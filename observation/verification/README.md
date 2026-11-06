@@ -16,16 +16,27 @@ authenticated HTTP response bodies. The provider returned no request ID;
 the stored attempt records that absence as null, alongside its actual local
 job ID, attempt, completed status and admitted cost estimate.
 
-`gated-review.json` records the actual role tool lists and the live server's
-HTTP 200 response to a deliberately invalid bearer. Role credentials cannot
-be issued by the checked-out server: it scopes sessions by endpoint path and
-has no bearer validator or issuer. This is failed authentication evidence,
-not a passing credential check. The gated smoke test keeps requiring issued
-`GATED_REVIEW_BUILDER_TOKEN` and `GATED_REVIEW_ASSESSOR_TOKEN` and refuses to
-substitute invented credentials.
+`gated-review-tools.json` is the endpoint proof: the complete `tools/list`
+result from the exact `OAKRIDGE_GATED_REVIEW_URL` every agent session receives.
+The server has no client authentication, so the check sends no credential:
+
+```sh
+OAKRIDGE_GATED_REVIEW_URL=<url> bun observation/verification/gated-review-tools.ts \
+  --run-id <run> --unit-id <unit>
+```
+
+It negotiates a real MCP session, follows every continuation page and calls no
+tool. The report retains the server's initialize and `tools/list` results, the
+advertised names and its assertions: `merge_pr` and `mark_merge_ready` are
+absent, the agent catalogue is present, and `selectMcpServers` supplies the URL
+unchanged with no header. Status is `passed`, `failed` for a complete list that
+breaks an assertion, or `incomplete` for a missing or unreachable endpoint,
+protocol failure or unfinished list. Only `passed` exits zero. The check needs
+no database, launcher or provider, and the shared shadow verification report
+retains this file.
 
 Launch an isolated source run with the installed Codex ACP agent's ordinary
-authentication and `OAKRIDGE_TEST_DATABASE_URL`:
+authentication, `OAKRIDGE_TEST_DATABASE_URL` and `OAKRIDGE_GATED_REVIEW_URL`:
 
 ```sh
 bun oakridge-dbos/scripts/live-source-run.ts --input input.json \

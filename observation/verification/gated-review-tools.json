@@ -1,0 +1,1407 @@
+{
+  "checked_at": "2026-11-06T20:08:25.125Z",
+  "endpoint": "http://otto:3555/mcp",
+  "run": {
+    "run_id": "run-91efddeff0e09446",
+    "unit_id": "run-91efddeff0e09446/implementation/single-review-endpoint"
+  },
+  "status": "passed",
+  "failure": null,
+  "initialize_result": {
+    "protocolVersion": "2025-06-18",
+    "capabilities": {
+      "tools": {
+        "listChanged": true
+      }
+    },
+    "serverInfo": {
+      "name": "gated-review",
+      "version": "0.1.0"
+    }
+  },
+  "pages": [
+    {
+      "cursor": null,
+      "result": {
+        "tools": [
+          {
+            "name": "review.get_state",
+            "title": "Review State",
+            "description": "Read the current gated-review state for a review thread.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "reviewId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "reviewId"
+              ],
+              "additionalProperties": false,
+              "description": "review.get_state.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "reviewId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "blocked",
+                    "approved",
+                    "request_changes"
+                  ],
+                  "description": "review.get_state.output.status"
+                },
+                "gate": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "isOpen": {
+                      "type": "boolean"
+                    },
+                    "actorScope": {
+                      "type": "string",
+                      "enum": [
+                        "agent",
+                        "operator",
+                        "event_source"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "isOpen",
+                    "actorScope"
+                  ],
+                  "additionalProperties": false
+                },
+                "lastUpdatedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                }
+              },
+              "required": [
+                "reviewId",
+                "status",
+                "gate",
+                "lastUpdatedAt"
+              ],
+              "additionalProperties": false,
+              "description": "review.get_state.output"
+            }
+          },
+          {
+            "name": "review.list_actions",
+            "title": "Review Actions",
+            "description": "List curated actions that have been taken for a review thread.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "reviewId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "reviewId"
+              ],
+              "additionalProperties": false,
+              "description": "review.list_actions.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "reviewId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "actionId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "kind": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "actorScope": {
+                        "type": "string",
+                        "enum": [
+                          "agent",
+                          "operator",
+                          "event_source"
+                        ]
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                      }
+                    },
+                    "required": [
+                      "actionId",
+                      "kind",
+                      "actorScope",
+                      "createdAt"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "reviewId",
+                "actions"
+              ],
+              "additionalProperties": false,
+              "description": "review.list_actions.output"
+            }
+          },
+          {
+            "name": "open_pr",
+            "title": "Open Pull Request",
+            "description": "Open a pull request. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "base": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "head": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "body": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "draft": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "repository",
+                "base",
+                "head",
+                "title"
+              ],
+              "additionalProperties": false,
+              "description": "open_pr.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "state": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "number",
+                "url",
+                "state"
+              ],
+              "additionalProperties": false,
+              "description": "open_pr.output"
+            }
+          },
+          {
+            "name": "set_pr_draft",
+            "title": "Set Pull Request Draft",
+            "description": "Mark a pull request ready for review (draft: false) or convert it to a draft (draft: true). Succeeds without change when the pull request is already in that state. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pullRequestNumber": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "draft": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "repository",
+                "pullRequestNumber",
+                "draft"
+              ],
+              "additionalProperties": false,
+              "description": "set_pr_draft.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "isDraft": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "number",
+                "url",
+                "isDraft"
+              ],
+              "additionalProperties": false,
+              "description": "set_pr_draft.output"
+            }
+          },
+          {
+            "name": "reply_to_thread",
+            "title": "Reply To Thread",
+            "description": "Reply to a GitHub review thread. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "threadId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "body": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "repository",
+                "threadId",
+                "body"
+              ],
+              "additionalProperties": false,
+              "description": "reply_to_thread.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "ok"
+              ],
+              "additionalProperties": false,
+              "description": "reply_to_thread.output"
+            }
+          },
+          {
+            "name": "resolve_thread",
+            "title": "Resolve Thread",
+            "description": "Resolve a review thread once you have actually handled it (fix pushed, or operator-approved ignore). Unresolved threads are the agent inbox; resolving is how a handled thread leaves it. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "threadId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "repository",
+                "threadId"
+              ],
+              "additionalProperties": false,
+              "description": "resolve_thread.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "ok"
+              ],
+              "additionalProperties": false,
+              "description": "resolve_thread.output"
+            }
+          },
+          {
+            "name": "request_next_round",
+            "title": "Request Next Round",
+            "description": "Request another Copilot review round on a pull request. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pullRequestNumber": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "repository",
+                "pullRequestNumber"
+              ],
+              "additionalProperties": false,
+              "description": "request_next_round.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "ok"
+              ],
+              "additionalProperties": false,
+              "description": "request_next_round.output"
+            }
+          },
+          {
+            "name": "git.push",
+            "title": "Git Push",
+            "description": "Push a branch to origin through the server (remote credentials stay server-side). Do NOT use git push/pull/fetch in the shell or GitHub CLI (gh) for remote operations. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "repo_path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "branch": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "force_with_lease": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "repository",
+                "repo_path"
+              ],
+              "additionalProperties": false,
+              "description": "git.push.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "ok"
+              ],
+              "additionalProperties": false,
+              "description": "git.push.output"
+            }
+          },
+          {
+            "name": "git.pull",
+            "title": "Git Pull",
+            "description": "Pull a branch from origin through the server (remote credentials stay server-side). Do NOT use git push/pull/fetch in the shell or GitHub CLI (gh) for remote operations. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "repo_path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "branch": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rebase": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "repository",
+                "repo_path"
+              ],
+              "additionalProperties": false,
+              "description": "git.pull.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "head_sha": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "ok",
+                "head_sha"
+              ],
+              "additionalProperties": false,
+              "description": "git.pull.output"
+            }
+          },
+          {
+            "name": "git.fetch",
+            "title": "Git Fetch",
+            "description": "Fetch a refspec from origin through the server (remote credentials stay server-side). Do NOT use git push/pull/fetch in the shell or GitHub CLI (gh) for remote operations. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "repo_path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "refspec": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "repository",
+                "repo_path"
+              ],
+              "additionalProperties": false,
+              "description": "git.fetch.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "ok"
+              ],
+              "additionalProperties": false,
+              "description": "git.fetch.output"
+            }
+          },
+          {
+            "name": "get_review_round",
+            "title": "Review Round",
+            "description": "Read all open review threads with their complete comment history; include resolved threads with includeResolved: true. Freshness only annotates threads and never hides previously fetched threads or comments. Returns the required triage prompt for grouping comments into fix, discuss, or ignore. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pullRequestNumber": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "includeResolved": {
+                  "description": "Also return resolved threads with their complete comment history. Previously fetched threads and comments are always returned.",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "repository",
+                "pullRequestNumber"
+              ],
+              "additionalProperties": false,
+              "description": "get_review_round.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "pullRequestNumber": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "includeResolved": {
+                  "type": "boolean"
+                },
+                "openThreadCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "freshSince": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triagePrompt": {
+                  "type": "object",
+                  "properties": {
+                    "instruction": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "buckets": {
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "enum": [
+                              "fix",
+                              "discuss",
+                              "ignore"
+                            ]
+                          },
+                          "description": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "description"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "presentation": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "approvalRequired": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "instruction",
+                    "buckets",
+                    "presentation",
+                    "approvalRequired"
+                  ],
+                  "additionalProperties": false
+                },
+                "threads": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "open",
+                          "resolved"
+                        ]
+                      },
+                      "path": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "line": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "hasFreshComments": {
+                        "type": "boolean"
+                      },
+                      "comments": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "body": {
+                              "type": "string"
+                            },
+                            "createdAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                            },
+                            "author": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "login": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "coderabbit",
+                                        "copilot",
+                                        "human"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "login",
+                                    "kind"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "body",
+                            "createdAt",
+                            "author"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "state",
+                      "path",
+                      "line",
+                      "hasFreshComments",
+                      "comments"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "summaries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "body": {
+                        "type": "string"
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                      },
+                      "author": {
+                        "type": "object",
+                        "properties": {
+                          "login": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "coderabbit",
+                              "copilot",
+                              "human"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "login",
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "body",
+                      "createdAt",
+                      "author"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "pullRequestNumber",
+                "includeResolved",
+                "openThreadCount",
+                "freshSince",
+                "triagePrompt",
+                "threads",
+                "summaries"
+              ],
+              "additionalProperties": false,
+              "description": "get_review_round.output"
+            }
+          },
+          {
+            "name": "pr_status",
+            "title": "PR Status",
+            "description": "Read advisory status for a pull request. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pullRequestNumber": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "repository",
+                "pullRequestNumber"
+              ],
+              "additionalProperties": false,
+              "description": "pr_status.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "pullRequestNumber": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "OPEN",
+                    "CLOSED",
+                    "MERGED"
+                  ]
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "isDraft": {
+                  "type": "boolean"
+                },
+                "headOwner": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "headBranch": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "headSha": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "baseBranch": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "mergedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "openThreadCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mergeReady": {
+                  "type": "object",
+                  "properties": {
+                    "isReady": {
+                      "type": "boolean"
+                    },
+                    "source": {
+                      "type": "string",
+                      "const": "github_label"
+                    },
+                    "label": {
+                      "type": "string",
+                      "const": "merge-ready"
+                    }
+                  },
+                  "required": [
+                    "isReady",
+                    "source",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                },
+                "checks": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "passing",
+                        "failing",
+                        "pending"
+                      ]
+                    },
+                    "totalCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "failingCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "pendingCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "contexts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "context": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failure",
+                              "error",
+                              "pending"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "context",
+                          "state"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "totalCount",
+                    "failingCount",
+                    "pendingCount",
+                    "contexts"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "pullRequestNumber",
+                "state",
+                "url",
+                "isDraft",
+                "headOwner",
+                "headBranch",
+                "headSha",
+                "baseBranch",
+                "mergedAt",
+                "openThreadCount",
+                "mergeReady",
+                "checks"
+              ],
+              "additionalProperties": false,
+              "description": "pr_status.output"
+            }
+          },
+          {
+            "name": "get_workflow_status",
+            "title": "Workflow Status",
+            "description": "Read the latest GitHub Actions workflow runs for the PR head and test merge commits. Returns status, conclusion, failed jobs, and log tails (up to 20,000 characters per job, 10 job downloads per response), with explicit unavailable and truncated results. Requires repository as an owner/name slug.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pullRequestNumber": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "repository",
+                "pullRequestNumber"
+              ],
+              "additionalProperties": false,
+              "description": "get_workflow_status.input"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            },
+            "outputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "pullRequestNumber": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "headSha": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "mergeSha": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "name": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "url": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "headSha": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "event": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "queued",
+                          "in_progress",
+                          "completed",
+                          "waiting",
+                          "requested",
+                          "pending"
+                        ]
+                      },
+                      "conclusion": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failure",
+                              "neutral",
+                              "cancelled",
+                              "skipped",
+                              "timed_out",
+                              "action_required",
+                              "stale",
+                              "startup_failure"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "attempt": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "failedJobs": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "available"
+                              },
+                              "jobs": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "url": {
+                                      "type": "string",
+                                      "format": "uri"
+                                    },
+                                    "status": {
+                                      "type": "string",
+                                      "enum": [
+                                        "queued",
+                                        "in_progress",
+                                        "completed",
+                                        "waiting",
+                                        "requested",
+                                        "pending"
+                                      ]
+                                    },
+                                    "conclusion": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "success",
+                                            "failure",
+                                            "neutral",
+                                            "cancelled",
+                                            "skipped",
+                                            "timed_out",
+                                            "action_required",
+                                            "stale",
+                                            "startup_failure"
+                                          ]
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "logs": {
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "available"
+                                            },
+                                            "text": {
+                                              "type": "string"
+                                            },
+                                            "truncated": {
+                                              "type": "boolean"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "text",
+                                            "truncated"
+                                          ],
+                                          "additionalProperties": false
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "unavailable"
+                                            },
+                                            "detail": {
+                                              "type": "string",
+                                              "minLength": 1
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "detail"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "name",
+                                    "url",
+                                    "status",
+                                    "conclusion",
+                                    "logs"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "jobs"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "unavailable"
+                              },
+                              "detail": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "detail"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "url",
+                      "headSha",
+                      "event",
+                      "status",
+                      "conclusion",
+                      "attempt",
+                      "failedJobs"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "truncated": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "pullRequestNumber",
+                "headSha",
+                "mergeSha",
+                "runs",
+                "truncated"
+              ],
+              "additionalProperties": false,
+              "description": "get_workflow_status.output"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tool_names": [
+    "get_review_round",
+    "get_workflow_status",
+    "git.fetch",
+    "git.pull",
+    "git.push",
+    "open_pr",
+    "pr_status",
+    "reply_to_thread",
+    "request_next_round",
+    "resolve_thread",
+    "review.get_state",
+    "review.list_actions",
+    "set_pr_draft"
+  ],
+  "assertions": [
+    {
+      "name": "human_only_tools_absent",
+      "passed": true,
+      "detail": "absent: merge_pr, mark_merge_ready"
+    },
+    {
+      "name": "agent_catalogue_available",
+      "passed": true,
+      "detail": "13 agent tools advertised"
+    },
+    {
+      "name": "sessions_receive_this_endpoint_unfiltered",
+      "passed": true,
+      "detail": "selectMcpServers supplies the configured URL unchanged, with no header"
+    }
+  ]
+}
