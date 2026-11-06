@@ -1,30 +1,16 @@
-import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
 import { canonicalJson } from "canonical-json";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
+import type { QuestionId } from "../domain/identity";
 import type { QuestionDefinition } from "../grading/question";
-import type { EvidenceSet } from "../grading/evidence";
-import { repositorySnapshotEligibility } from "../grading/eligibility";
-import { blindSubmissionIsValid, evaluatorIdentity, instructionDigest,
-  type EvaluatorDefinition } from "../grading/evaluator";
-import { evaluationDigest, runGradeDigest, type EvaluationIdentity } from "../grading/execution";
-import type { GradeAnswer, GradeListingItem, GradeObservation, GradeOrigin } from "../grading/observation";
-import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
-import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
-import type { ObservationEvaluationExecution, ObservationGradeObservation } from "./db-types";
-import { subjectProvenance, questionFromRow } from "./eligibility-store";
+import { evaluatorIdentity, instructionDigest, type EvaluatorDefinition } from "../grading/evaluator";
+import type { GradeListingItem } from "../grading/observation";
+import type { GradingError } from "../grading/runner";
+import { jsonText, withTenant, type Database, type TenantScope } from "./database";
+import type { ObservationEvaluationExecution, ObservationQuestionDefinition } from "./db-types";
 import type { Page } from "./projection-store";
-import type { GradeRunner } from "../ports/grade-runner";
-import { pinnedRepositoryMinimum, requiresRepositorySnapshot } from "../grading/evidence-packages/recipe";
 
-export interface GradeDetails extends Omit<GradeObservation, "observation_id"> {
-  readonly origin: GradeOrigin;
-  readonly collection_mode: "blind" | "in_context";
-  readonly blind_assignment_id?: string | null;
-  readonly model_answers_visible: boolean;
-  readonly workflow_decisions_visible: boolean;
-}
 export interface GradePage extends Page { readonly total: number; readonly items: readonly GradeListingItem[] }
 
 const scope = (tenant: TenantScope) => ({ producer: tenant.producer, namespace: tenant.namespace });
@@ -37,74 +23,51 @@ function same(left: unknown, right: unknown): boolean {
 }
 function asJson(value: unknown): JsonValue { return value as JsonValue; }
 
-/** Register the immutable question before capture-derived eligibility is frozen. */
+export function questionFromRow(row: Selectable<ObservationQuestionDefinition>): QuestionDefinition {
+  return { question_id: row.question_id as QuestionId, question_version: row.question_version, item_kind: row.item_kind,
+    question_text: row.question_text, response_kind: row.response_kind as QuestionDefinition["response_kind"],
+    allowed_values: row.allowed_values as QuestionDefinition["allowed_values"],
+    missing_evidence_policy: row.missing_evidence_policy as QuestionDefinition["missing_evidence_policy"],
+    abstain_semantics: row.abstain_semantics, unclear_semantics: row.unclear_semantics,
+    interpretation_caveats: row.interpretation_caveats };
+}
+
+/** Definitions are immutable within their natural keys: a repeat is a no-op, a change is refused. */
 export async function registerQuestion(db: Database, tenant: TenantScope, question: QuestionDefinition): Promise<Result<void, GradingError>> {
-  if (!question.pinned_expectation?.definition_id || !question.pinned_expectation.artifact_schema_version)
-    return failure("register_context", question.question_id, "question requires pinned expectation");
-  if (question.response_kind === "choice" && (!question.allowed_values || question.allowed_values.length === 0))
-    return failure("register_context", question.question_id, "choice question requires allowed values");
+  if ((question.response_kind === "choice" || question.response_kind === "ordinal")
+    && (!question.allowed_values || question.allowed_values.length === 0))
+    return failure("register_question", question.question_id, "choice question requires allowed values");
   try {
     return await withTenant(db, tenant, async (trx) => {
-      const q = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", tenant.producer)
+      const stored = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("question_id", "=", question.question_id)
         .where("question_version", "=", question.question_version).executeTakeFirst();
-      if (q && !same([q.target_item_kinds, q.input_recipe, q.response_kind, q.allowed_values, q.missing_evidence_policy,
-        q.abstain_semantics, q.unclear_semantics, q.interpretation_caveats, q.requires_repository_snapshot,
-        q.expected_definition_id, q.expected_artifact_schema_version],
-        [question.target_item_kinds, question.input_recipe, question.response_kind, question.allowed_values, question.missing_evidence_policy,
-          question.abstain_semantics, question.unclear_semantics, question.interpretation_caveats, question.requires_repository_snapshot,
-          question.pinned_expectation.definition_id, question.pinned_expectation.artifact_schema_version]))
-        return failure("register_context", question.question_id, "question definition identity conflict");
-      if (q && q.question_text !== null && q.question_text !== question.question_text)
-        return failure("register_context", question.question_id, "question text conflict");
-      if (!q) await trx.insertInto("observation.question_definition").values({ ...scope(tenant),
-        question_id: question.question_id, question_version: question.question_version,
-        target_item_kinds: jsonText(asJson(question.target_item_kinds)), input_recipe: jsonText(question.input_recipe),
+      if (stored) return same(questionFromRow(stored), question) ? ok(undefined)
+        : failure("register_question", question.question_id, "question definition identity conflict");
+      await trx.insertInto("observation.question_definition").values({ ...scope(tenant),
+        question_id: question.question_id, question_version: question.question_version, item_kind: question.item_kind,
         response_kind: question.response_kind, allowed_values: question.allowed_values === null ? null : jsonText(asJson(question.allowed_values)),
         missing_evidence_policy: question.missing_evidence_policy, abstain_semantics: question.abstain_semantics,
         unclear_semantics: question.unclear_semantics, interpretation_caveats: question.interpretation_caveats,
-        requires_repository_snapshot: question.requires_repository_snapshot,
-        question_text: question.question_text ?? null,
-        expected_definition_id: question.pinned_expectation.definition_id,
-        expected_artifact_schema_version: question.pinned_expectation.artifact_schema_version }).execute();
+        question_text: question.question_text }).execute();
       return ok(undefined);
     });
-  } catch (cause) { return failure("register_context", question.question_id, String(cause)); }
+  } catch (cause) { return failure("register_question", question.question_id, String(cause)); }
 }
 
-/** Definitions are immutable within their natural keys. */
-export async function registerGradingContext(db: Database, tenant: TenantScope, context: GradingContext): Promise<Result<void, GradingError>> {
-  const { question, evidence, evaluator } = context;
-  if (!question.pinned_expectation?.definition_id || !question.pinned_expectation.artifact_schema_version)
-    return failure("register_context", question.question_id, "question requires pinned expectation");
-  if (question.response_kind === "choice" && (!question.allowed_values || question.allowed_values.length === 0))
-    return failure("register_context", question.question_id, "choice question requires allowed values");
+export async function registerEvaluator(db: Database, tenant: TenantScope, evaluator: EvaluatorDefinition): Promise<Result<void, GradingError>> {
   const digest = evaluatorIdentity(evaluator);
-  if (!digest.ok) return failure("register_context", evaluator.evaluator_definition_id, digest.error.detail);
+  if (!digest.ok) return failure("register_evaluator", evaluator.evaluator_definition_id, digest.error.detail);
   if (evaluator.prompt_digest !== instructionDigest(evaluator.instruction_text))
-    return failure("register_context", evaluator.evaluator_definition_id, "prompt digest differs from canonical instruction text digest");
-  if (evidence.is_incomplete !== (evidence.incompleteness_reason !== null))
-    return failure("register_context", evidence.evidence_set_id, "incompleteness reason must match flag");
-  if (evidence.references.some((reference) => !reference.kind))
-    return failure("register_context", evidence.evidence_set_id, "new evidence references require classification");
-  const registered = await registerQuestion(db, tenant, question);
-  if (!registered.ok) return registered;
+    return failure("register_evaluator", evaluator.evaluator_definition_id, "prompt digest differs from canonical instruction text digest");
   try {
     return await withTenant(db, tenant, async (trx) => {
-      const e = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer)
-        .where("namespace", "=", tenant.namespace).where("evidence_set_id", "=", evidence.evidence_set_id).executeTakeFirst();
-      if (e && !same([e.evidence_refs, e.is_incomplete, e.incompleteness_reason],
-        [evidence.references, evidence.is_incomplete, evidence.incompleteness_reason]))
-        return failure("register_context", evidence.evidence_set_id, "evidence set identity conflict");
-      if (!e) await trx.insertInto("observation.evidence_set").values({ ...scope(tenant), evidence_set_id: evidence.evidence_set_id,
-        evidence_refs: jsonText(asJson(evidence.references)), is_incomplete: evidence.is_incomplete,
-        incompleteness_reason: evidence.incompleteness_reason }).execute();
-      const d = await trx.selectFrom("observation.evaluator_definition").selectAll().where("producer", "=", tenant.producer)
+      const stored = await trx.selectFrom("observation.evaluator_definition").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("evaluator_definition_id", "=", evaluator.evaluator_definition_id).executeTakeFirst();
-      if (d && (d.identity_digest !== digest.value || !same([d.cost_metadata, d.seed, d.attempt_controls, d.instruction_text],
-        [evaluator.cost_metadata, evaluator.seed, evaluator.attempt_controls, evaluator.instruction_text])))
-        return failure("register_context", evaluator.evaluator_definition_id, "evaluator definition identity conflict");
-      if (!d) await trx.insertInto("observation.evaluator_definition").values({ ...scope(tenant),
+      if (stored) return stored.identity_digest === digest.value && same([stored.cost_metadata, stored.seed, stored.attempt_controls, stored.instruction_text],
+        [evaluator.cost_metadata, evaluator.seed, evaluator.attempt_controls, evaluator.instruction_text]) ? ok(undefined)
+        : failure("register_evaluator", evaluator.evaluator_definition_id, "evaluator definition identity conflict");
+      await trx.insertInto("observation.evaluator_definition").values({ ...scope(tenant),
         evaluator_definition_id: evaluator.evaluator_definition_id, kind: evaluator.kind,
         backend_kind: evaluator.backend_kind, provider: evaluator.provider, model: evaluator.model,
         prompt_digest: evaluator.prompt_digest, config_digest: evaluator.config_digest,
@@ -113,391 +76,7 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
         identity_digest: digest.value, instruction_text: evaluator.instruction_text }).execute();
       return ok(undefined);
     });
-  } catch (cause) { return failure("register_context", question.question_id, String(cause)); }
-}
-
-export async function validateIdentity(trx: DatabaseTransaction, tenant: TenantScope, identity: EvaluationIdentity): Promise<Result<{ readonly question: QuestionDefinition; readonly evidence: EvidenceSet; readonly evaluator: EvaluatorDefinition }, GradingError>> {
-  const item = await trx.selectFrom("observation.item_occurrence").select(["item_kind"]).where("producer", "=", tenant.producer)
-    .where("namespace", "=", tenant.namespace).where("occurrence_id", "=", identity.subject_occurrence_id).executeTakeFirst();
-  if (!item) return failure("evaluate", identity.subject_occurrence_id, "subject occurrence does not exist in namespace");
-  const q = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", tenant.producer)
-    .where("namespace", "=", tenant.namespace).where("question_id", "=", identity.question_id)
-    .where("question_version", "=", identity.question_version).executeTakeFirst();
-  if (!q) return failure("evaluate", identity.question_id, "question definition does not exist in namespace");
-  if (!Array.isArray(q.target_item_kinds) || !q.target_item_kinds.includes(item.item_kind))
-    return failure("evaluate", identity.question_id, "question does not target subject item kind");
-  const provenance = await subjectProvenance(trx, tenant, { ...identity,
-    pinned_expectation: { definition_id: q.expected_definition_id, artifact_schema_version: q.expected_artifact_schema_version } });
-  if (!provenance.ok) return provenance;
-  if (provenance.value.tag === "inapplicable") return failure("evaluate", identity.subject_occurrence_id, provenance.value.payload.reason);
-  const e = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer)
-    .where("namespace", "=", tenant.namespace).where("evidence_set_id", "=", identity.evidence_set_id).executeTakeFirst();
-  if (!e) return failure("evaluate", identity.evidence_set_id, "evidence set does not exist in namespace");
-  const d = await trx.selectFrom("observation.evaluator_definition").selectAll().where("producer", "=", tenant.producer)
-    .where("namespace", "=", tenant.namespace).where("evaluator_definition_id", "=", identity.evaluator_definition_id).executeTakeFirst();
-  if (!d) return failure("evaluate", identity.evaluator_definition_id, "evaluator definition does not exist in namespace");
-  if (identity.config_digest !== d.config_digest) return failure("evaluate", identity.evaluator_definition_id, "config digest differs from evaluator definition");
-  return ok({ question: questionFromRow(q),
-    evidence: { ...e, evidence_set_id: e.evidence_set_id as EvidenceSet["evidence_set_id"], references: e.evidence_refs as unknown as EvidenceSet["references"] },
-    evaluator: { ...d, kind: d.kind as EvaluatorDefinition["kind"], instruction_text: d.instruction_text ?? "" } });
-}
-
-function validAnswer(answer: GradeAnswer, question: QuestionDefinition): boolean {
-  if (!answer || typeof answer !== "object" || answer.kind !== question.response_kind) return false;
-  if (answer.state === "abstain" || answer.state === "unclear")
-    return typeof answer.reason === "string" && answer.reason.length > 0;
-  if (answer.state !== "answered" || !("value" in answer)) return false;
-  if (answer.kind === "boolean") return typeof answer.value === "boolean";
-  if (answer.kind === "choice" || answer.kind === "ordinal")
-    return typeof answer.value === "string" && (question.allowed_values?.includes(answer.value) ?? false);
-  if (answer.kind === "numeric") return typeof answer.value === "number" && Number.isFinite(answer.value);
-  if (answer.kind === "text") return typeof answer.value === "string";
-  return canonicalJson(answer.value).ok;
-}
-function validOutcome(outcome: EvaluationOutcome, question: QuestionDefinition): boolean {
-  if (!validAnswer(outcome.answer, question)) return false;
-  if (outcome.confidence != null && (!Number.isFinite(outcome.confidence) || outcome.confidence < 0 || outcome.confidence > 1)) return false;
-  if (outcome.cost != null && (!Number.isFinite(outcome.cost) || outcome.cost < 0)) return false;
-  if (outcome.probabilities != null) {
-    if (typeof outcome.probabilities !== "object" || Array.isArray(outcome.probabilities)) return false;
-    for (const [label, probability] of Object.entries(outcome.probabilities)) {
-      if (!Number.isFinite(probability) || probability < 0 || probability > 1) return false;
-      if (question.allowed_values && !question.allowed_values.includes(label)) return false;
-    }
-  }
-  return true;
-}
-
-export interface RunGradeInput {
-  readonly identity: EvaluationIdentity;
-  readonly runner: GradeRunner;
-  /** Commit selected for this execution, independently of the pinned recipe descriptor. */
-  readonly reviewed_commit?: string;
-}
-export interface RunGradeResult { readonly execution: Selectable<ObservationEvaluationExecution>; readonly observation: Selectable<ObservationGradeObservation> | null; readonly was_replay: boolean }
-export type ManualRecoveryResult = { readonly state: "recovered"; readonly execution_id: string }
-  | { readonly state: "missing" } | { readonly state: "not_running" } | { readonly state: "queued_job" };
-
-/** An operator can fence a stranded manual call before submitting a new attempt label. */
-export async function recoverManualExecution(db: Database, tenant: TenantScope, execution_id: string)
-  : Promise<Result<ManualRecoveryResult, GradingError>> {
-  try {
-    return await withTenant(db, tenant, async (trx) => {
-      const execution = await trx.selectFrom("observation.evaluation_execution").selectAll()
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("execution_id", "=", execution_id).forUpdate().executeTakeFirst();
-      if (!execution) return ok({ state: "missing" });
-      if (execution.status !== "running") return ok({ state: "not_running" });
-      const job = await trx.selectFrom("observation.grading_job").select("job_id")
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("idempotency_digest", "=", execution.idempotency_digest).executeTakeFirst();
-      if (job) return ok({ state: "queued_job" });
-      await trx.updateTable("observation.evaluation_execution")
-        .set({ status: "failed", ended_at: new Date(), error: "operator_recovery" })
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("execution_id", "=", execution_id).execute();
-      return ok({ state: "recovered", execution_id });
-    });
-  } catch (cause) { return failure("recover_manual_evaluation", execution_id, String(cause)); }
-}
-
-/** Ingest and persist use separate short transactions; the runner is awaited between them. */
-export async function runGrade(db: Database, tenant: TenantScope, input: RunGradeInput & {
-  readonly lease?: { readonly job_id: string; readonly owner: string; readonly attempt: number };
-}): Promise<Result<RunGradeResult, GradingError>> {
-  const { identity } = input;
-  const digest = runGradeDigest(identity, input.reviewed_commit);
-  if (!digest.ok) return failure("evaluate", identity.subject_occurrence_id, digest.error.detail);
-  try {
-    const scheduled = await withTenant(db, tenant, async (trx) => {
-      if (input.lease) {
-        const claim = await trx.selectFrom("observation.grading_job")
-          .select(["state", "lease_owner", "attempts", "lease_expires_at"])
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("job_id", "=", input.lease.job_id).executeTakeFirst();
-        if (claim?.state !== "claimed" || claim.lease_owner !== input.lease.owner
-          || claim.attempts !== input.lease.attempt || !claim.lease_expires_at
-          || claim.lease_expires_at.getTime() <= Date.now())
-          return err({ operation: "evaluate", entity_id: identity.subject_occurrence_id,
-            detail: "grading claim lost before execution", outcome: "lost_lease" as const });
-      }
-      const checked = await validateIdentity(trx, tenant, identity);
-      if (!checked.ok) return checked;
-      if (checked.value.evaluator.kind !== input.runner.kind)
-        return failure("evaluate", identity.evaluator_definition_id, "runner kind differs from evaluator definition");
-      const inserted = await trx.insertInto("observation.evaluation_execution").values({ ...scope(tenant),
-        execution_id: randomUUID(), ...identity, idempotency_digest: digest.value,
-        attempts: 1, retries: 0, started_at: new Date(), ended_at: null, status: "running",
-        error: null, model_usage: null, cost: null, external_execution_id: null, provider_link: null,
-        reproducibility_metadata: null })
-        .onConflict((conflict) => conflict.columns(["producer", "namespace", "idempotency_digest"]).doNothing())
-        .returningAll().executeTakeFirst();
-      const execution = inserted ?? await trx.selectFrom("observation.evaluation_execution").selectAll()
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("idempotency_digest", "=", digest.value).executeTakeFirstOrThrow();
-      return ok({ checked: checked.value, execution, is_owner: !!inserted });
-    });
-    if (!scheduled.ok) return scheduled;
-    const { checked, execution, is_owner } = scheduled.value;
-    if (!is_owner && (!input.lease || execution.status !== "running")) {
-      const current = execution;
-      if (current.status === "running") return err({ operation: "evaluate", entity_id: identity.subject_occurrence_id,
-        detail: "execution is still running", outcome: "in_progress" });
-      const lease = input.lease;
-      if (lease) {
-        const settled = await withTenant(db, tenant, async (trx) => {
-          const claim = await trx.selectFrom("observation.grading_job").selectAll()
-            .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-            .where("job_id", "=", lease.job_id).forUpdate().executeTakeFirst();
-          if (claim?.state === "claimed" && claim.lease_owner === lease.owner
-            && claim.attempts === lease.attempt
-            && claim.lease_expires_at && claim.lease_expires_at.getTime() > Date.now()) {
-            await trx.updateTable("observation.grading_job").set({ state: "terminal",
-              terminal_cause: current.status === "completed" ? null : "runner_failed",
-              lease_owner: null, lease_expires_at: null, updated_at: new Date() })
-              .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-              .where("job_id", "=", claim.job_id).execute();
-            return true;
-          }
-          return false;
-        });
-        if (!settled) return err({ operation: "evaluate", entity_id: identity.subject_occurrence_id,
-          detail: "grading claim lost before replay", outcome: "lost_lease" });
-      }
-      const observation = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grade_observation")
-        .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("execution_id", "=", execution.execution_id).executeTakeFirst());
-      return ok({ execution: current, observation: observation ?? null, was_replay: true });
-    }
-    if (input.lease) {
-      const isOwned = await withTenant(db, tenant, async (trx) => {
-        const claim = await trx.selectFrom("observation.grading_job")
-          .select(["state", "lease_owner", "attempts", "lease_expires_at"])
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("job_id", "=", input.lease!.job_id).executeTakeFirst();
-        return claim?.state === "claimed" && claim.lease_owner === input.lease!.owner
-          && claim.attempts === input.lease!.attempt && !!claim.lease_expires_at
-          && claim.lease_expires_at.getTime() > Date.now();
-      });
-      if (!isOwned) return err({ operation: "evaluate", entity_id: identity.subject_occurrence_id,
-        detail: "grading claim lost before dispatch", outcome: "lost_lease" });
-    }
-    const { question, evidence, evaluator } = checked;
-    const minimum = pinnedRepositoryMinimum(question);
-    if (!minimum.ok) return err({ operation: "evaluate", entity_id: String(question.question_id),
-      detail: minimum.error.detail });
-    const snapshot = requiresRepositorySnapshot(question)
-      ? repositorySnapshotEligibility(evidence, minimum.value, input.reviewed_commit ?? "") : null;
-    const blocked = snapshot !== null && snapshot.tag !== "eligible";
-    const missing = evidence.is_incomplete && question.missing_evidence_policy === "fail";
-    let result: RunnerResult;
-    if (blocked || missing) result = failure("evaluate", evidence.evidence_set_id,
-      evidence.incompleteness_reason ?? (snapshot?.tag === "missing_evidence" ? snapshot.payload.kind === "missing_source"
-        ? snapshot.payload.detail : "repository evidence missing" : "evidence set is incomplete"));
-    else if (evidence.is_incomplete && question.missing_evidence_policy === "abstain")
-      result = ok({ answer: { state: "abstain", kind: question.response_kind, reason: evidence.incompleteness_reason ?? "incomplete evidence" } });
-    else {
-      try { result = await input.runner.run({ question, evidence, evaluator }); }
-      catch (cause) { result = failure("grade_runner", evaluator.evaluator_definition_id, String(cause)); }
-    }
-    if (result.ok && !validOutcome(result.value, question))
-      result = failure("evaluate", question.question_id, "answer or probabilities do not match question semantics");
-    const outcome = result.ok ? result.value : null;
-    return await withTenant(db, tenant, async (trx) => {
-      if (input.lease) {
-        const claim = await trx.selectFrom("observation.grading_job").selectAll()
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("job_id", "=", input.lease.job_id).forUpdate().executeTakeFirst();
-        if (!claim || claim.state !== "claimed" || claim.lease_owner !== input.lease.owner
-          || claim.attempts !== input.lease.attempt
-          || !claim.lease_expires_at || claim.lease_expires_at.getTime() <= Date.now())
-          return err({ operation: "evaluate", entity_id: identity.subject_occurrence_id,
-            detail: "grading claim lost before persist", outcome: "lost_lease" });
-        const failureCategory = result.ok ? undefined : result.error.category;
-        const retryable = (["rate_limit", "timeout", "transport", "http_error"] as const)
-          .some((category) => category === failureCategory);
-        if (!result.ok && retryable && claim.attempts <= claim.retry_limit) {
-          await trx.updateTable("observation.grading_job").set({ state: "reclaimable",
-            lease_owner: null, lease_expires_at: null, updated_at: new Date() })
-            .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-            .where("job_id", "=", claim.job_id).execute();
-          return failure("evaluate", identity.subject_occurrence_id, result.error.detail);
-        }
-      }
-      const updated = await trx.updateTable("observation.evaluation_execution").set({
-        status: outcome ? "completed" : "failed", ended_at: new Date(), error: result.ok ? null : result.error.detail,
-        model_usage: outcome?.model_usage == null ? null : jsonText(outcome.model_usage), cost: outcome?.cost ?? null,
-        external_execution_id: outcome?.external_execution_id ?? null, provider_link: outcome?.provider_link ?? null,
-        reproducibility_metadata: outcome?.reproducibility_metadata == null ? null : jsonText(outcome.reproducibility_metadata),
-      }).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("execution_id", "=", execution.execution_id).where("status", "=", "running")
-        .returningAll().executeTakeFirst();
-      if (!updated) return failure("evaluate", identity.subject_occurrence_id, "execution already persisted");
-      let observation: Selectable<ObservationGradeObservation> | null = null;
-      if (outcome) observation = await trx.insertInto("observation.grade_observation").values({ ...scope(tenant),
-        observation_id: randomUUID(), execution_id: execution.execution_id, subject_occurrence_id: identity.subject_occurrence_id,
-        evidence_set_id: identity.evidence_set_id, question_id: identity.question_id, question_version: identity.question_version,
-        evaluator_definition_id: identity.evaluator_definition_id, answer_kind: outcome.answer.kind,
-        answer_state: outcome.answer.state, answer_payload: jsonText(asJson(outcome.answer)),
-        probabilities: outcome.probabilities == null ? null : jsonText(asJson(outcome.probabilities)),
-        confidence: outcome.confidence ?? null, normalized_score: null, decision_policy_id: null,
-        decision_policy_version: null, reviewer_id: null, reviewer_details: null,
-        origin: "automated_evaluation", collection_mode: "in_context", blind_assignment_id: null,
-        model_answers_visible: false, workflow_decisions_visible: false,
-        comments: outcome.comments ?? null, rationale: outcome.rationale ?? null,
-        quality_flags: jsonText(asJson(outcome.quality_flags ?? [])), supersedes_observation_id: null })
-        .returningAll().executeTakeFirstOrThrow();
-      if (input.lease) await trx.updateTable("observation.grading_job").set({ state: "terminal",
-        terminal_cause: outcome ? null : blocked || missing ? "ineligible"
-          : !result.ok && result.error.category === "invalid_response"
-            ? "invalid_outcome" : !result.ok && (["rate_limit", "timeout", "transport", "http_error"] as const)
-              .some((category) => category === result.error.category) ? "retry_exhausted"
-              : !result.ok && result.error.operation === "evaluate" ? "invalid_outcome" : "runner_failed",
-        lease_owner: null, lease_expires_at: null, updated_at: new Date() })
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("job_id", "=", input.lease.job_id).execute();
-      return ok({ execution: updated, observation, was_replay: false });
-    });
-  } catch (cause) { return failure("evaluate", identity.subject_occurrence_id, String(cause)); }
-}
-
-export async function startDelegatedExecution(db: Database, tenant: TenantScope, identity: EvaluationIdentity,
-  reviewed_commit?: string)
-  : Promise<Result<Selectable<ObservationEvaluationExecution>, GradingError>> {
-  const digest = runGradeDigest(identity, reviewed_commit);
-  if (!digest.ok) return failure("delegate", identity.subject_occurrence_id, digest.error.detail);
-  try {
-    return await withTenant(db, tenant, async (trx) => {
-      const existing = await trx.selectFrom("observation.evaluation_execution").selectAll()
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("idempotency_digest", "=", digest.value).executeTakeFirst();
-      if (existing) return ok(existing);
-      const checked = await validateIdentity(trx, tenant, identity);
-      if (!checked.ok) return checked;
-      if (checked.value.evaluator.kind !== "model")
-        return failure("delegate", identity.evaluator_definition_id, "only a model evaluator can be delegated");
-      const inserted = await trx.insertInto("observation.evaluation_execution").values({ ...scope(tenant),
-        execution_id: randomUUID(), ...identity, idempotency_digest: digest.value, attempts: 1, retries: 0,
-        started_at: new Date(), ended_at: null, status: "running", error: null, model_usage: null, cost: null,
-        external_execution_id: null, provider_link: null, reproducibility_metadata: null })
-        .onConflict((conflict) => conflict.columns(["producer", "namespace", "idempotency_digest"]).doNothing())
-        .returningAll().executeTakeFirst();
-      return ok(inserted ?? await trx.selectFrom("observation.evaluation_execution").selectAll()
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("idempotency_digest", "=", digest.value).executeTakeFirstOrThrow());
-    });
-  } catch (cause) { return failure("delegate", identity.subject_occurrence_id, String(cause)); }
-}
-
-export interface HumanGradeInput extends EvaluationIdentity {
-  readonly details: GradeDetails;
-}
-/** Human intake uses the same execution identity and only inserts new observations. */
-export async function recordHumanGrade(db: Database, tenant: TenantScope, input: HumanGradeInput): Promise<Result<RunGradeResult, GradingError>> {
-  const { details, ...identity } = input;
-  const digest = evaluationDigest(identity);
-  if (!digest.ok) return failure("human_grade", identity.subject_occurrence_id, digest.error.detail);
-  try {
-    return await withTenant(db, tenant, async (trx) => {
-      const existing = await trx.selectFrom("observation.evaluation_execution").selectAll().where("producer", "=", tenant.producer)
-        .where("namespace", "=", tenant.namespace).where("idempotency_digest", "=", digest.value).executeTakeFirst();
-      if (existing) {
-        const observation = await trx.selectFrom("observation.grade_observation").selectAll().where("producer", "=", tenant.producer)
-          .where("namespace", "=", tenant.namespace).where("execution_id", "=", existing.execution_id).executeTakeFirst();
-        if (observation && (observation.reviewer_id !== details.reviewer_id
-          || observation.origin !== details.origin
-          || observation.collection_mode !== details.collection_mode
-          || observation.blind_assignment_id !== (details.blind_assignment_id ?? null)))
-          return failure("human_grade", identity.subject_occurrence_id, "execution belongs to a different reviewer or collection");
-        return ok({ execution: existing, observation: observation ?? null, was_replay: true });
-      }
-      const checked = await validateIdentity(trx, tenant, identity);
-      if (!checked.ok) return checked;
-      if (checked.value.evaluator.kind !== "human") return failure("human_grade", identity.evaluator_definition_id, "human evaluator required");
-      if (!details.reviewer_id) return failure("human_grade", identity.subject_occurrence_id, "reviewer id required");
-      if (!details.collection_mode || details.model_answers_visible === undefined || details.workflow_decisions_visible === undefined)
-        return failure("human_grade", identity.subject_occurrence_id, "collection mode and visibility required");
-      if (details.collection_mode === "blind") {
-        if (!blindSubmissionIsValid(details))
-          return failure("human_grade", identity.subject_occurrence_id, "blind submission requires a hidden claimed assignment");
-        if (details.blind_assignment_id) {
-          const assignment = await trx.selectFrom("observation.blind_assignment").selectAll()
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("assignment_id", "=", details.blind_assignment_id).forUpdate().executeTakeFirst();
-          if (assignment?.submitted_observation_id) {
-            const replay = await trx.selectFrom("observation.evaluation_execution").selectAll()
-              .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-              .where("idempotency_digest", "=", digest.value).executeTakeFirst();
-            if (replay) {
-              const observation = await trx.selectFrom("observation.grade_observation").selectAll()
-                .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-                .where("execution_id", "=", replay.execution_id).executeTakeFirst();
-              if (observation?.observation_id === assignment.submitted_observation_id
-                && observation.reviewer_id === details.reviewer_id
-                && observation.origin === details.origin
-                && observation.collection_mode === "blind"
-                && observation.blind_assignment_id === details.blind_assignment_id)
-                return ok({ execution: replay, observation, was_replay: true });
-            }
-          }
-          if (!assignment || assignment.claim_owner !== details.reviewer_id || !assignment.expires_at
-          || assignment.expires_at <= new Date() || assignment.submitted_observation_id
-          || assignment.subject_occurrence_id !== identity.subject_occurrence_id
-          || assignment.evidence_set_id !== identity.evidence_set_id || assignment.question_id !== identity.question_id
-          || assignment.question_version !== identity.question_version)
-            return failure("human_grade", identity.subject_occurrence_id, "blind assignment is unclaimed, expired, or mismatched");
-        }
-      } else if (details.blind_assignment_id) return failure("human_grade", identity.subject_occurrence_id, "in-context grade cannot use a blind assignment");
-      if (!validAnswer(details.answer, checked.value.question)) return failure("human_grade", identity.question_id, "invalid answer");
-      if (!validOutcome({ answer: details.answer, probabilities: details.probabilities, confidence: details.confidence }, checked.value.question))
-        return failure("human_grade", identity.question_id, "invalid probability or confidence");
-      if ((details.normalized_score === null) !== (details.decision_policy_id === null && details.decision_policy_version === null)
-        || (details.normalized_score !== null && (!details.decision_policy_id || !details.decision_policy_version)))
-        return failure("human_grade", identity.question_id, "normalized score requires a decision policy id and version");
-      const execution_id = randomUUID();
-      const now = new Date();
-      const inserted = await trx.insertInto("observation.evaluation_execution").values({ ...scope(tenant), ...identity,
-        execution_id, idempotency_digest: digest.value, attempts: 1, retries: 0, started_at: now, ended_at: now,
-        status: "completed", error: null, model_usage: null, cost: null, external_execution_id: null,
-        provider_link: null, reproducibility_metadata: null })
-        .onConflict((conflict) => conflict.columns(["producer", "namespace", "idempotency_digest"]).doNothing())
-        .returningAll().executeTakeFirst();
-      if (!inserted) {
-        const execution = await trx.selectFrom("observation.evaluation_execution").selectAll()
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("idempotency_digest", "=", digest.value).executeTakeFirstOrThrow();
-        const observation = await trx.selectFrom("observation.grade_observation").selectAll()
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("execution_id", "=", execution.execution_id).executeTakeFirst();
-        if (observation && (observation.reviewer_id !== details.reviewer_id
-          || observation.origin !== details.origin
-          || observation.collection_mode !== details.collection_mode
-          || observation.blind_assignment_id !== (details.blind_assignment_id ?? null)))
-          return failure("human_grade", identity.subject_occurrence_id, "execution belongs to a different reviewer or collection");
-        return ok({ execution, observation: observation ?? null, was_replay: true });
-      }
-      const execution = inserted;
-      const observation = await trx.insertInto("observation.grade_observation").values({ ...scope(tenant),
-        observation_id: randomUUID(), execution_id, subject_occurrence_id: identity.subject_occurrence_id,
-        evidence_set_id: identity.evidence_set_id, question_id: identity.question_id, question_version: identity.question_version,
-        evaluator_definition_id: identity.evaluator_definition_id, answer_kind: details.answer.kind,
-        answer_state: details.answer.state, answer_payload: jsonText(asJson(details.answer)),
-        probabilities: details.probabilities == null ? null : jsonText(asJson(details.probabilities)),
-        confidence: details.confidence, normalized_score: details.normalized_score,
-        decision_policy_id: details.decision_policy_id, decision_policy_version: details.decision_policy_version,
-        reviewer_id: details.reviewer_id, reviewer_details: details.reviewer_details == null ? null : jsonText(details.reviewer_details),
-        origin: details.origin, collection_mode: details.collection_mode, blind_assignment_id: details.blind_assignment_id ?? null,
-        model_answers_visible: details.model_answers_visible,
-        workflow_decisions_visible: details.workflow_decisions_visible,
-        comments: details.comments, rationale: details.rationale, quality_flags: jsonText(asJson(details.quality_flags)),
-        supersedes_observation_id: details.supersedes_observation_id }).returningAll().executeTakeFirstOrThrow();
-      if (details.blind_assignment_id) await trx.updateTable("observation.blind_assignment")
-        .set({ submitted_observation_id: observation.observation_id })
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("assignment_id", "=", details.blind_assignment_id).execute();
-      return ok({ execution, observation, was_replay: false });
-    });
-  } catch (cause) { return failure("human_grade", identity.subject_occurrence_id, String(cause)); }
+  } catch (cause) { return failure("register_evaluator", evaluator.evaluator_definition_id, String(cause)); }
 }
 
 export function readExecution(db: Database, tenant: TenantScope, execution_id: string): Promise<Selectable<ObservationEvaluationExecution> | null> {
@@ -505,31 +84,31 @@ export function readExecution(db: Database, tenant: TenantScope, execution_id: s
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("execution_id", "=", execution_id).executeTakeFirst()) ?? null);
 }
+
+/** An occurrence's answers are found through its executions, which own the measurement identity. */
 export function listGrades(db: Database, tenant: TenantScope, occurrence_id: string, page: Page): Promise<GradePage | null> {
   return withTenant(db, tenant, async (trx) => {
     const item = await trx.selectFrom("observation.item_occurrence").select("occurrence_id")
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("occurrence_id", "=", occurrence_id).executeTakeFirst();
     if (!item) return null;
-    const count = await trx.selectFrom("observation.grade_observation").select((eb) => eb.fn.countAll<number>().as("count"))
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("subject_occurrence_id", "=", occurrence_id).executeTakeFirstOrThrow();
-    const rows = await trx.selectFrom("observation.grade_observation as g")
+    const graded = trx.selectFrom("observation.grade_observation as g")
       .innerJoin("observation.evaluation_execution as x", (join) => join.onRef("x.producer", "=", "g.producer")
         .onRef("x.namespace", "=", "g.namespace").onRef("x.execution_id", "=", "g.execution_id"))
-      .innerJoin("observation.evaluator_definition as d", (join) => join.onRef("d.producer", "=", "g.producer")
-        .onRef("d.namespace", "=", "g.namespace").onRef("d.evaluator_definition_id", "=", "g.evaluator_definition_id"))
+      .where("g.producer", "=", tenant.producer).where("g.namespace", "=", tenant.namespace)
+      .where("x.subject_occurrence_id", "=", occurrence_id);
+    const count = await graded.select((eb) => eb.fn.countAll<number>().as("count")).executeTakeFirstOrThrow();
+    const rows = await graded
+      .innerJoin("observation.evaluator_definition as d", (join) => join.onRef("d.producer", "=", "x.producer")
+        .onRef("d.namespace", "=", "x.namespace").onRef("d.evaluator_definition_id", "=", "x.evaluator_definition_id"))
       .select([
         sql<GradeListingItem["observation"]>`to_jsonb(g)`.as("observation"),
         sql<GradeListingItem["execution"]>`to_jsonb(x)`.as("execution"),
         sql<GradeListingItem["evaluator"]>`to_jsonb(d)`.as("evaluator"),
       ])
-      .where("g.producer", "=", tenant.producer).where("g.namespace", "=", tenant.namespace)
-      .where("g.subject_occurrence_id", "=", occurrence_id)
       .orderBy("g.recorded_at", "asc").orderBy("g.observation_id", "asc").limit(page.limit).offset(page.offset).execute();
     const items: GradeListingItem[] = rows.map(({ observation, execution, evaluator }) => ({
-      observation,
-      answer: observation.answer_payload, evaluator, execution,
+      observation, answer: observation.answer_payload, evaluator, execution,
     }));
     return { items, total: Number(count.count), ...page };
   });

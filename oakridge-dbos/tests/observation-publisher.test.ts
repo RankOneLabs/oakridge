@@ -1,8 +1,10 @@
 import { sampleDefinition, commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { sql } from "kysely";
 import type { Event } from "../src/core-client/core-types";
 import type { Workflow } from "../src/core-client/core-types";
 import { createApp } from "../../observation/src/http/app";
+import { oakridgeProfile } from "../../observation/src/producers/oakridge/profile";
 import { openDatabase as openObservationDatabase, withTenant } from "../../observation/src/storage/database";
 import { migrateEmptyDatabase as migrateObservation } from "../../observation/src/storage/migrate";
 import { publishObservationOnce, startObservationPublisher, type ObservationOptions } from "../src/adapters/observation";
@@ -21,7 +23,7 @@ test("adapter, Oakridge and observation outages replay committed events from the
   const tenant = { producer: "oakridge", namespace: "drills" };
   try {
     await migrateObservation(observation);
-    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] } });
+    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] }, profile: oakridgeProfile });
     const fetcher: NonNullable<ObservationOptions["fetcher"]> = async (input, init) => app.request(new Request(input, init));
     const options: ObservationOptions = { url: "http://observation.test", namespace: tenant.namespace, token: "ingest", fetcher,
       poll_ms: 20, log: () => undefined };
@@ -118,24 +120,56 @@ test("adapter, Oakridge and observation outages replay committed events from the
     } finally { release(); await pending; await holder.destroy(); }
     const committed = await authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute();
     const delivered = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_event_outcome")
-      .select(["event_id", "outcome_kind", "detail"]).execute());
+      .select(["event_id", "event_kind", "outcome_kind"]).execute());
     const afterRecovery = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_event_cursor").select("event_id").executeTakeFirstOrThrow());
     const unmapped = await app.request("/v1/sources/oakridge/unmapped", { headers: { authorization: "Bearer read" } });
-    const grades = await app.request("/v1/sources/oakridge/human-grades", { headers: { authorization: "Bearer read" } });
-    const gradeRows = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_human_grade")
-      .select(["evaluator_kind", "unit_id", "review", "decision", "target_revision_id", "feedback"]).execute());
+    const retired = await app.request("/v1/sources/oakridge/human-grades", { headers: { authorization: "Bearer read" } });
+    const grading = await withTenant(observation, tenant, (trx) => sql<{ evidence: number; executions: number; grades: number }>`SELECT
+      (SELECT count(*)::integer FROM observation.evidence_set) AS evidence,
+      (SELECT count(*)::integer FROM observation.evaluation_execution) AS executions,
+      (SELECT count(*)::integer FROM observation.grade_observation) AS grades`.execute(trx));
     expect({ ids: delivered.map((row) => row.event_id).sort(), committed: committed.map((row) => row.id).sort(),
       held: beforeRecovery.event_id !== afterRecovery.event_id,
       unmapped: (await unmapped.json() as { items: { event_id: string }[] }).items.map((item) => item.event_id).sort(),
-      human: delivered.find((row) => row.outcome_kind === "human_grade")?.detail })
+      decision: delivered.find((row) => row.event_kind === "operator_decided")?.outcome_kind })
       .toMatchObject({ ids: committed.map((row) => row.id).sort(), committed: committed.map((row) => row.id).sort(), held: true,
-        unmapped: [unexpected, absentArtifact].sort(),
-        human: { evaluator: { kind: "human" }, target: `${unit}:draft:1`, review: "editor", decision: "request_changes",
-          feedback: { feedback: "shorter" } } });
+        unmapped: [unexpected, absentArtifact].sort(), decision: "ignored" });
     expect((await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_revision").select("revision_id").execute()))
       .map((row) => row.revision_id)).toEqual([`${unit}:draft:1`]);
-    expect({ status: grades.status, rows: gradeRows }).toMatchObject({ status: 200, rows: [{ evaluator_kind: "human",
-      unit_id: unit, review: "editor", decision: "request_changes", target_revision_id: `${unit}:draft:1`,
-      feedback: { feedback: "shorter" } }] });
+    expect({ status: retired.status, grading: grading.rows[0] }).toEqual({ status: 404, grading: { evidence: 0, executions: 0, grades: 0 } });
+  } finally { await observation.destroy(); await scratch.drop(); }
+});
+
+test("accept and request-changes pass through the mapper and ordered ingest as ignored, with no grading record", async () => {
+  const scratch = await scratchDatabase();
+  const observation = openObservationDatabase(scratch.url);
+  const tenant = { producer: "oakridge", namespace: "approvals" };
+  try {
+    await migrateObservation(observation);
+    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [] }, profile: oakridgeProfile });
+    const provider_calls: string[] = [];
+    const options: ObservationOptions = { url: "http://observation.test", namespace: tenant.namespace, token: "ingest",
+      fetcher: async (input, init) => { provider_calls.push(String(input)); return app.request(new Request(input, init)); } };
+    const { definition_id } = await sampleDefinition();
+    const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "approvals" } });
+    const unit = unitOf(run_id, "document");
+    const decisions = ["accept", "request_changes"].map((decision) => ({ id: crypto.randomUUID(), run_id, unit_id: unit,
+      payload: jsonText({ kind: "operator_decided", unit, review: "editor", decision, target: `${unit}:draft:1`, payload: {} } as Event),
+      writer: jsonText({ kind: "operator" as const, subject: "test" }) }));
+    await authority.db.insertInto("authority.event").values(decisions).execute();
+    while (await publishObservationOnce(authority.db, options)) { /* drain the ordered tail */ }
+    const outcomes = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_event_outcome")
+      .select(["event_id", "event_kind", "outcome_kind"]).where("event_kind", "=", "operator_decided").where("run_id", "=", run_id).execute());
+    expect(outcomes.map((row) => row.outcome_kind)).toEqual(["ignored", "ignored"]);
+    expect(outcomes.map((row) => row.event_id).sort()).toEqual(decisions.map((row) => row.id).sort());
+    const grading = await withTenant(observation, tenant, (trx) => sql<{ evidence: number; executions: number; attempts: number; grades: number }>`SELECT
+      (SELECT count(*)::integer FROM observation.evidence_set) AS evidence,
+      (SELECT count(*)::integer FROM observation.evaluation_execution) AS executions,
+      (SELECT count(*)::integer FROM observation.grading_provider_attempt) AS attempts,
+      (SELECT count(*)::integer FROM observation.grade_observation) AS grades`.execute(trx));
+    expect(grading.rows[0]).toEqual({ evidence: 0, executions: 0, attempts: 0, grades: 0 });
+    expect(provider_calls.every((url) => url.startsWith("http://observation.test/v1/sources/oakridge/"))).toBe(true);
+    // A restarted publisher finds nothing left: the cursor already passed both decisions.
+    expect(await publishObservationOnce(authority.db, options)).toBe(false);
   } finally { await observation.destroy(); await scratch.drop(); }
 });

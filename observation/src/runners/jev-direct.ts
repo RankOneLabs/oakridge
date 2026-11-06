@@ -2,7 +2,9 @@ import { z } from "zod";
 import { err, ok, type JsonValue } from "../domain/primitives";
 import type { GradingContext, GradingError, ProviderFailureCategory, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
-import { gradingLimits } from "../grading/jobs/budget";
+
+/** How long a provider call may run when its runner is built without an explicit deadline. */
+export const DEFAULT_PROVIDER_DEADLINE_MS = 30_000;
 
 const probability = z.number().finite().min(0).max(1);
 const probabilities = z.record(z.string(), probability);
@@ -150,5 +152,5 @@ export interface JevDirectConfig {
 }
 export function createJevDirectRunner(config: JevDirectConfig): GradeRunner {
   return createSystemOneRunner({ operation: "jev_direct", ...config,
-    deadline_ms: config.deadline_ms ?? gradingLimits().provider_deadline_ms });
+    deadline_ms: config.deadline_ms ?? DEFAULT_PROVIDER_DEADLINE_MS });
 }

@@ -1,4 +1,4 @@
-import type { EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
+import type { ExecutionId, GradeObservationId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import type { EvaluationExecution } from "./execution";
 import type { EvaluatorDefinition } from "./evaluator";
@@ -12,17 +12,14 @@ export type GradeAnswer =
   | { readonly state: "answered"; readonly kind: "text"; readonly value: string }
   | { readonly state: "answered"; readonly kind: "structured"; readonly value: JsonValue }
   | { readonly state: "abstain" | "unclear"; readonly kind: ResponseKind; readonly reason: string };
-export type GradeOrigin = "human_rubric_answer" | "workflow_approval" | "automated_evaluation";
 
+/** Mirrors observation.grade_observation. Measurement identity is read through the execution. */
 export interface GradeObservation {
-  readonly origin: GradeOrigin;
   readonly observation_id: GradeObservationId;
+  readonly execution_id: ExecutionId;
   readonly answer: GradeAnswer;
   readonly probabilities: Readonly<Record<string, number>> | null;
   readonly confidence: number | null;
-  readonly normalized_score: number | null;
-  readonly decision_policy_id: string | null;
-  readonly decision_policy_version: string | null;
   readonly reviewer_id: string | null;
   readonly reviewer_details: JsonValue | null;
   readonly comments: string | null;
@@ -33,18 +30,8 @@ export interface GradeObservation {
 
 /** The grades read contract mirrors the joined grading rows after JSON serialization. */
 export interface GradeObservationListing extends Omit<GradeObservation, "answer" | "probabilities" | "quality_flags"> {
-  readonly collection_mode: "blind" | "in_context";
-  readonly blind_assignment_id: string | null;
-  readonly model_answers_visible: boolean | null;
-  readonly workflow_decisions_visible: boolean | null;
   readonly producer: string;
   readonly namespace: string;
-  readonly execution_id: ExecutionId;
-  readonly subject_occurrence_id: ItemOccurrenceId;
-  readonly evidence_set_id: EvidenceSetId;
-  readonly question_id: QuestionId;
-  readonly question_version: string;
-  readonly evaluator_definition_id: string;
   readonly answer_kind: ResponseKind;
   readonly answer_state: GradeAnswer["state"];
   readonly answer_payload: GradeAnswer;
@@ -60,10 +47,13 @@ export interface GradeListingItem {
     readonly namespace: string;
     readonly identity_digest: string;
   };
-  readonly execution: Omit<EvaluationExecution, "started_at" | "ended_at"> & {
+  readonly execution: Omit<EvaluationExecution, "created_at" | "updated_at" | "started_at" | "ended_at" | "lease_expires_at"> & {
     readonly producer: string;
     readonly namespace: string;
-    readonly started_at: string;
+    readonly created_at: string;
+    readonly updated_at: string;
+    readonly started_at: string | null;
     readonly ended_at: string | null;
+    readonly lease_expires_at: string | null;
   };
 }
