@@ -74,9 +74,7 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
     if (!answer.success || !values.includes(answer.data.choice)
       || values.some((value) => !(value in answer.data.probabilities)))
       return failure(context, "judge answer does not match question choices", "invalid_response");
-    return ok({ answer: answer.data.choice === "unclear"
-      ? { state: "unclear", kind: "choice", reason: answer.data.choice }
-      : { state: "answered", kind: "choice", value: answer.data.choice },
+    return ok({ answer: { state: "answered", kind: "choice", value: answer.data.choice },
       probabilities: answer.data.probabilities, confidence: answer.data.confidence,
       rationale: answer.data.explanation ?? null, model_usage: completion.data.usage ?? null,
       external_execution_id: completion.data.id,

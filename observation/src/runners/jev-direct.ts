@@ -82,8 +82,7 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
       || (question.type === "score" && context.question.response_kind !== "structured")
       || (question.type === "noul" && context.question.response_kind !== "numeric"))
       return failure(context, config.operation, "question response kind does not match System One type", "invalid_request");
-    const unclear_choice = question.type === "choice" ? unclearChoice(context) : null;
-    if (question.type === "choice" && unclear_choice === null)
+    if (question.type === "choice" && unclearChoice(context) === null)
       return failure(context, config.operation, "question unclear semantics must name exactly one allowed choice",
         "invalid_unclear_designation");
     let response: Response;
@@ -121,11 +120,8 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
         return failure(context, config.operation, "provider choice distribution omits an option",
           "invalid_response", parsed.data.id, parsed.data.cost);
     }
-    const is_unclear = answer.type === "choice" && answer.choice === unclear_choice;
     const mapped = answer.type === "choice"
-      ? { answer: is_unclear
-        ? { state: "unclear", kind: "choice", reason: answer.choice } as const
-        : { state: "answered", kind: "choice", value: answer.choice } as const,
+      ? { answer: { state: "answered", kind: "choice", value: answer.choice } as const,
         probabilities: answer.probabilities, confidence: answer.confidence }
       : answer.type === "score"
         ? { answer: { state: "answered", kind: "structured", value: {

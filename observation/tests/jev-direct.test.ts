@@ -135,11 +135,11 @@ test("Jev Choice retains every raw option probability and provider confidence", 
   expect(result.value.reproducibility_metadata).toMatchObject({ raw_answer: answer });
 });
 
-test("Jev maps the question-designated unclear choice to unclear", async () => {
+test("Jev records the question-designated unclear choice as an answer", async () => {
   const insufficient = { ...answer, choice: "insufficient_evidence" };
   const runner = createJevDirectRunner({ api_key: "key", base_url: "https://api.typesafe.ai/v1", transport: async () => response(provider(insufficient)) });
   const result = await runner.run(context);
-  expect(result.ok && result.value.answer).toEqual({ state: "unclear", kind: "choice", reason: "insufficient_evidence" });
+  expect(result.ok && result.value.answer).toEqual({ state: "answered", kind: "choice", value: "insufficient_evidence" });
   if (!result.ok) return;
   expect(result.value.probabilities).toEqual(insufficient.probabilities);
   expect(result.value.confidence).toBe(insufficient.confidence);
@@ -157,7 +157,7 @@ test("a choice with spaces and punctuation is designated even when other options
   const result = await runner.run({ ...context, question: { ...context.question, allowed_values: choices,
     unclear_semantics: "Choose not-enough evidence when unclear; choose yes or no only when settled." },
     evaluator: { ...context.evaluator, instruction_text: text, prompt_digest: instructionDigest(text) } });
-  expect(result.ok && result.value.answer).toEqual({ state: "unclear", kind: "choice", reason: choice });
+  expect(result.ok && result.value.answer).toEqual({ state: "answered", kind: "choice", value: choice });
 });
 
 test("ambiguous or missing unclear designation fails before a provider call", async () => {

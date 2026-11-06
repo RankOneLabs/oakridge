@@ -35,12 +35,12 @@ test("judge answer is independent of explanation and records its pinned source",
   expect(requests[0]).toContain("Reported excerpt");
 });
 
-test("an unclear choice records unclear with its full distribution", async () => {
+test("an unclear choice is an answer with its full distribution", async () => {
   const unclear = { ...answer, choice: "unclear", confidence: 0.04 };
   const runner = createLlmJudgeRunner({ api_key: "key", base_url: "https://judge.example/v1",
     transport: async () => completion(unclear) });
   const result = await runner.run(context);
-  expect(result.ok && result.value.answer).toEqual({ state: "unclear", kind: "choice", reason: "unclear" });
+  expect(result.ok && result.value.answer).toEqual({ state: "answered", kind: "choice", value: "unclear" });
   if (result.ok) expect(result.value.probabilities).toEqual(answer.probabilities);
 });
 

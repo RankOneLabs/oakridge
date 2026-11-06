@@ -39,11 +39,11 @@ test("a flat, low-confidence GLiDE distribution remains an answered choice", asy
   if (result.ok) expect(result.value.confidence).toBe(0.01);
 });
 
-test("GLiDE maps the question-designated option to unclear", async () => {
+test("GLiDE records the question-designated option as an answer", async () => {
   const insufficient = { ...answer, choice: "insufficient_evidence" };
   const runner = createFastinoGlideRunner({ api_key: "key", base_url: "https://api.fastino.ai/v1", transport: async () => Response.json({ ...payload,
     answers: { [question.question_id]: insufficient } }) });
   const result = await runner.run(context);
-  expect(result.ok && result.value.answer).toEqual({ state: "unclear", kind: "choice", reason: "insufficient_evidence" });
+  expect(result.ok && result.value.answer).toEqual({ state: "answered", kind: "choice", value: "insufficient_evidence" });
   if (result.ok) expect(result.value.probabilities).toEqual(insufficient.probabilities);
 });
