@@ -467,7 +467,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
     let body = serde_json::json!({
         "head_sha": "abc123",
         "verdict": "pass_with_notes",
-        "findings": [{"description": "One non-blocking follow-up", "evidence": []}],
+        "findings": [{"task_ids": [], "description": "One non-blocking follow-up", "evidence": []}],
         "recommended_next_actions": []
     });
 
@@ -483,7 +483,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
     ));
     assert!(!check_type(
         &program.input,
-        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"status": "unknown", "evidence": []}],
+        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"task_ids": [], "status": "unknown", "evidence": []}],
             "recommended_next_actions": []})
     ));
 }
