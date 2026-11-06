@@ -109,6 +109,22 @@ fn validation_messages(result: &StepResult) -> Vec<String> {
         .collect()
 }
 
+fn approval(review: &str, revision: &RevisionState) -> Incoming {
+    Incoming {
+        event: Event::OperatorDecided {
+            unit: revision.unit.clone(),
+            review: review.into(),
+            decision: "accept".into(),
+            target: revision.id.clone(),
+            payload: json!({}),
+        },
+        writer: Writer::Operator {
+            subject: "test".into(),
+        },
+        ingress_id: Some("accept".into()),
+    }
+}
+
 #[test]
 fn a_plan_with_criterion_ids_repeated_across_cohorts_is_rejected_by_validation() {
     let program = development();
@@ -130,6 +146,38 @@ fn a_plan_with_criterion_ids_repeated_across_cohorts_is_rejected_by_validation()
             expected
         );
     }
+}
+
+#[test]
+fn a_plan_with_duplicate_criterion_ids_cannot_be_approved() {
+    let program = development();
+    let input = json!({"spec":"spec", "tasks":{"tasks":[]}, "repositories":[{"key":"app"}], "repository_key":"app", "workspace":workspace()});
+    let body = json!({"summary":"plan", "cohorts":[cohort("a", &["AC01"]), cohort("b", &["AC01"])],
+        "dependency_order":["a", "b"], "scope":{"in_scope":[], "out_of_scope":[]}, "acceptance_criteria":[], "risks":[]});
+    let published = publish(&program, unit("planning", input), "plan", body);
+    let revision = published.snapshot.revisions.last().unwrap();
+
+    assert!(matches!(
+        step(&program, &published.snapshot, &approval("plan_review", revision)),
+        Err(StepError::Rejected { reason, .. }) if reason.contains("failed validation")
+    ));
+}
+
+#[test]
+fn an_invalid_plan_offers_changes_but_no_approval() {
+    let program = development();
+    let input = json!({"spec":"spec", "tasks":{"tasks":[]}, "repositories":[{"key":"app"}], "repository_key":"app", "workspace":workspace()});
+    let body = json!({"summary":"plan", "cohorts":[cohort("a", &["AC01"]), cohort("b", &["AC01"])],
+        "dependency_order":["a", "b"], "scope":{"in_scope":[], "out_of_scope":[]}, "acceptance_criteria":[], "risks":[]});
+    let published = publish(&program, unit("planning", input), "plan", body);
+    let decisions: Vec<_> = published
+        .reviews
+        .iter()
+        .flat_map(|review| &review.decisions)
+        .map(|decision| decision.decision.0.as_str())
+        .collect();
+
+    assert_eq!(decisions, vec!["request_changes"]);
 }
 
 #[test]
@@ -157,6 +205,94 @@ fn a_brief_must_keep_its_cohorts_criterion_membership_and_order() {
             expected
         );
     }
+}
+
+#[test]
+fn a_brief_with_changed_criterion_membership_or_order_cannot_be_approved() {
+    let program = development();
+    for ids in [&["AC02", "AC01"][..], &["AC01", "AC03"][..], &["AC01"][..]] {
+        let input = json!({"cohort":cohort("a", &["AC01", "AC02"]), "spec":"spec", "workspace":workspace()});
+        let body = json!({"cohort_id":"a", "repository_key":"app", "title":"a", "depends_on":[], "goal":"build",
+            "files_in_scope":[], "decisions_made":[], "approaches_rejected":[], "acceptance_criteria":criteria(ids), "next_action":"build"});
+        let published = publish(&program, unit("brief", input), "brief", body);
+        let revision = published.snapshot.revisions.last().unwrap();
+
+        assert!(
+            matches!(
+                step(&program, &published.snapshot, &approval("brief_review", revision)),
+                Err(StepError::Rejected { reason, .. }) if reason.contains("failed validation")
+            ),
+            "{ids:?}"
+        );
+    }
+}
+
+#[test]
+fn correcting_duplicate_criterion_ids_restores_approval() {
+    let program = development();
+    let input = json!({"spec":"spec", "tasks":{"tasks":[]}, "repositories":[{"key":"app"}], "repository_key":"app", "workspace":workspace()});
+    let mut body = json!({"summary":"plan", "cohorts":[cohort("a", &["AC01"]), cohort("b", &["AC01"])],
+        "dependency_order":["a", "b"], "scope":{"in_scope":[], "out_of_scope":[]}, "acceptance_criteria":[], "risks":[]});
+    let published = publish(&program, unit("planning", input), "plan", body.clone());
+    body["cohorts"][1]["acceptance_criteria"] = criteria(&["AC02"]);
+    let corrected = step(
+        &program,
+        &published.snapshot,
+        &Incoming {
+            event: Event::RevisionPublished {
+                unit: "run".into(),
+                artifact: "plan".into(),
+                body,
+                predecessor: Some(published.snapshot.revisions.last().unwrap().id.clone()),
+                subject: None,
+                by: None,
+            },
+            writer: Writer::Operator {
+                subject: "test".into(),
+            },
+            ingress_id: Some("correct-plan".into()),
+        },
+    )
+    .unwrap();
+    let revision = corrected.snapshot.revisions.last().unwrap();
+    let accepted = step(
+        &program,
+        &corrected.snapshot,
+        &approval("plan_review", revision),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        accepted.snapshot.units[0].status,
+        UnitStatus::Done { .. }
+    ));
+}
+
+#[test]
+fn an_invalid_plan_still_accepts_an_explicit_request_for_changes() {
+    let program = development();
+    let input = json!({"spec":"spec", "tasks":{"tasks":[]}, "repositories":[{"key":"app"}], "repository_key":"app", "workspace":workspace()});
+    let body = json!({"summary":"plan", "cohorts":[cohort("a", &["AC01"]), cohort("b", &["AC01"])],
+        "dependency_order":["a", "b"], "scope":{"in_scope":[], "out_of_scope":[]}, "acceptance_criteria":[], "risks":[]});
+    let published = publish(&program, unit("planning", input), "plan", body);
+    let revision = published.snapshot.revisions.last().unwrap();
+    let mut incoming = approval("plan_review", revision);
+    if let Event::OperatorDecided {
+        decision, payload, ..
+    } = &mut incoming.event
+    {
+        *decision = "request_changes".into();
+        *payload = json!({"feedback":"Give the second criterion a distinct id."});
+    }
+    let changed = step(&program, &published.snapshot, &incoming).unwrap();
+
+    assert!(matches!(
+        changed.snapshot.decisions.last(),
+        Some(DecisionState::Review {
+            effect: DecisionEffect::RequestChanges { .. },
+            ..
+        })
+    ));
 }
 
 #[test]

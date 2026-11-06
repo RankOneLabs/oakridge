@@ -139,6 +139,15 @@ pub fn latest<'a>(
         .filter(|r| r.unit == *unit && r.artifact == *artifact)
         .max_by_key(|r| r.seq)
 }
+/// Validation belongs to an exact revision; correcting it does not inherit
+/// the predecessor's failure.
+pub(super) fn has_failed_validation(state: &StepSnapshot, revision: &RevisionState) -> bool {
+    state.decisions.iter().any(|decision| {
+        matches!(decision, DecisionState::Validation { unit, artifact, target, messages, .. }
+            if unit == &revision.unit && artifact == &revision.artifact
+                && target == &revision.id && !messages.is_empty())
+    })
+}
 pub(super) fn checked_stage<'a>(
     program: &'a CheckedWorkflow,
     unit: &UnitState,

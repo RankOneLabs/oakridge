@@ -2883,7 +2883,8 @@ fn frozen_trace_replay_matches_after_w6_projection() {
         // canonical-key-order digest; w6_projection restores its old shape.
         // A second review of a newer subject resolves `previous` and
         // `feedback`, which a review left null before. Validation failures
-        // also remain in revise feedback with their check messages.
-        "641f80a7799e3559c5ae1bcbc984346b510458ed2bf0d4aef62f6880059e50e3"
+        // also remain in revise feedback with their check messages, and
+        // failing revisions no longer advertise approval decisions.
+        "e492c3ffc799b13c6c8cba5b69071ebc61b624baf50756e12e49657821e609d6"
     );
 }

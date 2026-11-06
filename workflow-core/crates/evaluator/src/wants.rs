@@ -354,6 +354,11 @@ pub(super) fn open_decisions(
         .iter()
         .filter_map(|(key, decision)| {
             let target = latest(state, unit, decided_artifact(of, &decision.on))?;
+            if decision.effect == DeclaredDecisionEffect::Approve
+                && has_failed_validation(state, target)
+            {
+                return None;
+            }
             (!is_decided_by(state, unit, review, &target.id)).then(|| ResolvedDecision {
                 decision: SymbolKey::from(key.as_str()),
                 target: target.id.clone(),
