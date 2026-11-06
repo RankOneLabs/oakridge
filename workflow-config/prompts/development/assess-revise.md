@@ -47,7 +47,7 @@ Revise your previous assessment of this same build using every requested change 
 
    The call succeeds without change when the pull request is already in that state. It does not merge anything: merging stays with the operator.
 
-Set the required `assessment.head_sha` to the reviewed `build_result.head_sha` supplied as `{{subject}}`. On each cohort finding, set `criterion_id` to the id of the brief acceptance criterion assessed. Keep that id even if the criterion text is paraphrased. A finding without a criterion link is unlinked; never infer a link from prose.
+Set the required `assessment.head_sha` to the reviewed `build_result.head_sha` supplied as `{{subject}}`. On each cohort finding, set `task_ids` to the ids of the brief acceptance criteria assessed. Keep those ids even if the criterion text is paraphrased. A finding that assesses no criterion has `task_ids: []` and is unlinked; never infer a link from prose.
 
 ## Emit the artifact
 
@@ -58,7 +58,7 @@ Publish the `assessment` artifact with this body:
   "head_sha": "<reviewed build_result.head_sha>",
   "verdict": "pass|pass_with_notes|fail",
   "findings": [
-    { "criterion_id": "<brief criterion id>", "criterion": "<criterion from this cohort brief>", "status": "met|not_met|partial", "evidence": [{ "kind": "file|test|output", "ref": "<path, test id, or command>", "detail": "<optional explanation>" }] }
+    { "task_ids": ["<brief criterion id>"], "criterion": "<criterion from this cohort brief>", "status": "met|not_met|partial", "evidence": [{ "kind": "file|test|output", "ref": "<path, test id, or command>", "detail": "<optional explanation>" }] }
   ],
   "test_evidence": {
     "passed": <number>,

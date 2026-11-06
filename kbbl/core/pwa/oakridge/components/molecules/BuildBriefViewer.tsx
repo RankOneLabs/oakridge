@@ -144,9 +144,8 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
               <li key={index}>
                 {typeof criterion !== "string" && <code className="or-code mr-2">{criterion.id}</code>}
                 <BriefText anchor={`/acceptance_criteria/${index}${typeof criterion === "string" ? "" : "/text"}`} value={planCriterionText(criterion)} editor={editor} className="text-sm text-[var(--text-secondary)]" />
-                {typeof criterion !== "string" && (criterion.task_ids.length > 0 || criterion.decision_ids.length > 0) && (
+                {typeof criterion !== "string" && criterion.decision_ids.length > 0 && (
                   <span className="block text-xs text-[var(--text-muted)]">
-                    {criterion.task_ids.length > 0 && <>Tasks: {criterion.task_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
                     {criterion.decision_ids.length > 0 && <>Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
                   </span>
                 )}

@@ -112,7 +112,6 @@
     "plan_criterion": {
       "id": "ident",
       "text": "text",
-      "task_ids": "list(ident)",
       "decision_ids": "list(ident)"
     },
     "brief_body": {
@@ -171,7 +170,7 @@
       "text": "text"
     },
     "assessment_finding": {
-      "criterion_id": "optional(ident)",
+      "task_ids": "list(ident)",
       "criterion": "optional(text)",
       "status": "optional(enum(met, not_met, partial))",
       "evidence": "list(evidence_ref)",

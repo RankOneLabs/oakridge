@@ -38,7 +38,7 @@ describe("BuildBriefViewer", () => {
     expect(screen.queryByText("Not id-linked")).toBeNull();
     expect(screen.getByText("decision-new")).toBeTruthy();
     expect(screen.getByText("approach-replace")).toBeTruthy();
-    expect(screen.getByText("task-plan")).toBeTruthy();
+    expect(screen.getByText("criterion-plan")).toBeTruthy();
     expect(screen.getByText("The brief remains readable.")).toBeTruthy();
   });
 
@@ -125,7 +125,6 @@ describe("CohortBrief", () => {
     expect(screen.queryByText("Not id-linked")).toBeNull();
     expect(screen.getByText("decision-new")).toBeTruthy();
     expect(screen.getByText("criterion-plan")).toBeTruthy();
-    expect(screen.getByText("task-plan")).toBeTruthy();
     expect(screen.getByText("approach-replace")).toBeTruthy();
   });
 });
