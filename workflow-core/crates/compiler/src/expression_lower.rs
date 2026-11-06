@@ -51,6 +51,12 @@ pub(crate) fn resolve(expression: &StageExpr) -> Expression {
                 Comparison::LessOrEqual => Expression::LessOrEqual { left, right },
             }
         }
+        StageExpr::Flatten(inner) => Expression::Flatten {
+            value: boxed(inner),
+        },
+        StageExpr::Distinct(inner) => Expression::Distinct {
+            value: boxed(inner),
+        },
         StageExpr::Len(inner) => Expression::Len {
             value: boxed(inner),
         },

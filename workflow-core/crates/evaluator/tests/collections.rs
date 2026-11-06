@@ -366,3 +366,98 @@ fn a_collection_over_an_empty_list_completes_at_launch() {
         }
     );
 }
+
+fn evaluate_list_transform(expression: Expression) -> Option<Value> {
+    let result = launch(json!([])).unwrap();
+    let root = result
+        .snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id.0 == "run")
+        .unwrap();
+    eval_expression(
+        &expression,
+        root,
+        &result.snapshot,
+        None,
+        None,
+        &mut EvaluationContext::new(&ResourceLimits::default()),
+    )
+    .unwrap()
+}
+
+fn list_literal(value: Value) -> Box<Expression> {
+    Box::new(Expression::Literal {
+        schema: "list".into(),
+        value,
+    })
+}
+
+#[test]
+fn flatten_concatenates_one_level_of_nested_lists_in_order() {
+    assert_eq!(
+        evaluate_list_transform(Expression::Flatten {
+            value: list_literal(json!([[3, 1], [], [1, 2], [[4]]])),
+        }),
+        Some(json!([3, 1, 1, 2, [4]]))
+    );
+}
+
+#[test]
+fn flatten_accepts_empty_lists() {
+    for value in [json!([]), json!([[], []])] {
+        assert_eq!(
+            evaluate_list_transform(Expression::Flatten {
+                value: list_literal(value)
+            }),
+            Some(json!([]))
+        );
+    }
+}
+
+#[test]
+fn distinct_keeps_first_occurrences_including_nested_values_by_json_equality() {
+    assert_eq!(
+        evaluate_list_transform(Expression::Distinct {
+            value: list_literal(
+                json!([3, 1, 3, [2], {"a": 1, "b": 2}, [2], 1, {"b": 2, "a": 1}, 2])
+            ),
+        }),
+        Some(json!([3, 1, [2], {"a": 1, "b": 2}, 2]))
+    );
+}
+
+#[test]
+fn distinct_accepts_an_empty_list() {
+    assert_eq!(
+        evaluate_list_transform(Expression::Distinct {
+            value: list_literal(json!([]))
+        }),
+        Some(json!([]))
+    );
+}
+
+#[test]
+fn flatten_enforces_the_output_list_resource_limit() {
+    let result = launch(json!([])).unwrap();
+    let root = result
+        .snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id.0 == "run")
+        .unwrap();
+    let mut limits = ResourceLimits::default();
+    limits.max_list_items = 3;
+    let expression = Expression::Flatten {
+        value: list_literal(json!([[1, 2], [3, 4]])),
+    };
+    assert!(eval_expression(
+        &expression,
+        root,
+        &result.snapshot,
+        None,
+        None,
+        &mut EvaluationContext::new(&limits)
+    )
+    .is_err());
+}

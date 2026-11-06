@@ -170,6 +170,18 @@ pub(crate) fn infer(
             }
             Ok(boolean())
         }
+        StageExpr::Flatten(inner) => {
+            let item = list_item(&infer(inner, scope)?, &scope.for_expr(inner), "flatten")?;
+            let item = list_item(&item, &scope.for_expr(inner), "flatten's items")?;
+            Ok(Type::List {
+                item: Box::new(item),
+            })
+        }
+        StageExpr::Distinct(inner) => {
+            let ty = infer(inner, scope)?;
+            list_item(&ty, &scope.for_expr(inner), "distinct")?;
+            Ok(ty)
+        }
         StageExpr::Len(inner) => {
             let ty = resolve_type(&infer(inner, scope)?, scope.aliases);
             if ty != Type::Text && item_type(&ty).is_none() {

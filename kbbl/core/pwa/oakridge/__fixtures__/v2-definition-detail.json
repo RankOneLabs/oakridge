@@ -1,9 +1,9 @@
 {
-  "source": "/api/definitions/d8a33d159bf8bdc6e8bad5ca31709fa857a55468ee8c0734fb173cd5b9791b28",
+  "source": "/api/definitions/ebfe582682051ee4c713cb28ae6377ed7f2ee6539fcc422d7c2986e7c7a7190b",
   "captured_at": "2026-10-16T23:03:45.577Z",
   "run_id": "run-2dc6bf5a65fc53b7",
   "definition": {
-    "definition_id": "d8a33d159bf8bdc6e8bad5ca31709fa857a55468ee8c0734fb173cd5b9791b28",
+    "definition_id": "ebfe582682051ee4c713cb28ae6377ed7f2ee6539fcc422d7c2986e7c7a7190b",
     "bundle": {
       "key": "development",
       "root": "$root",
@@ -1329,10 +1329,14 @@
           }
         },
         {
-          "key": "{cohorts: list(completed_cohort), final_merge_policy: final_merge_policy, repository: repository, workspace: workspace}",
+          "key": "{briefs: list(brief_body), cohorts: list(completed_cohort), final_merge_policy: final_merge_policy, repository: repository, workspace: workspace}",
           "shape": {
             "kind": "record",
             "fields": [
+              {
+                "key": "briefs",
+                "schema": "list(brief_body)"
+              },
               {
                 "key": "cohorts",
                 "schema": "list(completed_cohort)"
@@ -1350,6 +1354,14 @@
                 "schema": "workspace"
               }
             ]
+          }
+        },
+        {
+          "key": "list(brief_body)",
+          "shape": {
+            "kind": "list",
+            "item": "brief_body",
+            "max_items": 9007199254740991
           }
         },
         {
@@ -1441,7 +1453,7 @@
           "key": "integration",
           "stage": "integration",
           "label": "Integration",
-          "input_schema": "{cohorts: list(completed_cohort), final_merge_policy: final_merge_policy, repository: repository, workspace: workspace}",
+          "input_schema": "{briefs: list(brief_body), cohorts: list(completed_cohort), final_merge_policy: final_merge_policy, repository: repository, workspace: workspace}",
           "artifacts": [
             {
               "key": "assessment",
@@ -1578,6 +1590,7 @@
           "integration": {
             "for_each": "filter(input.repositories, contains(map(implementation, implementation.outcome.repository_key), item.key))",
             "input": {
+              "briefs": "filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key)",
               "cohorts": "filter(map(implementation, implementation.outcome), item.repository_key == each.key)",
               "final_merge_policy": "input.final_merge_policy",
               "repository": "each",
@@ -1913,6 +1926,10 @@
                 {
                   "check": "brief.depends_on == input.cohort.depends_on",
                   "message": "The brief's depends_on must be its plan cohort's, in the same order."
+                },
+                {
+                  "check": "map(brief.acceptance_criteria, item.id) == map(input.cohort.acceptance_criteria, item.id)",
+                  "message": "The brief's acceptance criteria must be its plan cohort's, in the same order."
                 }
               ]
             }
@@ -2069,10 +2086,6 @@
               "creates": [
                 "assessment"
               ],
-              "gated_review": {
-                "kind": "restricted",
-                "role": "assessor"
-              },
               "inputs": {
                 "brief": "brief_value",
                 "pr": "latest(pr)"
@@ -2090,10 +2103,6 @@
                 "build_result",
                 "pr"
               ],
-              "gated_review": {
-                "kind": "restricted",
-                "role": "builder"
-              },
               "inputs": {
                 "brief": "brief_value",
                 "build_base": "input.repository.forge.build_base",
@@ -2146,6 +2155,7 @@
           },
           "done_when": "published(assessment) and approved(pr) and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
           "input": {
+            "briefs": "list(brief_body)",
             "cohorts": "list(completed_cohort)",
             "final_merge_policy": "final_merge_policy",
             "repository": "repository",
@@ -2216,11 +2226,8 @@
                 "pr",
                 "assessment"
               ],
-              "gated_review": {
-                "kind": "restricted",
-                "role": "builder"
-              },
               "inputs": {
+                "briefs": "input.briefs",
                 "cohorts": "input.cohorts",
                 "repository": "input.repository"
               },
@@ -2272,6 +2279,10 @@
                 {
                   "check": "every(plan.cohorts, contains(map(input.repositories, item.key), item.repository_key))",
                   "message": "Every cohort's repository_key must be the key of one of the run's repositories."
+                },
+                {
+                  "check": "len(distinct(flatten(map(plan.cohorts, map(item.acceptance_criteria, item.id))))) == len(flatten(map(plan.cohorts, map(item.acceptance_criteria, item.id))))",
+                  "message": "Every acceptance criterion id must be unique across the plan's cohorts."
                 },
                 {
                   "check": "valid_graph(plan.cohorts, id, depends_on)",

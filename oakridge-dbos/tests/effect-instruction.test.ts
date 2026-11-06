@@ -18,7 +18,7 @@ test("an agent instruction carries its pinned prompt, session key, inputs and de
   expect(instruction.ok ? instruction.value : null).toEqual({ version: 1, run_id: "run-1" as RunId, action,
     attempt: { action_id: resolved.action_id as ActionId, seq: 1 },
     worker: { kind: "agent", session: "resume", session_key: selectSessionKey(action, resolved.action_id, "resume"),
-      gated_review: null, prompt: { path: "review-loop/write.md", digest: "a".repeat(64) }, handoff: null, settings: null,
+      prompt: { path: "review-loop/write.md", digest: "a".repeat(64) }, handoff: null, settings: null,
       creates: [{ key: "draft", schema: { title: "text", body: "text" } }], schemas: {} },
     inputs: { topic: "Oakridge", critique: null }, engine_inputs: { previous: null, feedback: [], subject: null }, workspace: null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS });

@@ -26,7 +26,9 @@ pub(super) fn reads_artifact(expression: &Expression, artifact: &SymbolKey) -> b
         | Expression::GreaterOrEqual { left, right }
         | Expression::LessThan { left, right }
         | Expression::LessOrEqual { left, right } => reads(left) || reads(right),
-        Expression::Len { value }
+        Expression::Flatten { value }
+        | Expression::Distinct { value }
+        | Expression::Len { value }
         | Expression::Not { value }
         | Expression::Field { value, .. }
         | Expression::Require { value } => reads(value),

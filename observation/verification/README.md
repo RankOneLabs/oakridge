@@ -16,13 +16,11 @@ authenticated HTTP response bodies. The provider returned no request ID;
 the stored attempt records that absence as null, alongside its actual local
 job ID, attempt, completed status and admitted cost estimate.
 
-`gated-review.json` records the actual role tool lists and the live server's
-HTTP 200 response to a deliberately invalid bearer. Role credentials cannot
-be issued by the checked-out server: it scopes sessions by endpoint path and
-has no bearer validator or issuer. This is failed authentication evidence,
-not a passing credential check. The gated smoke test keeps requiring issued
-`GATED_REVIEW_BUILDER_TOKEN` and `GATED_REVIEW_ASSESSOR_TOKEN` and refuses to
-substitute invented credentials.
+`gated-review.json` records the configured endpoint's actual `tools/list`
+response and timestamp. The agent tool list excludes `merge_pr` and
+`mark_merge_ready`; merging remains an operator action. Regenerate the record
+with `OAKRIDGE_GATED_REVIEW_URL` set and `bun run test:acp:gated-review:real`
+in kbbl. The explicit live command fails if the endpoint is unset or unreachable.
 
 Launch an isolated source run with the installed Codex ACP agent's ordinary
 authentication and `OAKRIDGE_TEST_DATABASE_URL`:

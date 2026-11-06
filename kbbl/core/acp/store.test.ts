@@ -1,8 +1,14 @@
+import { Database } from "bun:sqlite";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { applyMigrations } from "../db/migrations";
 import { expect, test } from "bun:test";
 
 import { openTestDb } from "../db/test-db";
 import { AcpSessionStore, startSpecHash } from "./store";
 import type {
+  AcpSessionRow,
   AcpSessionStartSpec,
   AcpSessionWorkflowIdentity,
   KbblSessionId,
@@ -68,7 +74,7 @@ test("startSpecHash over a fixed spec is pinned to a literal digest", () => {
   );
 });
 
-const WORKFLOW: AcpSessionWorkflowIdentity = { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder", gated_review: { kind: "restricted", role: "builder" } };
+const WORKFLOW: AcpSessionWorkflowIdentity = { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder" };
 
 test("a session claimed with an identity stores and reads it back", () => {
   const store = makeStore();
@@ -274,4 +280,26 @@ test("boot recovery preserves dispatch evidence for an initial-only session", ()
   store.bootSweep();
   expect(store.getTurn(row.sid, turn_key)).toEqual(expect.objectContaining({ status: "accepted", started_at }));
   expect(store.hasDispatchedTurns(row.sid)).toBe(true);
+});
+
+type HistoricalSessionRow = AcpSessionRow & { readonly gated_review_json: string | null };
+
+test("dropping gated_review_json preserves existing ledger sessions", () => {
+  const directory = mkdtempSync(join(tmpdir(), "acp-migration-"));
+  const db = new Database(":memory:");
+  const source = join(import.meta.dir, "../db/migrations");
+  try {
+    for (const file of readdirSync(source).filter((name) => /^00[1-3]_.*\.sql$/.test(name))) {
+      copyFileSync(join(source, file), join(directory, file));
+    }
+    applyMigrations(db, directory);
+    const store = new AcpSessionStore(db);
+    const { gated_review_json: _removed, ...row } = claim(store, "preserved", startSpecHash(SPEC), WORKFLOW).row as HistoricalSessionRow;
+    db.prepare("UPDATE acp_sessions SET gated_review_json = ? WHERE sid = ?")
+      .run('{"kind":"restricted","role":"builder"}', row.sid);
+    copyFileSync(join(source, "004_drop_gated_review_json.sql"), join(directory, "004_drop_gated_review_json.sql"));
+    applyMigrations(db, directory);
+    expect({ row: store.getSession(row.sid), columns: db.query<{ name: string }, []>("PRAGMA table_info(acp_sessions)")
+      .all().some((column) => column.name === "gated_review_json") }).toEqual({ row, columns: false });
+  } finally { db.close(); rmSync(directory, { recursive: true, force: true }); }
 });

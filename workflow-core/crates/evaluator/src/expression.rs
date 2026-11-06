@@ -122,6 +122,26 @@ pub(super) fn eval_expression_inner(
     }
     Ok(match expression {
         Expression::Literal { value, .. } => Some(value.clone()),
+        Expression::Flatten { value } => {
+            let mut flattened = Vec::new();
+            for item in list!(value) {
+                let Value::Array(items) = item else {
+                    return Ok(None);
+                };
+                context.check_list_len(flattened.len().saturating_add(items.len()))?;
+                flattened.extend(items);
+            }
+            Some(Value::Array(flattened))
+        }
+        Expression::Distinct { value } => {
+            let mut distinct = Vec::new();
+            for item in list!(value) {
+                if !distinct.contains(&item) {
+                    distinct.push(item);
+                }
+            }
+            Some(Value::Array(distinct))
+        }
         Expression::Len { value } => Some(Value::from(match resolved!(eval!(value)) {
             Value::String(text) => text.chars().count(),
             Value::Array(items) => items.len(),

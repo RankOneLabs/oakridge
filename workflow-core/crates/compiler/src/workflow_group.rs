@@ -5,6 +5,8 @@ fn read_units(expr: &StageExpr, found: &mut BTreeSet<String>) {
     match expr {
         StageExpr::Spanned(inner, _)
         | StageExpr::Not(inner)
+        | StageExpr::Flatten(inner)
+        | StageExpr::Distinct(inner)
         | StageExpr::Len(inner)
         | StageExpr::Require { value: inner, .. }
         | StageExpr::Field { value: inner, .. } => read_units(inner, found),

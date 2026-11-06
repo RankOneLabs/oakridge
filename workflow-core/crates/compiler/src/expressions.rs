@@ -35,6 +35,8 @@ pub(crate) enum StageExpr {
         right: Box<StageExpr>,
     },
     Len(Box<StageExpr>),
+    Flatten(Box<StageExpr>),
+    Distinct(Box<StageExpr>),
     Published(String),
     Approved(String),
     ChangesRequested(String),
@@ -325,6 +327,8 @@ fn expand_lets_bounded(
             right: Box::new(expand(*right, visiting)?),
         },
         StageExpr::Len(inner) => StageExpr::Len(Box::new(expand(*inner, visiting)?)),
+        StageExpr::Flatten(inner) => StageExpr::Flatten(Box::new(expand(*inner, visiting)?)),
+        StageExpr::Distinct(inner) => StageExpr::Distinct(Box::new(expand(*inner, visiting)?)),
         StageExpr::Every { source, predicate } => StageExpr::Every {
             source: Box::new(expand(*source, visiting)?),
             predicate: Box::new(expand(*predicate, visiting)?),

@@ -196,6 +196,7 @@ run:
         repository: each
         workspace: "require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace"
         cohorts: "filter(map(implementation, implementation.outcome), item.repository_key == each.key)"
+        briefs: "filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key)"
         final_merge_policy: input.final_merge_policy
   outcome: { cohorts: "map(implementation, implementation.outcome)", integrations: "map(integration, integration.outcome)" }
 
@@ -269,6 +270,8 @@ stages:
             message: The plan must name at least one cohort.
           - check: every(plan.cohorts, contains(map(input.repositories, item.key), item.repository_key))
             message: Every cohort's repository_key must be the key of one of the run's repositories.
+          - check: len(distinct(flatten(map(plan.cohorts, map(item.acceptance_criteria, item.id))))) == len(flatten(map(plan.cohorts, map(item.acceptance_criteria, item.id))))
+            message: Every acceptance criterion id must be unique across the plan's cohorts.
           - check: valid_graph(plan.cohorts, id, depends_on)
             message: Cohort ids must be unique idents, and each depends_on must name other cohorts without repeats or a cycle.
     workers:
@@ -300,6 +303,8 @@ stages:
             message: The brief's repository_key must be its plan cohort's.
           - check: brief.depends_on == input.cohort.depends_on
             message: The brief's depends_on must be its plan cohort's, in the same order.
+          - check: map(brief.acceptance_criteria, item.id) == map(input.cohort.acceptance_criteria, item.id)
+            message: The brief's acceptance criteria must be its plan cohort's, in the same order.
     workers:
       writer:
         kind: agent
@@ -337,14 +342,12 @@ stages:
     workers:
       builder:
         kind: agent
-        gated_review: { kind: unscoped }
         prompts: { initial: development/build.md, revise: development/build-revise.md }
         inputs: { brief: brief_value, repository: input.repository, build_base: input.repository.forge.build_base }
         workspace: repository(input.workspace)
         creates: [build_result, pr]
       assessor:
         kind: agent
-        gated_review: { kind: unscoped }
         prompts: { review: development/assess.md, revise: development/assess-revise.md }
         inputs: { brief: brief_value, pr: latest(pr) }
         workspace: repository(input.workspace)
@@ -392,7 +395,7 @@ stages:
       build_result: latest(build_result)
 
   integration:
-    input: { repository: repository, workspace: workspace, cohorts: list(completed_cohort), final_merge_policy: final_merge_policy }
+    input: { repository: repository, workspace: workspace, cohorts: list(completed_cohort), briefs: list(brief_body), final_merge_policy: final_merge_policy }
     let:
       pr_published: published(pr)
       watch_base: input.repository.forge.final_base
@@ -409,9 +412,8 @@ stages:
     workers:
       integrator:
         kind: agent
-        gated_review: { kind: unscoped }
         prompts: { initial: development/integrate.md, revise: development/integrate-revise.md }
-        inputs: { repository: input.repository, cohorts: input.cohorts }
+        inputs: { repository: input.repository, cohorts: input.cohorts, briefs: input.briefs }
         workspace: repository(input.workspace)
         creates: [pr, assessment]
       pr_watch: { template: pr_watch }
