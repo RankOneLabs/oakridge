@@ -1,4 +1,3 @@
-import type { OperatorGatedReviewAccess as GatedReviewAccess } from "../pwa/oakridge/operator-contracts";
 // Domain model for the ACP session substrate (migration spec §8–§13, §18).
 // Row shapes mirror migration 027_acp_sessions.sql; the start-spec shape
 // mirrors the DBOS-facing HTTP contract (§11.1). Everything here is
@@ -110,20 +109,6 @@ export interface AcpSessionWorkflowIdentity {
   run_id: string;
   unit_id: string;
   worker: string;
-  gated_review?: GatedReviewAccess | null;
-}
-
-/** Parse a stored or wire grant using the authored contract's closed variants. */
-export function parseGatedReviewAccess(value: unknown): GatedReviewAccess | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const fields = value as { readonly kind?: unknown; readonly role?: unknown };
-  const keys = Object.keys(value);
-  if (fields.kind === "unscoped" && keys.length === 1) return { kind: "unscoped" };
-  if (fields.kind === "restricted" && keys.length === 2 && keys.includes("role")
-    && (fields.role === "builder" || fields.role === "assessor")) {
-    return { kind: "restricted", role: fields.role };
-  }
-  return null;
 }
 
 export interface AcpSessionRow {

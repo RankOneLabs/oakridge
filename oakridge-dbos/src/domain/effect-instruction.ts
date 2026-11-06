@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Action, FeedbackEntry, GatedReviewAccess, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression } from "../core-client/core-types";
+import type { Action, FeedbackEntry, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression } from "../core-client/core-types";
 import { selectWorkerSessionSettings, type RunConfig, type SessionSettings } from "./run-config";
 import type { ActionId, Result, RunId } from "./primitives";
 
@@ -16,7 +16,7 @@ export interface CreatedArtifact { readonly key: string; readonly schema: TypeEx
 /** The prompt key whose template words a fresh session's handoff (part 1 §2.5). */
 export const HANDOFF_PROMPT = "handoff";
 export type WorkerInstruction =
-  | { readonly kind: "agent"; readonly session_key: string; readonly session: SessionMode; readonly gated_review: GatedReviewAccess | null; readonly prompt: PinnedPrompt;
+  | { readonly kind: "agent"; readonly session_key: string; readonly session: SessionMode; readonly prompt: PinnedPrompt;
       /** The collection path that owns a shared session; absent for unit-owned sessions. */
       readonly shared_session_unit?: string;
       /** Pinned for `session: fresh` when the worker declares `prompts.handoff`; null otherwise. */
@@ -152,8 +152,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
       if (!artifact) return failure(resolved.action_id, `artifact ${key} is not declared on stage ${source.stage}`);
       creates.push({ key, schema: selectResolvedSchema(artifact.schema, source.workflow.schemas ?? {}) });
     }
-    const gated_review = declared.gated_review ?? null;
-    worker = { kind: "agent", session, gated_review, session_key: selectSessionKey(action, resolved.action_id, session),
+    worker = { kind: "agent", session, session_key: selectSessionKey(action, resolved.action_id, session),
       ...(session === "shared" ? { shared_session_unit: selectSharedSessionUnit(action.unit) } : {}),
       prompt: prompt.value, handoff: handoff?.value ?? null,
       settings: selectWorkerSessionSettings(source.config,
@@ -213,17 +212,12 @@ function isTypeExpression(value: unknown, depth = 0): value is TypeExpression {
   return depth < 64 && isFields(value) && Object.values(value).every((member) => isTypeExpression(member, depth + 1));
 }
 const isCreatedArtifact = (value: unknown): value is CreatedArtifact => isFields(value) && isString(value.key) && isTypeExpression(value.schema);
-function isGatedReviewAccess(value: unknown): value is GatedReviewAccess | null {
-  return value === null || isFields(value) && (
-    value.kind === "unscoped" || value.kind === "restricted" && (value.role === "builder" || value.role === "assessor")
-  );
-}
 function isWorkerInstruction(value: unknown): value is WorkerInstruction {
   if (!isFields(value)) return false;
   if (value.kind === "code") return isString(value.operation) && isNullableString(value.every) && isString(value.artifact);
   if (value.kind !== "agent") return false;
   const settings = value.settings;
-  return isGatedReviewAccess(value.gated_review) && isString(value.session_key) && (value.session === "resume" || value.session === "fresh" || value.session === "shared")
+  return isString(value.session_key) && (value.session === "resume" || value.session === "fresh" || value.session === "shared")
     && (value.session !== "shared" || isString(value.shared_session_unit) && value.shared_session_unit !== "")
     && isPinnedPrompt(value.prompt) && (value.handoff === null || isPinnedPrompt(value.handoff))
     && (settings === null || isFields(settings) && isString(settings.harness) && isString(settings.model) && isNullableString(settings.effort))

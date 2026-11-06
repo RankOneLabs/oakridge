@@ -2069,10 +2069,6 @@
               "creates": [
                 "assessment"
               ],
-              "gated_review": {
-                "kind": "restricted",
-                "role": "assessor"
-              },
               "inputs": {
                 "brief": "brief_value",
                 "pr": "latest(pr)"
@@ -2090,10 +2086,6 @@
                 "build_result",
                 "pr"
               ],
-              "gated_review": {
-                "kind": "restricted",
-                "role": "builder"
-              },
               "inputs": {
                 "brief": "brief_value",
                 "build_base": "input.repository.forge.build_base",
@@ -2216,10 +2208,6 @@
                 "pr",
                 "assessment"
               ],
-              "gated_review": {
-                "kind": "restricted",
-                "role": "builder"
-              },
               "inputs": {
                 "cohorts": "input.cohorts",
                 "repository": "input.repository"
