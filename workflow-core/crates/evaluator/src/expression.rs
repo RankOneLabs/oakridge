@@ -136,7 +136,15 @@ pub(super) fn eval_expression_inner(
         Expression::Distinct { value } => {
             let mut distinct = Vec::new();
             for item in list!(value) {
-                if !distinct.contains(&item) {
+                let mut is_duplicate = false;
+                for retained in &distinct {
+                    context.charge()?;
+                    if retained == &item {
+                        is_duplicate = true;
+                        break;
+                    }
+                }
+                if !is_duplicate {
                     distinct.push(item);
                 }
             }

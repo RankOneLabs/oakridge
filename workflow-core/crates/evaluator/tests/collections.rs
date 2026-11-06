@@ -5,7 +5,7 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use workflow_compiler::compile_workflow;
-use workflow_evaluator::{eval_expression, step, EvaluationContext};
+use workflow_evaluator::{eval_expression, step, EvalError, EvaluationContext};
 use workflow_model::*;
 
 fn program() -> CheckedWorkflow {
@@ -435,6 +435,41 @@ fn distinct_accepts_an_empty_list() {
         }),
         Some(json!([]))
     );
+}
+
+#[test]
+fn distinct_comparisons_exhaust_the_evaluation_budget() {
+    let result = launch(json!([])).unwrap();
+    let root = result
+        .snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id.0 == "run")
+        .unwrap();
+    let limits = ResourceLimits {
+        evaluation_budget: 4,
+        ..ResourceLimits::default()
+    };
+    for values in [
+        json!([1, 2, 3]),
+        json!([1, 1, 1, 1]),
+        json!([[1], [1], [1], [1]]),
+    ] {
+        let expression = Expression::Distinct {
+            value: list_literal(values),
+        };
+        assert_eq!(
+            eval_expression(
+                &expression,
+                root,
+                &result.snapshot,
+                None,
+                None,
+                &mut EvaluationContext::new(&limits),
+            ),
+            Err(EvalError::BudgetExceeded)
+        );
+    }
 }
 
 #[test]
