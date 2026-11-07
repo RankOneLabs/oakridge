@@ -395,7 +395,7 @@ supervise_observation() {
   trap 'kill -TERM "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; record_observation_status stopped; exit 0' TERM
   if [ "$isolated" -eq 1 ]; then exec_isolated_observation & else exec_default_observation & fi
   child=$!
-  record_observation_status running
+  record_observation_status running "pid_$child"
   wait "$child" || child_exit=$?
   echo "oakridge: observation exited with status $child_exit; DBOS and kbbl keep running" >&2
   record_observation_status exited "status_$child_exit"

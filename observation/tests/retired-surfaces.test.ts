@@ -81,7 +81,7 @@ test("no retired module, entrypoint or credential remains to dispatch outside HT
     "src/grading/eligibility.ts", "src/grading/coverage.ts", "src/grading/decision-policy.ts", "src/grading/evidence-integrity.ts",
     "src/storage/grading-job-store.ts", "src/storage/eligibility-store.ts", "src/storage/backfill-store.ts", "src/storage/blind-assignment-store.ts",
     "src/storage/coverage-store.ts", "src/storage/export-store.ts", "src/http/exports.ts", "src/runners/human-intake.ts",
-    "scripts/jev-live-walkthrough.ts", "scripts/live-grade-subject.ts", "src/producers/oakridge/classification.ts"])
+    "scripts/jev-live-walkthrough.ts", "scripts/live-grade-subject.ts", "scripts/regenerate-live-fixtures.ts", "src/producers/oakridge/classification.ts"])
     expect({ path, exists: existsSync(resolve(root, path)) }).toEqual({ path, exists: false });
   expect(credentialsFromEnv({} as NodeJS.ProcessEnv)).toEqual({ ingest: [], read: [], grade: [] });
 });
