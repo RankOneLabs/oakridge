@@ -145,7 +145,8 @@ the database is unavailable. `GET /health` on kbbl reports the component as `obs
 
 kbbl answers 200 in all four, and `capabilities` reports whether it holds each token, never the value.
 Health reflects what the service registered: a URL, token or open port proves nothing. The service
-currently registers no grader, so a healthy service reports `no_configured_graders`.
+registers the graders `observation/graders.json` selects, so a healthy service reports them as
+`configured`.
 
 ## Failure modes
 
