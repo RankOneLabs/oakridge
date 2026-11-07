@@ -15,6 +15,7 @@ import { AcpSessionService } from "./acp/session-service";
 import { AcpSessionStore } from "./acp/store";
 import { GitWorktreeProvider } from "./worktree/service";
 import { validateWorkdir } from "./server/handlers/sessions";
+import { observationServerConfigFromEnv } from "./server/handlers/observation-health";
 import { openDb } from "./db/connection";
 import { applyMigrations } from "./db/migrations";
 
@@ -212,6 +213,7 @@ const app = createApp({
   config,
   authPolicy,
   coreControlToken,
+  observation: observationServerConfigFromEnv(process.env),
 });
 
 // === bind port ===
