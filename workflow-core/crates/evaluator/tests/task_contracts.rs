@@ -63,7 +63,21 @@ fn entries(ids: &[&str]) -> Vec<Value> {
         .collect()
 }
 
-fn cohort(id: &str, repository_key: &str, depends_on: &[&str], task_ids: &[&str]) -> Value {
+/// The parts of a plan cohort these tests vary.
+struct PlannedCohort<'a> {
+    id: &'a str,
+    repository_key: &'a str,
+    depends_on: &'a [&'a str],
+    task_ids: &'a [&'a str],
+}
+
+fn cohort(planned: PlannedCohort<'_>) -> Value {
+    let PlannedCohort {
+        id,
+        repository_key,
+        depends_on,
+        task_ids,
+    } = planned;
     json!({
         "id": id, "repository_key": repository_key, "title": id, "scope": "scope",
         "depends_on": depends_on, "files_in_scope": [], "decisions": [],
@@ -95,6 +109,36 @@ fn build(head_sha: &str) -> Value {
 
 fn pr(key: &str, branch: &str) -> Value {
     json!({"pr_url": format!("https://forge/{key}/{branch}"), "branch": branch, "summary": "pr"})
+}
+
+/// An artifact one worker of a unit produces.
+#[derive(Clone, Copy)]
+struct WorkerOutput<'a> {
+    unit: &'a str,
+    worker: &'a str,
+    artifact: &'a str,
+}
+
+/// A worker's revision of its artifact, reviewing `subject` when it has one.
+struct Publication<'a> {
+    output: WorkerOutput<'a>,
+    body: Value,
+    subject: Option<RevisionId>,
+}
+
+/// A review of the latest revision of a unit's artifact.
+#[derive(Clone, Copy)]
+struct ReviewOf<'a> {
+    unit: &'a str,
+    review: &'a str,
+    artifact: &'a str,
+}
+
+/// An operator's decision on a review.
+struct Decision<'a> {
+    review: ReviewOf<'a>,
+    decision: &'a str,
+    payload: Value,
 }
 
 /// A run driven one event at a time, with the last step's result kept for its
@@ -196,21 +240,19 @@ impl Run {
         .map(|revision| revision.id.clone())
     }
 
-    fn publish(
-        &mut self,
-        unit: &str,
-        worker: &str,
-        artifact: &str,
-        body: Value,
-        subject: Option<RevisionId>,
-    ) {
-        let event = Event::RevisionPublished {
-            unit: UnitId::from(unit),
-            artifact: SymbolKey::from(artifact),
+    fn publish(&mut self, publication: Publication<'_>) {
+        let Publication {
+            output,
             body,
-            predecessor: self.latest_id(unit, artifact),
             subject,
-            by: Some(self.action(unit, worker)),
+        } = publication;
+        let event = Event::RevisionPublished {
+            unit: UnitId::from(output.unit),
+            artifact: SymbolKey::from(output.artifact),
+            body,
+            predecessor: self.latest_id(output.unit, output.artifact),
+            subject,
+            by: Some(self.action(output.unit, output.worker)),
         };
         self.apply(event, Writer::Engine).unwrap();
     }
@@ -223,41 +265,47 @@ impl Run {
         self.apply(event, Writer::Engine).unwrap();
     }
 
-    fn write(&mut self, unit: &str, worker: &str, artifact: &str, body: Value) {
-        self.publish(unit, worker, artifact, body, None);
-        self.end(unit, worker);
+    fn write(&mut self, output: WorkerOutput<'_>, body: Value) {
+        self.publish(Publication {
+            output,
+            body,
+            subject: None,
+        });
+        self.end(output.unit, output.worker);
     }
 
-    fn decide(
-        &mut self,
-        unit: &str,
-        review: &str,
-        decision: &str,
-        artifact: &str,
-        payload: Value,
-    ) -> Result<(), StepError> {
+    fn decide(&mut self, decision: Decision<'_>) -> Result<(), StepError> {
+        let Decision {
+            review,
+            decision,
+            payload,
+        } = decision;
         let event = Event::OperatorDecided {
-            unit: UnitId::from(unit),
-            review: SymbolKey::from(review),
+            unit: UnitId::from(review.unit),
+            review: SymbolKey::from(review.review),
             decision: SymbolKey::from(decision),
-            target: self.latest_id(unit, artifact).expect("published"),
+            target: self
+                .latest_id(review.unit, review.artifact)
+                .expect("published"),
             payload,
         };
         self.apply(event, Writer::Engine)
     }
 
-    fn accept(&mut self, unit: &str, review: &str, artifact: &str) -> Result<(), StepError> {
-        self.decide(unit, review, "accept", artifact, json!({}))
+    fn accept(&mut self, review: ReviewOf<'_>) -> Result<(), StepError> {
+        self.decide(Decision {
+            review,
+            decision: "accept",
+            payload: json!({}),
+        })
     }
 
-    fn request_changes(&mut self, unit: &str, review: &str, artifact: &str) {
-        self.decide(
-            unit,
+    fn request_changes(&mut self, review: ReviewOf<'_>) {
+        self.decide(Decision {
             review,
-            "request_changes",
-            artifact,
-            json!({"feedback": "Correct it"}),
-        )
+            decision: "request_changes",
+            payload: json!({"feedback": "Correct it"}),
+        })
         .unwrap();
     }
 
@@ -290,63 +338,143 @@ impl Run {
     fn prepare_and_analyze(&mut self, repositories: &[&str], task_ids: &[&str]) {
         for key in repositories {
             self.write(
-                &format!("run/prepare/{key}"),
-                "git",
-                "workspace",
+                WorkerOutput {
+                    unit: &format!("run/prepare/{key}"),
+                    worker: "git",
+                    artifact: "workspace",
+                },
                 workspace(key),
             );
         }
         let analysis = "run/analysis";
         self.write(
-            analysis,
-            "author",
-            "analysis",
+            WorkerOutput {
+                unit: analysis,
+                worker: "author",
+                artifact: "analysis",
+            },
             json!({
                 "summary": "s", "source_spec_refs": [], "findings": [], "requirements": [],
                 "risks": [], "proposed_spec_updates": []
             }),
         );
-        self.accept(analysis, "analysis_review", "analysis")
-            .unwrap();
-        self.publish(analysis, "spec_editor", "spec", json!("revised"), None);
-        self.write(analysis, "spec_editor", "tasks", tasks(task_ids));
-        self.accept(analysis, "spec_review", "spec").unwrap();
-        self.accept(analysis, "tasks_review", "tasks").unwrap();
+        self.accept(ReviewOf {
+            unit: analysis,
+            review: "analysis_review",
+            artifact: "analysis",
+        })
+        .unwrap();
+        self.publish(Publication {
+            output: WorkerOutput {
+                unit: analysis,
+                worker: "spec_editor",
+                artifact: "spec",
+            },
+            body: json!("revised"),
+            subject: None,
+        });
+        self.write(
+            WorkerOutput {
+                unit: analysis,
+                worker: "spec_editor",
+                artifact: "tasks",
+            },
+            tasks(task_ids),
+        );
+        self.accept(ReviewOf {
+            unit: analysis,
+            review: "spec_review",
+            artifact: "spec",
+        })
+        .unwrap();
+        self.accept(ReviewOf {
+            unit: analysis,
+            review: "tasks_review",
+            artifact: "tasks",
+        })
+        .unwrap();
     }
 
     fn accepted_plan(&mut self, cohorts: &[Value]) {
-        self.write("run/planning", "planner", "plan", plan(cohorts));
-        self.accept("run/planning", "plan_review", "plan").unwrap();
+        self.write(
+            WorkerOutput {
+                unit: "run/planning",
+                worker: "planner",
+                artifact: "plan",
+            },
+            plan(cohorts),
+        );
+        self.accept(ReviewOf {
+            unit: "run/planning",
+            review: "plan_review",
+            artifact: "plan",
+        })
+        .unwrap();
     }
 
     fn accepted_brief(&mut self, cohort: &Value) {
         let unit = format!("run/briefs/{}", cohort["id"].as_str().unwrap());
-        self.write(&unit, "writer", "brief", brief_of(cohort));
-        self.accept(&unit, "brief_review", "brief").unwrap();
+        self.write(
+            WorkerOutput {
+                unit: &unit,
+                worker: "writer",
+                artifact: "brief",
+            },
+            brief_of(cohort),
+        );
+        self.accept(ReviewOf {
+            unit: &unit,
+            review: "brief_review",
+            artifact: "brief",
+        })
+        .unwrap();
     }
 
     fn completed_cohort(&mut self, id: &str, key: &str) {
         let unit = format!("run/implementation/{id}");
-        self.publish(&unit, "builder", "pr", pr(key, id), None);
-        self.write(&unit, "builder", "build_result", build("build-sha"));
-        let subject = self.latest_id(&unit, "build_result");
-        self.publish(
-            &unit,
-            "assessor",
-            "assessment",
-            assessment("build-sha", json!([])),
-            subject,
+        self.publish(Publication {
+            output: WorkerOutput {
+                unit: &unit,
+                worker: "builder",
+                artifact: "pr",
+            },
+            body: pr(key, id),
+            subject: None,
+        });
+        self.write(
+            WorkerOutput {
+                unit: &unit,
+                worker: "builder",
+                artifact: "build_result",
+            },
+            build("build-sha"),
         );
+        let subject = self.latest_id(&unit, "build_result");
+        self.publish(Publication {
+            output: WorkerOutput {
+                unit: &unit,
+                worker: "assessor",
+                artifact: "assessment",
+            },
+            body: assessment("build-sha", json!([])),
+            subject,
+        });
         self.end(&unit, "assessor");
-        self.accept(&unit, "assessment_review", "assessment")
-            .unwrap();
-        self.decide(
-            &unit,
-            "merge_confirmation",
-            "confirm_merged",
-            "pr",
-            json!({}),
-        )
+        self.accept(ReviewOf {
+            unit: &unit,
+            review: "assessment_review",
+            artifact: "assessment",
+        })
+        .unwrap();
+        self.decide(Decision {
+            review: ReviewOf {
+                unit: &unit,
+                review: "merge_confirmation",
+                artifact: "pr",
+            },
+            decision: "confirm_merged",
+            payload: json!({}),
+        })
         .unwrap();
     }
 }
@@ -365,33 +493,66 @@ fn at_planning(task_ids: &[&str]) -> Run {
 /// The messages a published plan fails with.
 fn plan_failures(task_ids: &[&str], cohorts: &[Value]) -> Vec<String> {
     let mut run = at_planning(task_ids);
-    run.publish("run/planning", "planner", "plan", plan(cohorts), None);
+    run.publish(Publication {
+        output: WorkerOutput {
+            unit: "run/planning",
+            worker: "planner",
+            artifact: "plan",
+        },
+        body: plan(cohorts),
+        subject: None,
+    });
     run.validation_messages("run/planning", "plan")
 }
 
 #[test]
 fn a_plan_naming_a_task_off_the_approved_list_fails() {
-    let cohorts = [cohort("a", "oakridge", &[], &["T1", "AC9"])];
+    let cohorts = [cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1", "AC9"],
+    })];
     assert_eq!(plan_failures(&["T1"], &cohorts), [UNKNOWN_TASK]);
 }
 
 #[test]
 fn a_plan_leaving_a_task_uncovered_fails() {
-    let cohorts = [cohort("a", "oakridge", &[], &["T1"])];
+    let cohorts = [cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1"],
+    })];
     assert_eq!(plan_failures(&["T1", "T2"], &cohorts), [MISSING_TASK]);
 }
 
 #[test]
 fn a_plan_repeating_a_task_within_a_cohort_fails() {
-    let cohorts = [cohort("a", "oakridge", &[], &["T1", "T1"])];
+    let cohorts = [cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1", "T1"],
+    })];
     assert_eq!(plan_failures(&["T1"], &cohorts), [REPEATED_TASK]);
 }
 
 #[test]
 fn a_task_shared_by_two_cohorts_passes() {
     let cohorts = [
-        cohort("a", "oakridge", &[], &["T1", "T7"]),
-        cohort("b", "oakridge", &["a"], &["T2", "T7"]),
+        cohort(PlannedCohort {
+            id: "a",
+            repository_key: "oakridge",
+            depends_on: &[],
+            task_ids: &["T1", "T7"],
+        }),
+        cohort(PlannedCohort {
+            id: "b",
+            repository_key: "oakridge",
+            depends_on: &["a"],
+            task_ids: &["T2", "T7"],
+        }),
     ];
     assert_eq!(
         plan_failures(&["T1", "T2", "T7"], &cohorts),
@@ -401,7 +562,12 @@ fn a_task_shared_by_two_cohorts_passes() {
 
 #[test]
 fn a_plan_keeps_its_metadata_checks_beside_the_task_checks() {
-    let cohorts = [cohort("a", "elsewhere", &["a"], &["T1"])];
+    let cohorts = [cohort(PlannedCohort {
+        id: "a",
+        repository_key: "elsewhere",
+        depends_on: &["a"],
+        task_ids: &["T1"],
+    })];
     assert_eq!(
         plan_failures(&["T1"], &cohorts),
         [
@@ -419,12 +585,24 @@ fn a_plan_keeps_its_metadata_checks_beside_the_task_checks() {
 fn an_operator_cannot_accept_a_failed_plan_until_a_corrected_revision_passes() {
     let mut run = at_planning(&["T1", "T2"]);
     let unit = "run/planning";
-    let good = cohort("a", "oakridge", &[], &["T1", "T2"]);
+    let good = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1", "T2"],
+    });
     run.write(
-        unit,
-        "planner",
-        "plan",
-        plan(&[cohort("a", "oakridge", &[], &["T1"])]),
+        WorkerOutput {
+            unit,
+            worker: "planner",
+            artifact: "plan",
+        },
+        plan(&[cohort(PlannedCohort {
+            id: "a",
+            repository_key: "oakridge",
+            depends_on: &[],
+            task_ids: &["T1"],
+        })]),
     );
 
     let [awaiting] = run.last.reviews.as_slice() else {
@@ -440,7 +618,13 @@ fn an_operator_cannot_accept_a_failed_plan_until_a_corrected_revision_passes() {
         .collect();
     assert_eq!(offered, ["request_changes"]);
 
-    let refusal = run.accept(unit, "plan_review", "plan").unwrap_err();
+    let refusal = run
+        .accept(ReviewOf {
+            unit,
+            review: "plan_review",
+            artifact: "plan",
+        })
+        .unwrap_err();
     assert!(
         matches!(&refusal, StepError::Rejected { reason, .. } if reason == REFUSED),
         "{refusal:?}"
@@ -449,11 +633,27 @@ fn an_operator_cannot_accept_a_failed_plan_until_a_corrected_revision_passes() {
     assert!(!run.is_done(unit));
     assert!(!run.has_unit("run/briefs/a"));
 
-    run.request_changes(unit, "plan_review", "plan");
+    run.request_changes(ReviewOf {
+        unit,
+        review: "plan_review",
+        artifact: "plan",
+    });
     assert!(!run.is_done(unit));
-    run.write(unit, "planner", "plan", plan(std::slice::from_ref(&good)));
+    run.write(
+        WorkerOutput {
+            unit,
+            worker: "planner",
+            artifact: "plan",
+        },
+        plan(std::slice::from_ref(&good)),
+    );
     assert!(run.validation_messages(unit, "plan").is_empty());
-    run.accept(unit, "plan_review", "plan").unwrap();
+    run.accept(ReviewOf {
+        unit,
+        review: "plan_review",
+        artifact: "plan",
+    })
+    .unwrap();
     assert!(run.is_done(unit));
     assert!(run.has_unit("run/briefs/a"));
 }
@@ -463,17 +663,31 @@ fn the_earlier_failed_revision_stays_history_and_stays_unacceptable() {
     let mut run = at_planning(&["T1"]);
     let unit = "run/planning";
     run.write(
-        unit,
-        "planner",
-        "plan",
-        plan(&[cohort("a", "oakridge", &[], &["T9", "T1"])]),
+        WorkerOutput {
+            unit,
+            worker: "planner",
+            artifact: "plan",
+        },
+        plan(&[cohort(PlannedCohort {
+            id: "a",
+            repository_key: "oakridge",
+            depends_on: &[],
+            task_ids: &["T9", "T1"],
+        })]),
     );
     let failed = run.latest_id(unit, "plan").unwrap();
     run.write(
-        unit,
-        "planner",
-        "plan",
-        plan(&[cohort("a", "oakridge", &[], &["T1"])]),
+        WorkerOutput {
+            unit,
+            worker: "planner",
+            artifact: "plan",
+        },
+        plan(&[cohort(PlannedCohort {
+            id: "a",
+            repository_key: "oakridge",
+            depends_on: &[],
+            task_ids: &["T1"],
+        })]),
     );
 
     let stale = run.apply(
@@ -492,7 +706,12 @@ fn the_earlier_failed_revision_stays_history_and_stays_unacceptable() {
     assert!(run.state().decisions.iter().any(|decision| {
         matches!(decision, DecisionState::Validation { target, .. } if *target == failed)
     }));
-    run.accept(unit, "plan_review", "plan").unwrap();
+    run.accept(ReviewOf {
+        unit,
+        review: "plan_review",
+        artifact: "plan",
+    })
+    .unwrap();
     assert!(run.is_done(unit));
 }
 
@@ -501,17 +720,29 @@ fn an_operator_edit_is_validated_and_refused_like_an_agent_revision() {
     let mut run = at_planning(&["T1"]);
     let unit = "run/planning";
     run.write(
-        unit,
-        "planner",
-        "plan",
-        plan(&[cohort("a", "oakridge", &[], &["T1"])]),
+        WorkerOutput {
+            unit,
+            worker: "planner",
+            artifact: "plan",
+        },
+        plan(&[cohort(PlannedCohort {
+            id: "a",
+            repository_key: "oakridge",
+            depends_on: &[],
+            task_ids: &["T1"],
+        })]),
     );
     let predecessor = run.latest_id(unit, "plan");
     run.apply(
         Event::RevisionPublished {
             unit: UnitId::from(unit),
             artifact: SymbolKey::from("plan"),
-            body: plan(&[cohort("a", "oakridge", &[], &["T2"])]),
+            body: plan(&[cohort(PlannedCohort {
+                id: "a",
+                repository_key: "oakridge",
+                depends_on: &[],
+                task_ids: &["T2"],
+            })]),
             predecessor,
             subject: None,
             by: None,
@@ -525,7 +756,13 @@ fn an_operator_edit_is_validated_and_refused_like_an_agent_revision() {
         run.validation_messages(unit, "plan"),
         [UNKNOWN_TASK, MISSING_TASK]
     );
-    assert!(run.accept(unit, "plan_review", "plan").is_err());
+    assert!(run
+        .accept(ReviewOf {
+            unit,
+            review: "plan_review",
+            artifact: "plan"
+        })
+        .is_err());
     assert!(!run.is_done(unit));
 }
 
@@ -538,22 +775,48 @@ fn at_briefs(cohorts: &[Value], task_ids: &[&str]) -> Run {
 /// The messages a brief with the given acceptance ids fails with, for a
 /// cohort planned as T1, T2.
 fn brief_failures(ids: &[&str]) -> Vec<String> {
-    let planned = cohort("a", "oakridge", &[], &["T1", "T2"]);
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1", "T2"],
+    });
     let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
     let mut brief = brief_of(&planned);
     brief["acceptance_criteria"] = json!(entries(ids));
-    run.publish("run/briefs/a", "writer", "brief", brief, None);
+    run.publish(Publication {
+        output: WorkerOutput {
+            unit: "run/briefs/a",
+            worker: "writer",
+            artifact: "brief",
+        },
+        body: brief,
+        subject: None,
+    });
     run.validation_messages("run/briefs/a", "brief")
 }
 
 #[test]
 fn a_brief_with_its_cohort_ids_in_order_passes_with_rewritten_text() {
-    let planned = cohort("a", "oakridge", &[], &["T1", "T2"]);
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1", "T2"],
+    });
     let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
     let mut brief = brief_of(&planned);
     brief["acceptance_criteria"][0]["text"] =
         json!("Self-contained wording of the same obligation");
-    run.publish("run/briefs/a", "writer", "brief", brief, None);
+    run.publish(Publication {
+        output: WorkerOutput {
+            unit: "run/briefs/a",
+            worker: "writer",
+            artifact: "brief",
+        },
+        body: brief,
+        subject: None,
+    });
     assert!(run.validation_messages("run/briefs/a", "brief").is_empty());
 }
 
@@ -579,13 +842,26 @@ fn a_brief_reordering_its_ids_fails() {
 
 #[test]
 fn a_brief_keeps_its_cohort_metadata_checks() {
-    let planned = cohort("a", "oakridge", &[], &["T1"]);
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1"],
+    });
     let mut run = at_briefs(std::slice::from_ref(&planned), &["T1"]);
     let mut brief = brief_of(&planned);
     brief["cohort_id"] = json!("other");
     brief["repository_key"] = json!("elsewhere");
     brief["depends_on"] = json!(["z"]);
-    run.publish("run/briefs/a", "writer", "brief", brief, None);
+    run.publish(Publication {
+        output: WorkerOutput {
+            unit: "run/briefs/a",
+            worker: "writer",
+            artifact: "brief",
+        },
+        body: brief,
+        subject: None,
+    });
     assert_eq!(
         run.validation_messages("run/briefs/a", "brief"),
         [
@@ -598,14 +874,32 @@ fn a_brief_keeps_its_cohort_metadata_checks() {
 
 #[test]
 fn an_operator_cannot_accept_a_failed_brief_or_release_its_builder_until_corrected() {
-    let planned = cohort("a", "oakridge", &[], &["T1", "T2"]);
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1", "T2"],
+    });
     let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
     let unit = "run/briefs/a";
     let mut reordered = brief_of(&planned);
     reordered["acceptance_criteria"] = json!(entries(&["T2", "T1"]));
-    run.write(unit, "writer", "brief", reordered);
+    run.write(
+        WorkerOutput {
+            unit,
+            worker: "writer",
+            artifact: "brief",
+        },
+        reordered,
+    );
 
-    let refusal = run.accept(unit, "brief_review", "brief").unwrap_err();
+    let refusal = run
+        .accept(ReviewOf {
+            unit,
+            review: "brief_review",
+            artifact: "brief",
+        })
+        .unwrap_err();
     assert!(
         matches!(&refusal, StepError::Rejected { reason, .. } if reason == REFUSED),
         "{refusal:?}"
@@ -614,9 +908,25 @@ fn an_operator_cannot_accept_a_failed_brief_or_release_its_builder_until_correct
     assert!(!run.is_done(unit));
     assert!(!run.has_unit("run/implementation/a"));
 
-    run.request_changes(unit, "brief_review", "brief");
-    run.write(unit, "writer", "brief", brief_of(&planned));
-    run.accept(unit, "brief_review", "brief").unwrap();
+    run.request_changes(ReviewOf {
+        unit,
+        review: "brief_review",
+        artifact: "brief",
+    });
+    run.write(
+        WorkerOutput {
+            unit,
+            worker: "writer",
+            artifact: "brief",
+        },
+        brief_of(&planned),
+    );
+    run.accept(ReviewOf {
+        unit,
+        review: "brief_review",
+        artifact: "brief",
+    })
+    .unwrap();
     assert!(run.is_done(unit));
     assert!(run.state().attempts.iter().any(|attempt| {
         attempt.unit.0 == "run/implementation/a" && attempt.worker.0 == "builder"
@@ -628,9 +938,24 @@ fn at_integration() -> Run {
     let repositories = ["alpha", "beta"];
     let task_ids = ["T1", "T2", "T3", "T4"];
     let cohorts = [
-        cohort("a1", "alpha", &[], &["T1", "T2"]),
-        cohort("a2", "alpha", &["a1"], &["T1", "T3"]),
-        cohort("b1", "beta", &[], &["T4"]),
+        cohort(PlannedCohort {
+            id: "a1",
+            repository_key: "alpha",
+            depends_on: &[],
+            task_ids: &["T1", "T2"],
+        }),
+        cohort(PlannedCohort {
+            id: "a2",
+            repository_key: "alpha",
+            depends_on: &["a1"],
+            task_ids: &["T1", "T3"],
+        }),
+        cohort(PlannedCohort {
+            id: "b1",
+            repository_key: "beta",
+            depends_on: &[],
+            task_ids: &["T4"],
+        }),
     ];
     let mut run = Run::launch(&repositories);
     run.prepare_and_analyze(&repositories, &task_ids);
@@ -715,14 +1040,23 @@ fn integration_findings_link_tasks_many_to_many_without_a_build_subject() {
          "evidence": [{"kind": "output", "ref": "cargo test", "detail": "1 failed"}]},
         {"task_ids": [], "description": "Unlinked note", "evidence": []}
     ]);
-    run.publish(
-        unit,
-        "integrator",
-        "assessment",
-        assessment(head, findings.clone()),
-        None,
+    run.publish(Publication {
+        output: WorkerOutput {
+            unit,
+            worker: "integrator",
+            artifact: "assessment",
+        },
+        body: assessment(head, findings.clone()),
+        subject: None,
+    });
+    run.write(
+        WorkerOutput {
+            unit,
+            worker: "integrator",
+            artifact: "pr",
+        },
+        pr("alpha", "integration"),
     );
-    run.write(unit, "integrator", "pr", pr("alpha", "integration"));
 
     let revision = latest(
         run.state(),
@@ -745,14 +1079,23 @@ fn integration_findings_link_tasks_many_to_many_without_a_build_subject() {
 fn the_integration_review_and_revise_read_the_same_briefs() {
     let mut run = at_integration();
     let unit = "run/integration/alpha";
-    run.publish(
-        unit,
-        "integrator",
-        "assessment",
-        assessment("sha", json!([])),
-        None,
+    run.publish(Publication {
+        output: WorkerOutput {
+            unit,
+            worker: "integrator",
+            artifact: "assessment",
+        },
+        body: assessment("sha", json!([])),
+        subject: None,
+    });
+    run.write(
+        WorkerOutput {
+            unit,
+            worker: "integrator",
+            artifact: "pr",
+        },
+        pr("alpha", "integration"),
     );
-    run.write(unit, "integrator", "pr", pr("alpha", "integration"));
 
     let review = run
         .last
@@ -762,7 +1105,11 @@ fn the_integration_review_and_revise_read_the_same_briefs() {
         .expect("integration review awaits");
     assert_eq!(cohort_ids(&review.inputs["briefs"]), ["a1", "a2"]);
 
-    run.request_changes(unit, "integration_review", "pr");
+    run.request_changes(ReviewOf {
+        unit,
+        review: "integration_review",
+        artifact: "pr",
+    });
     assert_eq!(cohort_ids(&integrator_briefs(&run, unit)), ["a1", "a2"]);
 }
 
@@ -824,7 +1171,12 @@ fn assessment_findings_declare_task_links_and_no_criterion_fields() {
 #[test]
 fn an_acceptance_entry_without_its_decision_links_fails_schema() {
     let mut run = at_planning(&["T1"]);
-    let mut partial = cohort("a", "oakridge", &[], &["T1"]);
+    let mut partial = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1"],
+    });
     partial["acceptance_criteria"] = json!([{"id": "T1", "text": "Deliver T1"}]);
     let refusal = run.apply(
         Event::RevisionPublished {
