@@ -32,10 +32,13 @@ export interface RepositoryEvidence extends ReferenceFields {
   readonly line_range: LineRange | null;
   readonly is_absent: boolean;
 }
-/** Text the producer's agent reported. It is passed through and never independently verified. */
+/** Text the producer's agent reported, at the exact revision and item path it was reported in.
+ * It is passed through and never independently verified. */
 export interface ReportedEvidence extends ReferenceFields {
   readonly source: "reported";
   readonly reported_by: "agent";
+  readonly revision_id: string;
+  readonly item_path: string;
 }
 export type EvidenceReference = RevisionEvidence | RunInputEvidence | RepositoryEvidence | ReportedEvidence;
 

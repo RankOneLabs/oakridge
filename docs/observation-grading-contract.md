@@ -117,6 +117,7 @@ A reference records where its content came from, without digests or classificati
 - `repository`: a file at an exact `commit_sha`, with its path and line range. `is_absent` records a
   file missing from a readable commit, which is evidence rather than a failed read.
 - `reported`: text the producer's agent reported, passed through and never independently verified.
+  It keeps the exact `revision_id` and `item_path` it was reported at.
 
 Repository files are read with `git cat-file` at the exact commit, never from a worktree
 (`observation/src/storage/git-repository-reader.ts`). A path missing from a readable commit is
@@ -167,14 +168,16 @@ its evidence stay unchanged. Machine answers are not corrected.
 | Item kind | Question | Evidence | Answers |
 | --- | --- | --- | --- |
 | `finding` | Relevance | The finding (`subject`) and the full captured launch spec (`spec`) | `relevant`, `irrelevant`, `unclear` |
-| `assessment_finding` | Correctness | The finding, its citations, the exact `subject_id` build when set, and available linked task context | `supported`, `contradicted`, `unclear` |
-| `assessment_finding` | Evidence support | The finding and its citations | `supports`, `does_not_support`, `unclear` |
+| `assessment_finding` | Correctness | The finding, its citations, the assessment's reported test results, the exact `subject_id` build when set, and available linked task context | `supported`, `contradicted`, `unclear` |
+| `assessment_finding` | Evidence support | The finding, its citations and the assessment's reported test results | `supports`, `does_not_support`, `unclear` |
 
-Evidence references are labelled `subject`, `spec`, `build_result`, `citation:N` and
-`task_context:N`. The repository for file citations is the launch repository that holds the
+Evidence references are labelled `subject`, `spec`, `build_result`, `citation:N`, `test_evidence`
+and `task_context:N`. `test_evidence` is the assessment's own `test_evidence` (passed, failed,
+output, summary and `cargo_test_output`), passed whole as `reported` at the assessment revision and
+`/test_evidence`; an assessment without it has no such reference and does not wait. The repository for file citations is the launch repository that holds the
 assessment's `head_sha`, whichever it is; each citation keeps its path and line range. An
 unparseable reference, and every `test` and `output` citation with its reported detail, is passed as
-`reported` text. Correctness waits with `build_result_unavailable` until the exact `subject_id`
+`reported` text at `<finding path>/evidence/<index>`. Correctness waits with `build_result_unavailable` until the exact `subject_id`
 revision is captured; Evidence support on the same finding does not wait for it. Task context is the
 same run's linked task definition and plan or brief acceptance entries, each at its own revision and
 path, and is included only when an explicit link resolves.
