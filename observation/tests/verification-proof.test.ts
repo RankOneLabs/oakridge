@@ -9,7 +9,7 @@ import { launcherStateSchema, NO_EVIDENCE, PENDING_SCENARIOS, redactReport, repo
   type ObservationStatus, type ScenarioReport } from "../verification/proof-contract";
 import { liveScenario, runtimeScenario } from "../verification/scenarios";
 import { awaitRunCapture, isRunCaptured, readRunCapture } from "../verification/run-capture";
-import type { ProofIo } from "../verification/shadow-session";
+import { awaitLaunch, type LaunchedProcess, type ProofIo } from "../verification/shadow-session";
 import { sourceRunScenario, type SourceRunInput } from "../verification/source-run";
 
 const repository = resolve(import.meta.dir, "../..");
@@ -388,5 +388,38 @@ describe("one program, one launcher", () => {
       for (const banned of ["CREATE DATABASE", "createScratchDatabase", "createApp(", "Bun.serve(", "createProductionComposition", "migrateEmptyDatabase"])
         expect({ name, banned, found: source.includes(banned) }).toEqual({ name, banned, found: false });
     }
+  });
+});
+
+describe("the stack's startup wait", () => {
+  /** A launcher the test controls: it records the signal it was sent and exits when signaled. */
+  function fakeLauncher(exitCode: number | null = null) {
+    const signals: string[] = [];
+    let exit = (_code: number) => {};
+    const exited = new Promise<number>((resolve) => { exit = resolve; });
+    const child: LaunchedProcess = { exitCode, exited, kill: (signal) => { signals.push(signal); exit(143); } };
+    return { child, signals };
+  }
+  const waitFor = (answers: () => Promise<boolean>) => {
+    let clock = 0;
+    return { answers, timeout_ms: 5_000, now: () => clock, sleep: async (ms: number) => { clock += ms; }, log_path: "/log" };
+  };
+
+  test("a stack that never answers is stopped before the failure returns", async () => {
+    const { child, signals } = fakeLauncher();
+    const started = await awaitLaunch(child, waitFor(async () => false));
+    expect({ ok: started.ok, signals }).toEqual({ ok: false, signals: ["SIGTERM"] });
+  });
+
+  test("a stack that answers is left running", async () => {
+    const { child, signals } = fakeLauncher();
+    const started = await awaitLaunch(child, waitFor(async () => true));
+    expect({ ok: started.ok, signals }).toEqual({ ok: true, signals: [] });
+  });
+
+  test("a launcher that already exited is reported, not signaled", async () => {
+    const { child, signals } = fakeLauncher(1);
+    const started = await awaitLaunch(child, waitFor(async () => false));
+    expect({ detail: started.ok ? null : started.error.detail, signals }).toEqual({ detail: "launcher exited with status 1; see /log", signals: [] });
   });
 });

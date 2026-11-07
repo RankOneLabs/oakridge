@@ -80,6 +80,33 @@ async function isPrivate(path: string): Promise<boolean> {
   return ((await stat(path)).mode & 0o077) === 0;
 }
 
+/** The part of a spawned launcher that startup supervision needs. */
+export interface LaunchedProcess {
+  readonly exitCode: number | null;
+  kill(signal: "SIGTERM"): void;
+  readonly exited: Promise<number>;
+}
+export interface LaunchWait {
+  readonly answers: () => Promise<boolean>;
+  readonly timeout_ms: number;
+  readonly now: () => number;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly log_path: string;
+}
+
+/** Waits for the stack to answer; a launcher that never does is stopped before the failure returns. */
+export async function awaitLaunch(child: LaunchedProcess, wait: LaunchWait): Promise<Result<void, ProofFailure>> {
+  const deadline = wait.now() + wait.timeout_ms;
+  while (wait.now() < deadline) {
+    if (child.exitCode !== null) return failure("start_stack", LAUNCHER, `launcher exited with status ${child.exitCode}; see ${wait.log_path}`);
+    if (await wait.answers()) return ok(undefined);
+    await wait.sleep(POLL_MS);
+  }
+  child.kill("SIGTERM");
+  await child.exited;
+  return failure("start_stack", LAUNCHER, `DBOS and kbbl did not answer within ${wait.timeout_ms / 1000}s; the launcher was stopped; see ${wait.log_path}`);
+}
+
 export function createShadowIo(state: LauncherState, log_path: string): ProofIo {
   let launcher: ReturnType<typeof Bun.spawn> | null = null;
   const stackAnswers = async () => (await readJson(`${state.dbos.url}/health`))?.status === 200
@@ -101,15 +128,12 @@ export function createShadowIo(state: LauncherState, log_path: string): ProofIo 
     stackAnswers,
     async startStack() {
       const log = openSync(log_path, "a");
-      launcher = Bun.spawn([LAUNCHER, "--observation"], { cwd: REPOSITORY_ROOT, stdin: "ignore", stdout: log, stderr: log });
+      const child = Bun.spawn([LAUNCHER, "--observation"], { cwd: REPOSITORY_ROOT, stdin: "ignore", stdout: log, stderr: log });
       closeSync(log);
-      const deadline = Date.now() + STACK_START_TIMEOUT_MS;
-      while (Date.now() < deadline) {
-        if (launcher.exitCode !== null) return failure("start_stack", LAUNCHER, `launcher exited with status ${launcher.exitCode}; see ${log_path}`);
-        if (await stackAnswers()) return ok(undefined);
-        await Bun.sleep(POLL_MS);
-      }
-      return failure("start_stack", LAUNCHER, `DBOS and kbbl did not answer; see ${log_path}`);
+      const started = await awaitLaunch(child, { answers: stackAnswers, timeout_ms: STACK_START_TIMEOUT_MS, now: () => Date.now(),
+        sleep: (ms) => Bun.sleep(ms), log_path });
+      launcher = started.ok ? child : null;
+      return started;
     },
     async stopStack() {
       if (!launcher) return;
