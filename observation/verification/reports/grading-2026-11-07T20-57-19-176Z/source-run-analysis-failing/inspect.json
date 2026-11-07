@@ -1,0 +1,352 @@
+{
+  "run_id": "run-32bc4993c953496b",
+  "status": {
+    "kind": "active"
+  },
+  "units": [
+    {
+      "id": "run-32bc4993c953496b",
+      "unit_key": "$root",
+      "label": "Development",
+      "stage": null,
+      "status": {
+        "kind": "active"
+      }
+    },
+    {
+      "id": "run-32bc4993c953496b/analysis",
+      "unit_key": "analysis",
+      "label": "Analysis",
+      "stage": "analysis",
+      "status": {
+        "kind": "active"
+      }
+    },
+    {
+      "id": "run-32bc4993c953496b/planning",
+      "unit_key": "planning",
+      "label": "Planning",
+      "stage": "planning",
+      "status": {
+        "kind": "not_started"
+      }
+    },
+    {
+      "id": "run-32bc4993c953496b/prepare/oakridge",
+      "unit_key": "prepare",
+      "label": "Prepare",
+      "stage": "prepare",
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "key": "oakridge",
+          "workspace": {
+            "head": "b442f99ccdd68699a346ee55dd9fbe27bc3335d0",
+            "base_branch": "epic/grade-pray",
+            "repository_path": "/tmp/oakridge-proof/grading-2026-11-07T20-57-19-176Z/10060d3f-8cc0-4f45-82a7-3367c936c145",
+            "push_remote_owner": "RankOneLabs"
+          }
+        }
+      }
+    }
+  ],
+  "attention": [
+    {
+      "kind": "awaiting_review",
+      "unit_id": "run-32bc4993c953496b/analysis",
+      "review": "analysis_review",
+      "target": "run-32bc4993c953496b/analysis:analysis:1",
+      "decisions": [
+        {
+          "key": "analysis_review:accept",
+          "label": "Accept",
+          "payload_schema": "{}",
+          "fields": [],
+          "submit": {
+            "kind": "review",
+            "review": "analysis_review",
+            "decision": "accept",
+            "effect": "approve",
+            "target_revision_id": "run-32bc4993c953496b/analysis:analysis:1"
+          }
+        },
+        {
+          "key": "analysis_review:request_changes",
+          "label": "Request changes",
+          "payload_schema": "{feedback: text}",
+          "fields": [
+            {
+              "key": "feedback",
+              "label": "What must the proposed specification change?"
+            }
+          ],
+          "submit": {
+            "kind": "review",
+            "review": "analysis_review",
+            "decision": "request_changes",
+            "effect": "request_changes",
+            "target_revision_id": "run-32bc4993c953496b/analysis:analysis:1"
+          }
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "run_id": "run-32bc4993c953496b",
+      "unit_id": "run-32bc4993c953496b/analysis",
+      "artifact_key": "analysis",
+      "schema": "analysis_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-32bc4993c953496b/analysis:analysis:1",
+        "run_id": "run-32bc4993c953496b",
+        "unit_id": "run-32bc4993c953496b/analysis",
+        "artifact_key": "analysis",
+        "attempt_id": "35681fe34bd121b6f983b579cee27f16",
+        "body": {
+          "risks": [
+            {
+              "mitigation": "Follow the existing explicit detach instruction using origin/cohort/automatic-execution-lifecycle/73c9f2 and record 10cddc5ff69124002c485b011dba5d34ebe6de75 as head_sha after checkout.",
+              "description": "The local branch ref cohort/automatic-execution-lifecycle/73c9f2 and the origin remote-tracking ref point to different commits, so selecting the unqualified local branch would audit the wrong revision."
+            },
+            {
+              "mitigation": "Preserve the specification rule that inability is a known issue, capture the exact command output and counts, and never synthesize passing results.",
+              "description": "The observation suite or the ordered-delivery regression may be unable to start without its PostgreSQL test environment."
+            },
+            {
+              "mitigation": "Apply the proposed Builder verification update so T1 receives actual test evidence, with any environment failure reported honestly.",
+              "description": "Without a T1-specific builder command, later assessment can cite committed T1 tests but cannot claim those tests ran in this audit."
+            }
+          ],
+          "summary": "The audit specification is implementable with no blockers or operator decisions missing. The local remote-tracking target resolves to commit 10cddc5ff69124002c485b011dba5d34ebe6de75 and descends from epic/grade-pray. T1 and T2 match concrete code and regression coverage at that commit. One warning remains: the sole prescribed builder test command filters to the observation workspace and therefore does not execute the direct oakridge-dbos tests for T1.",
+          "findings": [
+            {
+              "id": "F1",
+              "severity": "warning",
+              "description": "The prescribed command bun run --filter observation test covers T2 but not the direct T1 regressions, because T1 tests are in another workspace: oakridge-dbos/tests/run-config.test.ts:56-83 verifies default-off and exact boolean preservation, oakridge-dbos/tests/observation-mapping.test.ts:50-65 verifies launch mapping, and oakridge-dbos/tests/observation-publisher.test.ts:177-209 verifies ordered delivery and replay. As written, builder test_evidence can leave T1 unexecuted; add a T1 test command and report its real output or known inability."
+            },
+            {
+              "id": "F2",
+              "severity": "info",
+              "description": "T1 is otherwise precise and repository-aligned. oakridge-dbos/src/domain/run-config.ts:7-10 names grading_enabled on RunConfig, and oakridge-dbos/src/domain/run-config.ts:21-41 defaults an absent choice to false while rejecting non-booleans. oakridge-dbos/src/adapters/observation-mapping.ts:42-48 places the exact committed config beside the launched input."
+            },
+            {
+              "id": "F3",
+              "severity": "info",
+              "description": "The first half of T2 maps to an explicit exact-claim fence. observation/src/storage/execution-store.ts:193-202 requires claimed status, matching lease owner, matching claim attempt, and an unexpired lease under a row lock; observation/src/grading/worker.ts:80-94 carries that same claim through request marking and settlement. observation/tests/execution-lifecycle.test.ts:299-320 separately exercises expired, reclaimed, and old-attempt claims."
+            },
+            {
+              "id": "F4",
+              "severity": "info",
+              "description": "The second half of T2 is independently observable and testable. observation/src/storage/execution-store.ts:227-253 updates execution and attempt state and inserts grade_observation inside one withTenant transaction. observation/tests/execution-lifecycle.test.ts:226-239 forces an invalid append and verifies that neither completion nor answer commits before a valid retry commits both."
+            }
+          ],
+          "requirements": [
+            {
+              "id": "R1",
+              "status": "implementable",
+              "description": "Produce exactly one cohort named audit with exactly tasks T1 and T2; no additional operator choice or confirmation is needed."
+            },
+            {
+              "id": "R2",
+              "status": "implementable",
+              "description": "T1 assesses that launch config carries grading_enabled, defaults it off when absent, and preserves it through ordered launch delivery."
+            },
+            {
+              "id": "R3",
+              "status": "implementable",
+              "description": "T2 assesses exact-current-claim fencing and atomic execution completion plus grade observation append."
+            },
+            {
+              "id": "R4",
+              "status": "implementable",
+              "description": "Builder detaches at origin/cohort/automatic-execution-lifecycle/73c9f2, makes no repository or external mutations, runs the specified verification honestly, and publishes build_result plus existing PR 791."
+            },
+            {
+              "id": "R5",
+              "status": "implementable",
+              "description": "Assessor evaluates the same head commit, reports at least one finding per task with path:start-end code citations and separate test or output evidence, and reports builder output as test_evidence."
+            }
+          ],
+          "source_spec_refs": [
+            "Audit target, branch and isolated-verification purpose",
+            "Exact cohort and two-task topology",
+            "T1 launch grading configuration criterion",
+            "T2 claim fencing and transactional completion criterion",
+            "Builder checkout, mutation prohibitions, test and existing-PR publication instructions",
+            "Assessor per-task code citation and test_evidence instructions",
+            "Finding severity and requirement-status rules"
+          ],
+          "proposed_spec_updates": [
+            {
+              "change": "After bun run --filter observation test, run bun test oakridge-dbos/tests/run-config.test.ts oakridge-dbos/tests/observation-mapping.test.ts oakridge-dbos/tests/observation-publisher.test.ts once and include its actual counts and output in build_result and test_evidence. If the database-backed publisher test cannot run, record that exact failure as a known issue rather than inventing a result.",
+              "reason": "The current sole command filters to observation and cannot execute the direct T1 defaulting, mapping, or ordered-delivery regressions in oakridge-dbos.",
+              "section": "Builder verification",
+              "finding_ids": [
+                "F1"
+              ]
+            }
+          ]
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-07T21:29:37.388Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-32bc4993c953496b",
+      "unit_id": "run-32bc4993c953496b/analysis",
+      "artifact_key": "spec",
+      "schema": "text",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 0,
+      "latest_revision": null
+    },
+    {
+      "run_id": "run-32bc4993c953496b",
+      "unit_id": "run-32bc4993c953496b/analysis",
+      "artifact_key": "tasks",
+      "schema": "tasks_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 0,
+      "latest_revision": null
+    },
+    {
+      "run_id": "run-32bc4993c953496b",
+      "unit_id": "run-32bc4993c953496b/planning",
+      "artifact_key": "plan",
+      "schema": "plan_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 0,
+      "latest_revision": null
+    },
+    {
+      "run_id": "run-32bc4993c953496b",
+      "unit_id": "run-32bc4993c953496b/prepare/oakridge",
+      "artifact_key": "workspace",
+      "schema": "workspace",
+      "is_reviewable": false,
+      "is_editable": false,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-32bc4993c953496b/prepare/oakridge:workspace:1",
+        "run_id": "run-32bc4993c953496b",
+        "unit_id": "run-32bc4993c953496b/prepare/oakridge",
+        "artifact_key": "workspace",
+        "attempt_id": "6f9364d3c7db793c044fb9ecce1fbdc7",
+        "body": {
+          "head": "b442f99ccdd68699a346ee55dd9fbe27bc3335d0",
+          "base_branch": "epic/grade-pray",
+          "repository_path": "/tmp/oakridge-proof/grading-2026-11-07T20-57-19-176Z/10060d3f-8cc0-4f45-82a7-3367c936c145",
+          "push_remote_owner": "RankOneLabs"
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-07T21:26:42.870Z",
+        "number": 1
+      }
+    }
+  ],
+  "attempts": [
+    {
+      "id": "6f9364d3c7db793c044fb9ecce1fbdc7:1",
+      "unit_id": "run-32bc4993c953496b/prepare/oakridge",
+      "worker": "git",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-07T21:26:33.013Z",
+      "is_current": true
+    },
+    {
+      "id": "35681fe34bd121b6f983b579cee27f16:1",
+      "unit_id": "run-32bc4993c953496b/analysis",
+      "worker": "author",
+      "number": 1,
+      "status": "running",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": "2b15c912-82b7-4d43-864c-983531959710",
+      "created_at": "2026-11-07T21:26:42.869Z",
+      "is_current": true
+    }
+  ],
+  "events": [
+    {
+      "id": "a9aae96f-fbcb-4a0b-aa0a-dc4c133e5b91",
+      "unit_id": "run-32bc4993c953496b/analysis",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "35681fe34bd121b6f983b579cee27f16",
+        "session": "2b15c912-82b7-4d43-864c-983531959710"
+      },
+      "created_at": "2026-11-07T21:29:37.389Z"
+    },
+    {
+      "id": "5ba2b212-c6a1-4890-b6cf-16315b770712",
+      "unit_id": "run-32bc4993c953496b/analysis",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "35681fe34bd121b6f983b579cee27f16"
+      },
+      "created_at": "2026-11-07T21:26:56.058Z"
+    },
+    {
+      "id": "3cfb1ef7-88fe-4083-a4bd-a6d44a29f71d",
+      "unit_id": "run-32bc4993c953496b/prepare/oakridge",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "6f9364d3c7db793c044fb9ecce1fbdc7"
+      },
+      "created_at": "2026-11-07T21:26:42.912Z"
+    },
+    {
+      "id": "201a0dd8-c385-411c-8663-8c5ec12a10ea",
+      "unit_id": "run-32bc4993c953496b/prepare/oakridge",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "6f9364d3c7db793c044fb9ecce1fbdc7"
+      },
+      "created_at": "2026-11-07T21:26:42.870Z"
+    },
+    {
+      "id": "c60721e7-f7ca-4005-8ef3-36ea1a8aa1ae",
+      "unit_id": "run-32bc4993c953496b/prepare/oakridge",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "6f9364d3c7db793c044fb9ecce1fbdc7"
+      },
+      "created_at": "2026-11-07T21:26:33.606Z"
+    },
+    {
+      "id": "5e0a9bb6-3df9-4227-8892-930ae230fe67",
+      "unit_id": null,
+      "kind": "launched",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-07T21:26:33.015Z"
+    }
+  ]
+}
