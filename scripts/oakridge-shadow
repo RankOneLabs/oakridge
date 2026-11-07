@@ -3,21 +3,33 @@
 # same machine, sharing none of its state: its own PostgreSQL container and
 # volume, ports, kbbl data, agent workdir and publication key. Arguments are
 # passed to kbbl. Configure with OAKRIDGE_SHADOW_* (see below); every other
-# Oakridge, DBOS and kbbl variable inherited from the shell is dropped, so a
-# profile that points at the default install cannot leak into this one.
+# Oakridge, DBOS, kbbl and observation variable inherited from the shell is
+# dropped, so a profile that points at the default install cannot leak into this
+# one.
+#
+# --observation also runs an observation service owned by this shadow: a database
+# in the shadow's PostgreSQL, its own port, and capability tokens in the state
+# directory. Only the provider settings the configured graders need are read from
+# the real observation/.env. --print-state prints the resolved state as JSON,
+# without secrets, and starts nothing; observation/verification reads it.
 set -euo pipefail
 
 OAKRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="${OAKRIDGE_SHADOW_NAME:-shadow}"
-STATE_DIR="${OAKRIDGE_SHADOW_STATE_DIR:-$HOME/.local/state/oakridge-$NAME}"
+# Resolved once: everything below, and oakridge-start, derives from this one path.
+STATE_DIR="$(realpath -m -- "${OAKRIDGE_SHADOW_STATE_DIR:-$HOME/.local/state/oakridge-$NAME}")"
 KBBL_PORT="${OAKRIDGE_SHADOW_KBBL_PORT:-8798}"
 DBOS_PORT="${OAKRIDGE_SHADOW_DBOS_PORT:-8800}"
 POSTGRES_PORT="${OAKRIDGE_SHADOW_POSTGRES_PORT:-54339}"
+SHADOW_OBSERVATION_PORT="${OAKRIDGE_SHADOW_OBSERVATION_PORT:-8801}"
+SHADOW_OBSERVATION_DATABASE="observation"
+SHADOW_OBSERVATION_NAMESPACE="shadow-$NAME"
+PROVIDER_ENV_FILE="${OAKRIDGE_SHADOW_PROVIDER_ENV_FILE:-$OAKRIDGE_ROOT/observation/.env}"
 POSTGRES_CONTAINER="oakridge-$NAME-postgres"
 POSTGRES_VOLUME="oakridge-$NAME-postgres-data"
 
 # What the default install uses (scripts/oakridge-start); a shadow never touches them.
-DEFAULT_PORTS=(8788 8790 54329)
+DEFAULT_PORTS=(8788 8790 8791 54329)
 DEFAULT_CONTAINER="oakridge-postgres"
 DEFAULT_VOLUME="oakridge-postgres-data"
 
@@ -25,17 +37,59 @@ fail() { echo "oakridge-shadow: $*" >&2; exit 1; }
 
 [[ "$NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "OAKRIDGE_SHADOW_NAME must be lowercase letters, digits and dashes"
 [ "$NAME" != "postgres" ] || fail "OAKRIDGE_SHADOW_NAME=postgres would reuse the default container's name"
-for port in "$KBBL_PORT" "$DBOS_PORT" "$POSTGRES_PORT"; do
-  for taken in "${DEFAULT_PORTS[@]}"; do
+
+# Both flags belong to this launcher; everything else goes on to kbbl.
+start_observation=0
+print_state=0
+kbbl_args=()
+for arg in "$@"; do
+  case "$arg" in
+    --observation) start_observation=1 ;;
+    --print-state) print_state=1 ;;
+    *) kbbl_args+=("$arg") ;;
+  esac
+done
+
+provider_env() { bun --no-env-file "$OAKRIDGE_ROOT/observation/scripts/provider-env.ts" "$@"; }
+# The live service may have moved off its default port in its own configuration.
+LIVE_OBSERVATION_PORT="$(provider_env live-port --env-file "$PROVIDER_ENV_FILE")" \
+  || fail "cannot read the live observation port from $PROVIDER_ENV_FILE"
+shadow_ports=("$KBBL_PORT" "$DBOS_PORT" "$POSTGRES_PORT" "$SHADOW_OBSERVATION_PORT")
+for port in "${shadow_ports[@]}"; do
+  [[ "$port" =~ ^[1-9][0-9]*$ ]] && [ "$port" -le 65535 ] || fail "port '$port' is not a TCP port"
+  for taken in "${DEFAULT_PORTS[@]}" "$LIVE_OBSERVATION_PORT"; do
     [ "$port" != "$taken" ] || fail "port $port belongs to the default install"
   done
 done
-[ "$KBBL_PORT" != "$DBOS_PORT" ] && [ "$KBBL_PORT" != "$POSTGRES_PORT" ] && [ "$DBOS_PORT" != "$POSTGRES_PORT" ] \
-  || fail "the kbbl, DBOS and PostgreSQL ports must differ"
+[ "$(printf '%s\n' "${shadow_ports[@]}" | sort -u | wc -l)" -eq "${#shadow_ports[@]}" ] \
+  || fail "the kbbl, DBOS, PostgreSQL and observation ports must differ"
+
+if [ "$print_state" -eq 1 ]; then
+  SHADOW_NAME="$NAME" SHADOW_STATE_DIR="$STATE_DIR" SHADOW_KBBL_PORT="$KBBL_PORT" SHADOW_DBOS_PORT="$DBOS_PORT" \
+    SHADOW_POSTGRES_PORT="$POSTGRES_PORT" SHADOW_POSTGRES_CONTAINER="$POSTGRES_CONTAINER" SHADOW_POSTGRES_VOLUME="$POSTGRES_VOLUME" \
+    SHADOW_PORT="$SHADOW_OBSERVATION_PORT" SHADOW_DATABASE="$SHADOW_OBSERVATION_DATABASE" SHADOW_NAMESPACE="$SHADOW_OBSERVATION_NAMESPACE" \
+    SHADOW_PROVIDER_ENV_FILE="$PROVIDER_ENV_FILE" bun --no-env-file -e '
+      const env = process.env;
+      const state = env.SHADOW_STATE_DIR;
+      console.log(JSON.stringify({
+        name: env.SHADOW_NAME, state_dir: state,
+        kbbl: { port: Number(env.SHADOW_KBBL_PORT), url: `http://127.0.0.1:${env.SHADOW_KBBL_PORT}`, data_dir: `${state}/kbbl` },
+        dbos: { port: Number(env.SHADOW_DBOS_PORT), url: `http://127.0.0.1:${env.SHADOW_DBOS_PORT}` },
+        postgres: { container: env.SHADOW_POSTGRES_CONTAINER, volume: env.SHADOW_POSTGRES_VOLUME, port: Number(env.SHADOW_POSTGRES_PORT), authority_database: "oakridge" },
+        observation: { port: Number(env.SHADOW_PORT), url: `http://127.0.0.1:${env.SHADOW_PORT}`, database: env.SHADOW_DATABASE, namespace: env.SHADOW_NAMESPACE,
+          ingest_token_file: `${state}/observation-ingest.token`, read_token_file: `${state}/observation-read.token`, grade_token_file: `${state}/observation-grade.token`,
+          status_file: `${state}/observation-status.json` },
+        provider_env_file: env.SHADOW_PROVIDER_ENV_FILE,
+      }, null, 2));'
+  exit 0
+fi
 
 is_listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 is_listening "$KBBL_PORT" && fail "port $KBBL_PORT is in use; is this shadow already running?"
 is_listening "$DBOS_PORT" && fail "port $DBOS_PORT is in use; is this shadow already running?"
+if [ "$start_observation" -eq 1 ] && is_listening "$SHADOW_OBSERVATION_PORT"; then
+  fail "port $SHADOW_OBSERVATION_PORT is in use; DBOS would hand its ingest token to whatever answers there"
+fi
 if docker container inspect "$POSTGRES_CONTAINER" >/dev/null 2>&1; then
   mounts="$(docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' "$POSTGRES_CONTAINER")"
   [[ " $mounts " != *" $DEFAULT_VOLUME "* ]] || fail "container $POSTGRES_CONTAINER mounts the default install's volume; remove it"
@@ -50,7 +104,7 @@ fi
 
 # kbbl takes the last --port and --dataDir it sees; the shadow appends its own, but refuses
 # a caller's rather than leave a silently ignored flag.
-for arg in "$@"; do
+for arg in ${kbbl_args[@]+"${kbbl_args[@]}"}; do
   case "$arg" in
     --port|--port=*|--dataDir|--dataDir=*) fail "$arg is set by oakridge-shadow; use OAKRIDGE_SHADOW_KBBL_PORT or OAKRIDGE_SHADOW_STATE_DIR" ;;
   esac
@@ -63,13 +117,20 @@ if [ ! -s "$KEY_FILE" ]; then
   (umask 077 && openssl rand -hex 32 > "$KEY_FILE")
 fi
 
+# Listed by the runners themselves, so a new runner's key cannot slip past this.
+provider_names="$(provider_env names)" || fail "cannot list the provider settings to drop"
+
 # The shadow's own values must survive the scrub even when the shell exported these names.
 export -n OAKRIDGE_ROOT KBBL_PORT DBOS_PORT
 for variable in $(compgen -e); do
   case "$variable" in
-    OAKRIDGE_*|DBOS_*|KBBL_*|GITHUB_TOKEN) unset "$variable" ;;
+    OAKRIDGE_*|DBOS_*|KBBL_*|OBSERVATION_*|GITHUB_TOKEN) unset "$variable" ;;
   esac
 done
+for variable in $provider_names; do unset "$variable"; done
+
+observation_flag=()
+if [ "$start_observation" -eq 1 ]; then observation_flag=(--observation); fi
 
 echo "oakridge-shadow: '$NAME' state in $STATE_DIR"
 echo "oakridge-shadow: PostgreSQL $POSTGRES_CONTAINER on 127.0.0.1:$POSTGRES_PORT (volume $POSTGRES_VOLUME)"
@@ -81,4 +142,10 @@ OAKRIDGE_POSTGRES_CONTAINER="$POSTGRES_CONTAINER" \
   OAKRIDGE_ALLOWED_ORIGINS="http://127.0.0.1:$KBBL_PORT" \
   OAKRIDGE_AGENT_WORKDIR="$STATE_DIR/agent-workdir" \
   OAKRIDGE_PUBLICATION_KEY="$(cat "$KEY_FILE")" \
-  exec "$OAKRIDGE_ROOT/scripts/oakridge-start" "$@" --port="$KBBL_PORT" --dataDir="$STATE_DIR/kbbl"
+  OAKRIDGE_STATE_DIR="$STATE_DIR" \
+  OAKRIDGE_OBSERVATION_SERVICE_PORT="$SHADOW_OBSERVATION_PORT" \
+  OAKRIDGE_OBSERVATION_DATABASE="$SHADOW_OBSERVATION_DATABASE" \
+  OAKRIDGE_OBSERVATION_NAMESPACE="$SHADOW_OBSERVATION_NAMESPACE" \
+  OAKRIDGE_OBSERVATION_PROVIDER_ENV_FILE="$PROVIDER_ENV_FILE" \
+  exec "$OAKRIDGE_ROOT/scripts/oakridge-start" --isolated ${observation_flag[@]+"${observation_flag[@]}"} \
+    ${kbbl_args[@]+"${kbbl_args[@]}"} --port="$KBBL_PORT" --dataDir="$STATE_DIR/kbbl"
