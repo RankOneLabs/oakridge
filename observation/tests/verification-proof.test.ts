@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { KbblHealth, ObservationHealth } from "../../kbbl/core/server/handlers/observation-health";
 import { err, ok } from "../src/domain/primitives";
+import { parseGraderConfiguration, planRegistration } from "../src/grading/configuration";
+import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { RELEVANCE_ID } from "../src/producers/oakridge/questions";
 import { runProof } from "../verification/proof";
+import { editedGraders, registrationScenario, type RegistrationCapture } from "../verification/registration";
 import { launcherStateSchema, NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, scenarioStatus, type LauncherState,
   type ObservationStatus, type ScenarioReport } from "../verification/proof-contract";
 import { liveScenario, runtimeScenario } from "../verification/scenarios";
@@ -30,7 +34,8 @@ function fakeIo(overrides: Partial<ProofIo> = {}): ProofIo {
     dbosHealthy: async () => true,
     tokens: async () => ok({ capabilities: { ingest: "i", read: "r", grade: "g" }, private_files: true }),
     shadowQuery: async () => ok("1"), killObservation: () => {}, dbos: async () => ok({}), observationGet: async () => ok({}),
-    publisherFailures: async () => [], now: () => clock, sleep: async (ms) => { clock += ms; }, ...overrides };
+    publisherFailures: async () => [], readGraders: async () => "{}", writeGraders: async () => {},
+    now: () => clock, sleep: async (ms) => { clock += ms; }, ...overrides };
 }
 const failing = (report: ScenarioReport) => report.checks.filter((check) => !check.passed).map((check) => check.name);
 
@@ -421,5 +426,90 @@ describe("the stack's startup wait", () => {
     const { child, signals } = fakeLauncher(1);
     const started = await awaitLaunch(child, waitFor(async () => false));
     expect({ detail: started.ok ? null : started.error.detail, signals }).toEqual({ detail: "launcher exited with status 1; see /log", signals: [] });
+  });
+});
+
+describe("the registration scenario", () => {
+  const committedText = readFileSync(resolve(repository, "observation/graders.json"), "utf8");
+  const plan = (text: string) => {
+    const parsed = parseGraderConfiguration(JSON.parse(text));
+    if (!parsed.ok) throw new Error(parsed.error.detail);
+    const registration = planRegistration(parsed.value, oakridgeProfile.questions);
+    if (!registration.ok) throw new Error(registration.error.detail);
+    return registration.value;
+  };
+  const relevancePin = (text: string) => plan(text).capture.pins.find((pin) => pin.question_id === RELEVANCE_ID)!;
+
+  /** A shadow whose observation registers whatever graders.json held when it last started, and
+   * pins each run's one finding with the selection in force when that run was captured. */
+  function shadow(options: { readonly repin_after_restart?: boolean; readonly executions?: number } = {}) {
+    let graders = committedText;
+    let running: string | null = null;
+    const stored = new Set<string>();
+    const pinnedAt = new Map<string, string>();
+    const writes: string[] = [];
+    const io = fakeIo({
+      readGraders: async () => graders,
+      writeGraders: async (text) => { graders = text; writes.push(text); },
+      startStack: async () => { running = graders; for (const evaluator of plan(graders).evaluators) stored.add(evaluator.evaluator_definition_id); return ok(undefined); },
+      stopStack: async () => { running = null; },
+      kbblHealth: async () => kbblHealth(running ? { state: "configured", graders: plan(running).graders.map((grader) =>
+        ({ runner: grader.runner, evaluatorDefinitionId: grader.evaluator_definition_id })) } : { state: "down", reason: "unreachable" }),
+      shadowQuery: async (_database, query) => ok(query.includes("evaluator_definition_id")
+        ? JSON.stringify([...stored]) : JSON.stringify({ executions: options.executions ?? 0, attempts: 0, requests_sent: 0, answers: 0 })),
+      observationGet: async (path) => {
+        const run = /\/v1\/runs\/([^/]+)\/items/.exec(path)?.[1];
+        if (run) return ok({ items: [{ occurrence_id: `occ-${run}`, revision_id: `analysis-${run}`, json_pointer: "/findings/0", item_kind: "finding" }] });
+        const occurrence = decodeURIComponent(/\/v1\/items\/([^/]+)\/evidence/.exec(path)?.[1] ?? "");
+        const selection = options.repin_after_restart && running ? running : pinnedAt.get(occurrence) ?? committedText;
+        const pin = relevancePin(selection);
+        return ok({ items: [{ evidence_set_id: `set-${occurrence}`, question_id: pin.question_id, question_version: pin.question_version,
+          pinned_evaluator_definition_ids: pin.evaluator_definition_ids,
+          readiness: { state: "ready", ready_at: "2026-11-07T00:00:00Z", references: [{ ref: "subject", source: "revision", revision_id: `analysis-${occurrence}`, item_path: "/findings/0" }] } }] });
+      },
+    });
+    const capture: RegistrationCapture = async (label) => {
+      const run_id = `run-${label}`;
+      pinnedAt.set(`occ-${run_id}`, running ?? committedText);
+      return { run: { run_id, definition_id: "development" }, report: { id: "source-run", status: "passed", checks: [{ name: "captured", passed: true, detail: "" }], evidence: NO_EVIDENCE } };
+    };
+    return { io, capture, writes, graders: () => graders };
+  }
+
+  test("an edit is a new definition: old pins stay, later captures take the edit, nothing is graded", async () => {
+    const stack = shadow();
+    const report = await registrationScenario(stack.io, stack.capture);
+    expect(failing(report)).toEqual([]);
+    expect(report.evidence.registrations.map((entry) => entry.checkpoint)).toEqual(["committed", "edited"]);
+    const [first, , second] = ["first", "first-after-swap", "second"].map((checkpoint) => report.evidence.pins.find((pin) => pin.checkpoint === checkpoint)!);
+    expect(first!.pinned_evaluator_definition_ids).not.toEqual(second!.pinned_evaluator_definition_ids);
+    expect(report.evidence.provider_request_count).toBe(0);
+    expect(stack.graders()).toBe(committedText);
+  });
+
+  test("a restart that repins earlier captures fails the proof", async () => {
+    const report = await registrationScenario(shadow({ repin_after_restart: true }).io, shadow().capture);
+    expect(failing(report)).toContain("the first run keeps its pins and frozen evidence after the swap");
+  });
+
+  test("an execution created by capture or restart fails the proof", async () => {
+    const stack = shadow({ executions: 1 });
+    expect(failing(await registrationScenario(stack.io, stack.capture))).toContain("capture and collection execute nothing");
+  });
+
+  test("the committed selection is restored even when the stack does not start", async () => {
+    const stack = shadow();
+    const report = await registrationScenario({ ...stack.io, startStack: async () => err({ operation: "start_stack", entity_id: "x", detail: "down" }) }, stack.capture);
+    expect(report.status).toBe("failed");
+    expect(stack.graders()).toBe(committedText);
+  });
+
+  test("the edit changes only graders.json and keeps every runner and model", () => {
+    const committed = parseGraderConfiguration(JSON.parse(committedText));
+    if (!committed.ok) throw new Error(committed.error.detail);
+    const edited = editedGraders(committed.value);
+    expect(edited.questions.flatMap((entry) => entry.graders.map((grader) => [grader.runner, grader.model])))
+      .toEqual(committed.value.questions.flatMap((entry) => entry.graders.map((grader) => [grader.runner, grader.model])));
+    expect(planRegistration(edited, oakridgeProfile.questions).ok).toBe(true);
   });
 });

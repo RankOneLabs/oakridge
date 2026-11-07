@@ -10,6 +10,7 @@ requests happen only here, never in an offline test command.
 bun observation/verification/proof.ts runtime
 bun observation/verification/proof.ts live
 bun observation/verification/proof.ts source-run --input input.json [--through plan|brief|assessment]
+bun observation/verification/proof.ts registration --input input.json [--through plan|brief|assessment]
 ```
 
 Configure the shadow with the usual `OAKRIDGE_SHADOW_*` variables. Set
@@ -26,12 +27,21 @@ which is not committed.
 | --- | --- | --- |
 | `runtime` | Isolation and supervision on the real services: shadow-owned role, database, ports and tokens; kbbl reporting observation down after it is killed; DBOS serving and a real run launching and canceling meanwhile; the run not reading as captured meanwhile; a restart reusing the same state; ordered delivery catching up to the authority and covering that run. | Starts and stops its own, and refuses a running one. |
 | `live` | The prerequisites of a real-provider proof: a reachable service, registered graders and both kbbl capabilities. | Attaches to a running stack, or starts one. |
+| `registration` | Startup registration, capture pins and per-question evidence across a `graders.json` edit and restart. Starts on the committed selection and checks health reports exactly the graders it plans; captures a real `source-run` (default `--through plan`) and reads back every pin, readiness and evidence reference through the read capability; edits every grader's instructions in `graders.json` and restarts; checks the edit registered new definitions and kept the old ones, that the first run's pins and frozen evidence are unchanged and that questions waiting at capture keep their pins as they become ready; captures a second run, which must take the edited selection; and checks no execution, provider attempt or answer exists throughout. Restores `graders.json` whatever happens. Records `registrations`, `pins` and `provider_request_count`. Spends the same real agent turns as two `source-run`s. | Starts, restarts and stops its own, and refuses a running one. |
 | `source-run` | Launches the committed development workflow to its target artifact, cancels it, and requires the ordered feed to cover the run. Retains `run.json`, `inspect.json` and `authority-rows.json` under `source-run/`. Spends real agent turns and needs the installed Codex agent's authentication. | Attaches, or starts one. |
 
 `live` fails on a missing key, invalid grader or unavailable database, with the
-launcher's reason in its checks, even though DBOS and kbbl stay up. It also fails
-today on a healthy service, which reports `no_configured_graders` until startup
-registration exists.
+launcher's reason in its checks, even though DBOS and kbbl stay up. A healthy
+service reports the graders it registered from `observation/graders.json`.
+
+`registration` drives only real captures, so it observes whatever readiness those
+runs produce. A real run's inputs are normally all present when it is captured, so
+its questions pass through `collection_pending` to `ready` and the check on waiting
+questions may report none waiting. The required-lookup cases, an unreadable
+repository, a missing build subject and their later arrival, are proven through the
+real service and HTTP in `observation/tests/grading-startup.test.ts`, which this
+scenario does not replace; `not-ready-arrival-on-real-capture` stays pending until a
+real capture is observed waiting on one.
 
 `source-run` checks that observation is reachable before it launches, so a service
 already down fails without spending a turn. After canceling, it waits up to two
@@ -73,7 +83,7 @@ failure, lineage and composites, and reveal.
 
 | Pending scenario | Owner |
 | --- | --- |
-| `registration-pins-evidence` | configured-question-evidence |
+| `not-ready-arrival-on-real-capture` | configured-question-evidence |
 | `real-provider-requests-and-recovery` | automatic-execution-lifecycle |
 | `relations-and-composites` | task-lineage-composites |
 | `first-assessment-finding-end-to-end`, `human-grading-and-pwa-readback` | operator-item-workspace |

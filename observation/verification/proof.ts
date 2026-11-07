@@ -6,6 +6,7 @@
  *   bun observation/verification/proof.ts runtime
  *   bun observation/verification/proof.ts live
  *   bun observation/verification/proof.ts source-run --input <file> [--through plan|brief|assessment]
+ *   bun observation/verification/proof.ts registration --input <file> [--through plan|brief|assessment]
  *
  * Exits zero only when the requested scenario passed. The report is written
  * either way, so a failure keeps its diagnostics.
@@ -15,6 +16,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, type LauncherState, type ProofReport,
   type ScenarioId, type ScenarioReport, type SourceIdentity } from "./proof-contract";
+import { registrationScenario } from "./registration";
 import { liveScenario, runtimeScenario } from "./scenarios";
 import { createShadowIo, readLauncherState, readSourceIdentity, type ProofIo } from "./shadow-session";
 import { sourceRunInputSchema, sourceRunScenario, type SourceRunTarget } from "./source-run";
@@ -64,8 +66,8 @@ async function writeReport(directory: string, text: string): Promise<string> {
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { input: { type: "string" }, through: { type: "string" } } });
   const [command] = positionals;
-  if (command !== "runtime" && command !== "live" && command !== "source-run") {
-    console.error("usage: proof.ts runtime | live | source-run --input <file> [--through plan|brief|assessment]");
+  if (command !== "runtime" && command !== "live" && command !== "source-run" && command !== "registration") {
+    console.error("usage: proof.ts runtime | live | (source-run | registration) --input <file> [--through plan|brief|assessment]");
     return 2;
   }
   const proof_id = `${command}-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
@@ -85,16 +87,20 @@ async function main(): Promise<number> {
   const scenario = async (): Promise<ScenarioReport> => {
     if (command === "runtime") return runtimeScenario(io);
     if (command === "live") return liveScenario(io);
-    if (!values.input) throw new Error("source-run needs --input");
-    const through = values.through ?? "brief";
+    if (!values.input) throw new Error(`${command} needs --input`);
+    const through = values.through ?? (command === "registration" ? "plan" : "brief");
     if (through !== "plan" && through !== "brief" && through !== "assessment") throw new Error("invalid --through");
+    const input = sourceRunInputSchema.parse(await Bun.file(values.input).json());
+    if (command === "registration") return registrationScenario(io, async (label) => {
+      const report = await sourceRunScenario(io, { input, directory: join(directory, `source-run-${label}`), through });
+      return { report, run: report.evidence.runs[0] ?? null };
+    });
     if (!await io.stackAnswers()) {
       const started = await io.startStack();
       if (!started.ok) throw new Error(started.error.detail);
     }
     try {
-      return await sourceRunScenario(io, { input: sourceRunInputSchema.parse(await Bun.file(values.input).json()),
-        directory: join(directory, "source-run"), through: through satisfies SourceRunTarget });
+      return await sourceRunScenario(io, { input, directory: join(directory, "source-run"), through: through satisfies SourceRunTarget });
     } finally { await io.stopStack(); }
   };
   const { report, text } = await runProof({ proof_id, scenario_id: command, source, launcher: state.value, scenario, now, secrets: () => secretValues(io) });

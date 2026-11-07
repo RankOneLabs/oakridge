@@ -3,7 +3,7 @@
  * and speaks to what that started. Nothing here creates a database, capability or
  * service; the launcher resolved them, and these are clients of that state.
  */
-import { readFile, stat } from "node:fs/promises";
+import { readFile, rename, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { closeSync, openSync } from "node:fs";
 import type { KbblHealth } from "../../kbbl/core/server/handlers/observation-health";
@@ -12,6 +12,7 @@ import { launcherStateSchema, observationStatusSchema, type LauncherState, type 
 
 const REPOSITORY_ROOT = resolve(import.meta.dir, "../..");
 const LAUNCHER = resolve(REPOSITORY_ROOT, "scripts/oakridge-shadow");
+const GRADERS = resolve(REPOSITORY_ROOT, "observation/graders.json");
 const REQUEST_TIMEOUT_MS = 5_000;
 const QUERY_TIMEOUT_MS = 30_000;
 const PUBLISHER_FAILURE_LINES = 5;
@@ -49,6 +50,9 @@ export interface ProofIo {
   observationGet(path: string, capability: keyof Capabilities): Promise<Result<unknown, ProofFailure>>;
   /** The publisher's latest refusals, from a stack this proof started; an attached stack logs elsewhere. */
   publisherFailures(): Promise<readonly string[]>;
+  /** observation/graders.json, the selection the next observation start registers. */
+  readGraders(): Promise<string>;
+  writeGraders(text: string): Promise<void>;
   now(): number;
   sleep(ms: number): Promise<void>;
 }
@@ -169,6 +173,11 @@ export function createShadowIo(state: LauncherState, log_path: string): ProofIo 
     async publisherFailures() {
       const log = await readFile(log_path, "utf8").catch(() => "");
       return log.split("\n").filter((line) => line.includes("observation publisher:")).slice(-PUBLISHER_FAILURE_LINES);
+    },
+    readGraders: () => readFile(GRADERS, "utf8"),
+    async writeGraders(text) {
+      await Bun.write(`${GRADERS}.pending`, text);
+      await rename(`${GRADERS}.pending`, GRADERS);
     },
     now: () => Date.now(),
     sleep: (ms) => Bun.sleep(ms),
