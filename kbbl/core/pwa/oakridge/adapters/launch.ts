@@ -46,5 +46,5 @@ export function developmentLaunch(body: CreateRunRequest, definition: OperatorDe
     primary_repository_key: repositories[0].key,
     final_merge_policy: body.epic_profile.final_merge_policy === "guarded" ? "require_merge" : "allow_close_without_merge" };
   return ok({ request_id: requestId, definition_id: definition.definition_id, project_id: body.project_id, input,
-    config: { sessions: body.context.session_settings } });
+    config: { sessions: body.context.session_settings, grading_enabled: body.context.grading_enabled } });
 }

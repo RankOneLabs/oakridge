@@ -15,12 +15,18 @@ export interface CaptureEnvelope {
   readonly body: JsonValue;
   readonly body_digest: CanonicalDigest;
 }
+export interface SessionSettingsWire { readonly harness: string; readonly model: string; readonly effort: string | null }
+/** The exact config a run was launched with. `grading_enabled` is the run's automatic-grading choice. */
+export interface RunConfigWire {
+  readonly sessions: { readonly [stage: string]: { readonly [worker: string]: SessionSettingsWire } };
+  readonly grading_enabled: boolean;
+}
 export interface SourceEventProvenance { readonly format: "observation.source-event/v1";
   readonly definition_id: string | null; readonly artifact_schema_version: string | null }
 export type SourceEventOutcome = SourceEventProvenance & (
   | { readonly kind: "artifact_revision"; readonly event_kind: "revision_published"; readonly run_id: string; readonly event_id: string; readonly revision: CaptureEnvelope }
   | { readonly kind: "run_input"; readonly event_kind: "launched"; readonly run_id: string; readonly event_id: string; readonly input: unknown;
-      readonly input_schema_version: string }
+      readonly input_schema_version: string; readonly config: RunConfigWire | null }
   | { readonly kind: "ignored"; readonly event_kind: "operator_decided" | "worker_started" | "worker_ended" | "retry_requested" | "cancel_requested";
       readonly run_id: string; readonly event_id: string }
   | { readonly kind: "unmapped"; readonly event_kind: string; readonly run_id: string; readonly event_id: string; readonly reason: string });

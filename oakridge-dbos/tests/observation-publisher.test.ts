@@ -173,3 +173,38 @@ test("accept and request-changes pass through the mapper and ordered ingest as i
     expect(await publishObservationOnce(authority.db, options)).toBe(false);
   } finally { await observation.destroy(); await scratch.drop(); }
 });
+
+test("each launch delivers its committed grading choice beside its input, and a replay delivers the same", async () => {
+  const scratch = await scratchDatabase();
+  const replica = await scratchDatabase();
+  const tenant = { producer: "oakridge", namespace: "launch-config" };
+  const services = [openObservationDatabase(scratch.url), openObservationDatabase(replica.url)];
+  try {
+    const { definition_id } = await sampleDefinition();
+    const launches = await Promise.all([
+      launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "on" }, config: { sessions: {}, grading_enabled: true } }),
+      launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "off" },
+        config: { sessions: { document: { writer: { harness: "codex", model: "gpt-5.5", effort: null } } }, grading_enabled: false } }),
+      launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "none" } })]);
+    const delivered = async (observation: (typeof services)[number]) => {
+      await migrateObservation(observation);
+      const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [] }, profile: oakridgeProfile });
+      const options: ObservationOptions = { url: "http://observation.test", namespace: tenant.namespace, token: "ingest",
+        fetcher: async (input, init) => app.request(new Request(input, init)) };
+      while (await publishObservationOnce(authority.db, options)) { /* drain the ordered tail */ }
+      const rows = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_event_outcome").select(["run_id", "detail"])
+        .where("outcome_kind", "=", "run_input").where("run_id", "in", launches.map((entry) => entry.run_id)).execute());
+      return Object.fromEntries(rows.map((row) => [row.run_id, row.detail as { input: unknown; config: unknown }]));
+    };
+    const first = await delivered(services[0]!);
+    // A fresh service starts at the beginning: replay reads the run's committed config, not anything current.
+    const replayed = await delivered(services[1]!);
+    const [on, off, none] = launches.map((entry) => first[entry.run_id]);
+    expect([on, off, none]).toEqual([
+      expect.objectContaining({ input: { topic: "on" }, config: { sessions: {}, grading_enabled: true } }),
+      expect.objectContaining({ input: { topic: "off" }, config: { sessions: { document: { writer: { harness: "codex", model: "gpt-5.5", effort: null } } },
+        grading_enabled: false } }),
+      expect.objectContaining({ input: { topic: "none" }, config: null })]);
+    expect(launches.map((entry) => replayed[entry.run_id])).toEqual([on, off, none]);
+  } finally { for (const db of services) await db.destroy(); await scratch.drop(); await replica.drop(); }
+});

@@ -31,7 +31,7 @@ test("a cohort pins independent assessor and builder settings", () => {
   const workflow = { ...base, workflow: "development", stages: { cohort: { ...document,
     workers: { assessor: document.workers.writer, builder: document.workers.writer } } } };
   const config = { sessions: { cohort: { assessor: { harness: "claude-code", model: "opus", effort: "high" },
-    builder: { harness: "codex", model: "gpt-6-sol", effort: "high" } } } };
+    builder: { harness: "codex", model: "gpt-6-sol", effort: "high" } } }, grading_enabled: false };
   const settingsFor = (worker: string) => {
     const selected = select({ workflow, config, stage: "cohort", action: { ...action,
       unit: "run-1/implementation/theme", worker } });
