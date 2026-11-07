@@ -64,6 +64,8 @@ fn latest_artifacts(expr: &StageExpr, found: &mut BTreeSet<String>) {
         StageExpr::Spanned(inner, _)
         | StageExpr::Not(inner)
         | StageExpr::Len(inner)
+        | StageExpr::Flatten(inner)
+        | StageExpr::Unique(inner)
         | StageExpr::Require { value: inner, .. }
         | StageExpr::Field { value: inner, .. } => latest_artifacts(inner, found),
         StageExpr::Or(left, right)

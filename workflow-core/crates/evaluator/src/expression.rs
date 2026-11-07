@@ -127,6 +127,26 @@ pub(super) fn eval_expression_inner(
             Value::Array(items) => items.len(),
             _ => return Ok(None),
         })),
+        Expression::Flatten { value } => {
+            let mut flattened = Vec::new();
+            for inner in list!(value) {
+                let Value::Array(items) = inner else {
+                    return Ok(None);
+                };
+                flattened.extend(items);
+                context.check_list_len(flattened.len())?;
+            }
+            Some(Value::Array(flattened))
+        }
+        // Serialized form sorts object keys, so it decides JSON equality.
+        Expression::Unique { value } => {
+            let mut seen = std::collections::BTreeSet::new();
+            Some(Value::Bool(
+                list!(value)
+                    .iter()
+                    .all(|item| seen.insert(item.to_string())),
+            ))
+        }
         Expression::GreaterThan { left, right } => {
             let (left, right) = integers!(left, right);
             Some(Value::Bool(left > right))

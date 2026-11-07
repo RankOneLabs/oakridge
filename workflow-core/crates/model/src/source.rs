@@ -208,6 +208,14 @@ pub enum Expression {
     Len {
         value: Box<Expression>,
     },
+    /// The items of a list of lists, in order.
+    Flatten {
+        value: Box<Expression>,
+    },
+    /// Whether no two items of a list are equal.
+    Unique {
+        value: Box<Expression>,
+    },
     GreaterThan {
         left: Box<Expression>,
         right: Box<Expression>,

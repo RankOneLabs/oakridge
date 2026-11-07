@@ -2,13 +2,16 @@
 #
 #   prepare         code worker repository.prepare per repository; creates the run's base branch on origin
 #   analysis        author discusses blockers and warnings; operator reviews the revised spec and tasks
-#   planning        planner agent + operator review; validate: cohorts, repositories, graph
-#   briefs          one shared writer session across plan cohorts, with a separate review per brief
+#   planning        planner agent + operator review; validate: cohorts, repositories, graph,
+#                   task membership and coverage, ids unique within a cohort
+#   briefs          one shared writer session across plan cohorts, with a separate review per brief;
+#                   validate: the cohort's identity and its task ids, in order
 #   implementation  one cohort per brief, after its dependencies, four at a time:
 #                   builder, assessor reviewing the build, operator reviewing the assessment,
 #                   the PR observed until merged (D4);
 #                   a closed, unmerged PR requests build changes (D5)
-#   integration     one integration PR per repository with cohorts, into its final base (D6)
+#   integration     one integration PR per repository with cohorts, into its final base (D6);
+#                   assesses every task in that repository's briefs on the integration branch
 #
 # Structured artifacts use named schemas; the approved spec is a text artifact.
 workflow: development
@@ -64,9 +67,10 @@ schemas:
     description: optional(text)
     files_in_scope: list(text)
     decisions: list(plan_decision)
-    acceptance_criteria: list(plan_criterion)
+    acceptance_criteria: list(task_acceptance)
   plan_decision: { id: ident, text: text }
-  plan_criterion: { id: ident, text: text, decision_ids: list(ident) }
+  # id is the approved task's id: a task shared by cohorts repeats it in each.
+  task_acceptance: { id: ident, text: text, decision_ids: list(ident) }
 
   brief_body:
     cohort_id: ident
@@ -77,7 +81,7 @@ schemas:
     files_in_scope: list(text)
     decisions_made: list(brief_decision)
     approaches_rejected: list(rejected_approach)
-    acceptance_criteria: list(plan_criterion)
+    acceptance_criteria: list(task_acceptance)
     next_action: text
   brief_decision: { id: ident, decision: text, rationale: text }
   rejected_approach: { id: ident, approach: text, reason: text, decision_ids: list(ident) }
@@ -107,7 +111,6 @@ schemas:
   next_action: { id: "uuid(generated)", text: text }
   assessment_finding:
     task_ids: list(ident)
-    criterion: optional(text)
     status: optional(enum(met, not_met, partial))
     evidence: list(evidence_ref)
     description: optional(text)
@@ -196,6 +199,7 @@ run:
         repository: each
         workspace: "require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace"
         cohorts: "filter(map(implementation, implementation.outcome), item.repository_key == each.key)"
+        briefs: "filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key)"
         final_merge_policy: input.final_merge_policy
   outcome: { cohorts: "map(implementation, implementation.outcome)", integrations: "map(integration, integration.outcome)" }
 
@@ -271,6 +275,12 @@ stages:
             message: Every cohort's repository_key must be the key of one of the run's repositories.
           - check: valid_graph(plan.cohorts, id, depends_on)
             message: Cohort ids must be unique idents, and each depends_on must name other cohorts without repeats or a cycle.
+          - check: every(plan.cohorts, every(item.acceptance_criteria, contains(map(input.tasks.tasks, item.id), item.id)))
+            message: Every cohort acceptance id must be the id of a task in the approved task list.
+          - check: every(map(input.tasks.tasks, item.id), contains(flatten(map(plan.cohorts, map(item.acceptance_criteria, item.id))), item))
+            message: Every task in the approved task list must appear in at least one cohort's acceptance_criteria.
+          - check: every(plan.cohorts, unique(map(item.acceptance_criteria, item.id)))
+            message: A task id may appear only once within a cohort's acceptance_criteria; repeating it in another cohort is valid.
     workers:
       planner:
         kind: agent
@@ -283,7 +293,7 @@ stages:
         of: plan
         by: operator
         prompt: development/plan-review.md
-        inputs: { spec: input.spec, plan: latest(plan) }
+        inputs: { spec: input.spec, tasks: input.tasks, plan: latest(plan) }
         decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the plan change?" } } } }
     done_when: approved(plan)
     outcome: { plan: latest(plan) }
@@ -300,6 +310,8 @@ stages:
             message: The brief's repository_key must be its plan cohort's.
           - check: brief.depends_on == input.cohort.depends_on
             message: The brief's depends_on must be its plan cohort's, in the same order.
+          - check: map(brief.acceptance_criteria, item.id) == map(input.cohort.acceptance_criteria, item.id)
+            message: The brief's acceptance_criteria ids must be its plan cohort's, in the same order.
     workers:
       writer:
         kind: agent
@@ -390,7 +402,7 @@ stages:
       build_result: latest(build_result)
 
   integration:
-    input: { repository: repository, workspace: workspace, cohorts: list(completed_cohort), final_merge_policy: final_merge_policy }
+    input: { repository: repository, workspace: workspace, cohorts: list(completed_cohort), briefs: list(brief_body), final_merge_policy: final_merge_policy }
     let:
       pr_published: published(pr)
       watch_base: input.repository.forge.final_base
@@ -408,7 +420,7 @@ stages:
       integrator:
         kind: agent
         prompts: { initial: development/integrate.md, revise: development/integrate-revise.md }
-        inputs: { repository: input.repository, cohorts: input.cohorts }
+        inputs: { repository: input.repository, cohorts: input.cohorts, briefs: input.briefs }
         workspace: repository(input.workspace)
         creates: [pr, assessment]
       pr_watch: { template: pr_watch }
@@ -433,7 +445,7 @@ stages:
         of: pr
         by: operator
         prompt: development/integration-review.md
-        inputs: { repository: input.repository, cohorts: input.cohorts, assessment: latest(assessment), pr: latest(pr), pr_state: latest(pr_state) }
+        inputs: { repository: input.repository, cohorts: input.cohorts, briefs: input.briefs, assessment: latest(assessment), pr: latest(pr), pr_state: latest(pr_state) }
         decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the integration change?" } } } }
       merge_confirmation:
         of: manual_merge_target
