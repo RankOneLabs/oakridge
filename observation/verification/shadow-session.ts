@@ -190,12 +190,20 @@ export interface DisposableRepository {
   readonly path: string;
   withhold(): Promise<Result<string, ProofFailure>>;
   supply(): Promise<Result<string, ProofFailure>>;
+  /** The file at `commit_sha`, read with git directly; null when the commit's tree has no such path. */
+  readAt(commit_sha: string, path: string): Promise<Result<string | null, ProofFailure>>;
 }
 
 function git(cwd: string, args: readonly string[]): Result<string, ProofFailure> {
   const child = Bun.spawnSync(["git", "-C", cwd, ...args], { timeout: STACK_START_TIMEOUT_MS });
   return child.exitCode === 0 ? ok(child.stdout.toString().trim())
     : failure("disposable_repository", cwd, child.stderr.toString().trim() || `git ${args[0]} did not finish`);
+}
+/** Untrimmed output, for file content. */
+function gitOutput(cwd: string, args: readonly string[]): Result<string, ProofFailure> {
+  const child = Bun.spawnSync(["git", "-C", cwd, ...args], { timeout: STACK_START_TIMEOUT_MS });
+  return child.exitCode === 0 ? ok(child.stdout.toString())
+    : failure("read_cited_file", cwd, child.stderr.toString().trim() || `git ${args[0]} did not finish`);
 }
 const exists = (path: string) => access(path).then(() => true, () => false);
 
@@ -226,5 +234,11 @@ export async function createDisposableRepository(source_path: string, directory:
       if (!await exists(withheld_path)) return failure("supply_repository", path, "neither in place nor withheld");
       await rename(withheld_path, path);
       return ok(`${withheld_path} moved back to ${path}`);
+    },
+    async readAt(commit_sha, file_path) {
+      const listed = gitOutput(path, ["--literal-pathspecs", "ls-tree", "--name-only", "-z", commit_sha, "--", file_path]);
+      if (!listed.ok) return listed;
+      if (!listed.value.split("\0").includes(file_path)) return ok(null);
+      return gitOutput(path, ["show", `${commit_sha}:${file_path}`]);
     } });
 }

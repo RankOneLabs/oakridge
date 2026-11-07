@@ -81,6 +81,8 @@ async function registrationSource(io: ProofIo, input: SourceRunInput, directory:
       const report = await sourceRunScenario(io, { input: disposable, directory: join(directory, `source-run-${label}`), through: "assessment", ...options });
       return { report, run: report.evidence.runs[0] ?? null };
     },
+    repository_key: primary.key,
+    readCited: (commit_sha, path) => repository.value.readAt(commit_sha, path),
     withholdRepository: () => repository.value.withhold(),
     supplyRepository: () => repository.value.supply(),
   };

@@ -469,7 +469,8 @@ describe("the registration scenario", () => {
   interface Occurrence { readonly run_id: string; readonly id: string; readonly revision_id: string; readonly item_path: string;
     readonly item_kind: string; readonly cites_file: boolean; pinned: string | null; ready_at: string | null }
   interface ShadowOptions { readonly repin_after_restart?: boolean; readonly executions?: number; readonly nothing_cited?: boolean;
-    readonly never_arrives?: boolean; readonly unstable_evidence?: boolean }
+    readonly never_arrives?: boolean; readonly unstable_evidence?: boolean; readonly drops_correctness?: boolean;
+    readonly wrong_commit?: boolean; readonly forgets_evidence?: boolean }
 
   /** A shadow whose observation registers whatever graders.json held when it last started, pins
    * each captured item with the selection running at its capture, and reads a cited file only
@@ -482,6 +483,7 @@ describe("the registration scenario", () => {
     let reads = 0;
     let clock = 0;
     let deferred: string | null = null;
+    let forgotten = false;
     const feed = caughtUp("assessment");
     const stored = new Set<string>();
     const occurrences: Occurrence[] = [];
@@ -496,10 +498,12 @@ describe("the registration scenario", () => {
       }
     };
     const questionsOf = (occurrence: Occurrence) => plan(options.repin_after_restart && running ? running : occurrence.pinned!).capture.pins
-      .filter((pin) => pin.item_kind === occurrence.item_kind);
+      .filter((pin) => pin.item_kind === occurrence.item_kind && !(options.drops_correctness && pin.question_id.endsWith("correctness")));
+    const isReady = (occurrence: Occurrence) => occurrence.ready_at !== null && !(forgotten && occurrence.run_id === "run-second" && !occurrence.cites_file
+      && occurrence.item_kind === FINDING_KIND);
     const references = (occurrence: Occurrence) => [{ ref: "subject", source: "revision", revision_id: occurrence.revision_id, item_path: occurrence.item_path,
-      content: options.unstable_evidence ? `read ${++reads}` : "finding" },
-      ...(occurrence.cites_file ? [{ ref: "citation:0", source: "repository", repository_key: "oakridge", commit_sha: "abc", path: "core/a.ts",
+      content: { evidence: occurrence.cites_file ? [{ kind: "file", ref: "core/a.ts:2-3" }] : [], ...options.unstable_evidence ? { read: ++reads } : {} } },
+      ...(occurrence.cites_file ? [{ ref: "citation:0", source: "repository", repository_key: "oakridge", commit_sha: options.wrong_commit ? "def" : "abc", path: "core/a.ts",
         line_range: { start: 2, end: 3 }, is_absent: false, content: "two\nthree" }] : [])];
     const io = fakeIo({
       now: () => clock,
@@ -517,7 +521,9 @@ describe("the registration scenario", () => {
       killObservation: () => { killed = true; },
       kbblHealth: async () => kbblHealth(running && !killed ? { state: "configured", graders: plan(running).graders.map((grader) =>
         ({ runner: grader.runner, evaluatorDefinitionId: grader.evaluator_definition_id })) } : { state: "down", reason: "unreachable" }),
-      shadowQuery: async (_database, query) => ok(query.includes("evaluator_definition_id") ? JSON.stringify([...stored])
+      shadowQuery: async (_database, query) => ok(query.includes("head_sha") ? JSON.stringify(Object.fromEntries(occurrences
+        .filter((entry) => entry.revision_id.startsWith("assessment") && query.includes(entry.run_id)).map((entry) => [entry.revision_id, "abc"])))
+        : query.includes("evaluator_definition_id") ? JSON.stringify([...stored])
         : query.includes("grading_provider_attempt") ? JSON.stringify({ executions: options.executions ?? 0, attempts: 0, requests_sent: 0, answers: 0 })
           : query.includes("source_event_outcome") ? JSON.stringify(feed.outcomes) : JSON.stringify(feed.events)),
       observationGet: async (path) => {
@@ -530,7 +536,7 @@ describe("the registration scenario", () => {
         const occurrence = occurrences.find((entry) => path.includes(`/v1/items/${entry.id}/`))!;
         return ok({ items: questionsOf(occurrence).map((pin) => ({ evidence_set_id: `${occurrence.id}:${pin.question_id}`, question_id: pin.question_id,
           question_version: pin.question_version, pinned_evaluator_definition_ids: pin.evaluator_definition_ids,
-          readiness: occurrence.ready_at ? { state: "ready", ready_at: occurrence.ready_at, references: references(occurrence) }
+          readiness: isReady(occurrence) ? { state: "ready", ready_at: occurrence.ready_at, references: references(occurrence) }
             : { state: "not_ready", reason: { code: occurrence.cites_file ? "repository_unavailable" : "collection_pending" } } })) });
       },
     });
@@ -548,10 +554,13 @@ describe("the registration scenario", () => {
           capture(run_id, `analysis-${run_id}`);
           for (let turn = 0; turn < 5; turn++) await tick();
           capture(run_id);
+          forgotten = Boolean(options.forgets_evidence);
         }
         return { run: { run_id, definition_id: "development" }, report: { id: "source-run", status: launched.passed ? "passed" : "failed",
           checks: [launched], evidence: NO_EVIDENCE } };
       },
+      repository_key: "oakridge",
+      readCited: async (commit_sha, path) => ok(commit_sha === "abc" && path === "core/a.ts" ? "one\ntwo\nthree\nfour" : null),
       withholdRepository: async () => { withheld = true; return ok("withheld"); },
       supplyRepository: async () => { withheld = false; return ok("supplied"); },
     };
@@ -595,6 +604,24 @@ describe("the registration scenario", () => {
     const stack = shadow({ unstable_evidence: true });
     expect(failing(await registrationScenario(stack.io, stack.source)))
       .toContain("evidence frozen earlier in the second run is unchanged by every later revision and task link captured in it");
+  });
+
+  test("an item missing one of its questions' pins fails the proof", async () => {
+    const stack = shadow({ drops_correctness: true });
+    expect(failing(await registrationScenario(stack.io, stack.source)))
+      .toContain("each first item has exactly its questions, pinned to the selection in force at its capture");
+  });
+
+  test("evidence frozen earlier that is no longer ready fails the proof", async () => {
+    const stack = shadow({ forgets_evidence: true });
+    expect(failing(await registrationScenario(stack.io, stack.source)))
+      .toContain("evidence frozen earlier in the second run is unchanged by every later revision and task link captured in it");
+  });
+
+  test("a cited file served at another commit than the assessment's fails the proof", async () => {
+    const stack = shadow({ wrong_commit: true });
+    expect(failing(await registrationScenario(stack.io, stack.source)))
+      .toContain("their evidence reads each cited file at the assessed commit, with the content the repository holds there");
   });
 
   test("an execution created by capture or restart fails the proof", async () => {
