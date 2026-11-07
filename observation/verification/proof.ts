@@ -87,9 +87,14 @@ async function main(): Promise<number> {
   const scenario = async (): Promise<ScenarioReport> => {
     if (command === "runtime") return runtimeScenario(io);
     if (command === "live") return liveScenario(io);
-    if (!values.input) throw new Error(`${command} needs --input`);
     const through = values.through ?? (command === "registration" ? "plan" : "brief");
     if (through !== "plan" && through !== "brief" && through !== "assessment") throw new Error("invalid --through");
+    // Without an input, registration still proves startup, the swap and retention on the real
+    // service, and fails its capture checks rather than claiming them.
+    if (command === "registration" && !values.input) return registrationScenario(io, async () => ({ run: null,
+      report: { id: "source-run", status: "not_run", evidence: NO_EVIDENCE, checks: [{ name: "a source-run input was given", passed: false,
+        detail: "no --input: no real run was captured" }] } }));
+    if (!values.input) throw new Error(`${command} needs --input`);
     const input = sourceRunInputSchema.parse(await Bun.file(values.input).json());
     if (command === "registration") return registrationScenario(io, async (label) => {
       const report = await sourceRunScenario(io, { input, directory: join(directory, `source-run-${label}`), through });
