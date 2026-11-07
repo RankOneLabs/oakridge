@@ -385,7 +385,9 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
     const supplied = await source.supplyRepository();
     checks.push(check("the withheld repository is supplied", supplied.ok, supplied.ok ? supplied.value : supplied.error.detail));
     if (!supplied.ok || !await startOn("edited, repository supplied", edited)) return finish();
-    const arrival = await settle(assessed.run_id, "assessment-after-arrival");
+    const waitedKeys = new Set(waited.map((measurement) => `${measurement.evidence_set_id} ${measurement.evaluator_definition_id}`));
+    const arrival = await settle(assessed.run_id, "assessment-after-arrival", (read) => settledRun(read)
+      && read.every((measurement) => !waitedKeys.has(`${measurement.evidence_set_id} ${measurement.evaluator_definition_id}`) || measurement.state !== "not_ready"));
     checks.push(...pinnedArrivalChecks(waited, arrival.read, committed, edited));
 
     // 6. A later capture under the edit: new evaluators, and one request per run allowance.
