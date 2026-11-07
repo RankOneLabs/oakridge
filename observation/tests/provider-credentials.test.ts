@@ -1,0 +1,52 @@
+import { expect, test } from "bun:test";
+import { allProviderCredentialNames, configuredRunnerNames, credentialsForRunners, parseEnvFile,
+  selectProviderEnvironment } from "../src/grading/provider-credentials";
+import { runnerRegistry } from "../src/grading/runner";
+
+const graders = (...runners: string[]) => ({ questions: [{ id: "q", graders: runners.map((runner) => ({ runner, model: "m" })) }] });
+
+test("every retained runner declares what it reads", () => {
+  expect(allProviderCredentialNames().toSorted()).toEqual(["FASTINO_API_KEY", "FASTINO_BASE_URL", "OBSERVATION_LLM_JUDGE_API_KEY",
+    "OBSERVATION_LLM_JUDGE_BASE_URL", "TYPESAFE_API_KEY", "TYPESAFE_BASE_URL"]);
+  expect(Object.keys(runnerRegistry).toSorted()).toEqual(["fastino_glide", "jev_direct", "llm_judge"]);
+});
+
+test("the configured runners are read from the grader selection, once each", () => {
+  expect(configuredRunnerNames(graders("jev_direct", "llm_judge", "jev_direct"))).toEqual({ ok: true, value: ["jev_direct", "llm_judge"] });
+});
+
+test("a selection without runners is invalid rather than empty", () => {
+  expect(configuredRunnerNames({ questions: [{ graders: [] }] })).toMatchObject({ ok: false, error: { kind: "invalid_graders" } });
+});
+
+test("an unknown runner fails instead of selecting nothing for it", () => {
+  expect(credentialsForRunners(["jev_direct", "imaginary"])).toMatchObject({ ok: false, error: { kind: "unknown_runner", entity_id: "imaginary" } });
+});
+
+test("only the configured runners' settings are selected", () => {
+  const requirements = credentialsForRunners(["jev_direct"]);
+  if (!requirements.ok) throw new Error("jev_direct is retained");
+  const entries = parseEnvFile("TYPESAFE_API_KEY=key\nTYPESAFE_BASE_URL=http://provider\nFASTINO_API_KEY=other\nOBSERVATION_DATABASE_URL=postgres://live\n");
+  const selected = selectProviderEnvironment(requirements.value, entries);
+  expect(selected.ok && [...selected.value]).toEqual([["TYPESAFE_API_KEY", "key"], ["TYPESAFE_BASE_URL", "http://provider"]]);
+});
+
+test("a missing required setting names the setting and no value", () => {
+  const requirements = credentialsForRunners(["jev_direct", "fastino_glide"]);
+  if (!requirements.ok) throw new Error("both runners are retained");
+  const selected = selectProviderEnvironment(requirements.value, parseEnvFile("FASTINO_API_KEY=secret-value\nTYPESAFE_API_KEY=\n"));
+  expect(selected).toMatchObject({ ok: false, error: { kind: "missing_credential", entity_id: "TYPESAFE_API_KEY" } });
+  expect(JSON.stringify(selected)).not.toContain("secret-value");
+});
+
+test("no configured runner selects nothing", () => {
+  const requirements = credentialsForRunners([]);
+  if (!requirements.ok) throw new Error("an empty selection cannot fail");
+  const selected = selectProviderEnvironment(requirements.value, parseEnvFile("TYPESAFE_API_KEY=key\n"));
+  expect(selected.ok && selected.value.size).toBe(0);
+});
+
+test("assignments are read as data, never expanded or executed", () => {
+  const entries = parseEnvFile([`export A="quoted value"`, `B='$(touch pwned)'`, "C=$(touch pwned)", "D=plain # comment", "# E=hidden", "not an assignment"].join("\n"));
+  expect([...entries]).toEqual([["A", "quoted value"], ["B", "$(touch pwned)"], ["C", "$(touch pwned)"], ["D", "plain"]]);
+});

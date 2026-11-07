@@ -104,6 +104,7 @@ jobs:
       - run: bun kbbl/scripts/generate-operator-contracts.ts --check
       - run: bunx tsc --noEmit -p kbbl/tsconfig.json
       - run: bunx tsc --noEmit -p observation/tsconfig.json
+      - run: bunx tsc --noEmit -p scripts/tsconfig.json
 
   kbbl-tests:
     name: kbbl backend tests (bun)
@@ -115,6 +116,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run --filter kbbl test
+      - run: bun run test:scripts
 
   kbbl-pwa-tests:
     name: kbbl PWA tests (vitest)

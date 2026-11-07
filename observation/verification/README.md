@@ -1,24 +1,88 @@
-# Live verification records
+# Live verification
 
-The prepared `pr.json` and `build_result.json` are artifact bodies awaiting
-republication. The original task secret was refused with HTTP 401 after its
-builder attempt had already succeeded. No PR artifact revision was recorded,
-so the build result was not sent out of order. A current task credential is
-required; these files contain no credentials.
+One program, `proof.ts`, holds every live proof. It runs on the stack that
+`scripts/oakridge-shadow` starts and reuses that shadow's resolved state across
+scenarios and restarts. There is no second launcher, database setup or capability
+set: extend these scenarios rather than adding another entrypoint. Real provider
+requests happen only here, never in an offline test command.
 
-The verified source run is `run-5ca31bc6c2414610`; `latest.json` locates its
-committed capture, original authority rows and HTTP readback report. Real
-TypeSafe execution `9bdc9b8d-9c7b-4065-b663-7b35a56adae6` answered
-`traceable` (confidence 0.88): probabilities 0.92 traceable, 0.04 unsupported,
-0.04 unclear_insufficient_evidence. The report retains the question, evidence,
-evaluator, execution, raw answer and provider attempt metadata obtained from
-authenticated HTTP response bodies. The provider returned no request ID;
-the stored attempt records that absence as null, alongside its actual local
-job ID, attempt, completed status and admitted cost estimate.
+```sh
+bun observation/verification/proof.ts runtime
+bun observation/verification/proof.ts live
+bun observation/verification/proof.ts source-run --input input.json [--through plan|brief|assessment]
+```
 
-`gated-review-tools.json` is the endpoint proof: the complete `tools/list`
-result from the exact `OAKRIDGE_GATED_REVIEW_URL` every agent session receives.
-The server has no client authentication, so the check sends no credential:
+Configure the shadow with the usual `OAKRIDGE_SHADOW_*` variables. Set
+`OAKRIDGE_SHADOW_PROVIDER_ENV_FILE` when running from a worktree, which has no
+`observation/.env` of its own. The program takes its paths and ports from
+`scripts/oakridge-shadow --print-state`, and reads token files from that state
+directory only.
+
+Each proof writes `reports/<proof_id>/report.json`, and exits zero only if the
+requested scenario passed. A failed proof keeps its report and `launcher.log`,
+which is not committed.
+
+| Scenario | What it proves | Stack |
+| --- | --- | --- |
+| `runtime` | Isolation and supervision on the real services: shadow-owned role, database, ports and tokens; kbbl reporting observation down after it is killed; DBOS serving and a real run launching and canceling meanwhile; the run not reading as captured meanwhile; a restart reusing the same state; ordered delivery catching up to the authority and covering that run. | Starts and stops its own, and refuses a running one. |
+| `live` | The prerequisites of a real-provider proof: a reachable service, registered graders and both kbbl capabilities. | Attaches to a running stack, or starts one. |
+| `source-run` | Launches the committed development workflow to its target artifact, cancels it, and requires the ordered feed to cover the run. Retains `run.json`, `inspect.json` and `authority-rows.json` under `source-run/`. Spends real agent turns and needs the installed Codex agent's authentication. | Attaches, or starts one. |
+
+`live` fails on a missing key, invalid grader or unavailable database, with the
+launcher's reason in its checks, even though DBOS and kbbl stay up. It also fails
+today on a healthy service, which reports `no_configured_graders` until startup
+registration exists.
+
+`source-run` checks that observation is reachable before it launches, so a service
+already down fails without spending a turn. After canceling, it waits up to two
+minutes for `run-capture.ts` to find every authority event of the run recorded by the
+service, none of them `unmapped`, the service cursor at or past the run's last event,
+and the target revision served back through the read capability. A cursor alone is
+not enough, and neither is a run that reached its target on a healthy DBOS and kbbl.
+A failure keeps `run_capture` in the report: the undelivered event ids, unmapped
+reasons, failed reads, observation health, the launcher's status and the publisher's
+latest refusals. Those refusals appear only when this proof started the stack, since
+only then does it hold the launcher's log.
+
+## Contracts
+
+`proof-contract.ts` holds the named types: `LauncherState` is what `--print-state`
+emits, `ObservationStatus` is `observation-status.json`, and `ProofReport` is the
+report. `shadow-session.ts` holds all IO behind `ProofIo`, so scenario logic is
+tested offline in `observation/tests/verification-proof.test.ts`.
+
+A report records the source revision, the resolved launcher state, each check, and
+`ScenarioEvidence`: run and definition ids, the authority head and service cursor,
+the run's event-by-event capture, authority event counts, source revisions, item paths, pinned definitions,
+execution, provider-attempt and observation ids, the provider request count and
+PWA readback. Every value is read back from a running service. A value not yet
+observed stays empty or null: a provider that returns no request id records null,
+and `provider_request_count` is null until a scenario counts requests. Reports
+carry no token, key or connection secret; `runProof` scans for those values,
+removes any it finds and fails the report.
+
+## What remains
+
+`pending` in every report lists what this program does not prove yet, so a passed
+`runtime` report cannot read as a complete proof. The first complete case is one
+assessment finding from a fresh service through startup registration, the ordered
+capture feed, exact evidence, and a real provider answer and an authenticated human
+answer both visible in the PWA without task or cohort context. The wider matrix then
+runs on the same state: on/off, readiness, pin swap, recovery, budget, correction,
+failure, lineage and composites, and reveal.
+
+| Pending scenario | Owner |
+| --- | --- |
+| `registration-pins-evidence` | configured-question-evidence |
+| `real-provider-requests-and-recovery` | automatic-execution-lifecycle |
+| `relations-and-composites` | task-lineage-composites |
+| `first-assessment-finding-end-to-end`, `human-grading-and-pwa-readback` | operator-item-workspace |
+
+## Review endpoint
+
+`gated-review-tools.json` is the endpoint proof: the complete `tools/list` result
+from the exact `OAKRIDGE_GATED_REVIEW_URL` every agent session receives. The server
+has no client authentication, so the check sends no credential:
 
 ```sh
 OAKRIDGE_GATED_REVIEW_URL=<url> bun observation/verification/gated-review-tools.ts \
@@ -27,35 +91,9 @@ OAKRIDGE_GATED_REVIEW_URL=<url> bun observation/verification/gated-review-tools.
 
 It negotiates a real MCP session, follows every continuation page and calls no
 tool. The report retains the server's initialize and `tools/list` results, the
-advertised names and its assertions: `merge_pr` and `mark_merge_ready` are
-absent, the agent catalogue is present, and `selectMcpServers` supplies the URL
-unchanged with no header. Status is `passed`, `failed` for a complete list that
-breaks an assertion, or `incomplete` for a missing or unreachable endpoint,
-protocol failure or unfinished list. Only `passed` exits zero. The check needs
-no database, launcher or provider, and the shared shadow verification report
-retains this file.
-
-Launch an isolated source run with the installed Codex ACP agent's ordinary
-authentication, `OAKRIDGE_TEST_DATABASE_URL` and `OAKRIDGE_GATED_REVIEW_URL`:
-
-```sh
-bun oakridge-dbos/scripts/live-source-run.ts --input input.json \
-  --output observation/verification --through brief
-```
-
-`input.json` has the committed development workflow's input shape. Its
-repository must have an existing remote build base. Preparation and per-agent
-base refreshes use gated-review's `git.fetch`; no source-run helper runs a
-remote git shell command. Agents run through the production ACP service and
-session handlers, in separate local worktrees. Planning reviews are accepted
-only within this fresh run. `--through assessment` also accepts brief reviews
-and permits the input's actual build, stopping before assessment approval or
-integration. The selected run is canceled after its target artifact arrives.
-
-Each new directory retains `run.json`, the exact ordered production
-`SourceEventDelivery[]` in `capture.json`, `inspect.json`, the selected run's
-actual `authority-rows.json`, and a `complete.json` marker. Both fresh databases
-remain available; their names are recorded, without connection secrets. The
-isolated ACP ledger and worktrees are retained locally under ignored `agents/`.
-An interrupted or failed run retains its partial capture and latest inspect
-response without claiming completion. `/tmp` is refused as an output root.
+advertised names and its assertions: `merge_pr` and `mark_merge_ready` are absent,
+the agent catalogue is present, and `selectMcpServers` supplies the URL unchanged
+with no header. Status is `passed`, `failed` for a complete list that breaks an
+assertion, or `incomplete` for a missing or unreachable endpoint, protocol failure
+or unfinished list. Only `passed` exits zero. The check needs no database, launcher
+or provider.

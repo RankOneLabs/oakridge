@@ -34,17 +34,20 @@ export interface EvaluationOutcome {
 }
 export type RunnerResult = Result<EvaluationOutcome, GradingError>;
 
+/** The environment names a runner reads: what must be set, and what it may also use. */
+export interface RunnerCredentials { readonly required: readonly string[]; readonly optional: readonly string[] }
 export interface RunnerRegistryEntry {
   readonly kind: "code" | "model";
+  readonly credentials: RunnerCredentials;
   readonly factory: (deadline_ms: number, env: NodeJS.ProcessEnv) => GradeRunner;
 }
 
 export const runnerRegistry = {
-  jev_direct: { kind: "model", factory: (deadline_ms, env) => createJevDirectRunner({
+  jev_direct: { kind: "model", credentials: { required: ["TYPESAFE_API_KEY"], optional: ["TYPESAFE_BASE_URL"] }, factory: (deadline_ms, env) => createJevDirectRunner({
     base_url: env.TYPESAFE_BASE_URL ?? "https://api.typesafe.ai/v1", api_key: env.TYPESAFE_API_KEY, deadline_ms }) },
-  fastino_glide: { kind: "model", factory: (deadline_ms, env) => createFastinoGlideRunner({
+  fastino_glide: { kind: "model", credentials: { required: ["FASTINO_API_KEY"], optional: ["FASTINO_BASE_URL"] }, factory: (deadline_ms, env) => createFastinoGlideRunner({
     base_url: env.FASTINO_BASE_URL ?? FASTINO_SYSTEM_ONE_BASE_URL, api_key: env.FASTINO_API_KEY, deadline_ms }) },
-  llm_judge: { kind: "model", factory: (deadline_ms, env) => createLlmJudgeRunner({
+  llm_judge: { kind: "model", credentials: { required: ["OBSERVATION_LLM_JUDGE_API_KEY"], optional: ["OBSERVATION_LLM_JUDGE_BASE_URL"] }, factory: (deadline_ms, env) => createLlmJudgeRunner({
     api_key: env.OBSERVATION_LLM_JUDGE_API_KEY,
     base_url: env.OBSERVATION_LLM_JUDGE_BASE_URL ?? "https://api.openai.com/v1", deadline_ms }) },
 } satisfies Record<string, RunnerRegistryEntry>;
