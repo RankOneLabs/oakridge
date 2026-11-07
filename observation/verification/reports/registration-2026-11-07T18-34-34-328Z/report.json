@@ -1,0 +1,136 @@
+{
+  "proof_id": "registration-2026-11-07T18-34-34-328Z",
+  "started_at": "2026-11-07T18:34:34.436Z",
+  "finished_at": "2026-11-07T18:47:28.597Z",
+  "source": {
+    "git_head": "35d68538002b07532c95879a9ae3a98d5c01fa26",
+    "worktree_clean": true
+  },
+  "launcher": {
+    "name": "shadow",
+    "state_dir": "/home/steve/.local/state/oakridge-shadow",
+    "kbbl": {
+      "port": 8798,
+      "url": "http://127.0.0.1:8798",
+      "data_dir": "/home/steve/.local/state/oakridge-shadow/kbbl"
+    },
+    "dbos": {
+      "port": 8800,
+      "url": "http://127.0.0.1:8800"
+    },
+    "postgres": {
+      "container": "oakridge-shadow-postgres",
+      "volume": "oakridge-shadow-postgres-data",
+      "port": 54339,
+      "authority_database": "oakridge"
+    },
+    "observation": {
+      "port": 8801,
+      "url": "http://127.0.0.1:8801",
+      "database": "observation",
+      "namespace": "shadow-shadow",
+      "ingest_token_file": "/home/steve/.local/state/oakridge-shadow/observation-ingest.token",
+      "read_token_file": "/home/steve/.local/state/oakridge-shadow/observation-read.token",
+      "grade_token_file": "/home/steve/.local/state/oakridge-shadow/observation-grade.token",
+      "status_file": "/home/steve/.local/state/oakridge-shadow/observation-status.json"
+    },
+    "provider_env_file": "/home/steve/codes/rol/oakridge/observation/.env"
+  },
+  "status": "failed",
+  "scenario": {
+    "id": "registration",
+    "status": "failed",
+    "checks": [
+      {
+        "name": "the stack starts (committed)",
+        "passed": true,
+        "detail": "answered"
+      },
+      {
+        "name": "observation is reachable (committed)",
+        "passed": true,
+        "detail": "health configured; launcher running: pid_2786876"
+      },
+      {
+        "name": "startup registered the configured graders (committed)",
+        "passed": true,
+        "detail": "jev_direct:canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4, jev_direct:canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420, jev_direct:canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047"
+      },
+      {
+        "name": "the first run reaches its assessment on the real stack",
+        "passed": false,
+        "detail": "the run reaches its target: needs intervention: {\"kind\":\"stalled_worker\",\"unit_id\":\"run-43f0aa53074446a6/implementation/audit\",\"worker\":\"pr_watch\",\"action_id\":\"621b6cd8f3330242fd2d76b6c388701e\",\"detail\":\"pull request #790 has base epic/grade-pray, not cohort/configured-question-evidence/79693b\",\"decisions\":[{\"key\":\"retry:pr_watch\",\"label\":\"Retry Pr Watch\",\"payload_schema\":\"{}\",\"fields\":[],\"submit\":{\"kind\":\"retry\",\"worker\":\"pr_watch\"}}]}"
+      }
+    ],
+    "evidence": {
+      "runs": [
+        {
+          "run_id": "run-43f0aa53074446a6",
+          "definition_id": "4a2facdb9c6ea9abbdb263a35aee19357744057896da226ff17d319f8eb600c5"
+        }
+      ],
+      "capture": null,
+      "run_capture": null,
+      "authority": null,
+      "source_revisions": [],
+      "item_paths": [],
+      "pinned_definitions": [],
+      "execution_ids": [],
+      "provider_attempt_ids": [],
+      "observation_ids": [],
+      "provider_request_count": null,
+      "pwa_readback": [],
+      "registrations": [
+        {
+          "checkpoint": "committed",
+          "graders": [
+            {
+              "runner": "jev_direct",
+              "evaluator_definition_id": "canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4"
+            },
+            {
+              "runner": "jev_direct",
+              "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420"
+            },
+            {
+              "runner": "jev_direct",
+              "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047"
+            }
+          ],
+          "stored_evaluator_definition_ids": [
+            "canonical-json/v1:201db21b6ba0b2161b298685243728719d79cb87b04903c095d596ce4498e20d",
+            "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+            "canonical-json/v1:394309ec577d79ab209b67ebf003fb5dba5fd57104a2cd17e205d72e3dc40273",
+            "canonical-json/v1:50d09be45aa536ca9c127764c8435374f0ae050ebfde0877e329b793bafa7527",
+            "canonical-json/v1:65540fcbf2d10c5884e8bb70c38a85ca2b080504db7f32fbd6bed8df62061fb1",
+            "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+            "canonical-json/v1:908a2ce4c66ce611e113f40e39c3d87b3cf47ef4b5dc0d1cc211bcfe15fc18ba",
+            "canonical-json/v1:96143771fb4b5f227fbf98b39b57e1c718474d644d696117e91542e464c95e1a",
+            "canonical-json/v1:b8b420f076b99073b5ec1fe15a6bf020a940dd43c47a17ac542955e082aa68ed",
+            "canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4"
+          ]
+        }
+      ],
+      "pins": [],
+      "frozen_evidence": []
+    }
+  },
+  "pending": [
+    {
+      "id": "real-provider-requests-and-recovery",
+      "owner": "automatic-execution-lifecycle"
+    },
+    {
+      "id": "relations-and-composites",
+      "owner": "task-lineage-composites"
+    },
+    {
+      "id": "first-assessment-finding-end-to-end",
+      "owner": "operator-item-workspace"
+    },
+    {
+      "id": "human-grading-and-pwa-readback",
+      "owner": "operator-item-workspace"
+    }
+  ]
+}
