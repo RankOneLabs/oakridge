@@ -53,6 +53,35 @@ test("a path missing from a readable commit is absent; an unreadable commit or r
   expect(await reader.hasCommit(other, "not-a-sha; rm -rf /")).toBe(false);
 });
 
+/** Deletes a loose object, as a damaged or partially fetched clone would lack it. */
+async function removeObject(repository_path: string, object: string): Promise<void> {
+  const id = git(repository_path, "rev-parse", object);
+  await rm(join(repository_path, ".git", "objects", id.slice(0, 2), id.slice(2)));
+}
+
+test("a readable commit whose tree or file object is missing makes the lookup unavailable, never absent", async () => {
+  const damaged = await repository("damaged", { "deep/inner.ts": "inner\n", "flat.ts": "flat\n" });
+  await removeObject(damaged.path, `${damaged.commit}:deep`);
+  await removeObject(damaged.path, `${damaged.commit}:flat.ts`);
+  const reader = createGitRepositoryReader();
+  expect(await reader.readFile({ repository_path: damaged.path, commit_sha: damaged.commit, path: "deep/inner.ts" }))
+    .toMatchObject({ state: "unavailable" });
+  expect(await reader.readFile({ repository_path: damaged.path, commit_sha: damaged.commit, path: "flat.ts" }))
+    .toMatchObject({ state: "unavailable" });
+  expect(await reader.readFile({ repository_path: damaged.path, commit_sha: damaged.commit, path: "gone.ts" })).toEqual({ state: "absent" });
+});
+
+test("a failed listing is unavailable and only an empty one is absent", async () => {
+  const commit = "a".repeat(40);
+  const reader = (listing: { code: number; stdout: string }) => createGitRepositoryReader(async (_path, args) =>
+    args.includes("ls-tree") ? { ...listing, stderr: "fatal: unable to read tree" }
+      : args[1] === "-p" ? { code: 0, stdout: "content", stderr: "" } : { code: 0, stdout: "", stderr: "" });
+  const request = { repository_path: "/r", commit_sha: commit, path: "src/a.ts" };
+  expect(await reader({ code: 128, stdout: "" }).readFile(request)).toEqual({ state: "unavailable", detail: "fatal: unable to read tree" });
+  expect(await reader({ code: 0, stdout: "" }).readFile(request)).toEqual({ state: "absent" });
+  expect(await reader({ code: 0, stdout: "100644 blob abc\tsrc/a.ts\0" }).readFile(request)).toEqual({ state: "present", content: "content" });
+});
+
 test("a path that leaves the tree never addresses a file", async () => {
   expect(await createGitRepositoryReader().readFile({ repository_path: other, commit_sha: cited_commit, path: "../primary/src/alpha.ts" }))
     .toEqual({ state: "absent" });

@@ -19,10 +19,14 @@ const spawnGit: Git = async (repository_path, args) => {
 /** A path inside the commit's tree. Parent steps and absolute paths never address one. */
 const isTreePath = (path: string): boolean => path.length > 0 && !path.startsWith("/") && !path.split("/").includes("..");
 
+/** Whether `git ls-tree -z` output holds an entry for exactly this path. */
+const listsPath = (listing: string, path: string): boolean =>
+  listing.split("\0").some((entry) => entry.slice(entry.indexOf("\t") + 1) === path);
+
 /**
- * Reads files at an exact commit with `git cat-file`, never from a worktree. A readable commit
- * without the path is `absent`, which is evidence; a repository or commit that cannot be read is
- * `unavailable`, which makes the question that needed it wait.
+ * Reads files at an exact commit with `git ls-tree` and `git cat-file`, never from a worktree. A readable commit
+ * without the path is `absent`, which is evidence; a repository, commit, tree or object that cannot be read
+ * is `unavailable`, which makes the question that needed it wait.
  */
 export function createGitRepositoryReader(git: Git = spawnGit): RepositoryReader {
   const hasCommit = async (repository_path: string, commit_sha: string): Promise<boolean> =>
@@ -33,11 +37,13 @@ export function createGitRepositoryReader(git: Git = spawnGit): RepositoryReader
       if (!await hasCommit(repository_path, commit_sha))
         return { state: "unavailable", detail: `commit ${commit_sha} is not readable in ${repository_path}` };
       if (!isTreePath(path)) return { state: "absent" };
-      const object = `${commit_sha}:${path}`;
-      const kind = await git(repository_path, ["cat-file", "-t", object]);
-      if (!kind) return { state: "unavailable", detail: "git could not be run" };
-      if (kind.code !== 0) return { state: "absent" };
-      const content = await git(repository_path, ["cat-file", "-p", object]);
+      // Listing the path's entry tells absence apart from a tree git cannot read: an empty listing
+      // is absence, a failed one is unavailability.
+      const listed = await git(repository_path, ["--literal-pathspecs", "ls-tree", "-z", commit_sha, "--", path]);
+      if (!listed) return { state: "unavailable", detail: "git could not be run" };
+      if (listed.code !== 0) return { state: "unavailable", detail: listed.stderr.trim() || `the tree of ${commit_sha} could not be read` };
+      if (!listsPath(listed.stdout, path)) return { state: "absent" };
+      const content = await git(repository_path, ["cat-file", "-p", `${commit_sha}:${path}`]);
       return content?.code === 0 ? { state: "present", content: content.stdout }
         : { state: "unavailable", detail: content?.stderr.trim() || "git could not be run" };
     },
