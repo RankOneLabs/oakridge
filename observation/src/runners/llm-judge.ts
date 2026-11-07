@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { err, ok, type JsonValue } from "../domain/primitives";
+import { providerEvidence } from "../grading/evidence";
 import type { QuestionDefinition } from "../grading/question";
 import type { GradingContext, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
@@ -44,7 +45,7 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
       return failure(context, "judge question requires an explicit unclear choice", "invalid_choice");
     const instruction = parsedInstruction(context.evaluator.instruction_text);
     if (!instruction) return failure(context, "judge instruction is invalid", "invalid_request");
-    const evidence = JSON.stringify(context.evidence.references.map(({ ref, content }) => ({ ref, content })));
+    const evidence = JSON.stringify(context.evidence.references.map((reference) => ({ ref: reference.ref, ...providerEvidence(reference) })));
     if (evidence.length > instruction.max_evidence_chars)
       return failure(context, "judge evidence exceeds its pinned bound", "invalid_request");
     const prompt = { rubric: instruction.rubric, allowed_values: values, evidence,

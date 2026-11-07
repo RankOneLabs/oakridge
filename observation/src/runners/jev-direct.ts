@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { err, ok, type JsonValue } from "../domain/primitives";
+import { providerEvidence } from "../grading/evidence";
 import type { QuestionDefinition } from "../grading/question";
 import type { GradingContext, GradingError, ProviderFailureCategory, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
@@ -76,7 +77,7 @@ export function systemOneRequest(context: GradingContext): ReturnType<typeof sys
   const state: Record<string, JsonValue> = { ...recipe.data.state_fields };
   for (const reference of context.evidence.references) {
     if (Object.hasOwn(state, reference.ref)) return systemOneRequestSchema.safeParse(null);
-    state[reference.ref] = reference.content;
+    state[reference.ref] = providerEvidence(reference);
   }
   return systemOneRequestSchema.safeParse({ model: context.evaluator.model, state,
     questions: { [context.question.question_id]: recipe.data.system_one } });

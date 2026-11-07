@@ -42,6 +42,24 @@ export interface ReportedEvidence extends ReferenceFields {
 }
 export type EvidenceReference = RevisionEvidence | RunInputEvidence | RepositoryEvidence | ReportedEvidence;
 
+type JsonObject = { readonly [key: string]: JsonValue };
+/** One reference as every provider is shown it, under its `ref`: the content together with its
+ * source and exact provenance. A file missing at its commit says `is_absent: true` rather than
+ * arriving as a bare null. */
+export function providerEvidence(reference: EvidenceReference): JsonObject {
+  switch (reference.source) {
+    case "revision": return { source: reference.source, revision_id: reference.revision_id, item_path: reference.item_path,
+      content: reference.content };
+    case "run_input": return { source: reference.source, run_id: reference.run_id, input_path: reference.input_path,
+      content: reference.content };
+    case "repository": return { source: reference.source, repository_key: reference.repository_key, commit_sha: reference.commit_sha,
+      path: reference.path, line_range: reference.line_range ? { start: reference.line_range.start, end: reference.line_range.end } : null,
+      is_absent: reference.is_absent, content: reference.content };
+    case "reported": return { source: reference.source, reported_by: reference.reported_by, revision_id: reference.revision_id,
+      item_path: reference.item_path, content: reference.content };
+  }
+}
+
 /** One question and the full evaluator set an occurrence of its item kind is pinned to when captured. */
 export interface CapturePin extends QuestionKey {
   readonly item_kind: string;

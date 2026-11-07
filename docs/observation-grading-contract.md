@@ -119,6 +119,14 @@ A reference records where its content came from, without digests or classificati
 - `reported`: text the producer's agent reported, passed through and never independently verified.
   It keeps the exact `revision_id` and `item_path` it was reported at.
 
+A provider is shown each reference under its label with its source, every provenance field and its
+content (`providerEvidence` in `observation/src/grading/evidence.ts`): System One runners as one
+`state` entry per label, the judge as one list entry per label. A file missing at its commit arrives
+as `is_absent: true` with `content: null`, and a range as its `line_range`. The committed
+`graders.json` instructions describe that shape: the finding is `state.subject`, and
+`reported` entries are the agent's own report. `observation/tests/provider-input.test.ts` captures
+the request each retained runner sends through an injected transport.
+
 Repository files are read with `git cat-file` at the exact commit, never from a worktree
 (`observation/src/storage/git-repository-reader.ts`). A path missing from a readable commit is
 `absent`. A repository or commit that cannot be read makes the question that needed it wait with
