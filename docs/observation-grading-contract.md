@@ -257,18 +257,25 @@ On the shadow, through `observation/verification/proof.ts`:
 
 - `live` passed (`observation/verification/reports/live-2026-11-07T16-59-47-486Z`): the service
   started from `graders.json` and reported its three configured graders.
-- `registration` now forces a real wait: it launches its runs from a disposable clone of the
-  input's repository, keeps observation down while the first run reaches its assessment, and
-  withholds the clone at capture so every file-citing question waits with `repository_unavailable`;
-  it then follows those waits through a `graders.json` swap and restart to their arrival on the
-  original pins, captures a second run on the edited pins, and fails if nothing waits or a wait
-  never ends. Its run with `inputs/registration-audit.json`
-  (`observation/verification/reports/registration-2026-11-07T18-03-10-914Z`) started on the
-  committed selection and registered it, and the first real run reached its brief with observation
-  down and nothing pushed. The audit's builder then stopped without publishing: the brief writer
-  had made the audit path conditional on an operator choice the spec did not record. No capture,
-  wait, arrival or swap was observed on that run, so those checkpoints remain proven only by
-  `observation/tests/grading-startup.test.ts` through the real service.
+- `registration` passed (`observation/verification/reports/registration-2026-11-07T18-48-17-496Z`)
+  on two real development runs through assessment, using `inputs/registration-audit.json`, at
+  `cdeba035`. The first run (`run-0e8c1a1cef8a656f`) reached its assessment with observation down.
+  With its launch repository withheld, observation captured all 45 of its events: 11 questions were
+  pinned to the committed selection, the 6 that cite files waited with `repository_unavailable`, and
+  the other 5 were ready. After a `graders.json` edit and restart, 3 new definitions were registered
+  and all 13 were stored; the first run kept every pin and frozen set, and the 6 still waited. With
+  the repository supplied and a restart, all 6 became ready on their capture-time pins, reading 20
+  file references at commit `cdeba035`. The second run (`run-3580ddecfbcd6c6c`) was pinned to the
+  edited selection. Its 5 analysis findings' Relevance evidence froze before the run's tasks
+  existed, and stayed unchanged through the tasks, plan, brief and assessment revisions and their
+  task links, across 79 reads. No execution, provider attempt or answer exists. On a real run the
+  ordered feed captures a build before its assessment, so the same finding with Correctness
+  waiting and Evidence support ready is not observed live (0 seen); it is proven through the real
+  service in `observation/tests/grading-startup.test.ts`.
+- Two earlier runs with that input stalled before any capture
+  (`registration-2026-11-07T18-03-10-914Z`: the brief made the audit wait for an operator choice;
+  `registration-2026-11-07T18-34-34-328Z`: `build_base` was the pull request's own branch, not its
+  base).
 - The earlier `registration` without `--input`
   (`observation/verification/reports/registration-2026-11-07T17-00-48-602Z`) recorded both
   startups' registrations, three new definitions after the edit with every earlier one kept, and

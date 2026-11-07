@@ -38,11 +38,13 @@ service reports the graders it registered from `observation/graders.json`.
 `inputs/registration-audit.json` is the one used: an audit of this branch's pull request
 whose spec forbids edits, commits, pushes and pull requests, and whose `build_base` is the
 pull request's existing base, so `prepare` finds it on the forge and pushes nothing; the builder
-checks out the pull request's head locally to inspect it. On a real capture the
+checks out the pull request's head locally to inspect it. Analysis findings are captured and frozen before the run has tasks, so
+the second run's check on evidence frozen earlier is the late-link case: their Relevance evidence
+must stay unchanged through every later task, plan, brief and assessment link. On a real capture the
 ordered feed always delivers a build before its assessment, so Correctness cannot wait on its
-subject there; that same-finding case, and a link declared after an occurrence's evidence froze,
-are proven through the real service in `observation/tests/grading-startup.test.ts`, and the
-proof reports how many findings it saw in that state.
+subject there; that same-finding case is proven through the real service in
+`observation/tests/grading-startup.test.ts`, and the proof reports how many findings it saw in that
+state.
 
 `source-run` checks that observation is reachable before it launches, so a service
 already down fails without spending a turn. After canceling, it waits up to two
