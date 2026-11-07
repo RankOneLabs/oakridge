@@ -267,6 +267,22 @@ describe("supervision", () => {
     expect(stack.status()).toMatchObject({ state: "preflight_failed", detail: "database_provisioning_failed" });
   }, TIMEOUT_MS);
 
+  test("a PostgreSQL that stops answering fails observation at its deadline and the stack still starts", async () => {
+    const stack = fixture();
+    stack.dockerFlag("hang-postgres");
+    stack.start({ env: { OAKRIDGE_SHADOW_OBSERVATION_PREFLIGHT_SECONDS: "2" } });
+    await stack.stackServing();
+    await stackSurvived(stack);
+    expect({ started: stack.hasRecord("observation"), status: stack.status() })
+      .toMatchObject({ started: false, status: { state: "preflight_failed", detail: "database_provisioning_timed_out" } });
+  }, TIMEOUT_MS);
+
+  test("PostgreSQL itself is told to end setup statements and lock waits at the deadline", async () => {
+    const stack = await startedStack();
+    await observationServing(stack);
+    expect(stack.dockerLog("docker")).toContain("PGOPTIONS=-c statement_timeout=30000 -c lock_timeout=30000");
+  }, TIMEOUT_MS);
+
   test("a container that does not match the shadow's settings gets no database", async () => {
     const stack = await startedStack((created) => created.dockerFlag("wrong-binding"));
     await stackSurvived(stack);

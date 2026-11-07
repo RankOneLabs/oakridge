@@ -92,6 +92,7 @@ with no secrets, and starts nothing.
 | Namespace | `shadow-<name>`. |
 | Capabilities | `observation-{ingest,read,grade}.token` in the state directory, mode 600. |
 | Child status | `observation-status.json` in the state directory. |
+| Setup deadline | `OAKRIDGE_SHADOW_OBSERVATION_PREFLIGHT_SECONDS`, default 30. |
 
 The first start creates the database empty and the service applies its baseline. Later starts reuse the
 database and tokens, so scenarios and restarts share one state. To begin again, stop the shadow and remove
@@ -112,7 +113,9 @@ grader is configured and no setting is read.
 
 ## Supervision and health
 
-Observation is a measurement service, so its failure is never a workflow failure. Only DBOS and kbbl
+Observation is a measurement service, so its failure is never a workflow failure. Its setup runs before DBOS and kbbl
+start, under one deadline that also bounds each PostgreSQL statement and lock wait, so it can delay them by
+at most that long. Only DBOS and kbbl
 exiting ends the stack; observation runs under its own supervisor and an explicit stop still ends it with
 everything else. It does not restart by itself: restart the stack to bring it back.
 
@@ -121,6 +124,7 @@ everything else. It does not restart by itself: restart the stack to bring it ba
 | Missing configured key, unknown runner, unusable `graders.json` | The child is not started. |
 | Shadow container mismatch or provisioning failure | The child is not started. |
 | No `OBSERVATION_DATABASE_URL` for the default install | The child is not started. |
+| Setup outlasting its deadline (PostgreSQL not answering, a lock that never frees) | The child is not started; the detail ends in `_timed_out`. |
 | Startup failure or later exit | The exit status is recorded. |
 | Hung HTTP | The child keeps running; health reports a timeout. |
 

@@ -263,13 +263,19 @@ prepare_observation_capabilities() {
 verify_shadow_postgres() {
   local mounts bindings
   [ "$POSTGRES_CONTAINER" != "oakridge-postgres" ] || return 1
-  mounts="$(docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' "$POSTGRES_CONTAINER")" || return 1
-  bindings="$(docker inspect -f '{{range $port, $hosts := .HostConfig.PortBindings}}{{range $hosts}}{{$port}}={{.HostIp}}:{{.HostPort}} {{end}}{{end}}' "$POSTGRES_CONTAINER")" || return 1
+  mounts="$(within_preflight docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' "$POSTGRES_CONTAINER")" || return 1
+  bindings="$(within_preflight docker inspect -f '{{range $port, $hosts := .HostConfig.PortBindings}}{{range $hosts}}{{$port}}={{.HostIp}}:{{.HostPort}} {{end}}{{end}}' "$POSTGRES_CONTAINER")" || return 1
   [[ " $mounts " == *" $POSTGRES_VOLUME "* && " $mounts " != *" oakridge-postgres-data "* ]] || return 1
   [ "$bindings" = "5432/tcp=127.0.0.1:$POSTGRES_PORT " ]
 }
 
-shadow_psql() { docker exec -i "$POSTGRES_CONTAINER" psql --username oakridge --dbname oakridge -v ON_ERROR_STOP=1 --tuples-only --no-align "$@"; }
+# PostgreSQL ends a statement or lock wait at the same deadline, in case the
+# killed client leaves it running in the container.
+shadow_psql() {
+  local server_ms=$((OBSERVATION_PREFLIGHT_SECONDS * 1000))
+  within_preflight docker exec -i -e PGOPTIONS="-c statement_timeout=$server_ms -c lock_timeout=$server_ms" "$POSTGRES_CONTAINER" \
+    psql --username oakridge --dbname oakridge -v ON_ERROR_STOP=1 --tuples-only --no-align "$@"
+}
 
 # An ordinary role, because a superuser bypasses row-level security. The first
 # start creates the database empty and the service applies its baseline; every
@@ -286,6 +292,23 @@ provision_shadow_observation() {
   SHADOW_OBSERVATION_DATABASE_URL="postgres://$role:$password@127.0.0.1:$POSTGRES_PORT/$database"
 }
 
+# Observation setup runs before DBOS and kbbl start, so all of it shares one
+# deadline: a PostgreSQL that stops answering or a lock that never frees delays
+# the stack by that long and then fails observation alone.
+OBSERVATION_PREFLIGHT_SECONDS="${OAKRIDGE_OBSERVATION_PREFLIGHT_SECONDS:-30}"
+if ! [[ "$OBSERVATION_PREFLIGHT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "oakridge: OAKRIDGE_OBSERVATION_PREFLIGHT_SECONDS must be a positive number of seconds" >&2
+  exit 1
+fi
+preflight_deadline=0
+within_preflight() {
+  local remaining=$((preflight_deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || return 124
+  timeout --kill-after=2 "$remaining" "$@"
+}
+# A step that failed once the deadline passed is reported as timed out.
+preflight_failure() { if [ "$SECONDS" -ge "$preflight_deadline" ]; then echo "$2"; else echo "$1"; fi; }
+
 # Every failure here leaves observation unstarted and the rest of the stack coming
 # up: it is a measurement service, not a prerequisite for workflows.
 observation_preflight_failed() {
@@ -296,15 +319,16 @@ observation_preflight_failed() {
 
 prepare_isolated_observation() {
   local selection_failure
-  verify_shadow_postgres || { observation_preflight_failed shadow_postgres_mismatch; return 1; }
-  provision_shadow_observation || { observation_preflight_failed database_provisioning_failed; return 1; }
+  verify_shadow_postgres || { observation_preflight_failed "$(preflight_failure shadow_postgres_mismatch shadow_postgres_timed_out)"; return 1; }
+  provision_shadow_observation \
+    || { observation_preflight_failed "$(preflight_failure database_provisioning_failed database_provisioning_timed_out)"; return 1; }
   selection_failure="$(mktemp)"
-  if ! provider_settings="$(provider_env select --env-file "$OAKRIDGE_OBSERVATION_PROVIDER_ENV_FILE" \
-    --graders "$OBSERVATION_ROOT/graders.json" 2>"$selection_failure")"; then
+  if ! provider_settings="$(within_preflight bun --no-env-file "$OBSERVATION_ROOT/scripts/provider-env.ts" select \
+    --env-file "$OAKRIDGE_OBSERVATION_PROVIDER_ENV_FILE" --graders "$OBSERVATION_ROOT/graders.json" 2>"$selection_failure")"; then
     local detail
     detail="$(head -n 1 "$selection_failure" | tr -cd 'A-Za-z0-9_:,-')"
     rm -f "$selection_failure"
-    observation_preflight_failed "${detail:-provider_selection_failed}"
+    observation_preflight_failed "$(preflight_failure "${detail:-provider_selection_failed}" provider_selection_timed_out)"
     return 1
   fi
   rm -f "$selection_failure"
@@ -314,11 +338,11 @@ prepare_isolated_observation() {
 # file from the service's cwd, so this check reads what the service will.
 prepare_default_observation() {
   local service_port
-  if ! service_port="$(cd "$OBSERVATION_ROOT" && bun -e '
+  if ! service_port="$(cd "$OBSERVATION_ROOT" && within_preflight bun -e '
     if (!process.env.OBSERVATION_DATABASE_URL) process.exit(1);
     console.log(process.env.OBSERVATION_PORT ?? 8791);')"; then
     OBSERVATION_URL="http://127.0.0.1:8791"
-    observation_preflight_failed observation_database_url_missing
+    observation_preflight_failed "$(preflight_failure observation_database_url_missing observation_settings_timed_out)"
     return 1
   fi
   OBSERVATION_URL="http://127.0.0.1:${service_port}"
@@ -327,6 +351,7 @@ prepare_default_observation() {
 start_observation_child=0
 if [ "$start_observation" -eq 1 ]; then
   record_observation_status starting
+  preflight_deadline=$((SECONDS + OBSERVATION_PREFLIGHT_SECONDS))
   if ! prepare_observation_capabilities; then
     observation_preflight_failed capability_state_unavailable || true
   elif [ "$isolated" -eq 1 ]; then

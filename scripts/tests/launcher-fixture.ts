@@ -89,6 +89,7 @@ case "$1" in
   exec)
     case "$*" in
       *pg_isready*) exit 0 ;;
+      *--command*) if [ -f "$state/hang-postgres" ]; then exec sleep 60; fi ;;&
       *--command*"FROM pg_roles"*) [ ! -f "$state/role" ] || echo 1 ;;
       *--command*"FROM pg_database"*) [ ! -f "$state/database" ] || echo 1 ;;
       *--command*"CREATE DATABASE"*)
@@ -147,7 +148,7 @@ export class LauncherFixture {
       graders: runners.map((runner) => ({ runner, model: "model", instructions: "grade", estimated_cost_per_call: 1 })) }] }));
   }
   behave(name: ChildName, behaviour: ObservationBehaviour): void { writeFileSync(join(this.records, `${name}.behaviour`), behaviour); }
-  dockerFlag(flag: "refuse-provisioning" | "wrong-binding"): void { writeFileSync(join(this.docker_state, flag), ""); }
+  dockerFlag(flag: "refuse-provisioning" | "wrong-binding" | "hang-postgres"): void { writeFileSync(join(this.docker_state, flag), ""); }
   dockerLog(name: "docker" | "provisioned" | "psql-stdin"): string {
     const path = join(this.docker_state, `${name}.log`);
     return existsSync(path) ? readFileSync(path, "utf8") : "";
