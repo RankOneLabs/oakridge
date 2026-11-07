@@ -55,7 +55,7 @@ describe("v2 Oakridge client", () => {
     let units: readonly OperatorUnitView[] = sample.units as unknown as OperatorUnitView[];
     let unitReads = 0;
     calls((path) => {
-      if (path.endsWith("/units")) { unitReads += 1; return units; }
+      if (path.includes("/units?")) { unitReads += 1; return units; }
       return sample.run;
     });
     const before = await fetchRun(runId);
@@ -93,7 +93,7 @@ describe("v2 Oakridge client", () => {
         isCancelled = true;
         return { kind: "committed", run_id: runId, event_id: "event-cancel" };
       }
-      if (path.endsWith("/units")) {
+      if (path.includes("/units?")) {
         unitReads += 1;
         return isCancelled ? sample.units.map((unit) => ({ ...unit, status: { kind: "cancelled" }, attention: null, decisions: [] })) : sample.units;
       }
@@ -171,13 +171,13 @@ describe("v2 Oakridge client", () => {
   });
 
   it("opens an artifact through its self-describing id without a prior run snapshot", async () => {
-    const fetch = calls((path) => path.endsWith("/units") ? sample.units : sample.artifact);
+    const fetch = calls((path) => path.includes("/units?") ? sample.units : sample.artifact);
     const id = compositeId({ kind: "artifact", runId, unitId: cohort.unit_id, name: `build_result:${changeTarget}` });
     const artifact = await fetchArtifact(id);
     expect([artifact.component_id, artifact.label]).toEqual(["dev-build-result-viewer", "a"]);
     expect(fetch.mock.calls.map(([path]) => String(path))).toEqual([
       `/oakridge/api/api/runs/${runId}/units/${encodeURIComponent(cohort.unit_id)}/artifacts/build_result`,
-      `/oakridge/api/api/runs/${runId}/units`,
+      `/oakridge/api/api/runs/${runId}/units?input_fields=brief,cohort,repositories,repository,repository_key,title,workspace`,
     ]);
   });
 
@@ -225,7 +225,7 @@ describe("v2 Oakridge client", () => {
 
   it("resolves an opaque revision id by a one-time run and unit search", async () => {
     const fetch = calls((path) => path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
-      : path.endsWith("/units") ? sample.units : sample.artifact);
+      : path.includes("/units?") ? sample.units : sample.artifact);
     expect((await fetchArtifact(changeTarget)).component_id).toBe("dev-build-result-viewer");
     expect(fetch.mock.calls.some(([path]) => String(path).includes(`/units/${encodeURIComponent(cohort.unit_id)}/artifacts/build_result`))).toBe(true);
   });
@@ -245,7 +245,7 @@ describe("v2 Oakridge client", () => {
     const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "builder" } };
     const units = (sample.units as unknown as OperatorUnitView[]).map((unit) => unit.stage === "cohort" && unit.collection_key === "b"
       ? { ...unit, decisions: [retry] } : unit);
-    calls((path) => path.endsWith("/units") ? units : sample.run);
+    calls((path) => path.includes("/units?") ? units : sample.run);
     const cohortStage = (await fetchRun(runId)).stages.find((stage) => stage.name === "cohort");
     expect(cohortStage?.units?.map((unit) => [unit.unit_id, unit.is_retryable])).toEqual([["a", false], ["b", true]]);
   });
@@ -253,7 +253,7 @@ describe("v2 Oakridge client", () => {
   it("resolves an opaque gate id from the revision and action before deciding", async () => {
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-opaque" }
       : path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
-      : path.endsWith("/units") ? sample.units : cohort);
+      : path.includes("/units?") ? sample.units : cohort);
     await resumeGate("legacy-gate", { idempotency_key: "opaque-1", artifact_revision_id: acceptTarget,
       action: "request_build_changes", feedback: "Improve it" });
     const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
@@ -338,10 +338,10 @@ describe("v2 Oakridge client", () => {
       : path.includes("/inbox") ? { items: [] } : sample.units);
     const inbox = await fetchReviewInbox();
     await refreshReviewInboxRun(runId, inbox);
-    expect(fetch.mock.calls.filter(([path]) => String(path).endsWith("/units"))).toHaveLength(1);
+    expect(fetch.mock.calls.filter(([path]) => String(path).includes("/units?"))).toHaveLength(1);
     invalidateCachedRunUnits(runId);
     await refreshReviewInboxRun(runId, inbox);
-    expect(fetch.mock.calls.filter(([path]) => String(path).endsWith("/units"))).toHaveLength(2);
+    expect(fetch.mock.calls.filter(([path]) => String(path).includes("/units?"))).toHaveLength(2);
     expect(fetch.mock.calls.filter(([path]) => String(path).includes("/run-inboxes"))).toHaveLength(1);
   });
 });

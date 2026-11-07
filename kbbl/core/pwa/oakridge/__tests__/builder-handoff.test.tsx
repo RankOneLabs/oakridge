@@ -49,7 +49,7 @@ function setup(options: { saved?: EditOutcome; revision?: string; actions?: Asse
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (init?.method === "POST") { posts.push(JSON.parse(String(init.body))); sent = true; unit = unitFor(revision, sent); return json({ kind: "committed", run_id: "run-1", event_id: `sent-${revision}` }); }
-    if (url.endsWith("/units")) return json([unit]);
+    if (url.includes("/units?")) return json([unit]);
     if (url.endsWith("/units/unit-a")) return json(unit);
     throw new Error(`unexpected request ${url}`);
   });

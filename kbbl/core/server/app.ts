@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
+import { compress } from "hono/compress";
 
 import type { KbblConfig } from "../config";
 import type { AcpSessionService } from "../acp/session-service";
@@ -16,6 +17,7 @@ import { mountDirectoriesRoutes } from "./handlers/directories";
 import { mountSkillsRoutes } from "../skills/routes";
 import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./handlers/oakridge-proxy";
 import { mountLiveStreamRoutes } from "./handlers/live-stream";
+import { compressEventStream } from "./event-stream-compression";
 import {
   isRuntimeId,
   RUNTIME_EFFORTS,
@@ -67,6 +69,12 @@ export function createApp(deps: CreateAppDeps): Hono {
     coreControlToken,
   } = deps;
   const app = new Hono();
+
+  // ---- response compression ----
+  //
+  // Skips event streams, which it would buffer forever; /live has its own.
+  app.use("/*", compress());
+  app.use("/live", compressEventStream);
 
   // ---- control auth middleware ----
   //
@@ -157,6 +165,10 @@ export function createApp(deps: CreateAppDeps): Hono {
     serveStatic({
       root: pwaDistDir,
       rewriteRequestPath: (path) => (path === "/" ? "/index.html" : path),
+      // Vite hashes everything under assets/, so a changed file has a new URL.
+      onFound: (path, c) => {
+        c.header("cache-control", path.includes("/assets/") ? "public, max-age=31536000, immutable" : "no-cache");
+      },
     }),
   );
 

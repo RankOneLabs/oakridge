@@ -7,6 +7,7 @@ import { selectInboxPage, selectRunInboxBatch, selectRunInboxItems } from "../pr
 import { selectRunInspect, selectRunUnitView, selectRunView } from "../projections/run-view";
 import type { Database } from "../storage/database";
 import type { SessionHoldResponse } from "../projections/session-hold";
+import { selectUnitInputFields } from "../projections/unit-view";
 import { listDefinitions, listLiveRuns, listRuns, readAllRunsChangeKey, readDefinition, readHistory, readPinnedDefinition, readRun, readRunChangeKey,
   readRunInspect, readSessionHold, readSessionRunLocation, readRunSummaries, readRunSummary, readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
 import { changeKeyed } from "./change-key";
@@ -139,10 +140,15 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     return found(c, read && { items: selectRunInboxItems(read), next_cursor: null }, "run");
   } catch (cause) { return fault(cause); } });
 
-  /** Read all units from one consistent run snapshot for workspace recovery. */
+  /** Read all units from one consistent run snapshot for workspace recovery.
+   * `input_fields` (comma-separated) narrows each unit's input to those fields. */
   app.get("/api/runs/:run_id/units", async (c) => { try {
     const read = await readRun(db, c.req.param("run_id"));
-    return found(c, read && read.units.map((unit) => selectRunUnitView(read, unit.id)), "run");
+    const input_fields = c.req.query("input_fields")?.split(",") ?? null;
+    return found(c, read && read.units.map((unit) => {
+      const view = selectRunUnitView(read, unit.id);
+      return view && input_fields ? selectUnitInputFields(view, input_fields) : view;
+    }), "run");
   } catch (cause) { return fault(cause); } });
 
   app.get("/api/runs/:run_id/definition", async (c) => { try {

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 
 import { useInbox } from "./useInbox";
+import type { Sid } from "../lib/ids";
 import { useStore } from "../state/store";
 import { useToastStore } from "./useToast";
 
@@ -193,6 +194,26 @@ describe("useInbox EventSource revival and parse guards", () => {
       }));
     });
     expect(useToastStore.getState().toasts).toHaveLength(1);
+  });
+
+  it("toasts a new permission request and reports removals from a changes frame", () => {
+    const onSessionRemoved = vi.fn();
+    renderHook(() => useInbox({ onSessionRemoved }), { wrapper: makeWrapper() });
+    const session = { sid: "s1", name: "one", pendingPermissionCount: 0 };
+    const gone = { sid: "s2", name: "two", pendingPermissionCount: 0 };
+
+    act(() => {
+      MockEventSource.last!.dispatch("snapshot", JSON.stringify({ sessions: [session, gone] }));
+    });
+    act(() => {
+      MockEventSource.last!.dispatch("changes", JSON.stringify({
+        sessions: [{ ...session, pendingPermissionCount: 1 }], removedSids: ["s2"],
+      }));
+    });
+
+    expect(useToastStore.getState().toasts).toHaveLength(1);
+    expect(useStore.getState().sessions.get("s1" as Sid)?.pendingPermissionCount).toBe(1);
+    expect(onSessionRemoved).toHaveBeenCalledWith("s2");
   });
 
   it("keeps existing session positions when a snapshot arrives in a new timestamp order", () => {

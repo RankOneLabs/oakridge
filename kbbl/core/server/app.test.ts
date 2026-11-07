@@ -56,6 +56,27 @@ afterEach(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
+describe("static PWA", () => {
+  const bundle = "console.log('kbbl');\n".repeat(200);
+  beforeEach(() => {
+    mkdirSync(join(tmpRoot, "assets"));
+    writeFileSync(join(tmpRoot, "assets", "index-abc123.js"), bundle);
+    writeFileSync(join(tmpRoot, "index.html"), "<!doctype html>");
+  });
+
+  test("a hashed asset is cached for good and compressed", async () => {
+    const res = await buildApp(KbblConfigSchema.parse({})).request("/assets/index-abc123.js", { headers: { "accept-encoding": "gzip" } });
+    expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    expect(Bun.gunzipSync(await res.arrayBuffer()).length).toBe(bundle.length);
+  });
+
+  test("the entry page is revalidated, so a new build's asset names reach the client", async () => {
+    const res = await buildApp(KbblConfigSchema.parse({})).request("/");
+    expect(res.headers.get("cache-control")).toBe("no-cache");
+  });
+});
+
 describe("GET /config", () => {
   test("returns defaultWorkdir", async () => {
     const app = buildApp(KbblConfigSchema.parse({}));

@@ -9,8 +9,8 @@ import type {
   AcpSessionWorkflowIdentity,
 } from "./types";
 
-/** ACP is the live inventory; archived sessions can be retained by the PWA seed. */
-export type PwaSessionSource = "acp" | "legacy_archive";
+/** ACP is the session inventory. */
+export type PwaSessionSource = "acp";
 
 /** camelCase mirror of `AcpSessionWorkflowIdentity` on the browser wire. */
 export interface PwaSessionWorkflowIdentity {
@@ -40,6 +40,24 @@ export interface PwaSessionSnapshot {
   /** Permission requests currently awaiting an operator answer. */
   pendingPermissionCount: number;
   workflow: PwaSessionWorkflowIdentity | null;
+}
+
+/** What one /inbox `changes` frame carries: sessions that are new or differ, and sessions that are gone. */
+export interface PwaSessionChanges {
+  sessions: PwaSessionSnapshot[];
+  removedSids: string[];
+}
+
+export function selectPwaSessionChanges(
+  previous: readonly PwaSessionSnapshot[],
+  current: readonly PwaSessionSnapshot[],
+): PwaSessionChanges {
+  const previousBySid = new Map(previous.map((session) => [session.sid, JSON.stringify(session)]));
+  const currentSids = new Set(current.map((session) => session.sid));
+  return {
+    sessions: current.filter((session) => previousBySid.get(session.sid) !== JSON.stringify(session)),
+    removedSids: [...previousBySid.keys()].filter((sid) => !currentSids.has(sid)),
+  };
 }
 
 function toPwaWorkflowIdentity(

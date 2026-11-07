@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ParsedStage } from "../src/core-client/core-types";
 import type { UnitAttention } from "../src/projections/attention";
-import { selectAvailableDecisions } from "../src/projections/unit-view";
+import { selectAvailableDecisions, selectUnitInputFields, type UnitView } from "../src/projections/unit-view";
 import type { RunSummaryRead, UnitSummaryRecord } from "../src/storage/read-store";
 
 /** A cohort stage whose assessment review may instead request changes `on` the build. */
@@ -29,4 +29,14 @@ test("each review decision submits the target the core resolved for it", () => {
 
 test("a decision the core does not list is not offered", () => {
   expect(targetsOf(awaiting([{ decision: "accept", target: "run/cohort:assessment:1" }]))).toEqual([["accept", "run/cohort:assessment:1"]]);
+});
+
+test("narrowing a unit's input keeps only the named fields", () => {
+  const view = { input: { brief: { title: "b" }, spec: "long", tasks: [] } } as unknown as UnitView;
+  expect(selectUnitInputFields(view, ["brief", "absent"]).input).toEqual({ brief: { title: "b" } });
+});
+
+test("a unit input that is not a record is left whole", () => {
+  const view = { input: "plain" } as unknown as UnitView;
+  expect(selectUnitInputFields(view, ["brief"]).input).toBe("plain");
 });

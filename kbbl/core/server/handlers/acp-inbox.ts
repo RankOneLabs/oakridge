@@ -1,21 +1,21 @@
 // GET /inbox — snapshot-push SSE over the ACP session list (§14.1).
 //
-// The ACP substrate has a coarse change feed and the session list is small,
-// so this stream sends the full snapshot on every change: one wire shape, no client-side
-// folding, and a reconnect needs no replay reasoning — the next frame is
-// always authoritative.
+// Each connection opens with the full snapshot, so a reconnect needs no replay
+// reasoning. The inventory keeps every ended session, so after that the ACP
+// substrate's coarse change feed becomes `changes` frames holding only the
+// sessions that differ from what this connection last sent.
 
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 
 import type { AcpSessionService } from "../../acp/session-service";
-import { toPwaSessionSnapshot, type PwaSessionSnapshot } from "../../acp/pwa-wire";
+import { selectPwaSessionChanges, toPwaSessionSnapshot, type PwaSessionSnapshot } from "../../acp/pwa-wire";
 import { compareSessionsByActivity } from "../../acp/pwa-session-order";
 import { guardSseStream } from "./sse-backpressure";
 
 const HEARTBEAT_MS = 15_000;
 /** Trailing coalesce window: a burst of store writes (provision, turn
- * start, activity touches) becomes one snapshot frame. */
+ * start, activity touches) becomes one frame. */
 const COALESCE_MS = 25;
 
 export function listPwaSessions(acp: AcpSessionService): PwaSessionSnapshot[] {
@@ -66,10 +66,8 @@ export function acpInboxHandler(acp: AcpSessionService) {
         // SSE readiness: flush before anything that can block so the
         // EventSource leaves "connecting" immediately.
         await stream.write(": ready\n\n");
-        await guard.send({
-          event: "snapshot",
-          data: JSON.stringify({ sessions: listPwaSessions(acp) }),
-        });
+        let sent = listPwaSessions(acp);
+        await guard.send({ event: "snapshot", data: JSON.stringify({ sessions: sent }) });
         while (!signal.aborted && !stream.aborted) {
           if (!dirty) {
             await new Promise<void>((resolve) => {
@@ -78,10 +76,11 @@ export function acpInboxHandler(acp: AcpSessionService) {
             continue;
           }
           dirty = false;
-          await guard.send({
-            event: "snapshot",
-            data: JSON.stringify({ sessions: listPwaSessions(acp) }),
-          });
+          const current = listPwaSessions(acp);
+          const changes = selectPwaSessionChanges(sent, current);
+          sent = current;
+          if (changes.sessions.length === 0 && changes.removedSids.length === 0) continue;
+          await guard.send({ event: "changes", data: JSON.stringify(changes) });
         }
       } finally {
         clearInterval(heartbeat);
