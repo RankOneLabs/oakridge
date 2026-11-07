@@ -1,0 +1,1133 @@
+[
+  {
+    "id": "7bc7d225-e0bc-4f96-83f3-44d0019bc92c",
+    "commit_txid": 2735,
+    "created_at": "2026-11-07T18:48:23.531621+00:00",
+    "payload": {
+      "kind": "launched",
+      "input": {
+        "spec": "Audit pull request https://github.com/RankOneLabs/oakridge/pull/790 (branch cohort/configured-question-evidence/79693b) in repository oakridge. This is an isolated verification run of the committed development definition, not feature work: its only purpose is real plan, brief, build_result and assessment artifacts for observation to capture. Produce exactly one cohort, named audit, with two tasks. T1: observation/graders.json is the only grader selection, and startup validates and registers it (observation/src/grading/configuration.ts, observation/src/main.ts). T2: cited files are read at the assessed commit, and a file missing there is recorded as absent (observation/src/producers/oakridge/evidence.ts, observation/src/storage/git-repository-reader.ts).\nThe operator authorizes this audit path: the builder publishes the existing PR #790 as its pr artifact instead of pushing or opening one. No brief may add a further operator choice or confirmation. The builder must not edit files, create commits, push, open or update any pull request, merge, reset a database or deploy. Its worktree starts from epic/grade-pray, the base of pull request #790, so it first checks out the head of branch cohort/configured-question-evidence/79693b locally (git checkout --detach origin/cohort/configured-question-evidence/79693b) and inspects that commit, runs bun install if needed and then bun run --filter observation test once, and publishes build_result with the commit it inspected as head_sha and the actual test counts and output. A test that cannot run is a known issue, never a reason to invent results. It then publishes the existing pull request https://github.com/RankOneLabs/oakridge/pull/790 as the pr artifact, with branch cohort/configured-question-evidence/79693b.\nThe assessor assesses that same commit without changing anything. Give at least one finding per task. Every finding cites at least one file as path:start-end at that commit, for example observation/src/main.ts:20-40, and cites test output separately as test or output evidence. Report the builder's test run as test_evidence.\nKeep the analysis, spec, tasks, plan and brief short; there are no ambiguous requirements to resolve.\n",
+        "title": "Configured question evidence audit",
+        "repositories": [
+          {
+            "key": "oakridge",
+            "forge": {
+              "name": "oakridge",
+              "owner": "RankOneLabs",
+              "build_base": "epic/grade-pray",
+              "final_base": "epic/grade-pray"
+            },
+            "preparation": {
+              "expected_head": null,
+              "repository_path": "/tmp/oakridge-proof/registration-2026-11-07T18-48-17-496Z/821860ee-fa18-453f-ac2a-97b0020dac5c"
+            }
+          }
+        ],
+        "final_merge_policy": "require_merge",
+        "primary_repository_key": "oakridge"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": null
+  },
+  {
+    "id": "823aa1e8-5a51-41ea-b8a8-ea669a5bf6cf",
+    "commit_txid": 2747,
+    "created_at": "2026-11-07T18:48:23.619452+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "db577b1055c48139ef68d31f1ae976ff",
+      "kbbl_session_id": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/prepare/oakridge"
+  },
+  {
+    "id": "9640893e-e1b3-4be0-bb68-052a7c2c2b7c",
+    "commit_txid": 2755,
+    "created_at": "2026-11-07T18:48:28.412406+00:00",
+    "payload": {
+      "by": "db577b1055c48139ef68d31f1ae976ff",
+      "body": {
+        "head": "73274f111ccd3a98fcac89ad6ac58047cb0e25a3",
+        "base_branch": "epic/grade-pray",
+        "repository_path": "/tmp/oakridge-proof/registration-2026-11-07T18-48-17-496Z/821860ee-fa18-453f-ac2a-97b0020dac5c",
+        "push_remote_owner": "RankOneLabs"
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/prepare/oakridge",
+      "subject": null,
+      "artifact": "workspace",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/prepare/oakridge"
+  },
+  {
+    "id": "4902df30-0c86-4b5e-b484-58de2ac96fff",
+    "commit_txid": 2757,
+    "created_at": "2026-11-07T18:48:28.449078+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "db577b1055c48139ef68d31f1ae976ff",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/prepare/oakridge"
+  },
+  {
+    "id": "106dd165-2cba-49fd-89e4-11fb456a4474",
+    "commit_txid": 2795,
+    "created_at": "2026-11-07T18:48:31.649572+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "f1b001e8c6d84d7016bb6f50cb1c2cd9",
+      "kbbl_session_id": "7a2a040e-fee4-4d1e-8e46-7257114a4cc3"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/analysis"
+  },
+  {
+    "id": "3df7a4f9-bb88-4063-b611-3cb919c51e30",
+    "commit_txid": 2880,
+    "created_at": "2026-11-07T18:50:19.922014+00:00",
+    "payload": {
+      "by": "f1b001e8c6d84d7016bb6f50cb1c2cd9",
+      "body": {
+        "risks": [
+          {
+            "mitigation": "Keep the specified single observation test invocation, record its literal output and actual counts, and use the specified known-issue path if the environment prevents execution.",
+            "description": "The observation suite contains database-backed integration tests, so local service or database availability may prevent a complete run even when the audited commit is sound."
+          },
+          {
+            "mitigation": "Detach the already identified PR head and publish that exact SHA in build_result; the assessor must use the same SHA for every file citation.",
+            "description": "Assessment evidence would be misleading if the builder or assessor used the moving branch name rather than the pinned PR head cdeba035bf148caf767eeb177905a8351992ed36."
+          }
+        ],
+        "summary": "The audit is implementable without clarification or specification changes. PR #790 is open and draft with base epic/grade-pray, head branch cohort/configured-question-evidence/79693b, and head cdeba035bf148caf767eeb177905a8351992ed36; the local refs agree. The committed code and tests directly cover both requested tasks. No blocking or warning findings were identified.",
+        "findings": [
+          {
+            "id": "F1",
+            "severity": "info",
+            "description": "T1 has concrete committed audit evidence: observation/graders.json:1-67 contains the grader selections; observation/src/grading/configuration.ts:37-49 strictly parses them and observation/src/grading/configuration.ts:128-149 plans registration; observation/src/main.ts:17-33 reads and validates that selection, while observation/src/main.ts:65-85 performs validation before registering definitions and serving. Behavioral coverage includes observation/tests/grader-configuration.test.ts:26-53,144-176 and observation/tests/grading-startup.test.ts:128-160."
+          },
+          {
+            "id": "F2",
+            "severity": "info",
+            "description": "T2 has concrete committed audit evidence: observation/src/producers/oakridge/evidence.ts:79-101 takes head_sha from the assessed revision, locates a repository containing that commit, reads each cited path there, and emits is_absent true with null content for a missing file. observation/src/storage/git-repository-reader.ts:19-42 validates tree paths and uses git cat-file against the exact commit, distinguishing absent from unavailable. Behavioral coverage includes observation/tests/producer-evidence.test.ts:90-105 and observation/tests/git-repository-reader.test.ts:42-73."
+          },
+          {
+            "id": "F3",
+            "severity": "info",
+            "description": "The authorized existing-PR publication path is internally consistent: gated-review reports PR #790 at https://github.com/RankOneLabs/oakridge/pull/790 with base epic/grade-pray, head cohort/configured-question-evidence/79693b, and head SHA cdeba035bf148caf767eeb177905a8351992ed36; local origin refs resolve to that head and base, and their merge-base is the specified base commit 73274f111ccd3a98fcac89ad6ac58047cb0e25a3."
+          }
+        ],
+        "requirements": [
+          {
+            "id": "R1",
+            "status": "implementable",
+            "description": "Produce exactly one cohort named audit with exactly two tasks, T1 and T2, for an isolated verification run that yields real plan, brief, build_result, and assessment artifacts."
+          },
+          {
+            "id": "T1",
+            "status": "implementable",
+            "description": "Audit that observation/graders.json is the only grader selection and startup validates and registers it in observation/src/grading/configuration.ts and observation/src/main.ts."
+          },
+          {
+            "id": "T2",
+            "status": "implementable",
+            "description": "Audit that cited files are read at the assessed commit and a file missing at that commit is recorded absent in observation/src/producers/oakridge/evidence.ts and observation/src/storage/git-repository-reader.ts."
+          },
+          {
+            "id": "R2",
+            "status": "implementable",
+            "description": "Builder detaches the specified PR head, makes no product or remote changes, runs the observation test command once after installing dependencies only if needed, reports the inspected SHA and actual test evidence, and publishes existing PR #790 rather than creating or updating a PR."
+          },
+          {
+            "id": "R3",
+            "status": "implementable",
+            "description": "Assessor evaluates the same commit without mutation, gives at least one finding per task, cites file ranges plus separate test or output evidence, and reports the builder run as test_evidence."
+          },
+          {
+            "id": "R4",
+            "status": "implementable",
+            "description": "Brief introduces no additional operator choice or confirmation, and prohibited edits, commits, pushes, PR mutation, merge, database reset, and deployment remain excluded."
+          }
+        ],
+        "source_spec_refs": [
+          "Current specification: audit scope and exact one-cohort/two-task topology",
+          "Current specification: T1 configured grader selection and startup registration",
+          "Current specification: T2 assessed-commit file evidence and absent-file handling",
+          "Current specification: authorized builder checkout, test, build_result, and existing-PR publication path",
+          "Current specification: assessor same-commit findings, citations, and test_evidence contract",
+          "Current specification: no-mutation and no-additional-operator-choice constraints"
+        ],
+        "proposed_spec_updates": []
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/analysis",
+      "subject": null,
+      "artifact": "analysis",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/analysis"
+  },
+  {
+    "id": "87a94e12-88c6-4cfd-8608-4004f4754a06",
+    "commit_txid": 2886,
+    "created_at": "2026-11-07T18:50:20.565735+00:00",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-0e8c1a1cef8a656f/analysis",
+      "review": "analysis_review",
+      "target": "run-0e8c1a1cef8a656f/analysis:analysis:1",
+      "payload": {
+        "feedback": "Accepted for the isolated live verification run."
+      },
+      "decision": "accept"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/analysis"
+  },
+  {
+    "id": "f9c31ded-3554-4b42-95d9-bf9b8b555923",
+    "commit_txid": 2904,
+    "created_at": "2026-11-07T18:50:27.143936+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "f1b001e8c6d84d7016bb6f50cb1c2cd9",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/analysis"
+  },
+  {
+    "id": "1ead6b9f-aa67-468d-b916-7c8e4f1a0df5",
+    "commit_txid": 2918,
+    "created_at": "2026-11-07T18:50:39.68088+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "f6008d5457823c5c87bb8d6a5ad7ac4a",
+      "kbbl_session_id": "3f3bb561-b9b0-4e97-9e9f-3c7c06f92c27"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/analysis"
+  },
+  {
+    "id": "2a1f546a-5ddc-4387-85d7-2a0b29f518a9",
+    "commit_txid": 2975,
+    "created_at": "2026-11-07T18:51:51.708046+00:00",
+    "payload": {
+      "by": "f6008d5457823c5c87bb8d6a5ad7ac4a",
+      "body": "Audit pull request https://github.com/RankOneLabs/oakridge/pull/790 (branch cohort/configured-question-evidence/79693b) in repository oakridge. This is an isolated verification run of the committed development definition, not feature work: its only purpose is real plan, brief, build_result and assessment artifacts for observation to capture. Produce exactly one cohort, named audit, with two tasks. T1: observation/graders.json is the only grader selection, and startup validates and registers it (observation/src/grading/configuration.ts, observation/src/main.ts). T2: cited files are read at the assessed commit, and a file missing there is recorded as absent (observation/src/producers/oakridge/evidence.ts, observation/src/storage/git-repository-reader.ts).\nThe operator authorizes this audit path: the builder publishes the existing PR #790 as its pr artifact instead of pushing or opening one. No brief may add a further operator choice or confirmation. The builder must not edit files, create commits, push, open or update any pull request, merge, reset a database or deploy. Its worktree starts from epic/grade-pray, the base of pull request #790, so it first checks out the head of branch cohort/configured-question-evidence/79693b locally (git checkout --detach origin/cohort/configured-question-evidence/79693b) and inspects that commit, runs bun install if needed and then bun run --filter observation test once, and publishes build_result with the commit it inspected as head_sha and the actual test counts and output. A test that cannot run is a known issue, never a reason to invent results. It then publishes the existing pull request https://github.com/RankOneLabs/oakridge/pull/790 as the pr artifact, with branch cohort/configured-question-evidence/79693b.\nThe assessor assesses that same commit without changing anything. Give at least one finding per task. Every finding cites at least one file as path:start-end at that commit, for example observation/src/main.ts:20-40, and cites test output separately as test or output evidence. Report the builder's test run as test_evidence.\nKeep the analysis, spec, tasks, plan and brief short; there are no ambiguous requirements to resolve.",
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/analysis",
+      "subject": null,
+      "artifact": "spec",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/analysis"
+  },
+  {
+    "id": "8d3a173f-9481-49ba-b071-0c5adf9cea7b",
+    "commit_txid": 2981,
+    "created_at": "2026-11-07T18:51:52.045373+00:00",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-0e8c1a1cef8a656f/analysis",
+      "review": "spec_review",
+      "target": "run-0e8c1a1cef8a656f/analysis:spec:1",
+      "payload": {
+        "feedback": "Accepted for the isolated live verification run."
+      },
+      "decision": "accept"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/analysis"
+  },
+  {
+    "id": "1bf40d32-e6cf-496a-8991-4edefe291ef3",
+    "commit_txid": 2990,
+    "created_at": "2026-11-07T18:51:57.610641+00:00",
+    "payload": {
+      "by": "f6008d5457823c5c87bb8d6a5ad7ac4a",
+      "body": {
+        "tasks": []
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/analysis",
+      "subject": null,
+      "artifact": "tasks",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/analysis"
+  },
+  {
+    "id": "10bfb33a-00b1-478e-bb06-d9f262bce601",
+    "commit_txid": 2996,
+    "created_at": "2026-11-07T18:51:58.187278+00:00",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-0e8c1a1cef8a656f/analysis",
+      "review": "tasks_review",
+      "target": "run-0e8c1a1cef8a656f/analysis:tasks:1",
+      "payload": {
+        "feedback": "Accepted for the isolated live verification run."
+      },
+      "decision": "accept"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/analysis"
+  },
+  {
+    "id": "f5148045-5c43-4486-ab9c-59a048a421f8",
+    "commit_txid": 3022,
+    "created_at": "2026-11-07T18:51:58.33048+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "f6008d5457823c5c87bb8d6a5ad7ac4a",
+      "result": {
+        "code": "attempt_stopped",
+        "kind": "failed",
+        "detail": "stopped because its unit is no longer active"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/analysis"
+  },
+  {
+    "id": "c05ef663-ecdf-40cf-a898-c36d412a053f",
+    "commit_txid": 3055,
+    "created_at": "2026-11-07T18:52:00.679061+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "97c2aa21bd35576bd63daa62b0116bc7",
+      "kbbl_session_id": "cefd665c-2c51-49ff-be52-e7cf4eafa63e"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/planning"
+  },
+  {
+    "id": "55fdd297-5490-47eb-bc15-ad6a3fd7907f",
+    "commit_txid": 3114,
+    "created_at": "2026-11-07T18:53:20.018796+00:00",
+    "payload": {
+      "by": "97c2aa21bd35576bd63daa62b0116bc7",
+      "body": {
+        "risks": [
+          {
+            "mitigation": "Run bun install only if needed, run bun run --filter observation test exactly once, and publish the real exit status, counts, and output as a known issue without inventing results.",
+            "description": "The prescribed Observation test run may be unable to start or may fail because of the checked-out commit or local dependencies."
+          },
+          {
+            "mitigation": "Keep findings and citations tied to T1 and T2, while using the exact detached PR head and reporting at least one evidence-backed finding for each task.",
+            "description": "PR #790 contains a broader diff than the two audit obligations, which could dilute evidence for the configured questions."
+          }
+        ],
+        "scope": {
+          "in_scope": [
+            "Read-only audit of existing PR #790 at the detached head of origin/cohort/configured-question-evidence/79693b.",
+            "Verify T1 grader configuration, startup validation, and registration behavior.",
+            "Verify T2 commit-pinned cited-file reads and absent-file evidence behavior.",
+            "Run the prescribed Observation test command once and publish actual build_result, existing PR, and assessment evidence for the same commit."
+          ],
+          "out_of_scope": [
+            "Any source edit, generated change, commit, push, pull-request creation or update, merge, rebase, base-branch repair, database reset, or deployment.",
+            "Feature implementation or requirements beyond T1 and T2.",
+            "Any additional operator choice or confirmation in the brief."
+          ]
+        },
+        "cohorts": [
+          {
+            "id": "audit",
+            "scope": "Audit the committed PR #790 implementation without changing it: inspect the detached branch head, verify the two specified Observation behaviors, execute the single authorized test run, and preserve commit-consistent evidence for assessment.",
+            "title": "Audit configured grader and commit-pinned evidence behavior",
+            "decisions": [
+              {
+                "id": "D1",
+                "text": "Use git checkout --detach origin/cohort/configured-question-evidence/79693b and treat the resulting SHA as the immutable head for the build result, PR evidence, file citations, and assessment; make no repository or remote mutations."
+              },
+              {
+                "id": "D2",
+                "text": "Treat observation/graders.json as the sole grader-selection source and verify startup parses and validates it against questions, runners, instructions, and credentials before registering definitions and serving."
+              },
+              {
+                "id": "D3",
+                "text": "Resolve file citations through the repository selected by repository_key at the assessed build head_sha, preserving requested ranges and representing a file missing at that accessible commit as absent evidence."
+              },
+              {
+                "id": "D4",
+                "text": "After bun install only if needed, run bun run --filter observation test exactly once, report its actual counts and output, and publish the already-existing PR #790 on cohort/configured-question-evidence/79693b rather than creating or updating a pull request."
+              }
+            ],
+            "depends_on": [],
+            "description": "One repository and one existing pull request contain both small, related audit obligations; a single cohort keeps the commit, test output, PR identity, and assessment evidence coherent for complete review.",
+            "files_in_scope": [
+              "observation/graders.json",
+              "observation/src/grading/configuration.ts",
+              "observation/src/main.ts",
+              "observation/src/producers/oakridge/evidence.ts",
+              "observation/src/storage/git-repository-reader.ts"
+            ],
+            "repository_key": "oakridge",
+            "acceptance_criteria": [
+              {
+                "id": "T1",
+                "text": "observation/graders.json is the only grader selection, and startup validates its configuration and registers the resulting grader definitions.",
+                "decision_ids": [
+                  "D1",
+                  "D2"
+                ]
+              },
+              {
+                "id": "T2",
+                "text": "Cited files are read from the named repository at the assessed commit, and a file missing at that accessible commit is recorded as absent evidence.",
+                "decision_ids": [
+                  "D1",
+                  "D3"
+                ]
+              }
+            ]
+          }
+        ],
+        "summary": "A single read-only audit cohort verifies the two specified behaviors on the existing PR #790 head, runs the Observation tests once, and carries real commit-pinned code and test evidence into assessment.",
+        "dependency_order": [
+          "audit"
+        ],
+        "acceptance_criteria": [
+          "The builder inspects the detached PR #790 head without modifying repository or remote state, publishes build_result with that exact head_sha and the actual one-time Observation test result, then publishes the existing PR URL and branch.",
+          "The assessor evaluates the same head without changes and reports at least one finding for T1 and at least one for T2.",
+          "Every assessment finding cites at least one repository file as path:start-end at the assessed commit and cites test or output evidence separately; the builder run is reported as test_evidence."
+        ]
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/planning",
+      "subject": null,
+      "artifact": "plan",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/planning"
+  },
+  {
+    "id": "2c886f86-32f5-4e9b-bb34-94fdb2573cc5",
+    "commit_txid": 3131,
+    "created_at": "2026-11-07T18:53:26.089261+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "97c2aa21bd35576bd63daa62b0116bc7",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/planning"
+  },
+  {
+    "id": "50c8203e-662c-496a-82b5-97c1854d5fb9",
+    "commit_txid": 3151,
+    "created_at": "2026-11-07T18:53:26.216403+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "e873666d93c75c2ddd9022324552f3ca",
+      "kbbl_session_id": "cefd665c-2c51-49ff-be52-e7cf4eafa63e"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/planning"
+  },
+  {
+    "id": "c5ecf5cf-4d85-43d0-9b3e-30b747436543",
+    "commit_txid": 3216,
+    "created_at": "2026-11-07T18:54:01.692555+00:00",
+    "payload": {
+      "by": "e873666d93c75c2ddd9022324552f3ca",
+      "body": {
+        "risks": [
+          {
+            "mitigation": "Keep both obligations explicit in the audit scope and decisions; the operator must approve task entries before task-linked acceptance or findings can be represented.",
+            "description": "The approved task list is empty, so the specified T1 and T2 obligations have no approved task ids and cannot appear as cohort task acceptance entries."
+          },
+          {
+            "mitigation": "Run bun install only if needed, run bun run --filter observation test exactly once, and publish the real exit status, counts, and output as a known issue without inventing results.",
+            "description": "The prescribed Observation test run may be unable to start or may fail because of the checked-out commit or local dependencies."
+          },
+          {
+            "mitigation": "Keep findings and citations tied to the two specified behaviors, while using the exact detached PR head and reporting at least one evidence-backed finding for each behavior.",
+            "description": "PR #790 contains a broader diff than the two audit obligations, which could dilute evidence for the configured questions."
+          }
+        ],
+        "scope": {
+          "in_scope": [
+            "Read-only audit of existing PR #790 at the detached head of origin/cohort/configured-question-evidence/79693b.",
+            "Verify that observation/graders.json is the only grader selection and startup validates and registers it.",
+            "Verify that cited files are read at the assessed commit and missing files there are recorded as absent.",
+            "Run the prescribed Observation test command once and publish actual build_result, existing PR, and assessment evidence for the same commit."
+          ],
+          "out_of_scope": [
+            "Any source edit, generated change, commit, push, pull-request creation or update, merge, rebase, base-branch repair, database reset, or deployment.",
+            "Feature implementation or requirements beyond the two specified audit obligations.",
+            "Any additional operator choice or confirmation in the brief."
+          ]
+        },
+        "cohorts": [
+          {
+            "id": "audit",
+            "scope": "Audit the committed PR #790 implementation without changing it: inspect the detached branch head, verify the two specified Observation behaviors, execute the single authorized test run, and preserve commit-consistent evidence for assessment.",
+            "title": "Audit configured grader and commit-pinned evidence behavior",
+            "decisions": [
+              {
+                "id": "D1",
+                "text": "Use git checkout --detach origin/cohort/configured-question-evidence/79693b and treat the resulting SHA as the immutable head for the build result, PR evidence, file citations, and assessment; make no repository or remote mutations."
+              },
+              {
+                "id": "D2",
+                "text": "Treat observation/graders.json as the sole grader-selection source and verify startup parses and validates it against questions, runners, instructions, and credentials before registering definitions and serving."
+              },
+              {
+                "id": "D3",
+                "text": "Resolve file citations through the repository selected by repository_key at the assessed build head_sha, preserving requested ranges and representing a file missing at that accessible commit as absent evidence."
+              },
+              {
+                "id": "D4",
+                "text": "After bun install only if needed, run bun run --filter observation test exactly once, report its actual counts and output, and publish the already-existing PR #790 on cohort/configured-question-evidence/79693b rather than creating or updating a pull request."
+              }
+            ],
+            "depends_on": [],
+            "description": "One repository and one existing pull request contain both small, related audit obligations; a single cohort keeps the commit, test output, PR identity, and assessment evidence coherent for complete review. Its task acceptance list is empty because the approved task list contains no ids.",
+            "files_in_scope": [
+              "observation/graders.json",
+              "observation/src/grading/configuration.ts",
+              "observation/src/main.ts",
+              "observation/src/producers/oakridge/evidence.ts",
+              "observation/src/storage/git-repository-reader.ts"
+            ],
+            "repository_key": "oakridge",
+            "acceptance_criteria": []
+          }
+        ],
+        "summary": "A single read-only audit cohort verifies the two specified behaviors on the existing PR #790 head, runs the Observation tests once, and carries real commit-pinned code and test evidence into assessment; task-linked acceptance awaits an approved task list.",
+        "dependency_order": [
+          "audit"
+        ],
+        "acceptance_criteria": [
+          "The builder inspects the detached PR #790 head without modifying repository or remote state, publishes build_result with that exact head_sha and the actual one-time Observation test result, then publishes the existing PR URL and branch.",
+          "The assessor evaluates the same head without changes and reports at least one finding for each specified audit behavior.",
+          "Every assessment finding cites at least one repository file as path:start-end at the assessed commit and cites test or output evidence separately; the builder run is reported as test_evidence."
+        ]
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/planning",
+      "subject": null,
+      "artifact": "plan",
+      "predecessor": "run-0e8c1a1cef8a656f/planning:plan:1"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/planning"
+  },
+  {
+    "id": "d532aae4-48c2-4ca6-a526-568dcf07a4e4",
+    "commit_txid": 3222,
+    "created_at": "2026-11-07T18:54:02.042382+00:00",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-0e8c1a1cef8a656f/planning",
+      "review": "plan_review",
+      "target": "run-0e8c1a1cef8a656f/planning:plan:2",
+      "payload": {
+        "feedback": "Accepted for the isolated live verification run."
+      },
+      "decision": "accept"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/planning"
+  },
+  {
+    "id": "8fb5cd34-2f26-40fb-b98b-33bca84e0df5",
+    "commit_txid": 3248,
+    "created_at": "2026-11-07T18:54:02.181468+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "e873666d93c75c2ddd9022324552f3ca",
+      "result": {
+        "code": "attempt_stopped",
+        "kind": "failed",
+        "detail": "stopped because its unit is no longer active"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/planning"
+  },
+  {
+    "id": "db03a734-bdec-4115-82b4-a93e237b3048",
+    "commit_txid": 3288,
+    "created_at": "2026-11-07T18:54:07.681795+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "7ff0c74bcdbf6635750ec13374d04380",
+      "kbbl_session_id": "0e4daba2-f905-42db-99c1-c7262968a864"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/briefs/audit"
+  },
+  {
+    "id": "54e9610d-49dd-4c3e-936f-92f1a7c77406",
+    "commit_txid": 3313,
+    "created_at": "2026-11-07T18:54:37.165208+00:00",
+    "payload": {
+      "by": "7ff0c74bcdbf6635750ec13374d04380",
+      "body": {
+        "goal": "Audit the committed implementation in existing PR #790 at the detached head of cohort/configured-question-evidence/79693b without changing repository or remote state: verify that observation/graders.json exclusively controls validated startup grader registration, verify commit-pinned file citation and absent-file evidence behavior, run the authorized Observation test command exactly once, and preserve commit-consistent evidence for assessment.",
+        "title": "Audit configured grader and commit-pinned evidence behavior",
+        "cohort_id": "audit",
+        "depends_on": [],
+        "next_action": "Run git checkout --detach origin/cohort/configured-question-evidence/79693b, record the resulting SHA as the immutable audit head, and begin inspection of the five files in scope without modifying them.",
+        "decisions_made": [
+          {
+            "id": "D1",
+            "decision": "Use git checkout --detach origin/cohort/configured-question-evidence/79693b and treat the resulting SHA as the immutable head for the build result, PR evidence, file citations, and assessment; make no repository or remote mutations.",
+            "rationale": "The audit must assess the exact committed PR #790 implementation and keep every evidence source consistent with one immutable commit while prohibiting edits, commits, pushes, pull-request changes, and other mutations."
+          },
+          {
+            "id": "D2",
+            "decision": "Treat observation/graders.json as the sole grader-selection source and verify startup parses and validates it against questions, runners, instructions, and credentials before registering definitions and serving.",
+            "rationale": "This is the first specified Observation behavior and establishes that configured grader selection is complete and validated before runtime registration or service startup."
+          },
+          {
+            "id": "D3",
+            "decision": "Resolve file citations through the repository selected by repository_key at the assessed build head_sha, preserving requested ranges and representing a file missing at that accessible commit as absent evidence.",
+            "rationale": "This is the second specified Observation behavior and ensures assessment evidence reflects repository contents at the audited commit rather than mutable working-tree state."
+          },
+          {
+            "id": "D4",
+            "decision": "After bun install only if needed, run bun run --filter observation test exactly once, report its actual counts and output, and publish the already-existing PR #790 on cohort/configured-question-evidence/79693b rather than creating or updating a pull request.",
+            "rationale": "The isolated verification permits one test execution and requires truthful reporting, including inability to run, while the existing pull request is the authorized PR artifact and must not be mutated."
+          }
+        ],
+        "files_in_scope": [
+          "observation/graders.json",
+          "observation/src/grading/configuration.ts",
+          "observation/src/main.ts",
+          "observation/src/producers/oakridge/evidence.ts",
+          "observation/src/storage/git-repository-reader.ts"
+        ],
+        "repository_key": "oakridge",
+        "acceptance_criteria": [],
+        "approaches_rejected": [
+          {
+            "id": "R1",
+            "reason": "Feature work or repository mutation would violate the isolated, read-only audit scope and break commit-consistent evidence.",
+            "approach": "Edit files, create commits, push, merge, reset a database, deploy, or otherwise change repository or remote state during the audit.",
+            "decision_ids": [
+              "D1"
+            ]
+          },
+          {
+            "id": "R2",
+            "reason": "Any additional or alternate grader-selection input would contradict the required sole-source configuration behavior.",
+            "approach": "Select graders from environment values, hard-coded defaults, or any source other than observation/graders.json.",
+            "decision_ids": [
+              "D2"
+            ]
+          },
+          {
+            "id": "R3",
+            "reason": "Working-tree or branch-tip reads can drift from the assessed build and cannot establish evidence for the immutable audit head.",
+            "approach": "Resolve cited files from the current filesystem or a moving branch instead of repository_key at head_sha, or treat a missing committed file as present evidence.",
+            "decision_ids": [
+              "D3"
+            ]
+          },
+          {
+            "id": "R4",
+            "reason": "Extra test runs or pull-request operations exceed the explicitly authorized audit path and could produce evidence inconsistent with the specified run.",
+            "approach": "Run the Observation tests more than once, invent results when they cannot run, or create, update, or replace PR #790.",
+            "decision_ids": [
+              "D4"
+            ]
+          }
+        ]
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/briefs/audit",
+      "subject": null,
+      "artifact": "brief",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/briefs/audit"
+  },
+  {
+    "id": "274664c9-4332-4d75-b383-47fdcd5970fa",
+    "commit_txid": 3319,
+    "created_at": "2026-11-07T18:54:37.367913+00:00",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-0e8c1a1cef8a656f/briefs/audit",
+      "review": "brief_review",
+      "target": "run-0e8c1a1cef8a656f/briefs/audit:brief:1",
+      "payload": {
+        "feedback": "Accepted for the isolated live verification run."
+      },
+      "decision": "accept"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/briefs/audit"
+  },
+  {
+    "id": "4ffa2915-9aae-4b00-9da3-30fbb549219c",
+    "commit_txid": 3337,
+    "created_at": "2026-11-07T18:54:37.505408+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "7ff0c74bcdbf6635750ec13374d04380",
+      "result": {
+        "code": "attempt_stopped",
+        "kind": "failed",
+        "detail": "stopped because its unit is no longer active"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/briefs/audit"
+  },
+  {
+    "id": "c183f2c4-2456-4046-a767-640adcce2b4e",
+    "commit_txid": 3361,
+    "created_at": "2026-11-07T18:54:39.595947+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "d126e3595d45eeb1f76bef7bf43740a9",
+      "kbbl_session_id": "d18c9035-453c-463a-9869-937e8b475594"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "0037aa37-2fb3-437a-b1c8-8cd42eb8a3a6",
+    "commit_txid": 3468,
+    "created_at": "2026-11-07T18:57:01.424395+00:00",
+    "payload": {
+      "by": "d126e3595d45eeb1f76bef7bf43740a9",
+      "body": {
+        "branch": "cohort/configured-question-evidence/79693b",
+        "pr_url": "https://github.com/RankOneLabs/oakridge/pull/790",
+        "summary": "Existing draft PR #790 contains the configured-grader startup registration and commit-tree evidence resolution under audit. This audit made no repository or remote changes.",
+        "review_status": "draft"
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/implementation/audit",
+      "subject": null,
+      "artifact": "pr",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "67bbfb1b-5ce1-49d2-b425-924e5feaa561",
+    "commit_txid": 3479,
+    "created_at": "2026-11-07T18:57:01.514647+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "c20fd83032167aa900f5d48ede07a9d4",
+      "kbbl_session_id": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "a9392041-4828-44eb-a8c1-4047c0d422d6",
+    "commit_txid": 3486,
+    "created_at": "2026-11-07T18:57:02.952461+00:00",
+    "payload": {
+      "by": "c20fd83032167aa900f5d48ede07a9d4",
+      "body": {
+        "url": "https://github.com/RankOneLabs/oakridge/pull/790",
+        "state": "open",
+        "number": 790,
+        "head_sha": "cdeba035bf148caf767eeb177905a8351992ed36",
+        "merged_at": null
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/implementation/audit",
+      "subject": null,
+      "artifact": "pr_state",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "13387db3-d61e-4780-ba3d-afcb11249811",
+    "commit_txid": 3488,
+    "created_at": "2026-11-07T18:57:02.991659+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "c20fd83032167aa900f5d48ede07a9d4",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "abcf311b-49ac-4ec1-86ea-e9eb2e6cca2f",
+    "commit_txid": 3506,
+    "created_at": "2026-11-07T18:57:03.183215+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "e89ae76985150378e41f50e5d13022d4",
+      "kbbl_session_id": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "03e37399-1be6-498d-bc6f-f7855fa24ef0",
+    "commit_txid": 3512,
+    "created_at": "2026-11-07T18:57:03.24007+00:00",
+    "payload": {
+      "by": "e89ae76985150378e41f50e5d13022d4",
+      "body": {
+        "url": "https://github.com/RankOneLabs/oakridge/pull/790",
+        "state": "open",
+        "number": 790,
+        "head_sha": "cdeba035bf148caf767eeb177905a8351992ed36",
+        "merged_at": null
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/implementation/audit",
+      "subject": null,
+      "artifact": "observed_state",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "64adf641-9ca3-4550-b952-a77afd4479f6",
+    "commit_txid": 3514,
+    "created_at": "2026-11-07T18:57:03.277868+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "e89ae76985150378e41f50e5d13022d4",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "03d40c55-cc67-4551-bbdd-f3c118a3eea1",
+    "commit_txid": 3537,
+    "created_at": "2026-11-07T18:57:15.79328+00:00",
+    "payload": {
+      "by": "d126e3595d45eeb1f76bef7bf43740a9",
+      "body": {
+        "tests": {
+          "failed": 29,
+          "output": "observation test:  0 pass\nobservation test:  29 fail\nobservation test:  29 errors\nobservation test: Ran 29 tests across 29 files. [77.00ms]\nobservation test: Exited with code 1",
+          "passed": 0,
+          "summary": "bun run --filter observation test executed exactly once; missing workspace dependencies prevented test assertions from loading."
+        },
+        "summary": "Audited existing PR #790 at immutable head cdeba035bf148caf767eeb177905a8351992ed36 without repository or remote mutations. The grader-registration path strictly parses observation/graders.json and validates questions, runners, instructions, and credentials before registration and serving. Commit-pinned reads, requested ranges, and absent-file evidence are implemented, but repository selection is based on the first launch repository containing the commit rather than the required repository_key. The single authorized Observation test command failed during module loading because workspace dependencies were absent.",
+        "head_sha": "cdeba035bf148caf767eeb177905a8351992ed36",
+        "known_issues": [
+          {
+            "severity": "blocking",
+            "description": "File-citation resolution does not select the repository by repository_key. repositoryAt iterates launch repositories and returns the first repository containing head_sha, so a shared commit across repositories can yield evidence from the wrong repository."
+          },
+          {
+            "severity": "blocking",
+            "description": "The single authorized Observation test run could not load dependencies including canonical-json, kysely, pg, zod, hono, and typescript; it reported 0 pass, 29 fail, and 29 errors. The exactly-once constraint prohibited installing dependencies and rerunning after this failure."
+          }
+        ],
+        "changed_files": [],
+        "repository_key": "oakridge"
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/implementation/audit",
+      "subject": null,
+      "artifact": "build_result",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "fbb287d4-7e48-4453-9025-fdfcaa633d7f",
+    "commit_txid": 3547,
+    "created_at": "2026-11-07T18:57:20.355334+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "d126e3595d45eeb1f76bef7bf43740a9",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "0c95da2d-6c9b-44bc-b009-64a1c2c739f7",
+    "commit_txid": 3569,
+    "created_at": "2026-11-07T18:57:23.128098+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "d75d14de4d0eb4f61dced6a590c7bfa0",
+      "kbbl_session_id": "8e1ae72f-81d4-4d2a-beaa-378cfef46df8"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "cb4d426c-ba2e-4699-b6ce-dee7d422aaca",
+    "commit_txid": 3652,
+    "created_at": "2026-11-07T18:59:03.081421+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "c20fd83032167aa900f5d48ede07a9d4",
+      "kbbl_session_id": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "ceee0c9d-65fd-4340-b64f-400c47368676",
+    "commit_txid": 3655,
+    "created_at": "2026-11-07T18:59:03.353932+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "e89ae76985150378e41f50e5d13022d4",
+      "kbbl_session_id": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "68603612-9b1b-4fae-9c8d-12400151bb10",
+    "commit_txid": 3659,
+    "created_at": "2026-11-07T18:59:03.394717+00:00",
+    "payload": {
+      "by": "e89ae76985150378e41f50e5d13022d4",
+      "body": {
+        "url": "https://github.com/RankOneLabs/oakridge/pull/790",
+        "state": "open",
+        "number": 790,
+        "head_sha": "cdeba035bf148caf767eeb177905a8351992ed36",
+        "merged_at": null
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/implementation/audit",
+      "subject": null,
+      "artifact": "observed_state",
+      "predecessor": "run-0e8c1a1cef8a656f/implementation/audit:observed_state:1"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "555a86c1-495b-48ce-81f2-8222b7e44678",
+    "commit_txid": 3661,
+    "created_at": "2026-11-07T18:59:03.431047+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "e89ae76985150378e41f50e5d13022d4",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "f0873ce9-115a-46bb-bbe6-2063f6b73876",
+    "commit_txid": 3683,
+    "created_at": "2026-11-07T18:59:09.434317+00:00",
+    "payload": {
+      "by": "c20fd83032167aa900f5d48ede07a9d4",
+      "body": {
+        "url": "https://github.com/RankOneLabs/oakridge/pull/790",
+        "state": "open",
+        "number": 790,
+        "head_sha": "cdeba035bf148caf767eeb177905a8351992ed36",
+        "merged_at": null
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/implementation/audit",
+      "subject": null,
+      "artifact": "pr_state",
+      "predecessor": "run-0e8c1a1cef8a656f/implementation/audit:pr_state:1"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "dadd2a91-e960-4208-a366-5d887e4aef90",
+    "commit_txid": 3685,
+    "created_at": "2026-11-07T18:59:09.468938+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "c20fd83032167aa900f5d48ede07a9d4",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "eccf8883-f52c-4921-86a1-6f468fb09ff5",
+    "commit_txid": 3702,
+    "created_at": "2026-11-07T18:59:16.080893+00:00",
+    "payload": {
+      "by": "d75d14de4d0eb4f61dced6a590c7bfa0",
+      "body": {
+        "verdict": "fail",
+        "findings": [
+          {
+            "status": "met",
+            "evidence": [
+              {
+                "ref": "observation/src/grading/configuration.ts:20-54",
+                "kind": "file",
+                "detail": "Defines the sole grader configuration shape, strict parser, and selected-runner derivation."
+              },
+              {
+                "ref": "observation/src/grading/configuration.ts:74-148",
+                "kind": "file",
+                "detail": "Validates runners and instructions and maps configured graders onto producer questions."
+              },
+              {
+                "ref": "observation/src/main.ts:17-33",
+                "kind": "file",
+                "detail": "Names graders.json as the selection file and validates configuration and credentials."
+              },
+              {
+                "ref": "observation/src/main.ts:65-86",
+                "kind": "file",
+                "detail": "Completes preparation before database registration and Bun.serve."
+              }
+            ],
+            "task_ids": [],
+            "description": "Startup reads the committed graders.json selection, strictly validates its shape, questions, runners, instructions, and credentials, and only then registers definitions and starts serving."
+          },
+          {
+            "status": "not_met",
+            "evidence": [
+              {
+                "ref": "observation/src/producers/oakridge/evidence.ts:58-74",
+                "kind": "file",
+                "detail": "repositoryAt iterates launch repositories and returns on hasCommit without accepting or matching a repository_key."
+              },
+              {
+                "ref": "observation/src/producers/oakridge/evidence.ts:85-97",
+                "kind": "file",
+                "detail": "Citation resolution passes only head_sha to repositoryAt and then records whichever repository was returned."
+              },
+              {
+                "ref": "observation/tests/git-repository-reader.test.ts:61-73",
+                "kind": "file",
+                "detail": "The committed multi-repository test distinguishes repositories only by which one contains the commit and does not cover a shared commit with an authoritative key."
+              }
+            ],
+            "task_ids": [],
+            "description": "File citation resolution does not select the launch repository by the authoritative repository_key; it returns the first repository containing head_sha, so shared commits can produce evidence from the wrong repository."
+          },
+          {
+            "status": "met",
+            "evidence": [
+              {
+                "ref": "observation/src/storage/git-repository-reader.ts:22-42",
+                "kind": "file",
+                "detail": "Uses git cat-file against commit_sha and distinguishes absent from unavailable."
+              },
+              {
+                "ref": "observation/src/producers/oakridge/evidence.ts:81-101",
+                "kind": "file",
+                "detail": "Carries head_sha and line_range into repository evidence and emits is_absent true with null content."
+              },
+              {
+                "ref": "observation/tests/producer-evidence.test.ts:90-105",
+                "kind": "file",
+                "detail": "Committed tests specify range preservation and absent-file behavior."
+              }
+            ],
+            "task_ids": [],
+            "description": "Within the chosen repository, citations are read from the requested commit, preserve line ranges, and represent a missing path at an accessible commit as absent evidence."
+          },
+          {
+            "status": "not_met",
+            "evidence": [
+              {
+                "ref": "bun run --filter observation test",
+                "kind": "output",
+                "detail": "Reported exactly once by the build result: 0 pass, 29 fail, 29 errors, exit code 1; missing canonical-json, kysely, pg, zod, hono, typescript, and other workspace dependencies prevented assertion execution."
+              }
+            ],
+            "task_ids": [],
+            "description": "The single authorized Observation test run did not load the relevant assertions: it reported 0 passing tests, 29 failures, and 29 module-loading errors because workspace dependencies were missing."
+          }
+        ],
+        "head_sha": "cdeba035bf148caf767eeb177905a8351992ed36",
+        "test_evidence": {
+          "failed": 29,
+          "output": "observation test:  0 pass\nobservation test:  29 fail\nobservation test:  29 errors\nobservation test: Ran 29 tests across 29 files. [77.00ms]\nobservation test: Exited with code 1",
+          "passed": 0,
+          "summary": "The authorized Observation command was reported as executed exactly once, but dependency-resolution failures prevented all 29 test files from loading."
+        },
+        "recommended_next_actions": [
+          {
+            "id": "21dbe1a9-7ee7-488a-a28a-33edb32599b4",
+            "text": "Thread the authoritative repository_key into citation resolution, select only the matching launch repository at head_sha, and add a shared-commit multi-repository regression test."
+          },
+          {
+            "id": "610a9ed1-a3d4-4a46-98dc-8ea1cb5ca40e",
+            "text": "In a fresh authorized audit run, install or restore workspace dependencies before the single Observation test execution and record a passing result for the relevant suites."
+          }
+        ]
+      },
+      "kind": "revision_published",
+      "unit": "run-0e8c1a1cef8a656f/implementation/audit",
+      "subject": "run-0e8c1a1cef8a656f/implementation/audit:build_result:1",
+      "artifact": "assessment",
+      "predecessor": null
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  },
+  {
+    "id": "29a991c1-5572-4ff3-98d0-be3e13a2de4d",
+    "commit_txid": 3710,
+    "created_at": "2026-11-07T18:59:16.98771+00:00",
+    "payload": {
+      "kind": "cancel_requested"
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": null
+  },
+  {
+    "id": "6ebcd3f9-452e-4b18-af66-2c6770406571",
+    "commit_txid": 3758,
+    "created_at": "2026-11-07T18:59:17.174174+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "d75d14de4d0eb4f61dced6a590c7bfa0",
+      "result": {
+        "code": "attempt_stopped",
+        "kind": "failed",
+        "detail": "stopped because its unit is no longer active"
+      }
+    },
+    "run_id": "run-0e8c1a1cef8a656f",
+    "unit_id": "run-0e8c1a1cef8a656f/implementation/audit"
+  }
+]

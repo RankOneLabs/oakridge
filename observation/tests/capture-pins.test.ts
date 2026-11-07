@@ -4,7 +4,8 @@ import type { ItemOccurrenceId } from "../src/domain/identity";
 import { COLLECTION_PENDING } from "../src/grading/evidence";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, OAKRIDGE_QUESTIONS, RELEVANCE_ID } from "../src/producers/oakridge/questions";
 import { oakridgeProfile } from "../src/producers/oakridge/profile";
-import { collectPinnedQuestion, readOccurrenceEvidence, recordCollection, type CaptureConfiguration } from "../src/storage/captured-evidence-store";
+import { collectPinnedQuestion, readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
+import type { CaptureConfiguration } from "../src/grading/evidence";
 import { withTenant, type Database } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems, projectRevisionInTransaction } from "../src/storage/projection-store";
@@ -81,14 +82,14 @@ integration("readiness moves per question; ready evidence is frozen and shared",
   const waiting = await recordCollection(db, tenant, correctness!.evidence_set_id,
     { state: "not_ready", reason: { code: "build_result_unavailable", detail: "build result b1 is not captured" } });
   expect(waiting.ok && waiting.value.readiness).toEqual({ state: "not_ready", reason: { code: "build_result_unavailable", detail: "build result b1 is not captured" } });
-  const references = [{ source: "reported", reported_by: "agent", ref: "subject", content: "cited" }] as const;
+  const references = [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "revision-1", item_path: "/findings/0", content: "cited" }] as const;
   const frozen = await recordCollection(db, tenant, support!.evidence_set_id, { state: "ready", references });
   expect(frozen.ok && frozen.value.readiness.state).toBe("ready");
   const [stillWaiting, stillReady] = await readOccurrenceEvidence(db, tenant, occurrence!);
   expect(stillWaiting?.readiness.state).toBe("not_ready");
   expect(stillReady?.readiness).toMatchObject({ state: "ready", references });
   const later = await recordCollection(db, tenant, support!.evidence_set_id,
-    { state: "ready", references: [{ source: "reported", reported_by: "agent", ref: "subject", content: "replacement" }] });
+    { state: "ready", references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "revision-1", item_path: "/findings/0", content: "replacement" }] });
   expect(later.ok && later.value.readiness).toEqual(stillReady!.readiness);
   await expect(withTenant(db, tenant, (trx) => sql`UPDATE observation.evidence_set SET evidence_refs = '[]'::jsonb
     WHERE evidence_set_id = ${support!.evidence_set_id}`.execute(trx))).rejects.toThrow("ready evidence_set is frozen");

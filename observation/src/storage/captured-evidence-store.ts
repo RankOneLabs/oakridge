@@ -1,20 +1,10 @@
 import type { Selectable } from "kysely";
 import type { EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
-import { COLLECTION_PENDING, evidenceSetId, type EvidenceReadiness, type EvidenceReference, type EvidenceSet } from "../grading/evidence";
-import type { QuestionKey } from "../grading/question";
+import { COLLECTION_PENDING, evidenceSetId, type CaptureConfiguration, type EvidenceReadiness, type EvidenceReference, type EvidenceSet } from "../grading/evidence";
 import type { ArtifactSource, EvidenceCollection } from "../ports/artifact-source";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationEvidenceSet } from "./db-types";
-
-/** One configured question and the evaluators an occurrence of its item kind is pinned to. */
-export interface CapturePin extends QuestionKey {
-  readonly item_kind: string;
-  readonly evaluator_definition_ids: readonly EvaluatorDefinitionId[];
-}
-/** The configuration in force when an occurrence is captured. Later edits reach later captures. */
-export interface CaptureConfiguration { readonly pins: readonly CapturePin[] }
-export const NO_CAPTURE_PINS: CaptureConfiguration = { pins: [] };
 
 export interface EvidenceStoreError { readonly operation: "evidence_store"; readonly entity_id: string; readonly detail: string }
 
@@ -81,4 +71,49 @@ export async function collectPinnedQuestion(db: Database, tenant: TenantScope, s
   if (!artifact) return err({ operation: "evidence_store", entity_id: evidence.subject_occurrence_id,
     detail: "subject occurrence is outside this source" });
   return recordCollection(db, tenant, evidence.evidence_set_id, await source.collect(artifact, evidence));
+}
+
+/** The questions of one run still waiting for evidence, oldest first. */
+export async function readWaitingEvidence(db: Database, tenant: TenantScope, run_id: string): Promise<readonly EvidenceSet[]> {
+  const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set as e")
+    .innerJoin("observation.item_occurrence as i", (join) => join.onRef("i.producer", "=", "e.producer")
+      .onRef("i.namespace", "=", "e.namespace").onRef("i.occurrence_id", "=", "e.subject_occurrence_id"))
+    .selectAll("e").where("e.producer", "=", tenant.producer).where("e.namespace", "=", tenant.namespace)
+    .where("i.run_id", "=", run_id).where("e.readiness", "=", "not_ready")
+    .orderBy("e.created_at").orderBy("e.evidence_set_id").execute());
+  return rows.map(evidenceSetFromRow);
+}
+
+/** Runs with any question still waiting, so a restart can retry them. */
+export async function readWaitingRuns(db: Database, tenant: TenantScope): Promise<readonly string[]> {
+  const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set as e")
+    .innerJoin("observation.item_occurrence as i", (join) => join.onRef("i.producer", "=", "e.producer")
+      .onRef("i.namespace", "=", "e.namespace").onRef("i.occurrence_id", "=", "e.subject_occurrence_id"))
+    .select("i.run_id").distinct().where("e.producer", "=", tenant.producer).where("e.namespace", "=", tenant.namespace)
+    .where("e.readiness", "=", "not_ready").orderBy("i.run_id").execute());
+  return rows.map((row) => row.run_id);
+}
+
+/** What one pass over a run's waiting questions found. */
+export interface RunCollection {
+  readonly run_id: string;
+  readonly ready: readonly EvidenceSetId[];
+  readonly waiting: readonly { readonly evidence_set_id: EvidenceSetId; readonly code: string }[];
+  readonly failed: readonly EvidenceStoreError[];
+}
+
+/** Collect each waiting question of a run on its own. A question that stays not ready, or whose
+ * collection fails, holds back nothing else. */
+export async function collectWaitingEvidence(db: Database, tenant: TenantScope, source: ArtifactSource, run_id: string): Promise<RunCollection> {
+  const ready: EvidenceSetId[] = [];
+  const waiting: { evidence_set_id: EvidenceSetId; code: string }[] = [];
+  const failed: EvidenceStoreError[] = [];
+  for (const pinned of await readWaitingEvidence(db, tenant, run_id)) {
+    const collected = await collectPinnedQuestion(db, tenant, source, pinned).catch((cause: unknown): Result<EvidenceSet, EvidenceStoreError> =>
+      err({ operation: "evidence_store", entity_id: pinned.evidence_set_id, detail: String(cause) }));
+    if (!collected.ok) failed.push(collected.error);
+    else if (collected.value.readiness.state === "ready") ready.push(collected.value.evidence_set_id);
+    else waiting.push({ evidence_set_id: collected.value.evidence_set_id, code: collected.value.readiness.reason.code });
+  }
+  return { run_id, ready, waiting, failed };
 }

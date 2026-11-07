@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { err, ok } from "../domain/primitives";
+import { err, ok, type JsonValue } from "../domain/primitives";
+import { providerEvidence } from "../grading/evidence";
+import type { QuestionDefinition } from "../grading/question";
 import type { GradingContext, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
 
@@ -43,7 +45,7 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
       return failure(context, "judge question requires an explicit unclear choice", "invalid_choice");
     const instruction = parsedInstruction(context.evaluator.instruction_text);
     if (!instruction) return failure(context, "judge instruction is invalid", "invalid_request");
-    const evidence = JSON.stringify(context.evidence.references.map(({ ref, content }) => ({ ref, content })));
+    const evidence = JSON.stringify(context.evidence.references.map((reference) => ({ ref: reference.ref, ...providerEvidence(reference) })));
     if (evidence.length > instruction.max_evidence_chars)
       return failure(context, "judge evidence exceeds its pinned bound", "invalid_request");
     const prompt = { rubric: instruction.rubric, allowed_values: values, evidence,
@@ -85,5 +87,10 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
   } };
 }
 
-export const llmJudgeRunner = createLlmJudgeRunner({ api_key: process.env.OBSERVATION_LLM_JUDGE_API_KEY,
-  base_url: process.env.OBSERVATION_LLM_JUDGE_BASE_URL ?? "https://api.openai.com/v1" });
+/** Why configured judge instructions cannot ask this question, or null when they can. */
+export function judgeInstructionProblem(instructions: JsonValue, question: QuestionDefinition): string | null {
+  if (!judgeInstructionSchema.safeParse(instructions).success) return "instructions must hold a rubric and max_evidence_chars";
+  if (question.response_kind !== "choice" || !question.allowed_values?.includes("unclear"))
+    return "the judge asks only choice questions with an unclear answer";
+  return null;
+}

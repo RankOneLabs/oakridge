@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { KbblHealth, ObservationHealth } from "../../kbbl/core/server/handlers/observation-health";
 import { err, ok } from "../src/domain/primitives";
+import { parseGraderConfiguration, planRegistration } from "../src/grading/configuration";
+import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { ASSESSMENT_FINDING_KIND, FINDING_KIND } from "../src/producers/oakridge/catalogue";
 import { runProof } from "../verification/proof";
+import { editedGraders, registrationScenario, type RegistrationSource } from "../verification/registration";
 import { launcherStateSchema, NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, scenarioStatus, type LauncherState,
   type ObservationStatus, type ScenarioReport } from "../verification/proof-contract";
 import { liveScenario, runtimeScenario } from "../verification/scenarios";
@@ -30,7 +34,8 @@ function fakeIo(overrides: Partial<ProofIo> = {}): ProofIo {
     dbosHealthy: async () => true,
     tokens: async () => ok({ capabilities: { ingest: "i", read: "r", grade: "g" }, private_files: true }),
     shadowQuery: async () => ok("1"), killObservation: () => {}, dbos: async () => ok({}), observationGet: async () => ok({}),
-    publisherFailures: async () => [], now: () => clock, sleep: async (ms) => { clock += ms; }, ...overrides };
+    publisherFailures: async () => [], readGraders: async () => "{}", writeGraders: async () => {},
+    now: () => clock, sleep: async (ms) => { clock += ms; }, ...overrides };
 }
 const failing = (report: ScenarioReport) => report.checks.filter((check) => !check.passed).map((check) => check.name);
 
@@ -262,6 +267,32 @@ describe("the source run", () => {
 
   const reached = [{ artifacts: [{ artifact_key: "plan", latest_revision: { id: "revision-1" } }], attention: [] }];
 
+  test("a deferred capture runs the launch hook, reaches the target and leaves the capture wait to its caller", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "source-run-"));
+    let hooked = "";
+    const report = await sourceRunScenario(fakeIo({ dbos: async (path) => ok(path === "/api/runs" ? { run_id: "run-1" } : path.endsWith("/inspect") ? reached[0] : {}),
+      ...feedIo(() => ({ events: [launched], outcomes: [], cursor: { commit_txid: "0", id: "e0" } })) }),
+      { input, directory, through: "plan", capture: "deferred",
+        after_launch: async (run) => { hooked = run.run_id; return { name: "observation is down", passed: true, detail: "" }; } });
+    rmSync(directory, { recursive: true, force: true });
+    expect(hooked).toBe("run-1");
+    expect(report.status).toBe("passed");
+    expect(report.evidence.run_capture).toBeNull();
+  });
+
+  test("a failed launch hook ends the run there, canceled", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "source-run-"));
+    const posted: string[] = [];
+    const report = await sourceRunScenario(fakeIo({ dbos: async (path, body) => {
+      if (body !== undefined) posted.push(path);
+      return ok(path === "/api/runs" ? { run_id: "run-1" } : {});
+    } }), { input, directory, through: "plan", capture: "deferred",
+      after_launch: async () => ({ name: "observation is down", passed: false, detail: "still up" }) });
+    rmSync(directory, { recursive: true, force: true });
+    expect(failing(report)).toEqual(["observation is down"]);
+    expect(posted).toEqual(["/api/runs", "/api/runs/run-1/cancel"]);
+  });
+
   test("it reports the capture it passed on, with the revisions it covered", async () => {
     const { report } = await drive(reached);
     expect(report.evidence.run_capture).toMatchObject({ run_id: "run-1", target_artifact: "plan", delivered_events: 2 });
@@ -421,5 +452,198 @@ describe("the stack's startup wait", () => {
     const { child, signals } = fakeLauncher(1);
     const started = await awaitLaunch(child, waitFor(async () => false));
     expect({ detail: started.ok ? null : started.error.detail, signals }).toEqual({ detail: "launcher exited with status 1; see /log", signals: [] });
+  });
+});
+
+describe("the registration scenario", () => {
+  const committedText = readFileSync(resolve(repository, "observation/graders.json"), "utf8");
+  const plan = (text: string) => {
+    const parsed = parseGraderConfiguration(JSON.parse(text));
+    if (!parsed.ok) throw new Error(parsed.error.detail);
+    const registration = planRegistration(parsed.value, oakridgeProfile.questions);
+    if (!registration.ok) throw new Error(registration.error.detail);
+    return registration.value;
+  };
+  const tick = () => new Promise<void>((done) => setImmediate(done));
+
+  interface Occurrence { readonly run_id: string; readonly id: string; readonly revision_id: string; readonly item_path: string;
+    readonly item_kind: string; readonly cites_file: boolean; pinned: string | null; ready_at: string | null }
+  interface ShadowOptions { readonly repin_after_restart?: boolean; readonly executions?: number; readonly nothing_cited?: boolean;
+    readonly never_arrives?: boolean; readonly unstable_evidence?: boolean; readonly drops_correctness?: boolean;
+    readonly wrong_commit?: boolean; readonly forgets_evidence?: boolean }
+
+  /** A shadow whose observation registers whatever graders.json held when it last started, pins
+   * each captured item with the selection running at its capture, and reads a cited file only
+   * while the launch repository is in place. */
+  function shadow(options: ShadowOptions = {}) {
+    let graders = committedText;
+    let running: string | null = null;
+    let killed = false;
+    let withheld = false;
+    let reads = 0;
+    let clock = 0;
+    let deferred: string | null = null;
+    let forgotten = false;
+    const feed = caughtUp("assessment");
+    const stored = new Set<string>();
+    const occurrences: Occurrence[] = [];
+    const collect = (occurrence: Occurrence) => {
+      if (occurrence.pinned && !occurrence.ready_at && (!occurrence.cites_file || (!withheld && !options.never_arrives)))
+        occurrence.ready_at = `2026-11-07T00:00:0${occurrences.indexOf(occurrence)}Z`;
+    };
+    const capture = (run_id: string, revision_id?: string) => {
+      for (const occurrence of occurrences.filter((entry) => entry.run_id === run_id && (!revision_id || entry.revision_id === revision_id))) {
+        occurrence.pinned ??= running;
+        collect(occurrence);
+      }
+    };
+    const questionsOf = (occurrence: Occurrence) => plan(options.repin_after_restart && running ? running : occurrence.pinned!).capture.pins
+      .filter((pin) => pin.item_kind === occurrence.item_kind && !(options.drops_correctness && pin.question_id.endsWith("correctness")));
+    const isReady = (occurrence: Occurrence) => occurrence.ready_at !== null && !(forgotten && occurrence.run_id === "run-second" && !occurrence.cites_file
+      && occurrence.item_kind === FINDING_KIND);
+    const references = (occurrence: Occurrence) => [{ ref: "subject", source: "revision", revision_id: occurrence.revision_id, item_path: occurrence.item_path,
+      content: { evidence: occurrence.cites_file ? [{ kind: "file", ref: "core/a.ts:2-3" }] : [], ...options.unstable_evidence ? { read: ++reads } : {} } },
+      ...(occurrence.cites_file ? [{ ref: "citation:0", source: "repository", repository_key: "oakridge", commit_sha: options.wrong_commit ? "def" : "abc", path: "core/a.ts",
+        line_range: { start: 2, end: 3 }, is_absent: false, content: "two\nthree" }] : [])];
+    const io = fakeIo({
+      now: () => clock,
+      sleep: async (ms) => { clock += ms; await tick(); },
+      readGraders: async () => graders,
+      writeGraders: async (text) => { graders = text; },
+      startStack: async () => {
+        running = graders; killed = false;
+        for (const evaluator of plan(graders).evaluators) stored.add(evaluator.evaluator_definition_id);
+        if (deferred) { capture(deferred); deferred = null; }
+        occurrences.forEach(collect);
+        return ok(undefined);
+      },
+      stopStack: async () => { running = null; },
+      killObservation: () => { killed = true; },
+      kbblHealth: async () => kbblHealth(running && !killed ? { state: "configured", graders: plan(running).graders.map((grader) =>
+        ({ runner: grader.runner, evaluatorDefinitionId: grader.evaluator_definition_id })) } : { state: "down", reason: "unreachable" }),
+      shadowQuery: async (_database, query) => ok(query.includes("head_sha") ? JSON.stringify(Object.fromEntries(occurrences
+        .filter((entry) => entry.revision_id.startsWith("assessment") && query.includes(entry.run_id)).map((entry) => [entry.revision_id, "abc"])))
+        : query.includes("evaluator_definition_id") ? JSON.stringify([...stored])
+        : query.includes("grading_provider_attempt") ? JSON.stringify({ executions: options.executions ?? 0, attempts: 0, requests_sent: 0, answers: 0 })
+          : query.includes("source_event_outcome") ? JSON.stringify(feed.outcomes) : JSON.stringify(feed.events)),
+      observationGet: async (path) => {
+        const run = /\/v1\/runs\/([^/]+)\/items/.exec(path)?.[1];
+        if (run) return ok({ items: occurrences.filter((entry) => entry.run_id === run && entry.pinned).map((entry) =>
+          ({ occurrence_id: entry.id, revision_id: entry.revision_id, json_pointer: entry.item_path, item_kind: entry.item_kind })) });
+        if (path.includes("/cursor")) return ok({ cursor: feed.cursor });
+        const revision = /\/v1\/source-revisions\/(.+)$/.exec(path)?.[1];
+        if (revision) return ok({ revision_id: decodeURIComponent(revision), run_id: "run-first", artifact_kind: "assessment" });
+        const occurrence = occurrences.find((entry) => path.includes(`/v1/items/${entry.id}/`))!;
+        return ok({ items: questionsOf(occurrence).map((pin) => ({ evidence_set_id: `${occurrence.id}:${pin.question_id}`, question_id: pin.question_id,
+          question_version: pin.question_version, pinned_evaluator_definition_ids: pin.evaluator_definition_ids,
+          readiness: isReady(occurrence) ? { state: "ready", ready_at: occurrence.ready_at, references: references(occurrence) }
+            : { state: "not_ready", reason: { code: occurrence.cites_file ? "repository_unavailable" : "collection_pending" } } })) });
+      },
+    });
+    const source: RegistrationSource = {
+      async run(label, run_options) {
+        const run_id = `run-${label}`;
+        const item = (id: string, revision_id: string, item_path: string, item_kind: string, cites_file: boolean) =>
+          occurrences.push({ run_id, id: `${run_id}-${id}`, revision_id: `${revision_id}-${run_id}`, item_path, item_kind, cites_file, pinned: null, ready_at: null });
+        item("finding", "analysis", "/findings/0", FINDING_KIND, false);
+        item("cited", "assessment", "/findings/0", ASSESSMENT_FINDING_KIND, !options.nothing_cited);
+        item("uncited", "assessment", "/findings/1", ASSESSMENT_FINDING_KIND, false);
+        const launched = await run_options.after_launch({ run_id, definition_id: "development" });
+        if (run_options.capture === "deferred") deferred = run_id;
+        else {
+          capture(run_id, `analysis-${run_id}`);
+          for (let turn = 0; turn < 5; turn++) await tick();
+          capture(run_id);
+          forgotten = Boolean(options.forgets_evidence);
+        }
+        return { run: { run_id, definition_id: "development" }, report: { id: "source-run", status: launched.passed ? "passed" : "failed",
+          checks: [launched], evidence: NO_EVIDENCE } };
+      },
+      repository_key: "oakridge",
+      readCited: async (commit_sha, path) => ok(commit_sha === "abc" && path === "core/a.ts" ? "one\ntwo\nthree\nfour" : null),
+      withholdRepository: async () => { withheld = true; return ok("withheld"); },
+      supplyRepository: async () => { withheld = false; return ok("supplied"); },
+    };
+    return { io, source, graders: () => graders, withheld: () => withheld };
+  }
+
+  test("a real wait at capture, a swap and restart, the input's arrival and a later capture each keep their own pins", async () => {
+    const stack = shadow();
+    const report = await registrationScenario(stack.io, stack.source);
+    expect(failing(report)).toEqual([]);
+    expect(report.evidence.registrations.map((entry) => entry.checkpoint)).toEqual(["committed", "committed, repository withheld",
+      "edited, repository withheld", "edited, repository supplied"]);
+    const pinOf = (checkpoint: string) => report.evidence.pins.find((pin) => pin.checkpoint === checkpoint && pin.item_path === "/findings/0"
+      && pin.item_kind === ASSESSMENT_FINDING_KIND)!;
+    expect(pinOf("first-capture")).toMatchObject({ readiness: "not_ready", not_ready_code: "repository_unavailable" });
+    expect(pinOf("first-after-arrival")).toMatchObject({ readiness: "ready", pinned_evaluator_definition_ids: pinOf("first-capture").pinned_evaluator_definition_ids });
+    expect(pinOf("second").pinned_evaluator_definition_ids).not.toEqual(pinOf("first-capture").pinned_evaluator_definition_ids);
+    expect(report.evidence.frozen_evidence.find((set) => set.run_id === "run-first" && set.item_path === "/findings/0" && set.question_id.endsWith("correctness"))
+      ?.references).toContainEqual(expect.objectContaining({ source: "repository", commit_sha: "abc", path: "core/a.ts", content: "two\nthree" }));
+    expect(report.evidence.provider_request_count).toBe(0);
+    expect(stack.graders()).toBe(committedText);
+    expect(stack.withheld()).toBe(false);
+  });
+
+  test("a capture where nothing waits fails rather than passing vacuously", async () => {
+    const report = await registrationScenario(shadow({ nothing_cited: true }).io, shadow({ nothing_cited: true }).source);
+    expect(failing(report)).toContain("a required lookup is waiting at capture");
+  });
+
+  test("a waiting question that never becomes ready fails the proof", async () => {
+    const stack = shadow({ never_arrives: true });
+    expect(failing(await registrationScenario(stack.io, stack.source))).toContain("every question waiting at capture is ready once its input is supplied");
+  });
+
+  test("a restart that repins earlier captures fails the proof", async () => {
+    const stack = shadow({ repin_after_restart: true });
+    expect(failing(await registrationScenario(stack.io, stack.source))).toContain("the first run keeps every pin and frozen evidence set after the swap");
+  });
+
+  test("frozen evidence that changes between reads fails the proof", async () => {
+    const stack = shadow({ unstable_evidence: true });
+    expect(failing(await registrationScenario(stack.io, stack.source)))
+      .toContain("evidence frozen earlier in the second run is unchanged by every later revision and task link captured in it");
+  });
+
+  test("an item missing one of its questions' pins fails the proof", async () => {
+    const stack = shadow({ drops_correctness: true });
+    expect(failing(await registrationScenario(stack.io, stack.source)))
+      .toContain("each first item has exactly its questions, pinned to the selection in force at its capture");
+  });
+
+  test("evidence frozen earlier that is no longer ready fails the proof", async () => {
+    const stack = shadow({ forgets_evidence: true });
+    expect(failing(await registrationScenario(stack.io, stack.source)))
+      .toContain("evidence frozen earlier in the second run is unchanged by every later revision and task link captured in it");
+  });
+
+  test("a cited file served at another commit than the assessment's fails the proof", async () => {
+    const stack = shadow({ wrong_commit: true });
+    expect(failing(await registrationScenario(stack.io, stack.source)))
+      .toContain("their evidence reads each cited file at the assessed commit, with the content the repository holds there");
+  });
+
+  test("an execution created by capture or restart fails the proof", async () => {
+    const stack = shadow({ executions: 1 });
+    expect(failing(await registrationScenario(stack.io, stack.source))).toContain("capture and collection execute nothing");
+  });
+
+  test("the committed selection and the repository are restored even when the stack does not start", async () => {
+    const stack = shadow();
+    await stack.source.withholdRepository();
+    const report = await registrationScenario({ ...stack.io, startStack: async () => err({ operation: "start_stack", entity_id: "x", detail: "down" }) }, stack.source);
+    expect(report.status).toBe("failed");
+    expect(stack.graders()).toBe(committedText);
+    expect(stack.withheld()).toBe(false);
+  });
+
+  test("the edit changes only graders.json and keeps every runner and model", () => {
+    const committed = parseGraderConfiguration(JSON.parse(committedText));
+    if (!committed.ok) throw new Error(committed.error.detail);
+    const edited = editedGraders(committed.value);
+    expect(edited.questions.flatMap((entry) => entry.graders.map((grader) => [grader.runner, grader.model])))
+      .toEqual(committed.value.questions.flatMap((entry) => entry.graders.map((grader) => [grader.runner, grader.model])));
+    expect(planRegistration(edited, oakridgeProfile.questions).ok).toBe(true);
   });
 });

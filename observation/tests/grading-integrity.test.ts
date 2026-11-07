@@ -6,7 +6,8 @@ import type { JsonValue } from "../src/domain/primitives";
 import { evaluationDigest, submissionAttemptLabel, submissionDigest, type EvaluationIdentity } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
 import { OAKRIDGE_QUESTIONS } from "../src/producers/oakridge/questions";
-import { readOccurrenceEvidence, recordCollection, type CaptureConfiguration } from "../src/storage/captured-evidence-store";
+import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
+import type { CaptureConfiguration } from "../src/grading/evidence";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { listGrades, registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems } from "../src/storage/projection-store";
@@ -28,7 +29,7 @@ async function readyFinding(db: Database, scope: TenantScope = tenant): Promise<
   const occurrence_id = items.items.find((item) => item.item_kind === "finding")!.occurrence_id as ItemOccurrenceId;
   const [pinned] = await readOccurrenceEvidence(db, scope, occurrence_id);
   const ready = await recordCollection(db, scope, pinned!.evidence_set_id, { state: "ready",
-    references: [{ source: "reported", reported_by: "agent", ref: "subject", content: "finding" }] });
+    references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "revision-1", item_path: "/findings/0", content: "finding" }] });
   if (!ready.ok) throw new Error(ready.error.detail);
   return { occurrence_id, evidence_set_id: pinned!.evidence_set_id };
 }

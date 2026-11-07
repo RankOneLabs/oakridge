@@ -10,6 +10,7 @@ requests happen only here, never in an offline test command.
 bun observation/verification/proof.ts runtime
 bun observation/verification/proof.ts live
 bun observation/verification/proof.ts source-run --input input.json [--through plan|brief|assessment]
+bun observation/verification/proof.ts registration --input observation/verification/inputs/registration-audit.json
 ```
 
 Configure the shadow with the usual `OAKRIDGE_SHADOW_*` variables. Set
@@ -26,12 +27,24 @@ which is not committed.
 | --- | --- | --- |
 | `runtime` | Isolation and supervision on the real services: shadow-owned role, database, ports and tokens; kbbl reporting observation down after it is killed; DBOS serving and a real run launching and canceling meanwhile; the run not reading as captured meanwhile; a restart reusing the same state; ordered delivery catching up to the authority and covering that run. | Starts and stops its own, and refuses a running one. |
 | `live` | The prerequisites of a real-provider proof: a reachable service, registered graders and both kbbl capabilities. | Attaches to a running stack, or starts one. |
+| `registration` | Startup registration, capture pins and per-question evidence across a `graders.json` edit and restart, with a required lookup waiting on a real capture. Clones the input's primary repository to a disposable path under the system temp directory, with the same origin, and launches both runs from it. Starts on the committed selection; launches the first run and stops observation once it has launched, so the run reaches its assessment unobserved; withholds the clone (renames it away from its launch path) and restarts, so observation captures the whole run, every captured item carries exactly the questions its kind applies, pinned to the selection in force, and every file-citing question waits with `repository_unavailable` while the rest are ready; edits every grader's instructions in `graders.json` and restarts, checking the edit registered new definitions and kept the old ones, and that the first run kept its pins, its frozen evidence and its waits; supplies the clone and restarts, checking every waiting question became ready on its capture-time pins and that each of its file references matches what the proof reads itself from the clone: the assessment's `head_sha`, the cited path and line range, and the content there; launches a second run with observation up, which must take the edited selection, reading it every ten seconds to check evidence frozen earlier stays ready and unchanged through every later revision and task link; and checks no execution, provider attempt or answer exists throughout. A capture where nothing waits, or a wait that never ends, fails. Restores `graders.json` and the clone whatever happens. Records `registrations`, `pins` (provenance at every checkpoint) and `frozen_evidence` (each set's full content when first seen ready). Spends the real agent turns of two runs through assessment. | Starts, restarts and stops its own, and refuses a running one. |
 | `source-run` | Launches the committed development workflow to its target artifact, cancels it, and requires the ordered feed to cover the run. Retains `run.json`, `inspect.json` and `authority-rows.json` under `source-run/`. Spends real agent turns and needs the installed Codex agent's authentication. | Attaches, or starts one. |
 
 `live` fails on a missing key, invalid grader or unavailable database, with the
-launcher's reason in its checks, even though DBOS and kbbl stay up. It also fails
-today on a healthy service, which reports `no_configured_graders` until startup
-registration exists.
+launcher's reason in its checks, even though DBOS and kbbl stay up. A healthy
+service reports the graders it registered from `observation/graders.json`.
+
+`registration` needs an input whose sessions change nothing outside the shadow.
+`inputs/registration-audit.json` is the one used: an audit of this branch's pull request
+whose spec forbids edits, commits, pushes and pull requests, and whose `build_base` is the
+pull request's existing base, so `prepare` finds it on the forge and pushes nothing; the builder
+checks out the pull request's head locally to inspect it. Analysis findings are captured and frozen before the run has tasks, so
+the second run's check on evidence frozen earlier is the late-link case: their Relevance evidence
+must stay unchanged through every later task, plan, brief and assessment link. On a real capture the
+ordered feed always delivers a build before its assessment, so Correctness cannot wait on its
+subject there; that same-finding case is proven through the real service in
+`observation/tests/grading-startup.test.ts`, and the proof reports how many findings it saw in that
+state.
 
 `source-run` checks that observation is reachable before it launches, so a service
 already down fails without spending a turn. After canceling, it waits up to two
@@ -73,7 +86,6 @@ failure, lineage and composites, and reveal.
 
 | Pending scenario | Owner |
 | --- | --- |
-| `registration-pins-evidence` | configured-question-evidence |
 | `real-provider-requests-and-recovery` | automatic-execution-lifecycle |
 | `relations-and-composites` | task-lineage-composites |
 | `first-assessment-finding-end-to-end`, `human-grading-and-pwa-readback` | operator-item-workspace |
