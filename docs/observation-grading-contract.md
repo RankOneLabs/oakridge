@@ -246,14 +246,30 @@ Offline, from the repository root, with `OAKRIDGE_TEST_DATABASE_URL` naming a lo
   `core/decision-record.ts:18-31` range read from a non-primary launch repository.
 - `observation/tests/producer-evidence.test.ts` and `capture-pins.test.ts`: the three question
   contracts, spec, subject and repository provenance, unparseable, empty and agent-reported
-  citations, integration without a subject, task context and frozen shared evidence.
+  citations, the assessment's reported test results with `cargo_test_output` for both questions,
+  integration without a subject and without task context, task context and frozen shared evidence.
+- `observation/tests/provider-input.test.ts`: the request `jev_direct`, `fastino_glide` and
+  `llm_judge` each send through an injected transport, holding every reference's provenance, an
+  absent file as `is_absent: true` and the reported test results; and the committed instructions
+  naming that shape.
 
 On the shadow, through `observation/verification/proof.ts`:
 
 - `live` passed (`observation/verification/reports/live-2026-11-07T16-59-47-486Z`): the service
   started from `graders.json` and reported its three configured graders.
-- `registration` without `--input` (`observation/verification/reports/registration-2026-11-07T17-00-48-602Z`)
-  recorded both startups' registrations, three new definitions after the edit with every earlier one
-  kept, and no execution or provider request. Its capture checks fail: no real development run was
-  captured, because a run's `prepare` step creates its base branch on the input's forge. The
-  capture, pin-retention and later-capture checks run only with `--input`.
+- `registration` now forces a real wait: it launches its runs from a disposable clone of the
+  input's repository, keeps observation down while the first run reaches its assessment, and
+  withholds the clone at capture so every file-citing question waits with `repository_unavailable`;
+  it then follows those waits through a `graders.json` swap and restart to their arrival on the
+  original pins, captures a second run on the edited pins, and fails if nothing waits or a wait
+  never ends. Its run with `inputs/registration-audit.json`
+  (`observation/verification/reports/registration-2026-11-07T18-03-10-914Z`) started on the
+  committed selection and registered it, and the first real run reached its brief with observation
+  down and nothing pushed. The audit's builder then stopped without publishing: the brief writer
+  had made the audit path conditional on an operator choice the spec did not record. No capture,
+  wait, arrival or swap was observed on that run, so those checkpoints remain proven only by
+  `observation/tests/grading-startup.test.ts` through the real service.
+- The earlier `registration` without `--input`
+  (`observation/verification/reports/registration-2026-11-07T17-00-48-602Z`) recorded both
+  startups' registrations, three new definitions after the edit with every earlier one kept, and
+  no execution or provider request.
