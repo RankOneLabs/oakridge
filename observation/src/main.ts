@@ -1,4 +1,5 @@
 import { createApp } from "./http/app";
+import { NO_CONFIGURED_GRADERS } from "./http/health";
 import { credentialsFromEnv } from "./http/ingest-auth";
 import { oakridgeProfile } from "./producers/oakridge/profile";
 import { openDatabase } from "./storage/database";
@@ -12,7 +13,8 @@ export async function startObservation(env: NodeJS.ProcessEnv = process.env): Pr
   const db = openDatabase(env.OBSERVATION_DATABASE_URL);
   try {
     await migrateEmptyDatabase(db);
-    const app = createApp({ db, credentials, profile: oakridgeProfile });
+    // Nothing registers a grader at startup yet, and health reports exactly that.
+    const app = createApp({ db, credentials, profile: oakridgeProfile, grader_capability: () => NO_CONFIGURED_GRADERS });
     const server = Bun.serve({ fetch: app.fetch, hostname: env.OBSERVATION_HOST ?? "127.0.0.1", port: Number(env.OBSERVATION_PORT ?? 8791) });
     return { port: server.port ?? Number(env.OBSERVATION_PORT ?? 8791),
       stop: async () => { server.stop(); await db.destroy(); } };

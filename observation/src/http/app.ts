@@ -6,10 +6,12 @@ import { registerItemRoutes } from "./items";
 import { registerEvaluationRoutes } from "./evaluations";
 import { registerGradeRoutes } from "./grades";
 import { registerGradingRecordRoutes } from "./grading-records";
+import { registerHealthRoute, type HealthDependencies } from "./health";
 import type { SourceDependencies } from "./sources";
 
-export function createApp(deps: SourceDependencies): Hono {
+export function createApp(deps: SourceDependencies & HealthDependencies): Hono {
   const app = new Hono();
+  registerHealthRoute(app, deps);
   registerSourceRoutes(app, deps);
   registerItemRoutes(app, deps);
   registerEvaluationRoutes(app, deps);
