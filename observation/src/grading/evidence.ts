@@ -39,6 +39,15 @@ export interface ReportedEvidence extends ReferenceFields {
 }
 export type EvidenceReference = RevisionEvidence | RunInputEvidence | RepositoryEvidence | ReportedEvidence;
 
+/** One question and the full evaluator set an occurrence of its item kind is pinned to when captured. */
+export interface CapturePin extends QuestionKey {
+  readonly item_kind: string;
+  readonly evaluator_definition_ids: readonly EvaluatorDefinitionId[];
+}
+/** The configuration in force when an occurrence is captured. Later edits reach later captures. */
+export interface CaptureConfiguration { readonly pins: readonly CapturePin[] }
+export const NO_CAPTURE_PINS: CaptureConfiguration = { pins: [] };
+
 /** Why one question cannot be collected yet. The question is retried when its input arrives. */
 export interface NotReadyReason {
   readonly code: string;

@@ -88,5 +88,6 @@ test("no retired module, entrypoint or credential remains to dispatch outside HT
 
 test("the service starts no worker: nothing runs a provider unattended", async () => {
   const main = await Bun.file(resolve(import.meta.dir, "../src/main.ts")).text();
-  expect(main).not.toMatch(/worker|runner|grading\//i);
+  // Startup validates and registers configured graders; it never builds a runner or an execution.
+  expect(main).not.toMatch(/worker|\.factory\(|create\w*Runner|grading\/execution|runners\/|setInterval/i);
 });

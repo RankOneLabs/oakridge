@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { err, ok } from "../domain/primitives";
+import { err, ok, type JsonValue } from "../domain/primitives";
+import type { QuestionDefinition } from "../grading/question";
 import type { GradingContext, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
 
@@ -85,5 +86,10 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
   } };
 }
 
-export const llmJudgeRunner = createLlmJudgeRunner({ api_key: process.env.OBSERVATION_LLM_JUDGE_API_KEY,
-  base_url: process.env.OBSERVATION_LLM_JUDGE_BASE_URL ?? "https://api.openai.com/v1" });
+/** Why configured judge instructions cannot ask this question, or null when they can. */
+export function judgeInstructionProblem(instructions: JsonValue, question: QuestionDefinition): string | null {
+  if (!judgeInstructionSchema.safeParse(instructions).success) return "instructions must hold a rubric and max_evidence_chars";
+  if (question.response_kind !== "choice" || !question.allowed_values?.includes("unclear"))
+    return "the judge asks only choice questions with an unclear answer";
+  return null;
+}

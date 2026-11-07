@@ -3,7 +3,8 @@ import { allProviderCredentialNames, configuredRunnerNames, credentialsForRunner
   selectProviderEnvironment } from "../src/grading/provider-credentials";
 import { runnerRegistry } from "../src/grading/runner";
 
-const graders = (...runners: string[]) => ({ questions: [{ id: "q", graders: runners.map((runner) => ({ runner, model: "m" })) }] });
+const graders = (...runners: string[]) => ({ questions: [{ question_id: "q", graders: runners.map((runner) =>
+  ({ runner, model: "m", instructions: {}, estimated_cost_per_call: 0 })) }] });
 
 test("every retained runner declares what it reads", () => {
   expect(allProviderCredentialNames().toSorted()).toEqual(["FASTINO_API_KEY", "FASTINO_BASE_URL", "OBSERVATION_LLM_JUDGE_API_KEY",
@@ -16,7 +17,12 @@ test("the configured runners are read from the grader selection, once each", () 
 });
 
 test("a selection without runners is invalid rather than empty", () => {
-  expect(configuredRunnerNames({ questions: [{ graders: [] }] })).toMatchObject({ ok: false, error: { kind: "invalid_graders" } });
+  expect(configuredRunnerNames({ questions: [{ question_id: "q", graders: [] }] })).toMatchObject({ ok: false, error: { kind: "invalid_graders" } });
+});
+
+test("a grader without its model, instructions or cost is refused before any setting is selected", () => {
+  expect(configuredRunnerNames({ questions: [{ question_id: "q", graders: [{ runner: "jev_direct" }] }] }))
+    .toMatchObject({ ok: false, error: { kind: "invalid_graders" } });
 });
 
 test("an unknown runner fails instead of selecting nothing for it", () => {

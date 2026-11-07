@@ -2,13 +2,16 @@ import { test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { canonicalDigest } from "canonical-json";
 import { Client } from "pg";
+import { sql } from "kysely";
+import { configuredRunnerNames, credentialsForRunners } from "../src/grading/provider-credentials";
+import { GRADERS_FILE } from "../src/main";
 import type { EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest, type EvaluatorDefinition } from "../src/grading/evaluator";
 import type { ReadyEvidence } from "../src/grading/evidence";
 import type { QuestionDefinition } from "../src/grading/question";
 import { oakridgeProfile } from "../src/producers/oakridge/profile";
-import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../src/storage/captured-evidence-store";
+import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../src/grading/evidence";
 import { deliverSourceEvent } from "../src/storage/capture-store";
 import { openDatabase, type Database, type TenantScope } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
@@ -83,6 +86,10 @@ export function revisionOutcome(input: FixtureRevision, scope: TenantScope = ten
     body_digest: digest.value as `canonical-json/v1:${string}` & { readonly __brand: "CanonicalDigest" } } };
 }
 
+/** The launch event that captures a run's input. */
+export const launchOutcome = (input: JsonValue, run_id = "run-1"): SourceEventOutcome => ({ ...provenance, kind: "run_input",
+  event_kind: "launched", run_id, event_id: `launch:${run_id}`, input, input_schema_version: SCHEMA_VERSION });
+
 export interface Feed {
   send(outcome: SourceEventOutcome, override?: CaptureConfiguration): Promise<SourceEventCursor>;
   /** A configuration override stands for a restart under an edited configuration. */
@@ -106,10 +113,28 @@ export function createFeed(db: Database, scope: TenantScope = tenant, configurat
   return {
     send,
     revision: (input, override) => send(revisionOutcome(input, scope), override),
-    launch: (input, run_id = "run-1") => send({ ...provenance, kind: "run_input", event_kind: "launched", run_id,
-      event_id: `launch:${run_id}`, input, input_schema_version: SCHEMA_VERSION }),
+    launch: (input, run_id = "run-1") => send(launchOutcome(input, run_id)),
     decide: (event_kind, run_id = "run-1") => send({ ...provenance, kind: "ignored", event_kind, run_id, event_id: `decision:${sequence}` }),
   };
 }
 
 export const occurrenceIdOf = (value: string): ItemOccurrenceId => value as ItemOccurrenceId;
+
+/** The committed selection, read from the file the service reads. Tests take graders from here. */
+export const committedGraders = async (): Promise<unknown> => Bun.file(GRADERS_FILE).json();
+
+/** A placeholder for each setting the selection requires. The offline suite never reaches a provider. */
+export function credentialEnv(graders: unknown): Record<string, string> {
+  const runners = configuredRunnerNames(graders);
+  if (!runners.ok) throw new Error(runners.error.detail);
+  const required = credentialsForRunners(runners.value);
+  if (!required.ok) throw new Error(required.error.detail);
+  return Object.fromEntries(required.value.required.map((name) => [name, "offline-placeholder"]));
+}
+
+/** The connection URL of a scratch database, for starting the real service on it. */
+export async function databaseUrl(db: Database): Promise<string> {
+  const database = await sql<{ name: string }>`SELECT current_database() AS name`.execute(db);
+  const url = new URL(serverUrl ?? ""); url.pathname = `/${database.rows[0]?.name ?? ""}`;
+  return url.href;
+}

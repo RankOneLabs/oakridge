@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { err, ok, type JsonValue } from "../domain/primitives";
+import type { QuestionDefinition } from "../grading/question";
 import type { GradingContext, GradingError, ProviderFailureCategory, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
 
@@ -32,6 +33,23 @@ export const systemOneResponseSchema = z.object({ model: z.string().min(1),
   usage: z.object({ input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() }).catchall(z.json()),
   cost: z.number().finite().nonnegative().optional(),
   id: z.string().min(1).optional(), provider_link: z.url().optional() }).catchall(z.json());
+
+const RESPONSE_KIND_FOR_TYPE = { choice: "choice", score: "structured", noul: "numeric" } as const;
+
+/** Why configured System One instructions cannot ask this question, or null when they can. A
+ * choice recipe's criteria must name exactly the question's allowed answers. */
+export function systemOneInstructionProblem(instructions: JsonValue, question: QuestionDefinition): string | null {
+  const recipe = systemOneRecipeSchema.safeParse(instructions);
+  if (!recipe.success) return "instructions must be a System One recipe";
+  const asked = recipe.data.system_one;
+  if (RESPONSE_KIND_FOR_TYPE[asked.type] !== question.response_kind)
+    return `a ${asked.type} recipe cannot answer a ${question.response_kind} question`;
+  if (asked.type !== "choice") return null;
+  const options = Object.keys(asked.criteria).toSorted();
+  const allowed = (question.allowed_values ?? []).map(String).toSorted();
+  return options.length === allowed.length && options.every((option, index) => option === allowed[index]) ? null
+    : `criteria must name exactly ${allowed.join(", ")}`;
+}
 
 export type SystemOneTransport = (url: string, init: RequestInit) => Promise<Response>;
 export interface SystemOneRunnerConfig {

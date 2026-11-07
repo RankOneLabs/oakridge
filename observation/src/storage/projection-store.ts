@@ -10,7 +10,8 @@ import { extractionIssue, issueId, type ExtractionIssue } from "../projection/is
 import { logicalItemId, logicalItemRelation, logicalReference, occurrenceRelation, relationId, revisionAnchorId,
   subjectRelation, type RelationProposal } from "../projection/relations";
 import { occurrenceId } from "../projection/occurrence-id";
-import { pinOccurrenceInTransaction, type CaptureConfiguration } from "./captured-evidence-store";
+import type { CaptureConfiguration } from "../grading/evidence";
+import { pinOccurrenceInTransaction } from "./captured-evidence-store";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationItemOccurrence, ObservationItemRelation, ObservationSourceRevision } from "./db-types";
 
