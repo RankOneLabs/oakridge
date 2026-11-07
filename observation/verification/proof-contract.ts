@@ -37,11 +37,33 @@ export interface CaptureReference {
   readonly authority_head: string | null;
   readonly service_cursor: string | null;
 }
+/** Which run a capture check covers, and the artifact it had to reach, if any. */
+export interface RunCaptureRequest { readonly run_id: string; readonly target_artifact: string | null }
+export interface UnmappedEvent { readonly event_id: string; readonly event_kind: string; readonly reason: string }
+/** What observation and the publisher said when a capture wait ended. */
+export interface RunCaptureDiagnostics { readonly health: string; readonly launcher: string; readonly publisher_failures: readonly string[] }
+/** One run compared event by event: the authority's rows against the service's recorded outcomes. */
+export interface RunCapture extends RunCaptureRequest {
+  readonly authority_events: number;
+  readonly delivered_events: number;
+  readonly authority_last: string | null;
+  readonly service_cursor: string | null;
+  readonly cursor_reached_run: boolean;
+  readonly undelivered_event_ids: readonly string[];
+  readonly unmapped: readonly UnmappedEvent[];
+  readonly source_revisions: readonly string[];
+  /** The target revision as the service served it back; null until it does. */
+  readonly target_revision: string | null;
+  readonly read_failures: readonly string[];
+  /** Null on a single read, which is not a finished wait. */
+  readonly diagnostics: RunCaptureDiagnostics | null;
+}
 export interface AuthorityCount { readonly events_before: number | null; readonly events_after: number | null }
 /** A scenario's evidence. Each list holds actual ids read back from the running services. */
 export interface ScenarioEvidence {
   readonly runs: readonly RunReference[];
   readonly capture: CaptureReference | null;
+  readonly run_capture: RunCapture | null;
   readonly authority: AuthorityCount | null;
   readonly source_revisions: readonly string[];
   readonly item_paths: readonly string[];
@@ -53,7 +75,7 @@ export interface ScenarioEvidence {
   readonly provider_request_count: number | null;
   readonly pwa_readback: readonly string[];
 }
-export const NO_EVIDENCE: ScenarioEvidence = { runs: [], capture: null, authority: null, source_revisions: [], item_paths: [],
+export const NO_EVIDENCE: ScenarioEvidence = { runs: [], capture: null, run_capture: null, authority: null, source_revisions: [], item_paths: [],
   pinned_definitions: [], execution_ids: [], provider_attempt_ids: [], observation_ids: [], provider_request_count: null, pwa_readback: [] };
 
 export interface ScenarioReport {

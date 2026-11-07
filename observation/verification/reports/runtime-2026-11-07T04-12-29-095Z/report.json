@@ -1,0 +1,209 @@
+{
+  "proof_id": "runtime-2026-11-07T04-12-29-095Z",
+  "started_at": "2026-11-07T04:12:29.189Z",
+  "finished_at": "2026-11-07T04:12:41.333Z",
+  "source": {
+    "git_head": "176fabfad8c5cbef4676596b36bc697606a472aa",
+    "worktree_clean": false
+  },
+  "launcher": {
+    "name": "rev91",
+    "state_dir": "/tmp/oakridge-rev-mJxf/state",
+    "kbbl": {
+      "port": 18798,
+      "url": "http://127.0.0.1:18798",
+      "data_dir": "/tmp/oakridge-rev-mJxf/state/kbbl"
+    },
+    "dbos": {
+      "port": 18800,
+      "url": "http://127.0.0.1:18800"
+    },
+    "postgres": {
+      "container": "oakridge-rev91-postgres",
+      "volume": "oakridge-rev91-postgres-data",
+      "port": 54439,
+      "authority_database": "oakridge"
+    },
+    "observation": {
+      "port": 18801,
+      "url": "http://127.0.0.1:18801",
+      "database": "observation",
+      "namespace": "shadow-rev91",
+      "ingest_token_file": "/tmp/oakridge-rev-mJxf/state/observation-ingest.token",
+      "read_token_file": "/tmp/oakridge-rev-mJxf/state/observation-read.token",
+      "grade_token_file": "/tmp/oakridge-rev-mJxf/state/observation-grade.token",
+      "status_file": "/tmp/oakridge-rev-mJxf/state/observation-status.json"
+    },
+    "provider_env_file": "/tmp/oakridge-rev-mJxf/provider.env"
+  },
+  "status": "passed",
+  "scenario": {
+    "id": "runtime",
+    "status": "passed",
+    "checks": [
+      {
+        "name": "the stack starts",
+        "passed": true,
+        "detail": "DBOS and kbbl answered"
+      },
+      {
+        "name": "observation is reachable",
+        "passed": true,
+        "detail": "health no_configured_graders; launcher running: pid_1960012"
+      },
+      {
+        "name": "capabilities are distinct and private",
+        "passed": true,
+        "detail": "private: true"
+      },
+      {
+        "name": "the shadow's ports are distinct",
+        "passed": true,
+        "detail": "18798,18800,54439,18801"
+      },
+      {
+        "name": "the service holds a connection in the shadow's PostgreSQL",
+        "passed": true,
+        "detail": "1 connection(s)"
+      },
+      {
+        "name": "it connects as an ordinary role",
+        "passed": true,
+        "detail": "rolsuper=f"
+      },
+      {
+        "name": "the target baseline is recorded once",
+        "passed": true,
+        "detail": "1"
+      },
+      {
+        "name": "kbbl reports observation down after it dies",
+        "passed": true,
+        "detail": "{\"state\":\"down\",\"reason\":\"unreachable\"}"
+      },
+      {
+        "name": "DBOS keeps serving",
+        "passed": true,
+        "detail": "health"
+      },
+      {
+        "name": "a run launches while observation is down",
+        "passed": true,
+        "detail": "run-70ea361e48763718"
+      },
+      {
+        "name": "it can be canceled while observation is down",
+        "passed": true,
+        "detail": "accepted"
+      },
+      {
+        "name": "the authority committed its events",
+        "passed": true,
+        "detail": "0 -> 3"
+      },
+      {
+        "name": "the run does not read as captured while observation is down",
+        "passed": true,
+        "detail": "0 of 3 events"
+      },
+      {
+        "name": "the stack restarts",
+        "passed": true,
+        "detail": "answered"
+      },
+      {
+        "name": "observation returns on the same state",
+        "passed": true,
+        "detail": "health no_configured_graders; launcher running: pid_1960778"
+      },
+      {
+        "name": "capabilities survive the restart",
+        "passed": true,
+        "detail": "compared by value, not reported"
+      },
+      {
+        "name": "ordered delivery catches up to the authority",
+        "passed": true,
+        "detail": "head 976/229f2e94-5d3f-43e5-8552-41cbc79986cc, cursor 976/229f2e94-5d3f-43e5-8552-41cbc79986cc"
+      },
+      {
+        "name": "the ordered feed delivered every event of the run",
+        "passed": true,
+        "detail": "3 of 3 events; cursor 976/229f2e94-5d3f-43e5-8552-41cbc79986cc, run's last event 976/229f2e94-5d3f-43e5-8552-41cbc79986cc"
+      },
+      {
+        "name": "the service mapped every event of the run",
+        "passed": true,
+        "detail": "0 unmapped: []"
+      }
+    ],
+    "evidence": {
+      "runs": [
+        {
+          "run_id": "run-70ea361e48763718",
+          "definition_id": "aaa26e7c474c6e049884fdeb9c9c136f0b0dc74c5c095fc095848dadc111da7a"
+        }
+      ],
+      "capture": {
+        "authority_head": "976/229f2e94-5d3f-43e5-8552-41cbc79986cc",
+        "service_cursor": "976/229f2e94-5d3f-43e5-8552-41cbc79986cc"
+      },
+      "run_capture": {
+        "run_id": "run-70ea361e48763718",
+        "target_artifact": null,
+        "authority_events": 3,
+        "delivered_events": 3,
+        "authority_last": "976/229f2e94-5d3f-43e5-8552-41cbc79986cc",
+        "service_cursor": "976/229f2e94-5d3f-43e5-8552-41cbc79986cc",
+        "cursor_reached_run": true,
+        "undelivered_event_ids": [],
+        "unmapped": [],
+        "source_revisions": [],
+        "target_revision": null,
+        "read_failures": [],
+        "diagnostics": {
+          "health": "no_configured_graders",
+          "launcher": "running: pid_1960778",
+          "publisher_failures": [
+            "observation publisher: Unable to connect. Is the computer able to access the url?",
+            "observation publisher: Unable to connect. Is the computer able to access the url?"
+          ]
+        }
+      },
+      "authority": {
+        "events_before": 0,
+        "events_after": 3
+      },
+      "source_revisions": [],
+      "item_paths": [],
+      "pinned_definitions": [],
+      "execution_ids": [],
+      "provider_attempt_ids": [],
+      "observation_ids": [],
+      "provider_request_count": null,
+      "pwa_readback": []
+    }
+  },
+  "pending": [
+    {
+      "id": "registration-pins-evidence",
+      "owner": "configured-question-evidence"
+    },
+    {
+      "id": "real-provider-requests-and-recovery",
+      "owner": "automatic-execution-lifecycle"
+    },
+    {
+      "id": "relations-and-composites",
+      "owner": "task-lineage-composites"
+    },
+    {
+      "id": "first-assessment-finding-end-to-end",
+      "owner": "operator-item-workspace"
+    },
+    {
+      "id": "human-grading-and-pwa-readback",
+      "owner": "operator-item-workspace"
+    }
+  ]
+}

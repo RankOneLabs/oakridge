@@ -8,6 +8,7 @@ import { runProof } from "../verification/proof";
 import { launcherStateSchema, NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, scenarioStatus, type LauncherState,
   type ObservationStatus, type ScenarioReport } from "../verification/proof-contract";
 import { liveScenario, runtimeScenario } from "../verification/scenarios";
+import { awaitRunCapture, isRunCaptured, readRunCapture } from "../verification/run-capture";
 import type { ProofIo } from "../verification/shadow-session";
 import { sourceRunScenario, type SourceRunInput } from "../verification/source-run";
 
@@ -23,14 +24,42 @@ const status = (value: ObservationStatus["state"], detail = ""): ObservationStat
 
 /** A stack whose answers the test fixes; nothing here reaches a process or network. */
 function fakeIo(overrides: Partial<ProofIo> = {}): ProofIo {
+  let clock = 0;
   return { state, startStack: async () => ok(undefined), stopStack: async () => {}, stackAnswers: async () => false,
     observationStatus: async () => status("running", "pid_42"), kbblHealth: async () => kbblHealth({ state: "no_configured_graders" }),
     dbosHealthy: async () => true,
     tokens: async () => ok({ capabilities: { ingest: "i", read: "r", grade: "g" }, private_files: true }),
     shadowQuery: async () => ok("1"), killObservation: () => {}, dbos: async () => ok({}), observationGet: async () => ok({}),
-    sleep: async () => {}, ...overrides };
+    publisherFailures: async () => [], now: () => clock, sleep: async (ms) => { clock += ms; }, ...overrides };
 }
 const failing = (report: ScenarioReport) => report.checks.filter((check) => !check.passed).map((check) => check.name);
+
+interface FeedEvent { readonly id: string; readonly commit_txid: string; readonly kind: string; readonly artifact: string | null }
+interface FeedOutcome { readonly event_id: string; readonly event_kind: string; readonly outcome_kind: string; readonly reason: string | null; readonly revision_id: string | null }
+const launched: FeedEvent = { id: "e1", commit_txid: "5", kind: "launched", artifact: null };
+const published = (artifact: string): FeedEvent => ({ id: "e2", commit_txid: "6", kind: "revision_published", artifact });
+const outcomeOf = (event: FeedEvent): FeedOutcome => ({ event_id: event.id, event_kind: event.kind, reason: null,
+  outcome_kind: event.artifact ? "artifact_revision" : "run_input", revision_id: event.artifact ? `oakridge:shadow-test:unit:${event.artifact}:1` : null });
+
+/** A run's two sides of the feed: what the authority holds and what the service recorded. */
+interface Feed { readonly events: readonly FeedEvent[]; readonly outcomes: readonly FeedOutcome[]; readonly cursor: { readonly commit_txid: string; readonly id: string } }
+const caughtUp = (artifact: string): Feed => {
+  const events = [launched, published(artifact)];
+  return { events, outcomes: events.map(outcomeOf), cursor: { commit_txid: "6", id: "e2" } };
+};
+/** IO that answers capture reads from `feed`, which a test may swap between reads. */
+const feedIo = (feed: () => Feed): Pick<ProofIo, "shadowQuery" | "observationGet"> => ({
+  shadowQuery: async (database, query) => {
+    if (database === state.observation.database) return ok(JSON.stringify(feed().outcomes));
+    return ok(query.includes("json_build_object") ? JSON.stringify(feed().events) : "[]");
+  },
+  observationGet: async (path) => {
+    if (path.endsWith("/cursor")) return ok({ cursor: feed().cursor });
+    const revision_id = decodeURIComponent(path.split("/").at(-1) ?? "");
+    return ok({ revision_id, run_id: "run-1", artifact_kind: revision_id.split(":").at(-2) });
+  },
+});
+const refused = (detail: string) => err({ operation: "observation_request", entity_id: "x", detail });
 
 describe("the live proof's prerequisites", () => {
   test("a missing configured key fails the proof and keeps the launcher's reason", async () => {
@@ -94,6 +123,92 @@ describe("the runtime scenario", () => {
     const report = await runtimeScenario(fakeIo());
     expect(failing(report)).toContain("kbbl reports observation down after it dies");
   });
+
+  test("a head and cursor that agree do not pass a run the service never recorded", async () => {
+    const io = feedIo(() => ({ ...caughtUp("plan"), outcomes: [] }));
+    const report = await runtimeScenario(fakeIo({ ...io, dbos: async (path) => ok(path === "/api/runs" ? { run_id: "run-1" } : {}),
+      shadowQuery: async (database, query) => query.includes("LIMIT 1") ? ok("6/e2") : io.shadowQuery(database, query) }));
+    expect(failing(report)).toContain("the ordered feed delivered every event of the run");
+    expect(report.evidence.run_capture?.undelivered_event_ids).toEqual(["e1", "e2"]);
+  });
+});
+
+describe("a run's capture", () => {
+  const request = { run_id: "run-1", target_artifact: "plan" };
+  const read = (feed: Feed, overrides: Partial<ProofIo> = {}) => readRunCapture(fakeIo({ ...feedIo(() => feed), ...overrides }), request);
+
+  test("every event delivered, mapped and the target served is captured", async () => {
+    const capture = await read(caughtUp("plan"));
+    expect(isRunCaptured(capture)).toBe(true);
+    expect(capture).toMatchObject({ authority_events: 2, delivered_events: 2, target_revision: "oakridge:shadow-test:unit:plan:1", read_failures: [] });
+  });
+
+  test("a cursor past the run does not stand in for the run's own outcomes", async () => {
+    const feed = caughtUp("plan");
+    const capture = await read({ ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "9", id: "other-run" } });
+    expect(isRunCaptured(capture)).toBe(false);
+    expect(capture.undelivered_event_ids).toEqual(["e2"]);
+  });
+
+  test("outcomes without a cursor at the run are not captured", async () => {
+    expect(isRunCaptured(await read({ ...caughtUp("plan"), cursor: { commit_txid: "5", id: "e1" } }))).toBe(false);
+  });
+
+  test("the cursor compares by number, not as text", async () => {
+    expect(isRunCaptured(await read({ ...caughtUp("plan"), cursor: { commit_txid: "10", id: "a" } }))).toBe(true);
+  });
+
+  test("a run the authority holds no events for is not captured", async () => {
+    expect(isRunCaptured(await read({ events: [], outcomes: [], cursor: { commit_txid: "6", id: "e2" } }))).toBe(false);
+  });
+
+  test("no target revision among the run's events is not captured", async () => {
+    const events = [launched];
+    expect(isRunCaptured(await read({ events, outcomes: events.map(outcomeOf), cursor: { commit_txid: "5", id: "e1" } }))).toBe(false);
+  });
+
+  test("a revision the service will not serve back is not captured", async () => {
+    const io = feedIo(() => caughtUp("plan"));
+    const capture = await read(caughtUp("plan"), { observationGet: async (path, capability) =>
+      path.endsWith("/cursor") ? io.observationGet(path, capability) : refused("HTTP 404") });
+    expect(isRunCaptured(capture)).toBe(false);
+    expect(capture.read_failures).toEqual(["observation_request: HTTP 404"]);
+  });
+
+  test("a revision from another run is not the target", async () => {
+    const io = feedIo(() => caughtUp("plan"));
+    const capture = await read(caughtUp("plan"), { observationGet: async (path, capability) =>
+      path.endsWith("/cursor") ? io.observationGet(path, capability) : ok({ revision_id: "r", run_id: "run-2", artifact_kind: "plan" }) });
+    expect(capture.target_revision).toBeNull();
+  });
+
+  test("the wait is bounded, and lag retains what is missing and why", async () => {
+    let reads = 0;
+    const feed = caughtUp("plan");
+    const lagging: Feed = { ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "5", id: "e1" } };
+    const capture = await awaitRunCapture(fakeIo({ ...feedIo(() => { reads += 1; return lagging; }),
+      publisherFailures: async () => ["observation publisher: observation delivery HTTP 400"] }), request, 5_000);
+    expect(isRunCaptured(capture)).toBe(false);
+    expect(reads).toBeLessThan(30);
+    expect(capture).toMatchObject({ undelivered_event_ids: ["e2"], diagnostics: { publisher_failures: ["observation publisher: observation delivery HTTP 400"] } });
+  });
+
+  test("delivery that catches up within the bound is captured", async () => {
+    let cursor_reads = 0;
+    const feed = caughtUp("plan");
+    const lagging: Feed = { ...feed, outcomes: feed.outcomes.slice(0, 1) };
+    const io = fakeIo({ ...feedIo(() => { cursor_reads += 1; return cursor_reads < 9 ? lagging : feed; }) });
+    expect(isRunCaptured(await awaitRunCapture(io, request, 60_000))).toBe(true);
+  });
+
+  test("an unmapped event ends the wait, because it stays unmapped", async () => {
+    const feed = caughtUp("plan");
+    let sleeps = 0;
+    const rejected: Feed = { ...feed, outcomes: [feed.outcomes[0]!, { ...feed.outcomes[1]!, outcome_kind: "unmapped", reason: "no artifact declaration", revision_id: null }] };
+    const capture = await awaitRunCapture(fakeIo({ ...feedIo(() => rejected), sleep: async () => { sleeps += 1; } }), request, 5_000);
+    expect(sleeps).toBe(0);
+    expect(capture.unmapped).toEqual([{ event_id: "e2", event_kind: "revision_published", reason: "no artifact declaration" }]);
+  });
 });
 
 describe("the source run", () => {
@@ -102,7 +217,7 @@ describe("the source run", () => {
   const awaiting = (review: string) => ({ kind: "awaiting_review", review, unit_id: "run-1/unit", target: "revision-1" });
 
   /** Answers each inspect with the next view, and records every request after that. */
-  async function drive(views: readonly unknown[], through: "plan" | "brief" | "assessment" = "plan") {
+  async function drive(views: readonly unknown[], through: "plan" | "brief" | "assessment" = "plan", overrides: Partial<ProofIo> = {}) {
     const directory = mkdtempSync(join(tmpdir(), "source-run-"));
     const posted: string[] = [];
     let reads = 0;
@@ -111,7 +226,7 @@ describe("the source run", () => {
       if (path.endsWith("/inspect")) { reads += 1; return ok(views[Math.min(reads, views.length) - 1]); }
       if (body !== undefined) posted.push(path);
       return ok({});
-    }, shadowQuery: async () => ok("[]") }), { input, directory, through, timeout_ms: 1_000 });
+    }, ...feedIo(() => caughtUp(through)), ...overrides }), { input, directory, through, timeout_ms: 60_000, capture_timeout_ms: 5_000 });
     const retained = readdirSync(directory).toSorted();
     rmSync(directory, { recursive: true, force: true });
     return { report, posted, retained };
@@ -143,6 +258,69 @@ describe("the source run", () => {
     expect(report.status).toBe("failed");
     expect(report.checks[0]?.detail).toContain("needs intervention");
     expect(posted).toEqual(["/api/runs/run-1/cancel"]);
+  });
+
+  const reached = [{ artifacts: [{ artifact_key: "plan", latest_revision: { id: "revision-1" } }], attention: [] }];
+
+  test("it reports the capture it passed on, with the revisions it covered", async () => {
+    const { report } = await drive(reached);
+    expect(report.evidence.run_capture).toMatchObject({ run_id: "run-1", target_artifact: "plan", delivered_events: 2 });
+    expect(report.evidence.source_revisions).toEqual(["oakridge:shadow-test:unit:plan:1"]);
+  });
+
+  test("observation down before launch fails without spending a turn", async () => {
+    let launches = 0;
+    const directory = mkdtempSync(join(tmpdir(), "source-run-"));
+    const report = await sourceRunScenario(fakeIo({ kbblHealth: async () => kbblHealth({ state: "down", reason: "unreachable" }),
+      observationStatus: async () => status("preflight_failed", "missing_credential:TYPESAFE_API_KEY"),
+      dbos: async () => { launches += 1; return ok({ run_id: "run-1" }); } }), { input, directory, through: "plan" });
+    rmSync(directory, { recursive: true, force: true });
+    expect(launches).toBe(0);
+    expect(report).toMatchObject({ status: "failed", checks: [{ passed: false }] });
+    expect(report.checks[0]?.detail).toContain("missing_credential:TYPESAFE_API_KEY");
+  });
+
+  test("observation lost during the run fails a healthy stack, and keeps the reason", async () => {
+    let settled = false;
+    const { report, posted } = await drive(reached, "plan", {
+      kbblHealth: async () => { const health = kbblHealth(settled ? { state: "down", reason: "unreachable" } : { state: "no_configured_graders" }); settled = true; return health; },
+      observationStatus: async () => status(settled ? "exited" : "running", settled ? "status_1" : "pid_42"),
+      observationGet: async () => refused("no response") });
+    expect(report.status).toBe("failed");
+    expect(failing(report)).toEqual(["the ordered feed delivered every event of the run", "the service serves the target revision"]);
+    expect(report.checks.find((check) => !check.passed)?.detail).toContain("health down; launcher exited: status_1");
+    expect(posted).toEqual(["/api/runs/run-1/cancel"]);
+  });
+
+  test("capture that stays behind fails, though the run reached its target", async () => {
+    const feed = caughtUp("plan");
+    const { report } = await drive(reached, "plan", feedIo(() => ({ ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "5", id: "e1" } })));
+    expect(report.status).toBe("failed");
+    expect(report.checks[0]).toMatchObject({ name: "the run reaches its target", passed: true });
+    expect(report.evidence.run_capture?.undelivered_event_ids).toEqual(["e2"]);
+  });
+
+  test("capture refused by the service fails, and the publisher's reason is kept", async () => {
+    const feed = caughtUp("plan");
+    const { report } = await drive(reached, "plan", { ...feedIo(() => ({ ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "5", id: "e1" } })),
+      publisherFailures: async () => ["observation publisher: observation delivery HTTP 400"] });
+    expect(report.status).toBe("failed");
+    expect(report.checks.find((check) => !check.passed)?.detail).toContain("observation delivery HTTP 400");
+  });
+
+  test("an unavailable observation database fails with its reason", async () => {
+    const io = feedIo(() => caughtUp("plan"));
+    const { report } = await drive(reached, "plan", { ...io, shadowQuery: async (database, query) =>
+      database === state.observation.database ? err({ operation: "shadow_query", entity_id: database, detail: "database does not exist" }) : io.shadowQuery(database, query) });
+    expect(report.status).toBe("failed");
+    expect(report.evidence.run_capture?.read_failures).toContain("shadow_query: database does not exist");
+  });
+
+  test("capability files that cannot be read fail with their reason", async () => {
+    const io = feedIo(() => caughtUp("plan"));
+    const { report } = await drive(reached, "plan", { ...io, observationGet: async () => err({ operation: "read_tokens", entity_id: "/state", detail: "ENOENT" }) });
+    expect(report.status).toBe("failed");
+    expect(report.evidence.run_capture?.read_failures).toContain("read_tokens: ENOENT");
   });
 
   test("a launch the authority refuses is a failed proof", async () => {

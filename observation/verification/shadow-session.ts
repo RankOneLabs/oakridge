@@ -13,12 +13,20 @@ import { launcherStateSchema, observationStatusSchema, type LauncherState, type 
 const REPOSITORY_ROOT = resolve(import.meta.dir, "../..");
 const LAUNCHER = resolve(REPOSITORY_ROOT, "scripts/oakridge-shadow");
 const REQUEST_TIMEOUT_MS = 5_000;
+const QUERY_TIMEOUT_MS = 30_000;
+const PUBLISHER_FAILURE_LINES = 5;
 /** A cold start rebuilds the WASM and the PWA and may pull PostgreSQL. */
 const STACK_START_TIMEOUT_MS = 300_000;
 const POLL_MS = 500;
 
 const failure = (operation: string, entity_id: string, detail: string): Result<never, ProofFailure> =>
   err({ operation, entity_id, detail });
+
+/** How observation looks from outside: what kbbl reports and what the launcher recorded. */
+export interface ObservationFacts { readonly health: string; readonly launcher: string }
+export const observationFacts = (health: KbblHealth | null, status: ObservationStatus | null): ObservationFacts => ({
+  health: health?.observation.state ?? "kbbl_unavailable",
+  launcher: status ? `${status.state}${status.detail ? `: ${status.detail}` : ""}` : "no status recorded" });
 
 export interface Capabilities { readonly ingest: string; readonly read: string; readonly grade: string }
 export interface TokenFacts { readonly capabilities: Capabilities; readonly private_files: boolean }
@@ -39,6 +47,9 @@ export interface ProofIo {
   killObservation(pid: number): void;
   dbos(path: string, body?: unknown): Promise<Result<unknown, ProofFailure>>;
   observationGet(path: string, capability: keyof Capabilities): Promise<Result<unknown, ProofFailure>>;
+  /** The publisher's latest refusals, from a stack this proof started; an attached stack logs elsewhere. */
+  publisherFailures(): Promise<readonly string[]>;
+  now(): number;
   sleep(ms: number): Promise<void>;
 }
 
@@ -120,8 +131,8 @@ export function createShadowIo(state: LauncherState, log_path: string): ProofIo 
     tokens,
     async shadowQuery(database, query) {
       const child = Bun.spawnSync(["docker", "exec", state.postgres.container, "psql", "--username", "oakridge", "--dbname", database,
-        "--tuples-only", "--no-align", "--command", query]);
-      return child.exitCode === 0 ? ok(child.stdout.toString().trim()) : failure("shadow_query", database, child.stderr.toString().trim());
+        "--tuples-only", "--no-align", "--command", query], { timeout: QUERY_TIMEOUT_MS });
+      return child.exitCode === 0 ? ok(child.stdout.toString().trim()) : failure("shadow_query", database, child.stderr.toString().trim() || "query did not finish");
     },
     killObservation: (pid) => { process.kill(pid, "SIGKILL"); },
     dbos: (path, body) => authenticated(`${state.dbos.url}${path}`, body === undefined ? {} : { method: "POST",
@@ -131,6 +142,11 @@ export function createShadowIo(state: LauncherState, log_path: string): ProofIo 
       if (!facts.ok) return facts;
       return authenticated(`${state.observation.url}${path}`, { headers: { authorization: `Bearer ${facts.value.capabilities[capability]}` } }, "observation_request");
     },
+    async publisherFailures() {
+      const log = await readFile(log_path, "utf8").catch(() => "");
+      return log.split("\n").filter((line) => line.includes("observation publisher:")).slice(-PUBLISHER_FAILURE_LINES);
+    },
+    now: () => Date.now(),
     sleep: (ms) => Bun.sleep(ms),
   };
 }

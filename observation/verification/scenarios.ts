@@ -6,7 +6,8 @@ import { defaultModelForRuntime } from "../../kbbl/core/runtime";
 import { resolveLaunchableDefinition } from "../../workflow-config/src/definition-store";
 import { NO_EVIDENCE, scenarioStatus, type AuthorityCount, type CaptureReference, type ProofCheck, type RunReference,
   type ScenarioEvidence, type ScenarioId, type ScenarioReport } from "./proof-contract";
-import type { ProofIo } from "./shadow-session";
+import { awaitRunCapture, isRunCaptured, readRunCapture, runCaptureChecks } from "./run-capture";
+import { observationFacts, type ObservationFacts, type ProofIo } from "./shadow-session";
 
 const OBSERVATION_START_ATTEMPTS = 120;
 const CAPTURE_CATCH_UP_ATTEMPTS = 240;
@@ -25,14 +26,13 @@ async function poll<Value>(io: ProofIo, attempts: number, read: () => Promise<Va
   return value;
 }
 
-const observationSettled = (state: string | undefined) => state !== undefined && state !== "not_configured" && state !== "down";
+export const observationSettled = (state: string | undefined) => state !== undefined && state !== "not_configured" && state !== "down";
 
 /** Waits for the service or its recorded failure, whichever is first, and returns what health then says. */
-async function settleObservation(io: ProofIo): Promise<{ readonly health: string; readonly launcher: string }> {
-  const health = await poll(io, OBSERVATION_START_ATTEMPTS, async () => ({ health: await io.kbblHealth(), status: await io.observationStatus() }),
+export async function settleObservation(io: ProofIo): Promise<ObservationFacts> {
+  const settled = await poll(io, OBSERVATION_START_ATTEMPTS, async () => ({ health: await io.kbblHealth(), status: await io.observationStatus() }),
     ({ health: current, status }) => observationSettled(current?.observation.state) || status?.state === "preflight_failed" || status?.state === "exited");
-  const launcher = health.status ? `${health.status.state}${health.status.detail ? `: ${health.status.detail}` : ""}` : "no status recorded";
-  return { health: health.health?.observation.state ?? "kbbl_unavailable", launcher };
+  return observationFacts(settled.health, settled.status);
 }
 
 async function isolationChecks(io: ProofIo): Promise<readonly ProofCheck[]> {
@@ -114,6 +114,12 @@ export async function runtimeScenario(io: ProofIo): Promise<ScenarioReport> {
     checks.push(check("DBOS keeps serving", await io.dbosHealthy(), "health"));
     const progress = await progressWorkflow(io);
     checks.push(...progress.checks);
+    const request = progress.run ? { run_id: progress.run.run_id, target_artifact: null } : null;
+    if (request) {
+      const behind = await readRunCapture(io, request);
+      checks.push(check("the run does not read as captured while observation is down", !isRunCaptured(behind),
+        `${behind.delivered_events} of ${behind.authority_events} events`));
+    }
 
     await io.stopStack();
     const restarted = await io.startStack();
@@ -127,7 +133,9 @@ export async function runtimeScenario(io: ProofIo): Promise<ScenarioReport> {
     const capture = await poll(io, CAPTURE_CATCH_UP_ATTEMPTS, () => readCapture(io), (position) => position.authority_head !== null && position.authority_head === position.service_cursor);
     checks.push(check("ordered delivery catches up to the authority", capture.authority_head !== null && capture.authority_head === capture.service_cursor,
       `head ${capture.authority_head}, cursor ${capture.service_cursor}`));
-    return report("runtime", checks, { ...NO_EVIDENCE, runs: progress.run ? [progress.run] : [], authority: progress.authority, capture });
+    const run_capture = request ? await awaitRunCapture(io, request) : null;
+    if (run_capture) checks.push(...runCaptureChecks(run_capture));
+    return report("runtime", checks, { ...NO_EVIDENCE, runs: progress.run ? [progress.run] : [], authority: progress.authority, capture, run_capture });
   } finally { await io.stopStack(); }
 }
 

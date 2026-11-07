@@ -24,14 +24,25 @@ which is not committed.
 
 | Scenario | What it proves | Stack |
 | --- | --- | --- |
-| `runtime` | Isolation and supervision on the real services: shadow-owned role, database, ports and tokens; kbbl reporting observation down after it is killed; DBOS serving and a real run launching and canceling meanwhile; a restart reusing the same state; ordered delivery catching up to the authority. | Starts and stops its own, and refuses a running one. |
+| `runtime` | Isolation and supervision on the real services: shadow-owned role, database, ports and tokens; kbbl reporting observation down after it is killed; DBOS serving and a real run launching and canceling meanwhile; the run not reading as captured meanwhile; a restart reusing the same state; ordered delivery catching up to the authority and covering that run. | Starts and stops its own, and refuses a running one. |
 | `live` | The prerequisites of a real-provider proof: a reachable service, registered graders and both kbbl capabilities. | Attaches to a running stack, or starts one. |
-| `source-run` | Launches the committed development workflow and retains `run.json`, `inspect.json` and `authority-rows.json` under `source-run/`. Spends real agent turns and needs the installed Codex agent's authentication. | Attaches, or starts one. |
+| `source-run` | Launches the committed development workflow to its target artifact, cancels it, and requires the ordered feed to cover the run. Retains `run.json`, `inspect.json` and `authority-rows.json` under `source-run/`. Spends real agent turns and needs the installed Codex agent's authentication. | Attaches, or starts one. |
 
 `live` fails on a missing key, invalid grader or unavailable database, with the
 launcher's reason in its checks, even though DBOS and kbbl stay up. It also fails
 today on a healthy service, which reports `no_configured_graders` until startup
 registration exists.
+
+`source-run` checks that observation is reachable before it launches, so a service
+already down fails without spending a turn. After canceling, it waits up to two
+minutes for `run-capture.ts` to find every authority event of the run recorded by the
+service, none of them `unmapped`, the service cursor at or past the run's last event,
+and the target revision served back through the read capability. A cursor alone is
+not enough, and neither is a run that reached its target on a healthy DBOS and kbbl.
+A failure keeps `run_capture` in the report: the undelivered event ids, unmapped
+reasons, failed reads, observation health, the launcher's status and the publisher's
+latest refusals. Those refusals appear only when this proof started the stack, since
+only then does it hold the launcher's log.
 
 ## Contracts
 
@@ -42,7 +53,7 @@ tested offline in `observation/tests/verification-proof.test.ts`.
 
 A report records the source revision, the resolved launcher state, each check, and
 `ScenarioEvidence`: run and definition ids, the authority head and service cursor,
-authority event counts, source revisions, item paths, pinned definitions,
+the run's event-by-event capture, authority event counts, source revisions, item paths, pinned definitions,
 execution, provider-attempt and observation ids, the provider request count and
 PWA readback. Every value is read back from a running service. A value not yet
 observed stays empty or null: a provider that returns no request id records null,
