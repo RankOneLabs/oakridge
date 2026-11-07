@@ -24,25 +24,42 @@ export interface HealthDependencies {
 export const NO_CONFIGURED_GRADERS: GraderCapability = { state: "none_configured" };
 const DATABASE_CHECK_MS = 1_000;
 
-/** A pool waiting on a dead server must not hold the health response open. */
-async function checkDatabase(db: Database, timeout_ms: number): Promise<DatabaseHealth> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<DatabaseHealth>((resolve) => { timer = setTimeout(() => resolve("unavailable"), timeout_ms); });
-  const reached = sql`SELECT 1`.execute(db).then((): DatabaseHealth => "available", (): DatabaseHealth => "unavailable");
-  try { return await Promise.race([reached, expired]); }
-  finally { clearTimeout(timer); }
+export type DatabaseProbe = () => Promise<DatabaseHealth>;
+
+/**
+ * One probe in flight at a time, bounded on both sides: the response stops
+ * waiting at the deadline, and PostgreSQL ends the statement there itself. A
+ * request that arrives while a probe is pending waits on that probe, so a
+ * server that stopped answering holds at most one connection for health.
+ */
+export function databaseProbe(db: Database, timeout_ms: number): DatabaseProbe {
+  let in_flight: Promise<DatabaseHealth> | null = null;
+  const query = (): Promise<DatabaseHealth> => Promise.resolve()
+    .then(() => db.transaction().execute(async (trx) => {
+      await sql`SELECT set_config('statement_timeout', ${String(timeout_ms)}, true)`.execute(trx);
+      await sql`SELECT 1`.execute(trx);
+    }))
+    .then((): DatabaseHealth => "available", (): DatabaseHealth => "unavailable");
+  return async () => {
+    const probe = in_flight ??= query().finally(() => { in_flight = null; });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<DatabaseHealth>((resolve) => { timer = setTimeout(() => resolve("unavailable"), timeout_ms); });
+    try { return await Promise.race([probe, expired]); }
+    finally { clearTimeout(timer); }
+  };
 }
 
-export async function readObservationHealth(deps: HealthDependencies): Promise<ObservationHealth> {
-  const database = await checkDatabase(deps.db, deps.database_check_ms ?? DATABASE_CHECK_MS);
+export async function readObservationHealth(probe: DatabaseProbe, grader_capability: HealthDependencies["grader_capability"]): Promise<ObservationHealth> {
+  const database = await probe();
   return { service: "observation", status: database === "available" ? "ok" : "degraded", database,
-    graders: deps.grader_capability?.() ?? NO_CONFIGURED_GRADERS };
+    graders: grader_capability?.() ?? NO_CONFIGURED_GRADERS };
 }
 
 /** Open like the DBOS health route: it carries availability and registered capability, never a credential. */
 export function registerHealthRoute(app: Hono, deps: HealthDependencies): void {
+  const probe = databaseProbe(deps.db, deps.database_check_ms ?? DATABASE_CHECK_MS);
   app.get("/health", async (c) => {
-    const health = await readObservationHealth(deps);
+    const health = await readObservationHealth(probe, deps.grader_capability);
     return c.json(health, health.status === "ok" ? 200 : 503);
   });
 }

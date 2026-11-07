@@ -6,8 +6,12 @@ import { oakridgeProfile } from "../src/producers/oakridge/profile";
 import type { Database } from "../src/storage/database";
 import { integration, scratchDatabase } from "./grading-fixture";
 
-/** A database that never answers: the pool of a server that stopped responding. */
-const hungDatabase = { getExecutor: () => { throw new Error("no connection"); } } as unknown as Database;
+/** A database that never answers: the pool of a server that stopped responding. It counts the probes it was handed. */
+function hungDatabase(): { readonly db: Database; readonly started: () => number } {
+  let started = 0;
+  const db = { transaction: () => ({ execute: () => { started += 1; return new Promise(() => {}); } }) } as unknown as Database;
+  return { db, started: () => started };
+}
 
 async function health(deps: HealthDependencies): Promise<{ status: number; body: ObservationHealth }> {
   const app = new Hono();
@@ -17,8 +21,17 @@ async function health(deps: HealthDependencies): Promise<{ status: number; body:
 }
 
 test("an unreachable database reports degraded, separately from grader capability", async () => {
-  expect(await health({ db: hungDatabase, database_check_ms: 20 })).toEqual({ status: 503, body: { service: "observation", status: "degraded",
+  expect(await health({ db: hungDatabase().db, database_check_ms: 20 })).toEqual({ status: 503, body: { service: "observation", status: "degraded",
     database: "unavailable", graders: { state: "none_configured" } } });
+});
+
+test("repeated probes of a hung database share the one query already pending", async () => {
+  const hung = hungDatabase();
+  const app = new Hono();
+  registerHealthRoute(app, { db: hung.db, database_check_ms: 20 });
+  for (let probe = 0; probe < 3; probe += 1) await app.request("/health");
+  await Promise.all([app.request("/health"), app.request("/health")]);
+  expect(hung.started()).toBe(1);
 });
 
 integration("a running service with nothing registered reports no configured graders", async () => scratchDatabase(async (db) => {
