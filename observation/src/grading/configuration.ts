@@ -103,8 +103,14 @@ export interface GradingRegistration {
 
 interface PinnedQuestion { readonly pin: CapturePin; readonly evaluators: readonly EvaluatorDefinition[]; readonly graders: readonly RegisteredGrader[] }
 
-function pinQuestion(question: QuestionDefinition, graders: readonly GraderEntry[], human: EvaluatorDefinition)
-  : Result<PinnedQuestion, GraderConfigurationError> {
+/** One question with the graders graders.json configures for it and the human evaluator every question keeps. */
+interface QuestionSelection {
+  readonly question: QuestionDefinition;
+  readonly graders: readonly GraderEntry[];
+  readonly human: EvaluatorDefinition;
+}
+
+function pinQuestion({ question, graders, human }: QuestionSelection): Result<PinnedQuestion, GraderConfigurationError> {
   const evaluators: EvaluatorDefinition[] = [];
   for (const grader of graders) {
     const evaluator = configuredEvaluator(question, grader);
@@ -138,7 +144,7 @@ export function planRegistration(configuration: GraderConfiguration, questions: 
   if (!human.ok) return human;
   const pinned: PinnedQuestion[] = [];
   for (const question of questions) {
-    const result = pinQuestion(question, configured.get(question.question_id)?.graders ?? [], human.value);
+    const result = pinQuestion({ question, graders: configured.get(question.question_id)?.graders ?? [], human: human.value });
     if (!result.ok) return result;
     pinned.push(result.value);
   }
