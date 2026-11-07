@@ -392,6 +392,8 @@ export async function readItemMeasurements(db: Database, tenant: TenantScope, oc
 /** A run's automatic-grading spend: what its claims sent or hold in reservation, against its allowance. */
 export interface RunSpend {
   readonly run_id: string;
+  /** The choice the run's captured launch committed. */
+  readonly is_grading_enabled: boolean;
   readonly committed: number;
   readonly requests_sent: number;
   readonly attempts: number;
@@ -408,6 +410,6 @@ export async function readRunSpend(db: Database, tenant: TenantScope, run_id: st
       .groupBy("status").execute();
     const executions: Record<ExecutionStatus, number> = { queued: 0, claimed: 0, reclaimable: 0, budget_deferred: 0, completed: 0, failed: 0 };
     for (const row of statuses) executions[row.status as ExecutionStatus] = Number(row.count);
-    return { run_id, committed, requests_sent: Number(counted.requests_sent), attempts: Number(counted.attempts), executions };
+    return { run_id, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id), committed, requests_sent: Number(counted.requests_sent), attempts: Number(counted.attempts), executions };
   });
 }

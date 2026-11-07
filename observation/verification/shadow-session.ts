@@ -32,10 +32,13 @@ export const observationFacts = (health: KbblHealth | null, status: ObservationS
 export interface Capabilities { readonly ingest: string; readonly read: string; readonly grade: string }
 export interface TokenFacts { readonly capabilities: Capabilities; readonly private_files: boolean }
 
+export interface StackOptions { readonly provider_env_file?: string }
 /** Everything a scenario does to the world, so the proof logic can run offline. */
 export interface ProofIo {
   readonly state: LauncherState;
-  startStack(): Promise<Result<void, ProofFailure>>;
+  /** Starts the shadow. A provider settings file other than the shadow's own is passed to the
+   * launcher as OAKRIDGE_SHADOW_PROVIDER_ENV_FILE, the launcher's established setting. */
+  startStack(options?: StackOptions): Promise<Result<void, ProofFailure>>;
   stopStack(): Promise<void>;
   /** Whether DBOS and kbbl answer now, for a scenario that attaches rather than launches. */
   stackAnswers(): Promise<boolean>;
@@ -130,9 +133,10 @@ export function createShadowIo(state: LauncherState, log_path: string): ProofIo 
   return {
     state,
     stackAnswers,
-    async startStack() {
+    async startStack(options = {}) {
       const log = openSync(log_path, "a");
-      const child = Bun.spawn([LAUNCHER, "--observation"], { cwd: REPOSITORY_ROOT, stdin: "ignore", stdout: log, stderr: log });
+      const env = options.provider_env_file ? { ...process.env, OAKRIDGE_SHADOW_PROVIDER_ENV_FILE: options.provider_env_file } : process.env;
+      const child = Bun.spawn([LAUNCHER, "--observation"], { cwd: REPOSITORY_ROOT, stdin: "ignore", stdout: log, stderr: log, env });
       closeSync(log);
       const started = await awaitLaunch(child, { answers: stackAnswers, timeout_ms: STACK_START_TIMEOUT_MS, now: () => Date.now(),
         sleep: (ms) => Bun.sleep(ms), log_path });
