@@ -65,8 +65,7 @@ function CriterionList({ criteria }: { criteria: PlanCriterion[] }) {
         {criteria.map((criterion, index) => <li key={index}>
           {typeof criterion !== "string" && <code className="or-code mr-2">{criterion.id}</code>}
           {planCriterionText(criterion)}
-          {typeof criterion !== "string" && (criterion.task_ids.length > 0 || criterion.decision_ids.length > 0) && <span className="block text-xs text-[var(--text-muted)]">
-            {criterion.task_ids.length > 0 && <>Tasks: {criterion.task_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
+          {typeof criterion !== "string" && criterion.decision_ids.length > 0 && <span className="block text-xs text-[var(--text-muted)]">
             {criterion.decision_ids.length > 0 && <>Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
           </span>}
         </li>)}

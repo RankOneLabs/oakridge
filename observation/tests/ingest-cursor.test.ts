@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { Client } from "pg";
 import { createApp } from "../src/http/app";
+import { oakridgeProfile } from "../src/producers/oakridge/profile";
 import { decodeSourceEventDelivery } from "../src/ingest/cursor";
 import { openDatabase, withTenant } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
@@ -28,7 +29,7 @@ integration("acknowledgement commits outcome and cursor together; stale delivery
     const db = openDatabase(url.href);
     try {
       await migrateEmptyDatabase(db);
-      const app = createApp({ db, credentials });
+      const app = createApp({ db, credentials, profile: oakridgeProfile });
       const auth = { authorization: "Bearer ingest-secret" };
       const first = await app.request("/v1/sources/oakridge/cursor", { headers: auth });
       expect(await first.json()).toEqual({ cursor: { commit_txid: "0", id: "" } });

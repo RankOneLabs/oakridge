@@ -3,16 +3,13 @@ import { createLlmJudgeRunner } from "../src/runners/llm-judge";
 import type { GradingContext } from "../src/grading/runner";
 import { evidence, evaluator, question } from "./grading-fixture";
 
+const instruction = JSON.stringify({ rubric: "Does the evidence support the claim?", max_evidence_chars: 500 });
 const context: GradingContext = { question: { ...question, response_kind: "choice",
-  allowed_values: ["faithful", "changed", "insufficient_evidence"],
-  input_recipe: { judge: { rubric: "Does the brief preserve the criterion's meaning?",
-    evidence_refs: ["criterion"], max_evidence_chars: 500, target: "report" } } },
-  evidence: { ...evidence, references: [{ ref: "criterion", content: "Original and brief criterion excerpts", digest: null },
-    { ref: "original_assessor_verdict", content: "faithful", digest: null }] },
+  allowed_values: ["supported", "contradicted", "unclear"] },
+  evidence: { ...evidence, references: [{ source: "reported", reported_by: "agent", ref: "citation", content: "Reported excerpt" }] },
   evaluator: { ...evaluator("model"), evaluator_definition_id: "judge", provider: "openai",
-    model: "pinned-judge", runtime_revision: "rubric-v1" } };
-const answer = { choice: "changed", probabilities: { faithful: 0.12, changed: 0.68,
-  insufficient_evidence: 0.2 }, confidence: 0.59 };
+    model: "pinned-judge", runtime_revision: "rubric-v1", instruction_text: instruction } };
+const answer = { choice: "contradicted", probabilities: { supported: 0.12, contradicted: 0.68, unclear: 0.2 }, confidence: 0.59 };
 function completion(value: unknown) { return Response.json({ id: "completion-1", model: "pinned-judge",
   choices: [{ message: { content: JSON.stringify(value) } }],
   usage: { prompt_tokens: 40, completion_tokens: 12, total_tokens: 52 } }); }
@@ -26,8 +23,8 @@ test("judge answer is independent of explanation and records its pinned source",
     } });
   const withExplanation = await runner.run(context);
   const withoutExplanation = await runner.run(context);
-  expect(withExplanation.ok && withExplanation.value.answer).toEqual({ state: "answered", kind: "choice", value: "changed" });
-  expect(withoutExplanation.ok && withoutExplanation.value.answer).toEqual({ state: "answered", kind: "choice", value: "changed" });
+  expect(withExplanation.ok && withExplanation.value.answer).toEqual({ state: "answered", kind: "choice", value: "contradicted" });
+  expect(withoutExplanation.ok && withoutExplanation.value.answer).toEqual({ state: "answered", kind: "choice", value: "contradicted" });
   if (!withExplanation.ok || !withoutExplanation.ok) return;
   expect(withExplanation.value.probabilities).toEqual(answer.probabilities);
   expect(withExplanation.value.confidence).toBe(answer.confidence);
@@ -35,34 +32,34 @@ test("judge answer is independent of explanation and records its pinned source",
   expect(withoutExplanation.value.rationale).toBeNull();
   expect(withExplanation.value.reproducibility_metadata).toMatchObject({ explanation_source: {
     provider: "openai", model: "pinned-judge", runtime_revision: "rubric-v1" } });
-  expect(requests[0]).not.toContain("original_assessor_verdict");
-  expect(requests[0]).not.toContain("faithful\",\"digest");
+  expect(requests[0]).toContain("Reported excerpt");
 });
 
-test("explicit insufficient evidence choice becomes an abstention with full distribution", async () => {
-  const insufficient = { ...answer, choice: "insufficient_evidence", confidence: 0.04 };
+test("an unclear choice is an answer with its full distribution", async () => {
+  const unclear = { ...answer, choice: "unclear", confidence: 0.04 };
   const runner = createLlmJudgeRunner({ api_key: "key", base_url: "https://judge.example/v1",
-    transport: async () => completion(insufficient) });
+    transport: async () => completion(unclear) });
   const result = await runner.run(context);
-  expect(result.ok && result.value.answer).toEqual({ state: "abstain", kind: "choice", reason: "insufficient_evidence" });
+  expect(result.ok && result.value.answer).toEqual({ state: "answered", kind: "choice", value: "unclear" });
   if (result.ok) expect(result.value.probabilities).toEqual(answer.probabilities);
 });
 
 test("a low-confidence non-abstain choice stays answered", async () => {
   const runner = createLlmJudgeRunner({ api_key: "key", base_url: "https://judge.example/v1",
     transport: async () => completion({ ...answer, confidence: 0.01,
-      probabilities: { faithful: 0.33, changed: 0.34, insufficient_evidence: 0.33 } }) });
+      probabilities: { supported: 0.33, contradicted: 0.34, unclear: 0.33 } }) });
   const result = await runner.run(context);
-  expect(result.ok && result.value.answer).toEqual({ state: "answered", kind: "choice", value: "changed" });
+  expect(result.ok && result.value.answer).toEqual({ state: "answered", kind: "choice", value: "contradicted" });
 });
 
-test("judge refuses an evidence recipe that exposes the original assessor verdict", async () => {
+test("judge refuses evidence over its pinned bound, and an unusable instruction, before any request", async () => {
   const runner = createLlmJudgeRunner({ api_key: "key", base_url: "https://judge.example/v1",
     transport: async () => { throw new Error("should not call"); } });
-  const result = await runner.run({ ...context, question: { ...context.question,
-    input_recipe: { judge: { rubric: "Judge report", evidence_refs: ["original_assessor_verdict"],
-      max_evidence_chars: 500, target: "report" } } } });
-  expect(result).toMatchObject({ ok: false, error: { operation: "llm_judge" } });
+  const oversized = await runner.run({ ...context, evaluator: { ...context.evaluator,
+    instruction_text: JSON.stringify({ rubric: "Judge", max_evidence_chars: 5 }) } });
+  const unusable = await runner.run({ ...context, evaluator: { ...context.evaluator, instruction_text: "not json" } });
+  expect(oversized).toMatchObject({ ok: false, error: { detail: "judge evidence exceeds its pinned bound" } });
+  expect(unusable).toMatchObject({ ok: false, error: { detail: "judge instruction is invalid" } });
 });
 
 test("judge HTTP failure preserves its provider request id", async () => {

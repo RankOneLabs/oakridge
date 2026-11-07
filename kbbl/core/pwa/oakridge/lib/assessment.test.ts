@@ -6,9 +6,11 @@ import emptyEvidenceAssessment from "./__fixtures__/empty-evidence-assessment.js
 import unresolvedAssessment from "./__fixtures__/unresolved-assessment.json";
 import linkedBrief from "./__fixtures__/id-linked-brief.json";
 import { readBuildBrief } from "./build-brief";
+import type { PlanTraceId } from "./plan";
 
+const task = (id: string): PlanTraceId => id as PlanTraceId;
 const finding = (criterion: string | null, status: AssessmentFinding["status"]): AssessmentFinding => ({
-  criterion_id: null,
+  task_ids: [],
   criterion,
   status,
   evidence: { kind: "legacy", text: null },
@@ -22,15 +24,15 @@ describe("parseAssessment", () => {
 
   test("reads legacy prose evidence and absent commit", () => {
     const parsed = parseAssessment(body);
-    expect(parsed.ok && [parsed.value.head_sha, parsed.value.findings[0]?.criterion_id, parsed.value.findings[0]?.evidence]).toEqual([
-      null, null, { kind: "legacy", text: "It does not." },
+    expect(parsed.ok && [parsed.value.head_sha, parsed.value.findings[0]?.task_ids, parsed.value.findings[0]?.evidence]).toEqual([
+      null, [], { kind: "legacy", text: "It does not." },
     ]);
   });
 
   test("reads linked criterion and typed references", () => {
     const parsed = parseAssessment(linkedAssessment);
-    expect(parsed.ok && [parsed.value.head_sha, parsed.value.findings[0]?.criterion_id, parsed.value.findings[0]?.evidence]).toEqual([
-      "abc123def456", "criterion-brief", { kind: "current", refs: [
+    expect(parsed.ok && [parsed.value.head_sha, parsed.value.findings[0]?.task_ids, parsed.value.findings[0]?.evidence]).toEqual([
+      "abc123def456", ["criterion-brief"], { kind: "current", refs: [
         { kind: "file", ref: "kbbl/core/pwa/oakridge/lib/build-brief.ts:100-110", detail: "Parser accepts linked criteria." },
         { kind: "test", ref: "build-brief.test.ts::reads id-linked brief", detail: null },
         { kind: "output", ref: "bun run test:pwa", detail: "Passed" },
@@ -128,13 +130,26 @@ describe("selectCriterionReport", () => {
     if (brief === null || !parsed.ok) throw new Error("fixture failed to parse");
     const first = parsed.value.findings[0];
     if (!first) throw new Error("fixture has no finding");
-    const second = { ...first, criterion_id: brief.acceptance_criteria[1] && typeof brief.acceptance_criteria[1] !== "string" ? brief.acceptance_criteria[1].id : null, criterion: "Older wording.", status: "partial" as const };
+    const second = { ...first, task_ids: brief.acceptance_criteria[1] && typeof brief.acceptance_criteria[1] !== "string" ? [brief.acceptance_criteria[1].id] : [], criterion: "Older wording.", status: "partial" as const };
     const reworded = brief.acceptance_criteria.map((criterion) => typeof criterion === "string" ? criterion : { ...criterion, text: `Reworded: ${criterion.text}` });
     const report = selectCriterionReport(reworded, [second, first]);
     expect([...report.needs_attention, ...report.met].map((check) => [label(check), check.match])).toEqual([["#2", "id"], ["#1", "id"]]);
   });
 
-  test("leaves an unknown criterion id unresolved even when its text matches", () => {
+  test("one finding can assess several criteria", () => {
+    const criteria = [{ id: task("T1"), text: "One", decision_ids: [] }, { id: task("T2"), text: "Two", decision_ids: [] }];
+    const report = selectCriterionReport(criteria, [{ ...finding("Both.", "met"), task_ids: [task("T1"), task("T2")] }]);
+    expect(report.met.map((check) => [label(check), check.match])).toEqual([["#1", "id"], ["#2", "id"]]);
+    expect(report.tally.unassessed).toBe(0);
+  });
+
+  test("a further finding on a brief task stays visible and is not unresolved", () => {
+    const criteria = [{ id: task("T1"), text: "One", decision_ids: [] }];
+    const report = selectCriterionReport(criteria, [{ ...finding("First.", "met"), task_ids: [task("T1")] }, { ...finding("Second.", "not_met"), task_ids: [task("T1"), task("T9")] }]);
+    expect(report.needs_attention).toMatchObject([{ kind: "assessment_only", unresolved_task_ids: ["T9"] }]);
+  });
+
+  test("leaves an unknown task id unresolved even when its text matches", () => {
     const brief = readBuildBrief(linkedBrief);
     const parsed = parseAssessment(unresolvedAssessment);
     if (brief === null || !parsed.ok) throw new Error("fixture failed to parse");

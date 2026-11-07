@@ -486,6 +486,11 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
         &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"task_ids": [], "status": "unknown", "evidence": []}],
             "recommended_next_actions": []})
     ));
+    assert!(!check_type(
+        &program.input,
+        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"evidence": []}],
+            "recommended_next_actions": []})
+    ));
 }
 
 #[test]

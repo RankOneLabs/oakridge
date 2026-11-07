@@ -4,7 +4,7 @@ import type { CohortId, RepositoryKey } from "../run-types";
 /** Cohort item shapes mirror `plan_cohort` in workflow-config/development.yaml. */
 export type PlanTraceId = string & { readonly __brand: "PlanTraceId" };
 export type PlanDecision = string | { id: PlanTraceId; text: string };
-export type PlanCriterion = string | { id: PlanTraceId; text: string; task_ids: PlanTraceId[]; decision_ids: PlanTraceId[] };
+export type PlanCriterion = string | { id: PlanTraceId; text: string; decision_ids: PlanTraceId[] };
 
 export const planDecisionText = (decision: PlanDecision): string => typeof decision === "string" ? decision : decision.text;
 export const planCriterionText = (criterion: PlanCriterion): string => typeof criterion === "string" ? criterion : criterion.text;
@@ -107,11 +107,9 @@ export function parsePlanCriterion(value: unknown, field: string): Parsed<PlanCr
   if (!id.ok) return id;
   const itemText = parseString(value.text, `${field}.text`);
   if (!itemText.ok) return itemText;
-  const taskIds = parseIdentList(value.task_ids, `${field}.task_ids`);
-  if (!taskIds.ok) return taskIds;
   const decisionIds = parseIdentList(value.decision_ids, `${field}.decision_ids`);
   if (!decisionIds.ok) return decisionIds;
-  return ok({ id: id.value, text: itemText.value, task_ids: taskIds.value, decision_ids: decisionIds.value });
+  return ok({ id: id.value, text: itemText.value, decision_ids: decisionIds.value });
 }
 
 function parseGenerationList<T extends string | object>(value: unknown, field: string, parseEntry: (entry: unknown, entryField: string) => Parsed<T>): Parsed<T[]> {

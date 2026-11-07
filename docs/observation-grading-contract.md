@@ -1,66 +1,134 @@
-# Observation grading contract (L2)
+# Observation grading contract
 
-L2 stores independent judgments about an L1 item occurrence. A question is identified by `(question_id, question_version)` within a `(producer, namespace)` pair. An evaluator definition identifies its kind (`model`, `code`, or `human`), backend, provider, model, prompt digest, configuration digest, and runtime revision. Evidence sets pin their references by content or digest and say explicitly when evidence is incomplete.
+Observation measures one narrow item in one immutable artifact revision. Grading follows
+**artifact revision → item → question and evidence → grader answer**. Task tracking follows
+**task → explicit item links → existing answers**. Each path works without the other: an item is
+gradeable with no task, link or approval, and a link added later changes the tracking view only.
 
-The grading tables and constraints live in the consolidated baseline, `observation/src/storage/migrations/0001_observation.sql`. Question text, recipe pins and evaluator instruction text are stored explicitly. Registration checks that an evaluator's prompt digest is the canonical digest of its instruction text. Eligibility records one immutable decision per tenant, subject occurrence and question pin. Its six stable tags are `eligible`, `inapplicable`, `missing_evidence`, `invalid_reference`, `blocked_dependency` and `skipped_budget`; typed payloads retain distinct causes such as `uncited`, `dangling_citation`, `unlinked` and `unevidenced`. Every subject, question, evidence set, evaluator, execution, and superseded observation reference is constrained within the same producer and namespace. PostgreSQL rejects direct updates and deletes of grades and eligibility. There is no consensus, aggregate, ground-truth, latest, or accepted column.
+The service is domain-neutral. A producer profile (`observation/src/ports/producer-profile.ts`) is
+the only way producer knowledge enters it, and it is injected at the composition root. Generic
+storage, grading and projection code never imports a profile implementation, and core code and
+tables name none of a producer's concepts. The Oakridge profile lives in
+`observation/src/producers/oakridge/`.
 
-## Answers and failures
+## Model
 
-An observation retains the evaluator's answer as `{state:"answered",kind,value}` for `boolean`, `choice`, `ordinal`, `numeric`, `text`, or `structured`. `{state:"abstain"|"unclear",kind,reason}` is explicit and does not stand for a negative answer. Probabilities and confidence accompany the raw answer. A normalized score is null unless the writer supplies a `DecisionPolicy` id and version with it; readers must not infer a default normalization. Human corrections insert a new observation with `supersedes_observation_id`, leaving the first row readable.
+The empty-database baseline `observation/src/storage/migrations/0001_observation.sql` holds exactly
+fifteen tables. `observation/tests/target-schema.ts` is the independently written inventory of every
+table, column, key, CHECK predicate, trigger, function and index that the schema test compares against a fresh
+database.
 
-This pass has no `DecisionPolicy` registry. Human intake checks that a normalized score has both a policy id and version, but does not verify that the policy exists or that its normalization produced the submitted score. Consumers must treat those stamps as caller-supplied provenance until a separately versioned policy registry and verification path are added.
+| Type | Table | What it is |
+| --- | --- | --- |
+| `SourceRevision` | `source_revision` | An immutable copy of one producer artifact revision. |
+| `ItemOccurrence` | `item_occurrence` | One selected item, addressed by revision and path. The thing graded. |
+| `LogicalItem` | `logical_item` | One thing tracked across revisions, scoped to a run. Optional. |
+| `ItemRelation` | `item_relation` | A directed edge the producer stated. An unresolved target stays visible. |
+| `ExtractionIssue` | `extraction_issue` | A failed selection. |
+| `QuestionDefinition` | `question_definition` | Versioned wording, its `item_kind` and its answers. |
+| `EvaluatorDefinition` | `evaluator_definition` | One grader: human, or a runner with a model and instructions. |
+| `EvidenceSet` | `evidence_set` | One occurrence and question: the capture pin, readiness and frozen evidence. |
+| `EvaluationExecution` | `evaluation_execution` | One measurement, and the only queue, lease and retry record. |
+| `ProviderAttempt` | `grading_provider_attempt` | One real provider request for an execution. |
+| `GradeObservation` | `grade_observation` | One append-only answer, read through its execution. |
 
-A failed grader or a repository snapshot question without qualifying references creates an `evaluation_execution` with `status:"failed"` and an error, but creates no grade observation. Snapshot eligibility requires the recipe's minimum number of repository-content references, explicit classification, the reviewed commit on each excerpt and a canonical digest; truncated or unreadable excerpts also need an incompleteness reason. The reviewed commit is supplied with each evaluation request, not stored in the pinned recipe descriptor, and contributes to the execution's idempotency digest. The failed execution is returned by the evaluation request and remains readable through the storage API. The grades read lists only observations.
+`schema_baseline`, `extractor_definition`, `source_event_cursor` and `source_event_outcome` complete
+the fifteen.
 
-The pinned `assessment.coverage/v1` question uses the captured brief criterion and assessment findings that explicitly assess it. A captured assessment with no matching findings supplies evidence for a negative coverage answer. If no assessment was captured for the brief revision, eligibility records `missing_evidence` with the `unevidenced` cause. `blocked_dependency` applies only to questions that require repository content.
+## Pins and readiness
 
-## Evidence classification
+`evidence_set` has one row per occurrence and question version, written in the capture transaction.
+The row *is* the pin: it names the question version and, in `pinned_evaluator_definition_ids`, the
+full evaluator set applicable when the occurrence was captured. Pins exist whether or not evidence is
+available and whether or not automatic grading is on, and they create no execution.
 
-`EvidenceReference.kind` is derived, never hardcoded at the packaging site.
-`evidenceKindForCapturedPath` takes a captured item's artifact kind and body path,
-reads the declared sensitivity of the top-level body field through
-`classifyProjectionField`, and maps it to an evidence kind: a `public` field becomes
-`public`, a `repository_content` field becomes `repository_content`, and `internal`,
-`restricted` and `unclassified_content` all fail closed to `internal`. An artifact kind
-with no declared policy, such as `tasks`, and a field absent from the policy also fail
-closed. Reclassifying a body field therefore changes the recorded evidence kind without
-editing the Oakridge evidence producer.
+A capture pins only a newly stored occurrence, so a replay under a later configuration does not
+repin it. Later configuration reaches later captures. Question and evaluator definitions are
+append-only, so a pinned definition stays readable across restarts; a change is a new definition,
+never an edit.
 
-On the current development body schemas this derivation classifies every pilot evidence
-role as `internal`: plan criteria and decisions are selected from the plan's `cohorts`
-field, brief criteria from the brief's `acceptance_criteria`, assessment findings from
-the assessment's `findings`, and all four are declared `internal`. Plan tasks come from
-the unclassified `tasks` artifact kind. No development field is declared
-`repository_content` today, so that branch of the mapping is currently unreachable from
-this producer. Providers receive the evidence required by the pinned question recipe,
-including references classified as `internal`, `raw_build_output` or `raw_test_output`.
-Before network dispatch, `checkEvidenceIntegrity` requires each reference to carry a
-digest or content that canonicalizes to a digest through `canonicalDigest`. A failure
-has operation `evidence_integrity` and contains no reference content. Authentication,
-tenant isolation and provider credentials remain enforced on the server.
+`readiness` starts as `not_ready` with the reason `collection_pending`. Each question moves on its
+own: collection records either a retryable `not_ready_code` and `not_ready_detail`, or `ready` with
+its references. Ready evidence is frozen by trigger and shared by every evaluator. A later link never
+changes it.
+
+`ArtifactSource.collect` takes the occurrence and question and returns ready references or a
+not-ready reason. A failed required lookup delays only the question that needs it.
+
+## Evidence references
+
+A reference records where its content came from, without digests or classification:
+
+- `revision`: content from an exact `revision_id`, and `item_path` when it is one item.
+- `run_input`: a field of the run's captured launch input.
+- `repository`: a file at an exact `commit_sha`, with its path and line range. `is_absent` records a
+  file missing from a readable commit, which is evidence rather than a failed read.
+- `reported`: text the producer's agent reported, passed through and never independently verified.
+
+## Measurements
+
+`evaluation_execution` owns subject, evidence, question and evaluator identity. A database trigger
+requires ready evidence and a pinned evaluator, and foreign keys keep the evidence on the same
+occurrence and question and the occurrence in the same run. Lifecycle fields move through `queued`,
+`claimed`, `reclaimable` and `budget_deferred` until the execution ends as `completed` or `failed`.
+An ended execution, and any execution's identity, is immutable.
+
+`grading_provider_attempt` records real requests by `execution_id`, apart from the measurement.
+
+## Answers and corrections
+
+`grade_observation` is append-only with no exception. An answer needs a completed execution of the
+question's response kind, and one execution holds one answer. `{state:"answered",kind,value}` carries
+a value; `{state:"abstain"|"unclear",kind,reason}` does not stand for a negative answer. `unclear` as
+a choice is an actual answer.
+
+A reviewer is named exactly when the evaluator is human. A human submission is one completed execution
+whose `attempt_label` carries the submission id and whose `idempotency_digest` is derived from the
+reviewer and submission id alone, so a resubmission lands on the same row.
+
+A correction is a new submission whose observation sets `supersedes_observation_id`. A trigger
+requires it to measure the same occurrence, question, evidence and evaluator for the same reviewer,
+through both executions. The one-successor key keeps each history linear, and the earlier answer and
+its evidence stay unchanged. Machine answers are not corrected.
+
+## Oakridge profile
+
+- **Items:** `finding` from each analysis finding and `assessment_finding` from each implementation or
+  integration assessment finding, both addressed by revision and path. Item identity holds no task id.
+- **Tasks:** one run-scoped logical item per `task_id`, from the `tasks` artifact. Plan and brief
+  `acceptance_criteria` entries are occurrences of that logical item; their `id` is the task id. A task
+  shared by cohorts stays one logical item, and the same id in another run is another item.
+- **Links:** each id in an assessment finding's `task_ids` is one `assesses` edge to the logical task.
+  An empty list is valid. An unknown id stays unresolved and resolves in place if the task arrives.
+  Links are never inferred from requirement ids, feedback, text, timestamps or unit paths.
+- **Late links:** `declareRelationInTransaction` adds an explicit edge to an item addressed by source
+  revision and path, without touching the item, its pins, evidence or answers.
+- **Composites:** the profile's path follows a task's incoming `assesses` edges to occurrences and on to
+  their answers. A composite is a read and creates no record.
+
+| Item kind | Question | Evidence | Answers |
+| --- | --- | --- | --- |
+| `finding` | Relevance | The finding and the full captured launch spec | `relevant`, `irrelevant`, `unclear` |
+| `assessment_finding` | Correctness | The finding, its citations, the exact `subject_id` build when set, and available linked task context | `supported`, `contradicted`, `unclear` |
+| `assessment_finding` | Evidence support | The finding and its citations | `supports`, `does_not_support`, `unclear` |
+
+Risks and decisions are captured but not graded. Tasks, whole artifacts and verdicts have no direct
+grade. A missing task, link or approval never makes a question wait; neither does an integration
+assessment's absent build subject or an empty citation list.
+
+## Approvals
+
+Approvals stay in Oakridge. `operator_decided` maps to `ignored` for accept and request-changes alike:
+it advances the source cursor and creates no evidence, execution or answer.
 
 ## HTTP routes
 
-`POST /v1/evaluations` accepts `{identity, context?, runner, reviewed_commit?}`. Snapshot questions supply `reviewed_commit` on each request. `identity` contains `subject_occurrence_id`, `evidence_set_id`, `question_id`, `question_version`, `evaluator_definition_id`, `config_digest`, and `attempt_label`. `context`, when supplied, contains the complete immutable `question`, `evidence`, and `evaluator` definitions and registers them before evaluation. A caller may omit it when those definitions already exist. The deterministic checker compares the question's `input_recipe.expected` with the first evidence reference's `content` using canonical JSON equality and answers a boolean question. The stub model uses a pinned `attempt_controls.answer` and optional `attempt_controls.probabilities` from its evaluator definition.
+The ingest credential uses `GET /v1/sources/oakridge/cursor` and `POST /v1/sources/oakridge/events`.
+The read credential uses:
 
-`POST /v1/grades` accepts `{identity, context?, details}` for human intake. `details` contains the required `origin` (`human_rubric_answer`, `workflow_approval` or `automated_evaluation`), typed `answer`, required `collection_mode` (`blind` or `in_context`), and the two visibility booleans `model_answers_visible` and `workflow_decisions_visible`. The body may supply `reviewer_id` for a consistency check; the stored identity always comes from the grade credential's `reviewer_id` binding. Configured grade credentials must have that binding. The Oakridge operator credential retains the literal binding `oakridge-operator`. A mismatched body identity returns `reviewer_mismatch`. The details may also carry probabilities, confidence, a named normalization policy and score, reviewer details, comments, rationale, quality flags, and `supersedes_observation_id`. A correction uses a new `attempt_label`. A replay returns HTTP 200 only for the same bound reviewer, origin and collection; a new attempt label creates new rows and returns HTTP 201. Invalid or cross-namespace references return HTTP 422 with no execution or observation.
+- `GET /v1/sources/oakridge/unmapped`, `GET /v1/source-revisions/:id`
+- `GET /v1/runs/:run_id/items`, `GET /v1/items/:id`, `GET /v1/items/:id/lineage`, `GET /v1/items/:id/grades`
+- `GET /v1/questions/:id/versions/:version`, `GET /v1/evidence-sets/:id`
+- `GET /v1/evaluations/by-digest/:digest`, `GET /v1/evaluation-executions/:id` (also the grade credential)
 
-Every grade row records `origin` and `collection_mode` at insert. Both columns are `NOT NULL` without defaults. The origin CHECK admits only `human_rubric_answer`, `workflow_approval` and `automated_evaluation`; the collection-mode CHECK admits only `blind` and `in_context`. Human rubric submissions supply `human_rubric_answer`, the operator backfill writes `workflow_approval`, and automated runners write `automated_evaluation`. Origin is independent of question, evaluator and reviewer identity, so two grades sharing those identities can still record different origins. A native correction remains a separate append-only observation; its `supersedes_observation_id` points to the previous answer. Human coverage counts only human evaluators' `human_rubric_answer` observations.
-
-`POST /v1/blind-assignments` freezes a recorded eligible subject occurrence, evidence set, and question pin. `GET /v1/blind-assignments?limit=50` lists at most 50 unclaimed or expired assignments. `POST /v1/blind-assignments/{id}/claim` binds a reviewer to it for 15 minutes; a live claim blocks another claim, while an expired unsubmitted claim can be reassigned without changing the frozen identity. `GET /v1/blind-assignments/{id}` reports `unsubmitted`, `claimed`, `expired`, or `submitted` to its reviewer. Before submission the response contains only frozen identifiers, question text, claim state, and timestamps. It carries no model grade, agreement summary, approval outcome, or evidence content. A blind submission to `/v1/grades` must name its claimed assignment; the transaction checks its reviewer, frozen identity, expiry, and unused state before inserting the grade and marking the assignment submitted. Blind submissions require both visibility booleans to be false.
-
-`GET /v1/runs/{run-id}/coverage` uses the read credential. Optional `revision_id` selects one captured revision; optional `question_id` and `question_version` select a pinned question together. The response includes every question pin with recorded eligibility in the selected run and revision. It carries `query_version`, with `eligible`, `graded`, `excluded`, typed exclusion counts including `skipped_budget`, `graded_by_collection_mode`, and `lag_seconds` per pin. The mode counts distinguish `blind` and `in_context`. Each mode counts distinct eligible subjects; a subject graded in several modes appears in each applicable count, so their sum can exceed `graded`. Counts use the latest recorded eligibility decision for each subject occurrence and question pin. A grade counts only for its exact occurrence and question pin; operator workflow decisions do not count as deliberate human grades.
-
-`GET /v1/items/{occurrence-id}/grades?limit=50&offset=0` uses the existing read credential. URL encode the occurrence ID because a canonical digest contains `/`. The result is `{items,total,limit,offset}`, ordered by recording time and observation id. Each item contains the raw `answer`, full observation including probabilities, evaluator definition and kind, and execution including evidence identity, status, provider link, and external execution id. `limit` ranges from 1 to 200.
-
-The idempotency digest is canonical JSON v1 over the ordered tuple `(subject_occurrence_id, evidence_set_id, question_id, question_version, evaluator_definition_id, config_digest, attempt_label)`. When `reviewed_commit` is supplied, a versioned digest of that tuple and the commit is used instead. Reusing a label and commit means retrying the same measurement; a deliberate repeat uses a different label. The interfaces in `observation/src/ports/` keep external evaluation backends, artifact producers, and JSONL/Assay experiment exporters outside the service's dependency tree. The local evaluation backend is a no-op mirror; the PostgreSQL grading store is authoritative.
-
-## Direct System One provider contract
-
-`EvaluatorDefinition.instruction_text` is JSON containing `system_one` (question type, instructions, criteria) and optional `state_fields`. Registration requires `prompt_digest` to equal the canonical digest of that exact text. A changed instruction needs a new evaluator id and creates a new evaluator identity; stored evaluator rows remain immutable. The pilot question's `input_recipe` stays the evidence descriptor `{recipe_id, recipe_version, input_roles, output_roles, projected_fields}`. The runner adds captured evidence content to `state` under each reference key and refuses a duplicate key.
-
-Queued `llm_judge` questions use `input_recipe.judge` with a pinned `rubric`, `target` (`report` or `code`), `max_evidence_chars`, and an `evidence_refs` allowlist. For capture-derived work, those refs are exact `oakridge://revision/<revision_id>#<path>` addresses within the subject's run. Report judgments include the selected subject; code judgments may select repository excerpts explicitly referenced by that subject. The server resolves content and canonical digests from capture, preserves the question's version, and refuses absent sources before enqueueing. Repository excerpts retain their captured reviewed commit. The judge receives only the allowlisted content; caller-supplied evidence does not replace capture-derived evidence.
-
-Choice questions require nonempty `allowed_values` at registration. For a direct choice grade, `unclear_semantics` designates one exact allowed value in the form `Choose <value> when ...`; an unresolved designation fails with `invalid_unclear_designation` before a provider call. The value may contain spaces or punctuation, and other values may appear later in the explanation. That designated value is stored as `unclear`. A returned choice outside the vocabulary fails without a grade. Incomplete evidence under `missing_evidence_policy: "abstain"` is handled before the provider call and stored as `abstain`; an inconclusive choice with present evidence does not become an abstention. Missing credentials, invalid choices, invalid responses, rate limits, timeouts, and transport failures carry distinct runner categories.
-
-The execution's `provider_attempts` array records the selected `external_processing_policy` separately from local retention. This is the configured provider processing agreement or policy identifier, and is omitted when none was selected. It does not imply that the provider retained or deleted any particular request; that depends on the agreement in force for the account.
+Every read carries its credential's tenant. No route dispatches a provider or writes an answer yet.

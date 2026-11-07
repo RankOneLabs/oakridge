@@ -14,8 +14,8 @@
     { "id": "approach-floating", "approach": "Use a floating panel.", "reason": "Harder to scan.", "decision_ids": [] }
   ],
   "acceptance_criteria": [
-    { "id": "criterion-brief", "text": "The brief remains readable.", "task_ids": [], "decision_ids": [] },
-    { "id": "criterion-plan", "text": "The plan is readable.", "task_ids": ["task-plan"], "decision_ids": ["decision-layout"] }
+    { "id": "criterion-brief", "text": "The brief remains readable.", "decision_ids": [] },
+    { "id": "criterion-plan", "text": "The plan is readable.", "decision_ids": ["decision-layout"] }
   ],
   "next_action": "Build the view."
 }

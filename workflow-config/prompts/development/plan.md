@@ -51,7 +51,7 @@ Publish the `plan` artifact. Split the work into cohorts, each with:
 - `depends_on`: the ids of the cohorts that must merge before it starts, with no cycle
 - its title, scope, files in scope, decisions and task acceptance entries in `acceptance_criteria`
 
-Give every decision an `id` unique within its cohort. A decision has `{ id, text }`. A task acceptance entry has exactly `{ id, text, decision_ids }`.
+Give every decision an `id` unique within its cohort. A decision has `{ id, text }`: a deliberately reworded decision keeps its id, and a genuinely new decision gets a new one. A task acceptance entry has exactly `{ id, text, decision_ids }`.
 
 The approved task list is the only source of acceptance ids. Each entry's `id` is the `id` of one task on that list, copied exactly, and it identifies the same task through planning, briefing, assessment and integration. Do not allocate any other id for an entry, and do not qualify a task id with its cohort.
 

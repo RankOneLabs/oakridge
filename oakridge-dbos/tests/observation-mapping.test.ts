@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { CORE_PROTOCOL_SCHEMA, type Event } from "../src/core-client/core-types";
 import { artifactSchemaVersion } from "../src/adapters/observation-schema-version";
 import { DELIBERATELY_UNMAPPED_EVENTS, MAPPED_EVENTS, mapObservationEvent } from "../src/adapters/observation-mapping";
+import { runOps } from "../src/ops";
 import type { CommittedEventRow, PinnedDefinitionRead } from "../src/storage/read-store";
 
 const definition = (schema: unknown, digest = "bundle-a"): PinnedDefinitionRead => ({
@@ -34,10 +35,14 @@ test("new variants and unknown artifact declarations become unmapped outcomes", 
   expect([unknown.kind, artifact.kind, unknown.event_id, artifact.run_id]).toEqual(["unmapped", "unmapped", "event-1", "run-1"]);
 });
 
-test("an operator decision carries human evaluator and intact feedback", () => {
-  const feedback = { note: "revise" };
+for (const decision of ["accept", "request_changes"]) test(`an operator ${decision} maps to ignored and carries no decision content`, () => {
   const outcome = mapObservationEvent({ row: row({ kind: "operator_decided", unit: "run-1/writing", review: "editor",
-    decision: "request_changes", target: "rev-1", payload: feedback }), definition: null, namespace: "test", stage: null, revision_sequence: null });
-  expect(outcome).toMatchObject({ kind: "human_grade", event_kind: "operator_decided", run_id: "run-1", event_id: "event-1",
-    evaluator: { kind: "human" }, unit: "run-1/writing", review: "editor", decision: "request_changes", target: "rev-1", feedback });
+    decision, target: "rev-1", payload: { note: "revise" } }), definition: null, namespace: "test", stage: null, revision_sequence: null });
+  expect(outcome).toEqual({ format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
+    kind: "ignored", event_kind: "operator_decided", run_id: "run-1", event_id: "event-1" });
+});
+
+test("no adapter or ops command remains for the retired observation surfaces", async () => {
+  expect(Object.keys(await import("../src/adapters/observation")).sort()).toEqual(["publishObservationOnce", "startObservationPublisher"]);
+  await expect(runOps(["observation-backfill", "10"], "postgres://unused")).rejects.toThrow("usage: ops");
 });

@@ -2,6 +2,7 @@ import { sampleDefinition } from "./committed-fixture";
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { createApp } from "../../observation/src/http/app";
+import { oakridgeProfile } from "../../observation/src/producers/oakridge/profile";
 import { openDatabase as openObservationDatabase, withTenant } from "../../observation/src/storage/database";
 import { migrateEmptyDatabase as migrateObservation } from "../../observation/src/storage/migrate";
 import { jsonText } from "../src/storage/database";
@@ -15,7 +16,7 @@ test("an oakridge-dbos process restart resumes from the service-held cursor", as
   let server: ReturnType<typeof Bun.serve> | null = null;
   try {
     await migrateObservation(observation);
-    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] } });
+    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] }, profile: oakridgeProfile });
     server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => app.fetch(request) });
     const { definition_id } = await sampleDefinition();
     const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "restart" } });

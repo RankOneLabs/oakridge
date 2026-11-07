@@ -1,39 +1,33 @@
 import { expect, test } from "bun:test";
-import type { JsonValue } from "../src/domain/primitives";
-import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakridge-development";
+import { oakridgeCatalogue } from "../src/producers/oakridge/catalogue";
 import { selectRevision } from "../src/projection/extractor";
+import { fixtureBody } from "./grading-fixture";
 
-async function fixture(name: string): Promise<JsonValue> {
-  return await Bun.file(new URL(`../fixtures/oakridge/${name}-revision.json`, import.meta.url)).json() as JsonValue;
-}
-
-test("the pinned plan catalogue addresses cohort ids and plan-wide paths honestly", async () => {
-  const definitions = oakridgeDevelopmentCatalogue("plan", "development-v1");
-  expect(definitions.every((definition) => definition.schema_version === "development-v1")).toBe(true);
-  expect(definitions.find((definition) => definition.extractor_id === "plan.criteria")?.extractor_version).toBe("2");
-  expect(definitions.filter((definition) => definition.extractor_id !== "plan.criteria")
-    .every((definition) => definition.extractor_version === "1")).toBe(true);
-  const pass = selectRevision(await fixture("plan"), "plan-1", definitions);
+test("the plan catalogue addresses decisions by cohort and acceptance entries by path", async () => {
+  const definitions = oakridgeCatalogue("plan", "development-v1");
+  expect(definitions.every((definition) => definition.schema_version === "development-v1" && definition.extractor_version === "1")).toBe(true);
+  const pass = selectRevision(await fixtureBody("plan"), "plan-1", definitions);
   expect(pass.issues).toEqual([]);
-  const criterion = pass.items.find(({ item }) => item.item_kind === "criterion")?.item;
-  expect(criterion?.item_scope).toBe("cohort/alpha/criterion");
-  expect(criterion?.producer_local_id).toBe("crit-a");
-  // Criteria and decisions retain cohort ownership even when local ids repeat.
+  const entry = pass.items.find(({ item }) => item.item_kind === "acceptance_entry")?.item;
+  expect(entry).toMatchObject({ item_id_or_path: "/cohorts/0/acceptance_criteria/0", item_scope: "task", producer_local_id: "T7" });
   const decision = pass.items.find(({ item }) => item.item_kind === "decision")?.item;
   expect(decision?.item_scope).toBe("cohort/alpha/decision");
-  const planWide = pass.items.find(({ item }) => item.item_kind === "plan_wide_criterion")?.item;
-  expect(planWide?.item_id_or_path).toBe("/acceptance_criteria/0");
-  expect(planWide?.item_scope).toBeNull();
-  expect(planWide?.links).toEqual([]);
+  expect(pass.items.map(({ item }) => item.item_kind)).not.toContain("plan_wide_criterion");
 });
 
 test("the catalogue only emits stated links and never derives a split", async () => {
-  for (const name of ["analysis", "plan", "brief", "assessment"]) {
-    const pass = selectRevision(await fixture(name), `${name}-1`, oakridgeDevelopmentCatalogue(name, "development-v1"));
+  for (const name of ["analysis", "tasks", "plan", "brief", "assessment"]) {
+    const pass = selectRevision(await fixtureBody(name), `${name}-1`, oakridgeCatalogue(name, "development-v1"));
     expect(pass.items.flatMap(({ item }) => item.links).some((link) => link.type === "split_from")).toBe(false);
   }
-  const brief = selectRevision(await fixture("brief"), "brief-1", oakridgeDevelopmentCatalogue("brief", "development-v1"));
-  const criterion = brief.items.find(({ item }) => item.item_kind === "criterion")?.item;
-  expect(criterion?.links).toMatchObject([{ target_artifact_kind: "plan", target_local_id: "crit-a", if_present: true }]);
-  expect(oakridgeDevelopmentCatalogue("spec", "development-v1")).toEqual([]);
+  const brief = selectRevision(await fixtureBody("brief"), "brief-1", oakridgeCatalogue("brief", "development-v1"));
+  const entry = brief.items.find(({ item }) => item.item_kind === "acceptance_entry")?.item;
+  expect(entry?.links).toEqual([]);
+  expect(oakridgeCatalogue("spec", "development-v1")).toEqual([]);
+});
+
+test("a finding keeps its producer id without using it as its address", async () => {
+  const pass = selectRevision(await fixtureBody("analysis"), "analysis-1", oakridgeCatalogue("analysis", "v1"));
+  const finding = pass.items.find(({ item }) => item.item_kind === "finding")?.item;
+  expect(finding).toMatchObject({ item_id_or_path: "/findings/0", item_scope: null, producer_local_id: "finding-a" });
 });
