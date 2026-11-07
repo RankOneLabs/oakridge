@@ -113,3 +113,19 @@ export function listGrades(db: Database, tenant: TenantScope, occurrence_id: str
     return { items, total: Number(count.count), ...page };
   });
 }
+
+/** The definitions startup registers for one tenant. */
+export interface DefinitionSet { readonly questions: readonly QuestionDefinition[]; readonly evaluators: readonly EvaluatorDefinition[] }
+/** Idempotent: a repeat registers nothing new, and an earlier definition is never altered or
+ * removed, so every pin written under an older configuration stays readable. */
+export async function registerDefinitions(db: Database, tenant: TenantScope, definitions: DefinitionSet): Promise<Result<void, GradingError>> {
+  for (const question of definitions.questions) {
+    const registered = await registerQuestion(db, tenant, question);
+    if (!registered.ok) return registered;
+  }
+  for (const evaluator of definitions.evaluators) {
+    const registered = await registerEvaluator(db, tenant, evaluator);
+    if (!registered.ok) return registered;
+  }
+  return ok(undefined);
+}

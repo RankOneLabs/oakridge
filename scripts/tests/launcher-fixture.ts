@@ -144,7 +144,7 @@ export class LauncherFixture {
   }
 
   writeGraders(...runners: string[]): void {
-    writeFileSync(join(this.checkout, "observation/graders.json"), JSON.stringify({ questions: [{ id: "relevance",
+    writeFileSync(join(this.checkout, "observation/graders.json"), JSON.stringify({ questions: [{ question_id: "relevance",
       graders: runners.map((runner) => ({ runner, model: "model", instructions: "grade", estimated_cost_per_call: 1 })) }] }));
   }
   behave(name: ChildName, behaviour: ObservationBehaviour): void { writeFileSync(join(this.records, `${name}.behaviour`), behaviour); }

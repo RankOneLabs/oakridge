@@ -6,7 +6,7 @@ import { evidence, evaluator, question } from "./grading-fixture";
 const instruction = JSON.stringify({ rubric: "Does the evidence support the claim?", max_evidence_chars: 500 });
 const context: GradingContext = { question: { ...question, response_kind: "choice",
   allowed_values: ["supported", "contradicted", "unclear"] },
-  evidence: { ...evidence, references: [{ source: "reported", reported_by: "agent", ref: "citation", content: "Reported excerpt" }] },
+  evidence: { ...evidence, references: [{ source: "reported", reported_by: "agent", ref: "citation", revision_id: "revision-1", item_path: "/findings/0", content: "Reported excerpt" }] },
   evaluator: { ...evaluator("model"), evaluator_definition_id: "judge", provider: "openai",
     model: "pinned-judge", runtime_revision: "rubric-v1", instruction_text: instruction } };
 const answer = { choice: "contradicted", probabilities: { supported: 0.12, contradicted: 0.68, unclear: 0.2 }, confidence: 0.59 };

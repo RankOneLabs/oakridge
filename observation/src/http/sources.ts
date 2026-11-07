@@ -2,9 +2,10 @@ import type { Hono } from "hono";
 import { decodeCapture } from "../ingest/capture";
 import { decodeSourceEventDelivery } from "../ingest/cursor";
 import type { ProducerProfile } from "../ports/producer-profile";
-import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../storage/captured-evidence-store";
+import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../grading/evidence";
 import { deliverSourceEvent, readSourceCursor, readSourceRevision, readUnmappedSourceEvents } from "../storage/capture-store";
 import type { Database } from "../storage/database";
+import type { EvidencePipeline } from "../storage/evidence-pipeline";
 import { errorResponse } from "./errors";
 import { credentialFor, type Credentials } from "./ingest-auth";
 
@@ -14,6 +15,8 @@ export interface SourceDependencies {
   readonly profile: ProducerProfile;
   /** Absent until a configuration is composed: occurrences are captured with no pins. */
   readonly capture_configuration?: CaptureConfiguration;
+  /** Collects a run's waiting questions after each accepted event. Absent means no collection. */
+  readonly evidence?: EvidencePipeline;
 }
 
 /** The one ordered source feed, served under the injected producer's name. */
@@ -39,6 +42,10 @@ export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void 
         return errorResponse(c, 403, "forbidden", "credential cannot ingest this source");
     }
     const result = await deliverSourceEvent(deps.db, credential, delivery, context);
+    // Collection reads repositories, so the acknowledgement does not wait for it; a failed pass
+    // leaves its questions waiting for the next event or restart.
+    if (result.status === 200) deps.evidence?.collectRun(credential, delivery.outcome.run_id)
+      .catch((error: unknown) => console.error("[observation] evidence collection failed", { run_id: delivery.outcome.run_id, error }));
     return c.json(result.body, result.status);
   });
   app.get(`/v1/sources/${producer}/unmapped`, async (c) => {

@@ -122,7 +122,7 @@ integration("changing stored instructions creates a new evaluator row and identi
 test("Jev Choice retains every raw option probability and provider confidence", async () => {
   const runner = createJevDirectRunner({ api_key: "key", base_url: "https://api.typesafe.ai/v1", transport: async (_url, init) => {
     const request = JSON.parse(String(init.body));
-    expect(request.state.fixture).toBe("sample");
+    expect(request.state.fixture).toEqual({ source: "reported", reported_by: "agent", revision_id: "revision-1", item_path: "/findings/0", content: "sample" });
     return response(provider(answer));
   } });
   const result = await runner.run(context);

@@ -1,5 +1,8 @@
 import type { Hono } from "hono";
+import type { ItemOccurrenceId } from "../domain/identity";
+import { readOccurrenceEvidence } from "../storage/captured-evidence-store";
 import { readEvidenceSetRecord, readQuestionRecord } from "../storage/grading-record-store";
+import { readItem } from "../storage/projection-store";
 import { credentialFor } from "./ingest-auth";
 import { errorResponse } from "./errors";
 import type { SourceDependencies } from "./sources";
@@ -12,6 +15,14 @@ export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies)
       question_id: c.req.param("id"), question_version: c.req.param("version"),
     });
     return record ? c.json(record) : errorResponse(c, 404, "not_found", "question version not found");
+  });
+  /** Each question pinned to an item at capture: its version, evaluator set and own readiness. */
+  app.get("/v1/items/:id/evidence", async (c) => {
+    const tenant = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!tenant) return errorResponse(c, 403, "forbidden", "read credential required");
+    const item = await readItem(deps.db, tenant, c.req.param("id"));
+    if (!item) return errorResponse(c, 404, "not_found", "item not found");
+    return c.json({ items: await readOccurrenceEvidence(deps.db, tenant, item.occurrence_id as ItemOccurrenceId) });
   });
   app.get("/v1/evidence-sets/:id", async (c) => {
     const tenant = credentialFor(c.req.header("authorization"), deps.credentials.read);

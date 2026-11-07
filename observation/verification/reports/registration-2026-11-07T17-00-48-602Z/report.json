@@ -1,0 +1,189 @@
+{
+  "proof_id": "registration-2026-11-07T17-00-48-602Z",
+  "started_at": "2026-11-07T17:00:48.697Z",
+  "finished_at": "2026-11-07T17:00:57.306Z",
+  "source": {
+    "git_head": "e1d3f0dcb693575f738701d7f751eb434875525d",
+    "worktree_clean": true
+  },
+  "launcher": {
+    "name": "shadow",
+    "state_dir": "/home/steve/.local/state/oakridge-shadow",
+    "kbbl": {
+      "port": 8798,
+      "url": "http://127.0.0.1:8798",
+      "data_dir": "/home/steve/.local/state/oakridge-shadow/kbbl"
+    },
+    "dbos": {
+      "port": 8800,
+      "url": "http://127.0.0.1:8800"
+    },
+    "postgres": {
+      "container": "oakridge-shadow-postgres",
+      "volume": "oakridge-shadow-postgres-data",
+      "port": 54339,
+      "authority_database": "oakridge"
+    },
+    "observation": {
+      "port": 8801,
+      "url": "http://127.0.0.1:8801",
+      "database": "observation",
+      "namespace": "shadow-shadow",
+      "ingest_token_file": "/home/steve/.local/state/oakridge-shadow/observation-ingest.token",
+      "read_token_file": "/home/steve/.local/state/oakridge-shadow/observation-read.token",
+      "grade_token_file": "/home/steve/.local/state/oakridge-shadow/observation-grade.token",
+      "status_file": "/home/steve/.local/state/oakridge-shadow/observation-status.json"
+    },
+    "provider_env_file": "/home/steve/codes/rol/oakridge/observation/.env"
+  },
+  "status": "failed",
+  "scenario": {
+    "id": "registration",
+    "status": "failed",
+    "checks": [
+      {
+        "name": "the stack starts on the committed selection",
+        "passed": true,
+        "detail": "answered"
+      },
+      {
+        "name": "observation is reachable on the committed selection",
+        "passed": true,
+        "detail": "health configured; launcher running: pid_2666814"
+      },
+      {
+        "name": "startup registered the committed graders",
+        "passed": true,
+        "detail": "jev_direct:canonical-json/v1:201db21b6ba0b2161b298685243728719d79cb87b04903c095d596ce4498e20d, jev_direct:canonical-json/v1:96143771fb4b5f227fbf98b39b57e1c718474d644d696117e91542e464c95e1a, jev_direct:canonical-json/v1:394309ec577d79ab209b67ebf003fb5dba5fd57104a2cd17e205d72e3dc40273"
+      },
+      {
+        "name": "the first run is captured",
+        "passed": false,
+        "detail": "a source-run input was given: no --input: no real run was captured"
+      },
+      {
+        "name": "capture and collection execute nothing",
+        "passed": true,
+        "detail": "{\"executions\":0,\"attempts\":0,\"requests_sent\":0,\"answers\":0}"
+      },
+      {
+        "name": "the stack starts on the edited selection",
+        "passed": true,
+        "detail": "answered"
+      },
+      {
+        "name": "observation is reachable on the edited selection",
+        "passed": true,
+        "detail": "health configured; launcher running: pid_2667505"
+      },
+      {
+        "name": "startup registered the edited graders",
+        "passed": true,
+        "detail": "jev_direct:canonical-json/v1:65540fcbf2d10c5884e8bb70c38a85ca2b080504db7f32fbd6bed8df62061fb1, jev_direct:canonical-json/v1:b8b420f076b99073b5ec1fe15a6bf020a940dd43c47a17ac542955e082aa68ed, jev_direct:canonical-json/v1:908a2ce4c66ce611e113f40e39c3d87b3cf47ef4b5dc0d1cc211bcfe15fc18ba"
+      },
+      {
+        "name": "the edit registered new definitions and kept every earlier one",
+        "passed": true,
+        "detail": "7 stored; 3 new"
+      },
+      {
+        "name": "the second run is captured",
+        "passed": false,
+        "detail": "a source-run input was given: no --input: no real run was captured"
+      },
+      {
+        "name": "the swap and restart regrade nothing",
+        "passed": true,
+        "detail": "{\"executions\":0,\"attempts\":0,\"requests_sent\":0,\"answers\":0}"
+      }
+    ],
+    "evidence": {
+      "runs": [],
+      "capture": null,
+      "run_capture": null,
+      "authority": null,
+      "source_revisions": [],
+      "item_paths": [],
+      "pinned_definitions": [],
+      "execution_ids": [],
+      "provider_attempt_ids": [],
+      "observation_ids": [],
+      "provider_request_count": 0,
+      "pwa_readback": [],
+      "registrations": [
+        {
+          "checkpoint": "committed",
+          "graders": [
+            {
+              "runner": "jev_direct",
+              "evaluator_definition_id": "canonical-json/v1:201db21b6ba0b2161b298685243728719d79cb87b04903c095d596ce4498e20d"
+            },
+            {
+              "runner": "jev_direct",
+              "evaluator_definition_id": "canonical-json/v1:96143771fb4b5f227fbf98b39b57e1c718474d644d696117e91542e464c95e1a"
+            },
+            {
+              "runner": "jev_direct",
+              "evaluator_definition_id": "canonical-json/v1:394309ec577d79ab209b67ebf003fb5dba5fd57104a2cd17e205d72e3dc40273"
+            }
+          ],
+          "stored_evaluator_definition_ids": [
+            "canonical-json/v1:201db21b6ba0b2161b298685243728719d79cb87b04903c095d596ce4498e20d",
+            "canonical-json/v1:394309ec577d79ab209b67ebf003fb5dba5fd57104a2cd17e205d72e3dc40273",
+            "canonical-json/v1:50d09be45aa536ca9c127764c8435374f0ae050ebfde0877e329b793bafa7527",
+            "canonical-json/v1:96143771fb4b5f227fbf98b39b57e1c718474d644d696117e91542e464c95e1a"
+          ]
+        },
+        {
+          "checkpoint": "edited",
+          "graders": [
+            {
+              "runner": "jev_direct",
+              "evaluator_definition_id": "canonical-json/v1:65540fcbf2d10c5884e8bb70c38a85ca2b080504db7f32fbd6bed8df62061fb1"
+            },
+            {
+              "runner": "jev_direct",
+              "evaluator_definition_id": "canonical-json/v1:b8b420f076b99073b5ec1fe15a6bf020a940dd43c47a17ac542955e082aa68ed"
+            },
+            {
+              "runner": "jev_direct",
+              "evaluator_definition_id": "canonical-json/v1:908a2ce4c66ce611e113f40e39c3d87b3cf47ef4b5dc0d1cc211bcfe15fc18ba"
+            }
+          ],
+          "stored_evaluator_definition_ids": [
+            "canonical-json/v1:201db21b6ba0b2161b298685243728719d79cb87b04903c095d596ce4498e20d",
+            "canonical-json/v1:394309ec577d79ab209b67ebf003fb5dba5fd57104a2cd17e205d72e3dc40273",
+            "canonical-json/v1:50d09be45aa536ca9c127764c8435374f0ae050ebfde0877e329b793bafa7527",
+            "canonical-json/v1:65540fcbf2d10c5884e8bb70c38a85ca2b080504db7f32fbd6bed8df62061fb1",
+            "canonical-json/v1:908a2ce4c66ce611e113f40e39c3d87b3cf47ef4b5dc0d1cc211bcfe15fc18ba",
+            "canonical-json/v1:96143771fb4b5f227fbf98b39b57e1c718474d644d696117e91542e464c95e1a",
+            "canonical-json/v1:b8b420f076b99073b5ec1fe15a6bf020a940dd43c47a17ac542955e082aa68ed"
+          ]
+        }
+      ],
+      "pins": []
+    }
+  },
+  "pending": [
+    {
+      "id": "not-ready-arrival-on-real-capture",
+      "owner": "configured-question-evidence"
+    },
+    {
+      "id": "real-provider-requests-and-recovery",
+      "owner": "automatic-execution-lifecycle"
+    },
+    {
+      "id": "relations-and-composites",
+      "owner": "task-lineage-composites"
+    },
+    {
+      "id": "first-assessment-finding-end-to-end",
+      "owner": "operator-item-workspace"
+    },
+    {
+      "id": "human-grading-and-pwa-readback",
+      "owner": "operator-item-workspace"
+    }
+  ]
+}

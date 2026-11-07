@@ -1,5 +1,5 @@
-import { z } from "zod";
 import { err, ok, type Result } from "../domain/primitives";
+import { parseGraderConfiguration, selectedRunners } from "./configuration";
 import { runnerEntry, runnerRegistry, type RunnerCredentials } from "./runner";
 
 /**
@@ -25,14 +25,10 @@ export function allProviderCredentialNames(): readonly string[] {
     .flatMap(({ credentials }) => [...credentials.required, ...credentials.optional]);
 }
 
-/** The slice of graders.json this boundary needs: which runners are selected. */
-const graderSelection = z.looseObject({ questions: z.array(z.looseObject({
-  graders: z.array(z.looseObject({ runner: z.string().min(1) })).min(1) })) });
-
+/** The runners graders.json selects, read through the same contract startup registers from. */
 export function configuredRunnerNames(graders: unknown): Result<readonly string[], ProviderCredentialError> {
-  const parsed = graderSelection.safeParse(graders);
-  if (!parsed.success) return failure("invalid_graders", "graders.json", "expected questions[].graders[].runner");
-  return ok([...new Set(parsed.data.questions.flatMap((question) => question.graders.map((grader) => grader.runner)))]);
+  const parsed = parseGraderConfiguration(graders);
+  return parsed.ok ? ok(selectedRunners(parsed.value)) : failure("invalid_graders", "graders.json", parsed.error.detail);
 }
 
 /** Runner requirements combined; an unknown runner fails instead of selecting nothing for it. */
@@ -74,4 +70,13 @@ Result<ProviderEnvironment, ProviderCredentialError> {
   const selected = [...credentials.required, ...credentials.optional]
     .flatMap((name): [string, string][] => { const value = entries.get(name); return value ? [[name, value]] : []; });
   return ok(new Map(selected));
+}
+
+/** Startup's check: every selected runner exists and the service's environment holds its required settings. */
+export function requireRunnerCredentials(runners: readonly string[], env: NodeJS.ProcessEnv): Result<void, ProviderCredentialError> {
+  const credentials = credentialsForRunners(runners);
+  if (!credentials.ok) return credentials;
+  const entries = new Map(Object.entries(env).flatMap(([name, value]): [string, string][] => value ? [[name, value]] : []));
+  const selected = selectProviderEnvironment(credentials.value, entries);
+  return selected.ok ? ok(undefined) : selected;
 }

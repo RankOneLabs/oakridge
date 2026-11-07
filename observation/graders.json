@@ -1,0 +1,67 @@
+{
+  "questions": [
+    {
+      "question_id": "finding.relevance",
+      "graders": [
+        {
+          "runner": "jev_direct",
+          "model": "jev-1.14.0",
+          "estimated_cost_per_call": 0.01,
+          "instructions": {
+            "system_one": {
+              "type": "choice",
+              "instructions": "Is the finding in state.subject relevant to the full spec in state.spec? Each entry of state is one evidence reference: its source, where it came from and its content. The finding is the content of state.subject and the spec is the content of state.spec. Choose relevant when the finding bears on what the spec asks for; irrelevant when it does not; unclear when the finding and the spec cannot settle its relevance. Judge only this finding against the whole spec.",
+              "criteria": {
+                "relevant": "The finding bears on what the spec asks for",
+                "irrelevant": "The finding does not bear on what the spec asks for",
+                "unclear": "The finding and the spec cannot settle its relevance"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "question_id": "assessment_finding.correctness",
+      "graders": [
+        {
+          "runner": "jev_direct",
+          "model": "jev-1.14.0",
+          "estimated_cost_per_call": 0.01,
+          "instructions": {
+            "system_one": {
+              "type": "choice",
+              "instructions": "Is the assessment finding in state.subject correct? Each entry of state is one evidence reference: its source, where it came from and its content. Use its citations (citation:N), the assessment's test results (test_evidence), the build result it assessed (build_result) when present, and any linked task context (task_context:N). A repository entry is the file at path in commit_sha, limited to line_range when one is given; is_absent true means that file does not exist at that commit. An entry whose source is reported, and the tests inside build_result, are the agent's own report and were not independently verified. Choose supported when the evidence shows the finding is correct; contradicted when the evidence shows it is wrong; unclear when the evidence cannot establish either.",
+              "criteria": {
+                "supported": "The evidence shows the finding is correct",
+                "contradicted": "The evidence shows the finding is wrong",
+                "unclear": "The evidence cannot establish whether the finding is correct"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "question_id": "assessment_finding.evidence_support",
+      "graders": [
+        {
+          "runner": "jev_direct",
+          "model": "jev-1.14.0",
+          "estimated_cost_per_call": 0.01,
+          "instructions": {
+            "system_one": {
+              "type": "choice",
+              "instructions": "Does the cited evidence support the assessment finding in state.subject? Each entry of state is one evidence reference: its source, where it came from and its content. The evidence is its citations (citation:N) and the assessment's test results (test_evidence). A repository entry is the file at path in commit_sha, limited to line_range when one is given; is_absent true means that file does not exist at that commit. An entry whose source is reported is the agent's own report and was not independently verified. Choose supports when the citations support the finding; does_not_support when they do not; unclear when they cannot be judged either way, including when there are none.",
+              "criteria": {
+                "supports": "The citations support the finding",
+                "does_not_support": "The citations do not support the finding",
+                "unclear": "The citations cannot be judged either way"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

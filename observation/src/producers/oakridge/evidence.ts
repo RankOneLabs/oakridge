@@ -13,8 +13,8 @@ export const notReady = (code: string, detail: string): EvidenceCollection =>
   ({ state: "not_ready", reason: { code, detail } satisfies NotReadyReason });
 const ready = (references: readonly EvidenceReference[]): EvidenceCollection => ({ state: "ready", references });
 
-/** A citation mirrors the assessment artifact's evidence entries. */
-export interface Citation { readonly kind: "file" | "test" | "output"; readonly ref: string; readonly detail: string | null }
+/** A citation mirrors the assessment artifact's evidence entries; `index` is its position in the finding's list. */
+export interface Citation { readonly index: number; readonly kind: "file" | "test" | "output"; readonly ref: string; readonly detail: string | null }
 export interface FileAddress { readonly path: string; readonly line_range: LineRange | null }
 
 /** `core/decision-record.ts:18-31`, a line, or a bare path. Anything else stays as text. */
@@ -30,17 +30,26 @@ export function parseFileCitation(ref: string): FileAddress | null {
 export function citationsOf(finding: JsonValue): readonly Citation[] {
   const entries = objectOf(finding)?.evidence;
   if (!Array.isArray(entries)) return [];
-  return entries.flatMap((entry: JsonValue): Citation[] => {
+  return entries.flatMap((entry: JsonValue, index): Citation[] => {
     const fields = objectOf(entry);
     if (!fields || typeof fields.ref !== "string") return [];
     if (fields.kind !== "file" && fields.kind !== "test" && fields.kind !== "output") return [];
-    return [{ kind: fields.kind, ref: fields.ref, detail: typeof fields.detail === "string" ? fields.detail : null }];
+    return [{ index, kind: fields.kind, ref: fields.ref, detail: typeof fields.detail === "string" ? fields.detail : null }];
   });
 }
 
-function reported(ref: string, citation: Citation): EvidenceReference {
-  return { source: "reported", reported_by: "agent", ref,
+/** A citation passed through as the agent wrote it, at its exact place in the finding. */
+function reported(ref: string, citation: Citation, artifact: SourceArtifact): EvidenceReference {
+  return { source: "reported", reported_by: "agent", ref, revision_id: artifact.revision_id,
+    item_path: `${artifact.item_path}/evidence/${citation.index}`,
     content: { kind: citation.kind, citation: citation.ref, detail: citation.detail } };
+}
+
+/** The assessment's own test results, as its agent reported them. Absent results are no wait. */
+export function testEvidence(revision: CapturedRevision): readonly EvidenceReference[] {
+  const results = objectOf(objectOf(revision.body)?.test_evidence);
+  return results ? [{ source: "reported", reported_by: "agent", ref: "test_evidence", revision_id: revision.revision_id,
+    item_path: "/test_evidence", content: results }] : [];
 }
 function lines(content: string, range: LineRange | null): string {
   return range ? content.split("\n").slice(range.start - 1, range.end).join("\n") : content;
@@ -72,7 +81,7 @@ type CitationEvidence = { readonly references: readonly EvidenceReference[] } | 
 async function citationEvidence(artifact: SourceArtifact, revision: CapturedRevision, sources: CapturedSources): Promise<CitationEvidence> {
   const citations = citationsOf(artifact.selected_value);
   const parsed = citations.map((citation) => ({ citation, address: citation.kind === "file" ? parseFileCitation(citation.ref) : null }));
-  if (!parsed.some(({ address }) => address)) return { references: citations.map((citation, index) => reported(`citation:${index}`, citation)) };
+  if (!parsed.some(({ address }) => address)) return { references: citations.map((citation, index) => reported(`citation:${index}`, citation, artifact)) };
   const head_sha = objectOf(revision.body)?.head_sha;
   if (typeof head_sha !== "string" || head_sha.length === 0)
     return { waiting: notReady("commit_unavailable", `revision ${revision.revision_id} names no head_sha for its file citations`) };
@@ -81,7 +90,7 @@ async function citationEvidence(artifact: SourceArtifact, revision: CapturedRevi
   const references: EvidenceReference[] = [];
   for (const [index, { citation, address }] of parsed.entries()) {
     const ref = `citation:${index}`;
-    if (!address) { references.push(reported(ref, citation)); continue; }
+    if (!address) { references.push(reported(ref, citation, artifact)); continue; }
     const file = await sources.repository.readFile({ repository_path: repository.repository_path, commit_sha: head_sha, path: address.path });
     if (file.state === "unavailable") return { waiting: notReady("repository_unavailable", file.detail) };
     const located: Omit<RepositoryEvidence, "content" | "is_absent"> = { source: "repository", ref,
@@ -108,7 +117,8 @@ async function citedEvidence(artifact: SourceArtifact, sources: CapturedSources)
   : Promise<{ readonly revision: CapturedRevision; readonly evidence: CitationEvidence } | EvidenceCollection> {
   const revision = await sources.readRevision(artifact.revision_id);
   if (!revision) return notReady("revision_unavailable", `revision ${artifact.revision_id} is not captured`);
-  return { revision, evidence: await citationEvidence(artifact, revision, sources) };
+  const evidence = await citationEvidence(artifact, revision, sources);
+  return { revision, evidence: "waiting" in evidence ? evidence : { references: [...evidence.references, ...testEvidence(revision)] } };
 }
 
 async function evidenceSupport(artifact: SourceArtifact, sources: CapturedSources): Promise<EvidenceCollection> {
