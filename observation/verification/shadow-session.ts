@@ -3,8 +3,8 @@
  * and speaks to what that started. Nothing here creates a database, capability or
  * service; the launcher resolved them, and these are clients of that state.
  */
-import { readFile, rename, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { access, mkdir, readFile, rename, stat } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { closeSync, openSync } from "node:fs";
 import type { KbblHealth } from "../../kbbl/core/server/handlers/observation-health";
 import { err, ok, type Result } from "../src/domain/primitives";
@@ -182,4 +182,49 @@ export function createShadowIo(state: LauncherState, log_path: string): ProofIo 
     now: () => Date.now(),
     sleep: (ms) => Bun.sleep(ms),
   };
+}
+
+/** A clone of one launch repository that only this proof uses, so it can be withheld from observation. */
+export interface DisposableRepository {
+  readonly source_path: string;
+  readonly path: string;
+  withhold(): Promise<Result<string, ProofFailure>>;
+  supply(): Promise<Result<string, ProofFailure>>;
+}
+
+function git(cwd: string, args: readonly string[]): Result<string, ProofFailure> {
+  const child = Bun.spawnSync(["git", "-C", cwd, ...args], { timeout: STACK_START_TIMEOUT_MS });
+  return child.exitCode === 0 ? ok(child.stdout.toString().trim())
+    : failure("disposable_repository", cwd, child.stderr.toString().trim() || `git ${args[0]} did not finish`);
+}
+const exists = (path: string) => access(path).then(() => true, () => false);
+
+/**
+ * Clones `source_path` under `directory` with the same origin, so the run prepares, fetches and
+ * builds as it would from the source. Withholding renames the clone away from its launch path;
+ * the source repository and every live checkout are never touched.
+ */
+export async function createDisposableRepository(source_path: string, directory: string): Promise<Result<DisposableRepository, ProofFailure>> {
+  const origin = git(source_path, ["remote", "get-url", "origin"]);
+  if (!origin.ok) return origin;
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, basename(source_path));
+  const withheld_path = `${path}.withheld`;
+  if (await exists(path) || await exists(withheld_path)) return failure("disposable_repository", path, "already exists");
+  const cloned = git(directory, ["clone", "--quiet", source_path, path]);
+  if (!cloned.ok) return cloned;
+  const pointed = git(path, ["remote", "set-url", "origin", origin.value]);
+  if (!pointed.ok) return pointed;
+  return ok({ source_path, path,
+    async withhold() {
+      if (!await exists(path)) return failure("withhold_repository", path, "not at its launch path");
+      await rename(path, withheld_path);
+      return ok(`${path} moved to ${withheld_path}`);
+    },
+    async supply() {
+      if (await exists(path)) return ok(`${path} in place`);
+      if (!await exists(withheld_path)) return failure("supply_repository", path, "neither in place nor withheld");
+      await rename(withheld_path, path);
+      return ok(`${withheld_path} moved back to ${path}`);
+    } });
 }

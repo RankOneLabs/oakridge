@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { defaultModelForRuntime } from "../../kbbl/core/runtime";
 import { resolveLaunchableDefinition } from "../../workflow-config/src/definition-store";
-import { NO_EVIDENCE, scenarioStatus, type ProofCheck, type ScenarioReport } from "./proof-contract";
+import { NO_EVIDENCE, scenarioStatus, type ProofCheck, type RunReference, type ScenarioReport } from "./proof-contract";
 import { awaitRunCapture, runCaptureChecks } from "./run-capture";
 import { observationSettled, readCapture, settleObservation } from "./scenarios";
 import type { ProofIo } from "./shadow-session";
@@ -29,7 +29,11 @@ export const sourceRunInputSchema = z.object({ title: z.string(), spec: z.string
 export type SourceRunInput = z.infer<typeof sourceRunInputSchema>;
 export type SourceRunTarget = "plan" | "brief" | "assessment";
 export interface SourceRunOptions { readonly input: SourceRunInput; readonly directory: string; readonly through: SourceRunTarget;
-  readonly timeout_ms?: number; readonly capture_timeout_ms?: number }
+  readonly timeout_ms?: number; readonly capture_timeout_ms?: number;
+  /** Runs once the run has launched and before it is driven; a failed check ends the run there. */
+  readonly after_launch?: (run: RunReference) => Promise<ProofCheck>;
+  /** `deferred` leaves the capture wait to a caller that keeps observation down while the run progresses. */
+  readonly capture?: "await" | "deferred" }
 
 const POLL_MS = 1_000;
 const DEFAULT_TIMEOUT_MS = 1_800_000;
@@ -92,17 +96,19 @@ export async function sourceRunScenario(io: ProofIo, options: SourceRunOptions):
     checks: [{ name: "the run launches", passed: false, detail: launched.ok ? "no run id" : launched.error.detail }] };
   const run = { run_id, definition_id: definition.value.definition_id };
   await writeJson(join(options.directory, "run.json"), run);
-  const reached = await driveToTarget(io, run_id, options);
+  const prepared = options.after_launch ? await options.after_launch(run) : null;
+  const reached = prepared && !prepared.passed ? null : await driveToTarget(io, run_id, options);
   const canceled = await io.dbos(`/api/runs/${run_id}/cancel`, { request_id: crypto.randomUUID() });
-  const run_capture = await awaitRunCapture(io, { run_id, target_artifact: options.through }, options.capture_timeout_ms);
+  const run_capture = options.capture === "deferred" ? null
+    : await awaitRunCapture(io, { run_id, target_artifact: options.through }, options.capture_timeout_ms);
   const rows = await io.shadowQuery(io.state.postgres.authority_database, `SELECT coalesce(json_agg(event ORDER BY commit_txid, id), '[]') FROM
     (SELECT id, commit_txid, created_at, payload, run_id, unit_id FROM authority.event WHERE run_id = '${run_id}') event`);
   if (rows.ok) await writeJson(join(options.directory, "authority-rows.json"), JSON.parse(rows.value));
-  const capture = await readCapture(io);
-  const checks: readonly ProofCheck[] = [reached,
+  const capture = run_capture ? await readCapture(io) : null;
+  const checks: readonly ProofCheck[] = [...(prepared ? [prepared] : []), ...(reached ? [reached] : []),
     { name: "the run is canceled", passed: canceled.ok, detail: canceled.ok ? "accepted" : canceled.error.detail },
     { name: "the authority rows are retained", passed: rows.ok, detail: rows.ok ? "authority-rows.json" : rows.error.detail },
-    ...runCaptureChecks(run_capture)];
+    ...(run_capture ? runCaptureChecks(run_capture) : [])];
   return { id: "source-run", status: scenarioStatus(checks), checks,
-    evidence: { ...NO_EVIDENCE, runs: [run], capture, run_capture, source_revisions: run_capture.source_revisions } };
+    evidence: { ...NO_EVIDENCE, runs: [run], capture, run_capture, source_revisions: run_capture?.source_revisions ?? [] } };
 }

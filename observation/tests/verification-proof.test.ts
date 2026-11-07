@@ -6,9 +6,9 @@ import type { KbblHealth, ObservationHealth } from "../../kbbl/core/server/handl
 import { err, ok } from "../src/domain/primitives";
 import { parseGraderConfiguration, planRegistration } from "../src/grading/configuration";
 import { oakridgeProfile } from "../src/producers/oakridge/profile";
-import { RELEVANCE_ID } from "../src/producers/oakridge/questions";
+import { ASSESSMENT_FINDING_KIND, FINDING_KIND } from "../src/producers/oakridge/catalogue";
 import { runProof } from "../verification/proof";
-import { editedGraders, registrationScenario, type RegistrationCapture } from "../verification/registration";
+import { editedGraders, registrationScenario, type RegistrationSource } from "../verification/registration";
 import { launcherStateSchema, NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, scenarioStatus, type LauncherState,
   type ObservationStatus, type ScenarioReport } from "../verification/proof-contract";
 import { liveScenario, runtimeScenario } from "../verification/scenarios";
@@ -267,6 +267,32 @@ describe("the source run", () => {
 
   const reached = [{ artifacts: [{ artifact_key: "plan", latest_revision: { id: "revision-1" } }], attention: [] }];
 
+  test("a deferred capture runs the launch hook, reaches the target and leaves the capture wait to its caller", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "source-run-"));
+    let hooked = "";
+    const report = await sourceRunScenario(fakeIo({ dbos: async (path) => ok(path === "/api/runs" ? { run_id: "run-1" } : path.endsWith("/inspect") ? reached[0] : {}),
+      ...feedIo(() => ({ events: [launched], outcomes: [], cursor: { commit_txid: "0", id: "e0" } })) }),
+      { input, directory, through: "plan", capture: "deferred",
+        after_launch: async (run) => { hooked = run.run_id; return { name: "observation is down", passed: true, detail: "" }; } });
+    rmSync(directory, { recursive: true, force: true });
+    expect(hooked).toBe("run-1");
+    expect(report.status).toBe("passed");
+    expect(report.evidence.run_capture).toBeNull();
+  });
+
+  test("a failed launch hook ends the run there, canceled", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "source-run-"));
+    const posted: string[] = [];
+    const report = await sourceRunScenario(fakeIo({ dbos: async (path, body) => {
+      if (body !== undefined) posted.push(path);
+      return ok(path === "/api/runs" ? { run_id: "run-1" } : {});
+    } }), { input, directory, through: "plan", capture: "deferred",
+      after_launch: async () => ({ name: "observation is down", passed: false, detail: "still up" }) });
+    rmSync(directory, { recursive: true, force: true });
+    expect(failing(report)).toEqual(["observation is down"]);
+    expect(posted).toEqual(["/api/runs", "/api/runs/run-1/cancel"]);
+  });
+
   test("it reports the capture it passed on, with the revisions it covered", async () => {
     const { report } = await drive(reached);
     expect(report.evidence.run_capture).toMatchObject({ run_id: "run-1", target_artifact: "plan", delivered_events: 2 });
@@ -438,70 +464,151 @@ describe("the registration scenario", () => {
     if (!registration.ok) throw new Error(registration.error.detail);
     return registration.value;
   };
-  const relevancePin = (text: string) => plan(text).capture.pins.find((pin) => pin.question_id === RELEVANCE_ID)!;
+  const tick = () => new Promise<void>((done) => setImmediate(done));
 
-  /** A shadow whose observation registers whatever graders.json held when it last started, and
-   * pins each run's one finding with the selection in force when that run was captured. */
-  function shadow(options: { readonly repin_after_restart?: boolean; readonly executions?: number } = {}) {
+  interface Occurrence { readonly run_id: string; readonly id: string; readonly revision_id: string; readonly item_path: string;
+    readonly item_kind: string; readonly cites_file: boolean; pinned: string | null; ready_at: string | null }
+  interface ShadowOptions { readonly repin_after_restart?: boolean; readonly executions?: number; readonly nothing_cited?: boolean;
+    readonly never_arrives?: boolean; readonly unstable_evidence?: boolean }
+
+  /** A shadow whose observation registers whatever graders.json held when it last started, pins
+   * each captured item with the selection running at its capture, and reads a cited file only
+   * while the launch repository is in place. */
+  function shadow(options: ShadowOptions = {}) {
     let graders = committedText;
     let running: string | null = null;
+    let killed = false;
+    let withheld = false;
+    let reads = 0;
+    let clock = 0;
+    let deferred: string | null = null;
+    const feed = caughtUp("assessment");
     const stored = new Set<string>();
-    const pinnedAt = new Map<string, string>();
-    const writes: string[] = [];
+    const occurrences: Occurrence[] = [];
+    const collect = (occurrence: Occurrence) => {
+      if (occurrence.pinned && !occurrence.ready_at && (!occurrence.cites_file || (!withheld && !options.never_arrives)))
+        occurrence.ready_at = `2026-11-07T00:00:0${occurrences.indexOf(occurrence)}Z`;
+    };
+    const capture = (run_id: string, revision_id?: string) => {
+      for (const occurrence of occurrences.filter((entry) => entry.run_id === run_id && (!revision_id || entry.revision_id === revision_id))) {
+        occurrence.pinned ??= running;
+        collect(occurrence);
+      }
+    };
+    const questionsOf = (occurrence: Occurrence) => plan(options.repin_after_restart && running ? running : occurrence.pinned!).capture.pins
+      .filter((pin) => pin.item_kind === occurrence.item_kind);
+    const references = (occurrence: Occurrence) => [{ ref: "subject", source: "revision", revision_id: occurrence.revision_id, item_path: occurrence.item_path,
+      content: options.unstable_evidence ? `read ${++reads}` : "finding" },
+      ...(occurrence.cites_file ? [{ ref: "citation:0", source: "repository", repository_key: "oakridge", commit_sha: "abc", path: "core/a.ts",
+        line_range: { start: 2, end: 3 }, is_absent: false, content: "two\nthree" }] : [])];
     const io = fakeIo({
+      now: () => clock,
+      sleep: async (ms) => { clock += ms; await tick(); },
       readGraders: async () => graders,
-      writeGraders: async (text) => { graders = text; writes.push(text); },
-      startStack: async () => { running = graders; for (const evaluator of plan(graders).evaluators) stored.add(evaluator.evaluator_definition_id); return ok(undefined); },
+      writeGraders: async (text) => { graders = text; },
+      startStack: async () => {
+        running = graders; killed = false;
+        for (const evaluator of plan(graders).evaluators) stored.add(evaluator.evaluator_definition_id);
+        if (deferred) { capture(deferred); deferred = null; }
+        occurrences.forEach(collect);
+        return ok(undefined);
+      },
       stopStack: async () => { running = null; },
-      kbblHealth: async () => kbblHealth(running ? { state: "configured", graders: plan(running).graders.map((grader) =>
+      killObservation: () => { killed = true; },
+      kbblHealth: async () => kbblHealth(running && !killed ? { state: "configured", graders: plan(running).graders.map((grader) =>
         ({ runner: grader.runner, evaluatorDefinitionId: grader.evaluator_definition_id })) } : { state: "down", reason: "unreachable" }),
-      shadowQuery: async (_database, query) => ok(query.includes("evaluator_definition_id")
-        ? JSON.stringify([...stored]) : JSON.stringify({ executions: options.executions ?? 0, attempts: 0, requests_sent: 0, answers: 0 })),
+      shadowQuery: async (_database, query) => ok(query.includes("evaluator_definition_id") ? JSON.stringify([...stored])
+        : query.includes("grading_provider_attempt") ? JSON.stringify({ executions: options.executions ?? 0, attempts: 0, requests_sent: 0, answers: 0 })
+          : query.includes("source_event_outcome") ? JSON.stringify(feed.outcomes) : JSON.stringify(feed.events)),
       observationGet: async (path) => {
         const run = /\/v1\/runs\/([^/]+)\/items/.exec(path)?.[1];
-        if (run) return ok({ items: [{ occurrence_id: `occ-${run}`, revision_id: `analysis-${run}`, json_pointer: "/findings/0", item_kind: "finding" }] });
-        const occurrence = decodeURIComponent(/\/v1\/items\/([^/]+)\/evidence/.exec(path)?.[1] ?? "");
-        const selection = options.repin_after_restart && running ? running : pinnedAt.get(occurrence) ?? committedText;
-        const pin = relevancePin(selection);
-        return ok({ items: [{ evidence_set_id: `set-${occurrence}`, question_id: pin.question_id, question_version: pin.question_version,
-          pinned_evaluator_definition_ids: pin.evaluator_definition_ids,
-          readiness: { state: "ready", ready_at: "2026-11-07T00:00:00Z", references: [{ ref: "subject", source: "revision", revision_id: `analysis-${occurrence}`, item_path: "/findings/0" }] } }] });
+        if (run) return ok({ items: occurrences.filter((entry) => entry.run_id === run && entry.pinned).map((entry) =>
+          ({ occurrence_id: entry.id, revision_id: entry.revision_id, json_pointer: entry.item_path, item_kind: entry.item_kind })) });
+        if (path.includes("/cursor")) return ok({ cursor: feed.cursor });
+        const revision = /\/v1\/source-revisions\/(.+)$/.exec(path)?.[1];
+        if (revision) return ok({ revision_id: decodeURIComponent(revision), run_id: "run-first", artifact_kind: "assessment" });
+        const occurrence = occurrences.find((entry) => path.includes(`/v1/items/${entry.id}/`))!;
+        return ok({ items: questionsOf(occurrence).map((pin) => ({ evidence_set_id: `${occurrence.id}:${pin.question_id}`, question_id: pin.question_id,
+          question_version: pin.question_version, pinned_evaluator_definition_ids: pin.evaluator_definition_ids,
+          readiness: occurrence.ready_at ? { state: "ready", ready_at: occurrence.ready_at, references: references(occurrence) }
+            : { state: "not_ready", reason: { code: occurrence.cites_file ? "repository_unavailable" : "collection_pending" } } })) });
       },
     });
-    const capture: RegistrationCapture = async (label) => {
-      const run_id = `run-${label}`;
-      pinnedAt.set(`occ-${run_id}`, running ?? committedText);
-      return { run: { run_id, definition_id: "development" }, report: { id: "source-run", status: "passed", checks: [{ name: "captured", passed: true, detail: "" }], evidence: NO_EVIDENCE } };
+    const source: RegistrationSource = {
+      async run(label, run_options) {
+        const run_id = `run-${label}`;
+        const item = (id: string, revision_id: string, item_path: string, item_kind: string, cites_file: boolean) =>
+          occurrences.push({ run_id, id: `${run_id}-${id}`, revision_id: `${revision_id}-${run_id}`, item_path, item_kind, cites_file, pinned: null, ready_at: null });
+        item("finding", "analysis", "/findings/0", FINDING_KIND, false);
+        item("cited", "assessment", "/findings/0", ASSESSMENT_FINDING_KIND, !options.nothing_cited);
+        item("uncited", "assessment", "/findings/1", ASSESSMENT_FINDING_KIND, false);
+        const launched = await run_options.after_launch({ run_id, definition_id: "development" });
+        if (run_options.capture === "deferred") deferred = run_id;
+        else {
+          capture(run_id, `analysis-${run_id}`);
+          for (let turn = 0; turn < 5; turn++) await tick();
+          capture(run_id);
+        }
+        return { run: { run_id, definition_id: "development" }, report: { id: "source-run", status: launched.passed ? "passed" : "failed",
+          checks: [launched], evidence: NO_EVIDENCE } };
+      },
+      withholdRepository: async () => { withheld = true; return ok("withheld"); },
+      supplyRepository: async () => { withheld = false; return ok("supplied"); },
     };
-    return { io, capture, writes, graders: () => graders };
+    return { io, source, graders: () => graders, withheld: () => withheld };
   }
 
-  test("an edit is a new definition: old pins stay, later captures take the edit, nothing is graded", async () => {
+  test("a real wait at capture, a swap and restart, the input's arrival and a later capture each keep their own pins", async () => {
     const stack = shadow();
-    const report = await registrationScenario(stack.io, stack.capture);
+    const report = await registrationScenario(stack.io, stack.source);
     expect(failing(report)).toEqual([]);
-    expect(report.evidence.registrations.map((entry) => entry.checkpoint)).toEqual(["committed", "edited"]);
-    const [first, , second] = ["first", "first-after-swap", "second"].map((checkpoint) => report.evidence.pins.find((pin) => pin.checkpoint === checkpoint)!);
-    expect(first!.pinned_evaluator_definition_ids).not.toEqual(second!.pinned_evaluator_definition_ids);
+    expect(report.evidence.registrations.map((entry) => entry.checkpoint)).toEqual(["committed", "committed, repository withheld",
+      "edited, repository withheld", "edited, repository supplied"]);
+    const pinOf = (checkpoint: string) => report.evidence.pins.find((pin) => pin.checkpoint === checkpoint && pin.item_path === "/findings/0"
+      && pin.item_kind === ASSESSMENT_FINDING_KIND)!;
+    expect(pinOf("first-capture")).toMatchObject({ readiness: "not_ready", not_ready_code: "repository_unavailable" });
+    expect(pinOf("first-after-arrival")).toMatchObject({ readiness: "ready", pinned_evaluator_definition_ids: pinOf("first-capture").pinned_evaluator_definition_ids });
+    expect(pinOf("second").pinned_evaluator_definition_ids).not.toEqual(pinOf("first-capture").pinned_evaluator_definition_ids);
+    expect(report.evidence.frozen_evidence.find((set) => set.run_id === "run-first" && set.item_path === "/findings/0" && set.question_id.endsWith("correctness"))
+      ?.references).toContainEqual(expect.objectContaining({ source: "repository", commit_sha: "abc", path: "core/a.ts", content: "two\nthree" }));
     expect(report.evidence.provider_request_count).toBe(0);
     expect(stack.graders()).toBe(committedText);
+    expect(stack.withheld()).toBe(false);
+  });
+
+  test("a capture where nothing waits fails rather than passing vacuously", async () => {
+    const report = await registrationScenario(shadow({ nothing_cited: true }).io, shadow({ nothing_cited: true }).source);
+    expect(failing(report)).toContain("a required lookup is waiting at capture");
+  });
+
+  test("a waiting question that never becomes ready fails the proof", async () => {
+    const stack = shadow({ never_arrives: true });
+    expect(failing(await registrationScenario(stack.io, stack.source))).toContain("every question waiting at capture is ready once its input is supplied");
   });
 
   test("a restart that repins earlier captures fails the proof", async () => {
-    const report = await registrationScenario(shadow({ repin_after_restart: true }).io, shadow().capture);
-    expect(failing(report)).toContain("the first run keeps its pins and frozen evidence after the swap");
+    const stack = shadow({ repin_after_restart: true });
+    expect(failing(await registrationScenario(stack.io, stack.source))).toContain("the first run keeps every pin and frozen evidence set after the swap");
+  });
+
+  test("frozen evidence that changes between reads fails the proof", async () => {
+    const stack = shadow({ unstable_evidence: true });
+    expect(failing(await registrationScenario(stack.io, stack.source)))
+      .toContain("evidence frozen earlier in the second run is unchanged by every later revision and task link captured in it");
   });
 
   test("an execution created by capture or restart fails the proof", async () => {
     const stack = shadow({ executions: 1 });
-    expect(failing(await registrationScenario(stack.io, stack.capture))).toContain("capture and collection execute nothing");
+    expect(failing(await registrationScenario(stack.io, stack.source))).toContain("capture and collection execute nothing");
   });
 
-  test("the committed selection is restored even when the stack does not start", async () => {
+  test("the committed selection and the repository are restored even when the stack does not start", async () => {
     const stack = shadow();
-    const report = await registrationScenario({ ...stack.io, startStack: async () => err({ operation: "start_stack", entity_id: "x", detail: "down" }) }, stack.capture);
+    await stack.source.withholdRepository();
+    const report = await registrationScenario({ ...stack.io, startStack: async () => err({ operation: "start_stack", entity_id: "x", detail: "down" }) }, stack.source);
     expect(report.status).toBe("failed");
     expect(stack.graders()).toBe(committedText);
+    expect(stack.withheld()).toBe(false);
   });
 
   test("the edit changes only graders.json and keeps every runner and model", () => {

@@ -6,20 +6,21 @@
  *   bun observation/verification/proof.ts runtime
  *   bun observation/verification/proof.ts live
  *   bun observation/verification/proof.ts source-run --input <file> [--through plan|brief|assessment]
- *   bun observation/verification/proof.ts registration --input <file> [--through plan|brief|assessment]
+ *   bun observation/verification/proof.ts registration --input <file>
  *
  * Exits zero only when the requested scenario passed. The report is written
  * either way, so a failure keeps its diagnostics.
  */
 import { mkdir, rename } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, type LauncherState, type ProofReport,
   type ScenarioId, type ScenarioReport, type SourceIdentity } from "./proof-contract";
-import { registrationScenario } from "./registration";
+import { registrationScenario, type RegistrationSource } from "./registration";
 import { liveScenario, runtimeScenario } from "./scenarios";
-import { createShadowIo, readLauncherState, readSourceIdentity, type ProofIo } from "./shadow-session";
-import { sourceRunInputSchema, sourceRunScenario, type SourceRunTarget } from "./source-run";
+import { createDisposableRepository, createShadowIo, readLauncherState, readSourceIdentity, type ProofIo } from "./shadow-session";
+import { sourceRunInputSchema, sourceRunScenario, type SourceRunInput, type SourceRunTarget } from "./source-run";
 
 const REPORT_ROOT = resolve(import.meta.dir, "reports");
 
@@ -63,11 +64,33 @@ async function writeReport(directory: string, text: string): Promise<string> {
   return path;
 }
 
+/**
+ * The registration proof's real runs, on a disposable clone of the input's primary repository so
+ * the proof can withhold it from observation. Its origin is the source's, so the run prepares and
+ * builds exactly as the input describes.
+ */
+async function registrationSource(io: ProofIo, input: SourceRunInput, directory: string, proof_id: string): Promise<RegistrationSource> {
+  const primary = input.repositories.find((repository) => repository.key === input.primary_repository_key);
+  if (!primary) throw new Error(`the input names no ${input.primary_repository_key} repository`);
+  const repository = await createDisposableRepository(primary.preparation.repository_path, join(tmpdir(), "oakridge-proof", proof_id));
+  if (!repository.ok) throw new Error(`${repository.error.operation}: ${repository.error.detail}`);
+  const disposable: SourceRunInput = { ...input, repositories: input.repositories.map((entry) => entry.key === primary.key
+    ? { ...entry, preparation: { ...entry.preparation, repository_path: repository.value.path } } : entry) };
+  return {
+    run: async (label, options) => {
+      const report = await sourceRunScenario(io, { input: disposable, directory: join(directory, `source-run-${label}`), through: "assessment", ...options });
+      return { report, run: report.evidence.runs[0] ?? null };
+    },
+    withholdRepository: () => repository.value.withhold(),
+    supplyRepository: () => repository.value.supply(),
+  };
+}
+
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { input: { type: "string" }, through: { type: "string" } } });
   const [command] = positionals;
   if (command !== "runtime" && command !== "live" && command !== "source-run" && command !== "registration") {
-    console.error("usage: proof.ts runtime | live | (source-run | registration) --input <file> [--through plan|brief|assessment]");
+    console.error("usage: proof.ts runtime | live | source-run --input <file> [--through plan|brief|assessment] | registration --input <file>");
     return 2;
   }
   const proof_id = `${command}-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
@@ -87,19 +110,11 @@ async function main(): Promise<number> {
   const scenario = async (): Promise<ScenarioReport> => {
     if (command === "runtime") return runtimeScenario(io);
     if (command === "live") return liveScenario(io);
-    const through = values.through ?? (command === "registration" ? "plan" : "brief");
-    if (through !== "plan" && through !== "brief" && through !== "assessment") throw new Error("invalid --through");
-    // Without an input, registration still proves startup, the swap and retention on the real
-    // service, and fails its capture checks rather than claiming them.
-    if (command === "registration" && !values.input) return registrationScenario(io, async () => ({ run: null,
-      report: { id: "source-run", status: "not_run", evidence: NO_EVIDENCE, checks: [{ name: "a source-run input was given", passed: false,
-        detail: "no --input: no real run was captured" }] } }));
     if (!values.input) throw new Error(`${command} needs --input`);
     const input = sourceRunInputSchema.parse(await Bun.file(values.input).json());
-    if (command === "registration") return registrationScenario(io, async (label) => {
-      const report = await sourceRunScenario(io, { input, directory: join(directory, `source-run-${label}`), through });
-      return { report, run: report.evidence.runs[0] ?? null };
-    });
+    if (command === "registration") return registrationScenario(io, await registrationSource(io, input, directory, proof_id));
+    const through = values.through ?? "brief";
+    if (through !== "plan" && through !== "brief" && through !== "assessment") throw new Error("invalid --through");
     if (!await io.stackAnswers()) {
       const started = await io.startStack();
       if (!started.ok) throw new Error(started.error.detail);

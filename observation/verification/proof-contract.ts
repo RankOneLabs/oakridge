@@ -58,14 +58,31 @@ export interface RunCapture extends RunCaptureRequest {
   /** Null on a single read, which is not a finished wait. */
   readonly diagnostics: RunCaptureDiagnostics | null;
 }
-/** One cited source inside frozen evidence: where it came from, never its content. */
+/** One cited source inside frozen evidence: where it came from. Its content is in `frozen_evidence`. */
 export interface ReferenceReadback {
   readonly ref: string;
   readonly source: string;
   readonly revision_id: string | null;
   readonly item_path: string | null;
+  readonly run_id: string | null;
+  readonly input_path: string | null;
+  readonly repository_key: string | null;
   readonly commit_sha: string | null;
   readonly path: string | null;
+  readonly line_range: { readonly start: number; readonly end: number } | null;
+  readonly is_absent: boolean | null;
+  readonly reported_by: string | null;
+}
+/** One frozen evidence set exactly as the service served it when first seen ready, content included. */
+export interface FrozenEvidenceReadback {
+  readonly checkpoint: string;
+  readonly run_id: string;
+  readonly occurrence_id: string;
+  readonly item_path: string;
+  readonly question_id: string;
+  readonly evidence_set_id: string;
+  readonly ready_at: string | null;
+  readonly references: readonly unknown[];
 }
 /** One question pinned to one captured item, as the running service served it back. */
 export interface PinReadback {
@@ -108,10 +125,11 @@ export interface ScenarioEvidence {
   readonly pwa_readback: readonly string[];
   readonly registrations: readonly RegistrationReadback[];
   readonly pins: readonly PinReadback[];
+  readonly frozen_evidence: readonly FrozenEvidenceReadback[];
 }
 export const NO_EVIDENCE: ScenarioEvidence = { runs: [], capture: null, run_capture: null, authority: null, source_revisions: [], item_paths: [],
   pinned_definitions: [], execution_ids: [], provider_attempt_ids: [], observation_ids: [], provider_request_count: null, pwa_readback: [],
-  registrations: [], pins: [] };
+  registrations: [], pins: [], frozen_evidence: [] };
 
 export interface ScenarioReport {
   readonly id: ScenarioId;
@@ -122,7 +140,6 @@ export interface ScenarioReport {
 /** Proof the program does not perform yet, and who adds it. Listed so a passing report cannot read as complete. */
 export interface PendingScenario { readonly id: string; readonly owner: string }
 export const PENDING_SCENARIOS: readonly PendingScenario[] = [
-  { id: "not-ready-arrival-on-real-capture", owner: "configured-question-evidence" },
   { id: "real-provider-requests-and-recovery", owner: "automatic-execution-lifecycle" },
   { id: "relations-and-composites", owner: "task-lineage-composites" },
   { id: "first-assessment-finding-end-to-end", owner: "operator-item-workspace" },
