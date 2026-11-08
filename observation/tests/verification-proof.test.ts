@@ -14,7 +14,7 @@ import { launcherStateSchema, NO_EVIDENCE, PENDING_SCENARIOS, redactReport, repo
 import { liveScenario, runtimeScenario } from "../verification/scenarios";
 import { awaitRunCapture, isRunCaptured, readRunCapture } from "../verification/run-capture";
 import { awaitLaunch, type LaunchedProcess, type ProofIo } from "../verification/shadow-session";
-import { sourceRunScenario, type SourceRunInput } from "../verification/source-run";
+import { sourceRunScenario, type ReviewCheckpoint, type SourceRunInput } from "../verification/source-run";
 
 const repository = resolve(import.meta.dir, "../..");
 const state: LauncherState = launcherStateSchema.parse({ name: "test", state_dir: "/state",
@@ -222,7 +222,7 @@ describe("the source run", () => {
   const awaiting = (review: string) => ({ kind: "awaiting_review", review, unit_id: "run-1/unit", target: "revision-1" });
 
   /** Answers each inspect with the next view, and records every request after that. */
-  async function drive(views: readonly unknown[], through: "plan" | "brief" | "assessment" = "plan", overrides: Partial<ProofIo> = {}) {
+  async function drive(views: readonly unknown[], through: "plan" | "brief" | "assessment" = "plan", overrides: Partial<ProofIo> = {}, reviews: readonly ReviewCheckpoint[] = []) {
     const directory = mkdtempSync(join(tmpdir(), "source-run-"));
     const posted: string[] = [];
     let reads = 0;
@@ -231,11 +231,28 @@ describe("the source run", () => {
       if (path.endsWith("/inspect")) { reads += 1; return ok(views[Math.min(reads, views.length) - 1]); }
       if (body !== undefined) posted.push(path);
       return ok({});
-    }, ...feedIo(() => caughtUp(through)), ...overrides }), { input, directory, through, timeout_ms: 60_000, capture_timeout_ms: 5_000 });
+    }, ...feedIo(() => caughtUp(through)), ...overrides }), { input, directory, through, timeout_ms: 60_000, capture_timeout_ms: 5_000, reviews });
     const retained = readdirSync(directory).toSorted();
     rmSync(directory, { recursive: true, force: true });
     return { report, posted, retained };
   }
+
+  test("a review's steps run once around its acceptance, and receive the revision it decides", async () => {
+    const steps: string[] = [];
+    const passed = { name: "step", passed: true, detail: "" };
+    const waiting = { artifacts: [], attention: [awaiting("plan_review")] };
+    const { report, posted } = await drive([waiting, waiting, { artifacts: [{ artifact_key: "plan", latest_revision: { id: "revision-1" } }], attention: [] }], "plan", {}, [{ review: "plan_review",
+      before: async (_run, target) => { steps.push(`before ${target}`); return passed; }, after: async (_run, target) => { steps.push(`after ${target}`); return passed; } }]);
+    expect([report.status, steps, posted.filter((path) => path.endsWith("/decide")).length]).toEqual(["passed", ["before revision-1", "after revision-1"], 2]);
+  });
+
+  test("a failed step ahead of a review ends the run there, without accepting it", async () => {
+    const { report, posted } = await drive([{ artifacts: [], attention: [awaiting("plan_review")] }], "plan", {}, [{ review: "plan_review",
+      before: async () => ({ name: "the proof's step", passed: false, detail: "not yet" }) }]);
+    expect(report.checks.find((entry) => entry.name === "the proof's step")?.detail).toBe("not yet");
+    expect(posted.filter((path) => path.endsWith("/decide"))).toEqual([]);
+    expect(posted.filter((path) => path.endsWith("/cancel"))).toHaveLength(1);
+  });
 
   test("it accepts planning reviews, retains the run and cancels at the target", async () => {
     const { report, posted, retained } = await drive([{ artifacts: [], attention: [awaiting("plan_review")] },

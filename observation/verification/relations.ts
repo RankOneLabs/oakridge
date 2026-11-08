@@ -330,8 +330,15 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
     let answeredBeforeTasks: readonly MeasurementReadback[] = [];
     let beforeApproval: RelationCheckpoint | null = null;
 
+    /** Every step's outcome stays in the report, whether or not the run could go on from it. */
+    const kept = (step: (run: RunReference, target: string) => Promise<ProofCheck>) => async (run: RunReference, target: string): Promise<ProofCheck> => {
+      const outcome = await step(run, target);
+      checks.push(outcome);
+      return outcome;
+    };
+
     /** Before the analysis is accepted, so before any task can exist: measure it and pick the two findings. */
-    const analysisAnswered: ReviewCheckpoint = { review: "analysis_review", before: async (run) => {
+    const analysisAnswered: ReviewCheckpoint = { review: "analysis_review", before: kept(async (run) => {
       const read = await readUntil(io, run.run_id, "analysis-before-tasks", settledRun);
       measurements.push(...read);
       const spend = await readSpend(io, run.run_id, "analysis-before-tasks");
@@ -347,21 +354,21 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
       answeredBeforeTasks = read.filter((measurement) => measurement.occurrence_id === first.occurrence_id);
       checkpoints.push(await relationCheckpoint(io, { checkpoint: "answered-before-tasks", run_id: run.run_id, linked: first.occurrence_id, control: last.occurrence_id }));
       return check("the analysis has two answered findings", true, `linked ${first.revision_id}${first.item_path}, control ${last.revision_id}${last.item_path}`);
-    } };
+    }) };
 
     const mappingOf = (task_ids_to_link: readonly string[]) => ({ request_id: crypto.randomUUID(), tasks_revision_id,
       entries: [{ source_revision_id: linked?.revision_id, item_path: linked?.item_path, task_ids: task_ids_to_link }] });
 
     /** Around the tasks review: a mapping before its approval is refused, and approval alone links nothing. */
     const tasksApproved: ReviewCheckpoint = { review: "tasks_review",
-      before: async (run, target) => {
+      before: kept(async (run, target) => {
         tasks_revision_id = target;
         const early = await io.dbos(declareRoute(run.run_id), mappingOf(["T1"]));
         beforeApproval = await relationCheckpoint(io, { checkpoint: "before-tasks-approval", run_id: run.run_id, linked: linked?.occurrence_id ?? "", control: control?.occurrence_id ?? "" });
         checkpoints.push(beforeApproval);
         return check("a mapping naming an unapproved tasks revision is refused", !early.ok && early.error.detail.includes("409"), early.ok ? JSON.stringify(early.value) : early.error.detail);
-      },
-      after: async (run) => {
+      }),
+      after: kept(async (run) => {
         const before = beforeApproval;
         if (!before || !linked || !control) return check("the tasks review had its before step", false, "no earlier checkpoint");
         // Everything the mapping names reaches observation in order, so it is delivered after the approval.
@@ -389,14 +396,13 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
         checkpoints.push(after);
         checks.push(...unchangedChecks(afterApproval, after, "the link"));
         checks.push(...compositeOriginalAnswerChecks(read, answeredBeforeTasks, await answerObservations(open, run.run_id, read, "analysis")));
-        const [, stored] = [null, await readRelationDeclarations(open.db, open.tenant, run.run_id)];
-        readbacks.declarations_after_delivery = stored;
+        readbacks.declarations_after_delivery = await readRelationDeclarations(open.db, open.tenant, run.run_id);
         const unlinked = await listRunUnlinkedItems(open.db, open.tenant, path, run.run_id, WHOLE);
         readbacks.unlinked_after_declaration = unlinked;
         checks.push(check("the control stays unlinked and readable", unlinked.items.some((item) => item.occurrence_id === control?.occurrence_id), `${unlinked.total} unlinked item(s)`));
         const unresolved = await listRunUnresolvedReferences(open.db, open.tenant, path, run.run_id, WHOLE);
         return check("the unknown task stays a visible reference", unresolved.items.some((reference) => reference.unresolved_target_ref === `logical_item:task:${UNRESOLVED_TASK}`), `${unresolved.total} reference(s)`);
-      } };
+      }) };
 
     const { report, run } = await source.run("links", { grading_enabled: true, through: "assessment", capture: "await", reviews: [analysisAnswered, tasksApproved] });
     const reached = report.status === "passed" && run !== null;
