@@ -168,6 +168,12 @@ export function lineageChecks(lineage: LogicalItemLineage): readonly ProofCheck[
   check("the task's lineage reaches the analysis finding and the implementation assessment", stages.has("analysis") && stages.has("implementation"), [...stages].join(", "))];
 }
 
+/** Every run's latest count, added up: a later run's early checkpoint says nothing of an earlier run's requests. */
+export function totalRequests(checkpoints: readonly RelationCheckpoint[]): number | null {
+  if (checkpoints.length === 0) return null;
+  return [...new Map(checkpoints.map((checkpoint) => [checkpoint.run_id, checkpoint.requests_sent])).values()].reduce((total, sent) => total + sent, 0);
+}
+
 // ---------------------------------------------------------- a real two-cohort run ---
 
 /** Every question window and answer window of a drilldown continues to the same whole lists. */
@@ -296,6 +302,8 @@ async function sharedRun(io: ProofIo, source: RelationsSource, open: Observation
   if (!run || !first || !control) return;
   const { occurrence_id: control_id } = control as FindingAddress;
   measurements.push(...await readUntil(io, run.run_id, "shared-settled", settledRun));
+  checkpoints.push(await relationCheckpoint(io, { checkpoint: "shared-settled", run_id: run.run_id, linked: (first as FindingAddress).occurrence_id, control: control_id }));
+  readbacks.shared_addresses = { first, second, control };
   const shared = await readLogicalItemComposite(open.db, open.tenant, path, run.run_id, SHARED_TASK);
   const other = await readLogicalItemComposite(open.db, open.tenant, path, run.run_id, OTHER_TASK);
   const implementation = stageOf(shared, "implementation");
@@ -455,7 +463,7 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
       execution_ids: [...new Set(measurements.flatMap((measurement) => measurement.execution_id ? [measurement.execution_id] : []))],
       observation_ids: [...new Set(measurements.flatMap((measurement) => measurement.observation_id ? [measurement.observation_id] : []))],
       provider_attempt_ids: [...new Set(measurements.flatMap((measurement) => measurement.attempts.map((attempt) => `${measurement.execution_id}#${attempt.attempt}`)))],
-      provider_request_count: checkpoints.at(-1)?.requests_sent ?? null };
+      provider_request_count: totalRequests(checkpoints) };
   };
   const finish = (): ScenarioReport => ({ id: "relations", status: scenarioStatus(checks), checks, evidence: evidence() });
   const original = await io.readGraders();

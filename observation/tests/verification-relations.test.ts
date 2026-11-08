@@ -3,7 +3,7 @@ import { parseGraderConfiguration, planRegistration } from "../src/grading/confi
 import type { LogicalItemComposite, LogicalItemLineage } from "../src/grading/composite";
 import { oakridgeProfile } from "../src/producers/oakridge/profile";
 import type { MeasurementReadback, RelationCheckpoint } from "../verification/proof-contract";
-import { compositeOriginalAnswerChecks, lineageChecks, sharedRunChecks, sharedTaskMatrix, unchangedChecks, UNRESOLVED_TASK, type SharedRunReads } from "../verification/relations";
+import { compositeOriginalAnswerChecks, lineageChecks, sharedRunChecks, sharedTaskMatrix, totalRequests, unchangedChecks, UNRESOLVED_TASK, type SharedRunReads } from "../verification/relations";
 import { committedGraders, integration, scratchDatabase } from "./grading-fixture";
 
 const facts = (occurrence_id: string, grades: unknown = { items: ["g1"] }) => ({ occurrence_id, occurrence: { occurrence_id }, evidence: { items: ["e1"] }, grades, measurements: { questions: [] } });
@@ -39,6 +39,11 @@ test("lineage must reach its definitions and both contributing stages", () => {
   expect(failed(lineageChecks(lineage([...definitions, ...contributions])))).toEqual([]);
   expect(failed(lineageChecks(lineage(contributions)))).toHaveLength(1);
   expect(failed(lineageChecks(lineage(definitions)))).toHaveLength(1);
+});
+
+test("the request total adds each run's latest count, whichever run checked last", () => {
+  expect(totalRequests([])).toBeNull();
+  expect(totalRequests([checkpoint("a", { run_id: "one", requests_sent: 5 }), checkpoint("b", { run_id: "one", requests_sent: 15 }), checkpoint("c", { run_id: "two", requests_sent: 3 })])).toBe(18);
 });
 
 const sharedReads = (overrides: Partial<SharedRunReads> = {}): SharedRunReads => {
