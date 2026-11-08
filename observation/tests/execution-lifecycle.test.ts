@@ -6,6 +6,7 @@ import { parseGraderConfiguration, planRegistration, type GradingRegistration } 
 import type { ExecutionClaim } from "../src/grading/execution";
 import type { GradingContext, RunnerResult } from "../src/grading/runner";
 import { gradeNext, type GradingWorkerDependencies } from "../src/grading/worker";
+import { createApp } from "../src/http/app";
 import type { RepositoryReader } from "../src/ports/artifact-source";
 import type { GradeRunner } from "../src/ports/grade-runner";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/questions";
@@ -14,7 +15,8 @@ import { withTenant, type Database } from "../src/storage/database";
 import { createEvidenceReconciler, type EvidenceReconciler } from "../src/storage/evidence-pipeline";
 import { claimNext, completeExecution, failExecution, markRequestSent, readItemMeasurements, readRunSpend } from "../src/storage/execution-store";
 import { registerDefinitions } from "../src/storage/grading-store";
-import { committedGraders, createFeed, databaseUrl, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
+import { committedGraders, createFeed, databaseUrl, DEFINITION_ID, fixtureBody, integration, runConfig, SCHEMA_VERSION, scratchDatabase, tenant,
+  type Feed } from "./grading-fixture";
 
 const HEAD = "1111111111111111111111111111111111111111";
 const LAUNCH = { spec: "The whole captured spec", repositories: [{ key: "oakridge", preparation: { repository_path: "/repos/oakridge" } }] };
@@ -425,11 +427,30 @@ integration("each run has its own allowance", async () => scratchDatabase(async 
   expect(await life.counts()).toMatchObject({ executions: 2, completed: 2, answers: 2 });
 }));
 
-integration("accept and request-changes on an enabled run create no grading record", async () => scratchDatabase(async (db) => {
+integration("accept and request-changes delivered over HTTP start no pass and admit nothing for ready, unmeasured items", async () => scratchDatabase(async (db) => {
   const life = await lifecycle(db);
+  // Supported, ready and unmeasured: captured and collected on an enabled run, but never admitted.
   await life.feed.launch(LAUNCH, "run-1", runConfig(true));
-  await life.feed.decide("operator_decided");
-  await life.feed.decide("operator_decided");
-  await life.reconciler.reconcileRun(tenant, "run-1");
+  let cursor = await life.feed.revision({ revision_id: "run-1-analysis", artifact_kind: "analysis", run_id: "run-1", body: await fixtureBody("analysis") });
+  await createEvidenceReconciler({ db, collector: oakridgeProfile.evidence, repository, log: () => undefined }).reconcileRun(tenant, "run-1");
+  expect(await life.counts()).toMatchObject({ ready: 1, executions: 0 });
+  const passes: string[] = [];
+  const evidence: EvidenceReconciler = { ...life.reconciler,
+    reconcileRun: (scope, run_id) => { passes.push(run_id); return life.reconciler.reconcileRun(scope, run_id); } };
+  const app = createApp({ db, credentials: { ingest: [{ ...tenant, token: "ingest-secret" }], read: [] }, profile: oakridgeProfile, evidence });
+  for (const [index, decision] of ["accept", "request-changes"].entries()) {
+    const next = { commit_txid: String(3 + index), id: `decision:${decision}` };
+    const response = await app.request("/v1/sources/oakridge/events", { method: "POST",
+      headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
+      body: JSON.stringify({ previous: cursor, cursor: next, outcome: { format: "observation.source-event/v1", definition_id: DEFINITION_ID,
+        artifact_schema_version: SCHEMA_VERSION, kind: "ignored", event_kind: "operator_decided", run_id: "run-1", event_id: next.id } }) });
+    expect(response.status).toBe(200);
+    cursor = next;
+  }
+  await Bun.sleep(200);
+  expect(passes).toEqual([]);
   expect(await life.counts()).toMatchObject({ executions: 0, attempts: 0, answers: 0 });
+  // The same items were admittable all along: a pass started by anything else admits them.
+  await life.reconciler.reconcileRun(tenant, "run-1");
+  expect((await life.counts()).executions).toBe(1);
 }));
