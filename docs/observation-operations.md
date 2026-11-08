@@ -7,7 +7,8 @@ workflow authority, and grading never decides a workflow. Start the service with
 alongside DBOS and kbbl and reads its settings from `observation/.env`. Without the flag the service is
 not started. Nothing about workflows waits on it: see [Supervision and health](#supervision-and-health).
 
-The service captures and serves reads. It runs no grading worker and has no route that calls a provider.
+The service captures and serves reads, and grades a run automatically only when that run's launch turned
+grading on: see [Automatic grading](#automatic-grading). No route dispatches a grade or calls a provider.
 
 ## Credentials
 
@@ -40,6 +41,10 @@ Provider keys belong to the observation child alone. Each runner declares the se
 | `OBSERVATION_READ_CREDENTIALS` | to read | Items, lineage, grades, questions and evidence. Supplied likewise. |
 | `OBSERVATION_GRADE_CREDENTIALS` | to grade | As above, with `reviewer_id`. Supplied likewise. |
 | `OBSERVATION_HOST`, `OBSERVATION_PORT` | no | Bind address. |
+| `OBSERVATION_GRADING_RUN_SPEND` | no | Estimated spend one run may reserve, in dollars. Default `5`. The only spend cap. |
+| `OBSERVATION_GRADING_RETRY_LIMIT` | no | Retries each execution may make, persisted at admission. Default `3`. |
+| `OBSERVATION_PROVIDER_DEADLINE_MS` | no | How long one provider request may run. Default `30000`. |
+| `OBSERVATION_GRADING_LEASE_MS` | no | How long a claim stays current; at least the deadline plus 15000. Default `45000`. |
 | `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL` | for `jev_direct` | Provider key and optional base URL. |
 | `FASTINO_API_KEY`, `FASTINO_BASE_URL` | for `fastino_glide` | Provider key and optional base URL. |
 | `OBSERVATION_LLM_JUDGE_API_KEY`, `OBSERVATION_LLM_JUDGE_BASE_URL` | for `llm_judge` | Provider key and optional base URL. |
@@ -69,13 +74,61 @@ cursor. A revision id names one immutable body, so a different body under the sa
 holds the feed until an operator resolves it.
 
 `launched` stores the run input as a `run_input` outcome, the durable source for the spec and
-repositories. `revision_published` captures and projects a revision. `operator_decided` and the worker
+repositories, together with the exact config the launch committed. Its `grading_enabled` is the run's
+automatic-grading choice; a launch that committed no config has grading off, and a replay delivers the
+run's original config, never the current one. `revision_published` captures and projects a revision. `operator_decided` and the worker
 events are `ignored`. An event the mapping cannot place is stored as `unmapped`; read those at
 `GET /v1/sources/oakridge/unmapped`. The feed still advances past them.
 
 `oakridge-dbos/scripts/observation-replay.ts` replays the committed stream into a scratch database and
 reports whether delivery reaches the end of the stream. Run it before restarting a live install on new
 code; nothing is written to the live databases.
+
+## Automatic grading
+
+A run is graded automatically only if its launch chose it. The PWA's new-run form has an **Automatic
+grading** switch, off by default; turning it on sends the run's spec and repository content to the
+configured provider. The API takes it as `config.grading_enabled` on `POST /api/runs`; a config may omit
+`sessions`, and a missing `grading_enabled` is `false`.
+
+One reconciler runs inside the service, after each accepted source event and every 15 seconds. It
+collects evidence for every captured question whether grading is on or off, so a reviewer always has
+frozen evidence, and keeps a not-ready reason on the one question whose required input is missing.
+For a run with grading on it then admits each ready question once for every machine evaluator pinned
+when the item was captured. Tasks, task approval, links, cohorts and browser activity play no part, and
+approvals create no grading record. Admission is keyed by occurrence, pinned question version, frozen
+evidence and evaluator, so replay and restarts add nothing; a graders.json edit reaches only later
+captures.
+
+`evaluation_execution` is the only queue. A worker claims the oldest due execution under a lease,
+reserving the next request's estimated cost against the run, and calls the pinned evaluator's runner
+with no database transaction open. It records each real request in `grading_provider_attempt` before
+sending it. Request marking and settlement are fenced to the claim's owner, claim attempt and unexpired
+lease, checked against the database clock once the execution row is locked and again at the write: a
+claim that expired, even while it waited on that lock, cannot send or settle, including after another
+worker reclaimed it. Operator decisions (accept and request-changes) and other ignored events never
+start reconciliation; captured revisions and launches do, and a periodic sweep revisits waiting runs. A valid answer completes the execution
+and appends its grade in one transaction. An invalid answer or a provider failure is retried within the
+execution's retry limit; exhaustion ends it `failed` with no grade. A request that never answers loses
+its lease and is reclaimed; its request stays charged and counts as a retry.
+
+`OBSERVATION_GRADING_RUN_SPEND` is the only cap. Every request is counted at the estimate the pinned
+evaluator definition carries from `estimated_cost_per_call` in `graders.json`, across every stage,
+question, evaluator and retry of the run; what a provider reports is kept on the attempt and never
+replaces the estimate. A request that would not fit is `budget_deferred`: nothing is sent and nothing
+is answered. Deferred work is offered again when a reservation is released without a request, and at
+every start. There are no stage caps or stage concurrency limits.
+
+`GET /v1/items/:id/measurements` serves each pinned question's readiness, whether a reviewer can answer it,
+and for each pinned machine evaluator one of `not_ready` (with its reason), `grading_off`,
+`awaiting_admission`, `pending`, `budget_deferred`, `failed` (with its cause) or `answered`, with its
+attempts. `GET /v1/runs/:run_id/grading-spend` serves the run's choice, the exact config its launch
+delivered, its committed spend, request count and execution statuses. Grades and provider failures stay in observation: nothing here writes to
+Oakridge, and an outage or failure never stops a workflow.
+
+The live proof is `bun observation/verification/proof.ts grading --input
+observation/verification/inputs/grading-audit.json`, on the isolated shadow below; its report is
+`observation/verification/reports/grading-<time>/report.json`. See `observation/verification/README.md`.
 
 ## Isolated shadow
 

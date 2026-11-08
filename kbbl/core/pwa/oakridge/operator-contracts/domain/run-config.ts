@@ -3,6 +3,8 @@
 
 export interface OperatorRunConfig {
   readonly sessions: { readonly [stage: string]: { readonly [worker: string]: OperatorSessionSettings } };
+  /** Whether observation may send this run's items to the configured graders. Off unless chosen. */
+  readonly grading_enabled: boolean;
 }
 
 export interface OperatorSessionSettings { readonly harness: string; readonly model: string; readonly effort: string | null }

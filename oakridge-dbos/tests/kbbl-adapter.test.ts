@@ -199,7 +199,7 @@ test("development cohort worktrees use the cohort key and a stable six-character
 });
 
 test("a session starts with the runtime, model and effort chosen for its worker", () => {
-  const start = selectSessionStart(instructionFor({ config: { sessions: { document: { writer: { harness: "codex", model: "gpt-6-sol", effort: "high" } } } } }),
+  const start = selectSessionStart(instructionFor({ config: { sessions: { document: { writer: { harness: "codex", model: "gpt-6-sol", effort: "high" } } }, grading_enabled: false } }),
     { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
   expect([start.runtime, start.model, start.effort]).toEqual(["codex", "gpt-6-sol", "high"]);
 });

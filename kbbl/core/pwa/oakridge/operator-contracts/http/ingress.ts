@@ -8,7 +8,7 @@ export interface OperatorIngressRequest { readonly request_id: string }
 
 export interface OperatorLaunchRequest extends OperatorIngressRequest {
   readonly definition_id: OperatorDefinitionId; readonly input: unknown; readonly project_id?: string | null;
-  /** Session settings keyed by stage, then by agent worker. */
+  /** Session settings keyed by stage, then by agent worker, and the run's automatic-grading choice. */
   readonly config?: OperatorRunConfig | null;
 }
 

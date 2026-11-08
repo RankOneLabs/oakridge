@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { sql } from "kysely";
 import { createApp } from "../src/http/app";
@@ -86,8 +86,11 @@ test("no retired module, entrypoint or credential remains to dispatch outside HT
   expect(credentialsFromEnv({} as NodeJS.ProcessEnv)).toEqual({ ingest: [], read: [], grade: [] });
 });
 
-test("the service starts no worker: nothing runs a provider unattended", async () => {
-  const main = await Bun.file(resolve(import.meta.dir, "../src/main.ts")).text();
-  // Startup validates and registers configured graders; it never builds a runner or an execution.
-  expect(main).not.toMatch(/worker|\.factory\(|create\w*Runner|grading\/execution|runners\/|setInterval/i);
+test("only reconciler admission creates an execution: no route, script or queue beside it enqueues one", () => {
+  const root = resolve(import.meta.dir, "../src");
+  const writers = [...new Bun.Glob("**/*.ts").scanSync(root)]
+    .filter((path) => readFileSync(resolve(root, path), "utf8").includes('insertInto("observation.evaluation_execution")'));
+  expect(writers).toEqual(["storage/execution-store.ts"]);
+  for (const path of new Bun.Glob("http/*.ts").scanSync(root))
+    expect({ path, text: readFileSync(resolve(root, path), "utf8") }).not.toMatchObject({ text: expect.stringMatching(/admitRun|claimNext|gradeNext/) });
 });

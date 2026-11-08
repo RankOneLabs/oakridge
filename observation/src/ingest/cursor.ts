@@ -4,12 +4,19 @@ import type { CaptureEnvelope } from "./capture";
 export interface SourceEventCursor { readonly commit_txid: string; readonly id: string }
 export const INITIAL_SOURCE_CURSOR: SourceEventCursor = { commit_txid: "0", id: "" };
 
+export interface SessionSettingsWire { readonly harness: string; readonly model: string; readonly effort: string | null }
+/** The exact config a run was launched with, carried beside its input. Only `grading_enabled` is
+ * read here: it is the run's own automatic-grading choice, and null means the launch made none. */
+export interface RunConfigWire {
+  readonly sessions: { readonly [stage: string]: { readonly [worker: string]: SessionSettingsWire } };
+  readonly grading_enabled: boolean;
+}
 export interface SourceEventProvenance { readonly format: "observation.source-event/v1";
   readonly definition_id: string | null; readonly artifact_schema_version: string | null }
 export type SourceEventOutcome = SourceEventProvenance & (
   | { readonly kind: "artifact_revision"; readonly event_kind: "revision_published"; readonly run_id: string; readonly event_id: string; readonly revision: CaptureEnvelope }
   | { readonly kind: "run_input"; readonly event_kind: "launched"; readonly run_id: string; readonly event_id: string; readonly input: unknown;
-      readonly input_schema_version: string }
+      readonly input_schema_version: string; readonly config: RunConfigWire | null }
   | { readonly kind: "ignored"; readonly event_kind: "operator_decided" | "worker_started" | "worker_ended" | "retry_requested" | "cancel_requested";
       readonly run_id: string; readonly event_id: string }
   | { readonly kind: "unmapped"; readonly event_kind: string; readonly run_id: string; readonly event_id: string; readonly reason: string });
@@ -24,6 +31,10 @@ function cursor(value: unknown): value is SourceEventCursor {
   return record(value) && typeof value.commit_txid === "string" && /^(0|[1-9][0-9]*)$/.test(value.commit_txid)
     && BigInt(value.commit_txid) <= 9223372036854775807n && typeof value.id === "string";
 }
+/** A launch carries its committed config, or null when it supplied none. */
+function runConfig(value: unknown): value is RunConfigWire | null {
+  return value === null || (record(value) && typeof value.grading_enabled === "boolean" && record(value.sessions));
+}
 export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery | null {
   if (!record(value) || !cursor(value.previous) || !cursor(value.cursor) || !record(value.outcome)) return null;
   const outcome = value.outcome;
@@ -33,6 +44,7 @@ export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery |
   if (!(outcome.definition_id === null || typeof outcome.definition_id === "string")) return null;
   if (outcome.kind === "artifact_revision" && (!record(outcome.revision) || outcome.revision.format !== "observation.artifact-revision/v2")) return null;
   if (outcome.kind === "unmapped" && typeof outcome.reason !== "string") return null;
+  if (outcome.kind === "run_input" && !runConfig(outcome.config)) return null;
   if (!["artifact_revision", "run_input", "ignored", "unmapped"].includes(outcome.kind)) return null;
   return value as unknown as SourceEventDelivery;
 }

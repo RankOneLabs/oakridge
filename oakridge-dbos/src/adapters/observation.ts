@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 import type { DB } from "../storage/db-types";
-import { readCommittedEventsAfter, readEventRevisionSequence, readEventUnitStage, readPinnedDefinition, type CommittedEventRow } from "../storage/read-store";
+import { readCommittedEventsAfter, readCommittedRunConfig, readEventRevisionSequence, readEventUnitStage, readPinnedDefinition,
+  type CommittedEventRow } from "../storage/read-store";
 import type { Event } from "../core-client/core-types";
 import { mapObservationEvent } from "./observation-mapping";
 import type { SourceEventAck, SourceEventCursor, SourceEventDelivery } from "./observation-wire";
@@ -14,7 +15,8 @@ async function deliveryFor(db: Kysely<DB>, row: CommittedEventRow<Event>, namesp
   const definition = await readPinnedDefinition(db, row.run_id ?? "");
   const stage = event.kind === "revision_published" ? await readEventUnitStage(db, row.run_id ?? "", event.unit) : null;
   const sequence = event.kind === "revision_published" ? await readEventRevisionSequence(db, row, event.artifact) : null;
-  const outcome = mapObservationEvent({ row, definition, namespace, stage, revision_sequence: sequence });
+  const run_config = event.kind === "launched" ? await readCommittedRunConfig(db, row.run_id ?? "") : null;
+  const outcome = mapObservationEvent({ row, definition, namespace, stage, revision_sequence: sequence, run_config });
   return { previous, cursor: { commit_txid: row.commit_txid, id: row.id }, outcome };
 }
 
