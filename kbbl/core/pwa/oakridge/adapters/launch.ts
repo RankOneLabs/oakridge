@@ -1,4 +1,5 @@
-import type { OperatorDefinitionDetail, OperatorLaunchRequest } from "../operator-contracts";
+import type { OperatorLaunchRequest } from "../operator-contracts/http/ingress";
+import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import type { CreateRunRequest } from "../run-types";
 import { selectAgentSessionTargets } from "../lib/agent-session-targets";
 import { fail, ok, type AdapterResult } from "./core";

@@ -2,16 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import definitionFixture from "../__fixtures__/v2-definition-detail.json";
-import type { OperatorDefinitionDetail, OperatorLaunchRequest } from "../operator-contracts";
+import type { OperatorLaunchRequest } from "../operator-contracts/http/ingress";
+import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import type { CreateRunRequest } from "../run-types";
 import { developmentLaunch } from "../adapters/launch";
 
 const definition = definitionFixture.definition as unknown as OperatorDefinitionDetail;
 const launches: OperatorLaunchRequest[] = [];
 
+vi.mock("../client-projects", () => ({ fetchProjects: async () => [] }));
+
 vi.mock("../client", () => ({
   fetchOakridgeConfig: async () => ({ available: true, core_url: "http://oakridge.test" }),
-  fetchProjects: async () => [],
   fetchWorkflowDefs: async () => [{ id: definition.definition_id, name: "development" }],
   fetchOperatorDefinition: async () => definition,
   // The launch request is the one the real adapter sends for this form's request.

@@ -13,7 +13,7 @@ import { compositeId } from "../adapters/core";
 import { invalidateCachedRunUnits } from "../client";
 import mergeFixture from "../__fixtures__/v2-integration-merge.json";
 import { retryUnit, withUnitFields } from "../__fixtures__/read-models";
-import type { OperatorUnitView } from "../operator-contracts";
+import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 
 type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 

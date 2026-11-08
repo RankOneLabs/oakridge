@@ -1,4 +1,5 @@
-import type { OperatorEventHistory, OperatorUnitHistory, OperatorUnitView } from "../operator-contracts";
+import type { OperatorEventHistory, OperatorUnitHistory } from "../operator-contracts/projections/history-view";
+import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { RunEventFrame, RunEventPayload } from "../run-types";
 import { compositeId, fail, ok, type AdapterResult } from "./core";
 
