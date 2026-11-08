@@ -26,11 +26,11 @@ export const parseOakridgeRunEventFrame = (data: string): RunEventFrame | null =
   let value: unknown;
   try { value = JSON.parse(data); } catch { return null; }
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const v2 = value as Partial<import("../operator-contracts").OperatorRunEvent> & { replay?: unknown };
+  const v2 = value as Partial<import("../operator-contracts/projections/run-event").OperatorRunEvent> & { replay?: unknown };
   if (typeof v2.event_id === "string" && typeof v2.run_id === "string" && typeof v2.unit_id === "string"
       && typeof v2.unit_key === "string" && typeof v2.kind === "string" && typeof v2.occurred_at === "string"
       && typeof v2.replay === "boolean") {
-    const mapped = runEventKind(v2 as import("../operator-contracts").OperatorRunEvent);
+    const mapped = runEventKind(v2 as import("../operator-contracts/projections/run-event").OperatorRunEvent);
     return mapped.ok && mapped.value ? { ...mapped.value, replayed: v2.replay } : null;
   }
   const event = value as Partial<RunEventFrame>;

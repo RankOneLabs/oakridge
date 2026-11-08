@@ -7,7 +7,7 @@ import { parseRepositoryKey } from "../repository-inputs";
 import type { ReviewInbox } from "../artifact-types";
 import type { CohortLifecycle } from "../artifact-types";
 import sample from "../__fixtures__/v2-adapter-sample.json";
-import type { OperatorUnitView } from "../operator-contracts";
+import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { compositeId } from "../adapters/core";
 
 const WEB_REPOSITORY_KEY = parseRepositoryKey("web")!;

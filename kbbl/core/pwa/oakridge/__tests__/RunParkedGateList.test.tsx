@@ -6,7 +6,7 @@ import sample from "../__fixtures__/v2-adapter-sample.json";
 import { withUnitFields } from "../__fixtures__/read-models";
 import { invalidateCachedRunUnits } from "../client";
 import { RunParkedGateList } from "../components/organisms/ParkedGateList";
-import type { OperatorUnitView } from "../operator-contracts";
+import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 
 const units = sample.units as unknown as OperatorUnitView[];
 const runId = units[0].run_id;

@@ -6,7 +6,7 @@
  * only the shape that crosses the boundary, so the PWA can narrow a refusal
  * without importing a server module.
  */
-import type { OperatorSessionHold, OperatorSessionRunLocation } from "../pwa/oakridge/operator-contracts";
+import type { OperatorSessionHold, OperatorSessionRunLocation } from "../pwa/oakridge/operator-contracts/projections/session-hold";
 
 /**
  * The running Oakridge attempt that still uses a session. Closing it would
