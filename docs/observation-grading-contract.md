@@ -168,8 +168,8 @@ its evidence stay unchanged. Machine answers are not corrected.
 - **Links:** each id in an assessment finding's `task_ids` is one `assesses` edge to the logical task.
   An empty list is valid. An unknown id stays unresolved and resolves in place if the task arrives.
   Links are never inferred from requirement ids, feedback, text, timestamps or unit paths.
-- **Late links:** `declareRelationInTransaction` adds an explicit edge to an item addressed by source
-  revision and path, without touching the item, its pins, evidence or answers.
+- **Late links:** an explicit analysis-link declaration (below) adds an edge to an original finding
+  addressed by source revision and path, without touching the item, its pins, evidence or answers.
 - **Composites:** the profile's path follows a task's incoming `assesses` edges to occurrences and on to
   their answers. A composite is a read and creates no record.
 
@@ -206,7 +206,111 @@ assessment's absent build subject or an empty citation list.
 ## Approvals
 
 Approvals stay in Oakridge. `operator_decided` maps to `ignored` for accept and request-changes alike:
-it advances the source cursor and creates no evidence, execution or answer.
+it advances the source cursor and creates no evidence, execution or answer. An approval creates no
+link either.
+
+## Analysis-link declarations
+
+A declaration (`oakridge-dbos/src/domain/analysis-link-declaration.ts`) is a producer's explicit statement
+that original analysis findings assess tracked tasks:
+
+```json
+{ "run_id": "...", "tasks_revision_id": "<exact approved tasks revision>",
+  "entries": [{ "source_revision_id": "<analysis revision>", "item_path": "/findings/0", "task_ids": ["T1"] }] }
+```
+
+`POST /api/runs/:run_id/analysis-links` takes `request_id`, `tasks_revision_id` and `entries` under the
+operator credential, and resolves the writer from that credential.
+
+1. **No applicable entries, no declaration.** An entry with no task id is dropped. If none remain, the
+   route answers `{ "kind": "no_declaration" }` and journals nothing. Missing links are valid and ask
+   nothing of anyone.
+2. **The exact context is checked under the run lock.** The named revision must be this run's `tasks`
+   revision and have an `approve` decision of its own; a later approved revision does not stand in for it.
+   Each source must be this run's `analysis` revision with a finding at exactly `/findings/<index>`.
+   A refusal is a 409 with a stored receipt, so a replay returns it again.
+3. **It is journaled, not stepped.** A valid declaration is one `analysis_links_declared` row in
+   `authority.event`, holding the supplied payload. The core never sees it: it opens no attempt, changes no
+   unit and starts no worker. It does not count as the run moving on, so a stall or fault still stands.
+   No part of it reads requirement ids, feedback, text, timestamps or unit paths.
+4. **It travels the one ordered feed.** The publisher maps the row to a `relation_declaration` outcome
+   carrying the journaled payload, in the same `(commit_txid, id)` order as every other event, so an
+   observation outage cannot touch the approval or the run.
+5. **Observation projects it in the delivery's transaction.** The Oakridge profile reads the declaration
+   (`observation/src/producers/oakridge/declarations.ts`); generic code receives only `RelationDeclaration`s.
+   Each task id becomes one `producer_explicit` `assesses` edge to that run's logical task. The edges, the
+   stored outcome and the cursor commit together, so a delivery applied before a lost acknowledgement is
+   not applied again: the restarted publisher asks the service where it is and moves on, and a stale
+   redelivery gets a 409.
+
+An edge's identity comes from its source, the tasks revision and the task id, so the same statement declared
+twice is one relation. The same statement against another tasks revision is a second path to the same
+task, and a composite still counts the item once.
+
+An unknown task stays an unresolved edge, visible, and resolves in place if that run captures the task. A
+source this service holds no item for, or one in another run, gets no edge: it is kept on the stored outcome
+as `projection.unresolved_sources`, read with `readRelationDeclarations`, and the cursor still advances. A
+declaration the profile cannot read is recorded as `unmapped`.
+
+A declaration starts no reconciliation, so a link can never admit, retry or send anything. It leaves the
+item, its pins, frozen evidence, answers, executions, provider attempts and request counts as they were.
+
+**The caller.** No workflow step supplies these mappings yet: `tasks` and `analysis` carry no such field,
+and inventing one needs an operator decision. Until then the route is the only source, and a run with no
+caller simply has no late links.
+
+## Composites and lineage
+
+`observation/src/grading/composite.ts` holds the pure transforms, and the read functions in
+`observation/src/storage/grading-record-store.ts` run them over one repeatable-read snapshot of a run. Nothing
+is stored. The profile's `composite` path names the logical scope, relation type, contributing item kinds,
+stages and `stageOf`. For Oakridge the stages are `analysis`, `implementation` and `integration`. An
+assessment's stage comes from the declared unit in its recorded `unit_id`, which never enters an item's
+identity.
+
+**Current selection.** Each unit's artifact is one stream with one current revision: the latest recorded
+that no revision in the stream names as its predecessor. This is decided per stream and before links are
+read, so every cohort keeps its own current revision, and a newer revision with no links replaces an older
+linked one instead of resurrecting it. Superseded revisions stay readable in history.
+
+**Answers.** A superseded answer is dropped from the counts by its own correction chain, never by
+recency across graders, and stays in history. Counts are per question version, per machine evaluator or
+human reviewer, per answer. Allowed values come from the registered question, so generic code holds no
+producer vocabulary.
+
+**Stages.** Stages stand side by side and nothing adds across them. A stage is `pending` until one of its
+revisions publishes. A stage marked final on publication is then `{ state: "published", is_final: true }`,
+whatever its answers, links or approvals. No current linked item is `coverage: "gap"`, in a stage and for
+the whole task; it is never a pass or a zero.
+
+**Status is not an answer.** `statuses` counts what is not an answer, with `totals` counting distinct items:
+
+| Status | Meaning |
+| --- | --- |
+| `not_ready` | The question's own wait, with its real code. Counted once per item and question, with no evaluator. |
+| `grading_off` | The run's launch chose no automatic grading. |
+| `awaiting_admission`, `pending` | Ready, and not answered yet. |
+| `budget_deferred` | The next request could not fit the run's allowance. |
+| `failed` | Ended with no answer, with its terminal cause. |
+
+A negative answer or a chosen `unclear` is an answer, and a human with no answer yet owes nothing, so has
+no status.
+
+**Disagreement** is differing current answers on one occurrence and question. Different items answering
+differently is not disagreement, and neither is a corrected answer differing from its correction.
+
+| Read | Returns |
+| --- | --- |
+| `readLogicalItemComposite`, `listRunComposites` | `LogicalItemComposite`, its stages and counts. A count carries its `drilldown` key. |
+| `readCompositeDrilldown` | `Paged<DrilldownRow>`: the exact items behind a count, with frozen evidence, statuses, current and superseded answers. |
+| `readLogicalItemLineage` | `LogicalItemLineage`: the task's list, plan and brief occurrences at exact revisions and paths, their declared edges, its linked items by stage, and unresolved references. |
+| `listRunUnlinkedItems`, `listRunUnresolvedReferences` | Items linked to nothing, and edges naming a target not captured. |
+
+Every list is `Paged` with the whole list's `total`, nested answers, statuses and links included, and each
+read is scoped to its tenant and run. A count's drilldown `total` equals the count, because rows are chosen
+before the page is cut. A drilldown row's `questions` list is not paged: it holds at most one entry per
+pinned question version. These reads need no submission, assignment or reveal record. The HTTP forwarding,
+item navigation and panel belong to the later operator cohort, on these same contracts.
 
 ## HTTP routes
 
@@ -221,12 +325,14 @@ The read credential uses:
 - `GET /v1/items/:id/evidence`
 
 Every read carries its credential's tenant. No route dispatches a provider or writes an answer yet.
+Composite reads are store functions so far; the operator cohort adds their HTTP routes.
 
 ## Verification
 
 Offline, from the repository root, with `OAKRIDGE_TEST_DATABASE_URL` naming a local PostgreSQL:
 `bun run --filter observation test` and `bun run typecheck`. No storage record changed, and
-`bun run --filter observation storage:check` passes against the existing baseline.
+`bun run --filter observation storage:check` passes against the existing baseline. No authority or
+observation baseline, core contract or generated definition changed for declarations or composites.
 
 - `observation/tests/grader-configuration.test.ts`: the committed `graders.json` configures every
   question; registration selects exactly the configured graders plus one human evaluator; several
@@ -253,8 +359,41 @@ Offline, from the repository root, with `OAKRIDGE_TEST_DATABASE_URL` naming a lo
   absent file as `is_absent: true` and the reported test results; and the committed instructions
   naming that shape.
 
+- `oakridge-dbos/tests/analysis-link-declaration.test.ts`: the exact approved revision, a newer unapproved
+  one, another run's addresses, replayed and reused ingress ids, the route with nothing applicable, standing
+  stalls, and through the real feed, failed delivery, a lost acknowledgement, stale redelivery and repeats.
+- `oakridge-dbos/tests/observation-process-restart.test.ts`: a real publisher process killed before a
+  declaration is applied, and after it is applied but before its acknowledgement, each delivering it once
+  when restarted.
+- `observation/tests/relation-declaration.test.ts`: what a declaration decodes to, unchanged items,
+  repeats, unresolved targets, absent and other-run sources, tenant isolation and unmapped declarations.
+- `observation/tests/composite.test.ts`: a finding graded before tasks and linked late beside an unlinked
+  control, one task through two cohorts and revised plan and briefs, newer empty revisions, stages,
+  integration pending then final, corrections, disagreement, every status, unknown tasks, duplicate
+  paths, page boundaries with nested lists, and run and tenant scope.
+
 On the shadow, through `observation/verification/proof.ts`:
 
+- `relations` passed all 48 checks (`observation/verification/reports/relations-2026-11-08T17-46-21-583Z`)
+  at `3b07bcd0`, with real provider answers, using `inputs/relations-audit.json`. On run
+  `run-b1b6cdd910414886`, 6 analysis questions were answered in 6 real requests before the run had any task.
+  A mapping naming the still unapproved `analysis:tasks:1` was refused with a 409. The approval then changed
+  nothing, and every task read as a coverage gap. After the mapping for `/findings/0` was delivered, its
+  composite opened the original observation, with the item, its pins, evidence, measurements and answers,
+  the unlinked `/findings/5` control, and the 6 requests all unchanged. The run went on to its assessment
+  (16 requests). A second mapping was journaled with observation killed, and the whole stack restarted before
+  anything acknowledged it: it arrived once, with 16 requests before and after, and the authority's events
+  went from 43 to 44, the mapping alone. `T1` reads `analysis` and `implementation` linked with `integration`
+  pending, the unknown task stays a visible reference, and every count opened as many rows as it reported.
+- **What that proof does not show.** A verification run may not merge and its planner chooses its cohorts,
+  so no real run reached a second cohort or integration. The report's `shared_task_matrix` covers those
+  reads (two cohorts, revised plan and briefs, integration pending then final, corrections, disagreement) on
+  the shadow's database through real ordered delivery, in a tenant of its own, on **synthetic** revisions and
+  answers, and is labelled so. No provider request is made for it. A lost acknowledgement is proven against a
+  real process in `observation-process-restart.test.ts`, not on the shadow. The human and PWA continuation
+  stays with the operator workspace, and this does not complete that cumulative proof.
+- An earlier `relations` run (`relations-2026-11-08T17-31-33-853Z`, at `53709a91`) also passed, but its report
+  left out passing step checks, which the later run records.
 - `live` passed (`observation/verification/reports/live-2026-11-07T16-59-47-486Z`): the service
   started from `graders.json` and reported its three configured graders.
 - `registration` passed (`observation/verification/reports/registration-2026-11-07T18-48-17-496Z`)
