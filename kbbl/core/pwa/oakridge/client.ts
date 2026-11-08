@@ -2,28 +2,21 @@
 // All paths are same-origin relative so the PWA needs no CORS config.
 
 import type { CohortPullRequestResponse, ConfirmCohortMergedRequest, ArtifactDetail, ArtifactTypeDescriptor, ReviewInbox } from "./artifact-types";
-import type { OakridgeConfig, Project, ProjectId, ProjectUpdateCommand, ProjectUpdateError, ProjectWriteInput, WorkflowDefSummary } from "./project-types";
+import type { OakridgeConfig, WorkflowDefSummary } from "./project-types";
 import type { CreateRunRequest, RunSummary, RunDetail, ConfirmFinalPullRequestRequest, EpicWorkflowProfile, FinalPullRequestResponse, RepositoryKey, EpicProfileId, WorkflowRunId, RunSessionAttempt, SessionRunLocation } from "./run-types";
-import type { CollabThread, ReviewItem, PostThreadRequest, PostMessageRequest, PostAtomEditRequest, PostReviewItemRequest, PatchReviewItemRequest } from "./collab-types";
-import type { Result } from "../lib/result";
-import type { OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorReviewItemRow } from "./operator-contracts/domain/delegated-session";
 import type { OperatorIngressResponse } from "./operator-contracts/http/ingress";
-import type { OperatorProjectList, OperatorProjectView } from "./operator-contracts/http/projects";
-import type { OperatorArtifactDetail } from "./operator-contracts/projections/artifact-view";
-import type { OperatorCollaborationThreadView } from "./operator-contracts/projections/collaboration-view";
 import type { OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary } from "./operator-contracts/projections/definition-view";
 import type { OperatorRunInboxBatch } from "./operator-contracts/projections/inbox";
 import type { OperatorRunPage, OperatorRunView } from "./operator-contracts/projections/run-view";
 import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
-import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, revisionToArtifact, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
+import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, latestUnitAttemptPerSession, parseCompositeId, revisionToArtifact, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
+import { createCollabClient } from "./client-collab";
 import { createGateClient } from "./client-gates";
+import { committed, oakridgeGet, oakridgePost, OPERATOR, runPath, unitPath } from "./client-http";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
 import { developmentLaunch } from "./adapters/launch";
-import { parseProject, projectUpdateError, selectFailureDetail } from "./adapters/boundary";
 import { parseArtifactDetail, parseRunInboxBatch, parseRunView, parseUnitViews } from "./adapters/parse";
 
-const API = "/oakridge/api";
-const OPERATOR = "/api";
 interface CachedUnits {
   readonly promise: Promise<readonly OperatorUnitView[]>;
   expiresAt: number;
@@ -32,8 +25,6 @@ interface CachedUnits {
 /** Run surfaces poll every ten seconds; a settled read must expire before their next poll. */
 const UNIT_CACHE_FRESH_MS = 5_000;
 const unitCache = new Map<string, CachedUnits>();
-const runPath = (runId: string): string => `${OPERATOR}/runs/${encodeURIComponent(runId)}`;
-const unitPath = (runId: string, unitId: string): string => `${runPath(runId)}/units/${encodeURIComponent(unitId)}`;
 async function resolveArtifactId(id: string): Promise<CompositeId> {
   const parsed = parseCompositeId(id, "artifact");
   if (parsed.ok) return parsed.value;
@@ -111,11 +102,6 @@ async function readRunInboxBatch(runIds: readonly string[]): Promise<OperatorRun
   return entries;
 }
 
-function committed(response: OperatorIngressResponse, path: string): string {
-  if (response.kind === "committed") return response.run_id;
-  throw new Error(`oakridge ${path}: unexpected ingress response`);
-}
-
 async function decide(runId: string, unitId: string, review: string, decision: string, target: string, payload: unknown, requestId: string): Promise<string> {
   const path = `${unitPath(runId, unitId)}/reviews/${encodeURIComponent(review)}/decide`;
   return committed(await oakridgePost<OperatorIngressResponse>(path, { request_id: requestId, decision, target, payload }), path);
@@ -125,51 +111,11 @@ export { parseOakridgeRunEventFrame } from "./adapters/event";
 
 export { selectFailureDetail } from "./adapters/boundary";
 
-async function oakridgeGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => null) as unknown;
-    const detail = selectFailureDetail(body, `oakridge ${path}: ${res.status}`);
-    throw new Error(detail);
-  }
-  return (await res.json()) as T;
-}
-
-interface OakridgePostOptions { readonly idempotency_key?: string }
-
-async function oakridgePost<T>(path: string, body: unknown, options: OakridgePostOptions = {}): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(options.idempotency_key ? { "Idempotency-Key": options.idempotency_key } : {}) },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const b = await res.json().catch(() => null) as unknown;
-    const detail = selectFailureDetail(b, `oakridge POST ${path}: ${res.status}`);
-    throw new Error(detail);
-  }
-  if (res.status === 204 || res.headers.get("content-length") === "0") {
-    return undefined as unknown as T;
-  }
-  return (await res.json()) as T;
-}
-
-async function oakridgePutBody<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-Oakridge-Publisher": "operator" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const b = await res.json().catch(() => null) as unknown;
-    const detail = selectFailureDetail(b, `oakridge PUT ${path}: ${res.status}`);
-    throw new Error(detail);
-  }
-  return (await res.json()) as T;
-}
-
 const gateClient = createGateClient({ readRunPage, readUnits, unitPath, get: oakridgeGet, decide, invalidateCachedRunUnits });
 export const { fetchRunGates, fetchRunSentFeedback, fetchGates, resumeGate, fetchMergeStatus } = gateClient;
+
+const collabClient = createCollabClient({ resolveArtifactId, invalidateCachedRunUnits });
+export const { fetchThreads, postThread, postMessage, pingThread, resolveThread, postAtomEdit, putArtifactRevisionBody, fetchReviewItems, postReviewItem, patchReviewItem } = collabClient;
 
 export async function fetchOakridgeConfig(): Promise<OakridgeConfig> {
   const res = await fetch("/oakridge/config");
@@ -243,37 +189,6 @@ export async function confirmCohortMerged(cohortId: string, req: ConfirmCohortMe
   await decide(stage.runId, unit.unit_id, decision.submit.review, decision.submit.decision, decision.submit.target_revision_id, {}, req.idempotency_key);
   invalidateCachedRunUnits(stage.runId);
   return { cohort_id: cohortId, outcome: { kind: "completed" } };
-}
-
-export function fetchProjects(): Promise<Project[]> {
-  return oakridgeGet<OperatorProjectList>(`${OPERATOR}/projects`).then((list) => list.items.map(projectFromV2));
-}
-
-export function createProject(body: ProjectWriteInput): Promise<Project> {
-  return oakridgePost<OperatorProjectView>(`${OPERATOR}/projects`, body).then(projectFromV2);
-}
-
-const projectFromV2 = (project: OperatorProjectView): Project => ({ id: project.id as ProjectId, name: project.name,
-  repo_dir: project.repo_dir, created_at: project.created_at, forge_repository: project.forge_repository,
-  base_branch: project.integration_branch });
-
-export async function updateProject(command: ProjectUpdateCommand): Promise<Result<Project, ProjectUpdateError>> {
-  const path = `${OPERATOR}/projects/${encodeURIComponent(command.id)}`;
-  try {
-    const response = await fetch(`${API}${path}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(command.project),
-    });
-    if (!response.ok) {
-      const responseBody = await response.json().catch(() => null) as unknown;
-      return projectUpdateError(path, selectFailureDetail(responseBody, `oakridge PUT ${path}: ${response.status}`));
-    }
-    const parsed = parseProject(await response.json());
-    return parsed.ok ? parsed : projectUpdateError(path, `${parsed.error.operation}: ${parsed.error.detail}`);
-  } catch (error) {
-    return projectUpdateError(path, error instanceof Error ? error.message : "request failed");
-  }
 }
 
 export async function fetchWorkflowDefs(): Promise<WorkflowDefSummary[]> {
@@ -351,108 +266,4 @@ export function confirmFinalPullRequest(
 
 export function fetchArtifactTypes(): Promise<ArtifactTypeDescriptor[]> {
   return Promise.resolve(artifactTypes());
-}
-
-// ── Collaboration through v2 revision and thread routes ─────────────────────
-
-interface RevisionLocation { readonly runId: string; readonly unitId: string; readonly artifactKey: string; readonly revisionId: string; readonly detail: OperatorArtifactDetail }
-const threadLocation = new Map<string, { readonly runId: string; readonly unitId: string }>();
-async function revisionLocation(artifactId: string): Promise<RevisionLocation> {
-  const parsed = await resolveArtifactId(artifactId);
-  const artifactKey = artifactKeyFromComposite(parsed.name);
-  const path = `${unitPath(parsed.runId, parsed.unitId)}/artifacts/${encodeURIComponent(artifactKey)}`;
-  const detail = unwrapAdapter(path, parseArtifactDetail(await oakridgeGet<unknown>(path)));
-  const revisionId = parsed.name.includes(":") ? parsed.name.slice(artifactKey.length + 1) : detail.revisions.at(-1)?.id;
-  if (!revisionId || !detail.revisions.some((revision) => revision.id === revisionId)) throw new Error(`oakridge ${path}: revision unavailable`);
-  return { runId: parsed.runId, unitId: parsed.unitId, artifactKey, revisionId, detail };
-}
-const threadsPath = (location: RevisionLocation): string =>
-  `${unitPath(location.runId, location.unitId)}/revisions/${encodeURIComponent(location.revisionId)}/threads`;
-const threadView = (thread: OperatorCollaborationThreadView, artifactId: string): CollabThread => {
-  threadLocation.set(thread.id, { runId: thread.run_id, unitId: thread.unit_id });
-  return { id: thread.id, artifact_id: artifactId, revision_id: thread.artifact_revision_id,
-    anchor: thread.context.anchor, status: "open", created_at: thread.created_at,
-    messages: thread.messages.map((message) => ({ id: message.id, thread_id: message.thread_id,
-      body: message.body.text, author: message.body.author, created_at: message.created_at })) };
-};
-
-export async function fetchThreads(artifactId: string): Promise<CollabThread[]> {
-  const location = await revisionLocation(artifactId);
-  const threads = await oakridgeGet<OperatorCollaborationThreadView[]>(threadsPath(location));
-  return threads.map((thread) => threadView(thread, artifactId));
-}
-
-export async function postThread(artifactId: string, req: PostThreadRequest): Promise<{ thread_id: string; message_id: string }> {
-  const location = await revisionLocation(artifactId);
-  const thread = await oakridgePost<OperatorCollaborationThreadRow>(threadsPath(location),
-    { request_key: crypto.randomUUID(), title: req.body || "Discussion", anchor: req.anchor ?? null });
-  threadLocation.set(thread.id, { runId: location.runId, unitId: location.unitId });
-  const message = await postMessage(thread.id, { body: req.body, author: req.author });
-  return { thread_id: thread.id, message_id: message.message_id };
-}
-
-export async function postMessage(threadId: string, req: PostMessageRequest): Promise<{ message_id: string }> {
-  const location = threadLocation.get(threadId);
-  if (!location) throw new Error(`oakridge thread ${threadId}: load its artifact before posting`);
-  const path = `${unitPath(location.runId, location.unitId)}/threads/${encodeURIComponent(threadId)}/messages`;
-  const response = await oakridgePost<{ readonly message: OperatorCollaborationMessageRow }>(path,
-    { request_key: crypto.randomUUID(), text: req.body });
-  return { message_id: response.message.id };
-}
-
-export function pingThread(threadId: string, _idempotencyKey: string): Promise<{ ok: boolean }> {
-  return Promise.reject(new Error(`oakridge thread ${threadId}: v2 has no ping operation`));
-}
-
-export function resolveThread(threadId: string): Promise<{ thread_id: string; status: string }> {
-  return Promise.reject(new Error(`oakridge thread ${threadId}: v2 has no resolution operation`));
-}
-
-export async function postAtomEdit(revisionId: string, req: PostAtomEditRequest): Promise<{ artifact_id: string }> {
-  const location = await revisionLocation(revisionId);
-  const revision = location.detail.revisions.find((candidate) => candidate.id === location.revisionId);
-  if (!revision) throw new Error(`oakridge ${revisionId}: revision unavailable`);
-  const body = unwrapAdapter(revisionId, replaceJsonPointer(revision.body, req.anchor, req.prev_value, req.new_value));
-  return publishArtifactRevision(location, body);
-}
-
-/** Publish a whole successor body for edits an anchor replacement cannot express. */
-export async function putArtifactRevisionBody(revisionId: string, body: unknown): Promise<{ artifact_id: string }> {
-  return publishArtifactRevision(await revisionLocation(revisionId), body);
-}
-
-async function publishArtifactRevision(location: RevisionLocation, body: unknown): Promise<{ artifact_id: string }> {
-  const revision = location.detail.revisions.find((candidate) => candidate.id === location.revisionId);
-  if (!revision) throw new Error(`oakridge ${location.revisionId}: revision unavailable`);
-  const path = `${unitPath(location.runId, location.unitId)}/artifacts/${encodeURIComponent(location.artifactKey)}`;
-  committed(await oakridgePutBody<OperatorIngressResponse>(path, { request_id: crypto.randomUUID(), body,
-    predecessor: location.revisionId, subject: revision.subject_id }), path);
-  invalidateCachedRunUnits(location.runId);
-  return { artifact_id: location.revisionId };
-}
-
-const reviewItemView = (item: OperatorReviewItemRow, artifactId: string, anchor: string): ReviewItem => ({
-  id: item.id, artifact_id: artifactId, revision_id: item.artifact_revision_id, anchor,
-  claim: item.body.title, reality: item.body.detail,
-  status: item.body.status === "resolved" || item.body.status === "waived" ? item.body.status : "open",
-  resolution: null, created_at: item.created_at,
-});
-export async function fetchReviewItems(artifactId: string): Promise<ReviewItem[]> {
-  const location = await revisionLocation(artifactId);
-  const threads = await oakridgeGet<OperatorCollaborationThreadView[]>(threadsPath(location));
-  return threads.flatMap((thread) => thread.review_items.map((item) => reviewItemView(item, artifactId, thread.context.anchor ?? "")));
-}
-
-export async function postReviewItem(artifactId: string, req: PostReviewItemRequest): Promise<ReviewItem> {
-  const location = await revisionLocation(artifactId);
-  const thread = await oakridgePost<OperatorCollaborationThreadRow>(threadsPath(location),
-    { request_key: crypto.randomUUID(), title: req.claim, anchor: req.anchor });
-  const path = `${unitPath(location.runId, location.unitId)}/threads/${encodeURIComponent(thread.id)}/review-items`;
-  const item = await oakridgePost<OperatorReviewItemRow>(path,
-    { request_key: crypto.randomUUID(), title: req.claim, detail: req.reality, status: "open" });
-  return reviewItemView(item, artifactId, req.anchor);
-}
-
-export function patchReviewItem(reviewItemId: string, _req: PatchReviewItemRequest): Promise<ReviewItem> {
-  return Promise.reject(new Error(`oakridge review item ${reviewItemId}: v2 has no update operation`));
 }

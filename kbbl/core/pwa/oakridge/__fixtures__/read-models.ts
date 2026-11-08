@@ -1,4 +1,14 @@
+import type { OperatorRunView } from "../operator-contracts/projections/run-view";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
+import sample from "./v2-adapter-sample.json";
+
+export const sampleRun = sample.run as unknown as OperatorRunView;
+export const sampleUnits = sample.units as unknown as OperatorUnitView[];
+export const sampleCohort: OperatorUnitView = (() => {
+  const selected = sampleUnits.find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review"));
+  if (!selected) throw new Error("captured fixture lacks a cohort review");
+  return selected;
+})();
 
 /** A stalled cohort unit for retry behavior tests. Keep read-model construction
  * here so tests consume the same named fixture boundary as other v2 views. */

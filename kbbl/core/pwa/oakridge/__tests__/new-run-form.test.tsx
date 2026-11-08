@@ -10,9 +10,10 @@ import { developmentLaunch } from "../adapters/launch";
 const definition = definitionFixture.definition as unknown as OperatorDefinitionDetail;
 const launches: OperatorLaunchRequest[] = [];
 
+vi.mock("../client-projects", () => ({ fetchProjects: async () => [] }));
+
 vi.mock("../client", () => ({
   fetchOakridgeConfig: async () => ({ available: true, core_url: "http://oakridge.test" }),
-  fetchProjects: async () => [],
   fetchWorkflowDefs: async () => [{ id: definition.definition_id, name: "development" }],
   fetchOperatorDefinition: async () => definition,
   // The launch request is the one the real adapter sends for this form's request.
