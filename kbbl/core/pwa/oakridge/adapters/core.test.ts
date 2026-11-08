@@ -4,7 +4,11 @@ import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import planningRevise from "../__fixtures__/v2-planning-revise.json";
 import { retryUnit, withUnitFields } from "../__fixtures__/read-models";
-import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunInboxBatchEntry, OperatorRunView, OperatorUnitView } from "../operator-contracts";
+import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
+import type { OperatorRunInboxBatchEntry } from "../operator-contracts/projections/inbox";
+import type { OperatorRunEvent } from "../operator-contracts/projections/run-event";
+import type { OperatorRunView } from "../operator-contracts/projections/run-view";
+import type { OperatorAttemptView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { RunStatus, StageStatus } from "../run-types";
 import { artifactType, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isVisibleDevelopmentArtifact, latestAttemptPerSession, latestUnitAttemptPerSession, objectValue, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, selectAggregateStatus, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
@@ -379,7 +383,7 @@ describe("v2 development adapters", () => {
     expect([decisionAction(accept), decisionAction(merge)]).toEqual(["approve", "confirm_merged"]);
   });
   it("classifies a development workflow inbox with a cohort lifecycle", () => {
-    const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);
+    const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts/projections/inbox").OperatorInboxItem[] }, units);
     expect(inbox.ok && [inbox.value.items[0].kind, inbox.value.cohorts[0].lifecycle]).toEqual(["artifact_gate", "artifact_review"]);
     expect(inbox.ok && inbox.value.items.filter((item) => item.kind === "artifact_gate")).toHaveLength(1);
     expect(inbox.ok && inbox.value.items[0].resume_actions).toEqual(["approve"]);
@@ -494,7 +498,7 @@ describe("v2 development adapters", () => {
     expect(developmentPullRequestUrl(unsafe)).toBeNull();
   });
   it("keeps both run slices when invalidate responses complete against an old inbox snapshot", () => {
-    const first = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);
+    const first = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts/projections/inbox").OperatorInboxItem[] }, units);
     if (!first.ok) throw new Error(first.error.detail);
     const secondRun = "run-another";
     const second = { cohorts: first.value.cohorts.map((cohort) => ({ ...cohort, run_id: secondRun })),

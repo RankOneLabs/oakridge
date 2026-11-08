@@ -1,4 +1,5 @@
-import type { OperatorRunView, OperatorUnitView } from "./operator-contracts";
+import type { OperatorRunView } from "./operator-contracts/projections/run-view";
+import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
 import type { GateResumeRequest, GateResumeResponse, MergeStatus, ParkedGate, SentReviewFeedback } from "./artifact-types";
 import { decisionAction, parseCompositeId, reviewToGates, sentReviewFeedback, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { parseUnitView } from "./adapters/parse";

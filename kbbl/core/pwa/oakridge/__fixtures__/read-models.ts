@@ -1,4 +1,4 @@
-import type { OperatorUnitView } from "../operator-contracts";
+import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 
 /** A stalled cohort unit for retry behavior tests. Keep read-model construction
  * here so tests consume the same named fixture boundary as other v2 views. */

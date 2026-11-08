@@ -1,4 +1,4 @@
-import type { OperatorBodyValue, OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts";
+import type { OperatorBodyValue, OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { ParkedGate, SentReviewFeedback } from "../artifact-types";
 import { artifactRevisionId, compositeId, developmentPullRequestUrl, ok, type AdapterResult } from "./core";
 

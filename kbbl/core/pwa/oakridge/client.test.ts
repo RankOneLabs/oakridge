@@ -6,7 +6,8 @@ import integrationMerge from "./__fixtures__/v2-integration-merge.json";
 import definitionFixture from "./__fixtures__/v2-definition-detail.json";
 import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, putArtifactRevisionBody, refreshReviewInboxRun, resumeGate, retryRunUnit } from "./client";
 import { compositeId } from "./adapters/core";
-import type { OperatorDefinitionDetail, OperatorUnitView } from "./operator-contracts";
+import type { OperatorDefinitionDetail } from "./operator-contracts/projections/definition-view";
+import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
 import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./lib/agent-session-targets";
 import type { CreateRunRequest, RepositoryKey } from "./run-types";
 

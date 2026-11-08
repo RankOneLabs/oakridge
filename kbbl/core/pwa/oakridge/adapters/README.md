@@ -1,6 +1,6 @@
 # V2 to frozen v1 mapping contracts
 
-The source contract is `../operator-contracts.ts`; the target is `../types.ts`.
+The source contract is `../operator-contracts/`; the target is `../types.ts`.
 These pairs are fixed before implementing the transforms:
 
 | Transform | Typed input | Typed output |

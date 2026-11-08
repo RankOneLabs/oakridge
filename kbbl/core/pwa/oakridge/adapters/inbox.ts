@@ -1,4 +1,5 @@
-import type { OperatorInboxItem, OperatorRunInboxBatchEntry, OperatorUnitView } from "../operator-contracts";
+import type { OperatorInboxItem, OperatorRunInboxBatchEntry } from "../operator-contracts/projections/inbox";
+import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../artifact-types";
 import { selectUnitAttentionLabel, type UnitAttentionLabelInput } from "../lib/run-attention";
 import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";

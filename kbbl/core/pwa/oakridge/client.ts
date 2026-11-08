@@ -6,7 +6,15 @@ import type { OakridgeConfig, Project, ProjectId, ProjectUpdateCommand, ProjectU
 import type { CreateRunRequest, RunSummary, RunDetail, ConfirmFinalPullRequestRequest, EpicWorkflowProfile, FinalPullRequestResponse, RepositoryKey, EpicProfileId, WorkflowRunId, RunSessionAttempt, SessionRunLocation } from "./run-types";
 import type { CollabThread, ReviewItem, PostThreadRequest, PostMessageRequest, PostAtomEditRequest, PostReviewItemRequest, PatchReviewItemRequest } from "./collab-types";
 import type { Result } from "../lib/result";
-import type { OperatorArtifactDetail, OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorCollaborationThreadView, OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary, OperatorIngressResponse, OperatorProjectList, OperatorProjectView, OperatorReviewItemRow, OperatorRunInboxBatch, OperatorRunPage, OperatorRunView, OperatorUnitView } from "./operator-contracts";
+import type { OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorReviewItemRow } from "./operator-contracts/domain/delegated-session";
+import type { OperatorIngressResponse } from "./operator-contracts/http/ingress";
+import type { OperatorProjectList, OperatorProjectView } from "./operator-contracts/http/projects";
+import type { OperatorArtifactDetail } from "./operator-contracts/projections/artifact-view";
+import type { OperatorCollaborationThreadView } from "./operator-contracts/projections/collaboration-view";
+import type { OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary } from "./operator-contracts/projections/definition-view";
+import type { OperatorRunInboxBatch } from "./operator-contracts/projections/inbox";
+import type { OperatorRunPage, OperatorRunView } from "./operator-contracts/projections/run-view";
+import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
 import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, revisionToArtifact, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { createGateClient } from "./client-gates";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
