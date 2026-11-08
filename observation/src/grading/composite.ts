@@ -391,8 +391,7 @@ export interface ContributionItem {
 export interface DrilldownRow {
   readonly item: ContributionItem;
   readonly links: Paged<CompositeRelation>;
-  /** Every question the selector opens: one per pinned question version, so this list is never paged. */
-  readonly questions: readonly DrilldownQuestion[];
+  readonly questions: Paged<DrilldownQuestion>;
 }
 const contributionItem = ({ occurrence, stage, unit_id, is_current }: Contribution): ContributionItem => ({ occurrence_id: occurrence.occurrence_id, revision_id: occurrence.revision_id,
   item_path: occurrence.item_path, artifact_kind: occurrence.artifact_kind, item_kind: occurrence.item_kind, selected_value: occurrence.selected_value, stage, unit_id, is_current });
@@ -417,7 +416,18 @@ function selectedQuestions(selector: CompositeSelector, occurrence_id: ItemOccur
   }
 }
 
-export interface DrilldownPages { readonly rows: PageRequest; readonly nested: PageRequest }
+/** Each list has its own window, so a reader can continue any one of them while holding the others still. */
+export interface DrilldownPages {
+  readonly rows: PageRequest;
+  readonly questions: PageRequest;
+  readonly links: PageRequest;
+  readonly statuses: PageRequest;
+  readonly answers: PageRequest;
+  readonly superseded_answers: PageRequest;
+}
+/** The same window for every list, which is what a reader opening a drilldown first asks for. */
+export const uniformDrilldownPages = (page: PageRequest): DrilldownPages =>
+  ({ rows: page, questions: page, links: page, statuses: page, answers: page, superseded_answers: page });
 /** The exact items behind a count, with their raw answers and evidence. Rows are chosen from the whole
  * qualifying population before the page is cut, so a count and its drilldown's `total` agree. */
 export function selectDrilldown(inputs: CompositeInputs, path: CompositePath, key: CompositeDrilldownKey, pages: DrilldownPages): Paged<DrilldownRow> {
@@ -436,11 +446,11 @@ export function selectDrilldown(inputs: CompositeInputs, path: CompositePath, ke
     const answersOf = selectCurrentAnswers(inputs.answers).filter((answer) => answer.occurrence_id === occurrence_id);
     const opened = questions.flatMap((question): readonly DrilldownQuestion[] => {
       const evidence = inputs.evidence_sets.find((set) => set.subject_occurrence_id === occurrence_id && sameQuestion(set, question));
-      return evidence ? [{ question, evidence, statuses: pageOf(measurements.filter((measurement) => sameQuestion(measurement.question, question)), pages.nested),
-        answers: pageOf(answersOf.filter((answer) => sameQuestion(answer.question, question)).map(detail), pages.nested),
-        superseded_answers: pageOf(superseded.filter((answer) => answer.occurrence_id === occurrence_id && sameQuestion(answer.question, question)).map(detail), pages.nested) }] : [];
+      return evidence ? [{ question, evidence, statuses: pageOf(measurements.filter((measurement) => sameQuestion(measurement.question, question)), pages.statuses),
+        answers: pageOf(answersOf.filter((answer) => sameQuestion(answer.question, question)).map(detail), pages.answers),
+        superseded_answers: pageOf(superseded.filter((answer) => answer.occurrence_id === occurrence_id && sameQuestion(answer.question, question)).map(detail), pages.superseded_answers) }] : [];
     });
-    return [{ item: contributionItem(contribution), links: pageOf(contribution.links, pages.nested), questions: opened }];
+    return [{ item: contributionItem(contribution), links: pageOf(contribution.links, pages.links), questions: pageOf(opened, pages.questions) }];
   });
   return pageOf(rows, pages.rows);
 }

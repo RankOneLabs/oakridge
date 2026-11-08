@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
-import { pageOf, selectCurrentAnswers, selectRevisionStandings, type AnswerCount, type CompositeRevision, type CompositeSelector, type DrilldownRow, type LogicalItemComposite,
+import { pageOf, selectCurrentAnswers, selectRevisionStandings, uniformDrilldownPages, type AnswerCount, type CompositeRevision, type CompositeSelector, type DrilldownPages, type DrilldownRow, type LogicalItemComposite,
   type StageComposite } from "../src/grading/composite";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { evaluationDigest, submissionAttemptLabel, submissionDigest } from "../src/grading/execution";
@@ -19,7 +19,7 @@ import { createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig
 
 const path = oakridgeProfile.composite;
 const all = { limit: 200, offset: 0 };
-const pages = { rows: all, nested: all };
+const pages = uniformDrilldownPages(all);
 const MACHINE_A = "machine-a", MACHINE_B = "machine-b", HUMAN = "human";
 const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question,
   evaluator_definition_ids: [evaluatorId(MACHINE_A), evaluatorId(MACHINE_B), evaluatorId(HUMAN)] })) };
@@ -175,7 +175,7 @@ integration("an item graded before any task appears under its task as soon as an
   const [count] = stageOf(read, "analysis").answers;
   const rows = await readCompositeDrilldown(h.db, h.scope, path, "run-1", count!.drilldown, pages);
   expect(rows.total).toBe(1);
-  const [question] = rows.items[0]!.questions;
+  const [question] = rows.items[0]!.questions.items;
   expect([rows.items[0]!.item.occurrence_id, question!.answers.items.map((answer) => answer.occurrence_id), question!.evidence.readiness.state]).toEqual([linked, [linked, linked], "ready"]);
   expect(question!.evidence.readiness.state === "ready" && question!.evidence.readiness.references[0]?.content).toBe(`evidence of ${linked}`);
 }));
@@ -228,7 +228,7 @@ integration("a newer revision with no links replaces a linked one instead of res
   const read = stageOf(await composite(h, "T7"), "implementation");
   expect([read.totals.contributing_items, read.totals.superseded_items, read.answers]).toEqual([1, 1, []]);
   const history = await readCompositeDrilldown(h.db, h.scope, path, "run-1", read.history, pages);
-  expect(history.items.map((row) => [row.item.revision_id, row.item.is_current, row.questions.flatMap((question) => question.answers.items.map((answer) => answer.answer))])).toEqual([
+  expect(history.items.map((row) => [row.item.revision_id, row.item.is_current, row.questions.items.flatMap((question) => question.answers.items.map((answer) => answer.answer))])).toEqual([
     ["assessment-alpha-1", false, [choice("supported")]]]);
   // Beta's own current revision was never touched by alpha's.
   const items = await readCompositeDrilldown(h.db, h.scope, path, "run-1", read.items, pages);
@@ -280,7 +280,7 @@ integration("corrections count once under their own reviewer; disagreement is on
   expect(opened.items.map((row) => row.item.occurrence_id)).toEqual([first]);
   const history = await readCompositeDrilldown(h.db, h.scope, path, "run-1", stage.history, pages);
   const [row] = history.items.filter((candidate) => candidate.item.occurrence_id === first);
-  const corrected = row!.questions.find((question) => question.question.question_id === CORRECTNESS_ID);
+  const corrected = row!.questions.items.find((question) => question.question.question_id === CORRECTNESS_ID);
   expect([corrected!.superseded_answers.items.map((answer) => answer.answer), corrected!.answers.total]).toEqual([[choice("contradicted")], 3]);
 }));
 
@@ -319,7 +319,7 @@ integration("not-ready, pending, failed, deferred and off stay distinct from eac
   for (const count of stage.statuses) expect([(await readCompositeDrilldown(h.db, h.scope, path, "run-1", count.drilldown, pages)).total, count.status.state]).toEqual([count.count, count.status.state]);
   for (const count of stage.answers) expect((await readCompositeDrilldown(h.db, h.scope, path, "run-1", count.drilldown, pages)).total).toBe(count.count);
   const opened = await readCompositeDrilldown(h.db, h.scope, path, "run-1", of(CORRECTNESS_ID, "not_ready", null)[0]!.drilldown, pages);
-  expect(opened.items[0]!.questions[0]!.statuses.items[0]!.detail).toBe("subject not captured");
+  expect(opened.items[0]!.questions.items[0]!.statuses.items[0]!.detail).toBe("subject not captured");
 }));
 
 integration("a run with grading off reads as off, not as an answer", async () => scratchDatabase(async (db) => {
@@ -376,27 +376,69 @@ integration("every list pages to its whole population, nested lists included, an
   expect(count.count).toBe(4);
   const seen: string[] = [];
   for (let offset = 0; ; offset += 2) {
-    const page = await readCompositeDrilldown(h.db, h.scope, path, "run-1", count.drilldown, { rows: { limit: 2, offset }, nested: all });
+    const page = await readCompositeDrilldown(h.db, h.scope, path, "run-1", count.drilldown, { ...pages, rows: { limit: 2, offset } });
     expect(page.total).toBe(4);
     if (page.items.length === 0) break;
     seen.push(...page.items.map((row) => row.item.occurrence_id));
   }
   expect(seen.sort()).toEqual([...ids].sort());
-  // Nested answers continue across pages too, and report the whole list's size on each.
-  const nested: string[] = [];
-  for (let offset = 0; offset < 4; offset += 2) {
-    const page = await readCompositeDrilldown(h.db, h.scope, path, "run-1", stage.items, { rows: { limit: 1, offset: 0 }, nested: { limit: 2, offset } });
-    const question = page.items[0]!.questions.find((candidate) => candidate.question.question_id === CORRECTNESS_ID)!;
-    expect(question.answers.total).toBe(3);
-    nested.push(...question.answers.items.map((answer) => answer.observation_id));
-  }
-  expect(new Set(nested).size).toBe(3);
   const composites = await listRunComposites(h.db, h.scope, path, "run-1", { limit: 1, offset: 1 });
   expect([composites.total, composites.items.map((item) => item.producer_local_id)]).toEqual([2, ["T8"]]);
   const lineage = await readLogicalItemLineage(h.db, h.scope, path, "run-1", "T7", { limit: 2, offset: 0 });
   expect([lineage.items.length, lineage.total > 2]).toEqual([2, true]);
   for (const selector of [{ kind: "items" }, { kind: "history" }] satisfies readonly CompositeSelector[])
-    expect((await readCompositeDrilldown(h.db, h.scope, path, "run-1", { ...stage.items, selector }, { rows: { limit: 1, offset: 9 }, nested: all })).items).toEqual([]);
+    expect((await readCompositeDrilldown(h.db, h.scope, path, "run-1", { ...stage.items, selector }, { ...pages, rows: { limit: 1, offset: 9 } })).items).toEqual([]);
+}));
+
+integration("a drilldown's questions and every list inside them continue separately, each reporting its whole size", async () => scratchDatabase(async (db) => {
+  const h = await harness(db);
+  await sharedTaskRun(h, { alpha: [finding(["T7", "T8"])], beta: [] });
+  const occurrence_id = await occurrenceAt(h, "assessment-alpha-1", "/findings/0");
+  await readyAll(h, occurrence_id);
+  const wrong = await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("contradicted") });
+  await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("supported"), supersedes: wrong });
+  const wrong_again = await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-b", answer: choice("contradicted") });
+  await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-b", answer: choice("supported"), supersedes: wrong_again });
+  await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-c", answer: choice("supported") });
+  await measure(h, { occurrence_id, question_id: EVIDENCE_SUPPORT_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("supports") });
+  const stage = stageOf(await composite(h, "T7"), "implementation");
+  const open = (windows: Partial<DrilldownPages>) => readCompositeDrilldown(h.db, h.scope, path, "run-1", stage.items, { ...pages, ...windows });
+  const one = { limit: 1, offset: 0 };
+
+  // The question list itself: one window per question, the whole size on each, nothing past its end.
+  const walked: string[] = [];
+  for (let offset = 0; offset < 2; offset++) {
+    const { questions } = (await open({ questions: { limit: 1, offset } })).items[0]!;
+    expect([questions.total, questions.limit, questions.offset, questions.items.length]).toEqual([2, 1, offset, 1]);
+    walked.push(questions.items[0]!.question.question_id);
+  }
+  expect(walked.sort()).toEqual([CORRECTNESS_ID, EVIDENCE_SUPPORT_ID].sort());
+  const past = (await open({ questions: { limit: 1, offset: 2 } })).items[0]!.questions;
+  expect([past.total, past.items]).toEqual([2, []]);
+
+  // Inside one question held still, its current and superseded answers each continue on their own.
+  const position = walked.indexOf(CORRECTNESS_ID);
+  const held = { questions: { limit: 1, offset: position } };
+  const current: string[] = [];
+  for (let offset = 0; offset < 3; offset++) {
+    const question = (await open({ ...held, answers: { limit: 1, offset }, superseded_answers: { limit: 2, offset: 0 } })).items[0]!.questions.items[0]!;
+    expect([question.question.question_id, question.answers.total, question.superseded_answers.total, question.superseded_answers.items.length]).toEqual([CORRECTNESS_ID, 3, 2, 2]);
+    current.push(...question.answers.items.map((answer) => answer.observation_id));
+  }
+  expect(new Set(current).size).toBe(3);
+  const superseded: string[] = [];
+  for (let offset = 0; offset < 2; offset++) {
+    const question = (await open({ ...held, answers: { limit: 3, offset: 0 }, superseded_answers: { limit: 1, offset } })).items[0]!.questions.items[0]!;
+    expect([question.superseded_answers.total, question.answers.items.length]).toEqual([2, 3]);
+    superseded.push(...question.superseded_answers.items.map((answer) => answer.observation_id));
+  }
+  expect(superseded.sort()).toEqual([wrong, wrong_again].sort());
+
+  // Moving one list's window moves no other, and links and statuses have their own.
+  const { links, questions } = (await open({ links: { limit: 1, offset: 1 }, questions: one, statuses: { limit: 0, offset: 0 } })).items[0]!;
+  expect([links.total, links.items.length, links.offset]).toEqual([2, 1, 1]);
+  const [opened] = questions.items;
+  expect([opened!.statuses.limit, opened!.statuses.items]).toEqual([0, []]);
 }));
 
 integration("reads stop at the run and the tenant, even for the same ids", async () => scratchDatabase(async (db) => {

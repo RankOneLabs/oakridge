@@ -306,10 +306,12 @@ differently is not disagreement, and neither is a corrected answer differing fro
 | `readLogicalItemLineage` | `LogicalItemLineage`: the task's list, plan and brief occurrences at exact revisions and paths, their declared edges, its linked items by stage, and unresolved references. |
 | `listRunUnlinkedItems`, `listRunUnresolvedReferences` | Items linked to nothing, and edges naming a target not captured. |
 
-Every list is `Paged` with the whole list's `total`, nested answers, statuses and links included, and each
-read is scoped to its tenant and run. A count's drilldown `total` equals the count, because rows are chosen
-before the page is cut. A drilldown row's `questions` list is not paged: it holds at most one entry per
-pinned question version. These reads need no submission, assignment or reveal record. The HTTP forwarding,
+Every returned list is `Paged` with the whole list's `total`, and each read is scoped to its tenant and
+run. A drilldown takes its own window for each of `rows`, `questions`, `links`, `statuses`, `answers` and
+`superseded_answers` (`DrilldownPages`), so a reader can continue any one list while holding the others
+still. A count's drilldown `total` equals the count, because rows are chosen before the page is cut. A
+stage's count lists are complete summaries rather than pages, and each of their entries opens as a paged
+drilldown. These reads need no submission, assignment or reveal record. The HTTP forwarding,
 item navigation and panel belong to the later operator cohort, on these same contracts.
 
 ## HTTP routes

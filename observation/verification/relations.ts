@@ -20,7 +20,7 @@ import { resolve } from "node:path";
 import { canonicalDigest } from "canonical-json";
 import type { EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId } from "../src/domain/identity";
 import type { JsonValue, Result } from "../src/domain/primitives";
-import type { LogicalItemComposite, LogicalItemLineage, Paged, StageComposite } from "../src/grading/composite";
+import { uniformDrilldownPages, type LogicalItemComposite, type LogicalItemLineage, type Paged, type StageComposite } from "../src/grading/composite";
 import type { GradingRegistration } from "../src/grading/configuration";
 import { AUTOMATIC_ATTEMPT_LABEL, evaluationDigest, submissionAttemptLabel, submissionDigest } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
@@ -130,8 +130,8 @@ const declareRoute = (run_id: string): string => `/api/runs/${run_id}/analysis-l
 const answerObservations = async (reads: ObservationReads, run_id: string, read: LogicalItemComposite | null, stage: string): Promise<readonly string[]> => {
   const counted = stageOf(read, stage);
   if (!counted) return [];
-  const rows = await Promise.all(counted.answers.map((count) => readCompositeDrilldown(reads.db, reads.tenant, path, run_id, count.drilldown, { rows: WHOLE, nested: WHOLE })));
-  return [...new Set(rows.flatMap((page) => page.items.flatMap((row) => row.questions.flatMap((question) => question.answers.items.map((answer) => answer.observation_id as string)))))];
+  const rows = await Promise.all(counted.answers.map((count) => readCompositeDrilldown(reads.db, reads.tenant, path, run_id, count.drilldown, uniformDrilldownPages(WHOLE))));
+  return [...new Set(rows.flatMap((page) => page.items.flatMap((row) => row.questions.items.flatMap((question) => question.answers.items.map((answer) => answer.observation_id as string)))))];
 };
 
 /** Every count opens exactly as many rows as it says, and a one-row page walks the same population. */
@@ -142,11 +142,11 @@ export async function drilldownChecks(reads: ObservationReads, run_id: string, r
   const mismatched: string[] = [];
   const unwalked: string[] = [];
   for (const { drilldown, count } of counted) {
-    const whole = await readCompositeDrilldown(reads.db, reads.tenant, path, run_id, drilldown, { rows: WHOLE, nested: WHOLE });
+    const whole = await readCompositeDrilldown(reads.db, reads.tenant, path, run_id, drilldown, uniformDrilldownPages(WHOLE));
     if (whole.total !== count) mismatched.push(`${JSON.stringify(drilldown.selector)}: count ${count}, rows ${whole.total}`);
     const walked: string[] = [];
     for (let offset = 0; offset <= count; offset++) walked.push(...(await readCompositeDrilldown(reads.db, reads.tenant, path, run_id, drilldown,
-      { rows: { limit: 1, offset }, nested: WHOLE })).items.map((row) => row.item.occurrence_id));
+      { ...uniformDrilldownPages(WHOLE), rows: { limit: 1, offset } })).items.map((row) => row.item.occurrence_id));
     if (digestOf([...walked].sort()) !== digestOf(whole.items.map((row) => row.item.occurrence_id as string).sort())) unwalked.push(JSON.stringify(drilldown.selector));
   }
   return [check("every count opens exactly as many raw rows as it reports", counted.length > 0 && mismatched.length === 0, mismatched.join("; ") || `${counted.length} count(s)`),
@@ -261,8 +261,8 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
   const lineage = await readLogicalItemLineage(db, tenant, path, run_id, shared, WHOLE);
   const unknown = await listRunUnresolvedReferences(db, tenant, path, run_id, WHOLE);
   const unlinked = await listRunUnlinkedItems(db, tenant, path, run_id, WHOLE);
-  const history = implementation ? await readCompositeDrilldown(db, tenant, path, run_id, implementation.history, { rows: WHOLE, nested: WHOLE }) : null;
-  const disagreement = implementation?.disagreements[0] ? await readCompositeDrilldown(db, tenant, path, run_id, implementation.disagreements[0].drilldown, { rows: WHOLE, nested: WHOLE }) : null;
+  const history = implementation ? await readCompositeDrilldown(db, tenant, path, run_id, implementation.history, uniformDrilldownPages(WHOLE)) : null;
+  const disagreement = implementation?.disagreements[0] ? await readCompositeDrilldown(db, tenant, path, run_id, implementation.disagreements[0].drilldown, uniformDrilldownPages(WHOLE)) : null;
   const other = await read("T8");
   return { reads: { label: "synthetic revisions and answers on the shadow's database", pending, final, other, lineage, unknown, unlinked, history, disagreement }, checks: [
     check("matrix: integration is pending until it publishes", stageOf(pending, "integration")?.publication.state === "pending", JSON.stringify(stageOf(pending, "integration")?.publication ?? null)),
