@@ -319,7 +319,7 @@ differently is not disagreement, and neither is a corrected answer differing fro
 Every returned list is `Paged` with the whole list's `total`, and each read is scoped to its tenant and
 run. A drilldown takes its own window for each of `rows`, `questions`, `links`, `statuses`, `answers` and
 `superseded_answers` (`DrilldownPages`), so a reader can continue any one list while holding the others
-still. A count's drilldown `total` equals the count, because rows are chosen before the page is cut. A
+still. An answer count is of items, and its drilldown `total` equals the count, because rows are chosen before the page is cut. A
 stage's count lists are complete summaries rather than pages, and each of their entries opens as a paged
 drilldown. These reads need no submission, assignment or reveal record. The HTTP forwarding,
 item navigation and panel belong to the later operator cohort, on these same contracts.
@@ -386,26 +386,38 @@ observation baseline, core contract or generated definition changed for declarat
 
 On the shadow, through `observation/verification/proof.ts`:
 
-- `relations` passed all 48 checks (`observation/verification/reports/relations-2026-11-08T17-46-21-583Z`)
-  at `3b07bcd0`, with real provider answers, using `inputs/relations-audit.json`. On run
-  `run-b1b6cdd910414886`, 6 analysis questions were answered in 6 real requests before the run had any task.
-  A mapping naming the still unapproved `analysis:tasks:1` was refused with a 409. The approval then changed
-  nothing, and every task read as a coverage gap. After the mapping for `/findings/0` was delivered, its
-  composite opened the original observation, with the item, its pins, evidence, measurements and answers,
-  the unlinked `/findings/5` control, and the 6 requests all unchanged. The run went on to its assessment
-  (16 requests). A second mapping was journaled with observation killed, and the whole stack restarted before
-  anything acknowledged it: it arrived once, with 16 requests before and after, and the authority's events
-  went from 43 to 44, the mapping alone. `T1` reads `analysis` and `implementation` linked with `integration`
-  pending, the unknown task stays a visible reference, and every count opened as many rows as it reported.
-- **What that proof does not show.** A verification run may not merge and its planner chooses its cohorts,
-  so no real run reached a second cohort or integration. The report's `shared_task_matrix` covers those
-  reads (two cohorts, revised plan and briefs, integration pending then final, corrections, disagreement) on
-  the shadow's database through real ordered delivery, in a tenant of its own, on **synthetic** revisions and
-  answers, and is labelled so. No provider request is made for it. A lost acknowledgement is proven against a
-  real process in `observation-process-restart.test.ts`, not on the shadow. The human and PWA continuation
-  stays with the operator workspace, and this does not complete that cumulative proof.
-- An earlier `relations` run (`relations-2026-11-08T17-31-33-853Z`, at `53709a91`) also passed, but its report
-  left out passing step checks, which the later run records.
+- `relations` passed all 68 checks (`observation/verification/reports/relations-2026-11-08T20-31-17-449Z`)
+  at `100000b5`, with real provider answers, 44 real requests across two runs. Three later fixes (a count of
+  items rather than rows, the namespace of a decision's link receipt, and a refused acceptance keeping its
+  checkpoint) are covered by the offline tests above, not by this report.
+- Its first run, `run-8734e674c984b0f3` from `inputs/relations-audit.json`, measures the late link. 5 analysis
+  questions were answered in 5 requests before the run had any task. A mapping naming the unapproved tasks
+  revision was refused, the approval changed nothing, and every task read as a coverage gap. After the mapping
+  was delivered, its composite opened the original observation, with the item, pins, evidence, measurements,
+  answers, the unlinked control and the request count all unchanged. A second mapping was journaled with
+  observation killed and the whole stack restarted before any acknowledgement: it arrived once, with 19 requests
+  before and after, and the authority's events went from 43 to 44, the mapping alone.
+- Its second run, `run-ac2e5f66cae38631` from `inputs/relations-shared-audit.json`, is the real shared task. Its
+  tasks approval itself carried explicit links, delivered as one declaration with the 5 requests unchanged. Its
+  plan and both briefs were sent back and really revised. Cohorts `alpha` and `beta` both reached their
+  assessments, and `T1` reads 2 analysis findings and 6 implementation findings across both cohorts, all
+  answered, 25 requests in all. One finding reads under both `T1` and `T2`, the unknown task stays a visible
+  reference, the control stays unlinked, and integration reads pending. Its lineage holds the task list, both plan
+  revisions and both revisions of each brief. Every count opened as many rows as it reported, and one-entry windows
+  reached every nested question and raw answer.
+- **What that proof does not show.** No real run published integration. A cohort completes only on an operator's
+  acceptance of its assessment and confirmation of a merge, and this proof does not make those decisions by itself.
+  The report's `shared_task_matrix` is a supplement for integration final, corrections and disagreement, on the
+  shadow's database through real ordered delivery, in a tenant of its own, on **synthetic** revisions and answers,
+  and is labelled so. No provider request is made for it. Both shared-run assessors returned `fail` because their
+  environment had no test database for the suite the audit spec asks them to run, which says nothing about the
+  reads above. A lost acknowledgement is proven against a real process in
+  `observation-process-restart.test.ts`, not on the shadow. The human and PWA continuation stays with the operator
+  workspace, and this does not complete that cumulative proof.
+- **A side effect to know before rerunning.** Audit assessors follow `assess.md`, so they call `set_pr_draft` on
+  the real pull request the audit input names. A proof run can therefore flip that pull request's draft state.
+- Earlier `relations` runs (`relations-2026-11-08T17-31-33-853Z`, `relations-2026-11-08T17-46-21-583Z`) predate the
+  real shared run.
 - `live` passed (`observation/verification/reports/live-2026-11-07T16-59-47-486Z`): the service
   started from `graders.json` and reported its three configured graders.
 - `registration` passed (`observation/verification/reports/registration-2026-11-07T18-48-17-496Z`)
