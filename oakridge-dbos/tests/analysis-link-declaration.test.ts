@@ -13,7 +13,7 @@ import { ANALYSIS_LINKS_DECLARED, selectApplicableEntries, selectDeclarationRefu
 import type { RunId } from "../src/domain/primitives";
 import { createHttpApp } from "../src/http/app";
 import { browserWritePolicy } from "../src/http/browser-write-policy";
-import { commitAnalysisLinkDeclaration } from "../src/storage/commit";
+import { commitAnalysisLinkDeclaration, commitEvent } from "../src/storage/commit";
 import { openDatabase, type Database } from "../src/storage/database";
 import { listLiveRuns, readCommittedEventsAfter, readRunInspect } from "../src/storage/read-store";
 import { actionOf, ANALYSIS_LINK_WORKFLOW, executor, launch, openAuthority, scratchDatabase, submitter, unitOf, OPERATOR, type Authority } from "./authority-fixture";
@@ -198,6 +198,82 @@ describe("the operator route", () => {
     expect((await post(run.run_id, { ...valid, request_id: crypto.randomUUID(), entries: [{ source_revision_id: run.analysis, task_ids: ["T1"] }] })).status).toBe(400);
     expect((await post(run.run_id, valid, null)).status).toBe(401);
     expect((await post("run-absent", { ...valid, request_id: crypto.randomUUID() })).status).toBe(404);
+  });
+});
+
+describe("the approved-tasks caller", () => {
+  const TOKEN = "approval-token";
+  let app: Hono;
+  beforeAll(() => {
+    app = createHttpApp({ db: authority.db, core: authority.core, wake: () => undefined, application_version: "test",
+      access: { kind: "token_required", token: TOKEN }, write_policy: browserWritePolicy([]) });
+  });
+  interface Decide { readonly request_id?: string; readonly decision?: string; readonly target?: string; readonly analysis_links?: unknown }
+  const decide = (run: LinkRun, input: Decide = {}) => {
+    const decision = input.decision ?? "approve";
+    return app.request(`/api/runs/${run.run_id}/units/${encodeURIComponent(run.unit)}/reviews/tasks_review/decide`, { method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ request_id: input.request_id ?? crypto.randomUUID(), decision, target: input.target ?? run.tasks, payload: decision === "approve" ? {} : { feedback: "again" },
+        ...(input.analysis_links === undefined ? {} : { analysis_links: input.analysis_links }) }) });
+  };
+  const decisions = async (run: LinkRun) => (await authority.db.selectFrom("authority.review_decision").select(["target_revision_id", "effect"]).where("run_id", "=", run.run_id).execute());
+  const entry = (run: LinkRun, task_ids: readonly string[] = ["T1"], item_path = "/findings/0") => ({ source_revision_id: run.analysis, item_path, task_ids });
+
+  test("an approval naming entries journals them against the exact revision it decides", async () => {
+    const run = await linkRun();
+    const response = await decide(run, { analysis_links: [entry(run, ["T1", "T2"]), entry(run, [], "/findings/1")] });
+    const body = await response.json() as { readonly analysis_links: { readonly kind: string; readonly event_id: string } };
+    const rows = await journaled(run.run_id);
+    expect({ status: response.status, links: body.analysis_links, rows: rows.map((row) => [row.id, row.payload]), decisions: await decisions(run) }).toEqual({
+      status: 201, links: { kind: "committed", event_id: rows[0]!.id },
+      rows: [[rows[0]!.id, { kind: ANALYSIS_LINKS_DECLARED, run_id: run.run_id, tasks_revision_id: run.tasks, entries: [entry(run, ["T1", "T2"])] }]],
+      decisions: [{ target_revision_id: run.tasks, effect: "approve" }] });
+  });
+  test("an approval supplying nothing applicable journals nothing, and answers as an approval always has", async () => {
+    for (const analysis_links of [undefined, [], [{ source_revision_id: "any", item_path: "/findings/0", task_ids: [] }]]) {
+      const run = await linkRun();
+      const response = await decide(run, { analysis_links });
+      expect([response.status, Object.keys(await response.json() as object).sort(), await journaled(run.run_id), (await decisions(run)).length])
+        .toEqual([201, ["event_id", "kind", "run_id"], [], 1]);
+    }
+  });
+  test("a refused entry refuses only the declaration: the approval stands, and the run moves on", async () => {
+    const run = await linkRun();
+    const response = await decide(run, { analysis_links: [entry(run, ["T1"], "/findings/9")] });
+    const body = await response.json() as { readonly analysis_links: { readonly kind: string; readonly reason: string } };
+    expect([response.status, body.analysis_links.kind, body.analysis_links.reason, await journaled(run.run_id), await decisions(run)]).toEqual([201, "refused",
+      `revision ${run.analysis} has no finding at /findings/9`, [], [{ target_revision_id: run.tasks, effect: "approve" }]]);
+  });
+  test("request-changes journals nothing and the entries it named are refused, since nothing was approved", async () => {
+    const run = await linkRun();
+    const response = await decide(run, { decision: "request_changes", analysis_links: [entry(run)] });
+    const body = await response.json() as { readonly analysis_links: { readonly kind: string } };
+    expect([response.status, body.analysis_links.kind, await journaled(run.run_id)]).toEqual([201, "refused", []]);
+  });
+  test("a decision refused by the core journals nothing, and links never reach the writer", async () => {
+    const run = await linkRun();
+    const response = await decide(run, { target: `${run.unit}:tasks:9`, analysis_links: [entry(run)] });
+    expect([response.status, await journaled(run.run_id), await decisions(run)]).toEqual([409, [], []]);
+  });
+  test("a retried request answers with the same decision and declaration, once each", async () => {
+    const run = await linkRun();
+    const input = { request_id: crypto.randomUUID(), analysis_links: [entry(run)] };
+    const first = await (await decide(run, input)).json();
+    const replay = await decide(run, input);
+    expect([replay.status, await replay.json(), (await journaled(run.run_id)).length, (await decisions(run)).length]).toEqual([200, first, 1, 1]);
+  });
+  test("a malformed entry refuses the request before anything commits", async () => {
+    const run = await linkRun();
+    const response = await decide(run, { analysis_links: [{ item_path: "/findings/0", task_ids: ["T1"] }] });
+    expect([response.status, await journaled(run.run_id), await decisions(run)]).toEqual([400, [], []]);
+  });
+  test("a failure journaling the links rolls the approval back with them, so a retry can complete both", async () => {
+    const run = await linkRun();
+    const failed = await commitEvent({ db: authority.db, core: authority.core, wake: () => undefined }, { run_id: run.run_id, ingress_id: crypto.randomUUID(), writer: OPERATOR,
+      event: { kind: "operator_decided", unit: run.unit, review: "tasks_review", decision: "approve", target: run.tasks, payload: {} } }, async () => { throw new Error("journal unavailable"); });
+    expect([failed.ok, await decisions(run)]).toEqual([false, []]);
+    const retried = await decide(run, { analysis_links: [entry(run)] });
+    expect([retried.status, (await journaled(run.run_id)).length, (await decisions(run)).length]).toEqual([201, 1, 1]);
   });
 });
 

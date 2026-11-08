@@ -255,9 +255,19 @@ declaration the profile cannot read is recorded as `unmapped`.
 A declaration starts no reconciliation, so a link can never admit, retry or send anything. It leaves the
 item, its pins, frozen evidence, answers, executions, provider attempts and request counts as they were.
 
-**The caller.** No workflow step supplies these mappings yet: `tasks` and `analysis` carry no such field,
-and inventing one needs an operator decision. Until then the route is the only source, and a run with no
-caller simply has no late links.
+**The caller.** The approved-tasks caller is the tasks review's own decision:
+`POST /api/runs/:run_id/units/:unit_id/reviews/tasks_review/decide` takes an optional `analysis_links` list of
+`{ source_revision_id, item_path, task_ids }`. The declaration names the revision the decision targets, and
+commits in the decision's transaction, so a crash cannot leave one without the other. Supplying nothing is the
+ordinary case: nothing is journaled and the response is unchanged. A refused entry refuses only the
+declaration, which the response reports as `analysis_links: { "kind": "refused", "reason": ... }`, and the
+decision stands. A retried request answers from both receipts. `operator_decided` still maps to ignored; only
+the separate declaration event carries associations. `POST /api/runs/:run_id/analysis-links` stays for links
+supplied after that approval.
+
+**What does not supply them.** Neither `tasks` nor `analysis` carries an association, and no agent step
+produces one, so a run gets late links only when a decision's caller supplies them. Having agents declare
+them needs a `tasks` artifact field or an agent output, which is an operator decision.
 
 ## Composites and lineage
 
