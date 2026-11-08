@@ -1,6 +1,7 @@
 import { commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Hono } from "hono";
+import { sql } from "kysely";
 import { createApp } from "../../observation/src/http/app";
 import { oakridgeProfile } from "../../observation/src/producers/oakridge/profile";
 import { openDatabase as openObservationDatabase, withTenant, type Database as ObservationDatabase } from "../../observation/src/storage/database";
@@ -17,6 +18,7 @@ import { openDatabase, type Database } from "../src/storage/database";
 import { listLiveRuns, readCommittedEventsAfter, readRunInspect } from "../src/storage/read-store";
 import { actionOf, ANALYSIS_LINK_WORKFLOW, executor, launch, openAuthority, scratchDatabase, submitter, unitOf, OPERATOR, type Authority } from "./authority-fixture";
 
+const DELIVERY_WAIT_MS = 60_000;
 let authority: Authority;
 let definition_id: Awaited<ReturnType<typeof commitTestDefinition>>["definition_id"];
 beforeAll(async () => {
@@ -216,7 +218,35 @@ describe("delivery through the ordered feed", () => {
   type Fetcher = NonNullable<ObservationOptions["fetcher"]>;
   const toService: Fetcher = async (input, init) => service.request(new Request(input, init));
   const options = (fetcher: Fetcher = toService): ObservationOptions => ({ url: "http://observation.test", namespace: tenant.namespace, token: "ingest", fetcher, poll_ms: 10, log: () => undefined });
-  const drain = async (db: Database = authority.db): Promise<void> => { while (await publishObservationOnce(db, options())); };
+  const cursor = () => withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_event_cursor").select(["commit_txid", "event_id"]).executeTakeFirst());
+  /** The feed's newest committed row. Reading it directly is the point: the feed itself may still be holding it back. */
+  const journalHead = (db: Database = authority.db) => db.selectFrom("authority.event").select(["id", "commit_txid"])
+    .orderBy("commit_txid", "desc").orderBy("id", "desc").limit(1).executeTakeFirstOrThrow();
+  const pastFeedGuard = async (event_id: string, db: Database = authority.db): Promise<void> => {
+    const deadline = Date.now() + DELIVERY_WAIT_MS;
+    for (;;) {
+      const at = await cursor();
+      const visible = await readCommittedEventsAfter(db, "authority.event", { after: { commit_txid: String(at?.commit_txid ?? 0), id: at?.event_id ?? "" }, limit: 1000 });
+      if (visible.some((row) => row.id === event_id)) return;
+      if (Date.now() >= deadline) throw new Error(`event ${event_id} never passed the feed's transaction-order guard`);
+      await Bun.sleep(20);
+    }
+  };
+  /**
+   * Delivers through what the journal holds now. An empty feed read proves nothing: the guard hides
+   * every row until all transactions older than it end, on any database of the server. So this waits
+   * for the service's cursor to reach the head, and only that counts as delivered.
+   */
+  const drain = async (db: Database = authority.db): Promise<void> => {
+    const head = await journalHead(db);
+    const deadline = Date.now() + DELIVERY_WAIT_MS;
+    for (;;) {
+      const at = await cursor();
+      if (at && BigInt(at.commit_txid) >= BigInt(head.commit_txid)) return;
+      if (Date.now() >= deadline) throw new Error(`the service never reached event ${head.id}`);
+      if (!await publishObservationOnce(db, options())) await Bun.sleep(20);
+    }
+  };
   const relations = (source_revision: string) => withTenant(observation, tenant, (trx) => trx.selectFrom("observation.item_relation as relation")
     .innerJoin("observation.item_occurrence as source", (join) => join.onRef("source.occurrence_id", "=", "relation.source_occurrence_id")
       .onRef("source.producer", "=", "relation.producer").onRef("source.namespace", "=", "relation.namespace"))
@@ -229,7 +259,6 @@ describe("delivery through the ordered feed", () => {
     attempts: await trx.selectFrom("observation.grading_provider_attempt").select("execution_id").execute(),
     observations: await trx.selectFrom("observation.grade_observation").select("observation_id").execute(),
   }));
-  const cursor = () => withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_event_cursor").select(["commit_txid", "event_id"]).executeTakeFirst());
   const headEventId = async (run_id: string): Promise<string> => (await journaled(run_id)).at(-1)!.id;
 
   test("a journaled declaration survives delivery failing and a publisher restart, and projects once", async () => {
@@ -266,6 +295,7 @@ describe("delivery through the ordered feed", () => {
       if (init?.method === "POST") { applied += 1; throw new Error("connection reset before the acknowledgement"); }
       return response;
     };
+    await pastFeedGuard(await headEventId(run.run_id));
     await expect(publishObservationOnce(authority.db, options(lostAck))).rejects.toThrow("connection reset");
     expect(applied).toBe(1);
     const projected = await relations(run.analysis);
@@ -283,12 +313,39 @@ describe("delivery through the ordered feed", () => {
     expect(stored.map((declaration) => declaration.projection)).toEqual([{ relation_ids: projected.map((relation) => relation.relation_id), unresolved_sources: [] }]);
   });
 
+  test("an older open transaction anywhere on the server holds a declaration back, and it arrives once that ends", async () => {
+    const run = await linkRun();
+    await run.decide(run.tasks, "approve");
+    await drain();
+    const elsewhere = openDatabase(authority.url);
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    let began!: () => void;
+    const beganTransaction = new Promise<void>((resolve) => { began = resolve; });
+    const held = elsewhere.transaction().execute(async (trx) => {
+      await sql`SELECT pg_current_xact_id()`.execute(trx);
+      began();
+      await released;
+    });
+    try {
+      await beganTransaction;
+      await declare(declarationOf(run));
+      // The guard is working as it must: this read is empty though the row has committed.
+      expect(await publishObservationOnce(authority.db, options())).toBe(false);
+      expect((await journaled(run.run_id))).toHaveLength(1);
+      expect(await relations(run.analysis)).toEqual([]);
+    } finally { release(); await held; await elsewhere.destroy(); }
+    await drain();
+    expect(await relations(run.analysis)).toHaveLength(1);
+  });
+
   test("a stale redelivery of a declaration is refused by the cursor and changes nothing", async () => {
     const run = await linkRun();
     await run.decide(run.tasks, "approve");
     await drain();
     const previous = await cursor();
     await declare(declarationOf(run));
+    await pastFeedGuard(await headEventId(run.run_id));
     let sent: { readonly body: string; readonly url: RequestInfo | URL } | null = null;
     await publishObservationOnce(authority.db, options(async (input, init) => {
       if (init?.method === "POST") sent = { body: String(init.body), url: input };
