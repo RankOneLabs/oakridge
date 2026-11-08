@@ -320,7 +320,39 @@ integration("an expired claim cannot send or settle, before or after another wor
     .toEqual([[1, false, "failed", "lease_expired"], [2, false, "completed", null]]);
 }));
 
-integration("a reclaimed claim that sent a request keeps its charge and counts as a retry", async () => scratchDatabase(async (db) => {
+integration("a claim that was current when it asked but expired while waiting on the row lock sends and writes nothing", async () => scratchDatabase(async (db) => {
+  const life = await lifecycle(db);
+  await captureAnalysis(life, true);
+  const claimed = await claimNext(db, tenant, { lease_owner: "a", lease_ms: 1_500, run_spend: 5 });
+  if (claimed.kind !== "claimed") throw new Error(claimed.kind);
+  const holder = new Client({ connectionString: await databaseUrl(db) });
+  await holder.connect();
+  const outcome = { answer: { state: "answered", kind: "choice", value: "relevant" } } as const;
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT set_config('observation.producer', $1, true), set_config('observation.namespace', $2, true)", [tenant.producer, tenant.namespace]);
+    await holder.query("SELECT 1 FROM observation.evaluation_execution WHERE execution_id = $1 FOR UPDATE", [claimed.claim.execution_id]);
+    // Each write asks while the lease is still valid, then waits on the lock past the lease's end.
+    const pending = Promise.all([markRequestSent(db, tenant, claimed.claim), completeExecution(db, tenant, claimed.claim, outcome),
+      failExecution(db, tenant, claimed.claim, { category: "timeout", detail: "late", provider_request_id: null, provider_cost: null })]);
+    for (let waiting = 0; waiting < 3;) {
+      await Bun.sleep(20);
+      waiting = (await holder.query(`SELECT count(*)::integer AS waiting FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock'`)).rows[0].waiting;
+    }
+    const lease_remaining = new Date(claimed.claim.lease_expires_at).getTime() - Date.now();
+    expect(lease_remaining).toBeGreaterThan(0);
+    await Bun.sleep(lease_remaining + 200);
+    await holder.query("COMMIT");
+    const stale = ok({ kind: "stale_claim" as const, execution_id: claimed.claim.execution_id });
+    expect(await pending).toEqual([false, stale, stale]);
+  } finally { await holder.end(); }
+  expect((await executionsOf(db)).map((row) => [row.status, row.retries])).toEqual([["claimed", 0]]);
+  expect((await attemptsOf(db, claimed.claim.execution_id)).map((row) => [row.request_sent, row.outcome, row.charged_cost])).toEqual([[false, null, 0]]);
+  expect(await life.counts()).toMatchObject({ completed: 0, sent: 0, answers: 0 });
+}));
+
+integration("a reclaimed claim that sent a request keeps its charge and counts as a retry",async () => scratchDatabase(async (db) => {
   const life = await lifecycle(db);
   await captureAnalysis(life, true);
   const first = await claimNext(db, tenant, { lease_owner: "a", lease_ms: 50, run_spend: 5 });

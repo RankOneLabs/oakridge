@@ -1,4 +1,4 @@
-import { sql, type Selectable } from "kysely";
+import { sql, type Selectable, type UpdateObject } from "kysely";
 import { canonicalDigest } from "canonical-json";
 import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
@@ -13,7 +13,7 @@ import type { QuestionDefinition } from "../grading/question";
 import type { EvaluationOutcome } from "../grading/runner";
 import { evidenceSetFromRow } from "./captured-evidence-store";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
-import type { ObservationEvaluationExecution, ObservationEvaluatorDefinition } from "./db-types";
+import type { DB, ObservationEvaluationExecution, ObservationEvaluatorDefinition } from "./db-types";
 import { questionFromRow } from "./grading-store";
 import { isRunGradingEnabled, runGradingEnabled } from "./run-capture-store";
 
@@ -192,13 +192,38 @@ export async function claimNext(db: Database, tenant: TenantScope, controls: Cla
 
 // ------------------------------------------------------------- fenced writes ---
 
-/** The execution, only while this exact claim is current: same owner, same claim attempt, lease unexpired. */
+/** The exact claim, as a predicate on its execution row: same owner, same claim attempt, and a lease
+ * still unexpired by database time when the predicate runs. */
+const isCurrentClaim = (claim: ExecutionClaim) => sql<boolean>`status = 'claimed' AND lease_owner = ${claim.lease_owner}
+  AND attempts = ${claim.claim_attempt} AND lease_expires_at > clock_timestamp()`;
+
+/** Rolls a settlement back when its claim stopped being current between the check and the write. */
+class StaleClaim extends Error {}
+
+/**
+ * Locks the execution row, then reads it only if this exact claim is current. The lock comes first
+ * and carries no lease predicate: a predicate PostgreSQL evaluated before waiting on another
+ * transaction's lock is not re-evaluated once the lock is granted, so a claim that expired during
+ * the wait would pass. Every check after the lock reads the clock afresh.
+ */
 async function fenced(trx: DatabaseTransaction, tenant: TenantScope, claim: ExecutionClaim)
   : Promise<Selectable<ObservationEvaluationExecution> | undefined> {
+  const locked = await trx.selectFrom("observation.evaluation_execution").select("execution_id")
+    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("execution_id", "=", claim.execution_id)
+    .forUpdate().executeTakeFirst();
+  if (!locked) return undefined;
   return trx.selectFrom("observation.evaluation_execution").selectAll()
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("execution_id", "=", claim.execution_id)
-    .where("status", "=", "claimed").where("lease_owner", "=", claim.lease_owner).where("attempts", "=", claim.claim_attempt)
-    .where("lease_expires_at", ">", sql<Date>`clock_timestamp()`).forUpdate().executeTakeFirst();
+    .where(isCurrentClaim(claim)).executeTakeFirst();
+}
+
+/** The authoritative settlement write, fenced again at the moment it is made. */
+async function settleExecution(trx: DatabaseTransaction, tenant: TenantScope, claim: ExecutionClaim,
+  values: UpdateObject<DB, "observation.evaluation_execution">): Promise<void> {
+  const updated = await trx.updateTable("observation.evaluation_execution").set(values)
+    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("execution_id", "=", claim.execution_id)
+    .where(isCurrentClaim(claim)).executeTakeFirst();
+  if (updated.numUpdatedRows !== 1n) throw new StaleClaim();
 }
 
 /** Records, before it is made, that this claim is sending its request; the request is then charged
@@ -206,13 +231,27 @@ async function fenced(trx: DatabaseTransaction, tenant: TenantScope, claim: Exec
 export async function markRequestSent(db: Database, tenant: TenantScope, claim: ExecutionClaim): Promise<boolean> {
   return withTenant(db, tenant, async (trx) => {
     if (!await fenced(trx, tenant, claim)) return false;
+    // The mark itself is fenced too: it writes only while the execution still holds this claim.
     const marked = await trx.updateTable("observation.grading_provider_attempt")
       .set({ request_sent: true, charged_cost: sql<number>`admitted_estimate`, updated_at: sql<Date>`clock_timestamp()` })
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("execution_id", "=", claim.execution_id)
       .where("attempt", "=", claim.claim_attempt).where("outcome", "is", null).where("request_sent", "=", false)
+      .where(sql<boolean>`EXISTS (SELECT 1 FROM observation.evaluation_execution x WHERE x.producer = ${tenant.producer}
+        AND x.namespace = ${tenant.namespace} AND x.execution_id = ${claim.execution_id} AND x.status = 'claimed'
+        AND x.lease_owner = ${claim.lease_owner} AND x.attempts = ${claim.claim_attempt} AND x.lease_expires_at > clock_timestamp())`)
       .returning("attempt").executeTakeFirst();
     return marked !== undefined;
   });
+}
+
+/** Runs a settlement; a claim found stale at any fenced point leaves nothing written. */
+async function settlement(db: Database, tenant: TenantScope, claim: ExecutionClaim,
+  work: (trx: DatabaseTransaction) => Promise<SettlementResult>): Promise<SettlementResult> {
+  try { return await withTenant(db, tenant, work); }
+  catch (cause) {
+    if (cause instanceof StaleClaim) return { kind: "stale_claim", execution_id: claim.execution_id };
+    throw cause;
+  }
 }
 
 function observationId(execution_id: ExecutionId): GradeObservationId {
@@ -228,15 +267,14 @@ const overage = (provider_cost: number | null | undefined) =>
 export async function completeExecution(db: Database, tenant: TenantScope, claim: ExecutionClaim, outcome: EvaluationOutcome)
   : Promise<Result<SettlementResult, ExecutionStoreError>> {
   try {
-    return ok(await withTenant(db, tenant, async (trx): Promise<SettlementResult> => {
+    return ok(await settlement(db, tenant, claim, async (trx): Promise<SettlementResult> => {
       if (!await fenced(trx, tenant, claim)) return { kind: "stale_claim", execution_id: claim.execution_id };
-      await trx.updateTable("observation.evaluation_execution").set({ status: "completed", lease_owner: null, lease_expires_at: null,
+      await settleExecution(trx, tenant, claim, { status: "completed", lease_owner: null, lease_expires_at: null,
         ended_at: sql<Date>`clock_timestamp()`, updated_at: sql<Date>`clock_timestamp()`,
         model_usage: outcome.model_usage === undefined || outcome.model_usage === null ? null : jsonText(outcome.model_usage),
         cost: outcome.cost ?? null, external_execution_id: outcome.external_execution_id ?? null, provider_link: outcome.provider_link ?? null,
         reproducibility_metadata: outcome.reproducibility_metadata === undefined || outcome.reproducibility_metadata === null
-          ? null : jsonText(outcome.reproducibility_metadata) })
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("execution_id", "=", claim.execution_id).execute();
+          ? null : jsonText(outcome.reproducibility_metadata) });
       await trx.updateTable("observation.grading_provider_attempt").set({ outcome: "completed", updated_at: sql<Date>`clock_timestamp()`,
         provider_request_id: outcome.external_execution_id ?? null, cost_overage: overage(outcome.cost) })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("execution_id", "=", claim.execution_id)
@@ -258,24 +296,20 @@ export async function completeExecution(db: Database, tenant: TenantScope, claim
 export async function failExecution(db: Database, tenant: TenantScope, claim: ExecutionClaim, failure: AttemptFailure)
   : Promise<Result<SettlementResult, ExecutionStoreError>> {
   try {
-    return ok(await withTenant(db, tenant, async (trx): Promise<SettlementResult> => {
+    return ok(await settlement(db, tenant, claim, async (trx): Promise<SettlementResult> => {
       const current = await fenced(trx, tenant, claim);
       if (!current) return { kind: "stale_claim", execution_id: claim.execution_id };
+      const disposition = failureDisposition(failure.category, current);
+      if (disposition.kind === "retry") await settleExecution(trx, tenant, claim, { status: "queued", retries: disposition.retries,
+        lease_owner: null, lease_expires_at: null, updated_at: sql<Date>`clock_timestamp()` });
+      else await settleExecution(trx, tenant, claim, ended("failed", `${failure.category}: ${failure.detail}`, disposition.terminal_cause));
       const attempt = await trx.updateTable("observation.grading_provider_attempt").set({ outcome: "failed", updated_at: sql<Date>`clock_timestamp()`,
         failure_category: failure.category, provider_request_id: failure.provider_request_id, cost_overage: overage(failure.provider_cost) })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("execution_id", "=", claim.execution_id)
         .where("attempt", "=", claim.claim_attempt).returning("request_sent").executeTakeFirstOrThrow();
-      const disposition = failureDisposition(failure.category, current);
-      const where = trx.updateTable("observation.evaluation_execution").where("producer", "=", tenant.producer)
-        .where("namespace", "=", tenant.namespace).where("execution_id", "=", claim.execution_id);
       if (!attempt.request_sent) await requeueDeferred(trx, tenant, claim.run_id);
-      if (disposition.kind === "retry") {
-        await where.set({ status: "queued", retries: disposition.retries, lease_owner: null, lease_expires_at: null,
-          updated_at: sql<Date>`clock_timestamp()` }).execute();
-        return { kind: "retry_queued", execution_id: claim.execution_id, retries: disposition.retries };
-      }
-      await where.set(ended("failed", `${failure.category}: ${failure.detail}`, disposition.terminal_cause)).execute();
-      return { kind: "failed", execution_id: claim.execution_id, terminal_cause: disposition.terminal_cause };
+      return disposition.kind === "retry" ? { kind: "retry_queued", execution_id: claim.execution_id, retries: disposition.retries }
+        : { kind: "failed", execution_id: claim.execution_id, terminal_cause: disposition.terminal_cause };
     }));
   } catch (cause) { return storeError("fail_execution", claim.execution_id, cause instanceof Error ? cause.message : String(cause)); }
 }
