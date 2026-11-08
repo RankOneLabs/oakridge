@@ -103,8 +103,11 @@ captures.
 `evaluation_execution` is the only queue. A worker claims the oldest due execution under a lease,
 reserving the next request's estimated cost against the run, and calls the pinned evaluator's runner
 with no database transaction open. It records each real request in `grading_provider_attempt` before
-sending it. Settlement is fenced to the claim's owner, claim attempt and unexpired lease: a claim that
-expired cannot settle, even after another worker reclaimed it. A valid answer completes the execution
+sending it. Request marking and settlement are fenced to the claim's owner, claim attempt and unexpired
+lease, checked against the database clock once the execution row is locked and again at the write: a
+claim that expired, even while it waited on that lock, cannot send or settle, including after another
+worker reclaimed it. Operator decisions (accept and request-changes) and other ignored events never
+start reconciliation; captured revisions and launches do, and a periodic sweep revisits waiting runs. A valid answer completes the execution
 and appends its grade in one transaction. An invalid answer or a provider failure is retried within the
 execution's retry limit; exhaustion ends it `failed` with no grade. A request that never answers loses
 its lease and is reclaimed; its request stays charged and counts as a retry.
@@ -119,8 +122,8 @@ every start. There are no stage caps or stage concurrency limits.
 `GET /v1/items/:id/measurements` serves each pinned question's readiness, whether a reviewer can answer it,
 and for each pinned machine evaluator one of `not_ready` (with its reason), `grading_off`,
 `awaiting_admission`, `pending`, `budget_deferred`, `failed` (with its cause) or `answered`, with its
-attempts. `GET /v1/runs/:run_id/grading-spend` serves the run's choice, its committed spend, request count
-and execution statuses. Grades and provider failures stay in observation: nothing here writes to
+attempts. `GET /v1/runs/:run_id/grading-spend` serves the run's choice, the exact config its launch
+delivered, its committed spend, request count and execution statuses. Grades and provider failures stay in observation: nothing here writes to
 Oakridge, and an outage or failure never stops a workflow.
 
 The live proof is `bun observation/verification/proof.ts grading --input
