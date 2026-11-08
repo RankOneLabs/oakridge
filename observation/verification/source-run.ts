@@ -70,11 +70,11 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 const acceptableReviews = (through: SourceRunTarget): readonly string[] => through === "analysis" ? []
   : ["analysis_review", "spec_review", "tasks_review", "plan_review", ...(through === "assessment" ? ["brief_review"] : [])];
 
-interface ReviewProgress { readonly taken: Set<string>; readonly revised: Set<string> }
+interface ReviewProgress { readonly taken: Set<string>; readonly revised: Set<string>; readonly prepared: Set<string> }
 /** Accepts what the capture needs, taking each review's checkpoint steps. Returns a `before` step that failed. */
 async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectView, options: SourceRunOptions, progress: ReviewProgress): Promise<ProofCheck | null> {
   const { run_id } = run;
-  const { taken, revised } = progress;
+  const { taken, revised, prepared } = progress;
   for (const review of inspect.attention) {
     if (review.kind !== "awaiting_review" || !review.review || !acceptableReviews(options.through).includes(review.review)) continue;
     const target = typeof review.target === "string" ? review.target : "";
@@ -88,14 +88,17 @@ async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectVie
       continue;
     }
     const checkpoint = taken.has(review.review) ? undefined : configured;
-    if (checkpoint?.before) {
+    if (checkpoint?.before && !prepared.has(review.review)) {
       const step = await checkpoint.before(run, target);
       if (!step.passed) return step;
+      prepared.add(review.review);
     }
-    await io.dbos(`/api/runs/${run_id}/units/${encodeURIComponent(review.unit_id ?? "")}/reviews/${review.review}/decide`, {
+    const accepted = await io.dbos(`/api/runs/${run_id}/units/${encodeURIComponent(review.unit_id ?? "")}/reviews/${review.review}/decide`, {
       request_id: crypto.randomUUID(), decision: "accept", target: review.target,
       payload: { feedback: "Accepted for the isolated live verification run." },
       ...(checkpoint?.analysis_links ? { analysis_links: checkpoint.analysis_links(run, target) } : {}) });
+    // Refused: the checkpoint stands, so the next poll's acceptance still carries its links and runs `after`.
+    if (!accepted.ok) continue;
     if (checkpoint) {
       taken.add(review.review);
       const step = await checkpoint.after?.(run, target);
@@ -107,7 +110,7 @@ async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectVie
 
 async function driveToTarget(io: ProofIo, run: RunReference, options: SourceRunOptions): Promise<ProofCheck> {
   const { run_id } = run;
-  const progress: ReviewProgress = { taken: new Set(), revised: new Set() };
+  const progress: ReviewProgress = { taken: new Set(), revised: new Set(), prepared: new Set() };
   const deadline = io.now() + (options.timeout_ms ?? DEFAULT_TIMEOUT_MS);
   while (io.now() < deadline) {
     const read = await io.dbos(`/api/runs/${run_id}/inspect`);

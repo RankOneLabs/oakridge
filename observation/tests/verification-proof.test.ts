@@ -280,6 +280,29 @@ describe("the source run", () => {
     expect([report.status, reads, posted.map((body) => body.analysis_links)]).toEqual(["passed", 2, [links]]);
   });
 
+  test("a refused acceptance keeps its checkpoint: the retry carries the links, and each step runs once", async () => {
+    const steps: string[] = [];
+    const passed = { name: "step", passed: true, detail: "" };
+    const links = [{ source_revision_id: "analysis:1", item_path: "/findings/0", task_ids: ["T1"] }];
+    const waiting = { artifacts: [], attention: [awaiting("plan_review")] };
+    const views = [waiting, waiting, { artifacts: [{ artifact_key: "plan", latest_revision: { id: "revision-1" } }], attention: [] }];
+    const carried: unknown[] = [];
+    const directory = mkdtempSync(join(tmpdir(), "source-run-"));
+    let reads = 0;
+    const report = await sourceRunScenario(fakeIo({ dbos: async (path, body) => {
+      if (path === "/api/runs") return ok({ run_id: "run-1" });
+      if (path.endsWith("/inspect")) { reads += 1; return ok(views[Math.min(reads, views.length) - 1]); }
+      if (path.endsWith("/decide")) {
+        carried.push((body as { analysis_links?: unknown }).analysis_links);
+        if (carried.length === 1) return err({ operation: "dbos", entity_id: path, detail: "409 contended" });
+      }
+      return ok({});
+    }, ...feedIo(() => caughtUp("plan")) }), { input, directory, through: "plan", timeout_ms: 60_000, capture_timeout_ms: 5_000, reviews: [{ review: "plan_review", analysis_links: () => links,
+      before: async () => { steps.push("before"); return passed; }, after: async () => { steps.push("after"); return passed; } }] });
+    rmSync(directory, { recursive: true, force: true });
+    expect([report.status, steps, carried]).toEqual(["passed", ["before", "after"], [links, links]]);
+  });
+
   test("a failed step ahead of a review ends the run there, without accepting it", async () => {
     const { report, posted } = await drive([{ artifacts: [], attention: [awaiting("plan_review")] }], "plan", {}, [{ review: "plan_review",
       before: async () => ({ name: "the proof's step", passed: false, detail: "not yet" }) }]);
