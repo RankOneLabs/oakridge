@@ -745,8 +745,9 @@ export interface DeclarationRequest {
  */
 export async function commitAnalysisLinkDeclaration(db: Database, request: DeclarationRequest): Promise<CommitResult> {
   const { run_id } = request.declaration;
+  const scoped_ingress_id = scopeIngressId(request.writer, request.ingress_id);
   try {
-    return { ok: true, value: await db.transaction().execute((trx) => journalAnalysisLinkDeclaration(trx, request)) };
+    return { ok: true, value: await db.transaction().execute((trx) => journalAnalysisLinkDeclaration(trx, { ...request, scoped_ingress_id })) };
   } catch (error) {
     const conflict = concurrencyConflict(error);
     if (conflict) return { ok: true, value: { kind: "contended", detail: conflict } };
@@ -755,10 +756,10 @@ export async function commitAnalysisLinkDeclaration(db: Database, request: Decla
 }
 
 /** The writer's work inside a caller's transaction, so a tasks approval and what it supplies commit together. */
-export async function journalAnalysisLinkDeclaration(trx: DatabaseTransaction, request: DeclarationRequest): Promise<CommitOutcome> {
+async function journalAnalysisLinkDeclaration(trx: DatabaseTransaction, request: Omit<DeclarationRequest, "ingress_id"> & { readonly scoped_ingress_id: IngressId | null }): Promise<CommitOutcome> {
   const { declaration, writer } = request;
   const { run_id } = declaration;
-  const scoped = { run_id: run_id as RunId, ingress_id: scopeIngressId(writer, request.ingress_id) };
+  const scoped = { run_id: run_id as RunId, ingress_id: request.scoped_ingress_id };
   const event: AnalysisLinksDeclared = { kind: ANALYSIS_LINKS_DECLARED, ...declaration };
   const digest = requestDigest({ event, writer });
   const run = await trx.selectFrom("authority.run").select("id").where("id", "=", run_id).where("root_unit_id", "is not", null).forUpdate().executeTakeFirst();
@@ -798,7 +799,9 @@ export async function commitDecisionWithLinks(deps: CommitDependencies, request:
   let links: CommitOutcome | null = null;
   const decision = await commitEvent(deps, request, async (trx, outcome) => {
     if (!decisionStands(outcome)) return;
-    links = await journalAnalysisLinkDeclaration(trx, { ingress_id: `${request.ingress_id}:analysis-links`, writer: request.writer,
+    // Outside every writer's namespace, so no id a caller may choose can land on this receipt.
+    const scoped_ingress_id = `decision-links:${scopeIngressId(request.writer, request.ingress_id)}` as IngressId;
+    links = await journalAnalysisLinkDeclaration(trx, { scoped_ingress_id, writer: request.writer,
       declaration: { run_id: request.run_id, tasks_revision_id: request.event.target, entries } });
   });
   return { decision, links };

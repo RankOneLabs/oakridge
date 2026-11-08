@@ -262,6 +262,14 @@ describe("the approved-tasks caller", () => {
     const replay = await decide(run, input);
     expect([replay.status, await replay.json(), (await journaled(run.run_id)).length, (await decisions(run)).length]).toEqual([200, first, 1, 1]);
   });
+  test("no request id a caller may choose lands on the receipt of a decision's links", async () => {
+    const run = await linkRun();
+    const request_id = crypto.randomUUID();
+    expect((await decide(run, { request_id, analysis_links: [entry(run)] })).status).toBe(201);
+    const other = declarationOf(run, { entries: [{ source_revision_id: run.analysis, item_path: "/findings/1", task_ids: ["T1"] }] });
+    for (const id of [`${request_id}:analysis-links`, `decision-links:operator:${request_id}`])
+      expect(await declare(other, id)).toMatchObject({ ok: true, value: { kind: "committed" } });
+  });
   test("a malformed entry refuses the request before anything commits", async () => {
     const run = await linkRun();
     const response = await decide(run, { analysis_links: [{ item_path: "/findings/0", task_ids: ["T1"] }] });
