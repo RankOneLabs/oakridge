@@ -12,8 +12,15 @@
  *   evaluators, and the request that cannot fit is budget_deferred with no request -> restart: nothing
  *   is admitted or sent again -> point the provider at an endpoint that never answers, kill observation
  *   while a claim's request is in flight, and restart with a key the provider refuses: the expired
- *   claim is recovered, every refused request is recorded, retries are exhausted and no grade exists.
+ *   claim is recovered, every refused request is recorded, retries are exhausted and no grade exists ->
+ *   under an edit whose estimate lets two requests fit a run, kill observation while its claim's request
+ *   is in flight and act as a second observation worker on the shadow's own database: simultaneous
+ *   claims at the allowance's edge, a reclaim after lease expiry, refusal of every stale claim's writes,
+ *   and a real request settled by the second worker -> restart: its answer is served and nothing more
+ *   is sent.
  *
+ * At every checkpoint the proof keeps each run's captured launch config beside the authority's, every
+ * question and evaluator pin, and the frozen evidence references; a missing readback fails the proof.
  * Every run is a real development run on the same stack. Grades and provider failures write nothing
  * to Oakridge: each run's authority events are counted before and after its grading. graders.json,
  * the withheld repository and the provider settings are restored whatever happens.
@@ -21,12 +28,19 @@
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Result } from "../src/domain/primitives";
+import { canonicalDigest } from "canonical-json";
+import type { JsonValue, Result } from "../src/domain/primitives";
+import { fitsRunAllowance } from "../src/grading/budget";
 import type { GraderConfiguration, GradingRegistration } from "../src/grading/configuration";
+import type { ClaimResult, ExecutionClaim, SettlementResult } from "../src/grading/execution";
 import { configuredRunnerNames, credentialsForRunners, parseEnvFile } from "../src/grading/provider-credentials";
-import { NO_EVIDENCE, scenarioStatus, type MeasurementReadback, type ProofCheck, type ProofFailure, type RegistrationReadback,
-  type RunReference, type ScenarioReport, type SpendReadback } from "./proof-contract";
-import { editedGraders, graderPlans, type RunLabel } from "./registration";
+import { settleClaim, type RunnerResolver } from "../src/grading/worker";
+import { withTenant, type Database, type TenantScope } from "../src/storage/database";
+import { claimNext, completeExecution, failExecution, markRequestSent, readRunSpend, type RunSpend } from "../src/storage/execution-store";
+import { NO_EVIDENCE, scenarioStatus, type ClaimReadback, type FrozenEvidenceReadback, type LaunchConfigReadback, type MeasurementReadback,
+  type PinReadback, type ProofCheck, type ProofFailure, type RegistrationReadback, type RunReference, type ScenarioReport,
+  type SecondWorkerReadback, type SpendReadback, type StaleSettlementReadback } from "./proof-contract";
+import { editedGraders, graderPlans, readRunPins, type RunLabel } from "./registration";
 import { awaitRunCapture, runCaptureChecks } from "./run-capture";
 import { observationSettled, settleObservation } from "./scenarios";
 import type { ProofIo, StackOptions } from "./shadow-session";
@@ -40,21 +54,44 @@ const QUIET_MS = 40_000;
 const UNANSWERED_BASE_URL = "http://192.0.2.1/v1";
 /** Configured estimate per call under the edit: one request fits the default $5 run allowance, a second does not. */
 export const EDITED_ESTIMATE_PER_CALL = 3;
+/** Configured estimate per call for the second-worker step: two requests fit the default $5 run allowance, a third does not. */
+export const CONCURRENT_ESTIMATE_PER_CALL = 2;
 
 const check = (name: string, passed: boolean, detail: string): ProofCheck => ({ name, passed, detail });
 
-export type GradingRunLabel = RunLabel | "analysis-on" | "analysis-off" | "assessment-on" | "analysis-edited" | "analysis-failing";
+export type GradingRunLabel = RunLabel | "analysis-on" | "analysis-off" | "assessment-on" | "analysis-edited" | "analysis-failing"
+  | "analysis-concurrent";
 export interface GradingRunOptions {
   readonly grading_enabled: boolean;
   readonly through: SourceRunTarget;
   readonly capture: "await" | "deferred";
   readonly after_launch?: (run: RunReference) => Promise<ProofCheck>;
 }
-/** The real runs and the one launch repository the scenario may withhold from observation. */
+/**
+ * A second observation worker on the shadow's own database, as a second observation process would
+ * be: the same store and worker code, the shadow's tenant, its validated default controls, and
+ * runners built from the shadow's real provider settings.
+ */
+export interface SecondWorker {
+  readonly db: Database;
+  readonly tenant: TenantScope;
+  readonly run_spend: number;
+  readonly lease_ms: number;
+  readonly runners: RunnerResolver;
+  close(): Promise<void>;
+}
+/** The real runs, the one launch repository the scenario may withhold from observation, and a second worker. */
 export interface GradingSource {
   run(label: GradingRunLabel, options: GradingRunOptions): Promise<{ readonly report: ScenarioReport; readonly run: RunReference | null }>;
   withholdRepository(): Promise<Result<string, ProofFailure>>;
   supplyRepository(): Promise<Result<string, ProofFailure>>;
+  secondWorker(): Promise<Result<SecondWorker, ProofFailure>>;
+}
+
+/** The committed instructions with an estimate that lets exactly two requests of a run fit. */
+export function concurrencyEdit(configuration: GraderConfiguration): GraderConfiguration {
+  return { questions: configuration.questions.map((entry) => ({ ...entry,
+    graders: entry.graders.map((grader) => ({ ...grader, estimated_cost_per_call: CONCURRENT_ESTIMATE_PER_CALL })) })) };
 }
 
 /** The edit swapped in mid-scenario: new instructions, and an estimate that lets one request per run fit. */
@@ -110,11 +147,15 @@ export async function readRunMeasurements(io: ProofIo, run_id: string, checkpoin
 export async function readSpend(io: ProofIo, run_id: string, checkpoint: string): Promise<SpendReadback> {
   const read = await io.observationGet(`/v1/runs/${encodeURIComponent(run_id)}/grading-spend`, "read");
   if (!read.ok) throw new Error(read.error.detail);
-  const spend = read.value as { readonly is_grading_enabled: boolean; readonly committed: number; readonly requests_sent: number;
-    readonly attempts: number; readonly executions: Readonly<Record<string, number>> };
-  return { checkpoint, run_id, grading_enabled: spend.is_grading_enabled, committed: spend.committed, requests_sent: spend.requests_sent,
-    attempts: spend.attempts, executions: spend.executions };
+  const spend = read.value as { readonly is_grading_enabled: boolean; readonly captured_config: unknown; readonly committed: number;
+    readonly requests_sent: number; readonly attempts: number; readonly executions: Readonly<Record<string, number>> };
+  return { checkpoint, run_id, grading_enabled: spend.is_grading_enabled, captured_config: spend.captured_config, committed: spend.committed,
+    requests_sent: spend.requests_sent, attempts: spend.attempts, executions: spend.executions };
 }
+/** The same readback taken by a second worker straight from the store the route serves. */
+const spendReadback = (spend: RunSpend, checkpoint: string): SpendReadback => ({ checkpoint, run_id: spend.run_id,
+  grading_enabled: spend.is_grading_enabled, captured_config: spend.captured_config, committed: spend.committed,
+  requests_sent: spend.requests_sent, attempts: spend.attempts, executions: spend.executions });
 
 /** Still moving: collection not yet looked at, admission or a claim still to come. */
 const isUnsettled = (measurement: MeasurementReadback): boolean => measurement.state === "pending" || measurement.state === "awaiting_admission"
@@ -236,6 +277,171 @@ export function failureChecks(read: readonly MeasurementReadback[], spend: Spend
   ];
 }
 
+const digestOf = (value: unknown): string => {
+  const digest = canonicalDigest(value as JsonValue);
+  return digest.ok ? digest.value : JSON.stringify(value);
+};
+
+interface ConfigShape { readonly sessions?: unknown; readonly grading_enabled?: unknown }
+/** The config observation captured from the launch delivery is the one the authority committed. A
+ * committed config with no grading choice has grading off, and one with no sessions overrides none. */
+export function launchConfigCheck(read: LaunchConfigReadback, grading_enabled: boolean, label: string): ProofCheck {
+  const captured = read.captured_config as ConfigShape | null;
+  const authority = read.authority_config as ConfigShape | null;
+  const same = captured !== null && authority !== null && captured.grading_enabled === (authority.grading_enabled === true)
+    && digestOf(captured.sessions ?? null) === digestOf(authority.sessions ?? {});
+  return check(`the ${label} run's captured launch config is exactly the one the authority committed`,
+    same && captured?.grading_enabled === grading_enabled,
+    `captured grading_enabled ${String(captured?.grading_enabled)}, committed ${String(authority?.grading_enabled)}; sessions ${same ? "equal" : "differ"}`);
+}
+
+/** Every measurement read at a checkpoint has its question and evaluator pin, and every ready question its frozen references. */
+export function pinReadbackChecks(checkpoint: string, measurements: readonly MeasurementReadback[], pins: readonly PinReadback[],
+  frozen: readonly FrozenEvidenceReadback[]): readonly ProofCheck[] {
+  const bySet = new Map(pins.map((pin) => [pin.evidence_set_id, pin]));
+  const unpinned = measurements.filter((measurement) => {
+    const pin = bySet.get(measurement.evidence_set_id);
+    return !pin || pin.question_id !== measurement.question_id || pin.question_version !== measurement.question_version
+      || !pin.pinned_evaluator_definition_ids.includes(measurement.evaluator_definition_id);
+  });
+  const withReferences = new Set(frozen.filter((entry) => entry.references.length > 0).map((entry) => entry.evidence_set_id));
+  const ready = pins.filter((pin) => pin.readiness === "ready");
+  const unfrozen = ready.filter((pin) => !withReferences.has(pin.evidence_set_id) || pin.references.length === 0);
+  return [
+    check(`every measurement at ${checkpoint} reads back its question and evaluator pins`, measurements.length > 0 && unpinned.length === 0,
+      `${pins.length} pin(s) for ${measurements.length} measurement(s); ${unpinned.length} without a matching pin`),
+    check(`every ready question at ${checkpoint} reads back its frozen evidence references`, ready.length > 0 && unfrozen.length === 0,
+      `${ready.length} ready; ${unfrozen.length} without frozen references`),
+  ];
+}
+
+const claimReadback = (worker: string, result: ClaimResult): ClaimReadback => ({ worker, kind: result.kind,
+  execution_id: result.kind === "claimed" ? result.claim.execution_id : result.kind === "idle" ? null : result.execution_id,
+  claim_attempt: result.kind === "claimed" ? result.claim.claim_attempt : null });
+const settlementKind = (result: Result<SettlementResult, { readonly detail: string }>): string =>
+  result.ok ? result.value.kind : `error: ${result.error.detail}`;
+
+/** The run's open claim, as the killed service left it. */
+async function openClaim(worker: SecondWorker, run_id: string): Promise<ExecutionClaim | null> {
+  const row = await withTenant(worker.db, worker.tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
+    .select(["execution_id", "run_id", "lease_owner", "attempts", "lease_expires_at"]).where("producer", "=", worker.tenant.producer)
+    .where("namespace", "=", worker.tenant.namespace).where("run_id", "=", run_id).where("status", "=", "claimed").executeTakeFirst());
+  return row?.lease_owner && row.lease_expires_at ? { execution_id: row.execution_id as ExecutionClaim["execution_id"], run_id: row.run_id,
+    lease_owner: row.lease_owner, claim_attempt: row.attempts, lease_expires_at: row.lease_expires_at } : null;
+}
+
+/** Presents a claim that is no longer current to every fenced write, as a stale worker finishing late would. */
+async function staleSettlement(worker: SecondWorker, claim: ExecutionClaim, kind: StaleSettlementReadback["case"]): Promise<StaleSettlementReadback> {
+  const mark_request_sent = await markRequestSent(worker.db, worker.tenant, claim);
+  // "unclear" is an allowed answer of every supported question, so only the fence can refuse it.
+  const complete = await completeExecution(worker.db, worker.tenant, claim, { answer: { state: "answered", kind: "choice", value: "unclear" } });
+  const fail = await failExecution(worker.db, worker.tenant, claim, { category: "timeout", detail: "a stale worker's late failure",
+    provider_request_id: null, provider_cost: null });
+  return { case: kind, execution_id: claim.execution_id, lease_owner: claim.lease_owner, claim_attempt: claim.claim_attempt,
+    mark_request_sent, complete: settlementKind(complete), fail: settlementKind(fail) };
+}
+
+/**
+ * With the service killed while its claim's request is in flight, a second worker on the same
+ * database: as many simultaneous claims as there is due work and more, each against the one run
+ * allowance; once every claim has expired, a reclaim by another worker; every stale claim presented
+ * to every fenced write; and the reclaimed execution measured with a real request.
+ */
+export async function secondWorkerPhase(io: ProofIo, worker: SecondWorker, run_id: string, estimate_per_call: number): Promise<SecondWorkerReadback> {
+  const spendNow = async (checkpoint: string) => spendReadback(await readRunSpend(worker.db, worker.tenant, run_id), checkpoint);
+  const service = await openClaim(worker, run_id);
+  const before = await spendNow("second-worker-before");
+  const due = (before.executions.queued ?? 0) + (before.executions.reclaimable ?? 0);
+  const controls = { lease_ms: worker.lease_ms, run_spend: worker.run_spend };
+  const simultaneous = await Promise.all(Array.from({ length: due + 2 }, (_, index) => `proof-second-worker-${index}`)
+    .map(async (lease_owner) => ({ lease_owner, result: await claimNext(worker.db, worker.tenant, { ...controls, lease_owner }) })));
+  const after_claims = await spendNow("second-worker-after-claims");
+  const contested = simultaneous.flatMap(({ result }) => result.kind === "claimed" ? [result.claim] : [])[0] ?? null;
+  const reclaims: ClaimReadback[] = [];
+  const stale: StaleSettlementReadback[] = [];
+  let settlement: SecondWorkerReadback["settlement"] = null;
+  if (contested) {
+    // Every claim taken so far, the killed service's included, expires before the reclaim.
+    await io.sleep(Math.max(0, new Date(contested.lease_expires_at).getTime() - io.now()) + 2_000);
+    const reclaimer = "proof-second-worker-reclaimer";
+    let reclaimed: ExecutionClaim | null = null;
+    for (let attempt = 0; attempt < due + 2 && !reclaimed; attempt++) {
+      const result = await claimNext(worker.db, worker.tenant, { ...controls, lease_owner: reclaimer });
+      reclaims.push(claimReadback(reclaimer, result));
+      if (result.kind === "idle") break;
+      if (result.kind === "claimed") reclaimed = result.claim;
+    }
+    stale.push(await staleSettlement(worker, contested, "earlier_owner"));
+    if (reclaimed) stale.push(await staleSettlement(worker, { ...reclaimed, claim_attempt: reclaimed.claim_attempt - 1 }, "older_attempt"));
+    if (service) stale.push(await staleSettlement(worker, service, "killed_service"));
+    if (reclaimed) {
+      const outcome = await settleClaim({ db: worker.db, runners: worker.runners, log: () => undefined }, worker.tenant, reclaimed);
+      settlement = outcome.kind === "settled"
+        ? { kind: outcome.result.kind, observation_id: outcome.result.kind === "completed" ? outcome.result.observation_id : null,
+          detail: outcome.result.kind === "failed" ? outcome.result.terminal_cause : null }
+        : { kind: outcome.kind, observation_id: null, detail: outcome.detail };
+    }
+  }
+  return { run_id, run_spend: worker.run_spend, estimate_per_call, before,
+    simultaneous: simultaneous.map(({ lease_owner, result }) => claimReadback(lease_owner, result)), after_claims, reclaims, stale, settlement,
+    after: await spendNow("second-worker-after") };
+}
+
+/** What the second worker's readback must show. */
+export function secondWorkerChecks(read: SecondWorkerReadback): readonly ProofCheck[] {
+  const claimed = read.simultaneous.filter((claim) => claim.kind === "claimed");
+  const deferred = read.simultaneous.filter((claim) => claim.kind === "budget_deferred");
+  const touched = read.simultaneous.filter((claim) => claim.kind !== "idle");
+  let fits = 0;
+  while (fits < touched.length && fitsRunAllowance({ committed: read.before.committed + fits * read.estimate_per_call,
+    estimate: read.estimate_per_call, allowance: read.run_spend })) fits++;
+  const contested = claimed[0];
+  const reclaim = read.reclaims.find((claim) => claim.kind === "claimed");
+  const refused = (kind: StaleSettlementReadback["case"]) => {
+    const entry = read.stale.find((stale) => stale.case === kind);
+    return { passed: entry !== undefined && !entry.mark_request_sent && entry.complete === "stale_claim" && entry.fail === "stale_claim",
+      detail: entry ? `${entry.lease_owner}#${entry.claim_attempt} on ${entry.execution_id}: mark ${entry.mark_request_sent}, complete ${entry.complete}, fail ${entry.fail}`
+        : "not presented" };
+  };
+  const earlier = refused("earlier_owner");
+  const older = refused("older_attempt");
+  const killed = refused("killed_service");
+  return [
+    check("simultaneous claims at the run allowance's edge: only what fits is claimed and the rest are budget_deferred",
+      claimed.length >= 1 && deferred.length >= 1 && claimed.length === fits,
+      `${read.simultaneous.length} simultaneous claim(s) on ${touched.length} due execution(s): ${claimed.length} claimed, ${deferred.length} deferred; ${fits} fit beside ${read.before.committed} committed`),
+    check("the claims reserve exactly their estimates and never pass the allowance",
+      Math.abs(read.after_claims.committed - (read.before.committed + claimed.length * read.estimate_per_call)) < 1e-9
+        && read.after_claims.committed <= read.run_spend + 1e-9,
+      `committed ${read.before.committed} then ${read.after_claims.committed} of ${read.run_spend}`),
+    check("no execution is claimed twice", new Set(touched.map((claim) => claim.execution_id)).size === touched.length,
+      touched.map((claim) => claim.execution_id).join(", ")),
+    check("an expired claim is reclaimed by another worker as its next claim attempt", contested !== undefined && reclaim !== undefined
+      && reclaim.execution_id === contested.execution_id && reclaim.claim_attempt === (contested.claim_attempt ?? 0) + 1,
+      read.reclaims.map((claim) => `${claim.kind} ${claim.execution_id ?? ""}#${claim.claim_attempt ?? ""}`).join("; ") || "no reclaim"),
+    check("the earlier owner's claim cannot send, complete or fail after the reclaim", earlier.passed, earlier.detail),
+    check("the reclaiming owner's older claim attempt is refused the same way", older.passed, older.detail),
+    check("the killed service's claim is refused after its lease expired and the execution was reclaimed", killed.passed, killed.detail),
+    check("the second worker sends a real request and completes it with an observation", read.settlement?.kind === "completed"
+      && read.settlement.observation_id !== null, JSON.stringify(read.settlement)),
+    check("each real request is counted once: the expired unsent reservation is released and the reclaim charged once",
+      read.after.requests_sent === read.before.requests_sent + 1
+        && Math.abs(read.after.committed - (read.before.committed + read.estimate_per_call)) < 1e-9,
+      `${read.before.requests_sent} then ${read.after.requests_sent} request(s); committed ${read.before.committed} then ${read.after.committed}`),
+  ];
+}
+
+/** The shadow's real provider settings, only those the runners graders.json selects can read. */
+export async function providerSettings(io: ProofIo): Promise<Readonly<Record<string, string>>> {
+  const runners = configuredRunnerNames(JSON.parse(await io.readGraders()));
+  if (!runners.ok) throw new Error(runners.error.detail);
+  const credentials = credentialsForRunners(runners.value);
+  if (!credentials.ok) throw new Error(credentials.error.detail);
+  const real = parseEnvFile(await Bun.file(io.state.provider_env_file).text());
+  return Object.fromEntries([...credentials.value.required, ...credentials.value.optional]
+    .flatMap((setting) => { const value = real.get(setting); return value ? [[setting, value]] : []; }));
+}
+
 /** Settings for every runner graders.json selects, from the shadow's real provider file: the key replaced, or the endpoint moved. */
 async function providerVariant(io: ProofIo, directory: string, name: string, change: (setting: string, value: string) => string | null)
   : Promise<string> {
@@ -260,6 +466,14 @@ async function authorityEvents(io: ProofIo, run_id: string): Promise<number | nu
   return counted.ok ? Number(counted.value) : null;
 }
 
+/** The run's config as the authority committed it, raw; null when it committed none or cannot be read. */
+async function authorityConfig(io: ProofIo, run_id: string): Promise<unknown> {
+  if (!/^[\w.:/-]+$/.test(run_id)) return null;
+  const read = await io.shadowQuery(io.state.postgres.authority_database, `SELECT coalesce(config::text, 'null') FROM authority.run WHERE id = '${run_id}'`);
+  if (!read.ok || read.value === "") return null;
+  try { return JSON.parse(read.value) as unknown; } catch { return null; }
+}
+
 export async function gradingScenario(io: ProofIo, source: GradingSource): Promise<ScenarioReport> {
   if (await io.stackAnswers()) return { id: "grading", status: "failed", evidence: NO_EVIDENCE,
     checks: [check("this proof owns the stack", false, "a shadow is already running; this proof restarts it with edited settings")] };
@@ -271,19 +485,31 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
   const edited_plan = graderPlans(JSON.stringify(edit));
   if (!edited_plan.ok) return { id: "grading", status: "failed", evidence: NO_EVIDENCE,
     checks: [check("the edit plans a registration", false, edited_plan.error.detail)] };
+  const concurrency = concurrencyEdit(plans.value.committed);
+  const concurrent_plan = graderPlans(JSON.stringify(concurrency));
+  if (!concurrent_plan.ok) return { id: "grading", status: "failed", evidence: NO_EVIDENCE,
+    checks: [check("the concurrency edit plans a registration", false, concurrent_plan.error.detail)] };
   const committed = plans.value.committed_plan;
   const edited = edited_plan.value.committed_plan;
+  const concurrent = concurrent_plan.value.committed_plan;
   const checks: ProofCheck[] = [];
   const runs: RunReference[] = [];
   const measurements: MeasurementReadback[] = [];
   const spend: SpendReadback[] = [];
   const registrations: RegistrationReadback[] = [];
+  const pins: PinReadback[] = [];
+  const launch_configs: LaunchConfigReadback[] = [];
+  /** Each evidence set's references as first served ready; later checkpoints must serve them unchanged. */
+  const frozen = new Map<string, { readonly readback: FrozenEvidenceReadback; readonly digest: string }>();
+  const changed = new Set<string>();
+  let second_worker: SecondWorkerReadback | null = null;
   const directory = await mkdtemp(join(tmpdir(), "oakridge-grading-proof-"));
   const evidence = () => {
     const latest = new Map<string, MeasurementReadback>();
     for (const measurement of measurements) latest.set(`${measurement.evidence_set_id} ${measurement.evaluator_definition_id}`, measurement);
     const final = [...latest.values()];
-    return { ...NO_EVIDENCE, runs, registrations, measurements, spend,
+    return { ...NO_EVIDENCE, runs, registrations, measurements, spend, pins, launch_configs, second_worker,
+      frozen_evidence: [...frozen.values()].map((entry) => entry.readback),
       source_revisions: [...new Set(final.map((measurement) => measurement.revision_id))],
       item_paths: [...new Set(final.map((measurement) => `${measurement.revision_id}${measurement.item_path}`))],
       pinned_definitions: [...new Set(final.map((measurement) => measurement.evaluator_definition_id))],
@@ -308,19 +534,40 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
       && JSON.stringify([...graders].sort()) === JSON.stringify([...expected].sort()), `health ${settled.health}; launcher ${settled.launcher}`));
     return observationSettled(settled.health);
   };
+  const launched = new Map<string, { readonly label: GradingRunLabel; readonly grading_enabled: boolean; readonly checked: boolean }>();
   const runTo = async (label: GradingRunLabel, options: GradingRunOptions): Promise<RunReference | null> => {
     const { report, run } = await source.run(label, options);
     const passed = report.status === "passed" && run !== null;
     checks.push(check(`the ${label} run reaches its ${options.through} on the real stack`, passed,
       report.checks.filter((entry) => !entry.passed).map((entry) => `${entry.name}: ${entry.detail}`).join("; ") || run?.run_id || "no run"));
-    if (run) runs.push(run);
+    if (run) { runs.push(run); launched.set(run.run_id, { label, grading_enabled: options.grading_enabled, checked: false }); }
     return passed ? run : null;
   };
+  /** Reads a run until `done`, then keeps everything the checkpoint must show: measurements, spend,
+   * every pin, frozen references and, the first time the run is read, its launch config. */
   const settle = async (run_id: string, checkpoint: string, done: (read: readonly MeasurementReadback[]) => boolean = settledRun) => {
     const read = await readUntil(io, run_id, checkpoint, done);
     measurements.push(...read);
-    spend.push(await readSpend(io, run_id, checkpoint));
-    return { read, spend: spend.at(-1)! };
+    const served = await readSpend(io, run_id, checkpoint);
+    spend.push(served);
+    const pinned = await readRunPins(io, run_id, checkpoint);
+    pins.push(...pinned.pins);
+    for (const entry of pinned.frozen) {
+      const digest = digestOf(entry.references);
+      const first = frozen.get(entry.evidence_set_id);
+      if (!first) frozen.set(entry.evidence_set_id, { readback: entry, digest });
+      else if (first.digest !== digest) changed.add(entry.evidence_set_id);
+    }
+    checks.push(...pinReadbackChecks(checkpoint, read, pinned.pins, pinned.frozen));
+    const run = launched.get(run_id);
+    if (run && !run.checked) {
+      const authority = await authorityConfig(io, run_id);
+      const config: LaunchConfigReadback = { checkpoint, run_id, captured_config: served.captured_config, authority_config: authority };
+      launch_configs.push(config);
+      checks.push(launchConfigCheck(config, run.grading_enabled, run.label));
+      launched.set(run_id, { ...run, checked: true });
+    }
+    return { read, spend: served };
   };
   const stopObservation = async (name: string): Promise<ProofCheck> => {
     const status = await io.observationStatus();
@@ -430,6 +677,39 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
     checks.push(...failureChecks(exhausted.read, exhausted.spend));
     checks.push(check("provider failures write no Oakridge authority record", failingEvents !== null && await authorityEvents(io, failing.run_id) === failingEvents,
       `${failingEvents} authority event(s) before and after the failures`));
+    await io.stopStack();
+
+    // 9. A second worker on the same database: simultaneous claims at one run's allowance, a reclaim,
+    // stale claims refused, and a real request settled by the second worker.
+    await io.writeGraders(JSON.stringify(concurrency, null, 2) + "\n");
+    if (!await startOn("concurrency edit, provider unanswered", concurrent, { provider_env_file: unanswered })) return finish();
+    const contested = await runTo("analysis-concurrent", { grading_enabled: true, through: "analysis", capture: "await" });
+    if (!contested) return finish();
+    const held = await settle(contested.run_id, "concurrent-in-flight", (read) => read.some((measurement) => measurement.detail === "claimed"
+      && measurement.attempts.some((attempt) => attempt.request_sent && attempt.outcome === null)));
+    checks.push(check("the service holds one claim with its request in flight", held.read.some((measurement) => measurement.detail === "claimed"),
+      countBy(held.read)));
+    const contestedEvents = await authorityEvents(io, contested.run_id);
+    checks.push(await stopObservation("observation is killed with its claim in flight while DBOS keeps serving"));
+    const worker = await source.secondWorker();
+    checks.push(check("a second worker opens the shadow's observation database", worker.ok, worker.ok ? worker.value.tenant.namespace : worker.error.detail));
+    if (!worker.ok) return finish();
+    try { second_worker = await secondWorkerPhase(io, worker.value, contested.run_id, CONCURRENT_ESTIMATE_PER_CALL); }
+    finally { await worker.value.close(); }
+    checks.push(...secondWorkerChecks(second_worker));
+    await io.stopStack();
+    if (!await startOn("concurrency edit, provider restored", concurrent)) return finish();
+    const served = await settle(contested.run_id, "concurrent-after-restart");
+    const answer = served.read.find((measurement) => second_worker?.settlement?.observation_id
+      && measurement.observation_id === second_worker.settlement.observation_id);
+    checks.push(check("the second worker's answer is served with its observation after the restart",
+      answer !== undefined && answer.state === "answered", answer ? `${answer.execution_id}: ${JSON.stringify(answer.answer)}` : countBy(served.read)));
+    checks.push(check("the restart sends nothing more for the contested run", served.spend.requests_sent === second_worker.after.requests_sent,
+      `${second_worker.after.requests_sent} then ${served.spend.requests_sent} request(s); ${JSON.stringify(served.spend.executions)}`));
+    checks.push(check("the second worker's grade and the stale writes leave Oakridge authority untouched", contestedEvents !== null
+      && await authorityEvents(io, contested.run_id) === contestedEvents, `${contestedEvents} authority event(s) before and after`));
+    checks.push(check("frozen evidence is served unchanged at every later checkpoint", frozen.size > 0 && changed.size === 0,
+      `${frozen.size} evidence set(s) frozen; ${changed.size} changed${changed.size ? `: ${[...changed].join(", ")}` : ""}`));
     return finish();
   } catch (cause) {
     checks.push(check("the scenario completes", false, cause instanceof Error ? cause.message : String(cause)));

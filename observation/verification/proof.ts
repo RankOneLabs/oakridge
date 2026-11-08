@@ -19,7 +19,11 @@ import { parseArgs } from "node:util";
 import { NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, type LauncherState, type ProofReport,
   type ScenarioId, type ScenarioReport, type SourceIdentity } from "./proof-contract";
 import { registrationScenario, type RegistrationSource } from "./registration";
-import { gradingScenario, type GradingSource } from "./grading";
+import { err, ok } from "../src/domain/primitives";
+import { gradingControls } from "../src/grading/budget";
+import { registryRunners } from "../src/grading/worker";
+import { openDatabase } from "../src/storage/database";
+import { gradingScenario, providerSettings, type GradingSource } from "./grading";
 import { liveScenario, runtimeScenario } from "./scenarios";
 import { createDisposableRepository, createShadowIo, readLauncherState, readSourceIdentity, type ProofIo } from "./shadow-session";
 import { sourceRunInputSchema, sourceRunScenario, type SourceRunInput, type SourceRunTarget } from "./source-run";
@@ -106,6 +110,19 @@ async function gradingSource(io: ProofIo, input: SourceRunInput, directory: stri
     },
     withholdRepository: () => repository.value.withhold(),
     supplyRepository: () => repository.value.supply(),
+    /** The shadow's own observation database under its provisioned role, the shadow's tenant, the
+     * validated default controls the shadow's service runs with, and the real provider settings. */
+    async secondWorker() {
+      const fail = (detail: string) => err({ operation: "second_worker", entity_id: io.state.observation.database, detail });
+      const password = (await Bun.file(join(io.state.state_dir, "observation-database.password")).text().catch(() => "")).trim();
+      if (!password) return fail("the shadow's observation database password is missing");
+      const controls = gradingControls({});
+      if (!controls.ok) return fail(controls.error.detail);
+      const database = encodeURIComponent(io.state.observation.database);
+      const db = openDatabase(`postgres://${database}:${encodeURIComponent(password)}@127.0.0.1:${io.state.postgres.port}/${database}`);
+      return ok({ db, tenant: { producer: "oakridge", namespace: io.state.observation.namespace }, run_spend: controls.value.run_spend,
+        lease_ms: controls.value.lease_ms, runners: registryRunners(controls.value, await providerSettings(io)), close: () => db.destroy() });
+    },
   };
 }
 
