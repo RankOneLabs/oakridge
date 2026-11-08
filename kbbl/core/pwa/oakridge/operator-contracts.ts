@@ -178,7 +178,7 @@ export interface OperatorIngressRequest { readonly request_id: string }
 
 export interface OperatorLaunchRequest extends OperatorIngressRequest {
   readonly definition_id: OperatorDefinitionId; readonly input: unknown; readonly project_id?: string | null;
-  /** Session settings keyed by stage, then by agent worker. */
+  /** Session settings keyed by stage, then by agent worker, and the run's automatic-grading choice. */
   readonly config?: OperatorRunConfig | null;
 }
 
@@ -350,6 +350,8 @@ export type OperatorStreamFrame =
 
 export interface OperatorRunConfig {
   readonly sessions: { readonly [stage: string]: { readonly [worker: string]: OperatorSessionSettings } };
+  /** Whether observation may send this run's items to the configured graders. Off unless chosen. */
+  readonly grading_enabled: boolean;
 }
 
 export type OperatorAttemptStatusKind = OperatorAttemptStatus["kind"];

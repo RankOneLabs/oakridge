@@ -56,4 +56,6 @@ export interface CreateRunContext {
   worktree_path: string;
   oakridge_url: string;
   session_settings: Readonly<{ [stage: string]: Readonly<{ [worker: string]: LaunchSessionSettings }> }>;
+  /** Automatic grading: off unless the operator turns it on for this run. */
+  grading_enabled: boolean;
 }

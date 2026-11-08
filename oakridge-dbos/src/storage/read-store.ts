@@ -4,6 +4,7 @@ import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysel
 import type { ParsedWorkflow, UnitStatus } from "../core-client/core-types";
 import type { ActionId, Brand, DecisionId, DefinitionId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
 import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
+import { parseRunConfig, type RunConfig } from "../domain/run-config";
 import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
 import type { Event } from "../core-client/core-types";
@@ -462,6 +463,17 @@ export async function readDefinition(_db: Reader, definition_id: string): Promis
 export async function readPinnedDefinition(db: Reader, run_id: string): Promise<PinnedDefinitionRead | null> {
   const run = await db.selectFrom("authority.run").select("definition_id").where("id", "=", run_id).executeTakeFirst();
   return run ? loadDefinition(run.definition_id as DefinitionId) : null;
+}
+/** The config a run was launched with, exactly as committed. A launch that supplied none has none. */
+export type CommittedRunConfig =
+  | { readonly state: "none" }
+  | { readonly state: "committed"; readonly config: RunConfig }
+  | { readonly state: "malformed" };
+export async function readCommittedRunConfig(db: Reader, run_id: string): Promise<CommittedRunConfig> {
+  const run = await db.selectFrom("authority.run").select("config").where("id", "=", run_id).executeTakeFirst();
+  if (!run || run.config === null) return { state: "none" };
+  const config = parseRunConfig(run.config);
+  return config ? { state: "committed", config } : { state: "malformed" };
 }
 
 // -------------------------------------------------------- operator stream ---

@@ -15,7 +15,7 @@ import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../src/grading/evide
 import { deliverSourceEvent } from "../src/storage/capture-store";
 import { openDatabase, type Database, type TenantScope } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
-import type { SourceEventCursor, SourceEventDelivery, SourceEventOutcome } from "../src/ingest/cursor";
+import type { RunConfigWire, SourceEventCursor, SourceEventDelivery, SourceEventOutcome } from "../src/ingest/cursor";
 import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
@@ -86,15 +86,18 @@ export function revisionOutcome(input: FixtureRevision, scope: TenantScope = ten
     body_digest: digest.value as `canonical-json/v1:${string}` & { readonly __brand: "CanonicalDigest" } } };
 }
 
-/** The launch event that captures a run's input. */
-export const launchOutcome = (input: JsonValue, run_id = "run-1"): SourceEventOutcome => ({ ...provenance, kind: "run_input",
-  event_kind: "launched", run_id, event_id: `launch:${run_id}`, input, input_schema_version: SCHEMA_VERSION });
+/** The run setting a launch commits: automatic grading on or off, no session overrides. */
+export const runConfig = (grading_enabled: boolean): RunConfigWire => ({ sessions: {}, grading_enabled });
+/** The launch event that captures a run's input and its committed config. A launch that
+ * committed no config carries null, which leaves automatic grading off. */
+export const launchOutcome = (input: JsonValue, run_id = "run-1", config: RunConfigWire | null = null): SourceEventOutcome => ({ ...provenance,
+  kind: "run_input", event_kind: "launched", run_id, event_id: `launch:${run_id}`, input, input_schema_version: SCHEMA_VERSION, config });
 
 export interface Feed {
   send(outcome: SourceEventOutcome, override?: CaptureConfiguration): Promise<SourceEventCursor>;
   /** A configuration override stands for a restart under an edited configuration. */
   revision(input: FixtureRevision, override?: CaptureConfiguration): Promise<SourceEventCursor>;
-  launch(input: JsonValue, run_id?: string): Promise<SourceEventCursor>;
+  launch(input: JsonValue, run_id?: string, config?: RunConfigWire | null): Promise<SourceEventCursor>;
   decide(event_kind: "operator_decided", run_id?: string): Promise<SourceEventCursor>;
 }
 
@@ -113,7 +116,7 @@ export function createFeed(db: Database, scope: TenantScope = tenant, configurat
   return {
     send,
     revision: (input, override) => send(revisionOutcome(input, scope), override),
-    launch: (input, run_id = "run-1") => send(launchOutcome(input, run_id)),
+    launch: (input, run_id = "run-1", config = null) => send(launchOutcome(input, run_id, config)),
     decide: (event_kind, run_id = "run-1") => send({ ...provenance, kind: "ignored", event_kind, run_id, event_id: `decision:${sequence}` }),
   };
 }

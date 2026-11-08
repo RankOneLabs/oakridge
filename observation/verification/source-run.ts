@@ -27,13 +27,15 @@ export const sourceRunInputSchema = z.object({ title: z.string(), spec: z.string
     forge: z.object({ owner: z.string(), name: z.string(), build_base: z.string(), final_base: z.string() }),
   })).min(1) });
 export type SourceRunInput = z.infer<typeof sourceRunInputSchema>;
-export type SourceRunTarget = "plan" | "brief" | "assessment";
+export type SourceRunTarget = "analysis" | "plan" | "brief" | "assessment";
 export interface SourceRunOptions { readonly input: SourceRunInput; readonly directory: string; readonly through: SourceRunTarget;
   readonly timeout_ms?: number; readonly capture_timeout_ms?: number;
   /** Runs once the run has launched and before it is driven; a failed check ends the run there. */
   readonly after_launch?: (run: RunReference) => Promise<ProofCheck>;
   /** `deferred` leaves the capture wait to a caller that keeps observation down while the run progresses. */
-  readonly capture?: "await" | "deferred" }
+  readonly capture?: "await" | "deferred";
+  /** The run's own automatic-grading choice, committed with its launch. Off unless set. */
+  readonly grading_enabled?: boolean }
 
 const POLL_MS = 1_000;
 const DEFAULT_TIMEOUT_MS = 1_800_000;
@@ -49,8 +51,8 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 }
 
 /** Only the reviews the requested capture needs. */
-const acceptableReviews = (through: SourceRunTarget): readonly string[] =>
-  ["analysis_review", "spec_review", "tasks_review", "plan_review", ...(through === "assessment" ? ["brief_review"] : [])];
+const acceptableReviews = (through: SourceRunTarget): readonly string[] => through === "analysis" ? []
+  : ["analysis_review", "spec_review", "tasks_review", "plan_review", ...(through === "assessment" ? ["brief_review"] : [])];
 
 async function acceptReviews(io: ProofIo, run_id: string, inspect: InspectView, through: SourceRunTarget): Promise<void> {
   for (const review of inspect.attention) {
@@ -90,7 +92,7 @@ export async function sourceRunScenario(io: ProofIo, options: SourceRunOptions):
   const settings = { harness: "codex", model: defaultModelForRuntime("codex"), effort: null };
   const launched = await io.dbos("/api/runs", { request_id: crypto.randomUUID(), definition_id: definition.value.definition_id, input: options.input,
     config: { sessions: { analysis: { author: settings, spec_editor: settings }, planning: { planner: settings }, brief: { writer: settings },
-      cohort: { builder: settings, assessor: settings } } } });
+      cohort: { builder: settings, assessor: settings } }, grading_enabled: options.grading_enabled ?? false } });
   const run_id = launched.ok ? (launched.value as { readonly run_id?: string }).run_id ?? null : null;
   if (!run_id) return { id: "source-run", status: "failed", evidence: NO_EVIDENCE,
     checks: [{ name: "the run launches", passed: false, detail: launched.ok ? "no run id" : launched.error.detail }] };

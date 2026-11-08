@@ -13,6 +13,7 @@ export interface BuildRunExecutionContextInput {
   readonly repositories: RepositoryInput[];
   readonly oakridge_url: string;
   readonly session_settings: CreateRunContext["session_settings"];
+  readonly grading_enabled: boolean;
 }
 
 export interface BuildRunExecutionContextError {
@@ -34,6 +35,7 @@ export function buildRunExecutionContext(input: BuildRunExecutionContextInput): 
       worktree_path: worktreePath,
       oakridge_url: input.oakridge_url,
       session_settings: input.session_settings,
+      grading_enabled: input.grading_enabled,
     },
   };
 }

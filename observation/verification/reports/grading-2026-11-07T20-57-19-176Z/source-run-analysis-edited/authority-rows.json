@@ -1,0 +1,209 @@
+[
+  {
+    "id": "438650ac-2cea-434d-9c42-944dfdc6eba5",
+    "commit_txid": 7221,
+    "created_at": "2026-11-07T21:22:46.583101+00:00",
+    "payload": {
+      "kind": "launched",
+      "input": {
+        "spec": "Audit pull request https://github.com/RankOneLabs/oakridge/pull/791 (branch cohort/automatic-execution-lifecycle/73c9f2) in repository oakridge. This is an isolated verification run of the committed development definition, not feature work: its only purpose is real analysis, plan, brief, build_result and assessment artifacts for observation to capture and grade. The analysis reports at least three separate findings about this spec, each a distinct observation. Produce exactly one cohort, named audit, with two tasks. T1: a run's launch config carries grading_enabled, off when missing, through the ordered launch delivery (oakridge-dbos/src/domain/run-config.ts, oakridge-dbos/src/adapters/observation-mapping.ts). T2: settlement of an evaluation execution is fenced to the exact current claim, and completion appends its observation in one transaction (observation/src/storage/execution-store.ts, observation/src/grading/worker.ts).\nThe operator authorizes this audit path: the builder publishes the existing PR #791 as its pr artifact instead of pushing or opening one. No brief may add a further operator choice or confirmation. The builder must not edit files, create commits, push, open or update any pull request, merge, reset a database or deploy. Its worktree starts from epic/grade-pray, the base of pull request #791, so it first checks out the head of branch cohort/automatic-execution-lifecycle/73c9f2 locally (git checkout --detach origin/cohort/automatic-execution-lifecycle/73c9f2) and inspects that commit, runs bun install if needed and then bun run --filter observation test once, and publishes build_result with the commit it inspected as head_sha and the actual test counts and output. A test that cannot run is a known issue, never a reason to invent results. It then publishes the existing pull request https://github.com/RankOneLabs/oakridge/pull/791 as the pr artifact, with branch cohort/automatic-execution-lifecycle/73c9f2.\nThe assessor assesses that same commit without changing anything. Give at least one finding per task. Every finding cites at least one file as path:start-end at that commit, for example observation/src/grading/worker.ts:20-40, and cites test output separately as test or output evidence. Report the builder's test run as test_evidence.\nKeep the spec, tasks, plan and brief short; there are no ambiguous requirements to resolve.\n",
+        "title": "Automatic grading lifecycle audit",
+        "repositories": [
+          {
+            "key": "oakridge",
+            "forge": {
+              "name": "oakridge",
+              "owner": "RankOneLabs",
+              "build_base": "epic/grade-pray",
+              "final_base": "epic/grade-pray"
+            },
+            "preparation": {
+              "expected_head": null,
+              "repository_path": "/tmp/oakridge-proof/grading-2026-11-07T20-57-19-176Z/10060d3f-8cc0-4f45-82a7-3367c936c145"
+            }
+          }
+        ],
+        "final_merge_policy": "require_merge",
+        "primary_repository_key": "oakridge"
+      }
+    },
+    "run_id": "run-8814451983bdd914",
+    "unit_id": null
+  },
+  {
+    "id": "957b58aa-1945-4bcb-9845-f6ed1a538d02",
+    "commit_txid": 7234,
+    "created_at": "2026-11-07T21:22:47.100891+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "87faf64183d7fb77405c8315f1207b96",
+      "kbbl_session_id": null
+    },
+    "run_id": "run-8814451983bdd914",
+    "unit_id": "run-8814451983bdd914/prepare/oakridge"
+  },
+  {
+    "id": "48026af0-3ae0-462c-b16c-64b6c3055341",
+    "commit_txid": 7243,
+    "created_at": "2026-11-07T21:22:54.980217+00:00",
+    "payload": {
+      "by": "87faf64183d7fb77405c8315f1207b96",
+      "body": {
+        "head": "b442f99ccdd68699a346ee55dd9fbe27bc3335d0",
+        "base_branch": "epic/grade-pray",
+        "repository_path": "/tmp/oakridge-proof/grading-2026-11-07T20-57-19-176Z/10060d3f-8cc0-4f45-82a7-3367c936c145",
+        "push_remote_owner": "RankOneLabs"
+      },
+      "kind": "revision_published",
+      "unit": "run-8814451983bdd914/prepare/oakridge",
+      "subject": null,
+      "artifact": "workspace",
+      "predecessor": null
+    },
+    "run_id": "run-8814451983bdd914",
+    "unit_id": "run-8814451983bdd914/prepare/oakridge"
+  },
+  {
+    "id": "692a75f4-5e2b-49ff-9500-8537ccaae157",
+    "commit_txid": 7245,
+    "created_at": "2026-11-07T21:22:55.022209+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "87faf64183d7fb77405c8315f1207b96",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-8814451983bdd914",
+    "unit_id": "run-8814451983bdd914/prepare/oakridge"
+  },
+  {
+    "id": "2234fd44-f8ac-44b7-a82d-9b7d276cbb4a",
+    "commit_txid": 7285,
+    "created_at": "2026-11-07T21:22:59.644215+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "ee744aaa74e911a305904e1c320e6145",
+      "kbbl_session_id": "a6494b5e-2857-43e5-a3c1-eb3c70e0c218"
+    },
+    "run_id": "run-8814451983bdd914",
+    "unit_id": "run-8814451983bdd914/analysis"
+  },
+  {
+    "id": "47688956-f0d9-4a5d-b21f-2e53339ad47f",
+    "commit_txid": 7410,
+    "created_at": "2026-11-07T21:25:37.562416+00:00",
+    "payload": {
+      "by": "ee744aaa74e911a305904e1c320e6145",
+      "body": {
+        "risks": [
+          {
+            "mitigation": "The builder must publish the exact command output and actual pass/fail/skip counts, treating an unavailable environment as a known issue as the specification already directs.",
+            "description": "The observation suite contains PostgreSQL integration tests, so local infrastructure or credentials may prevent execution even though the test script is valid (observation/package.json:6-8; observation/tests/execution-lifecycle.test.ts:204-239)."
+          },
+          {
+            "mitigation": "Record the detached checkout SHA in build_result and require the assessor to use that SHA; before checkout, compare the local remote-tracking ref with PR status. At analysis time both resolve to 10cddc5ff69124002c485b011dba5d34ebe6de75.",
+            "description": "The PR head branch can move between stages, which could otherwise make builder and assessor inspect different commits."
+          }
+        ],
+        "summary": "The specification is short, internally complete, and implementable without an operator choice. Live PR metadata and local refs agree that PR #791 targets epic/grade-pray from cohort/automatic-execution-lifecycle/73c9f2 at 10cddc5ff69124002c485b011dba5d34ebe6de75. Repository evidence independently supports T1 defaulting/preservation and ordered launch mapping, plus T2 exact-claim fencing and atomic completion/observation append. No specification update is needed; the mandated observation test remains the runtime qualification to report honestly.",
+        "findings": [
+          {
+            "id": "F-PR-TARGET",
+            "severity": "info",
+            "description": "The audit target is coherent: gated PR status reports PR #791 open with base epic/grade-pray, head cohort/automatic-execution-lifecycle/73c9f2, and head SHA 10cddc5ff69124002c485b011dba5d34ebe6de75; the local origin refs resolve to the same base and head. This makes the specified detached-checkout audit path concrete."
+          },
+          {
+            "id": "F-T1-DEFAULT",
+            "severity": "info",
+            "description": "T1 has direct implementation evidence: RunConfig names grading_enabled as a boolean and parseRunConfig defaults only an absent value to false while rejecting a supplied non-boolean (oakridge-dbos/src/domain/run-config.ts:7-11,21-41). Focused tests cover omitted, explicit, and malformed choices (oakridge-dbos/tests/run-config.test.ts:56-83)."
+          },
+          {
+            "id": "F-T1-DELIVERY",
+            "severity": "info",
+            "description": "T1 also has a distinct delivery observation: MappingInput carries the launch-specific committed run_config, and launched events emit the exact committed config beside input, map no config to null, and reject malformed committed config (oakridge-dbos/src/adapters/observation-mapping.ts:14-18,42-49). Tests distinguish on, off, none, and malformed delivery (oakridge-dbos/tests/observation-mapping.test.ts:50-65)."
+          },
+          {
+            "id": "F-T2-FENCE",
+            "severity": "info",
+            "description": "T2 claim settlement is fenced by execution id, claimed status, lease owner, claim attempt, and an unexpired lease under a row lock (observation/src/storage/execution-store.ts:193-215). The worker passes the same claim through request marking and both success/failure settlement paths (observation/src/grading/worker.ts:71-100), while integration cases exercise expired, reclaimed, and old-attempt claims (observation/tests/execution-lifecycle.test.ts:299-320)."
+          },
+          {
+            "id": "F-T2-ATOMIC",
+            "severity": "info",
+            "description": "T2 atomicity is separately visible: completeExecution opens one withTenant transaction, rechecks the fence, marks the execution and provider attempt completed, inserts grade_observation, and returns only after the unit commits (observation/src/storage/execution-store.ts:227-253). The integration test deliberately causes observation insertion to fail and verifies neither completion nor answer persists, then verifies both persist on valid input (observation/tests/execution-lifecycle.test.ts:226-239)."
+          }
+        ],
+        "requirements": [
+          {
+            "id": "R-AUDIT-SHAPE",
+            "status": "implementable",
+            "description": "Produce exactly one cohort named audit with two tasks, preserve at least three distinct analysis findings, and keep the downstream artifacts concise."
+          },
+          {
+            "id": "R-T1",
+            "status": "implementable",
+            "description": "Audit grading_enabled through RunConfig parsing/default-off behavior and exact ordered launch delivery using the named oakridge-dbos files."
+          },
+          {
+            "id": "R-T2",
+            "status": "implementable",
+            "description": "Audit exact-current-claim settlement fencing and transactional completion plus grade observation append using the named observation files."
+          },
+          {
+            "id": "R-BUILDER",
+            "status": "implementable",
+            "description": "Detach to the existing PR head, make no source/PR/deployment changes, run the observation test command once, report actual output/counts and inspected SHA, then publish existing PR #791 rather than opening or updating one."
+          },
+          {
+            "id": "R-ASSESSOR",
+            "status": "implementable",
+            "description": "Assess the builder-inspected commit without mutation, provide at least one path:line-range finding per task, cite test/output evidence separately, and report the builder run as test_evidence."
+          }
+        ],
+        "source_spec_refs": [
+          "Audit purpose and fixed one-cohort/two-task topology",
+          "T1: grading_enabled default and ordered launch delivery",
+          "T2: exact-claim fencing and atomic observation append",
+          "Builder: detached checkout, one observation test run, build_result, and existing PR publication",
+          "Assessor: same-commit review, per-task findings, and separate test/output evidence",
+          "Finding severity and requirement-status rules"
+        ],
+        "proposed_spec_updates": []
+      },
+      "kind": "revision_published",
+      "unit": "run-8814451983bdd914/analysis",
+      "subject": null,
+      "artifact": "analysis",
+      "predecessor": null
+    },
+    "run_id": "run-8814451983bdd914",
+    "unit_id": "run-8814451983bdd914/analysis"
+  },
+  {
+    "id": "83001e7f-80a2-4c3c-95d3-0f523cd1b5ca",
+    "commit_txid": 7423,
+    "created_at": "2026-11-07T21:25:38.120674+00:00",
+    "payload": {
+      "kind": "cancel_requested"
+    },
+    "run_id": "run-8814451983bdd914",
+    "unit_id": null
+  },
+  {
+    "id": "91cade1d-0325-473f-9e6c-771ff206dfae",
+    "commit_txid": 7435,
+    "created_at": "2026-11-07T21:25:38.337259+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "ee744aaa74e911a305904e1c320e6145",
+      "result": {
+        "code": "attempt_stopped",
+        "kind": "failed",
+        "detail": "stopped because its unit is no longer active"
+      }
+    },
+    "run_id": "run-8814451983bdd914",
+    "unit_id": "run-8814451983bdd914/analysis"
+  }
+]

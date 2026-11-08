@@ -1,0 +1,346 @@
+{
+  "run_id": "run-54d9551cb3e06047",
+  "status": {
+    "kind": "active"
+  },
+  "units": [
+    {
+      "id": "run-54d9551cb3e06047",
+      "unit_key": "$root",
+      "label": "Development",
+      "stage": null,
+      "status": {
+        "kind": "active"
+      }
+    },
+    {
+      "id": "run-54d9551cb3e06047/analysis",
+      "unit_key": "analysis",
+      "label": "Analysis",
+      "stage": "analysis",
+      "status": {
+        "kind": "active"
+      }
+    },
+    {
+      "id": "run-54d9551cb3e06047/planning",
+      "unit_key": "planning",
+      "label": "Planning",
+      "stage": "planning",
+      "status": {
+        "kind": "not_started"
+      }
+    },
+    {
+      "id": "run-54d9551cb3e06047/prepare/oakridge",
+      "unit_key": "prepare",
+      "label": "Prepare",
+      "stage": "prepare",
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "key": "oakridge",
+          "workspace": {
+            "head": "b442f99ccdd68699a346ee55dd9fbe27bc3335d0",
+            "base_branch": "epic/grade-pray",
+            "repository_path": "/tmp/oakridge-proof/grading-2026-11-08T00-43-55-106Z/10060d3f-8cc0-4f45-82a7-3367c936c145",
+            "push_remote_owner": "RankOneLabs"
+          }
+        }
+      }
+    }
+  ],
+  "attention": [
+    {
+      "kind": "awaiting_review",
+      "unit_id": "run-54d9551cb3e06047/analysis",
+      "review": "analysis_review",
+      "target": "run-54d9551cb3e06047/analysis:analysis:1",
+      "decisions": [
+        {
+          "key": "analysis_review:accept",
+          "label": "Accept",
+          "payload_schema": "{}",
+          "fields": [],
+          "submit": {
+            "kind": "review",
+            "review": "analysis_review",
+            "decision": "accept",
+            "effect": "approve",
+            "target_revision_id": "run-54d9551cb3e06047/analysis:analysis:1"
+          }
+        },
+        {
+          "key": "analysis_review:request_changes",
+          "label": "Request changes",
+          "payload_schema": "{feedback: text}",
+          "fields": [
+            {
+              "key": "feedback",
+              "label": "What must the proposed specification change?"
+            }
+          ],
+          "submit": {
+            "kind": "review",
+            "review": "analysis_review",
+            "decision": "request_changes",
+            "effect": "request_changes",
+            "target_revision_id": "run-54d9551cb3e06047/analysis:analysis:1"
+          }
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "run_id": "run-54d9551cb3e06047",
+      "unit_id": "run-54d9551cb3e06047/analysis",
+      "artifact_key": "analysis",
+      "schema": "analysis_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-54d9551cb3e06047/analysis:analysis:1",
+        "run_id": "run-54d9551cb3e06047",
+        "unit_id": "run-54d9551cb3e06047/analysis",
+        "artifact_key": "analysis",
+        "attempt_id": "a9c7e2e2ecf130dd0ece9f3e0cdf2dee",
+        "body": {
+          "risks": [
+            {
+              "mitigation": "Run it exactly once as specified and publish the real command, exit status, counts, and output; classify inability to run as a known issue and never synthesize results.",
+              "description": "The full observation test command may depend on local PostgreSQL or other runtime configuration and can legitimately fail or skip tests in this isolated environment."
+            },
+            {
+              "mitigation": "Before inspection or tests, detach at the specified branch ref and record git rev-parse HEAD as build_result.head_sha; the assessor must use that same SHA in every file-range citation.",
+              "description": "The worktree begins at the PR base, so evidence could accidentally be collected from b442f99c rather than the audited c7e326b7 head."
+            },
+            {
+              "mitigation": "Keep exactly the requested audit cohort and T1/T2; treat unrelated files only as supporting evidence when they directly prove ordered delivery, test behavior, or transaction semantics.",
+              "description": "PR #791 is much broader than the two-task audit, making it easy for plan or assessment scope to drift into unrelated changes."
+            }
+          ],
+          "summary": "The audit is implementable without operator clarification. The specified head c7e326b7d1c7b03e8d051a079967d496b07e541f is locally available and descends from the stated PR base b442f99ccdd68699a346ee55dd9fbe27bc3335d0. Repository evidence supports T1 default-off launch configuration and ordered delivery, plus T2 lock-first exact-claim fencing and atomic completion/observation. The builder and assessor can remain read-only apart from the explicitly required detached checkout, dependency materialization if needed, test execution, and artifact publication.",
+          "findings": [
+            {
+              "id": "F1",
+              "severity": "info",
+              "description": "T1 has a named domain model and deterministic default: RunConfig includes grading_enabled, parseRunConfig maps an omitted choice to false, rejects non-booleans, and preserves worker-session selection (oakridge-dbos/src/domain/run-config.ts:4-47). The launch mapper emits the committed config beside input, preserves null for a launch with no config, and refuses malformed committed data (oakridge-dbos/src/adapters/observation-mapping.ts:13-43)."
+            },
+            {
+              "id": "F2",
+              "severity": "info",
+              "description": "The ordered-delivery qualification in T1 is supported beyond the two focus files: the publisher reads the immutable committed run config only for a launched event and includes it in that event delivery (oakridge-dbos/src/adapters/observation.ts:13-20), while the read store distinguishes none, committed, and malformed states (oakridge-dbos/src/storage/read-store.ts:467-476). Observation treats either null/no captured launch as grading off (observation/src/storage/run-capture-store.ts:16-26)."
+            },
+            {
+              "id": "F3",
+              "severity": "info",
+              "description": "T2 exact-claim fencing is concrete and testable: the predicate requires claimed status, lease owner, claim attempt, and an unexpired database-time lease; settlement locks the execution row before evaluating the predicate and re-applies the predicate on the authoritative update (observation/src/storage/execution-store.ts:194-228)."
+            },
+            {
+              "id": "F4",
+              "severity": "info",
+              "description": "T2 atomicity and worker integration are explicit: completeExecution settles the execution, closes the same provider attempt, and inserts the grade observation inside one tenant transaction (observation/src/storage/execution-store.ts:267-292); settleClaim routes a valid provider answer through that operation and handles failures through fenced settlement (observation/src/grading/worker.ts:71-95). Existing integration coverage checks rollback on a refused observation and successful one-for-one completion (observation/tests/execution-lifecycle.test.ts:231-244), and stale/expired claims are covered separately (observation/tests/execution-lifecycle.test.ts:304-357)."
+            },
+            {
+              "id": "F5",
+              "severity": "info",
+              "description": "The verification procedure is sufficiently pinned: the branch ref resolves locally to c7e326b7d1c7b03e8d051a079967d496b07e541f, whose merge base with origin/epic/grade-pray is b442f99ccdd68699a346ee55dd9fbe27bc3335d0. The observation workspace defines test as bun test ./tests (observation/package.json:1-8), so the required bun run --filter observation test command has an unambiguous target. Actual counts and output must still come only from the builder run."
+            }
+          ],
+          "requirements": [
+            {
+              "id": "R1",
+              "status": "implementable",
+              "description": "Produce exactly one cohort named audit with exactly two tasks, T1 and T2, scoped to the stated committed PR head."
+            },
+            {
+              "id": "R2",
+              "status": "implementable",
+              "description": "T1 audits that grading_enabled is carried by launch config, defaults off when omitted, and survives ordered launch delivery in the named Oakridge files."
+            },
+            {
+              "id": "R3",
+              "status": "implementable",
+              "description": "T2 audits that evaluation settlement is fenced to the exact current claim and completion appends its observation in the same transaction in the named Observation files."
+            },
+            {
+              "id": "R4",
+              "status": "implementable",
+              "description": "The builder detaches at origin/cohort/automatic-execution-lifecycle/73c9f2, performs no source/commit/remote/database/deployment mutations, runs the observation test command once, reports actual output, and publishes the existing PR #791 rather than creating or changing a PR."
+            },
+            {
+              "id": "R5",
+              "status": "implementable",
+              "description": "The assessor examines the same head without changes, reports at least one file-range finding per task, cites test/output evidence separately, and reports the builder test run as test_evidence."
+            }
+          ],
+          "source_spec_refs": [
+            "Current specification: audit target, isolated-verification purpose, and exactly-one-cohort topology",
+            "Current specification T1: grading_enabled default-off launch configuration and ordered delivery",
+            "Current specification T2: exact-current-claim fencing and atomic completion observation",
+            "Current specification: builder detached-checkout, no-mutation, single-test-run, build_result, and existing-PR publication constraints",
+            "Current specification: assessor same-commit, per-task file-range evidence, separate test/output evidence, and test_evidence requirements"
+          ],
+          "proposed_spec_updates": []
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-08T00:46:36.063Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-54d9551cb3e06047",
+      "unit_id": "run-54d9551cb3e06047/analysis",
+      "artifact_key": "spec",
+      "schema": "text",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 0,
+      "latest_revision": null
+    },
+    {
+      "run_id": "run-54d9551cb3e06047",
+      "unit_id": "run-54d9551cb3e06047/analysis",
+      "artifact_key": "tasks",
+      "schema": "tasks_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 0,
+      "latest_revision": null
+    },
+    {
+      "run_id": "run-54d9551cb3e06047",
+      "unit_id": "run-54d9551cb3e06047/planning",
+      "artifact_key": "plan",
+      "schema": "plan_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 0,
+      "latest_revision": null
+    },
+    {
+      "run_id": "run-54d9551cb3e06047",
+      "unit_id": "run-54d9551cb3e06047/prepare/oakridge",
+      "artifact_key": "workspace",
+      "schema": "workspace",
+      "is_reviewable": false,
+      "is_editable": false,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-54d9551cb3e06047/prepare/oakridge:workspace:1",
+        "run_id": "run-54d9551cb3e06047",
+        "unit_id": "run-54d9551cb3e06047/prepare/oakridge",
+        "artifact_key": "workspace",
+        "attempt_id": "c7ec2c39a3b92e23fa853cf4c58a8727",
+        "body": {
+          "head": "b442f99ccdd68699a346ee55dd9fbe27bc3335d0",
+          "base_branch": "epic/grade-pray",
+          "repository_path": "/tmp/oakridge-proof/grading-2026-11-08T00-43-55-106Z/10060d3f-8cc0-4f45-82a7-3367c936c145",
+          "push_remote_owner": "RankOneLabs"
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-08T00:44:05.882Z",
+        "number": 1
+      }
+    }
+  ],
+  "attempts": [
+    {
+      "id": "c7ec2c39a3b92e23fa853cf4c58a8727:1",
+      "unit_id": "run-54d9551cb3e06047/prepare/oakridge",
+      "worker": "git",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-08T00:44:02.042Z",
+      "is_current": true
+    },
+    {
+      "id": "a9c7e2e2ecf130dd0ece9f3e0cdf2dee:1",
+      "unit_id": "run-54d9551cb3e06047/analysis",
+      "worker": "author",
+      "number": 1,
+      "status": "running",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": "fa7fd206-2654-4073-8ba8-cd354bce85bc",
+      "created_at": "2026-11-08T00:44:05.881Z",
+      "is_current": true
+    }
+  ],
+  "events": [
+    {
+      "id": "6c196bae-2b02-499e-9a98-5f97a683b678",
+      "unit_id": "run-54d9551cb3e06047/analysis",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "a9c7e2e2ecf130dd0ece9f3e0cdf2dee",
+        "session": "fa7fd206-2654-4073-8ba8-cd354bce85bc"
+      },
+      "created_at": "2026-11-08T00:46:36.065Z"
+    },
+    {
+      "id": "c7916cc1-863f-4f11-bbee-099b303bb108",
+      "unit_id": "run-54d9551cb3e06047/analysis",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "a9c7e2e2ecf130dd0ece9f3e0cdf2dee"
+      },
+      "created_at": "2026-11-08T00:44:13.622Z"
+    },
+    {
+      "id": "5953daa3-1bbd-4f04-9e6e-f697ea33b029",
+      "unit_id": "run-54d9551cb3e06047/prepare/oakridge",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c7ec2c39a3b92e23fa853cf4c58a8727"
+      },
+      "created_at": "2026-11-08T00:44:05.929Z"
+    },
+    {
+      "id": "eefb800d-87dc-4117-b8dd-4d6752e2ef9e",
+      "unit_id": "run-54d9551cb3e06047/prepare/oakridge",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c7ec2c39a3b92e23fa853cf4c58a8727"
+      },
+      "created_at": "2026-11-08T00:44:05.883Z"
+    },
+    {
+      "id": "22c36923-8ddc-4d78-8b85-ba1df4b24f02",
+      "unit_id": "run-54d9551cb3e06047/prepare/oakridge",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c7ec2c39a3b92e23fa853cf4c58a8727"
+      },
+      "created_at": "2026-11-08T00:44:02.599Z"
+    },
+    {
+      "id": "fc12b41e-48a8-4641-81b5-3c0dbdaee064",
+      "unit_id": null,
+      "kind": "launched",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-08T00:44:02.043Z"
+    }
+  ]
+}

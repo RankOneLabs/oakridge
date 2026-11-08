@@ -21,7 +21,7 @@ import { ConflictError, errorResponse, fault, MalformedRequestError, MissingEnti
 export interface IngressRequest { readonly request_id: string }
 export interface LaunchRequest extends IngressRequest {
   readonly definition_id: DefinitionId; readonly input: unknown; readonly project_id?: string | null;
-  /** Session settings keyed by stage, then by agent worker. */
+  /** Session settings keyed by stage, then by agent worker, and the run's automatic-grading choice. */
   readonly config?: RunConfig | null;
 }
 export interface DecideRequest extends IngressRequest { readonly decision: string; readonly target: string; readonly payload: unknown }
@@ -49,7 +49,7 @@ export function parseLaunchRequest(raw: unknown): Parsed<LaunchRequest> {
     return malformed("request_id (1 to 200 characters), definition_id and input are required");
   const config = raw.config === undefined || raw.config === null ? null : parseRunConfig(raw.config);
   if (raw.config !== undefined && raw.config !== null && config === null)
-    return malformed("config.sessions maps each stage and worker to { harness, model, effort }");
+    return malformed("config.sessions maps each stage and worker to { harness, model, effort }; config.grading_enabled is a boolean");
   return ok({ request_id: raw.request_id, definition_id: raw.definition_id as DefinitionId, input: raw.input, project_id: raw.project_id ?? null, config });
 }
 export function parseDecideRequest(raw: unknown): Parsed<DecideRequest> {

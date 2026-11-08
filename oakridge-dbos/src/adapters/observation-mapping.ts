@@ -1,5 +1,5 @@
 import type { Event } from "../core-client/core-types";
-import type { CommittedEventRow, PinnedDefinitionRead } from "../storage/read-store";
+import type { CommittedEventRow, CommittedRunConfig, PinnedDefinitionRead } from "../storage/read-store";
 import { artifactSchemaVersion, bodyDigest, declarationDigest } from "./observation-schema-version";
 import type { JsonValue, SourceEventOutcome } from "./observation-wire";
 
@@ -12,7 +12,9 @@ const allKindsCovered: MissingEventKind extends never ? true : never = true;
 void allKindsCovered;
 
 export interface MappingInput { readonly row: CommittedEventRow<Event>; readonly definition: PinnedDefinitionRead | null;
-  readonly namespace: string; readonly stage: string | null; readonly revision_sequence: number | null }
+  readonly namespace: string; readonly stage: string | null; readonly revision_sequence: number | null;
+  /** Read for a launch only: its config travels with its input. */
+  readonly run_config: CommittedRunConfig | null }
 export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
   const { row, definition } = input;
   const event = row.payload;
@@ -37,8 +39,14 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
           subject_id: event.subject ? `${prefix}${event.subject}` : null, by_id: event.by ?? null },
           recorded_at: row.created_at.toISOString(), body: event.body as JsonValue, body_digest: bodyDigest(event.body as JsonValue) } };
     }
-    case "launched": return definition ? { ...provenance, kind: "run_input", event_kind: event.kind, ...identity, input: event.input,
-      input_schema_version: declarationDigest(definition.checked_program.workflow.input as JsonValue) } : unmapped("pinned definition is missing");
+    case "launched": {
+      if (!definition) return unmapped("pinned definition is missing");
+      const committed = input.run_config ?? { state: "none" };
+      if (committed.state === "malformed") return unmapped("committed run config is malformed");
+      return { ...provenance, kind: "run_input", event_kind: event.kind, ...identity, input: event.input,
+        input_schema_version: declarationDigest(definition.checked_program.workflow.input as JsonValue),
+        config: committed.state === "committed" ? committed.config : null };
+    }
     case "operator_decided": case "worker_started": case "worker_ended": case "retry_requested": case "cancel_requested":
       return { ...provenance, kind: "ignored", event_kind: event.kind, ...identity };
     default: return unmapped(`unrecognized event variant ${String((event as { kind: unknown }).kind)}`);
