@@ -35,7 +35,15 @@ export interface SourceRunOptions { readonly input: SourceRunInput; readonly dir
   /** `deferred` leaves the capture wait to a caller that keeps observation down while the run progresses. */
   readonly capture?: "await" | "deferred";
   /** The run's own automatic-grading choice, committed with its launch. Off unless set. */
-  readonly grading_enabled?: boolean }
+  readonly grading_enabled?: boolean;
+  /** Steps around a review the run accepts, each taken once: `before` while it still awaits, `after` once accepted. */
+  readonly reviews?: readonly ReviewCheckpoint[] }
+/** What a proof does around one accepted review. `target` is the revision the review decides. A failed `before` ends the run there. */
+export interface ReviewCheckpoint {
+  readonly review: string;
+  before?(run: RunReference, target: string): Promise<ProofCheck>;
+  after?(run: RunReference, target: string): Promise<ProofCheck>;
+}
 
 const POLL_MS = 1_000;
 const DEFAULT_TIMEOUT_MS = 1_800_000;
@@ -54,16 +62,32 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 const acceptableReviews = (through: SourceRunTarget): readonly string[] => through === "analysis" ? []
   : ["analysis_review", "spec_review", "tasks_review", "plan_review", ...(through === "assessment" ? ["brief_review"] : [])];
 
-async function acceptReviews(io: ProofIo, run_id: string, inspect: InspectView, through: SourceRunTarget): Promise<void> {
+/** Accepts what the capture needs, taking each review's checkpoint steps. Returns a `before` step that failed. */
+async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectView, options: SourceRunOptions, taken: Set<string>): Promise<ProofCheck | null> {
+  const { run_id } = run;
   for (const review of inspect.attention) {
-    if (review.kind !== "awaiting_review" || !review.review || !acceptableReviews(through).includes(review.review)) continue;
+    if (review.kind !== "awaiting_review" || !review.review || !acceptableReviews(options.through).includes(review.review)) continue;
+    const checkpoint = taken.has(review.review) ? undefined : options.reviews?.find((candidate) => candidate.review === review.review);
+    const target = typeof review.target === "string" ? review.target : "";
+    if (checkpoint?.before) {
+      const step = await checkpoint.before(run, target);
+      if (!step.passed) return step;
+    }
     await io.dbos(`/api/runs/${run_id}/units/${encodeURIComponent(review.unit_id ?? "")}/reviews/${review.review}/decide`, {
       request_id: crypto.randomUUID(), decision: "accept", target: review.target,
       payload: { feedback: "Accepted for the isolated live verification run." } });
+    if (checkpoint) {
+      taken.add(review.review);
+      const step = await checkpoint.after?.(run, target);
+      if (step && !step.passed) return step;
+    }
   }
+  return null;
 }
 
-async function driveToTarget(io: ProofIo, run_id: string, options: SourceRunOptions): Promise<ProofCheck> {
+async function driveToTarget(io: ProofIo, run: RunReference, options: SourceRunOptions): Promise<ProofCheck> {
+  const { run_id } = run;
+  const taken = new Set<string>();
   const deadline = io.now() + (options.timeout_ms ?? DEFAULT_TIMEOUT_MS);
   while (io.now() < deadline) {
     const read = await io.dbos(`/api/runs/${run_id}/inspect`);
@@ -74,7 +98,8 @@ async function driveToTarget(io: ProofIo, run_id: string, options: SourceRunOpti
       return { name: "the run reaches its target", passed: true, detail: options.through };
     const stalled = inspect.attention.find((item) => item.kind !== "awaiting_review");
     if (stalled) return { name: "the run reaches its target", passed: false, detail: `needs intervention: ${JSON.stringify(stalled)}` };
-    await acceptReviews(io, run_id, inspect, options.through);
+    const refused = await acceptReviews(io, run, inspect, options, taken);
+    if (refused) return refused;
     await io.sleep(POLL_MS);
   }
   return { name: "the run reaches its target", passed: false, detail: "timed out; partial inspect.json retained" };
@@ -99,7 +124,7 @@ export async function sourceRunScenario(io: ProofIo, options: SourceRunOptions):
   const run = { run_id, definition_id: definition.value.definition_id };
   await writeJson(join(options.directory, "run.json"), run);
   const prepared = options.after_launch ? await options.after_launch(run) : null;
-  const reached = prepared && !prepared.passed ? null : await driveToTarget(io, run_id, options);
+  const reached = prepared && !prepared.passed ? null : await driveToTarget(io, run, options);
   const canceled = await io.dbos(`/api/runs/${run_id}/cancel`, { request_id: crypto.randomUUID() });
   const run_capture = options.capture === "deferred" ? null
     : await awaitRunCapture(io, { run_id, target_artifact: options.through }, options.capture_timeout_ms);

@@ -8,6 +8,7 @@
  *   bun observation/verification/proof.ts source-run --input <file> [--through plan|brief|assessment]
  *   bun observation/verification/proof.ts registration --input <file>
  *   bun observation/verification/proof.ts grading --input <file>
+ *   bun observation/verification/proof.ts relations --input <file>
  *
  * Exits zero only when the requested scenario passed. The report is written
  * either way, so a failure keeps its diagnostics.
@@ -24,6 +25,7 @@ import { gradingControls } from "../src/grading/budget";
 import { registryRunners } from "../src/grading/worker";
 import { openDatabase } from "../src/storage/database";
 import { gradingScenario, providerSettings, type GradingSource } from "./grading";
+import { relationsScenario, type RelationsSource } from "./relations";
 import { liveScenario, runtimeScenario } from "./scenarios";
 import { createDisposableRepository, createShadowIo, readLauncherState, readSourceIdentity, type ProofIo } from "./shadow-session";
 import { sourceRunInputSchema, sourceRunScenario, type SourceRunInput, type SourceRunTarget } from "./source-run";
@@ -105,7 +107,7 @@ async function gradingSource(io: ProofIo, input: SourceRunInput, directory: stri
   return {
     run: async (label, options) => {
       const report = await sourceRunScenario(io, { input: disposable, directory: join(directory, `source-run-${label}`), through: options.through,
-        capture: options.capture, after_launch: options.after_launch, grading_enabled: options.grading_enabled });
+        capture: options.capture, after_launch: options.after_launch, grading_enabled: options.grading_enabled, reviews: options.reviews });
       return { report, run: report.evidence.runs[0] ?? null };
     },
     withholdRepository: () => repository.value.withhold(),
@@ -126,11 +128,22 @@ async function gradingSource(io: ProofIo, input: SourceRunInput, directory: stri
   };
 }
 
+/** The late-link proof's real run on a disposable clone, and its composite reads on the shadow's own database. */
+function relationsSource(io: ProofIo, grading: GradingSource): RelationsSource {
+  return { run: grading.run, async openObservation() {
+    const password = (await Bun.file(join(io.state.state_dir, "observation-database.password")).text().catch(() => "")).trim();
+    if (!password) return err({ operation: "open_observation", entity_id: io.state.observation.database, detail: "the shadow's observation database password is missing" });
+    const database = encodeURIComponent(io.state.observation.database);
+    const db = openDatabase(`postgres://${database}:${encodeURIComponent(password)}@127.0.0.1:${io.state.postgres.port}/${database}`);
+    return ok({ db, tenant: { producer: "oakridge", namespace: io.state.observation.namespace }, close: () => db.destroy() });
+  } };
+}
+
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { input: { type: "string" }, through: { type: "string" } } });
   const [command] = positionals;
-  if (command !== "runtime" && command !== "live" && command !== "source-run" && command !== "registration" && command !== "grading") {
-    console.error("usage: proof.ts runtime | live | source-run --input <file> [--through analysis|plan|brief|assessment] | registration --input <file> | grading --input <file>");
+  if (command !== "runtime" && command !== "live" && command !== "source-run" && command !== "registration" && command !== "grading" && command !== "relations") {
+    console.error("usage: proof.ts runtime | live | source-run --input <file> [--through analysis|plan|brief|assessment] | registration --input <file> | grading --input <file> | relations --input <file>");
     return 2;
   }
   const proof_id = `${command}-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
@@ -154,6 +167,8 @@ async function main(): Promise<number> {
     const input = sourceRunInputSchema.parse(await Bun.file(values.input).json());
     if (command === "registration") return registrationScenario(io, await registrationSource(io, input, directory, proof_id));
     if (command === "grading") return gradingScenario(io, await gradingSource(io, input, directory, proof_id));
+    if (command === "relations") return relationsScenario(io, relationsSource(io, await gradingSource(io, input, directory, proof_id)),
+      `${state.value.observation.namespace}-matrix-${proof_id}`);
     const through = values.through ?? "brief";
     if (through !== "analysis" && through !== "plan" && through !== "brief" && through !== "assessment") throw new Error("invalid --through");
     if (!await io.stackAnswers()) {

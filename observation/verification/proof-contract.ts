@@ -29,7 +29,7 @@ export type ObservationStatus = z.infer<typeof observationStatusSchema>;
 export interface ProofFailure { readonly operation: string; readonly entity_id: string; readonly detail: string }
 export interface ProofCheck { readonly name: string; readonly passed: boolean; readonly detail: string }
 export type ScenarioStatus = "passed" | "failed" | "not_run";
-export type ScenarioId = "runtime" | "live" | "source-run" | "registration" | "grading";
+export type ScenarioId = "runtime" | "live" | "source-run" | "registration" | "grading" | "relations";
 
 export interface RunReference { readonly run_id: string; readonly definition_id: string }
 /** Position in the ordered feed, as the authority and the service each report it. */
@@ -183,6 +183,34 @@ export interface SecondWorkerReadback {
   readonly settlement: { readonly kind: string; readonly observation_id: string | null; readonly detail: string | null } | null;
   readonly after: SpendReadback;
 }
+/** One item as its own read routes served it at a checkpoint: what a link must leave unchanged. */
+export interface RelationItemFacts {
+  readonly occurrence_id: string;
+  readonly occurrence: unknown;
+  readonly evidence: unknown;
+  readonly grades: unknown;
+  readonly measurements: unknown;
+}
+/** A checkpoint of the late-link proof: the linked item, its unlinked control and what the run sent. */
+export interface RelationCheckpoint {
+  readonly checkpoint: string;
+  readonly run_id: string;
+  readonly linked: RelationItemFacts;
+  readonly control: RelationItemFacts;
+  readonly requests_sent: number;
+  readonly attempts: number;
+  readonly executions: Readonly<Record<string, number>>;
+  readonly authority_events: number | null;
+}
+/** The late-link proof's addresses, checkpoints, mappings as sent, and the composite, lineage and page reads. */
+export interface RelationsReadback {
+  readonly tasks_revision_id: string | null;
+  readonly linked: { readonly occurrence_id: string; readonly revision_id: string; readonly item_path: string } | null;
+  readonly control: { readonly occurrence_id: string; readonly revision_id: string; readonly item_path: string } | null;
+  readonly checkpoints: readonly RelationCheckpoint[];
+  readonly declarations: readonly unknown[];
+  readonly reads: { readonly [read: string]: unknown };
+}
 export interface AuthorityCount { readonly events_before: number | null; readonly events_after: number | null }
 /** A scenario's evidence. Each list holds actual ids read back from the running services. */
 export interface ScenarioEvidence {
@@ -206,10 +234,11 @@ export interface ScenarioEvidence {
   readonly spend: readonly SpendReadback[];
   readonly launch_configs: readonly LaunchConfigReadback[];
   readonly second_worker: SecondWorkerReadback | null;
+  readonly relations: RelationsReadback | null;
 }
 export const NO_EVIDENCE: ScenarioEvidence = { runs: [], capture: null, run_capture: null, authority: null, source_revisions: [], item_paths: [],
   pinned_definitions: [], execution_ids: [], provider_attempt_ids: [], observation_ids: [], provider_request_count: null, pwa_readback: [],
-  registrations: [], pins: [], frozen_evidence: [], measurements: [], spend: [], launch_configs: [], second_worker: null };
+  registrations: [], pins: [], frozen_evidence: [], measurements: [], spend: [], launch_configs: [], second_worker: null, relations: null };
 
 export interface ScenarioReport {
   readonly id: ScenarioId;
@@ -220,7 +249,9 @@ export interface ScenarioReport {
 /** Proof the program does not perform yet, and who adds it. Listed so a passing report cannot read as complete. */
 export interface PendingScenario { readonly id: string; readonly owner: string; readonly reason?: string }
 export const PENDING_SCENARIOS: readonly PendingScenario[] = [
-  { id: "relations-and-composites", owner: "task-lineage-composites" },
+  { id: "two-real-cohorts-through-integration", owner: "operator",
+    reason: "A verification run may not merge, and a run's cohorts are its planner's to choose, so no real run reaches a second cohort or integration here. "
+      + "`relations` proves those reads on the shadow's database with synthetic revisions, labelled as such; reaching them with real agents needs a run allowed to merge." },
   { id: "first-assessment-finding-end-to-end", owner: "operator-item-workspace" },
   { id: "human-grading-and-pwa-readback", owner: "operator-item-workspace" },
   { id: "same-finding-correctness-awaits-subject-build", owner: "operator",
