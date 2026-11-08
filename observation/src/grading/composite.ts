@@ -319,10 +319,16 @@ function stageComposite(stage: CompositePath["stages"][number], logical_item_id:
   const currentIds = new Set(current.map((contribution) => contribution.occurrence.occurrence_id));
   const evaluators = new Map(inputs.evaluators.map((evaluator) => [evaluator.evaluator_definition_id as string, evaluator]));
   const standing = selectCurrentAnswers(inputs.answers).filter((answer) => currentIds.has(answer.occurrence_id));
+  // Items, not rows: two uncorrected answers alike from one reviewer on one item open as that one item.
   const answerCounts = new Map<string, { readonly value: Omit<AnswerCount, "count" | "drilldown">; count: number }>();
+  const answeredItems = new Set<string>();
   for (const answer of standing) {
     const value = { question: answer.question, grader: graderOf(answer, evaluators), answer: answerKey(answer.answer) };
-    countInto(answerCounts, keyText(value), value);
+    const key = keyText(value);
+    const item = JSON.stringify([key, answer.occurrence_id]);
+    if (answeredItems.has(item)) continue;
+    answeredItems.add(item);
+    countInto(answerCounts, key, value);
   }
   const statusCounts = new Map<string, { readonly value: Omit<StatusCount, "count" | "drilldown">; count: number }>();
   const inCondition = (states: readonly ItemStatus["state"][]) => new Set(current.filter((contribution) =>

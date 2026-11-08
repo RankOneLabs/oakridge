@@ -284,6 +284,19 @@ integration("corrections count once under their own reviewer; disagreement is on
   expect([corrected!.superseded_answers.items.map((answer) => answer.answer), corrected!.answers.total]).toEqual([[choice("contradicted")], 3]);
 }));
 
+integration("a count is of items: two alike uncorrected answers from one reviewer count once, and open that item with both raw answers", async () => scratchDatabase(async (db) => {
+  const h = await harness(db);
+  await sharedTaskRun(h, { alpha: [finding(["T7"])], beta: [] });
+  const occurrence_id = await occurrenceAt(h, "assessment-alpha-1", "/findings/0");
+  await readyAll(h, occurrence_id);
+  for (let submission = 0; submission < 2; submission++)
+    await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("supported") });
+  const stage = stageOf(await composite(h, "T7"), "implementation");
+  const [count] = stage.answers;
+  const opened = await readCompositeDrilldown(h.db, h.scope, path, "run-1", count!.drilldown, pages);
+  expect([count!.count, opened.total, opened.items[0]!.questions.items[0]!.answers.total]).toEqual([1, 1, 2]);
+}));
+
 integration("not-ready, pending, failed, deferred and off stay distinct from each other and from negative and unclear answers", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7"]), finding(["T7"]), finding(["T7"]), finding(["T7"]), finding(["T7"]), finding(["T7"])], beta: [] });
