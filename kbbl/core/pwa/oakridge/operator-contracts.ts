@@ -182,13 +182,17 @@ export interface OperatorLaunchRequest extends OperatorIngressRequest {
   readonly config?: OperatorRunConfig | null;
 }
 
-export interface OperatorDecideRequest extends OperatorIngressRequest { readonly decision: string; readonly target: string; readonly payload: unknown }
+export interface OperatorDecideRequest extends OperatorIngressRequest {
+  readonly decision: string; readonly target: string; readonly payload: unknown;
+  /** Optional explicit links, declared against the tasks revision this decision approves. Nothing requires them. */
+  readonly analysis_links?: readonly OperatorAnalysisLinkEntry[];
+}
 
 export interface OperatorPublishRequest extends OperatorIngressRequest { readonly body: unknown; readonly predecessor: string | null; readonly subject: string | null }
 
 export type OperatorIngressResponse = OperatorIngressCommitted;
 
-export interface OperatorIngressCommitted { readonly kind: "committed"; readonly run_id: string; readonly event_id: string }
+export interface OperatorIngressCommitted { readonly kind: "committed"; readonly run_id: string; readonly event_id: string; readonly analysis_links?: OperatorDeclaredLinks }
 
 export type OperatorDefinitionId = string & { readonly __brand: "DefinitionId" };
 
@@ -353,6 +357,14 @@ export interface OperatorRunConfig {
   /** Whether observation may send this run's items to the configured graders. Off unless chosen. */
   readonly grading_enabled: boolean;
 }
+
+export interface OperatorAnalysisLinkEntry {
+  readonly source_revision_id: string;
+  readonly item_path: string;
+  readonly task_ids: readonly string[];
+}
+
+export type OperatorDeclaredLinks = { readonly kind: "committed"; readonly event_id: string } | { readonly kind: "refused"; readonly reason: string };
 
 export type OperatorAttemptStatusKind = OperatorAttemptStatus["kind"];
 
