@@ -393,6 +393,40 @@ integration("simultaneous claims cannot spend the same remaining run allowance",
   expect(await life.counts()).toMatchObject({ answers: 0 });
 }));
 
+integration("a reservation released while another worker is deciding never leaves its affordable work parked", async () => scratchDatabase(async (db) => {
+  const life = await lifecycle(db);
+  await captureAnalysis(life, true);
+  await captureAssessment(life);
+  // One request fits: worker A's claim holds it; every other execution but one is deferred behind it.
+  const allowance = { run_spend: 0.01, lease_ms: 60_000 };
+  const held = await claimNext(db, tenant, { ...allowance, lease_owner: "a" });
+  if (held.kind !== "claimed") throw new Error(held.kind);
+  for (let index = 0; index < 7; index++) expect((await claimNext(db, tenant, { ...allowance, lease_owner: "d" })).kind).toBe("budget_deferred");
+  const deferred = (await executionsOf(db)).find((row) => row.status === "budget_deferred")!;
+  const holder = new Client({ connectionString: await databaseUrl(db) });
+  await holder.connect();
+  const waiting = async () => (await holder.query(`SELECT count(*)::integer AS waiting FROM pg_stat_activity
+    WHERE datname = current_database() AND wait_event_type = 'Lock'`)).rows[0].waiting as number;
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT set_config('observation.producer', $1, true), set_config('observation.namespace', $2, true)", [tenant.producer, tenant.namespace]);
+    // Holding one deferred row stalls A's wake-up scan after A has released its reservation, uncommitted.
+    await holder.query("SELECT 1 FROM observation.evaluation_execution WHERE execution_id = $1 FOR UPDATE", [deferred.execution_id]);
+    const released = failExecution(db, tenant, held.claim, { category: "unconfigured_credential", detail: "no key", provider_request_id: null, provider_cost: null });
+    while (await waiting() < 1) await Bun.sleep(20);
+    // Worker B decides on the last queued execution while A's release is still open.
+    let decided = false;
+    const contender = claimNext(db, tenant, { ...allowance, lease_owner: "b" }).finally(() => { decided = true; });
+    // Without the run lock B decides at once; with it B waits behind A's release.
+    for (let polls = 0; !decided && polls < 50; polls++) await Bun.sleep(20);
+    await holder.query("COMMIT");
+    expect((await released).ok).toBe(true);
+    // B saw the released reservation and claimed what fits, rather than parking it after the wake-up looked.
+    expect((await contender).kind).toBe("claimed");
+  } finally { await holder.end(); }
+  expect((await executionsOf(db)).filter((row) => row.status === "budget_deferred")).toEqual([]);
+}));
+
 integration("deferral sends nothing and writes no answer; a released reservation offers deferred work again", async () => scratchDatabase(async (db) => {
   const life = await lifecycle(db);
   await captureAnalysis(life, true);

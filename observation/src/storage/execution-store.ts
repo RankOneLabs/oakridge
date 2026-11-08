@@ -300,6 +300,10 @@ export async function failExecution(db: Database, tenant: TenantScope, claim: Ex
     return ok(await settlement(db, tenant, claim, async (trx): Promise<SettlementResult> => {
       const current = await fenced(trx, tenant, claim);
       if (!current) return { kind: "stale_claim", execution_id: claim.execution_id };
+      // An unsent attempt releases its reservation and wakes the run's deferred work. Both happen under
+      // the run's allowance lock, so a claim deciding meanwhile waits and then sees the release, and
+      // cannot commit a deferral after the wake-up has looked.
+      await lockRunAllowance(trx, tenant, claim.run_id);
       const disposition = failureDisposition(failure.category, current);
       if (disposition.kind === "retry") await settleExecution(trx, tenant, claim, { status: "queued", retries: disposition.retries,
         lease_owner: null, lease_expires_at: null, updated_at: sql<Date>`clock_timestamp()` });
