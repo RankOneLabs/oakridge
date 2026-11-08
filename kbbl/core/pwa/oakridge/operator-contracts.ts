@@ -350,7 +350,7 @@ export type OperatorStreamFrame =
 
 export interface OperatorRunConfig {
   readonly sessions: { readonly [stage: string]: { readonly [worker: string]: OperatorSessionSettings } };
-  /** Whether observation may send the run's items to its configured graders. */
+  /** Whether observation may send this run's items to the configured graders. Off unless chosen. */
   readonly grading_enabled: boolean;
 }
 
