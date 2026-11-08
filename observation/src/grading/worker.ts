@@ -68,21 +68,17 @@ async function measure(context: ExecutionContext, runner: GradeRunner | null, on
   }
 }
 
-/** Claim, measure and settle one execution of one tenant. */
-export async function gradeNext(deps: GradingWorkerDependencies & { readonly lease_owner: string }, tenant: TenantScope): Promise<WorkOutcome> {
+/** Measures one claimed execution and settles it under that exact claim. The claim transaction has
+ * committed: the provider request runs with no transaction open. */
+export async function settleClaim(deps: Pick<GradingWorkerDependencies, "db" | "runners" | "log">, tenant: TenantScope, claim: ExecutionClaim)
+  : Promise<Exclude<WorkOutcome, ClaimResult>> {
   const log = deps.log ?? defaultLog;
-  const claimed = await claimNext(deps.db, tenant, { lease_owner: deps.lease_owner, lease_ms: deps.controls.lease_ms,
-    run_spend: deps.controls.run_spend });
-  if (claimed.kind !== "claimed") {
-    if (claimed.kind !== "idle") log(`grading ${claimed.kind}`, { namespace: tenant.namespace, run_id: claimed.run_id, execution_id: claimed.execution_id });
-    return claimed;
-  }
-  const claim = claimed.claim;
   const context = await readExecutionContext(deps.db, tenant, claim.execution_id);
-  const settle = async (): Promise<WorkOutcome> => {
+  const settled = (result: Awaited<ReturnType<typeof failExecution>>): Exclude<WorkOutcome, ClaimResult> => result.ok
+    ? { kind: "settled", claim, result: result.value } : { kind: "settlement_error", claim, detail: result.error.detail };
+  const settle = async (): Promise<Exclude<WorkOutcome, ClaimResult>> => {
     if (!context.ok) return settled(await failExecution(deps.db, tenant, claim, { category: "invalid_request", detail: context.error.detail,
       provider_request_id: null, provider_cost: null }));
-    // The claim transaction has committed: the provider request runs with no transaction open.
     const result = await measure(context.value, deps.runners(context.value.evaluator), () => markRequestSent(deps.db, tenant, claim));
     if (!result.ok) return settled(await failExecution(deps.db, tenant, claim, runnerFailure(result)));
     const problem = answerProblem(context.value.question, result.value.answer);
@@ -93,12 +89,22 @@ export async function gradeNext(deps: GradingWorkerDependencies & { readonly lea
     return settled(await failExecution(deps.db, tenant, claim, { category: "settlement_failed", detail: completed.error.detail,
       provider_request_id: result.value.external_execution_id ?? null, provider_cost: result.value.cost ?? null }));
   };
-  const settled = (result: Awaited<ReturnType<typeof failExecution>>): WorkOutcome => result.ok
-    ? { kind: "settled", claim, result: result.value } : { kind: "settlement_error", claim, detail: result.error.detail };
   const outcome = await settle();
   log("grading settled", { namespace: tenant.namespace, run_id: claim.run_id, execution_id: claim.execution_id, claim_attempt: claim.claim_attempt,
-    ...(outcome.kind === "settled" ? { result: outcome.result.kind } : outcome.kind === "settlement_error" ? { error: outcome.detail } : {}) });
+    ...(outcome.kind === "settled" ? { result: outcome.result.kind } : { error: outcome.detail }) });
   return outcome;
+}
+
+/** Claim, measure and settle one execution of one tenant. */
+export async function gradeNext(deps: GradingWorkerDependencies & { readonly lease_owner: string }, tenant: TenantScope): Promise<WorkOutcome> {
+  const log = deps.log ?? defaultLog;
+  const claimed = await claimNext(deps.db, tenant, { lease_owner: deps.lease_owner, lease_ms: deps.controls.lease_ms,
+    run_spend: deps.controls.run_spend });
+  if (claimed.kind !== "claimed") {
+    if (claimed.kind !== "idle") log(`grading ${claimed.kind}`, { namespace: tenant.namespace, run_id: claimed.run_id, execution_id: claimed.execution_id });
+    return claimed;
+  }
+  return settleClaim(deps, tenant, claimed.claim);
 }
 
 export interface GradingWorker { stop(): Promise<void> }

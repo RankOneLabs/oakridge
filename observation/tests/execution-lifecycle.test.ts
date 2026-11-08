@@ -126,6 +126,8 @@ integration("an enabled run's unlinked analysis is admitted and answered before 
     [RELEVANCE_ID, true, [expect.objectContaining({ state: "answered", answer: { state: "answered", kind: "choice", value: "relevant" } })]]]);
   expect(await life.counts()).toMatchObject({ executions: 1, completed: 1, attempts: 1, sent: 1, answers: 1 });
   expect(outbound).toBe(0);
+  // The spend read serves the exact config the launch delivered.
+  expect((await readRunSpend(db, tenant, "run-1")).captured_config).toEqual(runConfig(true));
 }));
 
 integration("with grading off, every supported question still gets frozen human-ready evidence and nothing is sent", async () => scratchDatabase(async (db) => {
@@ -146,6 +148,7 @@ integration("a launch that carried no config has grading off", async () => scrat
   await life.feed.launch(LAUNCH, "run-1", null);
   await captureAssessment(life);
   expect(await life.counts()).toMatchObject({ ready: 8, executions: 0 });
+  expect(await readRunSpend(db, tenant, "run-1")).toMatchObject({ is_grading_enabled: false, captured_config: null });
 }));
 
 integration("only supported kinds are admitted: tasks, risks, decisions and whole artifacts get no execution", async () => scratchDatabase(async (db) => {

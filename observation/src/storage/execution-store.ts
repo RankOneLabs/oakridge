@@ -9,13 +9,14 @@ import { AUTOMATIC_ATTEMPT_LABEL, automaticIdentity, evaluationDigest, failureDi
   type AttemptFailure, type ClaimResult, type ExecutionClaim, type ExecutionStatus, type ExecutionTerminalCause, type MeasurementState,
   type RunAdmission, type SettlementResult } from "../grading/execution";
 import type { GradeAnswer } from "../grading/observation";
+import type { RunConfigWire } from "../ingest/cursor";
 import type { QuestionDefinition } from "../grading/question";
 import type { EvaluationOutcome } from "../grading/runner";
 import { evidenceSetFromRow } from "./captured-evidence-store";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { DB, ObservationEvaluationExecution, ObservationEvaluatorDefinition } from "./db-types";
 import { questionFromRow } from "./grading-store";
-import { isRunGradingEnabled, runGradingEnabled } from "./run-capture-store";
+import { isRunGradingEnabled, readCapturedRunConfig, runGradingEnabled } from "./run-capture-store";
 
 /**
  * evaluation_execution is the one queue, lease and retry record; grading_provider_attempt holds one
@@ -428,6 +429,8 @@ export interface RunSpend {
   readonly run_id: string;
   /** The choice the run's captured launch committed. */
   readonly is_grading_enabled: boolean;
+  /** The exact config the launch delivered, or null when it carried none. */
+  readonly captured_config: RunConfigWire | null;
   readonly committed: number;
   readonly requests_sent: number;
   readonly attempts: number;
@@ -444,6 +447,8 @@ export async function readRunSpend(db: Database, tenant: TenantScope, run_id: st
       .groupBy("status").execute();
     const executions: Record<ExecutionStatus, number> = { queued: 0, claimed: 0, reclaimable: 0, budget_deferred: 0, completed: 0, failed: 0 };
     for (const row of statuses) executions[row.status as ExecutionStatus] = Number(row.count);
-    return { run_id, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id), committed, requests_sent: Number(counted.requests_sent), attempts: Number(counted.attempts), executions };
+    return { run_id, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id),
+      captured_config: await readCapturedRunConfig(trx, tenant, run_id), committed, requests_sent: Number(counted.requests_sent),
+      attempts: Number(counted.attempts), executions };
   });
 }

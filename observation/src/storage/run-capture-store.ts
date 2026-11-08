@@ -1,5 +1,6 @@
 import { sql } from "kysely";
 import type { JsonValue } from "../domain/primitives";
+import type { RunConfigWire } from "../ingest/cursor";
 import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 
 /** The launch delivery is the durable input a run was captured with; no other record restates it. */
@@ -23,4 +24,13 @@ export async function isRunGradingEnabled(trx: DatabaseTransaction, tenant: Tena
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("run_id", "=", run_id)
     .where("outcome_kind", "=", "run_input").where(sql<boolean>`detail->'config'->'grading_enabled' = 'true'::jsonb`).executeTakeFirst();
   return row !== undefined;
+}
+
+/** The exact config the run's launch delivered, as captured; null when the launch carried none or
+ * was never captured. */
+export async function readCapturedRunConfig(trx: DatabaseTransaction, tenant: TenantScope, run_id: string): Promise<RunConfigWire | null> {
+  const row = await trx.selectFrom("observation.source_event_outcome").select(sql<RunConfigWire | null>`detail->'config'`.as("config"))
+    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("run_id", "=", run_id)
+    .where("outcome_kind", "=", "run_input").executeTakeFirst();
+  return row?.config ?? null;
 }
