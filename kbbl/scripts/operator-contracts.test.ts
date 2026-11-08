@@ -1,6 +1,8 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { expect, test } from "bun:test";
+import { selectDriftedFiles } from "./operator-contracts-drift";
 
 const root = resolve(import.meta.dir, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
@@ -27,6 +29,32 @@ test("generated contracts import only each other, and only as types", () => {
       expect(sibling, `${file}: ${line}`).not.toBeNull();
       expect(files.has(join(dirname(file), `${sibling![1]}.ts`)), `${file}: ${line}`).toBe(true);
     }
+  }
+});
+
+test("the drift check reports any stray file a regeneration would delete, whatever its extension", () => {
+  const directory = mkdtempSync(join(tmpdir(), "operator-contracts-"));
+  try {
+    mkdirSync(join(directory, "projections"));
+    writeFileSync(join(directory, "projections/run-view.ts"), "generated");
+    const generated = new Map([["projections/run-view.ts", "generated"]]);
+    expect(selectDriftedFiles(directory, generated)).toEqual([]);
+    writeFileSync(join(directory, "projections/notes.md"), "kept by hand");
+    writeFileSync(join(directory, "stray.tsx"), "kept by hand");
+    expect(selectDriftedFiles(directory, generated).sort()).toEqual(["projections/notes.md", "stray.tsx"]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the drift check reports edited and missing generated files", () => {
+  const directory = mkdtempSync(join(tmpdir(), "operator-contracts-"));
+  try {
+    writeFileSync(join(directory, "edited.ts"), "edited");
+    const generated = new Map([["edited.ts", "generated"], ["missing.ts", "generated"]]);
+    expect(selectDriftedFiles(directory, generated)).toEqual(["edited.ts", "missing.ts"]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 

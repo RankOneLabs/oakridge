@@ -13,9 +13,10 @@
  * projections/unit-view.ts generates operator-contracts/projections/unit-view.ts,
  * and generated files import one another as types only.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import ts from "typescript";
+import { selectDriftedFiles } from "./operator-contracts-drift";
 
 const root = resolve(import.meta.dir, "../..");
 const output = resolve(root, "kbbl/core/pwa/oakridge/operator-contracts");
@@ -168,10 +169,8 @@ const generated = new Map([...contracts].map(([file, blocks]) => {
 }));
 
 if (process.argv.includes("--check")) {
-  const present = existsSync(output) ? readdirSync(output, { recursive: true, encoding: "utf8" }).filter((entry) => entry.endsWith(".ts")) : [];
-  const stray = present.filter((file) => !generated.has(file));
-  const stale = [...generated].filter(([file, text]) => !present.includes(file) || readFileSync(resolve(output, file), "utf8") !== text).map(([file]) => file);
-  if (stray.length || stale.length) throw new Error(`operator-contracts/ has drifted (${[...stale, ...stray].join(", ")}); run bun kbbl/scripts/generate-operator-contracts.ts`);
+  const drifted = selectDriftedFiles(output, generated);
+  if (drifted.length) throw new Error(`operator-contracts/ has drifted (${drifted.join(", ")}); run bun kbbl/scripts/generate-operator-contracts.ts`);
 } else {
   rmSync(output, { recursive: true, force: true });
   for (const [file, text] of generated) {
