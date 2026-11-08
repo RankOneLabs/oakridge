@@ -1,17 +1,18 @@
-import type { Event } from "../core-client/core-types";
+import { ANALYSIS_LINKS_DECLARED } from "../domain/analysis-link-declaration";
+import type { CoreEvent } from "../storage/json-column-types";
 import type { CommittedEventRow, CommittedRunConfig, PinnedDefinitionRead } from "../storage/read-store";
 import { artifactSchemaVersion, bodyDigest, declarationDigest } from "./observation-schema-version";
 import type { JsonValue, SourceEventOutcome } from "./observation-wire";
 
-export const MAPPED_EVENTS = ["revision_published", "launched"] as const satisfies readonly Event["kind"][];
+export const MAPPED_EVENTS = ["revision_published", "launched", ANALYSIS_LINKS_DECLARED] as const satisfies readonly CoreEvent["kind"][];
 /** Approvals stay in Oakridge: an operator decision advances capture and creates no grading record. */
-export const DELIBERATELY_UNMAPPED_EVENTS = ["operator_decided", "worker_started", "worker_ended", "retry_requested", "cancel_requested"] as const satisfies readonly Event["kind"][];
+export const DELIBERATELY_UNMAPPED_EVENTS = ["operator_decided", "worker_started", "worker_ended", "retry_requested", "cancel_requested"] as const satisfies readonly CoreEvent["kind"][];
 /** A new core variant must be handled here or deliberately excluded. */
-type MissingEventKind = Exclude<Event["kind"], typeof MAPPED_EVENTS[number] | typeof DELIBERATELY_UNMAPPED_EVENTS[number]>;
+type MissingEventKind = Exclude<CoreEvent["kind"], typeof MAPPED_EVENTS[number] | typeof DELIBERATELY_UNMAPPED_EVENTS[number]>;
 const allKindsCovered: MissingEventKind extends never ? true : never = true;
 void allKindsCovered;
 
-export interface MappingInput { readonly row: CommittedEventRow<Event>; readonly definition: PinnedDefinitionRead | null;
+export interface MappingInput { readonly row: CommittedEventRow<CoreEvent>; readonly definition: PinnedDefinitionRead | null;
   readonly namespace: string; readonly stage: string | null; readonly revision_sequence: number | null;
   /** Read for a launch only: its config travels with its input. */
   readonly run_config: CommittedRunConfig | null }
@@ -46,6 +47,11 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
       return { ...provenance, kind: "run_input", event_kind: event.kind, ...identity, input: event.input,
         input_schema_version: declarationDigest(definition.checked_program.workflow.input as JsonValue),
         config: committed.state === "committed" ? committed.config : null };
+    }
+    case ANALYSIS_LINKS_DECLARED: {
+      const { run_id, tasks_revision_id, entries } = event;
+      return { ...provenance, kind: "relation_declaration", event_kind: event.kind, ...identity, declaration: { run_id, tasks_revision_id,
+        entries: entries.map(({ source_revision_id, item_path, task_ids }) => ({ source_revision_id, item_path, task_ids })) } };
     }
     case "operator_decided": case "worker_started": case "worker_ended": case "retry_requested": case "cancel_requested":
       return { ...provenance, kind: "ignored", event_kind: event.kind, ...identity };

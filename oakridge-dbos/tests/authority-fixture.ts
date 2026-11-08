@@ -43,6 +43,18 @@ export function sampleWorkflow(name: "review-loop" | "fan-out"): Workflow {
   return JSON.parse(readFileSync(resolve(root, "workflow-core/fixtures/bundles", `${name}.json`), "utf8")) as Workflow;
 }
 
+/** The smallest workflow with the addresses a declaration names: an analysis, and tasks under an operator review. */
+export const ANALYSIS_LINK_WORKFLOW = { workflow: "analysis_links", input: { topic: "text" }, schemas: { finding: { id: "text" } },
+  run: { units: { document: { stage: "document", input: { topic: "input.topic" } } }, outcome: { tasks: "document.outcome.tasks" } },
+  stages: { document: { input: { topic: "text" },
+    artifacts: { analysis: { schema: { findings: "list(finding)" } }, tasks: { schema: { tasks: "list(text)" } } },
+    workers: { writer: { kind: "agent", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" },
+      inputs: { topic: "input.topic", critique: "latest(analysis)" }, creates: ["analysis", "tasks"] } },
+    reviews: { tasks_review: { of: "tasks", by: "operator", prompt: "review-loop/editor.md",
+      inputs: { topic: "input.topic", draft: "latest(tasks)", critique: "latest(analysis)" }, decisions: {
+        approve: { effect: "approve", label: "Approve" }, request_changes: { effect: "request_changes", label: "Request changes", fields: { feedback: "Why?" } } } } },
+    done_when: "approved(tasks)", outcome: { tasks: "latest(tasks)" } } } } as unknown as Workflow;
+
 export const OPERATOR: Writer = { kind: "operator", subject: "credential:test" };
 export const executor = (action: string): Writer => ({ kind: "executor", attempt: action });
 

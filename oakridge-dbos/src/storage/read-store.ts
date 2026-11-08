@@ -7,13 +7,13 @@ import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
 import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
-import type { Event } from "../core-client/core-types";
 import type { OperatorEventPayload } from "../projections/operator-event";
 import type { SessionHold, SessionRunLocation } from "../projections/session-hold";
 import type { DB } from "./db-types";
 import { anyOf, type DatabaseTransaction } from "./database";
 import { OWED_STATUSES } from "./executor-store";
-import type { StallRecord, WantedWorkers } from "./json-column-types";
+import { ANALYSIS_LINKS_DECLARED } from "../domain/analysis-link-declaration";
+import type { CoreEvent, StallRecord, WantedWorkers } from "./json-column-types";
 import type { ArtifactRevisionRecord, AttemptRecord, EffectIntentRecord, EventRecord, IngressReceiptRecord, ReviewDecisionRecord, RunRecord,
   UnitDependencyRecord, UnitRecord } from "./schema-records";
 
@@ -137,6 +137,7 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
   ]);
   const latest_events = await trx.selectFrom("authority.event").distinctOn(["run_id", "unit_id"])
     .select(["run_id", "unit_id", "id", "created_at"]).where("run_id", "=", ids)
+    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "<>", ANALYSIS_LINKS_DECLARED))
     .orderBy("run_id").orderBy("unit_id").orderBy("created_at", "desc").orderBy("id", "desc").execute();
   const definitions = new Map(await Promise.all(runs.map(async (run) => [run.definition_id, await loadDefinition(run.definition_id as DefinitionId)] as const)));
   return run_ids.flatMap((run_id) => {
@@ -489,12 +490,12 @@ export interface CommittedEventRow<Payload> { readonly id: string; readonly run_
   readonly payload: Payload; readonly created_at: Date; readonly commit_txid: string; readonly was_visible_at_subscription: boolean }
 export interface CommittedEventQuery { readonly after: CommittedEventCursor; readonly limit: number; readonly subscription_snapshot?: string | null }
 /** Both authority event feeds use this one guarded, ordered tuple scan. */
-export async function readCommittedEventsAfter(db: Reader, table: "authority.event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<Event>[]>;
+export async function readCommittedEventsAfter(db: Reader, table: "authority.event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<CoreEvent>[]>;
 export async function readCommittedEventsAfter(db: Reader, table: "authority.operator_event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<OperatorEventPayload>[]>;
 // ORDER BY names the table's columns: the bare name would sort by the text output alias,
 // putting "1000005" before "100001" and skipping every event below a digit boundary.
-export async function readCommittedEventsAfter(db: Reader, table: "authority.event" | "authority.operator_event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<Event | OperatorEventPayload>[]> {
-  const rows = await sql<{ id: string; run_id: string | null; unit_id: string | null; payload: Event | OperatorEventPayload; created_at: Date;
+export async function readCommittedEventsAfter(db: Reader, table: "authority.event" | "authority.operator_event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<CoreEvent | OperatorEventPayload>[]> {
+  const rows = await sql<{ id: string; run_id: string | null; unit_id: string | null; payload: CoreEvent | OperatorEventPayload; created_at: Date;
     commit_txid: string; was_visible_at_subscription: boolean }>`SELECT id, run_id, ${table === "authority.event" ? sql.ref("unit_id") : sql<null>`NULL::text`} AS unit_id, payload, created_at, commit_txid::text AS commit_txid, coalesce(pg_visible_in_snapshot(commit_txid::text::xid8, ${input.subscription_snapshot ?? null}::pg_snapshot), false) AS was_visible_at_subscription FROM ${sql.table(table)} WHERE (commit_txid, id) > (${input.after.commit_txid}::bigint, ${input.after.id}) AND commit_txid < pg_snapshot_xmin(pg_current_snapshot())::text::bigint ORDER BY ${sql.table(table)}.commit_txid, ${sql.table(table)}.id LIMIT ${input.limit}`.execute(db);
   return rows.rows;
 }
@@ -506,7 +507,7 @@ export async function readEventUnitStage(db: Reader, run_id: string, unit_id: st
 }
 
 /** Count committed publications through this event to reproduce the core's revision sequence. */
-export async function readEventRevisionSequence(db: Reader, row: CommittedEventRow<Event>, artifact: string): Promise<number> {
+export async function readEventRevisionSequence(db: Reader, row: CommittedEventRow<CoreEvent>, artifact: string): Promise<number> {
   const counted = await db.selectFrom("authority.event").select((eb) => eb.fn.countAll<number>().as("count"))
     .where("run_id", "=", row.run_id ?? "").where("unit_id", "=", row.unit_id)
     .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "revision_published"))

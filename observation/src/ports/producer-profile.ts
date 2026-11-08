@@ -1,5 +1,7 @@
 import type { QuestionDefinition, QuestionKey } from "../grading/question";
+import type { JsonValue, Result } from "../domain/primitives";
 import type { ExtractorDefinition, RelationType } from "../projection/extractor";
+import type { RelationDeclaration } from "../projection/relations";
 import type { CapturedSources, EvidenceCollection, SourceArtifact } from "./artifact-source";
 
 /** The fields of a captured revision a profile may use to relate it to another revision. */
@@ -11,9 +13,12 @@ export interface RevisionLink {
   readonly target_artifact_kind: string;
   readonly subject_revision_id: string;
 }
+export interface DeclarationDecodeError { readonly operation: "decode_relation_declaration"; readonly entity_id: string; readonly detail: string }
 export interface ExtractionProfile {
   definitions(artifact_kind: string, schema_version: string): readonly ExtractorDefinition[];
   revisionLink(revision: RevisionHeader): RevisionLink | null;
+  /** The relations a journaled producer declaration states for one run, exactly as supplied. */
+  declaredRelations(declaration: JsonValue, run_id: string): Result<readonly RelationDeclaration[], DeclarationDecodeError>;
 }
 
 export interface EvidenceCollector {

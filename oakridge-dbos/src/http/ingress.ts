@@ -2,9 +2,10 @@ import { resolveLaunchableDefinition, type DefinitionId } from "../runtime/defin
 import type { Context, Hono } from "hono";
 import { createHash } from "node:crypto";
 import type { Event, Writer } from "../core-client/core-types";
+import { selectApplicableEntries, type AnalysisLinkEntry } from "../domain/analysis-link-declaration";
 import { err, ok, type ProjectId, type Result, type RunId } from "../domain/primitives";
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
-import { commitEvent, launchRunId, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
+import { commitAnalysisLinkDeclaration, commitEvent, launchRunId, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
 import { readSessionAttempt } from "../storage/read-store";
 import { hasProject } from "../storage/operator-store";
 import { operatorWriterFromCredential } from "./control-auth";
@@ -27,6 +28,10 @@ export interface LaunchRequest extends IngressRequest {
 export interface DecideRequest extends IngressRequest { readonly decision: string; readonly target: string; readonly payload: unknown }
 /** What an agent sends to publish a revision; its attempt comes from the session secret. */
 export interface PublishRequest extends IngressRequest { readonly body: unknown; readonly predecessor: string | null; readonly subject: string | null }
+/** Explicit producer-supplied links against one exact approved tasks revision. */
+export interface DeclareLinksRequest extends IngressRequest { readonly tasks_revision_id: string; readonly entries: readonly AnalysisLinkEntry[] }
+/** Nothing applicable was supplied, so nothing was journaled: missing links are valid and need no one's action. */
+export interface NoDeclaration { readonly kind: "no_declaration"; readonly run_id: string }
 /** Successful ingress returns the committed event; typed refusals use the shared error response. */
 export type IngressResponse = IngressCommitted;
 /** A committed (or replayed) ingress request: the only success body. */
@@ -61,6 +66,16 @@ export function parsePublishRequest(raw: unknown): Parsed<PublishRequest> {
   if (!isFields(raw) || !isRequestId(raw.request_id) || !("body" in raw) || !isOptionalId(raw.predecessor) || !isOptionalId(raw.subject))
     return malformed("request_id and body are required; predecessor and subject are revision ids or null");
   return ok({ request_id: raw.request_id, body: raw.body, predecessor: raw.predecessor ?? null, subject: raw.subject ?? null });
+}
+
+const isTaskIds = (value: unknown): value is readonly string[] => Array.isArray(value) && value.every(isKey);
+const isLinkEntry = (value: unknown): value is AnalysisLinkEntry =>
+  isFields(value) && isKey(value.source_revision_id) && isKey(value.item_path) && isTaskIds(value.task_ids);
+export function parseDeclareLinksRequest(raw: unknown): Parsed<DeclareLinksRequest> {
+  if (!isFields(raw) || !isRequestId(raw.request_id) || !isKey(raw.tasks_revision_id) || !Array.isArray(raw.entries) || !raw.entries.every(isLinkEntry))
+    return malformed("request_id, tasks_revision_id and entries of { source_revision_id, item_path, task_ids } are required");
+  return ok({ request_id: raw.request_id, tasks_revision_id: raw.tasks_revision_id, entries: raw.entries.map(({ source_revision_id, item_path, task_ids }) =>
+    ({ source_revision_id, item_path, task_ids })) });
 }
 
 /** One commit outcome as an HTTP response: a step rejection is 409, as is a reused ingress id. */
@@ -137,6 +152,26 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
     ({ kind: "retry_requested", unit: param(c, "unit_id"), worker: param(c, "worker") })));
   app.post("/api/runs/:run_id/units/:unit_id/reviews/:review/decide", operatorEvent(parseDecideRequest, (c, body) =>
     ({ kind: "operator_decided", unit: param(c, "unit_id"), review: param(c, "review"), decision: body.decision, target: body.target, payload: body.payload })));
+
+  /**
+   * The writer of explicit analysis links, for a caller holding producer-supplied associations
+   * after a tasks approval. It is separate from the decision: the approval commits on its own and
+   * maps to nothing, and only what a caller supplies here can ever become a link.
+   */
+  app.post("/api/runs/:run_id/analysis-links", async (c) => {
+    const raw = await requestBody(c.req.raw);
+    if (raw instanceof MalformedRequestError) return errorResponse(raw);
+    const parsed = parseDeclareLinksRequest(raw);
+    if (!parsed.ok) return errorResponse(parsed.error);
+    const run_id = param(c, "run_id") as RunId;
+    const { request_id, tasks_revision_id } = parsed.value;
+    const entries = selectApplicableEntries(parsed.value.entries);
+    if (entries.length === 0) return Response.json({ kind: "no_declaration", run_id } satisfies NoDeclaration);
+    try {
+      return ingressResponse(run_id, await commitAnalysisLinkDeclaration(deps.db, { ingress_id: request_id,
+        declaration: { run_id, tasks_revision_id, entries }, writer: operatorWriterFromCredential(c.req.raw) }));
+    } catch (cause) { return fault(cause); }
+  });
 
   /**
    * Publish. A session secret names the running attempt, which is both the

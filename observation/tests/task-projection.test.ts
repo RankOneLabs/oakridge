@@ -155,7 +155,7 @@ integration("a finding is captured and pinned before any task exists, and a late
   const pinned = await readOccurrenceEvidence(db, tenant, occurrenceIdOf(finding!.occurrence_id));
   expect(pinned).toHaveLength(1);
   await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
-  const declaration = { source_revision_id: "analysis-1", item_path: finding!.json_pointer, link: { target: "logical_item" as const, type: "assesses" as const,
+  const declaration = { run_id: "run-1", source_revision_id: "analysis-1", item_path: finding!.json_pointer, link: { target: "logical_item" as const, type: "assesses" as const,
     target_scope: TASK_SCOPE, target_local_id: "T7", evidence_ref: "declaration:tasks-1:/findings/0" } };
   const first = await withTenant(db, tenant, (trx) => declareRelationInTransaction(trx, tenant, declaration));
   const repeated = await withTenant(db, tenant, (trx) => declareRelationInTransaction(trx, tenant, declaration));
@@ -186,7 +186,7 @@ integration("a declaration racing the task's capture still resolves to the task"
   });
   await holding;
   let settled = false;
-  const declared = withTenant(db, tenant, (trx) => declareRelationInTransaction(trx, tenant, { source_revision_id: "analysis-1",
+  const declared = withTenant(db, tenant, (trx) => declareRelationInTransaction(trx, tenant, { run_id: "run-1", source_revision_id: "analysis-1",
     item_path: finding!.json_pointer, link: { target: "logical_item", type: "assesses", target_scope: TASK_SCOPE, target_local_id: "T7",
       evidence_ref: "declaration:race" } })).finally(() => { settled = true; });
   for (let poll = 0; poll < 200 && !settled; poll += 1) {

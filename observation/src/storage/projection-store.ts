@@ -8,7 +8,7 @@ import { selectRevision, type ExtractorDefinition, type LinkReference, type Logi
   type RelationType, type SelectedItem } from "../projection/extractor";
 import { extractionIssue, issueId, type ExtractionIssue } from "../projection/issues";
 import { logicalItemId, logicalItemRelation, logicalReference, occurrenceRelation, relationId, revisionAnchorId,
-  subjectRelation, type RelationProposal } from "../projection/relations";
+  subjectRelation, type RelationDeclaration, type RelationProposal } from "../projection/relations";
 import { occurrenceId } from "../projection/occurrence-id";
 import type { CaptureConfiguration } from "../grading/evidence";
 import { pinOccurrenceInTransaction } from "./captured-evidence-store";
@@ -154,12 +154,6 @@ async function saveLink(trx: DatabaseTransaction, tenant: TenantScope, revision:
   return true;
 }
 
-/** An explicit link to an item already captured, addressed by its exact revision and path. */
-export interface RelationDeclaration {
-  readonly source_revision_id: string;
-  readonly item_path: string;
-  readonly link: LogicalItemLink;
-}
 export interface RelationDeclarationError { readonly operation: "declare_relation"; readonly entity_id: string; readonly detail: string }
 
 /** Serializes writers of one tenant's feed, so a target and an edge to it cannot miss each other. */
@@ -178,8 +172,9 @@ export async function declareRelationInTransaction(trx: DatabaseTransaction, ten
   const source = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "run_id"])
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("revision_id", "=", declaration.source_revision_id).where("json_pointer", "=", declaration.item_path).executeTakeFirst();
-  if (!source) return err({ operation: "declare_relation", entity_id: declaration.source_revision_id,
-    detail: `no captured item at ${declaration.item_path}` });
+  // The exact address decides, inside the declared run: another run's revision never satisfies it.
+  if (source?.run_id !== declaration.run_id) return err({ operation: "declare_relation", entity_id: declaration.source_revision_id,
+    detail: `no captured item at ${declaration.item_path} in run ${declaration.run_id}` });
   return ok(await saveLogicalItemRelation(trx, tenant, source.run_id, source.occurrence_id, declaration.link));
 }
 

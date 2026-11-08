@@ -29,6 +29,8 @@ export type SourceEventOutcome = SourceEventProvenance & (
       readonly input_schema_version: string; readonly config: RunConfigWire | null }
   | { readonly kind: "ignored"; readonly event_kind: "operator_decided" | "worker_started" | "worker_ended" | "retry_requested" | "cancel_requested";
       readonly run_id: string; readonly event_id: string }
+  /** A producer's explicit relations, carried as journaled: the service's profile reads them. */
+  | { readonly kind: "relation_declaration"; readonly event_kind: string; readonly run_id: string; readonly event_id: string; readonly declaration: JsonValue }
   | { readonly kind: "unmapped"; readonly event_kind: string; readonly run_id: string; readonly event_id: string; readonly reason: string });
 export interface SourceEventDelivery { readonly previous: SourceEventCursor; readonly cursor: SourceEventCursor; readonly outcome: SourceEventOutcome }
 export interface SourceEventAck { readonly cursor: SourceEventCursor }

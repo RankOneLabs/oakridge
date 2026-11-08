@@ -215,7 +215,7 @@ integration("not-ready capture, config swap and restart, readiness arrival and a
 
   // A late link changes the tracking view only.
   const unlinkedReady = await settled(h, second, unlinked, (sets) => sets.every((set) => set.readiness.state === "ready"));
-  const linked = await withTenant(db, tenant, (trx) => declareRelationInTransaction(trx, tenant, { source_revision_id: "assessment-1",
+  const linked = await withTenant(db, tenant, (trx) => declareRelationInTransaction(trx, tenant, { run_id: "run-1", source_revision_id: "assessment-1",
     item_path: "/findings/2", link: { target: "logical_item", type: "assesses", target_scope: TASK_SCOPE, target_local_id: "T8",
       evidence_ref: "declaration:late" } }));
   expect(linked.ok).toBe(true);

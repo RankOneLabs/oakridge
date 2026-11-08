@@ -18,6 +18,14 @@ export interface RelationProposal {
   readonly algorithm_version: string | null;
 }
 
+/** An explicit link to an item already captured in one run, addressed by its exact revision and path. */
+export interface RelationDeclaration {
+  readonly run_id: string;
+  readonly source_revision_id: string;
+  readonly item_path: string;
+  readonly link: LogicalItemLink;
+}
+
 /** Run-scoped: the same local id in another run is a different logical item. */
 export function logicalItemId(identity: LogicalItemIdentity): string {
   return `${identity.producer}:${identity.namespace}:${identity.run_id}:${identity.scope}:${identity.producer_local_id}`;
