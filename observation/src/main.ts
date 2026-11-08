@@ -73,13 +73,17 @@ const RECONCILE_MS = 15_000;
 
 /** Reconciles every tenant now and then at an interval until stopped, so a question whose input
  * arrives without a new event, or ready work of an enabled run, is still taken up. */
-function startReconcileSweep(reconciler: EvidenceReconciler, tenants: readonly TenantScope[], interval_ms: number): { stop(): Promise<void> } {
-  let current: Promise<void> = Promise.resolve();
+/** One sweep at a time: a tick that arrives while a sweep is still running is skipped, so slow
+ * sweeps never queue up behind each other. */
+export function startReconcileSweep(reconciler: Pick<EvidenceReconciler, "reconcileAll">, tenants: readonly TenantScope[], interval_ms: number)
+  : { stop(): Promise<void> } {
+  let current: Promise<void> | null = null;
   const sweep = (): void => {
-    current = current.then(async () => {
+    if (current) return;
+    current = (async () => {
       for (const tenant of tenants) await reconciler.reconcileAll(tenant)
         .catch((error: unknown) => console.error("[observation] reconciliation failed", { namespace: tenant.namespace, error }));
-    });
+    })().finally(() => { current = null; });
   };
   sweep();
   const timer = setInterval(sweep, interval_ms);
