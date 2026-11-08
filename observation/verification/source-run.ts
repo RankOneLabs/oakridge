@@ -37,12 +37,20 @@ export interface SourceRunOptions { readonly input: SourceRunInput; readonly dir
   /** The run's own automatic-grading choice, committed with its launch. Off unless set. */
   readonly grading_enabled?: boolean;
   /** Steps around a review the run accepts, each taken once: `before` while it still awaits, `after` once accepted. */
-  readonly reviews?: readonly ReviewCheckpoint[] }
+  readonly reviews?: readonly ReviewCheckpoint[];
+  /** How many units must hold the target artifact before the run is done. One unless set. */
+  readonly target_units?: number }
+/** One explicit association, as the tasks approval's caller supplies it. */
+export interface SuppliedLink { readonly source_revision_id: string; readonly item_path: string; readonly task_ids: readonly string[] }
 /** What a proof does around one accepted review. `target` is the revision the review decides. A failed `before` ends the run there. */
 export interface ReviewCheckpoint {
   readonly review: string;
   before?(run: RunReference, target: string): Promise<ProofCheck>;
   after?(run: RunReference, target: string): Promise<ProofCheck>;
+  /** Sent back once per unit before that unit's acceptance, so the run really revises the artifact. */
+  readonly revision_feedback?: string;
+  /** Explicit links the acceptance carries. */
+  analysis_links?(run: RunReference, target: string): readonly SuppliedLink[];
 }
 
 const POLL_MS = 1_000;
@@ -62,20 +70,32 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 const acceptableReviews = (through: SourceRunTarget): readonly string[] => through === "analysis" ? []
   : ["analysis_review", "spec_review", "tasks_review", "plan_review", ...(through === "assessment" ? ["brief_review"] : [])];
 
+interface ReviewProgress { readonly taken: Set<string>; readonly revised: Set<string> }
 /** Accepts what the capture needs, taking each review's checkpoint steps. Returns a `before` step that failed. */
-async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectView, options: SourceRunOptions, taken: Set<string>): Promise<ProofCheck | null> {
+async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectView, options: SourceRunOptions, progress: ReviewProgress): Promise<ProofCheck | null> {
   const { run_id } = run;
+  const { taken, revised } = progress;
   for (const review of inspect.attention) {
     if (review.kind !== "awaiting_review" || !review.review || !acceptableReviews(options.through).includes(review.review)) continue;
-    const checkpoint = taken.has(review.review) ? undefined : options.reviews?.find((candidate) => candidate.review === review.review);
     const target = typeof review.target === "string" ? review.target : "";
+    const configured = options.reviews?.find((candidate) => candidate.review === review.review);
+    const unit_review = JSON.stringify([review.unit_id, review.review]);
+    if (configured?.revision_feedback && !revised.has(unit_review)) {
+      revised.add(unit_review);
+      const sent = await io.dbos(`/api/runs/${run_id}/units/${encodeURIComponent(review.unit_id ?? "")}/reviews/${review.review}/decide`, {
+        request_id: crypto.randomUUID(), decision: "request_changes", target: review.target, payload: { feedback: configured.revision_feedback } });
+      if (!sent.ok) return { name: `${review.review} is sent back for a revision`, passed: false, detail: sent.error.detail };
+      continue;
+    }
+    const checkpoint = taken.has(review.review) ? undefined : configured;
     if (checkpoint?.before) {
       const step = await checkpoint.before(run, target);
       if (!step.passed) return step;
     }
     await io.dbos(`/api/runs/${run_id}/units/${encodeURIComponent(review.unit_id ?? "")}/reviews/${review.review}/decide`, {
       request_id: crypto.randomUUID(), decision: "accept", target: review.target,
-      payload: { feedback: "Accepted for the isolated live verification run." } });
+      payload: { feedback: "Accepted for the isolated live verification run." },
+      ...(checkpoint?.analysis_links ? { analysis_links: checkpoint.analysis_links(run, target) } : {}) });
     if (checkpoint) {
       taken.add(review.review);
       const step = await checkpoint.after?.(run, target);
@@ -87,18 +107,18 @@ async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectVie
 
 async function driveToTarget(io: ProofIo, run: RunReference, options: SourceRunOptions): Promise<ProofCheck> {
   const { run_id } = run;
-  const taken = new Set<string>();
+  const progress: ReviewProgress = { taken: new Set(), revised: new Set() };
   const deadline = io.now() + (options.timeout_ms ?? DEFAULT_TIMEOUT_MS);
   while (io.now() < deadline) {
     const read = await io.dbos(`/api/runs/${run_id}/inspect`);
     if (!read.ok) return { name: "the run reaches its target", passed: false, detail: read.error.detail };
     const inspect = read.value as InspectView;
     await writeJson(join(options.directory, "inspect.json"), inspect);
-    if (inspect.artifacts.some((artifact) => artifact.latest_revision && artifact.artifact_key === options.through))
+    if (inspect.artifacts.filter((artifact) => artifact.latest_revision && artifact.artifact_key === options.through).length >= (options.target_units ?? 1))
       return { name: "the run reaches its target", passed: true, detail: options.through };
     const stalled = inspect.attention.find((item) => item.kind !== "awaiting_review");
     if (stalled) return { name: "the run reaches its target", passed: false, detail: `needs intervention: ${JSON.stringify(stalled)}` };
-    const refused = await acceptReviews(io, run, inspect, options, taken);
+    const refused = await acceptReviews(io, run, inspect, options, progress);
     if (refused) return refused;
     await io.sleep(POLL_MS);
   }

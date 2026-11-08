@@ -9,18 +9,21 @@
  *   on to its assessment -> a second mapping is journaled with observation down, and the whole stack
  *   restarts before any acknowledgement: it arrives once and nothing is regraded.
  *
- * A run never reaches integration or a second cohort here: an audit may not merge, and a run's
- * cohorts are its planner's to choose. So the shared-task matrix (two cohorts, revised plan and briefs,
- * both implementation assessments, integration pending then final, corrections and disagreement) runs
- * in a tenant of its own on the shadow's database: real ordered delivery and real schema, but synthetic
- * revisions and answers, which the report labels as such. No service ever works that tenant, so it
- * sends no request.
+ * A second real run shares one task between two cohorts: its tasks approval itself carries explicit
+ * links, its plan and both briefs are sent back and really revised, and both cohorts reach their
+ * assessments. It stops there, with integration read as pending. Completing a cohort takes an operator's
+ * acceptance of its assessment and confirmation of a merge, which this proof does not make on its own.
+ *
+ * The shared-task matrix (integration pending then final, corrections and disagreement) therefore stays
+ * as a supplement, in a tenant of its own on the shadow's database: real ordered delivery and real
+ * schema, but synthetic revisions and answers, which the report labels as such. No service ever works
+ * that tenant, so it sends no request.
  */
 import { resolve } from "node:path";
 import { canonicalDigest } from "canonical-json";
 import type { EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId } from "../src/domain/identity";
 import type { JsonValue, Result } from "../src/domain/primitives";
-import { uniformDrilldownPages, type LogicalItemComposite, type LogicalItemLineage, type Paged, type StageComposite } from "../src/grading/composite";
+import { uniformDrilldownPages, type DrilldownRow, type LogicalItemComposite, type LogicalItemLineage, type Paged, type StageComposite } from "../src/grading/composite";
 import type { GradingRegistration } from "../src/grading/configuration";
 import { AUTOMATIC_ATTEMPT_LABEL, evaluationDigest, submissionAttemptLabel, submissionDigest } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
@@ -38,11 +41,12 @@ import { NO_EVIDENCE, scenarioStatus, type MeasurementReadback, type ProofCheck,
 import { graderPlans } from "./registration";
 import { observationSettled, settleObservation } from "./scenarios";
 import type { ProofIo } from "./shadow-session";
-import type { ReviewCheckpoint } from "./source-run";
+import type { ReviewCheckpoint, SourceRunInput } from "./source-run";
 
 const path = oakridgeProfile.composite;
 const POLL_MS = 1_000;
 const DELIVERY_ATTEMPTS = 180;
+const SHARED_RUN_TIMEOUT_MS = 5_400_000;
 const WHOLE = { limit: 200, offset: 0 };
 /** Named by no task list, so its edge stays unresolved and visible. */
 export const UNRESOLVED_TASK = "T-not-in-this-run";
@@ -51,6 +55,8 @@ const check = (name: string, passed: boolean, detail: string): ProofCheck => ({ 
 export interface ObservationReads { readonly db: Database; readonly tenant: TenantScope; close(): Promise<void> }
 export interface RelationsSource {
   run(label: GradingRunLabel, options: GradingRunOptions): Promise<{ readonly report: ScenarioReport; readonly run: RunReference | null }>;
+  /** Plans two cohorts sharing one task, for the wider real run. */
+  readonly shared_input: SourceRunInput;
   /** The shadow's own observation database under its provisioned role, and the shadow's tenant. */
   openObservation(): Promise<Result<ObservationReads, ProofFailure>>;
 }
@@ -160,6 +166,147 @@ export function lineageChecks(lineage: LogicalItemLineage): readonly ProofCheck[
   return [check("the task's lineage runs through its task list, plan and brief entries at exact revisions and paths", ["tasks", "plan", "brief"].every((kind) => kinds.has(kind)),
     [...kinds].join(", ")),
   check("the task's lineage reaches the analysis finding and the implementation assessment", stages.has("analysis") && stages.has("implementation"), [...stages].join(", "))];
+}
+
+// ---------------------------------------------------------- a real two-cohort run ---
+
+/** Every question window and answer window of a drilldown continues to the same whole lists. */
+export async function nestedPageChecks(reads: ObservationReads, run_id: string, read: LogicalItemComposite): Promise<readonly ProofCheck[]> {
+  const unwalked: string[] = [];
+  let questions_walked = 0;
+  let answers_walked = 0;
+  for (const stage of read.stages) {
+    const whole = await readCompositeDrilldown(reads.db, reads.tenant, path, run_id, stage.items, uniformDrilldownPages(WHOLE));
+    for (let row = 0; row < whole.items.length; row++) {
+      const expected = whole.items[row]!.questions;
+      const rows = { limit: 1, offset: row };
+      const walkedQuestions: string[] = [];
+      for (let offset = 0; offset < expected.total; offset++) {
+        const windowed = await readCompositeDrilldown(reads.db, reads.tenant, path, run_id, stage.items, { ...uniformDrilldownPages(WHOLE), rows, questions: { limit: 1, offset } });
+        walkedQuestions.push(...windowed.items[0]!.questions.items.map((question) => question.question.question_id));
+        questions_walked += 1;
+        const answers = expected.items[offset]!.answers;
+        const walkedAnswers: string[] = [];
+        for (let at = 0; at < answers.total; at++) {
+          const page = await readCompositeDrilldown(reads.db, reads.tenant, path, run_id, stage.items, { ...uniformDrilldownPages(WHOLE), rows, questions: { limit: 1, offset }, answers: { limit: 1, offset: at } });
+          walkedAnswers.push(...page.items[0]!.questions.items[0]!.answers.items.map((answer) => answer.observation_id as string));
+          answers_walked += 1;
+        }
+        if (digestOf(walkedAnswers) !== digestOf(answers.items.map((answer) => answer.observation_id as string))) unwalked.push(`${stage.stage} row ${row} question ${offset} answers`);
+      }
+      if (digestOf(walkedQuestions) !== digestOf(expected.items.map((question) => question.question.question_id))) unwalked.push(`${stage.stage} row ${row} questions`);
+    }
+  }
+  return [check("one-entry windows reach every nested question and raw answer", questions_walked > 0 && answers_walked > 0 && unwalked.length === 0,
+    unwalked.join("; ") || `${questions_walked} question window(s), ${answers_walked} answer window(s)`)];
+}
+
+export interface SharedRunReads {
+  readonly shared: LogicalItemComposite | null;
+  /** A task sharing one finding with the shared task. */
+  readonly other: LogicalItemComposite | null;
+  readonly implementation_rows: Paged<DrilldownRow> | null;
+  readonly lineage: LogicalItemLineage;
+  readonly unlinked_control: boolean;
+  readonly unresolved_visible: boolean;
+}
+/** What a real run sharing one task between two cohorts must read. */
+export function sharedRunChecks(reads: SharedRunReads): readonly ProofCheck[] {
+  const implementation = stageOf(reads.shared, "implementation");
+  const units = implementation?.publication.state === "published" ? implementation.publication.unit_ids : [];
+  const contributing = [...new Set(reads.implementation_rows?.items.map((row) => row.item.unit_id) ?? [])].sort();
+  const occurrences = reads.lineage.items.flatMap((entry) => entry.kind === "occurrence" ? [entry] : []);
+  const of = (artifact: string) => occurrences.filter((entry) => entry.artifact_kind === artifact);
+  const answered = reads.implementation_rows?.items.filter((row) => row.questions.items.some((question) => question.answers.total > 0)) ?? [];
+  const superseded = (artifact: string) => of(artifact).some((entry) => !entry.is_current);
+  const briefUnits = [...new Set(of("brief").map((entry) => entry.unit_id))];
+  return [
+    check("real: one task stands under both cohorts' implementation assessments", units.length === 2 && digestOf(contributing) === digestOf([...units].sort()), `${contributing.join(", ")} of ${units.join(", ")}`),
+    check("real: the provider answered findings of that task in both cohorts", new Set(answered.map((row) => row.item.unit_id)).size === 2, `${answered.length} answered item(s)`),
+    check("real: the analysis stage holds both findings linked by the approval, apart from implementation", stageOf(reads.shared, "analysis")?.totals.contributing_items === 2, JSON.stringify(stageOf(reads.shared, "analysis")?.totals ?? null)),
+    check("real: a finding linked to two tasks reads under both", stageOf(reads.other, "analysis")?.totals.contributing_items === 1, reads.other?.producer_local_id ?? "no task"),
+    check("real: the task is one logical item through its task list, the revised plan and both revised briefs", of("tasks").length >= 1 && superseded("plan") && superseded("brief") && briefUnits.length === 2,
+      `${of("plan").length} plan and ${of("brief").length} brief occurrence(s) across ${briefUnits.length} brief unit(s)`),
+    check("real: integration reads as pending, since no cohort of this run completed", stageOf(reads.shared, "integration")?.publication.state === "pending", JSON.stringify(stageOf(reads.shared, "integration")?.publication ?? null)),
+    check("real: the unlinked control stays listed", reads.unlinked_control, "unlinked items"),
+    check("real: the unknown task stays a visible reference", reads.unresolved_visible, UNRESOLVED_TASK),
+  ];
+}
+
+const SHARED_TASK = "T1";
+const OTHER_TASK = "T2";
+const REVISION_FEEDBACK = "Add one short sentence to the summary saying this revision was requested by the live verification run. Change nothing else: keep every cohort, task id and decision.";
+
+interface SharedRunCollectors { readonly checks: ProofCheck[]; readonly runs: RunReference[]; readonly measurements: MeasurementReadback[]; readonly checkpoints: RelationCheckpoint[]; readonly readbacks: { [key: string]: unknown } }
+const keptIn = (checks: ProofCheck[]) => (step: (run: RunReference, target: string) => Promise<ProofCheck>) => async (run: RunReference, target: string): Promise<ProofCheck> => {
+  const outcome = await step(run, target);
+  checks.push(outcome);
+  return outcome;
+};
+
+/** The wider real run. The approval's own explicit links, real revisions and both assessments, then every read. */
+async function sharedRun(io: ProofIo, source: RelationsSource, open: ObservationReads, collectors: SharedRunCollectors): Promise<void> {
+  const { checks, runs, measurements, checkpoints, readbacks } = collectors;
+  const kept = keptIn(checks);
+  let first: FindingAddress | null = null;
+  let second: FindingAddress | null = null;
+  let control: FindingAddress | null = null;
+  let originals: readonly MeasurementReadback[] = [];
+  let beforeApproval: RelationCheckpoint | null = null;
+  const analysisAnswered: ReviewCheckpoint = { review: "analysis_review", before: kept(async (run) => {
+    const read = await readUntil(io, run.run_id, "shared-before-tasks", settledRun);
+    measurements.push(...read);
+    const findings = [...new Map(read.filter((measurement) => measurement.item_kind === "finding" && measurement.state === "answered")
+      .map((measurement) => [measurement.occurrence_id, measurement])).values()].sort((left, right) => left.item_path.localeCompare(right.item_path, undefined, { numeric: true }));
+    const [one, two] = findings;
+    const last = findings.at(-1);
+    if (!one || !two || !last || last === two) return check("the shared run's analysis has three answered findings", false, `${findings.length} answered finding(s)`);
+    first = one; second = two; control = last;
+    originals = read.filter((measurement) => measurement.occurrence_id === one.occurrence_id);
+    return check("the shared run's analysis has three answered findings", true, `${one.item_path}, ${two.item_path}, control ${last.item_path}`);
+  }) };
+  const tasksApproved: ReviewCheckpoint = { review: "tasks_review",
+    analysis_links: () => first && second ? [
+      { source_revision_id: first.revision_id, item_path: first.item_path, task_ids: [SHARED_TASK, OTHER_TASK] },
+      { source_revision_id: second.revision_id, item_path: second.item_path, task_ids: [SHARED_TASK, UNRESOLVED_TASK] }] : [],
+    before: kept(async (run) => {
+      if (!first || !control) return check("the shared run chose its findings", false, "no analysis checkpoint");
+      beforeApproval = await relationCheckpoint(io, { checkpoint: "shared-before-approval", run_id: run.run_id, linked: first.occurrence_id, control: control.occurrence_id });
+      checkpoints.push(beforeApproval);
+      return check("the shared run chose its findings", true, `${first.item_path} and ${second?.item_path}`);
+    }),
+    after: kept(async (run, target) => {
+      if (!first || !control || !beforeApproval) return check("the approval's links were supplied", false, "no earlier checkpoint");
+      let stored = await readRelationDeclarations(open.db, open.tenant, run.run_id);
+      for (let attempt = 0; attempt < DELIVERY_ATTEMPTS && stored.length === 0; attempt++) { await io.sleep(POLL_MS); stored = await readRelationDeclarations(open.db, open.tenant, run.run_id); }
+      readbacks.shared_declarations = stored;
+      const read = await untilLinked(io, open, run.run_id, SHARED_TASK, "analysis");
+      readbacks.shared_after_approval = read;
+      const after = await relationCheckpoint(io, { checkpoint: "shared-after-approval", run_id: run.run_id, linked: first.occurrence_id, control: control.occurrence_id });
+      checkpoints.push(after);
+      checks.push(...unchangedChecks(beforeApproval, after, "the approval's links"));
+      checks.push(...compositeOriginalAnswerChecks(read, originals, (await answerObservations(open, run.run_id, read, "analysis")).filter((id) => originals.some((original) => original.observation_id === id))));
+      return check("the tasks approval's own explicit links were delivered once", stored.length === 1 && JSON.stringify(stored[0]).includes(target), `${stored.length} declaration(s) for ${target}`);
+    }) };
+  const { report, run } = await source.run("shared", { grading_enabled: true, through: "assessment", capture: "await", input: source.shared_input, target_units: 2, timeout_ms: SHARED_RUN_TIMEOUT_MS,
+    reviews: [analysisAnswered, tasksApproved, { review: "plan_review", revision_feedback: REVISION_FEEDBACK }, { review: "brief_review", revision_feedback: REVISION_FEEDBACK }] });
+  checks.push(check("the shared run reaches both cohorts' assessments on the real stack", report.status === "passed" && run !== null,
+    report.checks.filter((entry) => !entry.passed).map((entry) => `${entry.name}: ${entry.detail}`).join("; ") || run?.run_id || "no run"));
+  if (run) runs.push(run);
+  if (!run || !first || !control) return;
+  const { occurrence_id: control_id } = control as FindingAddress;
+  measurements.push(...await readUntil(io, run.run_id, "shared-settled", settledRun));
+  const shared = await readLogicalItemComposite(open.db, open.tenant, path, run.run_id, SHARED_TASK);
+  const other = await readLogicalItemComposite(open.db, open.tenant, path, run.run_id, OTHER_TASK);
+  const implementation = stageOf(shared, "implementation");
+  const implementation_rows = implementation ? await readCompositeDrilldown(open.db, open.tenant, path, run.run_id, implementation.items, uniformDrilldownPages(WHOLE)) : null;
+  const lineage = await readLogicalItemLineage(open.db, open.tenant, path, run.run_id, SHARED_TASK, WHOLE);
+  const unlinked = await listRunUnlinkedItems(open.db, open.tenant, path, run.run_id, WHOLE);
+  const unresolved = await listRunUnresolvedReferences(open.db, open.tenant, path, run.run_id, WHOLE);
+  readbacks.shared_run = { shared, other, implementation_rows, lineage, unlinked, unresolved };
+  checks.push(...sharedRunChecks({ shared, other, implementation_rows, lineage, unlinked_control: unlinked.items.some((item) => item.occurrence_id === control_id),
+    unresolved_visible: unresolved.items.some((reference) => reference.unresolved_target_ref === `logical_item:task:${UNRESOLVED_TASK}`) }));
+  if (shared) checks.push(...await drilldownChecks(open, run.run_id, shared), ...await nestedPageChecks(open, run.run_id, shared));
 }
 
 // --------------------------------------------------------- the shared-task matrix ---
@@ -461,6 +608,8 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
     }
     readbacks.unlinked_final = await listRunUnlinkedItems(open.db, open.tenant, path, run.run_id, WHOLE);
     readbacks.unresolved_final = await listRunUnresolvedReferences(open.db, open.tenant, path, run.run_id, WHOLE);
+
+    await sharedRun(io, source, open, { checks, runs, measurements, checkpoints, readbacks });
 
     // The shared-task matrix, in a tenant of its own.
     const matrix = await sharedTaskMatrix(open.db, { producer: open.tenant.producer, namespace: matrix_namespace }, plans.value.committed_plan);

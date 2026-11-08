@@ -246,6 +246,40 @@ describe("the source run", () => {
     expect([report.status, steps, posted.filter((path) => path.endsWith("/decide")).length]).toEqual(["passed", ["before revision-1", "after revision-1"], 2]);
   });
 
+  test("a review with feedback is sent back once per unit before its acceptance", async () => {
+    const decided: unknown[] = [];
+    const awaitingUnit = (unit_id: string, target: string) => ({ kind: "awaiting_review", review: "brief_review", unit_id, target });
+    const views = [{ artifacts: [], attention: [awaitingUnit("alpha", "a1"), awaitingUnit("beta", "b1")] }, { artifacts: [], attention: [awaitingUnit("alpha", "a2")] }, { artifacts: [], attention: [awaitingUnit("beta", "b2")] },
+      { artifacts: [{ artifact_key: "assessment", latest_revision: { id: "x1" } }, { artifact_key: "assessment", latest_revision: { id: "x2" } }], attention: [] }];
+    const directory = mkdtempSync(join(tmpdir(), "source-run-"));
+    let reads = 0;
+    const report = await sourceRunScenario(fakeIo({ dbos: async (path, body) => {
+      if (path === "/api/runs") return ok({ run_id: "run-1" });
+      if (path.endsWith("/inspect")) { reads += 1; return ok(views[Math.min(reads, views.length) - 1]); }
+      if (path.endsWith("/decide")) decided.push([(body as { decision: string }).decision, (body as { target: string }).target]);
+      return ok({});
+    }, ...feedIo(() => caughtUp("assessment")) }), { input, directory, through: "assessment", timeout_ms: 60_000, capture_timeout_ms: 5_000, target_units: 2, reviews: [{ review: "brief_review", revision_feedback: "again" }] });
+    rmSync(directory, { recursive: true, force: true });
+    expect([report.status, decided]).toEqual(["passed", [["request_changes", "a1"], ["request_changes", "b1"], ["accept", "a2"], ["accept", "b2"]]]);
+  });
+
+  test("the target waits for as many units as asked, and an acceptance carries the links its review supplies", async () => {
+    const posted: { readonly analysis_links?: unknown }[] = [];
+    const reached = { artifacts: [{ artifact_key: "plan", latest_revision: { id: "p1" } }], attention: [awaiting("plan_review")] };
+    const views = [reached, { artifacts: [{ artifact_key: "plan", latest_revision: { id: "p1" } }, { artifact_key: "plan", latest_revision: { id: "p2" } }], attention: [] }];
+    const directory = mkdtempSync(join(tmpdir(), "source-run-"));
+    let reads = 0;
+    const links = [{ source_revision_id: "analysis:1", item_path: "/findings/0", task_ids: ["T1"] }];
+    const report = await sourceRunScenario(fakeIo({ dbos: async (path, body) => {
+      if (path === "/api/runs") return ok({ run_id: "run-1" });
+      if (path.endsWith("/inspect")) { reads += 1; return ok(views[Math.min(reads, views.length) - 1]); }
+      if (path.endsWith("/decide")) posted.push(body as { analysis_links?: unknown });
+      return ok({});
+    }, ...feedIo(() => caughtUp("plan")) }), { input, directory, through: "plan", timeout_ms: 60_000, capture_timeout_ms: 5_000, target_units: 2, reviews: [{ review: "plan_review", analysis_links: () => links }] });
+    rmSync(directory, { recursive: true, force: true });
+    expect([report.status, reads, posted.map((body) => body.analysis_links)]).toEqual(["passed", 2, [links]]);
+  });
+
   test("a failed step ahead of a review ends the run there, without accepting it", async () => {
     const { report, posted } = await drive([{ artifacts: [], attention: [awaiting("plan_review")] }], "plan", {}, [{ review: "plan_review",
       before: async () => ({ name: "the proof's step", passed: false, detail: "not yet" }) }]);

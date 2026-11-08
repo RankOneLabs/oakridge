@@ -249,9 +249,10 @@ export interface ScenarioReport {
 /** Proof the program does not perform yet, and who adds it. Listed so a passing report cannot read as complete. */
 export interface PendingScenario { readonly id: string; readonly owner: string; readonly reason?: string }
 export const PENDING_SCENARIOS: readonly PendingScenario[] = [
-  { id: "two-real-cohorts-through-integration", owner: "operator",
-    reason: "A verification run may not merge, and a run's cohorts are its planner's to choose, so no real run reaches a second cohort or integration here. "
-      + "`relations` proves those reads on the shadow's database with synthetic revisions, labelled as such; reaching them with real agents needs a run allowed to merge." },
+  { id: "real-integration-publication", owner: "operator",
+    reason: "A real run reaches two cohorts' assessments here, with revised plan and briefs, and reads integration as pending. Publishing integration needs each cohort "
+      + "complete: an operator's acceptance of its assessment and confirmation of a merge. This proof does not make those decisions on its own, so integration final is read only on the "
+      + "supplementary synthetic matrix until an operator decides whether a verification run may." },
   { id: "first-assessment-finding-end-to-end", owner: "operator-item-workspace" },
   { id: "human-grading-and-pwa-readback", owner: "operator-item-workspace" },
   { id: "same-finding-correctness-awaits-subject-build", owner: "operator",
