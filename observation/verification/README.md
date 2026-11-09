@@ -67,9 +67,13 @@ only then does it hold the launcher's log.
 
 `bun observation/verification/cumulative.ts --workspace <proof_id> --grading <proof_id> --relations <proof_id>`
 ties the live matrix to the proof reports that hold it, beside the review-endpoint result, a scan of every
-retained definition, and the target-schema, import-boundary and task-contract test results. It starts no stack
-and sends no provider request. It writes `reports/cumulative-<time>/report.json` and passes only if every named
-report passed. Offline results sit beside the live ones and stand in for none of them.
+retained stored definition (workflow worker contracts field by field; workflows, operation registries and
+`launchable.json` whole for any `gated_review` key), and the target-schema, import-boundary and task-contract
+results, both the TypeScript contract test and the Rust evaluator's `task_contracts` tests. It starts no stack
+and sends no provider request. It writes `reports/cumulative-<time>/report.json`, a `CumulativeReport`, and passes
+only if every named report passed. It records the head it was made on and, for each proof, the head it ran on and
+the product files changed since, so a proof run on earlier code reads as such. Its `pending` holds every pending
+scenario the named reports list. Offline results sit beside the live ones and stand in for none of them.
 
 ## Contracts
 
@@ -97,8 +101,8 @@ shared-task composites.
 
 | Pending scenario | Owner |
 | --- | --- |
-| `two-real-cohorts-through-integration` | operator: a verification run may not merge, and a run's cohorts are its planner's to choose, so no real run reaches a second cohort or integration. `relations` proves those reads on the shadow's database with synthetic revisions, labelled as such. |
-| `same-finding-correctness-awaits-subject-build` | operator: live assessments are published with subject null, and the ordered feed captures a named subject before its assessment, so a real run cannot leave Correctness waiting while its Evidence support is answered; it is proven offline in `observation/tests/execution-lifecycle.test.ts` |
+| `real-integration-publication` | operator: a real run here reaches two cohorts' assessments, with revised plan and briefs, and reads integration as pending. Publishing integration needs an operator's acceptance of each assessment and confirmation of a merge, which a verification run does not make on its own, so integration final and a real integration finding are read only on `relations`' synthetic revisions, labelled as such, until an operator decides whether a verification run may. |
+| `same-finding-correctness-awaits-subject-build` | operator: Correctness alone waits only when an assessment names a subject build observation has not captured. Live assessments are published with subject null, and the ordered feed captures a named subject before its assessment, so a real run cannot leave Correctness waiting while its Evidence support is answered. It is proven offline in `observation/tests/execution-lifecycle.test.ts`; live, the not-ready refusal uses the withheld-repository wait. Reaching it live needs a product change or an operator decision on the requirement. |
 
 ## Review endpoint
 

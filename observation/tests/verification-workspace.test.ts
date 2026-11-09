@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GradingCounts, HumanSubmissionReadback } from "../verification/proof-contract";
@@ -35,9 +35,28 @@ describe("the live human checks", () => {
 });
 
 test("the definition scan names any retained definition carrying a discarded field", () => {
-  const directory = mkdtempSync(join(tmpdir(), "definition-scan-"));
-  writeFileSync(join(directory, "clean.json"), JSON.stringify({ source: { stages: { a: { workers: { w: { kind: "agent" } } } } } }));
-  expect(scanDefinitions(directory)).toEqual({ scanned: 1, with_discarded_field: [] });
-  writeFileSync(join(directory, "dirty.json"), JSON.stringify({ source: { stages: { a: { workers: { w: { gated_review: { kind: "unscoped" } } } } } } }));
-  expect(scanDefinitions(directory).with_discarded_field).toEqual(["dirty.json:/source/stages/a/workers/w/gated_review"]);
+  const root = mkdtempSync(join(tmpdir(), "definition-scan-"));
+  mkdirSync(join(root, "workflows"));
+  mkdirSync(join(root, "operations"));
+  writeFileSync(join(root, "workflows", "clean.json"), JSON.stringify({ source: { stages: { a: { workers: { w: { kind: "agent" } } } } } }));
+  writeFileSync(join(root, "operations", "registry.json"), JSON.stringify({ operations: [] }));
+  writeFileSync(join(root, "launchable.json"), JSON.stringify([]));
+  expect(scanDefinitions(root)).toEqual({ scanned: 1, with_discarded_field: [], files_scanned: 3, files_naming_gated_review: [] });
+  writeFileSync(join(root, "workflows", "dirty.json"), JSON.stringify({ source: { stages: { a: { workers: { w: { gated_review: { kind: "unscoped" } } } } } } }));
+  expect(scanDefinitions(root).with_discarded_field).toEqual(["dirty.json:/source/stages/a/workers/w/gated_review"]);
+});
+
+test("the definition scan reads operation registries and the launchable list whole for any gated_review key", () => {
+  const root = mkdtempSync(join(tmpdir(), "definition-scan-"));
+  mkdirSync(join(root, "workflows"));
+  mkdirSync(join(root, "operations"));
+  writeFileSync(join(root, "operations", "registry.json"), JSON.stringify({ operations: [{ id: "o", settings: { gated_review: true } }] }));
+  writeFileSync(join(root, "launchable.json"), JSON.stringify([{ id: "w" }]));
+  expect(scanDefinitions(root).files_naming_gated_review).toEqual([join("operations", "registry.json")]);
+});
+
+test("the retained definitions in this repository name no gated_review anywhere", () => {
+  const scan = scanDefinitions();
+  expect(scan.scanned).toBeGreaterThan(0);
+  expect([...scan.with_discarded_field, ...scan.files_naming_gated_review]).toEqual([]);
 });

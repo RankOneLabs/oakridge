@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import { mountObservationProxyRoutes } from "../../kbbl/core/server/handlers/observation-proxy";
 import { readNotReadyPanel, readWorkspace, type ReadbackResult } from "../../kbbl/tests/browser/grading-readback";
 import { selectDiscardedFields } from "../../workflow-config/src/definition-store";
-import { NO_EVIDENCE, scenarioStatus, type GradingCounts, type HumanSubmissionReadback, type MeasurementReadback, type ProofCheck, type RunReference, type ScenarioReport, type WorkspaceReadback } from "./proof-contract";
+import { NO_EVIDENCE, scenarioStatus, type GradingCounts, type HumanSubmissionReadback, type MeasurementReadback, type ProofCheck, type RunReference, type ScenarioReport, type DefinitionScan } from "./proof-contract";
 import { readRunMeasurements, readSpend, readUntil, settledRun, type GradingSource } from "./grading";
 import { authorityEvents } from "./relations";
 import { awaitRunCapture, runCaptureChecks } from "./run-capture";
@@ -24,7 +24,7 @@ import { observationSettled, settleObservation } from "./scenarios";
 import type { ProofIo } from "./shadow-session";
 
 const REVIEWER = "oakridge-operator";
-const DEFINITIONS = resolve(import.meta.dir, "../../workflow-config/definitions/workflows");
+const DEFINITIONS = resolve(import.meta.dir, "../../workflow-config/definitions");
 const CHOICES: Readonly<Record<string, readonly [string, string]>> = {
   "finding.relevance": ["unclear", "relevant"],
   "assessment_finding.correctness": ["contradicted", "supported"],
@@ -70,10 +70,21 @@ export function humanAnswerChecks(input: { readonly submissions: readonly HumanS
   ];
 }
 
-/** Scans every retained definition for a field the catalogue discards. */
-export function scanDefinitions(directory: string = DEFINITIONS): WorkspaceReadback["definition_scan"] {
-  const files = readdirSync(directory).filter((name) => name.endsWith(".json"));
-  return { scanned: files.length, with_discarded_field: files.flatMap((name) => selectDiscardedFields(JSON.parse(readFileSync(join(directory, name), "utf8"))).map((field) => `${name}:${field}`)) };
+/** Every stored definition file: workflows, operation registries and the launchable list. Prompts are text, not definitions. */
+const storedDefinitionFiles = (root: string): readonly string[] => [
+  ...["workflows", "operations"].flatMap((directory) => readdirSync(join(root, directory)).filter((name) => name.endsWith(".json")).map((name) => join(directory, name))),
+  ...(readdirSync(root).includes("launchable.json") ? ["launchable.json"] : []),
+];
+const namesGatedReview = (value: unknown): boolean => Array.isArray(value) ? value.some(namesGatedReview)
+  : typeof value === "object" && value !== null ? Object.entries(value).some(([key, member]) => key === "gated_review" || namesGatedReview(member)) : false;
+
+/** Scans every retained definition for a field the catalogue discards, and every stored definition file for any gated_review key. */
+export function scanDefinitions(root: string = DEFINITIONS): DefinitionScan {
+  const workflows = readdirSync(join(root, "workflows")).filter((name) => name.endsWith(".json"));
+  const stored = storedDefinitionFiles(root);
+  return { scanned: workflows.length,
+    with_discarded_field: workflows.flatMap((name) => selectDiscardedFields(JSON.parse(readFileSync(join(root, "workflows", name), "utf8"))).map((field) => `${name}:${field}`)),
+    files_scanned: stored.length, files_naming_gated_review: stored.filter((file) => namesGatedReview(JSON.parse(readFileSync(join(root, file), "utf8")))) };
 }
 
 export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): Promise<ScenarioReport> {
@@ -141,7 +152,8 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
     return kbbl(`${itemPath(occurrence_id)}/answers`, post({ ...body, submission_id })).then((response) => { const read = submissionOf(label, submission_id, response); submissions.push(read); return read; });
   };
 
-  checks.push(check("no retained definition carries a discarded review field", definition_scan.scanned > 0 && definition_scan.with_discarded_field.length === 0, `${definition_scan.scanned} scanned: ${definition_scan.with_discarded_field.join(", ") || "none carry one"}`));
+  checks.push(check("no retained definition carries a discarded review field", definition_scan.scanned > 0 && definition_scan.with_discarded_field.length === 0 && definition_scan.files_naming_gated_review.length === 0,
+    `${definition_scan.scanned} workflows and ${definition_scan.files_scanned} stored files scanned: ${[...definition_scan.with_discarded_field, ...definition_scan.files_naming_gated_review].join(", ") || "none carry one"}`));
   try {
     if (!await startStack("fresh")) return finish();
 

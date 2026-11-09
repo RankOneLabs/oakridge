@@ -102,12 +102,48 @@ export interface PinReadback {
   readonly references: readonly ReferenceReadback[];
 }
 /** What the service registered at one startup: its health report and the stored definitions. */
+/** Every retained stored definition: workflow worker contracts checked field by field, and every stored definition file read whole for any gated_review key. */
+export interface DefinitionScan {
+  readonly scanned: number;
+  readonly with_discarded_field: readonly string[];
+  readonly files_scanned: number;
+  readonly files_naming_gated_review: readonly string[];
+}
+/** One proof report as the cumulative report reads it, with the code it ran on. */
+export interface CumulativeProofSummary {
+  readonly proof_id: string;
+  readonly status: string;
+  readonly git_head: string | null;
+  readonly worktree_clean: boolean | null;
+  /** Product files changed between the head the proof ran on and the head the cumulative report was made on; verification files are left out. */
+  readonly product_changes_since: readonly string[] | null;
+  readonly passed_checks: number;
+  readonly failed_checks: readonly string[];
+  readonly runs: readonly string[];
+  readonly provider_request_count: number | null;
+}
+export type CumulativeProof = "workspace" | "grading" | "relations";
+export interface CumulativeMatrixRow { readonly part: string; readonly proof: CumulativeProof; readonly proof_id: string | null; readonly status: string }
+export interface OfflineContractResult { readonly command: string; readonly exit_code: number; readonly summary: readonly string[] }
+export interface CumulativeReport {
+  readonly status: "passed" | "failed";
+  readonly generated_at: string;
+  readonly git_head: string | null;
+  readonly proofs: Readonly<Record<CumulativeProof, CumulativeProofSummary | null>>;
+  readonly matrix: readonly CumulativeMatrixRow[];
+  readonly review_endpoint: { readonly status: string; readonly endpoint: string | null; readonly has_merge_pr: boolean | null; readonly has_mark_merge_ready: boolean | null };
+  readonly definition_scan: DefinitionScan;
+  readonly offline_contracts: readonly OfflineContractResult[];
+  /** Every pending scenario any named proof lists, once each, so this report cannot read as complete either. */
+  readonly pending: readonly PendingScenario[];
+  readonly not_live_proof: string;
+}
 export interface RegistrationReadback {
   readonly checkpoint: string;
   readonly graders: readonly { readonly runner: string; readonly evaluator_definition_id: string }[];
   readonly stored_evaluator_definition_ids: readonly string[];
 }
-/** One pinned machine measurement of one item, as /v1/items/:id/measurements served it. */
+/** One pinned machine measurement of one item, as /v1/items/:id/status served it. */
 export interface MeasurementReadback {
   readonly checkpoint: string;
   readonly run_id: string;
@@ -238,7 +274,7 @@ export interface WorkspaceReadback {
   readonly counts: { readonly [checkpoint: string]: GradingCounts };
   readonly composite: unknown;
   readonly browser: { readonly steps: readonly ProofCheck[]; readonly screenshots: readonly string[] };
-  readonly definition_scan: { readonly scanned: number; readonly with_discarded_field: readonly string[] };
+  readonly definition_scan: DefinitionScan;
 }
 export interface AuthorityCount { readonly events_before: number | null; readonly events_after: number | null }
 /** A scenario's evidence. Each list holds actual ids read back from the running services. */
