@@ -18,7 +18,8 @@ import type { ObservationItemOccurrence, ObservationItemRelation, ObservationSou
 export interface ProjectionSummary { readonly occurrences: number; readonly issues: number; readonly relations: number }
 export interface Page { readonly limit: number; readonly offset: number }
 export interface ItemsPage { readonly items: readonly Selectable<ObservationItemOccurrence>[];
-  readonly issues: readonly ExtractionIssue[]; readonly total: number; readonly limit: number; readonly offset: number }
+  readonly issues: { readonly items: readonly ExtractionIssue[]; readonly total: number; readonly limit: number; readonly offset: number };
+  readonly total: number; readonly limit: number; readonly offset: number }
 export interface Republication { readonly predecessor_revision_id: string; readonly is_republication: boolean }
 export interface LineagePage { readonly occurrence_id: string; readonly relations: readonly Selectable<ObservationItemRelation>[];
   readonly edges: readonly Selectable<ObservationItemRelation>[];
@@ -239,20 +240,21 @@ export async function projectRevisionInTransaction(trx: DatabaseTransaction, ten
   return { occurrences: selections.length, issues: pass.issues.length + collisionCount, relations: relationCount };
 }
 
-export function listRunItems(db: Database, tenant: TenantScope, run_id: string, page: Page): Promise<ItemsPage> {
+export function listRunItems(db: Database, tenant: TenantScope, run_id: string, page: Page, issues_page: Page = page): Promise<ItemsPage> {
   return withTenant(db, tenant, async (trx) => {
     const query = trx.selectFrom("observation.item_occurrence").where("producer", "=", tenant.producer)
       .where("namespace", "=", tenant.namespace).where("run_id", "=", run_id);
     const count = await query.select(sql<string>`count(*)::text`.as("count")).executeTakeFirstOrThrow();
     const items = await query.selectAll().orderBy("revision_id", "asc").orderBy("occurrence_id", "asc")
       .limit(page.limit).offset(page.offset).execute();
-    const issueRows = await trx.selectFrom("observation.extraction_issue as e")
+    const issues = trx.selectFrom("observation.extraction_issue as e")
       .innerJoin("observation.source_revision as r", (join) => join.onRef("e.producer", "=", "r.producer")
         .onRef("e.namespace", "=", "r.namespace").onRef("e.revision_id", "=", "r.revision_id"))
-      .select(["e.revision_id", "e.extractor_id", "e.extractor_version", "e.item_selector", "e.kind", "e.detail", "e.is_retriable"])
-      .where("e.producer", "=", tenant.producer).where("e.namespace", "=", tenant.namespace)
-      .where("r.run_id", "=", run_id).orderBy("e.issue_id", "asc").execute();
-    return { items, issues: issueRows as ExtractionIssue[], total: Number(count.count), ...page };
+      .where("e.producer", "=", tenant.producer).where("e.namespace", "=", tenant.namespace).where("r.run_id", "=", run_id);
+    const issueCount = await issues.select(sql<string>`count(*)::text`.as("count")).executeTakeFirstOrThrow();
+    const issueRows = await issues.select(["e.revision_id", "e.extractor_id", "e.extractor_version", "e.item_selector", "e.kind", "e.detail", "e.is_retriable"])
+      .orderBy("e.issue_id", "asc").limit(issues_page.limit).offset(issues_page.offset).execute();
+    return { items, issues: { items: issueRows as ExtractionIssue[], total: Number(issueCount.count), ...issues_page }, total: Number(count.count), ...page };
   });
 }
 

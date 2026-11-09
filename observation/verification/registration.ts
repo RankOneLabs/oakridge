@@ -108,9 +108,9 @@ interface ServedItem { readonly occurrence_id: string; readonly revision_id: str
 type ServedReference = { readonly ref: string; readonly source: string } & { readonly [field: string]: unknown };
 interface ServedEvidence {
   readonly evidence_set_id: string; readonly question_id: string; readonly question_version: string;
-  readonly pinned_evaluator_definition_ids: readonly string[];
-  readonly readiness: { readonly state: "ready" | "not_ready"; readonly reason?: { readonly code: string };
-    readonly references?: readonly ServedReference[]; readonly ready_at?: string };
+  readonly pinned_evaluator_definition_ids: { readonly items: readonly string[] };
+  readonly readiness: { readonly state: "ready" | "not_ready"; readonly reason?: { readonly code: string }; readonly ready_at?: string };
+  readonly references: { readonly items: readonly ServedReference[] };
 }
 
 const text = (value: unknown): string | null => typeof value === "string" ? value : null;
@@ -147,13 +147,13 @@ export async function readRunPins(io: ProofIo, run_id: string, checkpoint: strin
   const pins: PinReadback[] = [];
   const frozen: FrozenEvidenceReadback[] = [];
   for (const item of items) {
-    const read = await io.observationGet(`/v1/items/${encodeURIComponent(item.occurrence_id)}/evidence`, "read");
+    const read = await io.observationGet(`/v1/items/${encodeURIComponent(item.occurrence_id)}/evidence?limit=200&references_limit=200&pinned_evaluators_limit=200`, "read");
     if (!read.ok) throw new Error(read.error.detail);
     for (const set of (read.value as { readonly items: readonly ServedEvidence[] }).items) {
-      const references = set.readiness.references ?? [];
+      const references = set.references.items;
       pins.push({ checkpoint, run_id, occurrence_id: item.occurrence_id, revision_id: item.revision_id, item_path: item.json_pointer,
         item_kind: item.item_kind, question_id: set.question_id, question_version: set.question_version, evidence_set_id: set.evidence_set_id,
-        pinned_evaluator_definition_ids: set.pinned_evaluator_definition_ids, readiness: set.readiness.state,
+        pinned_evaluator_definition_ids: set.pinned_evaluator_definition_ids.items, readiness: set.readiness.state,
         not_ready_code: set.readiness.reason?.code ?? null, ready_at: set.readiness.ready_at ?? null, references: references.map(referenceReadback) });
       if (set.readiness.state === "ready") frozen.push({ checkpoint, run_id, occurrence_id: item.occurrence_id, item_path: item.json_pointer,
         question_id: set.question_id, evidence_set_id: set.evidence_set_id, ready_at: set.readiness.ready_at ?? null, references });

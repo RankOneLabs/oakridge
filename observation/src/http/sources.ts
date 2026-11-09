@@ -8,6 +8,7 @@ import type { Database } from "../storage/database";
 import type { EvidenceReconciler } from "../storage/evidence-pipeline";
 import { errorResponse } from "./errors";
 import { credentialFor, type Credentials } from "./ingest-auth";
+import { pagination } from "./items";
 
 export interface SourceDependencies {
   readonly db: Database;
@@ -59,7 +60,9 @@ export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void 
   app.get(`/v1/sources/${producer}/unmapped`, async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
     if (!credential || credential.producer !== producer) return errorResponse(c, 403, "forbidden", "read credential required");
-    return c.json({ items: await readUnmappedSourceEvents(deps.db, credential) });
+    const page = pagination(c.req.url);
+    if (!page) return errorResponse(c, 400, "invalid_pagination", "limit must be 1..200 and offset nonnegative");
+    return c.json(await readUnmappedSourceEvents(deps.db, credential, page));
   });
   app.get("/v1/source-revisions/:id", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);

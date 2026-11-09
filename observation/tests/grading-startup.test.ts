@@ -79,9 +79,15 @@ const itemAt = async (h: Harness, service: Service, revision_id: string, path: s
   if (!found) throw new Error(`no ${kind} at ${revision_id}${path}`);
   return found;
 };
-type EvidenceRead = Omit<EvidenceSet, "readiness"> & { readonly readiness: { state: string; reason?: { code: string }; references?: JsonValue[]; ready_at?: string } };
+type EvidenceRead = Omit<EvidenceSet, "readiness" | "pinned_evaluator_definition_ids"> & { readonly pinned_evaluator_definition_ids: readonly string[];
+  readonly readiness: { state: string; reason?: { code: string }; references?: JsonValue[]; ready_at?: string } };
+type ServedEvidence = Omit<EvidenceRead, "readiness" | "pinned_evaluator_definition_ids"> & { readonly pinned_evaluator_definition_ids: { items: string[] };
+  readonly readiness: EvidenceRead["readiness"]; readonly references: { items: JsonValue[] } };
+/** The served shape with its nested pages read out, the windows wide enough to hold them all. */
 const evidenceOf = async (h: Harness, service: Service, item: Item): Promise<readonly EvidenceRead[]> =>
-  ((await h.get(service, `/v1/items/${encodeURIComponent(item.occurrence_id)}/evidence`)) as { items: EvidenceRead[] }).items;
+  ((await h.get(service, `/v1/items/${encodeURIComponent(item.occurrence_id)}/evidence?limit=200&references_limit=200&pinned_evaluators_limit=200`)) as { items: ServedEvidence[] }).items
+    .map((set) => ({ ...set, pinned_evaluator_definition_ids: set.pinned_evaluator_definition_ids.items,
+      readiness: set.readiness.state === "ready" ? { ...set.readiness, references: set.references.items } : set.readiness }));
 const question = (sets: readonly EvidenceRead[], id: string): EvidenceRead => {
   const found = sets.find((set) => set.question_id === id);
   if (!found) throw new Error(`no ${id}`);
@@ -291,9 +297,9 @@ integration("an enabled run grades with the evaluators pinned at capture across 
   // The older occurrence's first answers use its original evaluators, not the swapped ones.
   for (const row of ready) expect(pinsOf(before, row.question_id)).toContain(row.evaluator_definition_id as never);
   const cited = await itemAt(h, second, "assessment-1", "/findings/0", "assessment_finding");
-  const measured = await h.get(second, `/v1/items/${encodeURIComponent(cited.occurrence_id)}/measurements`) as {
-    questions: { machine: { measurement: { state: string } }[] }[] };
-  expect(measured.questions.flatMap((entry) => entry.machine.map((machine) => machine.measurement.state))).toEqual(["answered", "answered"]);
+  const measured = await h.get(second, `/v1/items/${encodeURIComponent(cited.occurrence_id)}/status`) as {
+    questions: { items: { machine: { items: { measurement: { state: string } }[] } }[] } };
+  expect(measured.questions.items.flatMap((entry) => entry.machine.items.map((machine) => machine.measurement.state))).toEqual(["answered", "answered"]);
 
   await h.send(second, revisionOutcome({ revision_id: "assessment-2", artifact_kind: "assessment", subject_id: "build-1",
     body: await fixtureBody("assessment") }));

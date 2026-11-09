@@ -186,7 +186,7 @@ const questionKey = (question: QuestionKey): QuestionKey => ({ question_id: ques
 const sameQuestion = (left: QuestionKey, right: QuestionKey): boolean =>
   left.question_id === right.question_id && left.question_version === right.question_version;
 
-function graderOf(answer: CompositeAnswer, evaluators: ReadonlyMap<string, CompositeEvaluator>): GraderKey {
+export function graderOf(answer: CompositeAnswer, evaluators: ReadonlyMap<string, CompositeEvaluator>): GraderKey {
   const evaluator = evaluators.get(answer.evaluator_definition_id);
   return answer.reviewer_id !== null ? { kind: "human", evaluator_definition_id: answer.evaluator_definition_id, reviewer_id: answer.reviewer_id }
     : { kind: "machine", evaluator_definition_id: answer.evaluator_definition_id, backend_kind: evaluator?.backend_kind ?? "", model: evaluator?.model ?? null };
@@ -399,10 +399,10 @@ export interface DrilldownRow {
   readonly links: Paged<CompositeRelation>;
   readonly questions: Paged<DrilldownQuestion>;
 }
-const contributionItem = ({ occurrence, stage, unit_id, is_current }: Contribution): ContributionItem => ({ occurrence_id: occurrence.occurrence_id, revision_id: occurrence.revision_id,
+export const contributionItem = ({ occurrence, stage, unit_id, is_current }: Contribution): ContributionItem => ({ occurrence_id: occurrence.occurrence_id, revision_id: occurrence.revision_id,
   item_path: occurrence.item_path, artifact_kind: occurrence.artifact_kind, item_kind: occurrence.item_kind, selected_value: occurrence.selected_value, stage, unit_id, is_current });
 /** By revision, then by path as a reader would count them: /x/2 before /x/10. */
-const orderedItems = (contributions: readonly Contribution[]): readonly Contribution[] => [...contributions].sort((left, right) =>
+export const orderedItems = (contributions: readonly Contribution[]): readonly Contribution[] => [...contributions].sort((left, right) =>
   left.occurrence.revision_id < right.occurrence.revision_id ? -1 : left.occurrence.revision_id > right.occurrence.revision_id ? 1
     : left.occurrence.item_path.localeCompare(right.occurrence.item_path, undefined, { numeric: true }));
 
