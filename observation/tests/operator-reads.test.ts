@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import type { EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import { humanEvaluator } from "../src/grading/configuration";
 import type { CaptureConfiguration } from "../src/grading/evidence";
@@ -48,8 +48,8 @@ const ready = async (h: Harness, occurrence_id: ItemOccurrenceId, question_id?: 
   for (const set of await readOccurrenceEvidence(h.db, tenant, occurrence_id)) {
     if (question_id && set.question_id !== question_id) continue;
     const recorded = await recordCollection(h.db, tenant, set.evidence_set_id, { state: "ready", references: [
-      { source: "reported", reported_by: "agent", ref: "a", revision_id: "r", item_path: "/findings/0", content: "first" },
-      { source: "reported", reported_by: "agent", ref: "b", revision_id: "r", item_path: "/findings/0", content: "second" }] });
+      { source: "reported", reported_by: "agent", ref: "a", revision_id: "r" as ArtifactRevisionId, item_path: "/findings/0", content: "first" },
+      { source: "reported", reported_by: "agent", ref: "b", revision_id: "r" as ArtifactRevisionId, item_path: "/findings/0", content: "second" }] });
     if (!recorded.ok) throw new Error(recorded.error.detail);
   }
 };

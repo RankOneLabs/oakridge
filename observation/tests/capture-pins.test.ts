@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { sql } from "kysely";
-import type { ItemOccurrenceId } from "../src/domain/identity";
+import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../src/domain/identity";
 import { COLLECTION_PENDING } from "../src/grading/evidence";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, OAKRIDGE_QUESTIONS, RELEVANCE_ID } from "../src/producers/oakridge/questions";
 import { oakridgeProfile } from "../src/producers/oakridge/profile";
@@ -82,14 +82,14 @@ integration("readiness moves per question; ready evidence is frozen and shared",
   const waiting = await recordCollection(db, tenant, correctness!.evidence_set_id,
     { state: "not_ready", reason: { code: "build_result_unavailable", detail: "build result b1 is not captured" } });
   expect(waiting.ok && waiting.value.readiness).toEqual({ state: "not_ready", reason: { code: "build_result_unavailable", detail: "build result b1 is not captured" } });
-  const references = [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "revision-1", item_path: "/findings/0", content: "cited" }] as const;
+  const references = [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "revision-1" as ArtifactRevisionId, item_path: "/findings/0", content: "cited" }] as const;
   const frozen = await recordCollection(db, tenant, support!.evidence_set_id, { state: "ready", references });
   expect(frozen.ok && frozen.value.readiness.state).toBe("ready");
   const [stillWaiting, stillReady] = await readOccurrenceEvidence(db, tenant, occurrence!);
   expect(stillWaiting?.readiness.state).toBe("not_ready");
   expect(stillReady?.readiness).toMatchObject({ state: "ready", references });
   const later = await recordCollection(db, tenant, support!.evidence_set_id,
-    { state: "ready", references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "revision-1", item_path: "/findings/0", content: "replacement" }] });
+    { state: "ready", references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "revision-1" as ArtifactRevisionId, item_path: "/findings/0", content: "replacement" }] });
   expect(later.ok && later.value.readiness).toEqual(stillReady!.readiness);
   await expect(withTenant(db, tenant, (trx) => sql`UPDATE observation.evidence_set SET evidence_refs = '[]'::jsonb
     WHERE evidence_set_id = ${support!.evidence_set_id}`.execute(trx))).rejects.toThrow("ready evidence_set is frozen");
@@ -104,7 +104,7 @@ integration("a pinned question is collected through the port, and ready evidence
   const [occurrence] = await occurrences(db, "finding");
   const [pinned] = await readOccurrenceEvidence(db, tenant, occurrence!);
   let collected = 0;
-  const source = { read: async (occurrence_id: ItemOccurrenceId) => ({ occurrence_id, run_id: "run-1", revision_id: "analysis-1",
+  const source = { read: async (occurrence_id: ItemOccurrenceId) => ({ occurrence_id, run_id: "run-1" as RunId, revision_id: "analysis-1" as ArtifactRevisionId,
     item_path: "/findings/0", item_kind: "finding", selected_value: "finding" }),
     collect: async () => { collected++; return { state: "ready" as const, references: [] }; } };
   const first = await collectPinnedQuestion(db, tenant, source, pinned!);

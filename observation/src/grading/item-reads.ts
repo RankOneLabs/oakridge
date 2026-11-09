@@ -4,7 +4,7 @@
  * returned list is `Paged` with a window of its own, so nothing unbounded hides inside a paged parent:
  * a reader continues one list while holding the others still.
  */
-import type { EvaluatorDefinitionId, ItemOccurrenceId } from "../domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ExecutionId, ItemOccurrenceId, LogicalItemId, RelationId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import { pageOf, selectCurrentAnswers, type AnswerDetail, type CompositeLogicalItem, type CompositeRelation, type ContributionItem, type DrilldownRow, type LogicalItemComposite, type MeasurementRead,
   type PageRequest, type Paged, type StageComposite, type UnresolvedReference } from "./composite";
@@ -12,14 +12,14 @@ import type { EvidenceReference, EvidenceSet } from "./evidence";
 import type { QuestionDefinition, QuestionKey } from "./question";
 
 /** An item as a client addresses it: exactly one revision and path, with nothing tracked in it. */
-export interface ItemAddress { readonly source_revision_id: string; readonly item_path: string }
+export interface ItemAddress { readonly source_revision_id: ArtifactRevisionId; readonly item_path: string }
 export interface AddressedItem extends ContributionItem, ItemAddress {}
 export const addressedItem = (item: ContributionItem): AddressedItem => ({ ...item, source_revision_id: item.revision_id });
 
 /** One explicit edge from an item to a logical item. A reference with no captured target stays visible as unresolved. */
 export type LogicalLinkRead =
-  | { readonly state: "resolved"; readonly producer_local_id: string; readonly logical_item_id: string; readonly relation_id: string; readonly evidence_ref: string }
-  | { readonly state: "unresolved"; readonly producer_local_id: string; readonly unresolved_target_ref: string; readonly relation_id: string; readonly evidence_ref: string };
+  | { readonly state: "resolved"; readonly producer_local_id: string; readonly logical_item_id: LogicalItemId; readonly relation_id: RelationId; readonly evidence_ref: string }
+  | { readonly state: "unresolved"; readonly producer_local_id: string; readonly unresolved_target_ref: string; readonly relation_id: RelationId; readonly evidence_ref: string };
 
 const SCOPED_REFERENCE = /^logical_item:[^:]*:(?<id>.+)$/;
 export function logicalLinks(relations: readonly CompositeRelation[], logical_items: readonly CompositeLogicalItem[]): readonly LogicalLinkRead[] {
@@ -34,15 +34,16 @@ export function logicalLinks(relations: readonly CompositeRelation[], logical_it
 
 // ---------------------------------------------------------------- evidence ---
 
-export type EvidenceReadiness =
+/** A question's readiness as read: its references are paged beside it, not carried in it. */
+export type EvidenceReadinessRead =
   | { readonly state: "ready"; readonly ready_at: Date }
   | { readonly state: "not_ready"; readonly reason: { readonly code: string; readonly detail: string } };
 /** The exact frozen references one question's answers all share. */
 export interface EvidenceRead extends QuestionKey {
-  readonly evidence_set_id: string;
+  readonly evidence_set_id: EvidenceSetId;
   readonly subject_occurrence_id: ItemOccurrenceId;
   readonly pinned_evaluator_definition_ids: Paged<EvaluatorDefinitionId>;
-  readonly readiness: EvidenceReadiness;
+  readonly readiness: EvidenceReadinessRead;
   readonly references: Paged<EvidenceReference>;
   readonly is_incomplete: boolean;
   readonly incompleteness_reason: string | null;
@@ -127,7 +128,7 @@ export interface MachineStatusRead<Measurement, Attempt> {
   readonly evaluator_definition_id: EvaluatorDefinitionId;
   readonly backend_kind: string;
   readonly model: string | null;
-  readonly execution_id: string | null;
+  readonly execution_id: ExecutionId | null;
   readonly measurement: Measurement;
   readonly attempts: Paged<Attempt>;
 }

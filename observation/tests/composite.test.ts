@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import type { EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, ItemOccurrenceId, UnitId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import { pageOf, selectCurrentAnswers, selectRevisionStandings, uniformDrilldownPages, type AnswerCount, type CompositeRevision, type CompositeSelector, type DrilldownPages, type DrilldownRow, type LogicalItemComposite,
   type StageComposite } from "../src/grading/composite";
@@ -45,7 +45,7 @@ async function readyAll(h: Harness, occurrence_id: ItemOccurrenceId, only?: stri
   for (const set of await readOccurrenceEvidence(h.db, h.scope, occurrence_id)) {
     if (only && set.question_id !== only) continue;
     const recorded = await recordCollection(h.db, h.scope, set.evidence_set_id, { state: "ready",
-      references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "fixture", item_path: "/findings/0", content: `evidence of ${occurrence_id}` }] });
+      references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "fixture" as ArtifactRevisionId, item_path: "/findings/0", content: `evidence of ${occurrence_id}` }] });
     if (!recorded.ok) throw new Error(recorded.error.detail);
   }
 }
@@ -95,7 +95,7 @@ const analysisBody = (ids: readonly string[]): JsonValue => ({ summary: "s", sou
 describe("current revisions", () => {
   const at = (minute: number): Date => new Date(Date.UTC(2026, 10, 1, 0, minute));
   const revision = (revision_id: string, unit_id: string, minute: number, predecessor_id: string | null = null, artifact_kind = "assessment"): CompositeRevision =>
-    ({ revision_id, unit_id, artifact_kind, predecessor_id, recorded_at: at(minute), captured_at: at(minute) });
+    ({ revision_id: revision_id as ArtifactRevisionId, unit_id: unit_id as UnitId, artifact_kind, predecessor_id: predecessor_id as ArtifactRevisionId | null, recorded_at: at(minute), captured_at: at(minute) });
   const current = (revisions: readonly CompositeRevision[]): readonly string[] => [...selectRevisionStandings(revisions, path).values()]
     .filter((standing) => standing.is_current).map((standing) => standing.revision.revision_id).sort();
 
@@ -200,8 +200,8 @@ integration("one task through both cohorts, revised plan and briefs: one logical
   await sharedTaskRun(h, { alpha: [finding(["T7"]), finding(["T7"]), finding(["T7", "T8"])], beta: [finding(["T7"]), finding([])] });
   const read = await composite(h, "T7");
   const implementation = stageOf(read, "implementation");
-  expect([implementation.publication, implementation.totals.contributing_items, stageOf(read, "integration").publication, stageOf(read, "analysis").publication.state, read.logical_item_id]).toEqual([
-    { state: "published", is_final: false, unit_ids: ["run-1/implementation/alpha", "run-1/implementation/beta"] }, 4, { state: "pending" }, "pending", `oakridge:${h.scope.namespace}:run-1:task:T7`]);
+  expect([implementation.publication, implementation.totals.contributing_items, stageOf(read, "integration").publication, stageOf(read, "analysis").publication.state, read.logical_item_id as string]).toEqual([
+    { state: "published", is_final: false, unit_ids: ["run-1/implementation/alpha" as UnitId, "run-1/implementation/beta" as UnitId] }, 4, { state: "pending" }, "pending", `oakridge:${h.scope.namespace}:run-1:task:T7`]);
   // A finding naming two tasks contributes once to each, and copies nothing.
   const other = await composite(h, "T8");
   expect(stageOf(other, "implementation").totals.contributing_items).toBe(1);
@@ -228,11 +228,11 @@ integration("a newer revision with no links replaces a linked one instead of res
   const read = stageOf(await composite(h, "T7"), "implementation");
   expect([read.totals.contributing_items, read.totals.superseded_items, read.answers]).toEqual([1, 1, []]);
   const history = await readCompositeDrilldown(h.db, h.scope, path, "run-1", read.history, pages);
-  expect(history.items.map((row) => [row.item.revision_id, row.item.is_current, row.questions.items.flatMap((question) => question.answers.items.map((answer) => answer.answer))])).toEqual([
+  expect(history.items.map((row) => [row.item.revision_id as string, row.item.is_current, row.questions.items.flatMap((question) => question.answers.items.map((answer) => answer.answer))])).toEqual([
     ["assessment-alpha-1", false, [choice("supported")]]]);
   // Beta's own current revision was never touched by alpha's.
   const items = await readCompositeDrilldown(h.db, h.scope, path, "run-1", read.items, pages);
-  expect(items.items.map((row) => row.item.revision_id)).toEqual(["assessment-beta-1"]);
+  expect(items.items.map((row): string => row.item.revision_id)).toEqual(["assessment-beta-1"]);
 }));
 
 integration("stages stand side by side: integration is pending, then final once published, whatever its answers and approvals", async () => scratchDatabase(async (db) => {
@@ -246,7 +246,7 @@ integration("stages stand side by side: integration is pending, then final once 
   const unanswered = await composite(h, "T7");
   const integration_stage = stageOf(unanswered, "integration");
   expect([integration_stage.publication, integration_stage.coverage, integration_stage.answers, integration_stage.totals.contributing_items]).toEqual([
-    { state: "published", is_final: true, unit_ids: ["run-1/integration/oakridge"] }, "linked", [], 1]);
+    { state: "published", is_final: true, unit_ids: ["run-1/integration/oakridge" as UnitId] }, "linked", [], 1]);
   const final = await occurrenceAt(h, "integration-1", "/findings/0");
   await readyAll(h, final);
   await measure(h, { occurrence_id: final, question_id: CORRECTNESS_ID, evaluator_id: MACHINE_A, answer: choice("contradicted") });

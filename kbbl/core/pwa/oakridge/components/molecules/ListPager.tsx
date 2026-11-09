@@ -1,10 +1,10 @@
 import { Button } from "../../../components/atoms/Button";
-import type { Paged, PageWindow } from "../../grading-types";
+import type { ObservationPageRequest, ObservationPaged } from "../../grading-contracts/grading/composite";
 
 interface Props {
   name: string;
-  page: Pick<Paged<unknown>, "total" | "limit" | "offset">;
-  onWindow: (window: PageWindow) => void;
+  page: Pick<ObservationPaged<unknown>, "total" | "limit" | "offset">;
+  onWindow: (window: ObservationPageRequest) => void;
 }
 
 /** Continuation for one list. Each returned list carries its own, so none can end silently early. */

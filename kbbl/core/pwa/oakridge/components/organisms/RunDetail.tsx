@@ -16,7 +16,7 @@ import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { FinalIntegrationPanel } from "./FinalIntegrationPanel";
-import type { ItemSelection } from "../../grading-types";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 
 const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
@@ -46,7 +46,7 @@ interface RunDetailProps {
    */
   onRunDeleted: () => void;
   onSelectArtifact: (artifactId: string) => void;
-  onOpenItem?: (selection: ItemSelection) => void;
+  onOpenItem?: (selection: ObservationItemAddress) => void;
 }
 
 export function RunDetail({ runId, onRunDeleted, onSelectArtifact, onOpenItem }: RunDetailProps) {

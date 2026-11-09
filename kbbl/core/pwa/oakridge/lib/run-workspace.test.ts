@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { id } from "../__fixtures__/grading";
 
 import type { ArtifactId, Sid } from "../../lib/ids";
+import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
 import {
   DEFAULT_RUN_WORKSPACE_STATE,
   LIST_PANE,
@@ -206,7 +208,7 @@ describe("shouldReadRunActivity", () => {
 });
 
 describe("the item pane", () => {
-  const selection = { source_revision_id: "r", item_path: "/findings/1" };
+  const selection: ObservationItemAddress = { source_revision_id: id("r"), item_path: "/findings/1" };
   const pane = (item_path: string) => ({ kind: "item", selection: { ...selection, item_path } }) as const;
   it("is one pane per exact revision and path", () => {
     expect(arePanesEqual(pane("/findings/1"), pane("/findings/1"))).toBe(true);

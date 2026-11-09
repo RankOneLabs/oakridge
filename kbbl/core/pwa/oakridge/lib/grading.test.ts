@@ -1,33 +1,39 @@
 import { describe, expect, test } from "vitest";
-import type { AnswerRead, EvidenceReference, MeasurementState, Paged, QuestionStatus, StageComposite, SubmissionAcknowledgment } from "../grading-types";
-import { itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
+import type { ObservationGradeObservationId, ObservationReviewerId } from "../grading-contracts/domain/identity";
+import type { ObservationAnswerCount, ObservationPaged } from "../grading-contracts/grading/composite";
+import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
+import type { ObservationMeasurementState } from "../grading-contracts/grading/execution";
+import type { ObservationAnswerRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
+import type { ObservationHumanSubmissionAcknowledgment } from "../grading-contracts/http/grades";
+import type { ObservationQuestionStatusResponse } from "../grading-contracts/storage/grading-record-store";
+import { id, itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
 import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, stagePublicationLabel, taskLinkLabel } from "./grading";
 
-const empty = <Item,>(): Paged<Item> => ({ items: [], total: 0, limit: 50, offset: 0 });
-const answer = (observation_id: string, supersedes_observation_id: string | null = null): AnswerRead => ({ observation_id, execution_id: observation_id, occurrence_id: "o", evidence_set_id: "e",
-  question: { question_id: "q", question_version: "1" }, evaluator_definition_id: "human", reviewer_id: "r", answer: { state: "answered", kind: "choice", value: "supports" },
-  supersedes_observation_id, confidence: null, rationale: null, comments: null, recorded_at: "2026-11-01", grader: { kind: "human", evaluator_definition_id: "human", reviewer_id: "r" } });
+const empty = <Item,>(): ObservationPaged<Item> => ({ items: [], total: 0, limit: 50, offset: 0 });
+const answer = (observation_id: string, supersedes_observation_id: string | null = null): ObservationAnswerRead => ({ observation_id: id(observation_id), execution_id: id(observation_id), occurrence_id: id("o"), evidence_set_id: id("e"),
+  question: { question_id: id("q"), question_version: "1" }, evaluator_definition_id: id("human"), reviewer_id: id<ObservationReviewerId>("r"), answer: { state: "answered", kind: "choice", value: "supports" },
+  supersedes_observation_id: supersedes_observation_id === null ? null : id<ObservationGradeObservationId>(supersedes_observation_id), confidence: null, rationale: null, comments: null, recorded_at: "2026-11-01", grader: { kind: "human", evaluator_definition_id: id("human"), reviewer_id: id("r") }, is_current: true });
 
 describe("item selection", () => {
   const revision = compositeId({ kind: "artifact", runId: "run-1", unitId: "run-1/integration/final", name: "assessment:run-1/integration/final:assessment:3" });
   test("addresses a finding by the authority's exact revision and its path, with no task, cohort or stage", () => {
-    expect(selectItemSelection({ revision_id: revision }, "/findings/2")).toEqual({ source_revision_id: "run-1/integration/final:assessment:3", item_path: "/findings/2" });
+    expect(selectItemSelection({ revision_id: revision }, "/findings/2")).toEqual({ source_revision_id: id("run-1/integration/final:assessment:3"), item_path: "/findings/2" });
   });
   test("no revision identity means no address, rather than a guess", () => {
     expect(selectItemSelection(undefined, "/findings/0")).toBeNull();
-    expect(selectItemSelection({ revision_id: "not-a-composite" }, "/findings/0")).toBeNull();
+    expect(selectItemSelection({ revision_id: id("not-a-composite") }, "/findings/0")).toBeNull();
   });
   test("two paths of one revision are different items", () => {
-    const at = (item_path: string) => itemSelectionKey({ source_revision_id: "r", item_path });
+    const at = (item_path: string) => itemSelectionKey({ source_revision_id: id("r"), item_path });
     expect(at("/findings/1")).not.toBe(at("/findings/10"));
   });
 });
 
 describe("states read apart", () => {
-  const states: readonly MeasurementState[] = [{ state: "not_ready", code: "repository_unavailable", detail: "no clone" }, { state: "grading_off" }, { state: "awaiting_admission" },
+  const states: readonly ObservationMeasurementState[] = [{ state: "not_ready", code: "repository_unavailable", detail: "no clone" }, { state: "grading_off" }, { state: "awaiting_admission" },
     { state: "pending", status: "queued" }, { state: "budget_deferred" }, { state: "failed", terminal_cause: "retry_exhausted", error: "rate limited" },
-    { state: "answered", observation_id: "o", answer: { state: "answered", kind: "choice", value: "contradicted" } }];
+    { state: "answered", observation_id: id("o"), answer: { state: "answered", kind: "choice", value: "contradicted" } }];
   test("every measurement state has its own label", () => {
     const labels = states.map((state) => measurementDisplay(state).label);
     expect(new Set(labels).size).toBe(states.length);
@@ -40,7 +46,7 @@ describe("states read apart", () => {
   for (const value of ["irrelevant", "contradicted", "does_not_support", "unclear"]) test(`${value} is an answer, not failed or missing work`, () => {
     expect(answerTone(value)).not.toBe("danger");
     expect(answerTone(value)).not.toBe("muted");
-    expect(measurementDisplay({ state: "answered", observation_id: "o", answer: { state: "answered", kind: "choice", value } }).tone).not.toBe("danger");
+    expect(measurementDisplay({ state: "answered", observation_id: id("o"), answer: { state: "answered", kind: "choice", value } }).tone).not.toBe("danger");
   });
 });
 
@@ -90,7 +96,7 @@ describe("the operator's grade editor", () => {
 });
 
 describe("saved means acknowledged", () => {
-  const acknowledgment = { status: "recorded", answer: { state: "answered", kind: "choice", value: "does_not_support" } } as SubmissionAcknowledgment;
+  const acknowledgment = { status: "recorded", answer: { state: "answered", kind: "choice", value: "does_not_support" } } as ObservationHumanSubmissionAcknowledgment;
   test("pending, refused and failed never read as saved", () => {
     expect(selectSubmissionNotice({ is_pending: true, result: undefined }).kind).toBe("pending");
     expect(selectSubmissionNotice({ is_pending: true, result: { kind: "acknowledged", acknowledgment } }).kind).toBe("pending");
@@ -107,27 +113,27 @@ describe("saved means acknowledged", () => {
 describe("frozen references", () => {
   const fields = { ref: "citation:0", content: "x" };
   test("reported output is labelled agent-reported, and a missing file absent, with exact provenance", () => {
-    const reported: EvidenceReference = { ...fields, source: "reported", reported_by: "agent", revision_id: "r", item_path: "/findings/0/evidence/1" };
+    const reported: ObservationEvidenceReference = { ...fields, source: "reported", reported_by: "agent", revision_id: id("r"), item_path: "/findings/0/evidence/1" };
     expect(referenceDisplay(reported)).toMatchObject({ is_agent_reported: true, source_label: "Agent-reported" });
-    const absent: EvidenceReference = { ...fields, content: null, source: "repository", repository_key: "oakridge", commit_sha: "abc", path: "a.ts", line_range: { start: 2, end: 4 }, is_absent: true };
+    const absent: ObservationEvidenceReference = { ...fields, content: null, source: "repository", repository_key: "oakridge", commit_sha: "abc", path: "a.ts", line_range: { start: 2, end: 4 }, is_absent: true };
     expect(referenceDisplay(absent)).toEqual({ source_label: "Repository", location: "oakridge a.ts:2-4 @ abc", is_agent_reported: false, is_absent: true });
-    expect(referenceDisplay({ ...fields, source: "run_input", run_id: "run-1", input_path: "/spec" })).toMatchObject({ source_label: "Launch input", location: "run-1 /spec" });
-    expect(referenceDisplay({ ...fields, source: "revision", revision_id: "r", item_path: null })).toMatchObject({ location: "r" });
+    expect(referenceDisplay({ ...fields, source: "run_input", run_id: id("run-1"), input_path: "/spec" })).toMatchObject({ source_label: "Launch input", location: "run-1 /spec" });
+    expect(referenceDisplay({ ...fields, source: "revision", revision_id: id("r"), item_path: null })).toMatchObject({ location: "r" });
   });
 });
 
 describe("stages", () => {
-  const stage = (overrides: Partial<StageComposite>): StageComposite => ({ stage: "integration", publication: { state: "pending" }, coverage: "gap", questions: empty(), answers: empty(), statuses: empty(), disagreements: empty(),
+  const stage = (overrides: Partial<ObservationStageCompositeRead>): ObservationStageCompositeRead => ({ stage: "integration", publication: { state: "pending" }, coverage: "gap", questions: empty(), answers: empty(), statuses: empty(), disagreements: empty(),
     totals: { contributing_items: 0, not_ready_items: 0, pending_items: 0, failed_items: 0, budget_deferred_items: 0, grading_off_items: 0, superseded_items: 0, superseded_answers: 0 },
-    items: { logical_item_id: "t", stage: "integration", selector: { kind: "items" } }, history: { logical_item_id: "t", stage: "integration", selector: { kind: "history" } }, ...overrides });
-  const published = (is_final: boolean): StageComposite["publication"] => ({ state: "published", is_final, unit_ids: empty() });
+    items: { logical_item_id: id("t"), stage: "integration", selector: { kind: "items" } }, history: { logical_item_id: id("t"), stage: "integration", selector: { kind: "history" } }, ...overrides });
+  const published = (is_final: boolean): ObservationStageCompositeRead["publication"] => ({ state: "published", is_final, unit_ids: empty() });
   test("integration is pending, then final results; another stage is only published", () => {
     expect(stagePublicationLabel(stage({}))).toBe("Pending");
     expect(stagePublicationLabel(stage({ publication: published(true) }))).toBe("Final results");
     expect(stagePublicationLabel(stage({ publication: published(false) }))).toBe("Published");
   });
   test("a hidden stage carries no answer, status or disagreement at all", () => {
-    const count = { question: { question_id: "q", question_version: "1" }, grader: { kind: "human", evaluator_definition_id: "h", reviewer_id: "r" }, answer: { state: "answered", value: "supports" }, count: 3, drilldown: stage({}).items } as const;
+    const count: ObservationAnswerCount = { question: { question_id: id("q"), question_version: "1" }, grader: { kind: "human", evaluator_definition_id: id("h"), reviewer_id: id("r") }, answer: { state: "answered", value: "supports" }, count: 3, drilldown: stage({}).items };
     const full = stage({ answers: { ...empty(), items: [count], total: 1 }, publication: published(false), coverage: "linked" });
     const hidden = selectStageView(full, false);
     expect(Object.keys(hidden).sort()).toEqual(["contributing_items", "coverage", "kind", "publication", "stage"]);
@@ -141,23 +147,24 @@ test("an item reads by its description, and says so when it has none", () => {
   expect(selectItemText({ status: "met" })).toBe("No description recorded.");
 });
 test("an unresolved link says so", () => {
-  expect(taskLinkLabel({ state: "unresolved", producer_local_id: "T9", unresolved_target_ref: "logical_item:task:T9", relation_id: "r", evidence_ref: "e" })).toBe("T9 (unresolved)");
-  expect(taskLinkLabel({ state: "resolved", producer_local_id: "T1", logical_item_id: "l", relation_id: "r", evidence_ref: "e" })).toBe("T1");
+  expect(taskLinkLabel({ state: "unresolved", producer_local_id: "T9", unresolved_target_ref: "logical_item:task:T9", relation_id: id("r"), evidence_ref: "e" })).toBe("T9 (unresolved)");
+  expect(taskLinkLabel({ state: "resolved", producer_local_id: "T1", logical_item_id: id("l"), relation_id: id("r"), evidence_ref: "e" })).toBe("T1");
 });
 
 describe("artifact glances", () => {
   const ready = { state: "ready" } as const;
-  const question = (question_id: string, overrides: Partial<QuestionStatus> = {}): QuestionStatus => ({ ...supportQuestion(), question: { ...supportQuestion().question, question_id }, ...overrides });
-  const own = (question_id: string) => reviewerAnswer(`own-${question_id}`, "supports", "operator", { question: { question_id, question_version: "1" } });
+  const OPERATOR = id<ObservationReviewerId>("operator");
+  const question = (question_id: string, overrides: Partial<ObservationQuestionStatusResponse> = {}): ObservationQuestionStatusResponse => ({ ...supportQuestion(), question: { ...supportQuestion().question, question_id: id(question_id) }, ...overrides });
+  const own = (question_id: string) => reviewerAnswer(`own-${question_id}`, "supports", "operator", { question: { question_id: id(question_id), question_version: "1" } });
   test("Grade until every question the operator can answer has their answer, then Graded", () => {
     const partly = itemStatus([question("a", { answers: paged([own("a")]) }), question("b", { answers: paged([reviewerAnswer("x", "unclear", "someone-else")]) })]);
     const fully = itemStatus([question("a", { answers: paged([own("a")]) }), question("b", { answers: paged([own("b")]) })]);
-    expect([selectOwnGradeProgress(partly, "operator"), gradeActionLabel(selectOwnGradeProgress(partly, "operator"))]).toEqual([{ kind: "open", answered: 1, total: 2 }, "Grade"]);
-    expect([selectOwnGradeProgress(fully, "operator"), gradeActionLabel(selectOwnGradeProgress(fully, "operator"))]).toEqual([{ kind: "graded", total: 2 }, "Graded"]);
+    expect([selectOwnGradeProgress(partly, OPERATOR), gradeActionLabel(selectOwnGradeProgress(partly, OPERATOR))]).toEqual([{ kind: "open", answered: 1, total: 2 }, "Grade"]);
+    expect([selectOwnGradeProgress(fully, OPERATOR), gradeActionLabel(selectOwnGradeProgress(fully, OPERATOR))]).toEqual([{ kind: "graded", total: 2 }, "Graded"]);
   });
   test("a question with no human evaluator is not waiting on the operator", () => {
     const status = itemStatus([question("a", { answers: paged([own("a")]), human: ready }), question("b", { human: { state: "no_human_evaluator" } })]);
-    expect(gradeActionLabel(selectOwnGradeProgress(status, "operator"))).toBe("Graded");
+    expect(gradeActionLabel(selectOwnGradeProgress(status, OPERATOR))).toBe("Graded");
   });
   test("one glyph per automatic evaluator and question, an actual negative answer apart from failed and waiting work", () => {
     const status = itemStatus([
@@ -169,7 +176,7 @@ describe("artifact glances", () => {
   });
   test("show all addresses exactly the findings each row addresses", () => {
     const source = { revision_id: compositeId({ kind: "artifact", runId: "run-1", unitId: "u", name: "assessment:u:assessment:2" }) };
-    expect(selectFindingSelections(source, ["/findings/0", "/findings/1"])).toEqual([{ source_revision_id: "u:assessment:2", item_path: "/findings/0" }, { source_revision_id: "u:assessment:2", item_path: "/findings/1" }]);
+    expect(selectFindingSelections(source, ["/findings/0", "/findings/1"])).toEqual([{ source_revision_id: id("u:assessment:2"), item_path: "/findings/0" }, { source_revision_id: id("u:assessment:2"), item_path: "/findings/1" }]);
     expect(selectFindingSelections(undefined, ["/findings/0"])).toEqual([]);
   });
 });

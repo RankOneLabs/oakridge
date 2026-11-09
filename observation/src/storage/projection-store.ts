@@ -1,6 +1,6 @@
 import { sql, type Selectable } from "kysely";
 import { canonicalJson } from "canonical-json";
-import type { ItemOccurrenceId } from "../domain/identity";
+import type { ItemOccurrenceId, LogicalItemId, RelationId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { INITIAL_SOURCE_CURSOR, type SourceEventCursor } from "../ingest/cursor";
 import type { ExtractionProfile } from "../ports/producer-profile";
@@ -13,7 +13,7 @@ import { occurrenceId } from "../projection/occurrence-id";
 import type { CaptureConfiguration } from "../grading/evidence";
 import { pinOccurrenceInTransaction } from "./captured-evidence-store";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
-import type { ObservationItemOccurrence, ObservationItemRelation, ObservationSourceRevision } from "./db-types";
+import type { ObservationItemOccurrence, ObservationSourceRevision } from "./db-types";
 
 export interface ProjectionSummary { readonly occurrences: number; readonly issues: number; readonly relations: number }
 export interface Page { readonly limit: number; readonly offset: number }
@@ -21,9 +21,26 @@ export interface ItemsPage { readonly items: readonly Selectable<ObservationItem
   readonly issues: { readonly items: readonly ExtractionIssue[]; readonly total: number; readonly limit: number; readonly offset: number };
   readonly total: number; readonly limit: number; readonly offset: number }
 export interface Republication { readonly predecessor_revision_id: string; readonly is_republication: boolean }
-export interface LineagePage { readonly occurrence_id: string; readonly relations: readonly Selectable<ObservationItemRelation>[];
-  readonly edges: readonly Selectable<ObservationItemRelation>[];
-  readonly unresolved: readonly Selectable<ObservationItemRelation>[]; readonly total: number;
+/** One stored relation as a lineage read returns it: the observation.item_relation row, its ids named. */
+export interface ItemRelationRead {
+  readonly producer: string;
+  readonly namespace: string;
+  readonly relation_id: RelationId;
+  readonly source_occurrence_id: ItemOccurrenceId | null;
+  readonly source_logical_item_id: LogicalItemId | null;
+  readonly target_occurrence_id: ItemOccurrenceId | null;
+  readonly target_logical_item_id: LogicalItemId | null;
+  readonly unresolved_target_ref: string | null;
+  readonly type: string;
+  readonly asserted_by: string;
+  readonly evidence_ref: string;
+  readonly algorithm: string | null;
+  readonly algorithm_version: string | null;
+  readonly recorded_at: Date;
+}
+export interface LineagePage { readonly occurrence_id: ItemOccurrenceId; readonly relations: readonly ItemRelationRead[];
+  readonly edges: readonly ItemRelationRead[];
+  readonly unresolved: readonly ItemRelationRead[]; readonly total: number;
   readonly limit: number; readonly offset: number; readonly republication: Republication | null }
 interface StoredSelection { readonly occurrence_id: string; readonly item: SelectedItem; readonly definition: ExtractorDefinition }
 /** What a capture needs from composition: how to select items, and what to pin to new ones. */
@@ -299,7 +316,7 @@ export function readLineage(db: Database, tenant: TenantScope, occurrence_id: st
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("run_id", "=", item.run_id).execute();
     const logicalByOccurrence = new Map(occurrences.map((row) => [row.occurrence_id, row.logical_item_id]));
-    const relations = (await sql<Selectable<ObservationItemRelation>>`
+    const relations = (await sql<ItemRelationRead>`
       SELECT rel.* FROM observation.item_relation rel
       WHERE rel.producer = ${tenant.producer} AND rel.namespace = ${tenant.namespace}
         AND (
@@ -335,7 +352,7 @@ export function readLineage(db: Database, tenant: TenantScope, occurrence_id: st
     }
     const ordered = relations.filter((relation) => connected.has(relation.relation_id));
     const slice = ordered.slice(page.offset, page.offset + page.limit);
-    return { occurrence_id, relations: slice, edges: slice.filter((relation) => relation.unresolved_target_ref === null),
+    return { occurrence_id: occurrence_id as ItemOccurrenceId, relations: slice, edges: slice.filter((relation) => relation.unresolved_target_ref === null),
       unresolved: slice.filter((relation) => relation.unresolved_target_ref !== null),
       total: ordered.length, ...page, republication };
   });

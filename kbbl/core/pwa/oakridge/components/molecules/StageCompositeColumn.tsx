@@ -1,15 +1,16 @@
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import type { DrilldownKey, PageWindow, StageComposite } from "../../grading-types";
+import type { ObservationCompositeDrilldownKey, ObservationPageRequest } from "../../grading-contracts/grading/composite";
+import type { ObservationStageCompositeRead } from "../../grading-contracts/grading/item-reads";
 import { answerKeyLabel, answerTone, graderLabel, questionLabel, selectStageView, stageLabel, statusKeyLabel } from "../../lib/grading";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ListPager } from "./ListPager";
 
 interface Props {
-  stage: StageComposite;
+  stage: ObservationStageCompositeRead;
   isRevealed: boolean;
-  onDrill: (key: DrilldownKey, label: string) => void;
-  onWindow: (name: "questions" | "answers" | "statuses" | "disagreements", window: PageWindow) => void;
+  onDrill: (key: ObservationCompositeDrilldownKey, label: string) => void;
+  onWindow: (name: "questions" | "answers" | "statuses" | "disagreements", window: ObservationPageRequest) => void;
 }
 
 function CountButton({ label, count, drill, testId }: { label: string; count: number; drill: () => void; testId: string }) {

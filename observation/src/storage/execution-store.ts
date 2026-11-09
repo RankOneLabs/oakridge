@@ -1,5 +1,5 @@
 import { sql, type Selectable, type UpdateObject } from "kysely";
-import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
+import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId, RunId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { estimatedCostPerCall, fitsRunAllowance } from "../grading/budget";
 import type { EvaluatorDefinition } from "../grading/evaluator";
@@ -428,7 +428,7 @@ export async function readItemMeasurementsIn(trx: DatabaseTransaction, tenant: T
 
 /** A run's automatic-grading spend: what its claims sent or hold in reservation, against its allowance. */
 export interface RunSpend {
-  readonly run_id: string;
+  readonly run_id: RunId;
   /** The choice the run's captured launch committed. */
   readonly is_grading_enabled: boolean;
   /** The exact config the launch delivered, or null when it carried none. */
@@ -449,7 +449,7 @@ export async function readRunSpend(db: Database, tenant: TenantScope, run_id: st
       .groupBy("status").execute();
     const executions: Record<ExecutionStatus, number> = { queued: 0, claimed: 0, reclaimable: 0, budget_deferred: 0, completed: 0, failed: 0 };
     for (const row of statuses) executions[row.status as ExecutionStatus] = Number(row.count);
-    return { run_id, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id),
+    return { run_id: run_id as RunId, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id),
       captured_config: await readCapturedRunConfig(trx, tenant, run_id), committed, requests_sent: Number(counted.requests_sent),
       attempts: Number(counted.attempts), executions };
   });

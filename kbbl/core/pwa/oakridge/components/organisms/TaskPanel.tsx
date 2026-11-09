@@ -3,7 +3,8 @@ import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GradingReadError } from "../../client-grading";
-import type { DrilldownKey, ItemSelection, PageWindow } from "../../grading-types";
+import type { ObservationCompositeDrilldownKey, ObservationPageRequest } from "../../grading-contracts/grading/composite";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { useTask } from "../../hooks/useTask";
 import { useTaskLineage } from "../../hooks/useTaskLineage";
 import { selectItemText } from "../../lib/grading";
@@ -14,12 +15,12 @@ import { ListPager } from "../molecules/ListPager";
 import { CompositeDrilldown } from "./CompositeDrilldown";
 import { TaskStageComposites } from "./TaskStageComposites";
 
-const FIRST: PageWindow = { limit: 50, offset: 0 };
+const FIRST: ObservationPageRequest = { limit: 50, offset: 0 };
 
 interface Props {
   runId: string;
   taskId: string;
-  onOpenItem: (selection: ItemSelection) => void;
+  onOpenItem: (selection: ObservationItemAddress) => void;
 }
 
 /** One run-scoped task: its stages side by side and the items linked to it. A task is read, never answered. */
@@ -28,7 +29,7 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
   const reveal = useGradingVisibility((state) => state.revealComposites);
   const hide = useGradingVisibility((state) => state.hideComposites);
   const [lineagePage, setLineagePage] = useState(FIRST);
-  const [drill, setDrill] = useState<{ readonly key: DrilldownKey; readonly label: string } | null>(null);
+  const [drill, setDrill] = useState<{ readonly key: ObservationCompositeDrilldownKey; readonly label: string } | null>(null);
   const composite = useTask({ run_id: runId, task_id: taskId, nested: {} });
   const lineage = useTaskLineage(runId, taskId, lineagePage);
   const isUncaptured = composite.error instanceof GradingReadError && composite.error.status === 404;

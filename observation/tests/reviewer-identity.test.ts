@@ -6,5 +6,5 @@ test("grade credentials require an explicit reviewer binding in configuration", 
   expect(() => credentialsFromEnv({ OBSERVATION_GRADE_CREDENTIALS: JSON.stringify([
     { ...tenant, token: "grade" },
   ]) } as NodeJS.ProcessEnv)).toThrow("reviewer_id binding");
-  expect(boundReviewer({ ...tenant, token: "operator", reviewer_id: "oakridge-operator" })).toBe("oakridge-operator");
+  expect<string>(boundReviewer({ ...tenant, token: "operator", reviewer_id: "oakridge-operator" })).toBe("oakridge-operator");
 });

@@ -1,5 +1,5 @@
 import { Button } from "../../../components/atoms/Button";
-import type { ItemSelection } from "../../grading-types";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { useItemGlance } from "../../hooks/useItemGlance";
 import { useReviewer } from "../../hooks/useReviewer";
 import { gradeActionLabel, itemSelectionKey, selectAutomaticGlances, selectOwnGradeProgress } from "../../lib/grading";
@@ -9,8 +9,8 @@ import { GradeItemButton } from "../molecules/GradeItemButton";
 
 interface Props {
   runId: string;
-  selection: ItemSelection;
-  onOpenItem: (selection: ItemSelection) => void;
+  selection: ObservationItemAddress;
+  onOpenItem: (selection: ObservationItemAddress) => void;
 }
 
 /**

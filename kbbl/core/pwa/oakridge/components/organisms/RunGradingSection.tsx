@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import type { DrilldownKey, ItemSelection, PageWindow } from "../../grading-types";
+import type { ObservationCompositeDrilldownKey, ObservationPageRequest } from "../../grading-contracts/grading/composite";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { useRunGrading } from "../../hooks/useRunGrading";
 import { useRunTasks } from "../../hooks/useRunTasks";
 import { useRunUnresolvedReferences } from "../../hooks/useRunUnresolvedReferences";
@@ -14,11 +15,11 @@ import { CompositeDrilldown } from "./CompositeDrilldown";
 import { StageFindings } from "./StageFindings";
 import { TaskStageComposites } from "./TaskStageComposites";
 
-const FIRST: PageWindow = { limit: 50, offset: 0 };
+const FIRST: ObservationPageRequest = { limit: 50, offset: 0 };
 
 interface Props {
   runId: string;
-  onOpenItem: (selection: ItemSelection) => void;
+  onOpenItem: (selection: ObservationItemAddress) => void;
   onOpenTask: (task_id: string) => void;
 }
 
@@ -29,7 +30,7 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
   const hide = useGradingVisibility((state) => state.hideComposites);
   const grading = useRunGrading(runId);
   const [taskPage, setTaskPage] = useState(FIRST);
-  const [drill, setDrill] = useState<{ readonly key: DrilldownKey; readonly label: string } | null>(null);
+  const [drill, setDrill] = useState<{ readonly key: ObservationCompositeDrilldownKey; readonly label: string } | null>(null);
   const tasks = useRunTasks({ run_id: runId, page: taskPage, nested: {} });
   const [unresolvedPage, setUnresolvedPage] = useState(FIRST);
   const unresolved = useRunUnresolvedReferences(runId, unresolvedPage);

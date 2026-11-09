@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import type { QuestionStatus, SubmissionResult } from "../../grading-types";
+import type { ObservationItemOccurrenceId } from "../../grading-contracts/domain/identity";
+import type { ObservationQuestionStatusResponse } from "../../grading-contracts/storage/grading-record-store";
+import type { SubmissionResult } from "../../grading-types";
 import { useOwnAnswers } from "../../hooks/useOwnAnswers";
 import { useReviewer } from "../../hooks/useReviewer";
 import { useSubmitAnswer } from "../../hooks/useSubmitAnswer";
@@ -12,8 +14,8 @@ import { artifactLabelClass } from "../molecules/ArtifactSection";
 import { AnswerRow } from "../molecules/ItemAnswers";
 
 interface Props {
-  occurrenceId: string;
-  question: QuestionStatus;
+  occurrenceId: ObservationItemOccurrenceId;
+  question: ObservationQuestionStatusResponse;
   onAcknowledged: () => void;
 }
 

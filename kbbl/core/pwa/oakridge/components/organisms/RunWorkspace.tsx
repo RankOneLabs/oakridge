@@ -29,7 +29,7 @@ import { useStore } from "../../../state/store";
 import { selectArchivedSessionIds } from "../../../lib/session";
 import { RunIdentityHeader } from "../molecules/RunIdentityHeader";
 import { RunPaneChrome } from "../molecules/RunPaneChrome";
-import type { ItemSelection } from "../../grading-types";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { itemSelectionKey } from "../../lib/grading";
 import { ArtifactReview } from "./ArtifactReview";
 import { ItemPanel } from "./ItemPanel";
@@ -217,7 +217,7 @@ interface PaneBodyProps {
  * was meant to avoid.
  */
 function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane, onOpenBeside }: PaneBodyProps) {
-  const openItem = (selection: ItemSelection) => onOpenBeside({ kind: "item", selection });
+  const openItem = (selection: ObservationItemAddress) => onOpenBeside({ kind: "item", selection });
   const openTask = (task_id: string) => onOpenBeside({ kind: "task", task_id });
   switch (pane.kind) {
     case "overview":

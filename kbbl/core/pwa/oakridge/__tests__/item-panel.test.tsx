@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-import { acknowledged, correctnessQuestion, findingRow, IMPLEMENTATION, INTEGRATION, ANALYSIS, item, itemStatus, machine, OCCURRENCE, paged, reviewerAnswer, supportQuestion, taskComposite } from "../__fixtures__/grading";
+import { acknowledged, correctnessQuestion, findingRow, id, IMPLEMENTATION, INTEGRATION, ANALYSIS, item, itemStatus, machine, OCCURRENCE, paged, reviewerAnswer, supportQuestion, taskComposite } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
 import { AssessmentViewer } from "../components/molecules/AssessmentViewer";
 import { SpecAnalysisViewer } from "../components/molecules/SpecAnalysisViewer";
@@ -11,27 +11,29 @@ import { FinalIntegrationPanel } from "../components/organisms/FinalIntegrationP
 import { ItemPanel } from "../components/organisms/ItemPanel";
 import { RunGradingSection } from "../components/organisms/RunGradingSection";
 import { TaskPanel } from "../components/organisms/TaskPanel";
-import type { ItemStatus, TaskComposite } from "../grading-types";
+import type { ObservationGradeObservationId } from "../grading-contracts/domain/identity";
+import type { ObservationCompositeRead } from "../grading-contracts/grading/item-reads";
+import type { ObservationItemStatusResponse } from "../grading-contracts/storage/grading-record-store";
 import { parseAssessment } from "../lib/assessment";
 import { useGradingVisibility } from "../state/gradingVisibility";
 import type { EpicWorkflowProfile } from "../run-types";
 
 const json = (body: unknown, status = 200): Response => Response.json(body, { status });
-interface Harness { status: ItemStatus; own: readonly ReturnType<typeof reviewerAnswer>[]; submit: () => Response | Promise<Response>; sent: unknown[]; paths: string[] }
+interface Harness { status: ObservationItemStatusResponse; own: readonly ReturnType<typeof reviewerAnswer>[]; submit: () => Response | Promise<Response>; sent: unknown[]; paths: string[] }
 let world: Harness;
 const reads = (path: string): Response | null => {
-  if (path === "/oakridge/observation/reviewer") return json({ reviewer_id: "oakridge-operator" });
+  if (path === "/oakridge/observation/reviewer") return json({ reviewer_id: id("oakridge-operator") });
   if (path.endsWith("/items/at")) return json(world.status.item);
   if (path.endsWith("/status")) return json(world.status);
   if (path.endsWith("/lineage") && path.includes("/items/")) return json({ occurrence_id: OCCURRENCE, relations: [], total: 0, limit: 20, offset: 0, republication: null });
   if (path.endsWith("/answers")) return json(paged(world.own));
-  if (path.endsWith("/grading")) return json({ run_id: "run-1", is_grading_enabled: false, committed: 0.13, requests_sent: 13, attempts: 13, executions: { completed: 3 } });
+  if (path.endsWith("/grading")) return json({ run_id: id("run-1"), is_grading_enabled: false, committed: 0.13, requests_sent: 13, attempts: 13, executions: { completed: 3 } });
   if (path.endsWith("/tasks")) return json(paged([taskComposite()]));
   if (path.endsWith("/tasks/T1")) return json(taskComposite());
   if (path.endsWith("/tasks/T404")) return json({ error: { code: "not_found", message: "no such task" } }, 404);
-  if (/\/tasks\/[^/]+\/lineage$/.test(path)) return json({ ...paged([{ kind: "contribution", relation_id: "rel-1", evidence_ref: "e", asserted_by: "producer_explicit", item: item(IMPLEMENTATION) }]), run_id: "run-1", producer_local_id: "T1", is_captured: true });
-  if (path.endsWith("/unresolved-task-references")) return json(paged([{ item: item(IMPLEMENTATION), relation_id: "rel-2", unresolved_target_ref: "logical_item:task:T404", evidence_ref: "e" }]));
-  if (path.endsWith("/drilldown")) return json(paged([{ item: item(IMPLEMENTATION), links: paged([]), questions: paged([{ question: { question_id: "assessment_finding.evidence_support", question_version: "1" }, evidence: supportQuestion().evidence, statuses: paged([]),
+  if (/\/tasks\/[^/]+\/lineage$/.test(path)) return json({ ...paged([{ kind: "contribution", relation_id: id("rel-1"), evidence_ref: "e", asserted_by: "producer_explicit", item: item(IMPLEMENTATION) }]), run_id: id("run-1"), producer_local_id: "T1", is_captured: true });
+  if (path.endsWith("/unresolved-task-references")) return json(paged([{ item: item(IMPLEMENTATION), relation_id: id("rel-2"), unresolved_target_ref: "logical_item:task:T404", evidence_ref: "e" }]));
+  if (path.endsWith("/drilldown")) return json(paged([{ item: item(IMPLEMENTATION), links: paged([]), questions: paged([{ question: { question_id: id("assessment_finding.evidence_support"), question_version: "1" }, evidence: supportQuestion().evidence, statuses: paged([]),
     answers: paged([reviewerAnswer("raw-answer", "does_not_support", "second-reviewer")]), superseded_answers: paged([]) }]) }]));
   return null;
 };
@@ -45,7 +47,7 @@ beforeEach(() => {
     if (url.pathname.endsWith("/findings")) {
       const stage = url.searchParams.get("stage");
       if (stage === "analysis") return json(paged([findingRow(ANALYSIS, { stage: "analysis", selected_value: { description: "analysis finding" } })]));
-      if (stage === "implementation") return json(paged([findingRow(IMPLEMENTATION, {}, paged([{ state: "unresolved", producer_local_id: "T404", unresolved_target_ref: "logical_item:task:T404", relation_id: "r", evidence_ref: "e" }]))]));
+      if (stage === "implementation") return json(paged([findingRow(IMPLEMENTATION, {}, paged([{ state: "unresolved", producer_local_id: "T404", unresolved_target_ref: "logical_item:task:T404", relation_id: id("r"), evidence_ref: "e" }]))]));
       return json(paged([findingRow(INTEGRATION, { stage: "integration", selected_value: { description: "unlinked integration finding" } })]));
     }
     return reads(url.pathname) ?? json({ error: { code: "unexpected", message: url.pathname } }, 404);
@@ -120,7 +122,7 @@ describe("the panel's question states", () => {
     expect(await screen.findAllByTestId("or-your-grade-choice")).toHaveLength(3);
   });
   it("relevance offers relevant, irrelevant and unclear", async () => {
-    world.status = itemStatus([supportQuestion({ question: { ...supportQuestion().question, question_id: "finding.relevance", allowed_values: ["relevant", "irrelevant", "unclear"] } })], {}, ANALYSIS);
+    world.status = itemStatus([supportQuestion({ question: { ...supportQuestion().question, question_id: id("finding.relevance"), allowed_values: ["relevant", "irrelevant", "unclear"] } })], {}, ANALYSIS);
     wrap(<ItemPanel runId="run-1" selection={ANALYSIS} onOpenTask={vi.fn()} />);
     expect((await screen.findAllByTestId("or-your-grade-choice")).map((input) => (input as HTMLInputElement).value)).toEqual(["relevant", "irrelevant", "unclear"]);
     expect(screen.getByTestId("or-item-question").textContent).toBe("Relevance");
@@ -129,7 +131,7 @@ describe("the panel's question states", () => {
     world.status = itemStatus([supportQuestion({ machine: paged([
       machine({ state: "not_ready", code: "repository_unavailable", detail: "no clone" }), machine({ state: "grading_off" }), machine({ state: "pending", status: "claimed" }),
       machine({ state: "failed", terminal_cause: "retry_exhausted", error: "rate limited" }), machine({ state: "budget_deferred" }),
-      machine({ state: "answered", observation_id: "m", answer: { state: "answered", kind: "choice", value: "does_not_support" } }) ]) })], { is_grading_enabled: false });
+      machine({ state: "answered", observation_id: id("m"), answer: { state: "answered", kind: "choice", value: "does_not_support" } }) ]) })], { is_grading_enabled: false });
     panel();
     fireEvent.click(await screen.findByTestId("or-item-reveal"));
     const rows = await screen.findAllByTestId("or-item-machine-status");
@@ -197,7 +199,7 @@ describe("saving", () => {
     fireEvent.change(screen.getByTestId("or-your-grade-rationale"), { target: { value: "cited line disagrees" } });
     fireEvent.click(screen.getByTestId("or-your-grade-submit"));
     await screen.findByTestId("or-your-grade-saved");
-    expect(world.sent).toEqual([{ question_id: "assessment_finding.evidence_support", question_version: "1", submission_id: expect.any(String), answer: "does_not_support", rationale: "cited line disagrees", corrects_observation_id: null }]);
+    expect(world.sent).toEqual([{ question_id: id("assessment_finding.evidence_support"), question_version: "1", submission_id: expect.any(String), answer: "does_not_support", rationale: "cited line disagrees", corrects_observation_id: null }]);
     expect(world.paths.some((path) => path.startsWith(`/oakridge/observation/items/${encodeURIComponent(OCCURRENCE)}/answers`))).toBe(true);
   });
   it("says saved only after the acknowledgment arrives", async () => {
@@ -239,7 +241,7 @@ describe("saving", () => {
     expect((world.sent[2] as { submission_id: string }).submission_id).not.toBe(first!.submission_id);
   });
   it("a correction links the operator's current answer and keeps the earlier one listed", async () => {
-    world.own = [reviewerAnswer("first", "does_not_support"), reviewerAnswer("second", "unclear", "oakridge-operator", { supersedes_observation_id: "first" })];
+    world.own = [reviewerAnswer("first", "does_not_support"), reviewerAnswer("second", "unclear", "oakridge-operator", { supersedes_observation_id: id<ObservationGradeObservationId>("first") })];
     panel();
     expect((await screen.findByTestId("or-your-grade-current")).textContent).toContain("unclear");
     expect(screen.getByTestId("or-your-grade-history").textContent).toContain("does not support");
@@ -247,11 +249,11 @@ describe("saving", () => {
     await choose(0);
     fireEvent.click(screen.getByTestId("or-your-grade-submit"));
     await screen.findByTestId("or-your-grade-saved");
-    expect(world.sent).toMatchObject([{ answer: "supports", corrects_observation_id: "second" }]);
+    expect(world.sent).toMatchObject([{ answer: "supports", corrects_observation_id: id("second") }]);
   });
   it("after another tab corrects first, a stale refusal reloads the operator's answers and the retry corrects the new one", async () => {
     world.own = [reviewerAnswer("first", "does_not_support")];
-    world.submit = () => { world.own = [...world.own, reviewerAnswer("other-tab", "unclear", "oakridge-operator", { supersedes_observation_id: "first" })];
+    world.submit = () => { world.own = [...world.own, reviewerAnswer("other-tab", "unclear", "oakridge-operator", { supersedes_observation_id: id<ObservationGradeObservationId>("first") })];
       return json({ error: { code: "stale_correction", message: "that answer has already been corrected" } }, 409); };
     panel();
     expect((await screen.findByTestId("or-your-grade-current")).textContent).toContain("does not support");
@@ -262,7 +264,7 @@ describe("saving", () => {
     world.submit = () => json(acknowledged("supports"), 201);
     fireEvent.click(screen.getByTestId("or-your-grade-submit"));
     await screen.findByTestId("or-your-grade-saved");
-    expect(world.sent).toMatchObject([{ corrects_observation_id: "first" }, { corrects_observation_id: "other-tab" }]);
+    expect(world.sent).toMatchObject([{ corrects_observation_id: id("first") }, { corrects_observation_id: id("other-tab") }]);
   });
   it("nothing can be edited while a submission is out", async () => {
     let answer: (response: Response) => void = () => {};
@@ -287,7 +289,7 @@ describe("saving", () => {
     fireEvent.change(rationale, { target: { value: "line 5" } });
     fireEvent.click(screen.getByTestId("or-your-grade-submit"));
     await screen.findByTestId("or-your-grade-saved");
-    expect(world.sent).toMatchObject([{ answer: "unclear", rationale: "line 5", corrects_observation_id: "first" }]);
+    expect(world.sent).toMatchObject([{ answer: "unclear", rationale: "line 5", corrects_observation_id: id("first") }]);
   });
 });
 
@@ -327,7 +329,7 @@ describe("the grading section and task drilldown", () => {
     expect(documentText()).not.toContain("second-reviewer");
   });
   it("paging one task's stage moves only that list, and its pager stays when the page is empty", async () => {
-    const many = (id: string, offset = 0): TaskComposite => {
+    const many = (id: string, offset = 0): ObservationCompositeRead => {
       const task = taskComposite(id);
       return { ...task, stages: { ...task.stages, items: task.stages.items.map((stage) => stage.stage !== "implementation" ? stage
         : { ...stage, answers: offset === 0 ? { ...stage.answers, total: 51 } : paged([], 51, 50, offset) }) } };
@@ -413,7 +415,7 @@ describe("every entry point opens the same item", () => {
   const missing = { kind: "missing", cohort_label: null } as const;
   it("analysis: a finding addressed by its original index even though the view reorders it", () => {
     const onOpenItem = vi.fn();
-    wrap(<SpecAnalysisViewer source={{ run_id: "run-1", revision_id: revisionId("run-1/analysis", "analysis", ANALYSIS.source_revision_id), label: null, as_of: "t" }} onOpenItem={onOpenItem}
+    wrap(<SpecAnalysisViewer source={{ run_id: id("run-1"), revision_id: revisionId("run-1/analysis", "analysis", ANALYSIS.source_revision_id), label: null, as_of: "t" }} onOpenItem={onOpenItem}
       body={{ summary: "s", source_spec_refs: [], requirements: [], risks: [], proposed_spec_updates: [], findings: [
         { id: "F1", description: "info one", severity: "info" }, { id: "F2", description: "blocking one", severity: "blocking" }, { id: "F3", description: "warning one", severity: "warning" }] }} />);
     const buttons = screen.getAllByTestId("or-grade-item");
@@ -422,7 +424,7 @@ describe("every entry point opens the same item", () => {
     expect(onOpenItem).toHaveBeenCalledWith({ source_revision_id: ANALYSIS.source_revision_id, item_path: "/findings/1" });
   });
   it("analysis: a risk or requirement gets no grade control", () => {
-    wrap(<SpecAnalysisViewer source={{ run_id: "run-1", revision_id: revisionId("u", "analysis", "r"), label: null, as_of: "t" }} onOpenItem={vi.fn()}
+    wrap(<SpecAnalysisViewer source={{ run_id: id("run-1"), revision_id: revisionId("u", "analysis", "r"), label: null, as_of: "t" }} onOpenItem={vi.fn()}
       body={{ summary: "s", source_spec_refs: [], findings: [], proposed_spec_updates: [], requirements: [{ id: "R", description: "d", status: "implementable" }], risks: [{ description: "d", mitigation: "m" }] }} />);
     expect(screen.queryByTestId("or-grade-item")).toBeNull();
   });

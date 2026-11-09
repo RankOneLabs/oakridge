@@ -1,5 +1,6 @@
 import { Chip } from "../../../components/atoms/Chip";
-import type { EvidenceRead, PageWindow } from "../../grading-types";
+import type { ObservationPageRequest } from "../../grading-contracts/grading/composite";
+import type { ObservationEvidenceRead } from "../../grading-contracts/grading/item-reads";
 import { referenceDisplay } from "../../lib/grading";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
@@ -8,7 +9,7 @@ import { ListPager } from "./ListPager";
 const contentText = (content: unknown): string => typeof content === "string" ? content : JSON.stringify(content, null, 2);
 
 /** The exact frozen references every answer to this question shares. */
-export function FrozenEvidenceList({ evidence, onWindow }: { evidence: EvidenceRead; onWindow: (window: PageWindow) => void }) {
+export function FrozenEvidenceList({ evidence, onWindow }: { evidence: ObservationEvidenceRead; onWindow: (window: ObservationPageRequest) => void }) {
   if (evidence.readiness.state === "not_ready") {
     return <p className="text-sm text-[var(--text-muted)]" data-testid="or-item-evidence-not-ready">Evidence is not ready: {evidence.readiness.reason.detail} ({evidence.readiness.reason.code})</p>;
   }

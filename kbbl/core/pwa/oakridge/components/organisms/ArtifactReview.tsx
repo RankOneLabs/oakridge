@@ -14,7 +14,7 @@ import { settleEdit } from "../../lib/edit-outcome";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ArtifactRevision } from "../../artifact-types";
-import type { ItemSelection } from "../../grading-types";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";
@@ -42,7 +42,7 @@ import { ShowAutomaticGrades } from "./ShowAutomaticGrades";
  */
 interface ArtifactReviewProps {
   artifactId: string;
-  onOpenItem?: (selection: ItemSelection) => void;
+  onOpenItem?: (selection: ObservationItemAddress) => void;
   onOpenTask?: (task_id: string) => void;
 }
 

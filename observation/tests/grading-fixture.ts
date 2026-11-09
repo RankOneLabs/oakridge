@@ -5,7 +5,7 @@ import { Client } from "pg";
 import { sql } from "kysely";
 import { configuredRunnerNames, credentialsForRunners } from "../src/grading/provider-credentials";
 import { GRADERS_FILE } from "../src/main";
-import type { EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../src/domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest, type EvaluatorDefinition } from "../src/grading/evaluator";
 import type { ReadyEvidence } from "../src/grading/evidence";
@@ -30,7 +30,7 @@ export const question: QuestionDefinition = {
   unclear_semantics: "ambiguous", interpretation_caveats: "relevance is not acceptance",
 };
 export const evidence: ReadyEvidence = { evidence_set_id: "evidence-1" as EvidenceSetId,
-  references: [{ source: "reported", reported_by: "agent", ref: "fixture", revision_id: "revision-1", item_path: "/findings/0", content: "sample" }],
+  references: [{ source: "reported", reported_by: "agent", ref: "fixture", revision_id: "revision-1" as ArtifactRevisionId, item_path: "/findings/0", content: "sample" }],
   is_incomplete: false, incompleteness_reason: null };
 export function evaluator(kind: "model" | "human", id: string = kind): EvaluatorDefinition {
   return { evaluator_definition_id: id, kind, backend_kind: "local", provider: `fixture-${id}`,

@@ -7,7 +7,7 @@ import type { BuildResult } from "../../lib/build-result";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
 import { selectStatusTone } from "../../lib/status-tone";
 import type { ArtifactSource, AssessmentVerdict } from "../../artifact-types";
-import type { ItemSelection } from "../../grading-types";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import type { ItemGradingSlots } from "../../artifactRegistry";
 import { selectFindingSelections, selectItemSelection } from "../../lib/grading";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
@@ -25,7 +25,7 @@ interface Props {
   handoff?: ReactNode;
   /** The revision on screen, which addresses its findings. */
   source?: Pick<ArtifactSource, "revision_id">;
-  onOpenItem?: (selection: ItemSelection) => void;
+  onOpenItem?: (selection: ObservationItemAddress) => void;
   itemGrading?: ItemGradingSlots;
 }
 

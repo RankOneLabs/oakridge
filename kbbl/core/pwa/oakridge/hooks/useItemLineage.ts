@@ -1,8 +1,9 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, skipToken, useQuery } from "@tanstack/react-query";
+import type { ObservationItemOccurrenceId } from "../grading-contracts/domain/identity";
 import { readItemLineage } from "../client-grading";
-import type { PageWindow } from "../grading-types";
+import type { ObservationPageRequest } from "../grading-contracts/grading/composite";
 
-export function useItemLineage(occurrence_id: string | null, page: PageWindow) {
-  return useQuery({ queryKey: ["oakridge", "grading", "item-lineage", occurrence_id, page], enabled: occurrence_id !== null,
-    queryFn: () => readItemLineage(occurrence_id ?? "", page), placeholderData: keepPreviousData });
+export function useItemLineage(occurrence_id: ObservationItemOccurrenceId | null, page: ObservationPageRequest) {
+  return useQuery({ queryKey: ["oakridge", "grading", "item-lineage", occurrence_id, page],
+    queryFn: occurrence_id === null ? skipToken : () => readItemLineage(occurrence_id, page), placeholderData: keepPreviousData });
 }

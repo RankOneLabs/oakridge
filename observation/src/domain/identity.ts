@@ -10,4 +10,8 @@ export type QuestionId = Brand<string, "ObservationQuestionId">;
 export type EvaluatorDefinitionId = Brand<string, "ObservationEvaluatorDefinitionId">;
 export type ExecutionId = Brand<string, "ObservationExecutionId">;
 export type GradeObservationId = Brand<string, "ObservationGradeObservationId">;
+/** The producer unit that published a revision. */
+export type UnitId = Brand<string, "ObservationUnitId">;
+/** The reviewer a grade credential is bound to. */
+export type ReviewerId = Brand<string, "ObservationReviewerId">;
 export type CanonicalDigest = Brand<`canonical-json/v1:${string}`, "CanonicalDigest">;

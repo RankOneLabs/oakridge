@@ -1,9 +1,9 @@
 import { Button } from "../../../components/atoms/Button";
-import type { ItemSelection } from "../../grading-types";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 
 interface Props {
-  selection: ItemSelection | null;
-  onOpenItem?: (selection: ItemSelection) => void;
+  selection: ObservationItemAddress | null;
+  onOpenItem?: (selection: ObservationItemAddress) => void;
   /** "Grade" until the operator has answered every question the item lets them answer. */
   label?: string;
 }

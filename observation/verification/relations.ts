@@ -21,7 +21,7 @@
  */
 import { resolve } from "node:path";
 import { canonicalDigest } from "canonical-json";
-import type { EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId } from "../src/domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId } from "../src/domain/identity";
 import type { JsonValue, Result } from "../src/domain/primitives";
 import { uniformDrilldownPages, type DrilldownRow, type LogicalItemComposite, type LogicalItemLineage, type Paged, type StageComposite } from "../src/grading/composite";
 import type { GradingRegistration } from "../src/grading/configuration";
@@ -386,7 +386,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
   const ready = async (occurrence_id: ItemOccurrenceId): Promise<EvidenceSetId> => {
     const sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
     for (const set of sets) await recordCollection(db, tenant, set.evidence_set_id, { state: "ready",
-      references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "synthetic", item_path: "/findings/0", content: `synthetic evidence of ${occurrence_id}` }] });
+      references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "synthetic" as ArtifactRevisionId, item_path: "/findings/0", content: `synthetic evidence of ${occurrence_id}` }] });
     return sets[0]!.evidence_set_id;
   };
   const answer = async (input: { readonly occurrence_id: ItemOccurrenceId; readonly question_id: string; readonly value: string; readonly reviewer?: string; readonly supersedes?: string }): Promise<string> => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import type { EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
 import { humanEvaluator } from "../src/grading/configuration";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { createApp } from "../src/http/app";
@@ -47,7 +47,7 @@ async function setup(db: Database, grading_enabled = false) {
   const support = sets.find((set) => set.question_id === EVIDENCE_SUPPORT_ID)!;
   const correctness = sets.find((set) => set.question_id === CORRECTNESS_ID)!;
   const ready = (evidence_set_id: typeof support.evidence_set_id) => recordCollection(db, tenant, evidence_set_id, { state: "ready",
-    references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "assessment-1", item_path: "/findings/0", content: "frozen" }] });
+    references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "assessment-1" as ArtifactRevisionId, item_path: "/findings/0", content: "frozen" }] });
   await ready(support.evidence_set_id);
   return { app: createApp({ db, credentials, profile: oakridgeProfile }), occurrence_id, support, correctness, ready };
 }

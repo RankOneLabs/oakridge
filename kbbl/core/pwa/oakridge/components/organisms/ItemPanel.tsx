@@ -3,7 +3,8 @@ import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GradingReadError, type WindowQuery } from "../../client-grading";
-import type { ItemSelection, PageWindow } from "../../grading-types";
+import type { ObservationPageRequest } from "../../grading-contracts/grading/composite";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { useItemAt } from "../../hooks/useItemAt";
 import { useItemLineage } from "../../hooks/useItemLineage";
 import { useItemStatus } from "../../hooks/useItemStatus";
@@ -15,12 +16,12 @@ import { ItemAnswers } from "../molecules/ItemAnswers";
 import { ListPager } from "../molecules/ListPager";
 import { YourGrade } from "./YourGrade";
 
-const QUESTIONS: PageWindow = { limit: 200, offset: 0 };
-const FIRST_LINEAGE: PageWindow = { limit: 20, offset: 0 };
+const QUESTIONS: ObservationPageRequest = { limit: 200, offset: 0 };
+const FIRST_LINEAGE: ObservationPageRequest = { limit: 20, offset: 0 };
 
 interface Props {
   runId: string;
-  selection: ItemSelection;
+  selection: ObservationItemAddress;
   onOpenTask: (task_id: string) => void;
 }
 
@@ -48,7 +49,7 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
   const [lineagePage, setLineagePage] = useState(FIRST_LINEAGE);
   const status = useItemStatus(occurrenceId === null ? null : { occurrence_id: occurrenceId, top: QUESTIONS, nested: windows });
   const lineage = useItemLineage(occurrenceId, lineagePage);
-  const setWindow = (name: string, window: PageWindow) => setWindows((current) => ({ ...current, [name]: window }));
+  const setWindow = (name: string, window: ObservationPageRequest) => setWindows((current) => ({ ...current, [name]: window }));
 
   if (address.isError) return <Unavailable error={address.error} />;
   if (status.isError) return <Unavailable error={status.error} />;

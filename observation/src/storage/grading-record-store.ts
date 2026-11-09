@@ -1,10 +1,10 @@
-import type { EvaluatorDefinitionId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, QuestionId, RelationId, ReviewerId, RunId, UnitId } from "../domain/identity";
 import { contributionItem, graderOf, orderedItems, pageOf, selectComposite, selectContributions, selectDrilldown, selectLineage, selectRevisionStandings, selectUnlinkedItems, selectUnresolvedReferences, type AnswerDetail, type CompositeAnswer, type CompositeDrilldownKey,
-  type CompositeEvaluator, type CompositeInputs, type CompositeRelation, type ContributionItem, type DrilldownPages, type DrilldownRow, type LogicalItemComposite,
+  type CompositeEvaluator, type CompositeInputs, type CompositeLogicalItem, type CompositeRelation, type CompositeRevision, type ContributionItem, type DrilldownPages, type DrilldownRow, type LogicalItemComposite,
   type LogicalItemLineage, type PageRequest, type Paged, type UnresolvedReference } from "../grading/composite";
 import type { QuestionKey } from "../grading/question";
 import { addressedItem, answerReads, evidenceRead, humanReadiness, logicalLinks, type AddressedItem, type AnswerRead, type EvidenceRead, type EvidenceWindows, type GradeableItemRow, type ItemStatusRead,
-  type QuestionStatusRead, type QuestionStatusWindows, type LogicalLinkRead, type UnresolvedReferenceRead } from "../grading/item-reads";
+  type MachineStatusRead, type QuestionStatusRead, type QuestionStatusWindows, type LogicalLinkRead, type UnresolvedReferenceRead } from "../grading/item-reads";
 import type { ExecutionStatus, ExecutionTerminalCause, MeasurementState } from "../grading/execution";
 import type { GradeAnswer } from "../grading/observation";
 import type { CompositePath } from "../ports/producer-profile";
@@ -43,12 +43,23 @@ async function readAnswerRows(trx: DatabaseTransaction, tenant: TenantScope, wit
   const rows = await ("run_id" in within ? scoped.where("x.run_id", "=", within.run_id) : scoped.where("x.subject_occurrence_id", "=", within.occurrence_id))
     .orderBy("g.recorded_at").orderBy("g.observation_id").execute();
   return rows.map((row): CompositeAnswer => ({ observation_id: row.observation_id as GradeObservationId, execution_id: row.execution_id as ExecutionId,
-    occurrence_id: row.subject_occurrence_id as ItemOccurrenceId, evidence_set_id: row.evidence_set_id,
+    occurrence_id: row.subject_occurrence_id as ItemOccurrenceId, evidence_set_id: row.evidence_set_id as EvidenceSetId,
     question: { question_id: row.question_id as QuestionId, question_version: row.question_version },
-    evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId, reviewer_id: row.reviewer_id, answer: row.answer_payload as unknown as GradeAnswer,
+    evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId, reviewer_id: row.reviewer_id as ReviewerId | null, answer: row.answer_payload as unknown as GradeAnswer,
     supersedes_observation_id: row.supersedes_observation_id as GradeObservationId | null, confidence: row.confidence, rationale: row.rationale, comments: row.comments,
     recorded_at: row.recorded_at }));
 }
+
+// Stored rows carry plain text; these name each id as the identity it is, at the one place rows are read.
+interface RevisionRow { readonly revision_id: string; readonly unit_id: string; readonly artifact_kind: string; readonly predecessor_id: string | null; readonly recorded_at: Date; readonly captured_at: Date }
+const revisionFromRow = (row: RevisionRow): CompositeRevision => ({ ...row, revision_id: row.revision_id as ArtifactRevisionId, unit_id: row.unit_id as UnitId,
+  predecessor_id: row.predecessor_id as ArtifactRevisionId | null });
+interface LogicalItemRow { readonly logical_item_id: string; readonly scope: string; readonly producer_local_id: string }
+const logicalItemFromRow = (row: LogicalItemRow): CompositeLogicalItem => ({ ...row, logical_item_id: row.logical_item_id as LogicalItemId });
+interface RelationRow { readonly relation_id: string; readonly target_occurrence_id: string | null; readonly target_logical_item_id: string | null; readonly unresolved_target_ref: string | null;
+  readonly type: string; readonly asserted_by: string; readonly evidence_ref: string }
+const relationFromRow = (source_occurrence_id: ItemOccurrenceId, row: RelationRow): CompositeRelation => ({ ...row, relation_id: row.relation_id as RelationId, source_occurrence_id,
+  target_occurrence_id: row.target_occurrence_id as ItemOccurrenceId | null, target_logical_item_id: row.target_logical_item_id as LogicalItemId | null, type: row.type as CompositeRelation["type"] });
 
 /** Every row of one run a composite reads, from one snapshot, so a count and its drilldown never mix commits. */
 async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope, path: CompositePath, run_id: string): Promise<CompositeInputs> {
@@ -73,14 +84,15 @@ async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope
     .where("producer", "=", producer).where("namespace", "=", namespace).where("run_id", "=", run_id).execute();
   const answers = await readAnswerRows(trx, tenant, { run_id });
   const questions = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", producer).where("namespace", "=", namespace).execute();
-  return { run_id, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id), logical_items,
-    revisions: revisions.map((row) => ({ ...row })),
-    occurrences: occurrences.map(({ json_pointer, occurrence_id, ...row }) => ({ ...row, occurrence_id: occurrence_id as ItemOccurrenceId, item_path: json_pointer })),
-    relations: relations.flatMap((row) => row.source_occurrence_id === null ? [] : [{ ...row, source_occurrence_id: row.source_occurrence_id as ItemOccurrenceId,
-      target_occurrence_id: row.target_occurrence_id as ItemOccurrenceId | null, type: row.type as CompositeRelation["type"] }]),
+  return { run_id: run_id as RunId, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id), logical_items: logical_items.map(logicalItemFromRow),
+    revisions: revisions.map(revisionFromRow),
+    occurrences: occurrences.map(({ json_pointer, occurrence_id, revision_id, logical_item_id, ...row }) => ({ ...row, occurrence_id: occurrence_id as ItemOccurrenceId,
+      revision_id: revision_id as ArtifactRevisionId, logical_item_id: logical_item_id as LogicalItemId | null, item_path: json_pointer })),
+    relations: relations.flatMap((row) => row.source_occurrence_id === null ? [] : [relationFromRow(row.source_occurrence_id as ItemOccurrenceId, row)]),
     evidence_sets: evidence.map(evidenceSetFromRow),
     evaluators: evaluators.map((row) => ({ ...row, evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId, kind: row.kind as CompositeEvaluator["kind"] })),
     executions: executions.map(({ subject_occurrence_id, ...row }) => ({ ...row, occurrence_id: subject_occurrence_id as ItemOccurrenceId, execution_id: row.execution_id as ExecutionId,
+      evidence_set_id: row.evidence_set_id as EvidenceSetId,
       evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId, status: row.status as ExecutionStatus,
       terminal_cause: row.terminal_cause as ExecutionTerminalCause | null })),
     answers,
@@ -152,16 +164,15 @@ async function readItemContext(trx: DatabaseTransaction, tenant: TenantScope, pa
   const stream = await trx.selectFrom("observation.source_revision").select(["revision_id", "unit_id", "artifact_kind", "predecessor_id", "recorded_at", "captured_at"])
     .where("producer", "=", producer).where("namespace", "=", namespace).where("run_id", "=", occurrence.run_id).where("unit_id", "=", revision.unit_id)
     .where("artifact_kind", "=", revision.artifact_kind).execute();
-  const standing = selectRevisionStandings(stream, path).get(revision.revision_id);
+  const standing = selectRevisionStandings(stream.map(revisionFromRow), path).get(revision.revision_id as ArtifactRevisionId);
   const relations = await trx.selectFrom("observation.item_relation").select(["relation_id", "source_occurrence_id", "target_occurrence_id", "target_logical_item_id", "unresolved_target_ref", "type", "asserted_by", "evidence_ref"])
     .where("producer", "=", producer).where("namespace", "=", namespace).where("source_occurrence_id", "=", occurrence_id).where("type", "=", path.relation_type).orderBy("relation_id").execute();
   const targets = relations.flatMap((relation) => relation.target_logical_item_id ? [relation.target_logical_item_id] : []);
   const logical = targets.length === 0 ? [] : await trx.selectFrom("observation.logical_item").select(["logical_item_id", "scope", "producer_local_id"]).where("producer", "=", producer)
     .where("namespace", "=", namespace).where("logical_item_id", "in", targets).execute();
-  const links = logicalLinks(relations.map((row) => ({ ...row, source_occurrence_id: occurrence_id as ItemOccurrenceId, target_occurrence_id: row.target_occurrence_id as ItemOccurrenceId | null,
-    type: row.type as CompositeRelation["type"] })), logical);
-  return { standing_stage: standing?.stage ?? null, links, item: { occurrence_id: occurrence_id as ItemOccurrenceId, revision_id: occurrence.revision_id, item_path: occurrence.json_pointer,
-    artifact_kind: occurrence.artifact_kind, item_kind: occurrence.item_kind, selected_value: occurrence.selected_value, stage: standing?.stage ?? "", unit_id: revision.unit_id, is_current: standing?.is_current ?? false } };
+  const links = logicalLinks(relations.map((row) => relationFromRow(occurrence_id as ItemOccurrenceId, row)), logical.map(logicalItemFromRow));
+  return { standing_stage: standing?.stage ?? null, links, item: { occurrence_id: occurrence_id as ItemOccurrenceId, revision_id: occurrence.revision_id as ArtifactRevisionId, item_path: occurrence.json_pointer,
+    artifact_kind: occurrence.artifact_kind, item_kind: occurrence.item_kind, selected_value: occurrence.selected_value, stage: standing?.stage ?? "", unit_id: revision.unit_id as UnitId, is_current: standing?.is_current ?? false } };
 }
 
 export interface ItemAddressInRun { readonly run_id: string; readonly source_revision_id: string; readonly item_path: string }
@@ -185,7 +196,11 @@ export async function readItemEvidence(db: Database, tenant: TenantScope, occurr
 }
 
 export interface ItemStatusWindows extends QuestionStatusWindows { readonly questions: PageRequest; readonly links: PageRequest }
-export function readItemStatus(db: Database, tenant: TenantScope, path: CompositePath, occurrence_id: string, windows: ItemStatusWindows): Promise<ItemStatusRead<MeasurementState, AttemptRead> | null> {
+/** An item's status as served: each machine evaluator's measurement state and real provider attempts. */
+export type ItemStatusResponse = ItemStatusRead<MeasurementState, AttemptRead>;
+export type QuestionStatusResponse = QuestionStatusRead<MeasurementState, AttemptRead>;
+export type MachineStatusResponse = MachineStatusRead<MeasurementState, AttemptRead>;
+export function readItemStatus(db: Database, tenant: TenantScope, path: CompositePath, occurrence_id: string, windows: ItemStatusWindows): Promise<ItemStatusResponse | null> {
   return withTenantSnapshot(db, tenant, async (trx) => {
     const context = await readItemContext(trx, tenant, path, occurrence_id);
     const measurements = context ? await readItemMeasurementsIn(trx, tenant, occurrence_id) : null;
@@ -199,7 +214,7 @@ export function readItemStatus(db: Database, tenant: TenantScope, path: Composit
     const definitions = (await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", producer).where("namespace", "=", namespace).execute()).map(questionFromRow);
     const questions = pageOf(measurements.questions, windows.questions);
     return { item: addressedItem(context.item), is_grading_enabled: measurements.is_grading_enabled, links: pageOf(context.links, windows.links),
-      questions: { ...questions, items: questions.items.map((question): QuestionStatusRead<MeasurementState, AttemptRead> => {
+      questions: { ...questions, items: questions.items.map((question): QuestionStatusResponse => {
         const of = reads.filter((answer) => answer.evidence_set_id === question.evidence.evidence_set_id);
         const definition = definitions.find((candidate) => candidate.question_id === question.evidence.question_id && candidate.question_version === question.evidence.question_version);
         if (!definition) throw new Error(`question ${question.evidence.question_id}@${question.evidence.question_version} is pinned but not defined`);

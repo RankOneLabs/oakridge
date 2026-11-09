@@ -3,23 +3,24 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-import { correctnessQuestion, IMPLEMENTATION, itemStatus, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
+import { correctnessQuestion, id, IMPLEMENTATION, itemStatus, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
 import { AssessmentViewer } from "../components/molecules/AssessmentViewer";
 import { ItemGradeAction } from "../components/organisms/ItemGradeAction";
 import { ShowAutomaticGrades } from "../components/organisms/ShowAutomaticGrades";
-import type { ItemSelection, ItemStatus } from "../grading-types";
+import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
+import type { ObservationItemStatusResponse } from "../grading-contracts/storage/grading-record-store";
 import { parseAssessment } from "../lib/assessment";
 import { useGradingVisibility } from "../state/gradingVisibility";
 
 const json = (body: unknown, status = 200): Response => Response.json(body, { status });
-let status: ItemStatus;
+let status: ObservationItemStatusResponse;
 beforeEach(() => {
   status = itemStatus([supportQuestion(), correctnessQuestion()]);
   useGradingVisibility.setState({ revealed_item_keys: new Set(), revealed_composite_run_ids: new Set() });
   vi.spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
     const path = new URL(String(input), "http://kbbl.test").pathname;
-    if (path === "/oakridge/observation/reviewer") return json({ reviewer_id: "oakridge-operator" });
+    if (path === "/oakridge/observation/reviewer") return json({ reviewer_id: id("oakridge-operator") });
     if (path.endsWith("/items/at")) return json(status.item);
     if (path.endsWith("/status")) return json(status);
     return json({ error: { code: "unexpected", message: path } }, 404);
@@ -28,8 +29,8 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const wrap = (node: ReactNode) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{node}</QueryClientProvider>);
-const action = (selection: ItemSelection = IMPLEMENTATION) => wrap(<ItemGradeAction runId="run-1" selection={selection} onOpenItem={vi.fn()} />);
-const own = (question_id: string) => reviewerAnswer(`own-${question_id}`, "supports", "oakridge-operator", { question: { question_id, question_version: "1" } });
+const action = (selection: ObservationItemAddress = IMPLEMENTATION) => wrap(<ItemGradeAction runId="run-1" selection={selection} onOpenItem={vi.fn()} />);
+const own = (question_id: string) => reviewerAnswer(`own-${question_id}`, "supports", "oakridge-operator", { question: { question_id: id(question_id), question_version: "1" } });
 
 describe("the artifact's Grade button", () => {
   it("reads Grade while any question still waits on the operator", async () => {
@@ -85,7 +86,7 @@ describe("automatic grades on the artifact", () => {
     if (!parsed.ok) throw new Error(parsed.error.detail);
     const missing = { kind: "missing", cohort_label: null } as const;
     const revision_id = compositeId({ kind: "artifact", runId: "run-1", unitId: "u", name: `assessment:${IMPLEMENTATION.source_revision_id}` });
-    const shown: ItemSelection[][] = [];
+    const shown: ObservationItemAddress[][] = [];
     wrap(<AssessmentViewer assessment={parsed.value} brief={missing} result={missing} cohortLabel={null} source={{ revision_id }} onOpenItem={vi.fn()}
       itemGrading={{ renderItemAction: (selection) => <span data-testid="slot-action">{selection.item_path}</span>, renderShowAll: (selections) => { shown.push([...selections]); return <span data-testid="slot-all" />; } }} />);
     expect(screen.getAllByTestId("slot-action").map((slot) => slot.textContent).sort()).toEqual(["/findings/0", "/findings/1"]);

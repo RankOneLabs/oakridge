@@ -1,5 +1,5 @@
 import { canonicalDigest } from "canonical-json";
-import type { EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId } from "../domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, RunId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { QuestionKey } from "./question";
 
@@ -14,13 +14,13 @@ interface ReferenceFields {
 /** Content copied from an exact captured revision, or from one item path within it. */
 export interface RevisionEvidence extends ReferenceFields {
   readonly source: "revision";
-  readonly revision_id: string;
+  readonly revision_id: ArtifactRevisionId;
   readonly item_path: string | null;
 }
 /** A field of the run's captured launch input. */
 export interface RunInputEvidence extends ReferenceFields {
   readonly source: "run_input";
-  readonly run_id: string;
+  readonly run_id: RunId;
   readonly input_path: string;
 }
 /** A file read at an exact commit. A file missing at that commit is evidence, not a failed read. */
@@ -37,7 +37,7 @@ export interface RepositoryEvidence extends ReferenceFields {
 export interface ReportedEvidence extends ReferenceFields {
   readonly source: "reported";
   readonly reported_by: "agent";
-  readonly revision_id: string;
+  readonly revision_id: ArtifactRevisionId;
   readonly item_path: string;
 }
 export type EvidenceReference = RevisionEvidence | RunInputEvidence | RepositoryEvidence | ReportedEvidence;

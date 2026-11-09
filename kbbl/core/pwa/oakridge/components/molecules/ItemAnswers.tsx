@@ -1,10 +1,11 @@
 import { Chip } from "../../../components/atoms/Chip";
-import type { AnswerRead, PageWindow, QuestionStatus } from "../../grading-types";
+import type { ObservationAnswerDetail, ObservationPageRequest } from "../../grading-contracts/grading/composite";
+import type { ObservationQuestionStatusResponse } from "../../grading-contracts/storage/grading-record-store";
 import { answerTone, attemptDisplay, gradeAnswerLabel, graderLabel, measurementDisplay } from "../../lib/grading";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ListPager } from "./ListPager";
 
-export function AnswerRow({ answer, isCorrected = false }: { answer: AnswerRead; isCorrected?: boolean }) {
+export function AnswerRow({ answer, isCorrected = false }: { answer: ObservationAnswerDetail; isCorrected?: boolean }) {
   return (
     <li className="flex flex-col gap-1 py-1.5" data-testid="or-item-answer" data-observation={answer.observation_id} data-grader={answer.grader.kind} data-corrected={isCorrected}>
       <div className="flex flex-wrap items-center gap-2">
@@ -18,8 +19,8 @@ export function AnswerRow({ answer, isCorrected = false }: { answer: AnswerRead;
 }
 
 interface Props {
-  question: QuestionStatus;
-  onWindow: (name: "machine" | "attempts" | "answers" | "superseded_answers", window: PageWindow) => void;
+  question: ObservationQuestionStatusResponse;
+  onWindow: (name: "machine" | "attempts" | "answers" | "superseded_answers", window: ObservationPageRequest) => void;
 }
 
 /** Every evaluator's status and every answer. Rendered only when revealed, so hidden mode has nothing here to leak. */

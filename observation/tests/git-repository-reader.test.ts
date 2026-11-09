@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ItemOccurrenceId } from "../src/domain/identity";
+import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../src/domain/identity";
 import type { CapturedSources, SourceArtifact } from "../src/ports/artifact-source";
 import { oakridgeEvidence } from "../src/producers/oakridge/evidence";
 import { EVIDENCE_SUPPORT_ID } from "../src/producers/oakridge/questions";
@@ -88,13 +88,13 @@ test("a path that leaves the tree never addresses a file", async () => {
 });
 
 test("the collector reads a citation range from the non-primary launch repository holding head_sha", async () => {
-  const artifact: SourceArtifact = { occurrence_id: "occurrence" as ItemOccurrenceId, run_id: "run-1", revision_id: "assessment-1",
+  const artifact: SourceArtifact = { occurrence_id: "occurrence" as ItemOccurrenceId, run_id: "run-1" as RunId, revision_id: "assessment-1" as ArtifactRevisionId,
     item_path: "/findings/0", item_kind: "assessment_finding",
     selected_value: { task_ids: [], evidence: [{ kind: "file", ref: "core/decision-record.ts:18-31" }, { kind: "file", ref: "core/gone.ts" }] } };
   const sources: CapturedSources = { repository: createGitRepositoryReader(), readLinkedItems: async () => [],
     readRunInput: async () => ({ spec: "s", primary_repository_key: "primary", repositories: [
       { key: "primary", preparation: { repository_path: primary } }, { key: "other", preparation: { repository_path: other } }] }),
-    readRevision: async (revision_id) => ({ revision_id, artifact_kind: "assessment", subject_id: null, body: { head_sha: cited_commit } }) };
+    readRevision: async (revision_id) => ({ revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: null, body: { head_sha: cited_commit } }) };
   const collected = await oakridgeEvidence.collect(artifact, { question_id: EVIDENCE_SUPPORT_ID, question_version: "1" }, sources);
   expect(collected).toMatchObject({ state: "ready", references: [{ ref: "subject" },
     { source: "repository", repository_key: "other", commit_sha: cited_commit, path: "core/decision-record.ts", line_range: { start: 18, end: 31 },

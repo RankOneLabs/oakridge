@@ -6,7 +6,7 @@ import { randomUuid } from "../../../lib/random-uuid";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import type { ItemSelection } from "../../grading-types";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { StageFindings } from "./StageFindings";
 
 const stateLabels = {
@@ -87,7 +87,7 @@ interface FinalIntegrationPanelProps {
   runId: string;
   profile: EpicWorkflowProfile;
   /** Integration findings open the same item panel as every other finding. */
-  onOpenItem?: (selection: ItemSelection) => void;
+  onOpenItem?: (selection: ObservationItemAddress) => void;
 }
 
 export function FinalIntegrationPanel({ runId, profile, onOpenItem }: FinalIntegrationPanelProps) {

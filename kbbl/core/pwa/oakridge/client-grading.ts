@@ -1,7 +1,14 @@
 // Observation reads and the one submission, through kbbl's forwarding routes. The browser holds no
 // observation token: kbbl authenticates the operator and supplies the matching capability.
-import type { AnswerRead, AnswerSubmission, AddressedItem, DrilldownKey, DrilldownRow, FindingRow, ItemLineage, ItemSelection, ItemStatus, PageWindow, Paged, QuestionKey, RunGradingState,
-  SubmissionAcknowledgment, SubmissionResult, TaskComposite, TaskLineage, UnresolvedTaskReference } from "./grading-types";
+import type { ObservationItemOccurrenceId, ObservationReviewerId } from "./grading-contracts/domain/identity";
+import type { ObservationCompositeDrilldownKey, ObservationLogicalItemLineage, ObservationPageRequest, ObservationPaged } from "./grading-contracts/grading/composite";
+import type { ObservationAddressedItem, ObservationAnswerRead, ObservationCompositeRead, ObservationDrilldownRowRead, ObservationGradeableItemRow, ObservationItemAddress, ObservationUnresolvedReferenceRead } from "./grading-contracts/grading/item-reads";
+import type { ObservationQuestionKey } from "./grading-contracts/grading/question";
+import type { ObservationHumanSubmissionAcknowledgment, ObservationHumanSubmissionRequest, ObservationReviewerRead } from "./grading-contracts/http/grades";
+import type { ObservationRunSpend } from "./grading-contracts/storage/execution-store";
+import type { ObservationItemStatusResponse } from "./grading-contracts/storage/grading-record-store";
+import type { ObservationLineagePage } from "./grading-contracts/storage/projection-store";
+import type { SubmissionResult } from "./grading-types";
 
 const ROOT = "/oakridge/observation";
 export class GradingReadError extends Error {
@@ -13,9 +20,9 @@ const failureOf = (body: unknown, fallback: string): { readonly code: string; re
   if (typeof error === "string") return { code: error, message: error };
   return { code: error?.code ?? "unavailable", message: error?.message ?? fallback };
 };
-export type WindowQuery = Readonly<Record<string, PageWindow | undefined>>;
+export type WindowQuery = Readonly<Record<string, ObservationPageRequest | undefined>>;
 /** `top` is the list's own window; each named list has its own `<name>_limit` and `<name>_offset`. */
-const windowParams = (top: PageWindow | null, nested: WindowQuery = {}): URLSearchParams => {
+const windowParams = (top: ObservationPageRequest | null, nested: WindowQuery = {}): URLSearchParams => {
   const params = new URLSearchParams();
   if (top) { params.set("limit", String(top.limit)); params.set("offset", String(top.offset)); }
   for (const [name, window] of Object.entries(nested)) if (window) {
@@ -36,55 +43,55 @@ async function read<Value>(path: string, params: URLSearchParams = new URLSearch
 }
 const id = encodeURIComponent;
 
-export const readItemAt = (run_id: string, selection: ItemSelection): Promise<AddressedItem> =>
+export const readItemAt = (run_id: string, selection: ObservationItemAddress): Promise<ObservationAddressedItem> =>
   read(`/runs/${id(run_id)}/items/at`, new URLSearchParams({ source_revision_id: selection.source_revision_id, item_path: selection.item_path }));
 /** One item's status: its questions' own window and every nested list's. */
-export interface ItemStatusRequest { readonly occurrence_id: string; readonly top: PageWindow; readonly nested: WindowQuery }
-export const readItemStatus = ({ occurrence_id, top, nested }: ItemStatusRequest): Promise<ItemStatus> =>
+export interface ItemStatusRequest { readonly occurrence_id: ObservationItemOccurrenceId; readonly top: ObservationPageRequest; readonly nested: WindowQuery }
+export const readItemStatus = ({ occurrence_id, top, nested }: ItemStatusRequest): Promise<ObservationItemStatusResponse> =>
   read(`/items/${id(occurrence_id)}/status`, windowParams(top, nested));
-export const readItemLineage = (occurrence_id: string, top: PageWindow): Promise<ItemLineage> =>
+export const readItemLineage = (occurrence_id: ObservationItemOccurrenceId, top: ObservationPageRequest): Promise<ObservationLineagePage> =>
   read(`/items/${id(occurrence_id)}/lineage`, windowParams(top));
-export const readReviewer = (): Promise<{ readonly reviewer_id: string }> => read("/reviewer");
-export function readAnswersPage(occurrence_id: string, filter: { readonly question: QuestionKey; readonly reviewer_id: string }, page: PageWindow): Promise<Paged<AnswerRead>> {
+export const readReviewer = (): Promise<ObservationReviewerRead> => read("/reviewer");
+export function readAnswersPage(occurrence_id: ObservationItemOccurrenceId, filter: { readonly question: ObservationQuestionKey; readonly reviewer_id: ObservationReviewerId }, page: ObservationPageRequest): Promise<ObservationPaged<ObservationAnswerRead>> {
   const params = windowParams(page);
   params.set("question_id", filter.question.question_id);
   params.set("question_version", filter.question.question_version);
   params.set("reviewer_id", filter.reviewer_id);
   return read(`/items/${id(occurrence_id)}/answers`, params);
 }
-export const readRunGrading = (run_id: string): Promise<RunGradingState> => read(`/runs/${id(run_id)}/grading`);
-export function readRunFindings(run_id: string, query: { readonly stage: string; readonly is_current_only: boolean; readonly page: PageWindow; readonly links: PageWindow }): Promise<Paged<FindingRow>> {
+export const readRunGrading = (run_id: string): Promise<ObservationRunSpend> => read(`/runs/${id(run_id)}/grading`);
+export function readRunFindings(run_id: string, query: { readonly stage: string; readonly is_current_only: boolean; readonly page: ObservationPageRequest; readonly links: ObservationPageRequest }): Promise<ObservationPaged<ObservationGradeableItemRow>> {
   const params = windowParams(query.page, { links: query.links });
   params.set("stage", query.stage);
   if (!query.is_current_only) params.set("revisions", "all");
   return read(`/runs/${id(run_id)}/findings`, params);
 }
-export const readRunUnresolved = (run_id: string, page: PageWindow): Promise<Paged<UnresolvedTaskReference>> =>
+export const readRunUnresolved = (run_id: string, page: ObservationPageRequest): Promise<ObservationPaged<ObservationUnresolvedReferenceRead>> =>
   read(`/runs/${id(run_id)}/unresolved-task-references`, windowParams(page));
 /** A page of a run's tasks. Each nested window applies to that list in every task on the page. */
-export interface RunTasksRequest { readonly run_id: string; readonly page: PageWindow; readonly nested: WindowQuery }
-export const readRunTasks = ({ run_id, page, nested }: RunTasksRequest): Promise<Paged<TaskComposite>> =>
+export interface RunTasksRequest { readonly run_id: string; readonly page: ObservationPageRequest; readonly nested: WindowQuery }
+export const readRunTasks = ({ run_id, page, nested }: RunTasksRequest): Promise<ObservationPaged<ObservationCompositeRead>> =>
   read(`/runs/${id(run_id)}/tasks`, windowParams(page, nested));
 /** One task of a run, with its nested windows. */
 export interface TaskRequest { readonly run_id: string; readonly task_id: string; readonly nested: WindowQuery }
-export const readTask = ({ run_id, task_id, nested }: TaskRequest): Promise<TaskComposite> =>
+export const readTask = ({ run_id, task_id, nested }: TaskRequest): Promise<ObservationCompositeRead> =>
   read(`/runs/${id(run_id)}/tasks/${id(task_id)}`, windowParams(null, nested));
-export const readTaskLineage = (run_id: string, task_id: string, page: PageWindow): Promise<TaskLineage> =>
+export const readTaskLineage = (run_id: string, task_id: string, page: ObservationPageRequest): Promise<ObservationLogicalItemLineage> =>
   read(`/runs/${id(run_id)}/tasks/${id(task_id)}/lineage`, windowParams(page));
 /** The rows behind one composite count. */
-export interface DrilldownRequest { readonly run_id: string; readonly key: DrilldownKey; readonly page: PageWindow; readonly nested: WindowQuery }
-export function readDrilldown({ run_id, key, page, nested }: DrilldownRequest): Promise<Paged<DrilldownRow>> {
+export interface DrilldownRequest { readonly run_id: string; readonly key: ObservationCompositeDrilldownKey; readonly page: ObservationPageRequest; readonly nested: WindowQuery }
+export function readDrilldown({ run_id, key, page, nested }: DrilldownRequest): Promise<ObservationPaged<ObservationDrilldownRowRead>> {
   const params = windowParams(page, nested);
   params.set("key", JSON.stringify(key));
   return read(`/runs/${id(run_id)}/drilldown`, params);
 }
 
 /** Never throws: the caller tells acknowledged, refused and unknown apart, and says saved only on the first. */
-export async function submitAnswer(occurrence_id: string, submission: AnswerSubmission): Promise<SubmissionResult> {
+export async function submitAnswer(occurrence_id: ObservationItemOccurrenceId, submission: ObservationHumanSubmissionRequest): Promise<SubmissionResult> {
   try {
     const response = await fetch(`${ROOT}/items/${id(occurrence_id)}/answers`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(submission) });
     const body = await response.json().catch(() => null) as unknown;
-    if (response.ok && body !== null) return { kind: "acknowledged", acknowledgment: body as SubmissionAcknowledgment };
+    if (response.ok && body !== null) return { kind: "acknowledged", acknowledgment: body as ObservationHumanSubmissionAcknowledgment };
     if (response.status >= 500 || response.ok) return { kind: "failed", message: failureOf(body, `observation answered ${response.status}`).message };
     return { kind: "refused", ...failureOf(body, `observation refused the answer (${response.status})`) };
   } catch (cause) {

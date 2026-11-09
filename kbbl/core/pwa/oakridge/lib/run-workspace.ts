@@ -7,7 +7,7 @@
 // secondary rather than mint an illegal state a renderer would have to guess at.
 
 import type { ArtifactId, Sid } from "../../lib/ids";
-import type { ItemSelection } from "../grading-types";
+import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
 import { areSelectionsEqual } from "./grading";
 
 /**
@@ -37,7 +37,7 @@ export type RunWorkspacePane =
   | { kind: "list" }
   | { kind: "grading" }
   /** One finding by its exact revision and path, whichever view opened it. */
-  | { kind: "item"; selection: ItemSelection }
+  | { kind: "item"; selection: ObservationItemAddress }
   /** One run-scoped task. Navigation only: a task is never an item's address. */
   | { kind: "task"; task_id: string }
   | RoutePaneTarget;

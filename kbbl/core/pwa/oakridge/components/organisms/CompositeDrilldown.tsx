@@ -3,7 +3,8 @@ import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import type { WindowQuery } from "../../client-grading";
-import type { DrilldownKey, ItemSelection, PageWindow } from "../../grading-types";
+import type { ObservationCompositeDrilldownKey, ObservationPageRequest } from "../../grading-contracts/grading/composite";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { useCompositeDrilldown } from "../../hooks/useCompositeDrilldown";
 import { drilldownIdentity, questionLabel, selectItemText, statusKeyLabel } from "../../lib/grading";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
@@ -12,14 +13,14 @@ import { GradeItemButton } from "../molecules/GradeItemButton";
 import { AnswerRow } from "../molecules/ItemAnswers";
 import { ListPager } from "../molecules/ListPager";
 
-const FIRST: PageWindow = { limit: 20, offset: 0 };
+const FIRST: ObservationPageRequest = { limit: 20, offset: 0 };
 
 interface Props {
   runId: string;
-  drilldownKey: DrilldownKey;
+  drilldownKey: ObservationCompositeDrilldownKey;
   label: string;
   onClose: () => void;
-  onOpenItem: (selection: ItemSelection) => void;
+  onOpenItem: (selection: ObservationItemAddress) => void;
 }
 
 /**
@@ -34,7 +35,7 @@ function DrilldownPages({ runId, drilldownKey, label, onClose, onOpenItem }: Pro
   const [page, setPage] = useState(FIRST);
   const [windows, setWindows] = useState<WindowQuery>({});
   const query = useCompositeDrilldown({ run_id: runId, key: drilldownKey, page, nested: windows });
-  const setWindow = (name: string) => (window: PageWindow) => setWindows((current) => ({ ...current, [name]: window }));
+  const setWindow = (name: string) => (window: ObservationPageRequest) => setWindows((current) => ({ ...current, [name]: window }));
   return (
     <section className="flex flex-col gap-2 rounded-md border border-[var(--border-muted)] p-2" data-testid="or-task-drilldown">
       <div className="flex items-center gap-2">

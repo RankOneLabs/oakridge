@@ -2,7 +2,7 @@ import { sql, type Selectable } from "kysely";
 import { canonicalJson } from "canonical-json";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
-import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
+import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId, ReviewerId, RunId } from "../domain/identity";
 import type { QuestionDefinition, QuestionKey } from "../grading/question";
 import { evaluatorIdentity, instructionDigest, type EvaluatorDefinition } from "../grading/evaluator";
 import { humanChoiceAnswer, submissionAttemptLabel, submissionDigest } from "../grading/execution";
@@ -135,22 +135,22 @@ export async function registerDefinitions(db: Database, tenant: TenantScope, def
 
 /** What a reviewer submits. The reviewer comes from the credential; evidence and evaluator from the pin. */
 export interface HumanSubmission extends QuestionKey {
-  readonly occurrence_id: string;
+  readonly occurrence_id: ItemOccurrenceId;
   readonly submission_id: string;
   readonly answer: string;
   readonly rationale: string | null;
-  readonly corrects_observation_id: string | null;
+  readonly corrects_observation_id: GradeObservationId | null;
 }
 /** The durable result of a submission; a repeat of its id returns this same result. */
 export interface RecordedSubmission {
   readonly submission_id: string;
-  readonly reviewer_id: string;
+  readonly reviewer_id: ReviewerId;
   readonly observation_id: GradeObservationId;
   readonly execution_id: ExecutionId;
   readonly evidence_set_id: EvidenceSetId;
   readonly evaluator_definition_id: EvaluatorDefinitionId;
   readonly occurrence_id: ItemOccurrenceId;
-  readonly run_id: string;
+  readonly run_id: RunId;
   readonly question: QuestionKey;
   readonly answer: GradeAnswer;
   readonly rationale: string | null;
@@ -160,14 +160,15 @@ export interface RecordedSubmission {
 export type SubmissionOutcome = { readonly status: "recorded" | "duplicate"; readonly submission: RecordedSubmission };
 /** Why a submission recorded nothing. Only the selected question's own readiness can make it `not_ready`. */
 export type SubmissionRefusal =
-  | { readonly kind: "item_not_found"; readonly occurrence_id: string }
+  | { readonly kind: "item_not_found"; readonly occurrence_id: ItemOccurrenceId }
   | { readonly kind: "question_not_pinned"; readonly question: QuestionKey }
   | { readonly kind: "not_ready"; readonly question: QuestionKey; readonly code: string; readonly detail: string }
   | { readonly kind: "invalid_answer"; readonly question: QuestionKey; readonly detail: string; readonly allowed_values: readonly JsonValue[] }
   | { readonly kind: "no_human_evaluator"; readonly question: QuestionKey }
-  | { readonly kind: "not_correctable"; readonly corrects_observation_id: string; readonly detail: string }
-  | { readonly kind: "stale_correction"; readonly corrects_observation_id: string; readonly current_observation_id: string }
-  | { readonly kind: "correction_required"; readonly current_observation_id: string };
+  | { readonly kind: "not_correctable"; readonly corrects_observation_id: GradeObservationId; readonly detail: string }
+  /** `current_observation_id` is null when the reviewer has no current answer left to correct. */
+  | { readonly kind: "stale_correction"; readonly corrects_observation_id: GradeObservationId; readonly current_observation_id: GradeObservationId | null }
+  | { readonly kind: "correction_required"; readonly current_observation_id: GradeObservationId };
 
 const refuse = (refusal: SubmissionRefusal): Result<never, SubmissionRefusal> => err(refusal);
 
@@ -178,9 +179,9 @@ async function readRecordedSubmission(trx: DatabaseTransaction, tenant: TenantSc
     .select(["g.observation_id", "g.execution_id", "g.reviewer_id", "g.answer_payload", "g.rationale", "g.supersedes_observation_id", "g.recorded_at",
       "x.evidence_set_id", "x.evaluator_definition_id", "x.subject_occurrence_id", "x.run_id", "x.question_id", "x.question_version"])
     .where("g.producer", "=", tenant.producer).where("g.namespace", "=", tenant.namespace).where("g.execution_id", "=", execution_id).executeTakeFirst();
-  return row ? { submission_id, reviewer_id: row.reviewer_id!, observation_id: row.observation_id as GradeObservationId, execution_id: row.execution_id as ExecutionId,
+  return row ? { submission_id, reviewer_id: row.reviewer_id as ReviewerId, observation_id: row.observation_id as GradeObservationId, execution_id: row.execution_id as ExecutionId,
     evidence_set_id: row.evidence_set_id as EvidenceSetId, evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId,
-    occurrence_id: row.subject_occurrence_id as ItemOccurrenceId, run_id: row.run_id,
+    occurrence_id: row.subject_occurrence_id as ItemOccurrenceId, run_id: row.run_id as RunId,
     question: { question_id: row.question_id as QuestionId, question_version: row.question_version }, answer: row.answer_payload as unknown as GradeAnswer,
     rationale: row.rationale, corrects_observation_id: row.supersedes_observation_id as GradeObservationId | null, recorded_at: row.recorded_at } : null;
 }
@@ -227,14 +228,14 @@ export async function submitHumanAnswer(db: Database, tenant: TenantScope, revie
     if (!human) return refuse({ kind: "no_human_evaluator", question });
     const own = await readOwnAnswers(trx, tenant, evidence.evidence_set_id, reviewer_id);
     const replaced = new Set(own.flatMap((row) => row.supersedes_observation_id ? [row.supersedes_observation_id] : []));
-    const current = own.filter((row) => !replaced.has(row.observation_id)).at(-1)?.observation_id ?? null;
+    const current = (own.filter((row) => !replaced.has(row.observation_id)).at(-1)?.observation_id ?? null) as GradeObservationId | null;
     if (input.corrects_observation_id === null) {
       if (current) return refuse({ kind: "correction_required", current_observation_id: current });
     } else {
       if (!own.some((row) => row.observation_id === input.corrects_observation_id))
         return refuse({ kind: "not_correctable", corrects_observation_id: input.corrects_observation_id, detail: "a correction replaces this reviewer's own earlier answer to this question" });
       if (current !== input.corrects_observation_id)
-        return refuse({ kind: "stale_correction", corrects_observation_id: input.corrects_observation_id, current_observation_id: current ?? "" });
+        return refuse({ kind: "stale_correction", corrects_observation_id: input.corrects_observation_id, current_observation_id: current });
     }
     const observation_id = observationIdOf(execution_id as unknown as ExecutionId);
     await trx.insertInto("observation.evaluation_execution").values({ ...scope(tenant), execution_id, run_id: item.run_id, subject_occurrence_id: input.occurrence_id,

@@ -2,18 +2,19 @@ import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import type { ItemSelection, PageWindow } from "../../grading-types";
+import type { ObservationPageRequest } from "../../grading-contracts/grading/composite";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { useRunFindings } from "../../hooks/useRunFindings";
 import { selectItemText, stageLabel, taskLinkLabel } from "../../lib/grading";
 import { GradeItemButton } from "../molecules/GradeItemButton";
 import { ListPager } from "../molecules/ListPager";
 
-const FIRST: PageWindow = { limit: 50, offset: 0 };
+const FIRST: ObservationPageRequest = { limit: 50, offset: 0 };
 
 interface Props {
   runId: string;
   stage: string;
-  onOpenItem: (selection: ItemSelection) => void;
+  onOpenItem: (selection: ObservationItemAddress) => void;
   onOpenTask?: (task_id: string) => void;
   /** Older revisions stay inspectable, on request. */
   canShowOlder?: boolean;

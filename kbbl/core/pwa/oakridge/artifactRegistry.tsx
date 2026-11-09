@@ -1,7 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
 import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./artifact-types";
 import type { EditOutcome } from "./lib/edit-outcome";
-import type { ItemSelection } from "./grading-types";
+import type { ObservationItemAddress } from "./grading-contracts/grading/item-reads";
 import { SpecViewer } from "./components/molecules/SpecViewer";
 import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
 import { PlanViewer } from "./components/molecules/PlanViewer";
@@ -25,7 +25,7 @@ export interface ViewerProps {
   /** The open review of the revision on screen, when it is the latest; a viewer may record a decision on it. */
   gate?: ParkedGate;
   /** Opens the shared item panel. A finding needs only its revision and path: no task, cohort or review. */
-  onOpenItem?: (selection: ItemSelection) => void;
+  onOpenItem?: (selection: ObservationItemAddress) => void;
   /** Grading controls a stateful parent renders for a viewer's findings; without them a finding offers only Grade. */
   itemGrading?: ItemGradingSlots;
   /** Opens a task by its run-scoped id: navigation only, never an item address. */
@@ -34,9 +34,9 @@ export interface ViewerProps {
 
 export interface ItemGradingSlots {
   /** One finding's control: its Grade button with the operator's own progress, and its automatic grades when revealed. */
-  renderItemAction: (selection: ItemSelection) => ReactNode;
+  renderItemAction: (selection: ObservationItemAddress) => ReactNode;
   /** One control over every finding on screen. */
-  renderShowAll: (selections: readonly ItemSelection[]) => ReactNode;
+  renderShowAll: (selections: readonly ObservationItemAddress[]) => ReactNode;
 }
 
 interface RegistryEntry {

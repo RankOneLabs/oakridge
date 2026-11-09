@@ -1,4 +1,4 @@
-import type { ItemOccurrenceId } from "../domain/identity";
+import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import type { QuestionKey } from "../grading/question";
 import type { ArtifactSource, CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, RepositoryReader,
@@ -28,7 +28,7 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
         .select(["occurrence_id", "run_id", "revision_id", "json_pointer", "item_kind", "selected_value"])
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("run_id", "=", run_id).where("occurrence_id", "=", occurrence_id).executeTakeFirst();
-      return row ? { occurrence_id: row.occurrence_id as ItemOccurrenceId, run_id: row.run_id, revision_id: row.revision_id,
+      return row ? { occurrence_id: row.occurrence_id as ItemOccurrenceId, run_id: row.run_id as RunId, revision_id: row.revision_id as ArtifactRevisionId,
         item_path: row.json_pointer, item_kind: row.item_kind, selected_value: row.selected_value } : null;
     });
   }
@@ -48,7 +48,7 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
       .select(["revision_id", "artifact_kind", "subject_id", "body"])
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("run_id", "=", run_id).where("revision_id", "=", revision_id).executeTakeFirst());
-    return row ?? null;
+    return row ? { ...row, revision_id: row.revision_id as ArtifactRevisionId } : null;
   }
 
   /** Follows only resolved producer edges to a logical item, then that item's occurrences. */
@@ -61,7 +61,7 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
       .where("relation.producer", "=", tenant.producer).where("relation.namespace", "=", tenant.namespace)
       .where("relation.source_occurrence_id", "=", occurrence_id).where("item.run_id", "=", run_id)
       .orderBy("item.revision_id").orderBy("item.json_pointer").execute());
-    return rows.map((row) => ({ revision_id: row.revision_id, item_path: row.json_pointer, item_kind: row.item_kind,
+    return rows.map((row) => ({ revision_id: row.revision_id as ArtifactRevisionId, item_path: row.json_pointer, item_kind: row.item_kind,
       selected_value: row.selected_value }));
   }
 }

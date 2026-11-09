@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { WindowQuery } from "../../client-grading";
-import type { DrilldownKey, PageWindow, StageComposite } from "../../grading-types";
+import type { ObservationCompositeDrilldownKey, ObservationPageRequest } from "../../grading-contracts/grading/composite";
+import type { ObservationStageCompositeRead } from "../../grading-contracts/grading/item-reads";
 import { useTask } from "../../hooks/useTask";
 import { selectTaskStage } from "../../lib/grading";
 import { StageCompositeColumn } from "../molecules/StageCompositeColumn";
@@ -8,11 +9,11 @@ import { StageCompositeColumn } from "../molecules/StageCompositeColumn";
 interface Props {
   runId: string;
   taskId: string;
-  stage: StageComposite;
+  stage: ObservationStageCompositeRead;
   /** The task's stages window, so a stage on a later page is still in its own read. */
-  stagesWindow: PageWindow | null;
+  stagesWindow: ObservationPageRequest | null;
   isRevealed: boolean;
-  onDrill: (key: DrilldownKey, label: string) => void;
+  onDrill: (key: ObservationCompositeDrilldownKey, label: string) => void;
 }
 
 /**
