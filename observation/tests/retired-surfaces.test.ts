@@ -86,11 +86,14 @@ test("no retired module, entrypoint or credential remains to dispatch outside HT
   expect(credentialsFromEnv({} as NodeJS.ProcessEnv)).toEqual({ ingest: [], read: [], grade: [] });
 });
 
-test("only reconciler admission creates an execution: no route, script or queue beside it enqueues one", () => {
+test("only reconciler admission queues an execution; a reviewer's submission writes one already completed", () => {
   const root = resolve(import.meta.dir, "../src");
   const writers = [...new Bun.Glob("**/*.ts").scanSync(root)]
     .filter((path) => readFileSync(resolve(root, path), "utf8").includes('insertInto("observation.evaluation_execution")'));
-  expect(writers).toEqual(["storage/execution-store.ts"]);
+  expect(writers.sort()).toEqual(["storage/execution-store.ts", "storage/grading-store.ts"]);
+  const submission = readFileSync(resolve(root, "storage/grading-store.ts"), "utf8");
+  expect(submission).toContain('status: "completed"');
+  expect(submission).not.toMatch(/status: "(queued|claimed|reclaimable)"/);
   for (const path of new Bun.Glob("http/*.ts").scanSync(root))
     expect({ path, text: readFileSync(resolve(root, path), "utf8") }).not.toMatchObject({ text: expect.stringMatching(/admitRun|claimNext|gradeNext/) });
 });

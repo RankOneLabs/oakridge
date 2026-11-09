@@ -62,6 +62,15 @@ export function evaluationDigest(identity: EvaluationIdentity): Result<string, C
     identity.question_version, identity.evaluator_definition_id, identity.attempt_label]);
 }
 
+/** The one question a reviewer may answer now: its own readiness and nothing else decides it. */
+export function humanChoiceAnswer(question: QuestionDefinition, value: string): Result<GradeAnswer, string> {
+  if (question.response_kind !== "choice" && question.response_kind !== "ordinal")
+    return { ok: false, error: `question ${question.question_id}@${question.question_version} takes no selected answer` };
+  const answer: GradeAnswer = { state: "answered", kind: question.response_kind, value };
+  const problem = answerProblem(question, answer);
+  return problem ? { ok: false, error: problem } : { ok: true, value: answer };
+}
+
 /** A reviewer's submission is one execution, labelled so a resubmission lands on the same row. */
 export interface ReviewerSubmission { readonly reviewer_id: string; readonly submission_id: string }
 export function submissionAttemptLabel(submission: ReviewerSubmission): string {
