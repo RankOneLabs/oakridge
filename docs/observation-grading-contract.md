@@ -105,8 +105,8 @@ Collection runs after each accepted source event, for the waiting questions of t
 once at startup for every run with a waiting question. Each question is collected and recorded on its
 own, and the acknowledgement does not wait for it. Collection consults no automatic-grading setting,
 task, approval or human action, so it behaves the same whether automatic grading is on or off.
-`GET /v1/items/:id/evidence` serves each pinned question of an item with its version, evaluator set
-and readiness.
+`GET /v1/items/:id/evidence` serves each pinned question of an item with its version, evaluator set,
+readiness and frozen references, each list paged.
 
 ## Evidence references
 
@@ -157,6 +157,35 @@ A correction is a new submission whose observation sets `supersedes_observation_
 requires it to measure the same occurrence, question, evidence and evaluator for the same reviewer,
 through both executions. The one-successor key keeps each history linear, and the earlier answer and
 its evidence stay unchanged. Machine answers are not corrected.
+
+### Human submission
+
+`POST /v1/items/:id/answers`, with the grade credential, takes `question_id`, `question_version`,
+`submission_id`, `answer`, optional `rationale` and, for a correction, `corrects_observation_id`
+(`HumanSubmissionRequest` in `observation/src/http/grades.ts`). Parsing is strict: a field naming a
+reviewer, evaluator or evidence set is refused. The reviewer comes from the credential, and the human
+evaluator and frozen evidence are resolved from the question's pin, so a human answer shares the
+evidence set machine answers use.
+
+| Response | Meaning |
+| --- | --- |
+| `201` `recorded` | The answer was appended. This acknowledgment is what a client may call saved. |
+| `200` `duplicate` | This reviewer already used this submission id. Nothing changed; the original result returns, whatever the repeat carried. |
+| `404` `item_not_found`, `question_not_pinned` | Outside this tenant, or a question not pinned to this item. |
+| `409` `not_ready` | The selected question is not ready, with its reason. Another ready question on the item stays answerable. |
+| `409` `correction_required` | This reviewer already holds a current answer to this question; a new answer must link it. |
+| `409` `stale_correction`, `not_correctable` | The link is not this reviewer's current answer to this question. |
+| `422` `invalid_answer` | The answer is not one of the question's choices. |
+
+A submission writes one completed execution and one observation. It needs no task, link, approval or
+automatic grading, makes no provider request, and writes nothing to Oakridge. `GET /v1/reviewer`, with
+the grade credential, names the reviewer that credential answers as.
+
+The operator reaches these through kbbl's `/oakridge/observation/*` (`kbbl/core/server/handlers/observation-proxy.ts`),
+a closed list of routes. kbbl applies its control policy and browser-write protections first, then
+replaces every browser credential with the server-held capability the route needs, and forwards only the
+request fields above. Hiding answers is a preference in that browser: no visibility or assignment record
+exists, and no read depends on having answered.
 
 ## Oakridge profile
 
@@ -327,17 +356,29 @@ item navigation and panel belong to the later operator cohort, on these same con
 ## HTTP routes
 
 The ingest credential uses `GET /v1/sources/oakridge/cursor` and `POST /v1/sources/oakridge/events`.
-The read credential uses:
+The grade credential uses `POST /v1/items/:id/answers` and `GET /v1/reviewer`. The read credential uses:
 
 - `GET /v1/sources/oakridge/unmapped`, `GET /v1/source-revisions/:id`
 - `GET /v1/runs/:run_id/items`, `GET /v1/items/:id`, `GET /v1/items/:id/lineage`, `GET /v1/items/:id/grades`
+- `GET /v1/runs/:run_id/items/at?source_revision_id=&item_path=`: one item by its exact address, with no task or cohort
+- `GET /v1/items/:id/status`: each pinned question's definition, own readiness, frozen evidence, each machine evaluator's state and attempts, every answer and correction history, and the item's explicit links
+- `GET /v1/items/:id/answers?question_id=&question_version=&reviewer_id=`, `GET /v1/items/:id/evidence`
+- `GET /v1/runs/:run_id/grading-spend`: the run's choice, spend, request count and execution statuses
+- `GET /v1/runs/:run_id/gradeable-items?stage=&revisions=all`, `GET /v1/runs/:run_id/unlinked-items`, `GET /v1/runs/:run_id/unresolved-references`
+- `GET /v1/runs/:run_id/logical-items`, `GET /v1/runs/:run_id/logical-items/:local_id`, `.../lineage`, `GET /v1/runs/:run_id/composite-drilldown?key=`
 - `GET /v1/questions/:id/versions/:version`, `GET /v1/evidence-sets/:id`
 - `GET /v1/evaluations/by-digest/:digest`, `GET /v1/evaluation-executions/:id` (also the grade credential)
 
-- `GET /v1/items/:id/evidence`
+Every read carries its credential's tenant and needs only the read credential: none is unlocked by an
+answer. Every returned list is paged. `limit` and `offset` window the list itself, up to 200; a nested list
+has its own `<name>_limit` and `<name>_offset`, so a reader continues it while holding the others still. A bad
+window refuses the read rather than clamping. Each page says its `total`. Question choices are part of the
+definition and are not paged. An unknown task id is a 404 from the logical-item route and stays visible as an
+`unresolved` link on the items that named it.
 
-Every read carries its credential's tenant. No route dispatches a provider or writes an answer yet.
-Composite reads are store functions so far; the operator cohort adds their HTTP routes.
+The types are in `observation/src/grading/item-reads.ts`, and `kbbl/core/pwa/oakridge/grading-types.ts` mirrors
+them for the PWA. kbbl serves the same reads under task names: `/runs/:run_id/tasks`, `/findings`,
+`/unlinked-findings`, `/unresolved-task-references`, `/drilldown` and `/grading`.
 
 ## Verification
 
@@ -413,8 +454,7 @@ On the shadow, through `observation/verification/proof.ts`:
   and is labelled so. No provider request is made for it. Both shared-run assessors returned `fail` because their
   environment had no test database for the suite the audit spec asks them to run, which says nothing about the
   reads above. A lost acknowledgement is proven against a real process in
-  `observation-process-restart.test.ts`, not on the shadow. The human and PWA continuation stays with the operator
-  workspace, and this does not complete that cumulative proof.
+  `observation-process-restart.test.ts`, not on the shadow. The human and PWA continuation is the `workspace` proof.
 - **A side effect to know before rerunning.** Audit assessors follow `assess.md`, so they call `set_pr_draft` on
   the real pull request the audit input names. A proof run can therefore flip that pull request's draft state.
 - Earlier `relations` runs (`relations-2026-11-08T17-31-33-853Z`, `relations-2026-11-08T17-46-21-583Z`) predate the

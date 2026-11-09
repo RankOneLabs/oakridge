@@ -29,7 +29,7 @@ export function StageFindings({ runId, stage, onOpenItem, onOpenTask, canShowOld
     <section className="flex flex-col gap-2" data-testid="or-stage-findings" data-stage={stage}>
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="m-0 text-sm font-semibold text-[var(--text-primary)]">{stageLabel(stage)} findings{query.data ? ` (${query.data.total})` : ""}</h4>
-        {canShowOlder && <Button variant="secondary" size="xsmall" aria-pressed={isOlderShown} onClick={() => { setIsOlderShown(!isOlderShown); setPage(FIRST); }}>
+        {canShowOlder && <Button variant="secondary" size="xsmall" className="text-xs!" aria-pressed={isOlderShown} onClick={() => { setIsOlderShown(!isOlderShown); setPage(FIRST); }}>
           {isOlderShown ? "Latest revisions only" : "Include older revisions"}
         </Button>}
       </div>
@@ -47,7 +47,7 @@ export function StageFindings({ runId, stage, onOpenItem, onOpenTask, canShowOld
               {!row.item.is_current && <Chip tone="muted">Older revision</Chip>}
               {row.links.total === 0 && <Chip tone="muted" testId="or-finding-unlinked">Unlinked</Chip>}
               {row.links.items.map((link) => onOpenTask
-                ? <Button key={link.relation_id} variant="secondary" size="xsmall" onClick={() => onOpenTask(link.producer_local_id)} data-testid="or-finding-task-link" data-link-state={link.state}>{taskLinkLabel(link)}</Button>
+                ? <Button key={link.relation_id} variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(link.producer_local_id)} data-testid="or-finding-task-link" data-link-state={link.state}>{taskLinkLabel(link)}</Button>
                 : <Chip key={link.relation_id} tone={link.state === "resolved" ? "neutral" : "warning"}>{taskLinkLabel(link)}</Chip>)}
               {query.data && <ListPager name="links" page={row.links} onWindow={setLinks} />}
             </div>

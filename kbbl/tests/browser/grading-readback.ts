@@ -98,7 +98,9 @@ export async function readWorkspace(input: WorkspaceReadbackInput): Promise<Work
     const occurrence = await panel.getAttribute("data-occurrence");
     await page.locator(`[data-testid="or-item-question"][data-question="${input.answered_question_id}"]`).click();
     await page.getByTestId("or-item-answers-hidden").waitFor();
-    step("hidden: the panel omits other answers and keeps the form", await page.getByTestId("or-item-answer").count() === 0, "no answer row rendered");
+    const evaluators = await page.getByTestId("or-item-machine-status").count();
+    const others = await page.getByTestId("or-item-answers").count();
+    step("hidden: the panel omits other answers and evaluators and keeps the form", evaluators === 0 && others === 0 && await page.getByTestId("or-your-grade").count() === 1, `${evaluators} evaluator rows, ${others} answer sections`);
     await shot("item-hidden");
     await page.getByTestId("or-item-reveal").click();
     await page.getByTestId("or-item-answers").waitFor();

@@ -15,9 +15,9 @@ export function ListPager({ name, page, onWindow }: Props) {
   return (
     <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]" data-testid={`or-pager-${name}`}>
       <span>{first}–{last} of {page.total}</span>
-      <Button variant="secondary" size="xsmall" disabled={page.offset === 0} aria-label={`Previous ${name}`}
+      <Button variant="secondary" size="xsmall" className="text-xs!" disabled={page.offset === 0} aria-label={`Previous ${name}`}
         onClick={() => onWindow({ limit: page.limit, offset: Math.max(0, page.offset - page.limit) })}>Previous</Button>
-      <Button variant="secondary" size="xsmall" disabled={last >= page.total} aria-label={`More ${name}`} data-testid={`or-pager-${name}-next`}
+      <Button variant="secondary" size="xsmall" className="text-xs!" disabled={last >= page.total} aria-label={`More ${name}`} data-testid={`or-pager-${name}-next`}
         onClick={() => onWindow({ limit: page.limit, offset: page.offset + page.limit })}>More</Button>
     </div>
   );

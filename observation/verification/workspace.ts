@@ -246,7 +246,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
     checks.push(check("composites count the corrected answer, by item and grader", tasks.status === 200 && counted.includes(`"value":"${positive}"`) && counted.includes(`"reviewer_id":"${REVIEWER}"`), `status ${tasks.status}`));
 
     // 7. The real browser.
-    const browserFinding = measurements.find((entry) => entry.item_kind === "finding" && entry.state === "answered") ?? null;
+    const browserFinding = measurements.find((entry) => entry.item_kind === "finding" && entry.state === "answered" && entry.occurrence_id !== readyElsewhere?.occurrence_id) ?? null;
     if (!browserFinding) { checks.push(check("an analysis finding is ready for a browser answer", false, "none")); return finish(); }
     const [browser_first_choice, browser_second_choice] = CHOICES[browserFinding.question_id] ?? ["unclear", "unclear"];
     const readback = await readWorkspace({ kbbl_url: io.state.kbbl.url, run_id: run.run_id, screenshot_dir: screenshots, answered: addressOf(chosen), answered_question_id: chosen.question_id,

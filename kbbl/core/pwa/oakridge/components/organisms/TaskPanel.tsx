@@ -39,8 +39,8 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
         <code className="or-code">{taskId}</code>
         {composite.data?.coverage === "gap" && <Chip tone="warning" testId="or-task-coverage-gap-all">No linked items</Chip>}
         {isRevealed
-          ? <Button variant="secondary" size="xsmall" onClick={() => { hide(runId); setDrill(null); }} data-testid="or-composites-hide">Hide composites</Button>
-          : <Button variant="secondary" size="xsmall" onClick={() => reveal(runId)} data-testid="or-composites-reveal">Reveal composites</Button>}
+          ? <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => { hide(runId); setDrill(null); }} data-testid="or-composites-hide">Hide composites</Button>
+          : <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => reveal(runId)} data-testid="or-composites-reveal">Reveal composites</Button>}
       </header>
       {isUncaptured && <FeedbackMessage testId="or-task-unresolved">This run has captured no task with this id. Items naming it stay listed below, unresolved.</FeedbackMessage>}
       {composite.isError && !isUncaptured && <FeedbackMessage tone="danger" testId="or-task-unavailable">{composite.error instanceof Error ? composite.error.message : "observation did not answer"}</FeedbackMessage>}

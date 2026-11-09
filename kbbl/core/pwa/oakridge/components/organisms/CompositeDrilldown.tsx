@@ -31,7 +31,7 @@ export function CompositeDrilldown({ runId, drilldownKey, label, onClose, onOpen
     <section className="flex flex-col gap-2 rounded-md border border-[var(--border-muted)] p-2" data-testid="or-task-drilldown">
       <div className="flex items-center gap-2">
         <h4 className="m-0 min-w-0 flex-1 text-sm font-semibold text-[var(--text-primary)]">{label}{query.data ? ` (${query.data.total})` : ""}</h4>
-        <Button variant="secondary" size="xsmall" onClick={onClose} data-testid="or-task-drilldown-close">Close</Button>
+        <Button variant="secondary" size="xsmall" className="text-xs!" onClick={onClose} data-testid="or-task-drilldown-close">Close</Button>
       </div>
       {query.isError && <FeedbackMessage tone="danger">{query.error instanceof Error ? query.error.message : "observation did not answer"}</FeedbackMessage>}
       <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">

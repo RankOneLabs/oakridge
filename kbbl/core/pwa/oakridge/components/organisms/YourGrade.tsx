@@ -60,7 +60,7 @@ export function YourGrade({ occurrenceId, question, onAcknowledged }: Props) {
               onChange={(event) => changed(() => setRationale(event.target.value))} data-testid="or-your-grade-rationale" />
           </label>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="primary" size="xsmall" disabled={!isChanged || submit.isPending || reviewer.isError} data-testid="or-your-grade-submit"
+            <Button variant="primary" size="xsmall" className="text-xs!" disabled={!isChanged || submit.isPending || reviewer.isError} data-testid="or-your-grade-submit"
               onClick={() => { if (choice) submit.mutate({ ...key, submission_id: submissionId.current, answer: choice, rationale: rationale.trim() === "" ? null : rationale,
                 corrects_observation_id: current?.observation_id ?? null }); }}>
               {current ? "Correct your answer" : "Save answer"}

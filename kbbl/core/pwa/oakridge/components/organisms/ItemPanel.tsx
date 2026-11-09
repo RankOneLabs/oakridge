@@ -71,7 +71,7 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
           <span>Tasks</span>
           {links.total === 0 && <Chip tone="muted">None linked</Chip>}
           {links.items.map((link) => (
-            <Button key={link.relation_id} variant="secondary" size="xsmall" onClick={() => onOpenTask(link.producer_local_id)} data-testid="or-item-task-link" data-link-state={link.state}>{taskLinkLabel(link)}</Button>
+            <Button key={link.relation_id} variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(link.producer_local_id)} data-testid="or-item-task-link" data-link-state={link.state}>{taskLinkLabel(link)}</Button>
           ))}
           <ListPager name="links" page={links} onWindow={(window) => setWindow("links", window)} />
         </div>
@@ -80,7 +80,7 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
       {questions.total === 0 ? <p className="m-0 text-sm text-[var(--text-muted)]" data-testid="or-item-no-questions">No question was pinned to this item.</p> : (
         <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Questions">
           {questions.items.map((candidate, index) => (
-            <Button key={`${candidate.question.question_id}@${candidate.question.question_version}`} variant={question && sameQuestion(candidate.question, question.question) ? "primary" : "secondary"} size="xsmall"
+            <Button key={`${candidate.question.question_id}@${candidate.question.question_version}`} variant={question && sameQuestion(candidate.question, question.question) ? "primary" : "secondary"} size="xsmall" className="text-xs!"
               role="tab" aria-selected={question !== null && sameQuestion(candidate.question, question.question)} data-testid="or-item-question" data-question={candidate.question.question_id} data-readiness={candidate.human.state}
               onClick={() => { setSelectedIndex(index); setWindows({}); }}>
               {questionLabel(candidate.question)}{candidate.human.state === "not_ready" ? " (not ready)" : ""}
@@ -98,8 +98,8 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
           <YourGrade occurrenceId={item.occurrence_id} question={question} onAcknowledged={() => reveal(key)} />
           <div className="flex flex-wrap items-center gap-2">
             {isRevealed
-              ? <Button variant="secondary" size="xsmall" onClick={() => hide(key)} data-testid="or-item-hide">Hide other answers</Button>
-              : <Button variant="secondary" size="xsmall" onClick={() => reveal(key)} data-testid="or-item-reveal">Reveal other answers</Button>}
+              ? <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => hide(key)} data-testid="or-item-hide">Hide other answers</Button>
+              : <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => reveal(key)} data-testid="or-item-reveal">Reveal other answers</Button>}
           </div>
           {isRevealed
             ? <ItemAnswers question={question} onWindow={setWindow} />

@@ -14,7 +14,7 @@ interface Props {
 
 function CountButton({ label, count, drill, testId }: { label: string; count: number; drill: () => void; testId: string }) {
   return (
-    <Button variant="secondary" size="xsmall" onClick={drill} data-testid={testId}>{label}: {count}</Button>
+    <Button variant="secondary" size="xsmall" className="text-xs!" onClick={drill} data-testid={testId}>{label}: {count}</Button>
   );
 }
 
@@ -70,9 +70,9 @@ export function StageCompositeColumn({ stage, isRevealed, onDrill, onWindow }: P
             <ListPager name="disagreements" page={stage.disagreements} onWindow={(window) => onWindow("disagreements", window)} />
           </div>}
           <div className="flex flex-wrap gap-1.5">
-            <Button variant="secondary" size="xsmall" onClick={() => onDrill(stage.items, `${stageLabel(view.stage)}: every linked item`)} data-testid="or-task-items">All linked items</Button>
+            <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => onDrill(stage.items, `${stageLabel(view.stage)}: every linked item`)} data-testid="or-task-items">All linked items</Button>
             {(stage.totals.superseded_items > 0 || stage.totals.superseded_answers > 0) && (
-              <Button variant="secondary" size="xsmall" onClick={() => onDrill(stage.history, `${stageLabel(view.stage)}: older revisions and answers`)} data-testid="or-task-history">
+              <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => onDrill(stage.history, `${stageLabel(view.stage)}: older revisions and answers`)} data-testid="or-task-history">
                 Older revisions and answers
               </Button>
             )}

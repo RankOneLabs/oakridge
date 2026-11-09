@@ -42,8 +42,8 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
         {grading.data && <Chip tone={grading.data.is_grading_enabled ? "info" : "muted"} testId="or-grading-state">Automatic grading {grading.data.is_grading_enabled ? "on" : "off"}</Chip>}
         {isRevealed && grading.data && <span className="text-xs text-[var(--text-muted)]" data-testid="or-grading-spend">{grading.data.requests_sent} provider requests · ${grading.data.committed.toFixed(2)} committed</span>}
         {isRevealed
-          ? <Button variant="secondary" size="xsmall" onClick={() => { hide(runId); setDrill(null); }} data-testid="or-composites-hide">Hide composites</Button>
-          : <Button variant="secondary" size="xsmall" onClick={() => reveal(runId)} data-testid="or-composites-reveal">Reveal composites</Button>}
+          ? <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => { hide(runId); setDrill(null); }} data-testid="or-composites-hide">Hide composites</Button>
+          : <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => reveal(runId)} data-testid="or-composites-reveal">Reveal composites</Button>}
       </header>
 
       <section className="flex flex-col gap-3" data-testid="or-grading-tasks">
@@ -53,7 +53,7 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
         {tasks.data?.items.map((task) => (
           <div key={task.logical_item_id} className="flex flex-col gap-2" data-testid="or-grading-task" data-task={task.producer_local_id}>
             <div className="flex items-center gap-2">
-              <Button variant="secondary" size="xsmall" onClick={() => onOpenTask(task.producer_local_id)} data-testid="or-grading-task-open">{task.producer_local_id}</Button>
+              <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(task.producer_local_id)} data-testid="or-grading-task-open">{task.producer_local_id}</Button>
               {task.coverage === "gap" && <Chip tone="warning" testId="or-task-coverage-gap-all">No linked items</Chip>}
             </div>
             <div className="grid gap-2 md:grid-cols-3">
