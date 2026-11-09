@@ -32,6 +32,7 @@ const CHOICES: Readonly<Record<string, readonly [string, string]>> = {
 };
 const POLL_MS = 2_000;
 const check = (name: string, passed: boolean, detail: string): ProofCheck => ({ name, passed, detail });
+const phase = (name: string): void => { console.info(`[workspace ${new Date().toISOString()}] ${name}`); };
 
 export interface WorkspaceSource extends Pick<GradingSource, "run" | "withholdRepository" | "supplyRepository"> { readonly directory: string }
 
@@ -144,6 +145,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
   try {
     if (!await startStack("fresh")) return finish();
 
+    phase("grading-off run");
     // 1. Grading off: evidence for a reviewer and nothing sent, and a human answer still accepted.
     const off = await source.run("analysis-off", { grading_enabled: false, through: "analysis", capture: "await" });
     checks.push(check("the grading-off run reaches its analysis", off.report.status === "passed" && off.run !== null, off.run?.run_id ?? JSON.stringify(off.report.checks.filter((entry) => !entry.passed))));
@@ -157,6 +159,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
     const offSpend = await readSpend(io, off.run.run_id, "off");
     checks.push(check("a human answer is accepted with automatic grading off, and no request is sent", offAnswer.status === 201 && offSpend.requests_sent === 0, `${offAnswer.status}; ${offSpend.requests_sent} request(s)`));
 
+    phase("enabled run, repository withheld");
     // 2. An enabled run captured with its repository withheld: file-citing questions wait, each on its own.
     const assessed = await source.run("assessment-on", { grading_enabled: true, through: "assessment", capture: "deferred",
       reviews: [{ review: "plan_review", revision_feedback: "Revise the plan's summary wording; change nothing else." }],
@@ -186,6 +189,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
     recordBrowser(await readNotReadyPanel({ kbbl_url: io.state.kbbl.url, run_id: run.run_id, screenshot_dir: screenshots, item: addressOf(notReady), question_id: notReady.question_id, code: notReady.detail ?? "repository_unavailable" }));
     await io.stopStack();
 
+    phase("repository supplied");
     // 3. The input arrives: real provider answers on the pins from capture.
     const supplied = await source.supplyRepository();
     checks.push(check("the repository is supplied", supplied.ok, supplied.ok ? supplied.value : supplied.error.detail));
@@ -200,6 +204,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
     target = chosen;
     const machineObservation = chosen.observation_id!;
 
+    phase("human answers");
     // 4. Exact address and no task: kbbl resolves it, and the human path meets every boundary.
     const at = await kbbl(`/runs/${encodeURIComponent(run.run_id)}/items/at?source_revision_id=${encodeURIComponent(chosen.revision_id)}&item_path=${encodeURIComponent(chosen.item_path)}`);
     checks.push(check("exact revision and path resolve the occurrence, with no task or cohort", at.status === 200 && (at.body as { readonly occurrence_id?: string }).occurrence_id === chosen.occurrence_id, JSON.stringify(at.status)));
@@ -219,6 +224,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
     counts.before = before; counts.after_first = after_first; counts.after_duplicate = after_duplicate; counts.after_correction = after_correction;
     checks.push(...humanAnswerChecks({ submissions, machine_evidence_set_id: chosen.evidence_set_id, before, after_first, after_duplicate, after_correction }));
 
+    phase("capabilities");
     // 5. Capabilities, and the forwarding routes under a control token, on the real service.
     const tokens = await io.tokens();
     if (!tokens.ok) { checks.push(check("the shadow's capabilities are readable", false, tokens.error.detail)); return finish(); }
@@ -234,6 +240,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
     const anonymousWrite = await guarded.request(`/oakridge/observation${itemPath(chosen.occurrence_id)}/answers`, post({ ...question, submission_id: "anonymous", answer: positive }));
     checks.push(check("under a control token, kbbl's forwarding refuses before forwarding and admits the operator, against the real service", anonymous.status === 401 && anonymousWrite.status === 401 && operator.status === 200, `${anonymous.status}, ${anonymousWrite.status}, ${operator.status}`));
 
+    phase("readback");
     // 6. Both answers read back, kept apart, with correction history; the composite follows the correction.
     const state = (await kbbl(`${itemPath(chosen.occurrence_id)}/status?limit=200&answers_limit=200&superseded_answers_limit=200`)).body as { readonly questions: { readonly items: readonly { readonly question: { readonly question_id: string }; readonly answers: { readonly items: readonly { readonly observation_id: string; readonly reviewer_id: string | null; readonly evaluator_definition_id: string }[] }; readonly superseded_answers: { readonly items: readonly { readonly observation_id: string }[] } }[] } };
     const served = state.questions.items.find((entry) => entry.question.question_id === chosen.question_id);
@@ -245,6 +252,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
     const counted = JSON.stringify(tasks.body);
     checks.push(check("composites count the corrected answer, by item and grader", tasks.status === 200 && counted.includes(`"value":"${positive}"`) && counted.includes(`"reviewer_id":"${REVIEWER}"`), `status ${tasks.status}`));
 
+    phase("browser");
     // 7. The real browser.
     const browserFinding = measurements.find((entry) => entry.item_kind === "finding" && entry.state === "answered" && entry.occurrence_id !== readyElsewhere?.occurrence_id) ?? null;
     if (!browserFinding) { checks.push(check("an analysis finding is ready for a browser answer", false, "none")); return finish(); }
@@ -253,6 +261,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
       machine_observation_id: machineObservation, human_observation_id: correction.observation_id ?? "", browser_item: addressOf(browserFinding),
       hidden_markers: ["Recorded by the live proof.", "Corrected by the live proof.", "Reviewer oakridge-operator"], browser_first_choice, browser_second_choice });
     recordBrowser(readback);
+    phase("browser finished");
     const authorityAfter = await authorityEvents(io, run.run_id);
     checks.push(check("browser answers write no authority event", authorityAfter === before.authority_events, `${before.authority_events} then ${authorityAfter}`));
     checks.push(check("browser answers bind the credential's reviewer and link the correction", readback.submissions.length === 2 && readback.submissions.every((entry) => entry.reviewer_id === REVIEWER)
@@ -263,6 +272,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
     checks.push(check("the run's request count matches its sent attempts after every human answer", finalSpend.requests_sent === measurements.reduce((total, entry) => total + entry.attempts.filter((attempt) => attempt.request_sent).length, 0), `${finalSpend.requests_sent} request(s) in ${finalSpend.attempts} attempt(s)`));
     return finish();
   } finally {
+    phase("stopping the stack");
     await io.stopStack();
     await source.supplyRepository();
   }

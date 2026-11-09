@@ -12,6 +12,11 @@ export interface ReadbackStep { readonly name: string; readonly passed: boolean;
 export interface ReadbackResult { readonly steps: readonly ReadbackStep[]; readonly screenshots: readonly string[] }
 export interface LiveTarget { readonly kbbl_url: string; readonly run_id: string; readonly screenshot_dir: string }
 const NAVIGATION_MS = 30_000;
+/** A whole flow's limit, so a stuck page ends as a failed step and the proof still writes its report. */
+const FLOW_MS = 300_000;
+/** Closing a browser has been seen never to settle after the browser has gone, so it is not waited on past this. */
+const CLOSE_MS = 10_000;
+const expired = (ms: number, value: string): Promise<string> => new Promise((resolve) => { setTimeout(() => resolve(value), ms).unref?.(); });
 
 async function withPage(target: LiveTarget, work: (page: Page, step: (name: string, passed: boolean, detail: string) => void, shot: (name: string) => Promise<void>) => Promise<void>): Promise<ReadbackResult> {
   await mkdir(target.screenshot_dir, { recursive: true });
@@ -25,13 +30,15 @@ async function withPage(target: LiveTarget, work: (page: Page, step: (name: stri
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(`${target.kbbl_url}/#oakridge/run/${encodeURIComponent(target.run_id)}`);
-    await work(page, (name, passed, detail) => { steps.push({ name, passed, detail }); }, async (name) => {
+    const flow = work(page, (name, passed, detail) => { steps.push({ name, passed, detail }); }, async (name) => {
       const path = join(target.screenshot_dir, `${name}.png`);
       await page.screenshot({ path, fullPage: true });
       screenshots.push(path);
-    }).catch((cause: unknown) => { steps.push({ name: "the browser flow completes", passed: false, detail: cause instanceof Error ? cause.message : String(cause) }); });
+    }).then(() => "completed").catch((cause: unknown) => cause instanceof Error ? cause.message : String(cause));
+    const ended = await Promise.race([flow, expired(FLOW_MS, `no result within ${FLOW_MS} ms`)]);
+    if (ended !== "completed") steps.push({ name: "the browser flow completes", passed: false, detail: ended });
     steps.push({ name: "the page raised no error", passed: errors.length === 0, detail: errors.join("; ") || "none" });
-  } finally { await browser.close(); }
+  } finally { await Promise.race([browser.close(), expired(CLOSE_MS, "unsettled")]); }
   return { steps, screenshots };
 }
 
