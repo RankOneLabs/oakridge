@@ -17,6 +17,7 @@ import { mountSkillsRoutes } from "../skills/routes";
 import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./handlers/oakridge-proxy";
 import { mountLiveStreamRoutes } from "./handlers/live-stream";
 import { mountHealthRoutes, type ObservationServerConfig } from "./handlers/observation-health";
+import { mountObservationProxyRoutes } from "./handlers/observation-proxy";
 import {
   isRuntimeId,
   RUNTIME_EFFORTS,
@@ -156,6 +157,15 @@ export function createApp(deps: CreateAppDeps): Hono {
     coreControlToken,
     browserControlToken: authPolicy.mode === "token" ? authPolicy.token : undefined,
     fallbackRefreshMs: parseFallbackRefreshMs(process.env.OAKRIDGE_FALLBACK_REFRESH_MS),
+  });
+
+  // ---- Observation forwarding ----
+  //
+  // /oakridge/observation/* → the listed reads and the one write, each with the
+  // server-held capability it needs. An outage answers these routes and no other.
+  mountObservationProxyRoutes(app, {
+    observation,
+    browserControlToken: authPolicy.mode === "token" ? authPolicy.token : undefined,
   });
 
   // ---- /inbox (always-on snapshot stream over the ACP session list) ----
