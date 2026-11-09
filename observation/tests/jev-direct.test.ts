@@ -1,28 +1,16 @@
 import { expect, test } from "bun:test";
-import { missingLivePrerequisites, verifyCapturedRun } from "../scripts/jev-live-walkthrough";
 import { createJevDirectRunner, createSystemOneRunner } from "../src/runners/jev-direct";
-import { listGrades, readExecution, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import type { GradingContext } from "../src/grading/runner";
 import { evaluatorIdentity, instructionDigest } from "../src/grading/evaluator";
+import { OAKRIDGE_QUESTIONS } from "../src/producers/oakridge/questions";
 import { withTenant } from "../src/storage/database";
-import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
-import { pilotExpectations } from "./grading-fixture";
-const OAKRIDGE_QUESTIONS = oakridgeQuestions(pilotExpectations);
-import { ANALYSIS_RELEVANCE_RECIPE, ASSESSMENT_COVERAGE_RECIPE, BRIEF_FIDELITY_RECIPE, PLAN_TRACEABILITY_RECIPE,
-  pinnedInputRecipe } from "../src/grading/evidence-packages/pilot-recipe";
-
-const AUTHORED_RECIPES = {
-  "analysis.finding_relevance": ANALYSIS_RELEVANCE_RECIPE,
-  "plan.criterion_traceability": PLAN_TRACEABILITY_RECIPE,
-  "brief.source_fidelity": BRIEF_FIDELITY_RECIPE,
-  "assessment.coverage": ASSESSMENT_COVERAGE_RECIPE,
-} as const;
-import { evidence, evaluator, question, scratchGrading, tenant } from "./grading-fixture";
+import { registerEvaluator } from "../src/storage/grading-store";
+import { evidence, evaluator, integration, question, scratchDatabase, tenant } from "./grading-fixture";
 
 const recipe = { system_one: { type: "choice", instructions: "Classify evidence", criteria: {
   faithful: "Meaning preserved", changed: "Meaning changed", insufficient_evidence: "Not enough evidence" } } };
 const context: GradingContext = { question: { ...question, response_kind: "choice",
-  allowed_values: ["faithful", "changed", "insufficient_evidence"], unclear_semantics: "Choose insufficient_evidence when unclear", input_recipe: { source: "selected_value" } },
+  allowed_values: ["faithful", "changed", "insufficient_evidence"], unclear_semantics: "Choose insufficient_evidence when unclear" },
   evidence, evaluator: { ...evaluator("model"), evaluator_definition_id: "jev", provider: "typesafe",
     model: "jev-1.13.0", instruction_text: JSON.stringify(recipe), prompt_digest: instructionDigest(JSON.stringify(recipe)) } };
 const answer = { type: "choice", choice: "faithful", probabilities: {
@@ -30,7 +18,6 @@ const answer = { type: "choice", choice: "faithful", probabilities: {
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 const provider = (value: unknown) => ({ model: "jev-1.13.0", answers: { [question.question_id]: value },
   usage: { input_tokens: 31, output_tokens: 7 } });
-const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 
 test("System One transport receives a required abort deadline", async () => {
   const runner = createSystemOneRunner({ operation: "deadline-test", base_url: "https://example.invalid",
@@ -53,37 +40,29 @@ test("a deadline while reading the provider body is a timeout", async () => {
   expect(result).toMatchObject({ ok: false, error: { category: "timeout" } });
 });
 
-test("a pinned pilot recipe reaches the provider using evaluator instructions", async () => {
-  const pilot = OAKRIDGE_QUESTIONS["plan.criterion_traceability"].definition;
-  const criteria = Object.fromEntries((pilot.allowed_values ?? []).map((value) => [String(value), String(value)]));
-  const text = JSON.stringify({ system_one: { type: "choice", instructions: "Judge traceability", criteria } });
+test("a producer question reaches the provider using evaluator instructions", async () => {
+  const relevance = OAKRIDGE_QUESTIONS[0]!;
+  const criteria = Object.fromEntries((relevance.allowed_values ?? []).map((value) => [String(value), String(value)]));
+  const text = JSON.stringify({ system_one: { type: "choice", instructions: "Judge relevance", criteria } });
   let was_sent = false;
   const runner = createJevDirectRunner({ api_key: "key", base_url: "https://stub.invalid/v1", transport: async (url, init) => {
     was_sent = true;
     expect(url).toBe("https://stub.invalid/v1/systemone");
-    expect(JSON.parse(String(init.body)).questions[pilot.question_id].instructions).toBe("Judge traceability");
-    return response({ model: "jev-1.14.0", answers: { [pilot.question_id]: { type: "choice", choice: "traceable",
-      probabilities: { traceable: 0.8, unsupported: 0.1, unclear_insufficient_evidence: 0.1 }, confidence: 0.8 } },
+    expect(JSON.parse(String(init.body)).questions[relevance.question_id].instructions).toBe("Judge relevance");
+    return response({ model: "jev-1.14.0", answers: { [relevance.question_id]: { type: "choice", choice: "relevant",
+      probabilities: { relevant: 0.8, irrelevant: 0.1, unclear: 0.1 }, confidence: 0.8 } },
       usage: { input_tokens: 31, output_tokens: 7 }, cost: 0.01, id: "request-1" });
   } });
-  const result = await runner.run({ ...context, question: pilot, evaluator: { ...context.evaluator,
+  const result = await runner.run({ ...context, question: relevance, evaluator: { ...context.evaluator,
     instruction_text: text, prompt_digest: instructionDigest(text) } });
   expect(was_sent).toBe(true);
   expect(result).toMatchObject({ ok: true, value: { cost: 0.01, external_execution_id: "request-1",
     model_usage: { input_tokens: 31, output_tokens: 7 }, reproducibility_metadata: { provider_model: "jev-1.14.0" } } });
 });
 
-test("all four pilot input recipes retain their pinned bytes", () => {
-  const expected: Record<string, string> = {
-    "analysis.finding_relevance": '{"recipe_version":"v1","build":{"kind":"unscheduled_source","detail":"no relevant excerpt source is scheduled"},"subject":{"artifact_kind":"analysis","item_kind":"finding"},"input":[{"role":"requested_change","source":{"from":"unscheduled"},"min_count":1,"max_count":1},{"role":"relevant_excerpt","source":{"from":"unscheduled"},"min_count":1,"max_count":1}],"output":[{"role":"analysis_finding","source":{"from":"subject"},"min_count":1,"max_count":1}]}',
-    "plan.criterion_traceability": '{"recipe_version":"v1","build":{"kind":"linked_sources","undeclared":"uncited","uncaptured_source":"incomplete"},"subject":{"artifact_kind":"plan","item_kind":"criterion"},"input":[{"role":"plan_task","source":{"from":"linked","link_type":"derived_from","direction":"out","artifact_kind":"tasks","item_kind":"task"},"min_count":0,"max_count":20},{"role":"plan_decision","source":{"from":"linked","link_type":"derived_from","direction":"out","artifact_kind":"plan","item_kind":"decision"},"min_count":0,"max_count":20}],"output":[{"role":"plan_criterion","source":{"from":"subject"},"min_count":1,"max_count":1}]}',
-    "brief.source_fidelity": '{"recipe_version":"v1","build":{"kind":"linked_sources","undeclared":"unlinked","uncaptured_source":"dangling"},"subject":{"artifact_kind":"brief","item_kind":"criterion"},"input":[{"role":"plan_criterion","source":{"from":"linked","link_type":"derived_from","direction":"out","artifact_kind":"plan","item_kind":"criterion"},"min_count":1,"max_count":1}],"output":[{"role":"brief_criterion","source":{"from":"subject"},"min_count":1,"max_count":1}]}',
-    "assessment.coverage": '{"recipe_version":"v1","build":{"kind":"assessment_window"},"subject":{"artifact_kind":"brief","item_kind":"criterion"},"input":[{"role":"brief_criterion","source":{"from":"subject"},"min_count":1,"max_count":1}],"output":[{"role":"assessment_finding","source":{"from":"linked","link_type":"assesses","direction":"in","artifact_kind":"assessment","item_kind":"assessment_finding"},"min_count":0,"max_count":100}]}',
-  };
-  for (const [id, pilot] of Object.entries(OAKRIDGE_QUESTIONS)) {
-    expect(JSON.stringify(pilot.definition.input_recipe)).toBe(expected[id]);
-    expect(pilot.definition.input_recipe).toEqual(pinnedInputRecipe(AUTHORED_RECIPES[id as keyof typeof AUTHORED_RECIPES]));
-  }
+test("each producer question designates its own unclear choice", async () => {
+  const { unclearChoice } = await import("../src/runners/jev-direct");
+  for (const question of OAKRIDGE_QUESTIONS) expect(unclearChoice({ ...context, question })).toBe("unclear");
 });
 
 test("provider failures retain categories before and after a request", async () => {
@@ -121,7 +100,7 @@ test("provider modules do not read environment at import", async () => {
   }
 });
 
-integration("changing stored instructions creates a new evaluator row and identity", async () => scratchGrading(async (db) => {
+integration("changing stored instructions creates a new evaluator row and identity", async () => scratchDatabase(async (db) => {
   const first = context.evaluator;
   const secondText = JSON.stringify({ ...recipe, state_fields: { policy: "revised" } });
   const second = { ...first, evaluator_definition_id: "jev-revised", instruction_text: secondText,
@@ -130,7 +109,7 @@ integration("changing stored instructions creates a new evaluator row and identi
   const secondDigest = evaluatorIdentity(second);
   expect(firstDigest.ok && secondDigest.ok && firstDigest.value !== secondDigest.value).toBe(true);
   for (const selectedEvaluator of [first, second]) {
-    expect((await registerGradingContext(db, tenant, { ...context, evaluator: selectedEvaluator })).ok).toBe(true);
+    expect((await registerEvaluator(db, tenant, selectedEvaluator)).ok).toBe(true);
   }
   const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluator_definition")
     .select(["evaluator_definition_id", "instruction_text", "identity_digest"])
@@ -143,7 +122,7 @@ integration("changing stored instructions creates a new evaluator row and identi
 test("Jev Choice retains every raw option probability and provider confidence", async () => {
   const runner = createJevDirectRunner({ api_key: "key", base_url: "https://api.typesafe.ai/v1", transport: async (_url, init) => {
     const request = JSON.parse(String(init.body));
-    expect(request.state.fixture).toBe("sample");
+    expect(request.state.fixture).toEqual({ source: "reported", reported_by: "agent", revision_id: "revision-1", item_path: "/findings/0", content: "sample" });
     return response(provider(answer));
   } });
   const result = await runner.run(context);
@@ -156,11 +135,11 @@ test("Jev Choice retains every raw option probability and provider confidence", 
   expect(result.value.reproducibility_metadata).toMatchObject({ raw_answer: answer });
 });
 
-test("Jev maps the question-designated unclear choice to unclear", async () => {
+test("Jev records the question-designated unclear choice as an answer", async () => {
   const insufficient = { ...answer, choice: "insufficient_evidence" };
   const runner = createJevDirectRunner({ api_key: "key", base_url: "https://api.typesafe.ai/v1", transport: async () => response(provider(insufficient)) });
   const result = await runner.run(context);
-  expect(result.ok && result.value.answer).toEqual({ state: "unclear", kind: "choice", reason: "insufficient_evidence" });
+  expect(result.ok && result.value.answer).toEqual({ state: "answered", kind: "choice", value: "insufficient_evidence" });
   if (!result.ok) return;
   expect(result.value.probabilities).toEqual(insufficient.probabilities);
   expect(result.value.confidence).toBe(insufficient.confidence);
@@ -178,7 +157,7 @@ test("a choice with spaces and punctuation is designated even when other options
   const result = await runner.run({ ...context, question: { ...context.question, allowed_values: choices,
     unclear_semantics: "Choose not-enough evidence when unclear; choose yes or no only when settled." },
     evaluator: { ...context.evaluator, instruction_text: text, prompt_digest: instructionDigest(text) } });
-  expect(result.ok && result.value.answer).toEqual({ state: "unclear", kind: "choice", reason: choice });
+  expect(result.ok && result.value.answer).toEqual({ state: "answered", kind: "choice", value: choice });
 });
 
 test("ambiguous or missing unclear designation fails before a provider call", async () => {
@@ -248,65 +227,3 @@ test("provider HTTP failure preserves its request id without storing the respons
     external_execution_id: "provider-request-1", detail: "provider HTTP 503" } });
   expect(JSON.stringify(result)).not.toContain("secret response");
 });
-
-integration("stored model grade has no normalized score and a failed call creates only a readable execution", async () => scratchGrading(async (db, occurrence_id) => {
-  const registered = await registerGradingContext(db, tenant, context);
-  expect(registered.ok).toBe(true);
-  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
-    question_id: context.question.question_id, question_version: context.question.question_version,
-    evaluator_definition_id: "jev", config_digest: context.evaluator.config_digest, attempt_label: "success" };
-  const passed = await runGrade(db, tenant, { identity, runner: createJevDirectRunner({ api_key: "key", base_url: "https://api.typesafe.ai/v1", transport: async () => response(provider(answer)) }) });
-  expect(passed.ok).toBe(true);
-  if (!passed.ok) return;
-  expect(passed.value.observation?.answer_payload).toEqual({ state: "answered", kind: "choice", value: "faithful" });
-  expect(passed.value.observation?.probabilities).toEqual(answer.probabilities);
-  expect(passed.value.observation?.confidence).toBe(answer.confidence);
-  expect([passed.value.observation?.normalized_score, passed.value.observation?.decision_policy_id,
-    passed.value.observation?.decision_policy_version]).toEqual([null, null, null]);
-  const failed = await runGrade(db, tenant, { identity: { ...identity, attempt_label: "failure" },
-    runner: createJevDirectRunner({ api_key: "key", base_url: "https://api.typesafe.ai/v1", transport: async () => response({}, 503) }) });
-  expect(failed.ok).toBe(true);
-  if (!failed.ok) return;
-  expect(failed.value.execution.status).toBe("failed");
-  expect(failed.value.execution.error).not.toBeNull();
-  expect(failed.value.execution.ended_at).not.toBeNull();
-  expect(failed.value.observation).toBeNull();
-  expect((await readExecution(db, tenant, failed.value.execution.execution_id))?.status).toBe("failed");
-  expect((await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.total).toBe(1);
-}));
-
-integration("invalid provider outcomes create failed executions without grade rows", async () => scratchGrading(async (db, occurrence_id) => {
-  expect((await registerGradingContext(db, tenant, context)).ok).toBe(true);
-  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
-    question_id: context.question.question_id, question_version: context.question.question_version,
-    evaluator_definition_id: context.evaluator.evaluator_definition_id, config_digest: context.evaluator.config_digest };
-  const cases = [
-    { label: "invalid-choice", key: "key", transport: async () => response(provider({ ...answer, choice: "outside" })) },
-    { label: "invalid-response", key: "key", transport: async () => response({ model: "jev", answers: {} }) },
-    { label: "rate-limit", key: "key", transport: async () => response({}, 429) },
-    { label: "timeout", key: "key", transport: async (_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-    }) },
-    { label: "no-key", key: undefined, transport: async () => { throw new Error("must not send"); } },
-  ];
-  for (const entry of cases) {
-    const result = await runGrade(db, tenant, { identity: { ...identity, attempt_label: entry.label },
-      runner: createJevDirectRunner({ api_key: entry.key, base_url: "https://stub.invalid/v1",
-        transport: entry.transport, deadline_ms: 5 }) });
-    expect(result.ok && result.value.execution.status).toBe("failed");
-    expect(result.ok && result.value.observation).toBeNull();
-  }
-}));
-
-// OAKRIDGE_LIVE_CAPTURE names SourceEventDelivery[] recorded from a newly
-// launched committed-definition run, never the checked-in run-slice fixtures.
-const live_capture = process.env.OAKRIDGE_LIVE_CAPTURE;
-const missing_live = missingLivePrerequisites(live_capture);
-const liveTest = missing_live.length === 0 ? test : test.skip;
-if (missing_live.length) console.warn(`SKIP: direct-provider live verification; missing ${missing_live.join(", ")}`);
-liveTest("a newly captured criterion is graded by TypeSafe and read back through authenticated APIs", async () => {
-  if (!live_capture) throw new Error("OAKRIDGE_LIVE_CAPTURE disappeared");
-  const report = await verifyCapturedRun({ capture_path: live_capture,
-    question_id: "plan.criterion_traceability", estimated_cost: 0.01 });
-  expect(report.execution_id.length).toBeGreaterThan(0);
-}, 120_000);

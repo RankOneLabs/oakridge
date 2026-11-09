@@ -199,7 +199,7 @@ test("development cohort worktrees use the cohort key and a stable six-character
 });
 
 test("a session starts with the runtime, model and effort chosen for its worker", () => {
-  const start = selectSessionStart(instructionFor({ config: { sessions: { document: { writer: { harness: "codex", model: "gpt-6-sol", effort: "high" } } } } }),
+  const start = selectSessionStart(instructionFor({ config: { sessions: { document: { writer: { harness: "codex", model: "gpt-6-sol", effort: "high" } } }, grading_enabled: false } }),
     { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
   expect([start.runtime, start.model, start.effort]).toEqual(["codex", "gpt-6-sol", "high"]);
 });
@@ -290,12 +290,9 @@ test("an agent's start, revise, observation and stops call only routes kbbl regi
   expect({ calls: calls.length > 6, unregistered }).toEqual({ calls: true, unregistered: [] });
 });
 
-test("the declared grant is carried unchanged into the session start identity", () => {
+test("the session start identity carries exactly the run, unit and worker", () => {
   const instruction = instructionFor();
-  const agent = instruction.worker;
-  if (agent.kind !== "agent") throw new Error("writer is an agent");
   const options = { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" };
-  const grants = [{ kind: "restricted", role: "builder" } as const, { kind: "restricted", role: "assessor" } as const, { kind: "unscoped" } as const];
-  expect(grants.map((gated_review) => selectSessionStart({ ...instruction, worker: { ...agent, gated_review } }, options, "s").workflow?.gated_review))
-    .toEqual(grants);
+  expect(selectSessionStart(instruction, options, "s").workflow).toEqual({
+    run_id: instruction.run_id, unit_id: instruction.action.unit, worker: instruction.action.worker });
 });

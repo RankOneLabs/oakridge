@@ -1,7 +1,7 @@
 import type { StageUnit } from "../../run-types";
 import { selectCohortBrief } from "../../lib/stage-unit-params";
-import { isBuildBriefIdLinked, type BuildBrief } from "../../lib/build-brief";
-import { planCriterionText, type PlanCriterion } from "../../lib/plan";
+import type { BuildBrief } from "../../lib/build-brief";
+import type { PlanCriterion } from "../../lib/plan";
 
 interface CohortBriefProps {
   unit: StageUnit;
@@ -27,7 +27,7 @@ function DecisionList({ decisions }: { decisions: BuildBrief["decisions_made"] }
       <ul className="m-0 space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
         {decisions.map((item, index) => (
           <li key={`${index}-${item.decision}`}>
-            {item.id && <code className="or-code mr-2">{item.id}</code>}
+            <code className="or-code mr-2">{item.id}</code>
             {item.decision}
             {item.rationale && (
               <span className="block text-xs text-[var(--text-muted)]">{item.rationale}</span>
@@ -46,10 +46,10 @@ function RejectedList({ approaches }: { approaches: BuildBrief["approaches_rejec
       <h5 className="mb-1 mt-0 text-xs font-semibold uppercase text-[var(--text-muted)]">Approaches rejected</h5>
       <ul className="m-0 space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
         {approaches.map((item, index) => <li key={index}>
-          {item.id && <code className="or-code mr-2">{item.id}</code>}
+          <code className="or-code mr-2">{item.id}</code>
           {item.approach}
           <span className="block text-xs text-[var(--text-muted)]">{item.reason}</span>
-          {"decision_ids" in item && item.decision_ids.length > 0 && <span className="block text-xs text-[var(--text-muted)]">Decisions: {item.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</span>}
+          {item.decision_ids.length > 0 && <span className="block text-xs text-[var(--text-muted)]">Decisions: {item.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</span>}
         </li>)}
       </ul>
     </div>
@@ -63,11 +63,10 @@ function CriterionList({ criteria }: { criteria: PlanCriterion[] }) {
       <h5 className="mb-1 mt-0 text-xs font-semibold uppercase text-[var(--text-muted)]">Acceptance criteria</h5>
       <ul className="m-0 space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
         {criteria.map((criterion, index) => <li key={index}>
-          {typeof criterion !== "string" && <code className="or-code mr-2">{criterion.id}</code>}
-          {planCriterionText(criterion)}
-          {typeof criterion !== "string" && (criterion.task_ids.length > 0 || criterion.decision_ids.length > 0) && <span className="block text-xs text-[var(--text-muted)]">
-            {criterion.task_ids.length > 0 && <>Tasks: {criterion.task_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
-            {criterion.decision_ids.length > 0 && <>Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
+          <code className="or-code mr-2">{criterion.id}</code>
+          {criterion.text}
+          {criterion.decision_ids.length > 0 && <span className="block text-xs text-[var(--text-muted)]">
+            Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}
           </span>}
         </li>)}
       </ul>
@@ -86,7 +85,6 @@ export function CohortBrief({ unit }: CohortBriefProps) {
         <span className="rounded border border-[var(--border-muted)] px-1.5 py-0.5 text-xs text-[var(--text-secondary)]">
           {brief.repository_key}
         </span>
-        {!isBuildBriefIdLinked(brief) && <span className="text-xs text-[var(--text-muted)]">Not id-linked</span>}
       </div>
       {brief.goal && <p className="mb-2 mt-0 text-sm font-medium text-[var(--text-primary)]">{brief.goal}</p>}
       {brief.next_action && <p className="mb-3 mt-0 whitespace-pre-wrap text-sm text-[var(--text-secondary)]">{brief.next_action}</p>}

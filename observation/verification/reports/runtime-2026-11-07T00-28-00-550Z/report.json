@@ -1,0 +1,172 @@
+{
+  "proof_id": "runtime-2026-11-07T00-28-00-550Z",
+  "started_at": "2026-11-07T00:28:00.668Z",
+  "finished_at": "2026-11-07T00:28:16.868Z",
+  "source": {
+    "git_head": "4b2ba0eada1a40371581bf6e93c2b8902cb90d72",
+    "worktree_clean": true
+  },
+  "launcher": {
+    "name": "isoproof",
+    "state_dir": "/home/steve/.cache/oakridge-builder-69c8/shadow-state",
+    "kbbl": {
+      "port": 18798,
+      "url": "http://127.0.0.1:18798",
+      "data_dir": "/home/steve/.cache/oakridge-builder-69c8/shadow-state/kbbl"
+    },
+    "dbos": {
+      "port": 18800,
+      "url": "http://127.0.0.1:18800"
+    },
+    "postgres": {
+      "container": "oakridge-isoproof-postgres",
+      "volume": "oakridge-isoproof-postgres-data",
+      "port": 54399,
+      "authority_database": "oakridge"
+    },
+    "observation": {
+      "port": 18801,
+      "url": "http://127.0.0.1:18801",
+      "database": "observation",
+      "namespace": "shadow-isoproof",
+      "ingest_token_file": "/home/steve/.cache/oakridge-builder-69c8/shadow-state/observation-ingest.token",
+      "read_token_file": "/home/steve/.cache/oakridge-builder-69c8/shadow-state/observation-read.token",
+      "grade_token_file": "/home/steve/.cache/oakridge-builder-69c8/shadow-state/observation-grade.token",
+      "status_file": "/home/steve/.cache/oakridge-builder-69c8/shadow-state/observation-status.json"
+    },
+    "provider_env_file": "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/oakridge/69c8f08d-28ae-41d5-b772-0f2a7d903bc9/observation/.env"
+  },
+  "status": "passed",
+  "scenario": {
+    "id": "runtime",
+    "status": "passed",
+    "checks": [
+      {
+        "name": "the stack starts",
+        "passed": true,
+        "detail": "DBOS and kbbl answered"
+      },
+      {
+        "name": "observation is reachable",
+        "passed": true,
+        "detail": "health no_configured_graders; launcher running: pid_1696412"
+      },
+      {
+        "name": "capabilities are distinct and private",
+        "passed": true,
+        "detail": "private: true"
+      },
+      {
+        "name": "the shadow's ports are distinct",
+        "passed": true,
+        "detail": "18798,18800,54399,18801"
+      },
+      {
+        "name": "the service holds a connection in the shadow's PostgreSQL",
+        "passed": true,
+        "detail": "1 connection(s)"
+      },
+      {
+        "name": "it connects as an ordinary role",
+        "passed": true,
+        "detail": "rolsuper=f"
+      },
+      {
+        "name": "the target baseline is recorded once",
+        "passed": true,
+        "detail": "1"
+      },
+      {
+        "name": "kbbl reports observation down after it dies",
+        "passed": true,
+        "detail": "{\"state\":\"down\",\"reason\":\"unreachable\"}"
+      },
+      {
+        "name": "DBOS keeps serving",
+        "passed": true,
+        "detail": "health"
+      },
+      {
+        "name": "a run launches while observation is down",
+        "passed": true,
+        "detail": "run-273ff0f27bd90674"
+      },
+      {
+        "name": "it can be canceled while observation is down",
+        "passed": true,
+        "detail": "accepted"
+      },
+      {
+        "name": "the authority committed its events",
+        "passed": true,
+        "detail": "0 -> 3"
+      },
+      {
+        "name": "the stack restarts",
+        "passed": true,
+        "detail": "answered"
+      },
+      {
+        "name": "observation returns on the same state",
+        "passed": true,
+        "detail": "health no_configured_graders; launcher running: pid_1697206"
+      },
+      {
+        "name": "capabilities survive the restart",
+        "passed": true,
+        "detail": "compared by value, not reported"
+      },
+      {
+        "name": "ordered delivery catches up to the authority",
+        "passed": true,
+        "detail": "head 964/8718dadc-7f8e-4d69-a299-0a6ec704f5b9, cursor 964/8718dadc-7f8e-4d69-a299-0a6ec704f5b9"
+      }
+    ],
+    "evidence": {
+      "runs": [
+        {
+          "run_id": "run-273ff0f27bd90674",
+          "definition_id": "aaa26e7c474c6e049884fdeb9c9c136f0b0dc74c5c095fc095848dadc111da7a"
+        }
+      ],
+      "capture": {
+        "authority_head": "964/8718dadc-7f8e-4d69-a299-0a6ec704f5b9",
+        "service_cursor": "964/8718dadc-7f8e-4d69-a299-0a6ec704f5b9"
+      },
+      "authority": {
+        "events_before": 0,
+        "events_after": 3
+      },
+      "source_revisions": [],
+      "item_paths": [],
+      "pinned_definitions": [],
+      "execution_ids": [],
+      "provider_attempt_ids": [],
+      "observation_ids": [],
+      "provider_request_count": null,
+      "pwa_readback": []
+    }
+  },
+  "pending": [
+    {
+      "id": "registration-pins-evidence",
+      "owner": "configured-question-evidence"
+    },
+    {
+      "id": "real-provider-requests-and-recovery",
+      "owner": "automatic-execution-lifecycle"
+    },
+    {
+      "id": "relations-and-composites",
+      "owner": "task-lineage-composites"
+    },
+    {
+      "id": "first-assessment-finding-end-to-end",
+      "owner": "operator-item-workspace"
+    },
+    {
+      "id": "human-grading-and-pwa-readback",
+      "owner": "operator-item-workspace"
+    }
+  ]
+}

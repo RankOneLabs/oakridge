@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import sample from "../__fixtures__/v2-adapter-sample.json";
 import { withUnitFields } from "../__fixtures__/read-models";
-import type { OperatorRevisionDecision, OperatorUnitView } from "../operator-contracts";
+import type { OperatorRevisionDecision, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { sentReviewFeedback } from "./core";
 
 const cohort: OperatorUnitView = (() => {

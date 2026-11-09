@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
@@ -8,7 +8,7 @@ import YAML from "yaml";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type DefinitionOrder, type OperationRegistry } from "./definition-objects";
-import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, type DefinitionStoreFailure } from "./definition-store";
+import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, selectDiscardedFields, type DefinitionStoreFailure } from "./definition-store";
 import { WORKFLOW_SOURCES } from "./workflow-sources";
 
 function unwrap<Value, Failure>(result: Result<Value, Failure>): Value {
@@ -459,6 +459,101 @@ for (const change of historical_changes) {
     expect(runGenerator(root, true).exitCode).toBe(0);
   });
 }
+
+function retainedDefinitions(store: string): { readonly id: DefinitionId; readonly object: unknown }[] {
+  return readdirSync(resolve(store, "workflows")).map((name) => ({ id: name.replace(/\.json$/, "") as DefinitionId,
+    object: JSON.parse(readFileSync(resolve(store, "workflows", name), "utf8")) }));
+}
+/** A hash-valid stored object carrying the removed grant, as an old store or a merge would hold it. */
+function plantDiscardedDefinition(store: string): string {
+  const launchable = unwrap(readLaunchableCatalog(store))["review-loop"];
+  const definition = structuredClone(retainedDefinitions(store).find(({ id }) => id === launchable)!.object) as
+    { source: { stages: { document: { workers: { writer: Record<string, unknown> } } } } };
+  definition.source.stages.document.workers.writer.gated_review = { kind: "unscoped" };
+  const id = unwrap(jsonIdentity<DefinitionId>(definition));
+  const path = resolve(store, "workflows", `${id}.json`);
+  writeFileSync(path, unwrap(canonicalJson(definition)));
+  return path;
+}
+
+test("the discarded-field scan finds a grant at every worker position", () => {
+  const grant = { kind: "unscoped" };
+  const definition = { source: { workers: { template: { gated_review: grant } },
+    stages: { a: { workers: { direct: { gated_review: grant }, used: { template: "template", overrides: { gated_review: grant } } } } } } };
+  expect(selectDiscardedFields(definition)).toEqual(["/source/workers/template/gated_review",
+    "/source/stages/a/workers/direct/gated_review", "/source/stages/a/workers/used/overrides/gated_review"]);
+});
+
+test("the discarded-field scan keeps authored names that match the removed field", () => {
+  const worker = { kind: "agent", inputs: { gated_review: "input.gated_review" }, gated_review_note: "kept" };
+  const definition = { source: { input: { gated_review: "text" }, schemas: { gated_review: { gated_review: "text" } },
+    workers: { gated_review: worker }, stages: { gated_review: { input: { gated_review: "text" }, artifacts: { gated_review: { schema: "text" } },
+      workers: { gated_review: worker } } } } };
+  expect(selectDiscardedFields(definition)).toEqual([]);
+});
+
+test("generation keeps a launchable definition with an input named like the removed field", () => {
+  const root = generatorFixture();
+  const source = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+  writeFileSync(source, readFileSync(source, "utf8").replace("input: { topic: text }\nrun:", "input: { topic: text, gated_review: text }\nrun:"));
+  expect(runGenerator(root).exitCode).toBe(0);
+  const resolved = unwrap(resolveLaunchableDefinition("review-loop", resolve(root, "workflow-config/definitions")));
+  expect({ input: resolved.source.input, check: runGenerator(root, true).exitCode }).toEqual({ input: { topic: "text", gated_review: "text" }, check: 0 });
+});
+
+test("the committed store's complete inventory resolves and carries no discarded field", () => {
+  const retained = retainedDefinitions(DEFINITION_STORE_ROOT);
+  expect(retained.flatMap(({ object }) => selectDiscardedFields(object))).toEqual([]);
+  expect(retained.map(({ id }) => unwrap(resolveDefinition(id)).definition_id)).toEqual(retained.map(({ id }) => id));
+  expect(retained.map(({ id }) => id)).toEqual(expect.arrayContaining(Object.values(unwrap(readLaunchableCatalog()))));
+});
+
+test("the source contract refuses the removed grant", () => {
+  const yaml = authored.replace("writer: { kind: agent,", "writer: { kind: agent, gated_review: { kind: unscoped },");
+  expect(decodeWorkflowSource(YAML.parse(yaml))).toBeNull();
+});
+
+test("--check names a retained definition carrying a discarded field and does not delete it", () => {
+  const root = generatorFixture();
+  expect(runGenerator(root).exitCode).toBe(0);
+  const path = plantDiscardedDefinition(resolve(root, "workflow-config/definitions"));
+  const check = runGenerator(root, true);
+  expect({ code: check.exitCode, named: check.stderr.toString().includes(path), kept: existsSync(path) }).toEqual({ code: 1, named: true, kept: true });
+});
+
+test("generation discards an incompatible object and keeps the rest of the store", () => {
+  const root = generatorFixture();
+  expect(runGenerator(root).exitCode).toBe(0);
+  const snapshot = storeSnapshot(root);
+  plantDiscardedDefinition(resolve(root, "workflow-config/definitions"));
+  expect(runGenerator(root).exitCode).toBe(0);
+  expect(storeSnapshot(root)).toEqual(snapshot);
+  expect(runGenerator(root, true).exitCode).toBe(0);
+});
+
+test("generation after a later authored change stays clean and cannot revive a discarded object", () => {
+  const root = generatorFixture();
+  expect(runGenerator(root).exitCode).toBe(0);
+  const store = resolve(root, "workflow-config/definitions");
+  const path = plantDiscardedDefinition(store);
+  const source = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+  writeFileSync(source, readFileSync(source, "utf8").replace("workflow: review_loop", "workflow: review_loop_updated"));
+  expect(runGenerator(root).exitCode).toBe(0);
+  expect(runGenerator(root).exitCode).toBe(0);
+  expect({ revived: existsSync(path), fields: retainedDefinitions(store).flatMap(({ object }) => selectDiscardedFields(object)),
+    check: runGenerator(root, true).exitCode }).toEqual({ revived: false, fields: [], check: 0 });
+});
+
+test("generation refuses an authored source that declares the removed grant", () => {
+  const root = generatorFixture();
+  expect(runGenerator(root).exitCode).toBe(0);
+  const snapshot = storeSnapshot(root);
+  const source = resolve(root, "workflow-config/development.yaml");
+  writeFileSync(source, readFileSync(source, "utf8").replace("        kind: agent\n", "        kind: agent\n        gated_review: { kind: unscoped }\n"));
+  const generated = runGenerator(root);
+  expect({ code: generated.exitCode, invalid: generated.stderr.toString().includes("invalid authored workflow shape") }).toEqual({ code: 1, invalid: true });
+  expect(storeSnapshot(root)).toEqual(snapshot);
+});
 
 interface AssessmentPromptExample { readonly recommended_next_actions: readonly { readonly text: string; readonly id?: string }[] }
 for (const name of ["assess", "assess-revise"]) {

@@ -5,6 +5,7 @@
 //! Precedence, loosest first: `or`, `and`, `not`, a comparison (`==`, `!=`,
 //! `>`, `>=`, `<`, `<=`), then an atom: a call, a record literal, a literal or
 //! a read. Inside `every`, `any`, `filter` and `map`, `item` is the element.
+//! `flatten` joins a list of lists; `unique` holds when no two items are equal.
 use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 
@@ -35,6 +36,8 @@ pub(crate) enum StageExpr {
         right: Box<StageExpr>,
     },
     Len(Box<StageExpr>),
+    Flatten(Box<StageExpr>),
+    Unique(Box<StageExpr>),
     Published(String),
     Approved(String),
     ChangesRequested(String),
@@ -325,6 +328,8 @@ fn expand_lets_bounded(
             right: Box::new(expand(*right, visiting)?),
         },
         StageExpr::Len(inner) => StageExpr::Len(Box::new(expand(*inner, visiting)?)),
+        StageExpr::Flatten(inner) => StageExpr::Flatten(Box::new(expand(*inner, visiting)?)),
+        StageExpr::Unique(inner) => StageExpr::Unique(Box::new(expand(*inner, visiting)?)),
         StageExpr::Every { source, predicate } => StageExpr::Every {
             source: Box::new(expand(*source, visiting)?),
             predicate: Box::new(expand(*predicate, visiting)?),

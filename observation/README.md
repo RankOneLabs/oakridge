@@ -5,11 +5,10 @@
 Canonical JSON v1 identities are computed from the canonicalized body recovered from JSONB. Byte-identical recovery of a producer's submitted JSON is not claimed.
 
 The service creates its current schema on an empty database and verifies that
-schema on restart. It does not upgrade or adopt an older installation. The checked-in
-`fixtures/oakridge/run-slice/` corpus drives the cross-layer slice and failure
-cases. Run `bun test observation/tests` with a local PostgreSQL server named by
+schema on restart. It does not upgrade or adopt an older installation. Run
+`bun test observation/tests` with a local PostgreSQL server named by
 `OAKRIDGE_TEST_DATABASE_URL`; the tests create and remove isolated databases.
-They do not contact a model provider or Assay.
+They do not contact a model provider.
 
 ## Canonical JSON v1
 

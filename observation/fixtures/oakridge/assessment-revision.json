@@ -2,8 +2,11 @@
   "head_sha": "1111111111111111111111111111111111111111",
   "verdict": "pass_with_notes",
   "findings": [
-    { "criterion_id": "crit-a", "criterion": "A works reliably", "status": "met", "evidence": [{ "kind": "test", "ref": "alpha.test.ts" }] },
-    { "criterion_id": "missing", "criterion": "Missing link", "status": "partial", "evidence": [] }
+    { "task_ids": ["T7", "T8"], "criterion": "The case works and is documented", "status": "met",
+      "evidence": [{ "kind": "file", "ref": "src/alpha.ts:2-3" }, { "kind": "test", "ref": "alpha.test.ts", "detail": "1 passed" }] },
+    { "task_ids": ["T7"], "criterion": "Edge inputs are refused", "status": "partial", "evidence": [] },
+    { "task_ids": [], "criterion": "An unlinked observation", "status": "met", "evidence": [] },
+    { "task_ids": ["T404"], "criterion": "A reference to an unknown task", "status": "partial", "evidence": [] }
   ],
   "recommended_next_actions": [{ "id": "aa32c2d6-b93c-42e5-80c8-d4cb1081fab2", "text": "Document the result." }]
 }

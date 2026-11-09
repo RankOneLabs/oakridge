@@ -25,6 +25,7 @@ import { selectRequestIdentity, type PendingRequestIdentity } from "../../lib/re
 import { randomUuid } from "../../../lib/random-uuid";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
 import { BriefNotesField } from "../molecules/BriefNotesField";
+import { AutomaticGradingField } from "../molecules/AutomaticGradingField";
 import { readBriefNotesFile, selectMissingBriefNotesDetail, type BriefNotesSource } from "../../lib/brief-notes";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
@@ -57,6 +58,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const [briefNotesSource, setBriefNotesSource] = useState<BriefNotesSource>({ kind: "typed" });
   const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "", forge_owner: "", forge_name: "", integration_branch: "main" }]);
   const [projectId, setProjectId] = useState<string>("");
+  const [isGradingEnabled, setIsGradingEnabled] = useState(false);
   const [workflowDefId, setWorkflowDefId] = useState<string>("");
   const definitionQuery = useOperatorDefinition(workflowDefId);
   const sessionTargets = useMemo(() => definitionQuery.data ? selectAgentSessionTargets(definitionQuery.data.workflow) : [], [definitionQuery.data]);
@@ -155,6 +157,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
       repositories: normalizedRepositories.map(({ key, path, integration_branch }) => ({ key, path, integration_branch })),
       oakridge_url: coreUrl,
       session_settings: sessionSettings.value,
+      grading_enabled: isGradingEnabled,
     });
     if (!contextResult.ok) { setError(contextResult.error.detail); return; }
     try {
@@ -256,6 +259,8 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           runtimes={{ descriptors: runtimeDescriptors, default_id: defaultRuntimeId }}
           disabled={pending}
         />}
+
+        <AutomaticGradingField is_enabled={isGradingEnabled} onChange={setIsGradingEnabled} disabled={pending} />
 
         {error && <FeedbackMessage tone="danger">{error}</FeedbackMessage>}
 

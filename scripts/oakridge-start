@@ -6,6 +6,19 @@ if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3))); 
   exit 1
 fi
 
+# A shadow's state all comes from oakridge-shadow. Checked first, before anything
+# below can create the default install's state on its behalf.
+for arg in "$@"; do
+  if [ "$arg" != "--isolated" ]; then continue; fi
+  for setting in OAKRIDGE_STATE_DIR OAKRIDGE_OBSERVATION_SERVICE_PORT OAKRIDGE_OBSERVATION_DATABASE \
+    OAKRIDGE_OBSERVATION_NAMESPACE OAKRIDGE_OBSERVATION_PROVIDER_ENV_FILE; do
+    if [ -z "${!setting:-}" ]; then
+      echo "oakridge: --isolated is set by oakridge-shadow, which also supplies $setting" >&2
+      exit 1
+    fi
+  done
+done
+
 OAKRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DBOS_ROOT="$OAKRIDGE_ROOT/oakridge-dbos"
 DEFAULT_CORE_WASM="$OAKRIDGE_ROOT/workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm"
@@ -51,9 +64,9 @@ fi
 if [ -z "$GATED_REVIEW_URL" ]; then
   echo "oakridge: $MCP_CONFIG names no gated-review server; pull_request.observe will fail with discovery_unsupported" >&2
 fi
-# The default install keeps its publication key and agent workdir here;
-# oakridge-shadow passes its own of each.
-STATE_DIR="$HOME/.local/state/oakridge"
+# The default install keeps its publication key, agent workdir and observation
+# tokens here; oakridge-shadow passes its own resolved directory.
+STATE_DIR="${OAKRIDGE_STATE_DIR:-$HOME/.local/state/oakridge}"
 if [ -z "${OAKRIDGE_PUBLICATION_KEY:-}" ]; then
   # One key for the install's lifetime: rotating it breaks every resumed agent session.
   KEY_FILE="$STATE_DIR/publication.key"
@@ -84,10 +97,13 @@ KBBL_INTERNAL_PORT="$KBBL_DISPLAY_PORT"
 next_is_host=0
 next_is_port=0
 start_observation=0
+isolated=0
 kbbl_args=()
 for arg in "$@"; do
-  # --observation is the launcher's own flag; every other argument belongs to kbbl.
+  # --observation and --isolated are the launcher's own flags; every other argument
+  # belongs to kbbl. --isolated is oakridge-shadow's: nothing here may read live settings.
   if [ "$arg" = "--observation" ]; then start_observation=1; continue; fi
+  if [ "$arg" = "--isolated" ]; then isolated=1; continue; fi
   kbbl_args+=("$arg")
   if [ "$next_is_host" -eq 1 ]; then
     next_is_host=0
@@ -195,29 +211,155 @@ fi
 if [ -n "${DBOS_APPLICATION_VERSION:-}" ]; then export DBOS_APPLICATION_VERSION; fi
 if [ -n "${OAKRIDGE_GITHUB_TOKEN:-}" ]; then export OAKRIDGE_GITHUB_TOKEN; fi
 
-# --observation starts the observation service from its own observation/.env and
-# points the DBOS publisher at it. Bun loads that file from the service's cwd, so
-# the check below reads the same environment the service will.
+# Provider keys belong to the observation child alone. The runners list them, so
+# DBOS and kbbl lose every one whether or not observation runs here.
 OBSERVATION_ROOT="$OAKRIDGE_ROOT/observation"
-# Without the flag, a publisher URL and token exported for a separate deployment pass through.
+provider_env() { bun --no-env-file "$OBSERVATION_ROOT/scripts/provider-env.ts" "$@"; }
+if ! PROVIDER_NAMES="$(provider_env names)"; then
+  echo "oakridge: cannot list the provider settings to keep out of DBOS and kbbl" >&2
+  exit 1
+fi
+mapfile -t provider_names <<< "$PROVIDER_NAMES"
+
+# These are this script's own names; an exported value must not ride along to a child.
+export -n OBSERVATION_ROOT OBSERVATION_URL OBSERVATION_NAMESPACE \
+  OBSERVATION_INGEST_TOKEN OBSERVATION_READ_TOKEN OBSERVATION_GRADE_TOKEN 2>/dev/null || true
+# Without the flag, a URL and tokens exported for a separate deployment pass through.
 OBSERVATION_URL="${OAKRIDGE_OBSERVATION_URL:-}"
 OBSERVATION_INGEST_TOKEN="${OAKRIDGE_OBSERVATION_INGEST_TOKEN:-}"
+OBSERVATION_READ_TOKEN="${OAKRIDGE_OBSERVATION_READ_TOKEN:-}"
+OBSERVATION_GRADE_TOKEN="${OAKRIDGE_OBSERVATION_GRADE_TOKEN:-}"
 OBSERVATION_NAMESPACE="${OAKRIDGE_OBSERVATION_NAMESPACE:-default}"
-if [ "$start_observation" -eq 1 ]; then
-  if ! OBSERVATION_SERVICE_PORT="$(cd "$OBSERVATION_ROOT" && bun -e '
+OBSERVATION_REVIEWER_ID="oakridge-operator"
+SHADOW_OBSERVATION_DATABASE_URL=""
+OBSERVATION_STATUS_FILE="$STATE_DIR/observation-status.json"
+provider_settings=""
+
+# What became of the observation child, for operators and the verification
+# program. Details are fixed words and setting names; never a value.
+record_observation_status() {
+  local state="$1" detail="${2:-}"
+  mkdir -p "$STATE_DIR" || return 0
+  printf '{"state":"%s","detail":"%s","recorded_at":"%s"}\n' "$state" "$detail" "$(date -u +%FT%TZ)" \
+    > "$OBSERVATION_STATUS_FILE.pending" && mv "$OBSERVATION_STATUS_FILE.pending" "$OBSERVATION_STATUS_FILE" || true
+}
+
+# One secret for the install's lifetime, generated once and reused by every restart.
+read_state_secret() {
+  local path="$STATE_DIR/$1"
+  if [ ! -s "$path" ]; then
+    mkdir -p "$STATE_DIR" && (umask 077 && openssl rand -hex 32 > "$path") || return 1
+  fi
+  cat "$path"
+}
+
+prepare_observation_capabilities() {
+  OBSERVATION_INGEST_TOKEN="$(read_state_secret observation-ingest.token)" \
+    && OBSERVATION_READ_TOKEN="$(read_state_secret observation-read.token)" \
+    && OBSERVATION_GRADE_TOKEN="$(read_state_secret observation-grade.token)"
+}
+
+# The shadow's container must be what its settings say before a database goes in it.
+verify_shadow_postgres() {
+  local mounts bindings
+  [ "$POSTGRES_CONTAINER" != "oakridge-postgres" ] || return 1
+  mounts="$(within_preflight docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' "$POSTGRES_CONTAINER")" || return 1
+  bindings="$(within_preflight docker inspect -f '{{range $port, $hosts := .HostConfig.PortBindings}}{{range $hosts}}{{$port}}={{.HostIp}}:{{.HostPort}} {{end}}{{end}}' "$POSTGRES_CONTAINER")" || return 1
+  [[ " $mounts " == *" $POSTGRES_VOLUME "* && " $mounts " != *" oakridge-postgres-data "* ]] || return 1
+  [ "$bindings" = "5432/tcp=127.0.0.1:$POSTGRES_PORT " ]
+}
+
+# PostgreSQL ends a statement or lock wait at the same deadline, in case the
+# killed client leaves it running in the container.
+shadow_psql() {
+  local server_ms=$((OBSERVATION_PREFLIGHT_SECONDS * 1000))
+  within_preflight docker exec -i -e PGOPTIONS="-c statement_timeout=$server_ms -c lock_timeout=$server_ms" "$POSTGRES_CONTAINER" \
+    psql --username oakridge --dbname oakridge -v ON_ERROR_STOP=1 --tuples-only --no-align "$@"
+}
+
+# An ordinary role, because a superuser bypasses row-level security. The first
+# start creates the database empty and the service applies its baseline; every
+# later start finds both retained. The password goes over stdin, off the command line.
+provision_shadow_observation() {
+  local database="$OAKRIDGE_OBSERVATION_DATABASE" role="$OAKRIDGE_OBSERVATION_DATABASE" password
+  password="$(read_state_secret observation-database.password)" || return 1
+  if [ -z "$(shadow_psql --command "SELECT 1 FROM pg_roles WHERE rolname = '$role'")" ]; then
+    printf "CREATE ROLE \"%s\" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '%s';\n" "$role" "$password" | shadow_psql >/dev/null || return 1
+  fi
+  if [ -z "$(shadow_psql --command "SELECT 1 FROM pg_database WHERE datname = '$database'")" ]; then
+    shadow_psql --command "CREATE DATABASE \"$database\" OWNER \"$role\"" >/dev/null || return 1
+  fi
+  SHADOW_OBSERVATION_DATABASE_URL="postgres://$role:$password@127.0.0.1:$POSTGRES_PORT/$database"
+}
+
+# Observation setup runs before DBOS and kbbl start, so all of it shares one
+# deadline: a PostgreSQL that stops answering or a lock that never frees delays
+# the stack by that long and then fails observation alone.
+OBSERVATION_PREFLIGHT_SECONDS="${OAKRIDGE_OBSERVATION_PREFLIGHT_SECONDS:-30}"
+if ! [[ "$OBSERVATION_PREFLIGHT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "oakridge: OAKRIDGE_OBSERVATION_PREFLIGHT_SECONDS must be a positive number of seconds" >&2
+  exit 1
+fi
+preflight_deadline=0
+within_preflight() {
+  local remaining=$((preflight_deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || return 124
+  timeout --kill-after=2 "$remaining" "$@"
+}
+# A step that failed once the deadline passed is reported as timed out.
+preflight_failure() { if [ "$SECONDS" -ge "$preflight_deadline" ]; then echo "$2"; else echo "$1"; fi; }
+
+# Every failure here leaves observation unstarted and the rest of the stack coming
+# up: it is a measurement service, not a prerequisite for workflows.
+observation_preflight_failed() {
+  echo "oakridge: observation will not start ($1); DBOS and kbbl continue without it" >&2
+  record_observation_status preflight_failed "$1"
+  return 1
+}
+
+prepare_isolated_observation() {
+  local selection_failure
+  verify_shadow_postgres || { observation_preflight_failed "$(preflight_failure shadow_postgres_mismatch shadow_postgres_timed_out)"; return 1; }
+  provision_shadow_observation \
+    || { observation_preflight_failed "$(preflight_failure database_provisioning_failed database_provisioning_timed_out)"; return 1; }
+  selection_failure="$(mktemp)"
+  if ! provider_settings="$(within_preflight bun --no-env-file "$OBSERVATION_ROOT/scripts/provider-env.ts" select \
+    --env-file "$OAKRIDGE_OBSERVATION_PROVIDER_ENV_FILE" --graders "$OBSERVATION_ROOT/graders.json" 2>"$selection_failure")"; then
+    local detail
+    detail="$(head -n 1 "$selection_failure" | tr -cd 'A-Za-z0-9_:,-')"
+    rm -f "$selection_failure"
+    observation_preflight_failed "$(preflight_failure "${detail:-provider_selection_failed}" provider_selection_timed_out)"
+    return 1
+  fi
+  rm -f "$selection_failure"
+}
+
+# The default install's service reads its own observation/.env. Bun loads that
+# file from the service's cwd, so this check reads what the service will.
+prepare_default_observation() {
+  local service_port
+  if ! service_port="$(cd "$OBSERVATION_ROOT" && within_preflight bun -e '
     if (!process.env.OBSERVATION_DATABASE_URL) process.exit(1);
     console.log(process.env.OBSERVATION_PORT ?? 8791);')"; then
-    echo "oakridge: --observation needs OBSERVATION_DATABASE_URL in $OBSERVATION_ROOT/.env" >&2
-    exit 1
+    OBSERVATION_URL="http://127.0.0.1:8791"
+    observation_preflight_failed "$(preflight_failure observation_database_url_missing observation_settings_timed_out)"
+    return 1
   fi
-  # One ingest token for the install's lifetime, shared by the service and the DBOS publisher.
-  INGEST_TOKEN_FILE="$STATE_DIR/observation-ingest.token"
-  if [ ! -s "$INGEST_TOKEN_FILE" ]; then
-    mkdir -p "$STATE_DIR"
-    (umask 077 && openssl rand -hex 32 > "$INGEST_TOKEN_FILE")
+  OBSERVATION_URL="http://127.0.0.1:${service_port}"
+}
+
+start_observation_child=0
+if [ "$start_observation" -eq 1 ]; then
+  record_observation_status starting
+  preflight_deadline=$((SECONDS + OBSERVATION_PREFLIGHT_SECONDS))
+  if ! prepare_observation_capabilities; then
+    observation_preflight_failed capability_state_unavailable || true
+  elif [ "$isolated" -eq 1 ]; then
+    OBSERVATION_URL="http://127.0.0.1:${OAKRIDGE_OBSERVATION_SERVICE_PORT}"
+    if prepare_isolated_observation; then start_observation_child=1; fi
+  elif prepare_default_observation; then
+    start_observation_child=1
   fi
-  OBSERVATION_INGEST_TOKEN="$(cat "$INGEST_TOKEN_FILE")"
-  OBSERVATION_URL="http://127.0.0.1:${OBSERVATION_SERVICE_PORT}"
 fi
 
 dbos_pid=""
@@ -239,19 +381,73 @@ stop_from_signal() {
 trap stop_from_signal INT TERM
 trap stop_services EXIT
 
-if [ "$start_observation" -eq 1 ]; then
+export_observation_credentials() {
+  local tenant="\"producer\":\"oakridge\",\"namespace\":\"$OBSERVATION_NAMESPACE\""
+  export OBSERVATION_INGEST_CREDENTIALS="[{$tenant,\"token\":\"$OBSERVATION_INGEST_TOKEN\"}]"
+  export OBSERVATION_READ_CREDENTIALS="[{$tenant,\"token\":\"$OBSERVATION_READ_TOKEN\"}]"
+  export OBSERVATION_GRADE_CREDENTIALS="[{$tenant,\"token\":\"$OBSERVATION_GRADE_TOKEN\",\"reviewer_id\":\"$OBSERVATION_REVIEWER_ID\"}]"
+}
+
+# The shadow child gets exactly this environment. It starts in the state directory
+# with env-file loading off, so neither the shell nor observation/.env can add to it.
+exec_isolated_observation() {
+  local variable pair service_port="$OAKRIDGE_OBSERVATION_SERVICE_PORT"
+  for variable in $(compgen -e); do
+    case "$variable" in
+      PATH|HOME|USER|LOGNAME|LANG|LC_*|TZ|TMPDIR) ;;
+      *) unset "$variable" 2>/dev/null || true ;;
+    esac
+  done
+  export_observation_credentials
+  export OBSERVATION_DATABASE_URL="$SHADOW_OBSERVATION_DATABASE_URL" OBSERVATION_HOST=127.0.0.1 OBSERVATION_PORT="$service_port"
+  while IFS= read -r pair; do
+    if [ -n "$pair" ]; then export "$pair"; fi
+  done <<< "$provider_settings"
+  cd "$STATE_DIR"
+  exec bun --no-env-file "$OBSERVATION_ROOT/src/main.ts"
+}
+
+exec_default_observation() {
+  export_observation_credentials
+  cd "$OBSERVATION_ROOT"
+  exec bun run start
+}
+
+# Observation runs under its own supervisor, outside the wait below: its exit is
+# recorded and logged, and DBOS and kbbl keep running. Only stop_services ends it.
+supervise_observation() {
+  local child="" child_exit=0
+  trap 'kill -TERM "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; record_observation_status stopped; exit 0' TERM
+  if [ "$isolated" -eq 1 ]; then exec_isolated_observation & else exec_default_observation & fi
+  child=$!
+  record_observation_status running "pid_$child"
+  wait "$child" || child_exit=$?
+  echo "oakridge: observation exited with status $child_exit; DBOS and kbbl keep running" >&2
+  record_observation_status exited "status_$child_exit"
+}
+
+if [ "$start_observation_child" -eq 1 ]; then
   echo "oakridge: starting observation service at $OBSERVATION_URL"
-  (
-    cd "$OBSERVATION_ROOT"
-    OBSERVATION_INGEST_CREDENTIALS="[{\"producer\":\"oakridge\",\"namespace\":\"$OBSERVATION_NAMESPACE\",\"token\":\"$OBSERVATION_INGEST_TOKEN\"}]" \
-      bun run start
-  ) &
+  supervise_observation &
   observation_pid=$!
 fi
+
+# Isolated children also skip Bun's env-file loading: the checkout's .env describes
+# the default install, and kbbl's cwd is wherever the launcher was run from.
+dbos_launch=(bun run start)
+kbbl_env_file_setting=()
+if [ "$isolated" -eq 1 ]; then
+  dbos_launch=(bun --no-env-file run src/main.ts)
+  kbbl_env_file_setting=(KBBL_NO_ENV_FILE=1)
+fi
+# DBOS refuses a publisher URL with no token, so it gets neither or both.
+DBOS_OBSERVATION_URL="$OBSERVATION_URL"
+if [ -z "$OBSERVATION_INGEST_TOKEN" ]; then DBOS_OBSERVATION_URL=""; fi
 
 echo "oakridge: starting DBOS backend at $DBOS_URL"
 (
   cd "$DBOS_ROOT"
+  unset "${provider_names[@]}" OAKRIDGE_OBSERVATION_READ_TOKEN OAKRIDGE_OBSERVATION_GRADE_TOKEN
   DBOS_SYSTEM_DATABASE_URL="$DBOS_SYSTEM_DATABASE_URL" \
     OAKRIDGE_PROMPT_ROOT="${OAKRIDGE_PROMPT_ROOT:-$OAKRIDGE_ROOT}" \
     KBBL_BASE_URL="${KBBL_BASE_URL:-$KBBL_URL}" \
@@ -261,17 +457,25 @@ echo "oakridge: starting DBOS backend at $DBOS_URL"
     OAKRIDGE_PUBLICATION_KEY="$OAKRIDGE_PUBLICATION_KEY" \
     OAKRIDGE_AGENT_WORKDIR="$AGENT_WORKDIR" \
     PORT="$DBOS_PORT" \
-    OAKRIDGE_OBSERVATION_URL="$OBSERVATION_URL" \
+    OAKRIDGE_OBSERVATION_URL="$DBOS_OBSERVATION_URL" \
     OAKRIDGE_OBSERVATION_NAMESPACE="$OBSERVATION_NAMESPACE" \
     OAKRIDGE_OBSERVATION_INGEST_TOKEN="$OBSERVATION_INGEST_TOKEN" \
-    bun run start
+    "${dbos_launch[@]}"
 ) &
 dbos_pid=$!
 
+kbbl_unset=(-u ANTHROPIC_API_KEY -u OAKRIDGE_OBSERVATION_INGEST_TOKEN)
+for name in "${provider_names[@]}"; do kbbl_unset+=(-u "$name"); done
+
 echo "oakridge: starting kbbl (the PWA rebuild may take a moment)"
-env -u ANTHROPIC_API_KEY \
+env "${kbbl_unset[@]}" \
   OAKRIDGE_CORE_BASE_URL="$DBOS_URL" \
   OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
+  OAKRIDGE_OBSERVATION_URL="$OBSERVATION_URL" \
+  OAKRIDGE_OBSERVATION_NAMESPACE="$OBSERVATION_NAMESPACE" \
+  OAKRIDGE_OBSERVATION_READ_TOKEN="$OBSERVATION_READ_TOKEN" \
+  OAKRIDGE_OBSERVATION_GRADE_TOKEN="$OBSERVATION_GRADE_TOKEN" \
+  ${kbbl_env_file_setting[@]+"${kbbl_env_file_setting[@]}"} \
   "$OAKRIDGE_ROOT/kbbl/scripts/kbbl-start" ${kbbl_args[@]+"${kbbl_args[@]}"} &
 kbbl_pid=$!
 
@@ -283,10 +487,9 @@ else
   echo "oakridge: Ctrl-C stops kbbl and DBOS; the PostgreSQL container remains running"
 fi
 
+# Only DBOS and kbbl end the stack; observation's exit is its supervisor's to record.
 set +e
-wait_pids=("$dbos_pid" "$kbbl_pid")
-if [ -n "$observation_pid" ]; then wait_pids+=("$observation_pid"); fi
-wait -n "${wait_pids[@]}"
+wait -n "$dbos_pid" "$kbbl_pid"
 exit_code=$?
 set -e
 exit "$exit_code"

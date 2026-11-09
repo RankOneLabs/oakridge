@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { id } from "../__fixtures__/grading";
 
 import type { ArtifactId, Sid } from "../../lib/ids";
+import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
 import {
   DEFAULT_RUN_WORKSPACE_STATE,
   LIST_PANE,
@@ -202,5 +204,22 @@ describe("shouldReadRunActivity", () => {
     expect(shouldReadRunActivity(twin(LIST_PANE, OVERVIEW_PANE))).toBe(true);
     expect(shouldReadRunActivity({ primary: LIST_PANE, secondary: null })).toBe(false);
     expect(shouldReadRunActivity(twin(sessionPane("sid-1"), artifactPane("art-1")))).toBe(false);
+  });
+});
+
+describe("the item pane", () => {
+  const selection: ObservationItemAddress = { source_revision_id: id("r"), item_path: "/findings/1" };
+  const pane = (item_path: string) => ({ kind: "item", selection: { ...selection, item_path } }) as const;
+  it("is one pane per exact revision and path", () => {
+    expect(arePanesEqual(pane("/findings/1"), pane("/findings/1"))).toBe(true);
+    expect(arePanesEqual(pane("/findings/1"), pane("/findings/10"))).toBe(false);
+    expect(arePanesEqual({ kind: "task", task_id: "T1" }, { kind: "task", task_id: "T2" })).toBe(false);
+  });
+  it("opening an item already on screen does not show it twice", () => {
+    expect(openInPane({ primary: pane("/findings/1"), secondary: null }, "secondary", pane("/findings/1"))).toEqual({ primary: pane("/findings/1"), secondary: null });
+  });
+  it("names itself by its path", () => {
+    expect(describePane(pane("/findings/1"))).toEqual({ title: "Item", subtitle: "/findings/1" });
+    expect(describePane({ kind: "grading" })).toEqual({ title: "Grading", subtitle: null });
   });
 });

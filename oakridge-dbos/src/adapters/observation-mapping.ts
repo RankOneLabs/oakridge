@@ -1,21 +1,21 @@
-import type { Event } from "../core-client/core-types";
-import type { CommittedEventRow, PinnedDefinitionRead } from "../storage/read-store";
+import { ANALYSIS_LINKS_DECLARED } from "../domain/analysis-link-declaration";
+import type { CoreEvent } from "../storage/json-column-types";
+import type { CommittedEventRow, CommittedRunConfig, PinnedDefinitionRead } from "../storage/read-store";
 import { artifactSchemaVersion, bodyDigest, declarationDigest } from "./observation-schema-version";
 import type { JsonValue, SourceEventOutcome } from "./observation-wire";
-import type { Selectable } from "kysely";
-import type { AuthorityCollaborationMessage, AuthorityCollaborationThread } from "../storage/db-types";
 
-export const MAPPED_EVENTS = ["revision_published", "operator_decided", "launched"] as const satisfies readonly Event["kind"][];
-export const DELIBERATELY_UNMAPPED_EVENTS = ["worker_started", "worker_ended", "retry_requested", "cancel_requested"] as const satisfies readonly Event["kind"][];
+export const MAPPED_EVENTS = ["revision_published", "launched", ANALYSIS_LINKS_DECLARED] as const satisfies readonly CoreEvent["kind"][];
+/** Approvals stay in Oakridge: an operator decision advances capture and creates no grading record. */
+export const DELIBERATELY_UNMAPPED_EVENTS = ["operator_decided", "worker_started", "worker_ended", "retry_requested", "cancel_requested"] as const satisfies readonly CoreEvent["kind"][];
 /** A new core variant must be handled here or deliberately excluded. */
-type MissingEventKind = Exclude<Event["kind"], typeof MAPPED_EVENTS[number] | typeof DELIBERATELY_UNMAPPED_EVENTS[number]>;
+type MissingEventKind = Exclude<CoreEvent["kind"], typeof MAPPED_EVENTS[number] | typeof DELIBERATELY_UNMAPPED_EVENTS[number]>;
 const allKindsCovered: MissingEventKind extends never ? true : never = true;
 void allKindsCovered;
 
-export interface MappingInput { readonly row: CommittedEventRow<Event>; readonly definition: PinnedDefinitionRead | null;
+export interface MappingInput { readonly row: CommittedEventRow<CoreEvent>; readonly definition: PinnedDefinitionRead | null;
   readonly namespace: string; readonly stage: string | null; readonly revision_sequence: number | null;
-  readonly decision_effect?: "approve" | "request_changes" | null; readonly decision_created_at?: Date;
-  readonly decision_id?: string | null }
+  /** Read for a launch only: its config travels with its input. */
+  readonly run_config: CommittedRunConfig | null }
 export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
   const { row, definition } = input;
   const event = row.payload;
@@ -40,29 +40,21 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
           subject_id: event.subject ? `${prefix}${event.subject}` : null, by_id: event.by ?? null },
           recorded_at: row.created_at.toISOString(), body: event.body as JsonValue, body_digest: bodyDigest(event.body as JsonValue) } };
     }
-    case "operator_decided": {
-      const targetArtifact = event.target.startsWith(`${event.unit}:`) ? event.target.slice(event.unit.length + 1).split(":")[0] : null;
-      const targetVersion = definition && input.stage && targetArtifact ? artifactSchemaVersion(definition, input.stage, targetArtifact) : null;
-      return { ...provenance, artifact_schema_version: targetVersion, kind: "human_grade", event_kind: event.kind, ...identity,
-        evaluator: { kind: "human" }, unit: event.unit, review: event.review, decision: event.decision,
-        decision_id: input.decision_id ?? null,
-        target: event.target, feedback: event.payload, effect: input.decision_effect ?? null,
-        decided_at: (input.decision_created_at ?? row.created_at).toISOString() };
+    case "launched": {
+      if (!definition) return unmapped("pinned definition is missing");
+      const committed = input.run_config ?? { state: "none" };
+      if (committed.state === "malformed") return unmapped("committed run config is malformed");
+      return { ...provenance, kind: "run_input", event_kind: event.kind, ...identity, input: event.input,
+        input_schema_version: declarationDigest(definition.checked_program.workflow.input as JsonValue),
+        config: committed.state === "committed" ? committed.config : null };
     }
-    case "launched": return definition ? { ...provenance, kind: "run_input", event_kind: event.kind, ...identity, input: event.input,
-      input_schema_version: declarationDigest(definition.checked_program.workflow.input as JsonValue) } : unmapped("pinned definition is missing");
-    case "worker_started": case "worker_ended": case "retry_requested": case "cancel_requested":
+    case ANALYSIS_LINKS_DECLARED: {
+      const { run_id, tasks_revision_id, entries } = event;
+      return { ...provenance, kind: "relation_declaration", event_kind: event.kind, ...identity, declaration: { run_id, tasks_revision_id,
+        entries: entries.map(({ source_revision_id, item_path, task_ids }) => ({ source_revision_id, item_path, task_ids })) } };
+    }
+    case "operator_decided": case "worker_started": case "worker_ended": case "retry_requested": case "cancel_requested":
       return { ...provenance, kind: "ignored", event_kind: event.kind, ...identity };
     default: return unmapped(`unrecognized event variant ${String((event as { kind: unknown }).kind)}`);
   }
-}
-
-export function mapCollaborationThread(input: { readonly thread: Selectable<AuthorityCollaborationThread>;
-  readonly messages: readonly Selectable<AuthorityCollaborationMessage>[]; readonly definition: PinnedDefinitionRead | null }): Extract<SourceEventOutcome, { kind: "collaboration_thread" }> {
-  const { thread, messages, definition } = input;
-  return { format: "observation.source-event/v1", definition_id: definition?.definition_id ?? null, artifact_schema_version: null,
-    kind: "collaboration_thread", event_kind: "collaboration_thread", run_id: thread.run_id,
-    event_id: thread.id, unit: thread.unit_id, revision_id: thread.artifact_revision_id,
-    context: thread.context, messages: messages.map((message) => ({ id: message.id, body: message.body,
-      created_at: message.created_at.toISOString() })) };
 }

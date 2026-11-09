@@ -1,0 +1,772 @@
+[
+  {
+    "id": "1b62ca0e-67ec-4a13-9a21-e4d9eb0ad784",
+    "commit_txid": 990,
+    "created_at": "2026-11-07T18:03:16.462239+00:00",
+    "payload": {
+      "kind": "launched",
+      "input": {
+        "spec": "Audit pull request https://github.com/RankOneLabs/oakridge/pull/790 (branch cohort/configured-question-evidence/79693b) in repository oakridge. This is an isolated verification run of the committed development definition, not feature work: its only purpose is real plan, brief, build_result and assessment artifacts for observation to capture. Produce exactly one cohort, named audit, with two tasks. T1: observation/graders.json is the only grader selection, and startup validates and registers it (observation/src/grading/configuration.ts, observation/src/main.ts). T2: cited files are read at the assessed commit, and a file missing there is recorded as absent (observation/src/producers/oakridge/evidence.ts, observation/src/storage/git-repository-reader.ts).\nThe builder must not edit files, create commits, push, open or update any pull request, merge, reset a database or deploy. It inspects the checked-out branch, runs bun install if needed and then bun run --filter observation test once, and publishes build_result with the commit it inspected as head_sha and the actual test counts and output. A test that cannot run is a known issue, never a reason to invent results. It then publishes the existing pull request https://github.com/RankOneLabs/oakridge/pull/790 as the pr artifact, with branch cohort/configured-question-evidence/79693b.\nThe assessor assesses that same commit without changing anything. Give at least one finding per task. Every finding cites at least one file as path:start-end at that commit, for example observation/src/main.ts:20-40, and cites test output separately as test or output evidence. Report the builder's test run as test_evidence.\nKeep the analysis, spec, tasks, plan and brief short; there are no ambiguous requirements to resolve.\n",
+        "title": "Configured question evidence audit",
+        "repositories": [
+          {
+            "key": "oakridge",
+            "forge": {
+              "name": "oakridge",
+              "owner": "RankOneLabs",
+              "build_base": "cohort/configured-question-evidence/79693b",
+              "final_base": "epic/grade-pray"
+            },
+            "preparation": {
+              "expected_head": null,
+              "repository_path": "/tmp/oakridge-proof/registration-2026-11-07T18-03-10-914Z/821860ee-fa18-453f-ac2a-97b0020dac5c"
+            }
+          }
+        ],
+        "final_merge_policy": "require_merge",
+        "primary_repository_key": "oakridge"
+      }
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": null
+  },
+  {
+    "id": "23e3b250-325e-49eb-ab4f-54b86f8c4e61",
+    "commit_txid": 1002,
+    "created_at": "2026-11-07T18:03:16.931363+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "0c9b7c5066c08fb6a19ace0067de6398",
+      "kbbl_session_id": null
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/prepare/oakridge"
+  },
+  {
+    "id": "a9bf7a50-0c33-4d90-93c3-f24b8dd92d93",
+    "commit_txid": 1010,
+    "created_at": "2026-11-07T18:03:21.587395+00:00",
+    "payload": {
+      "by": "0c9b7c5066c08fb6a19ace0067de6398",
+      "body": {
+        "head": "07eb9ab191d74f7aba6775d50a7bd81b13d5be1e",
+        "base_branch": "cohort/configured-question-evidence/79693b",
+        "repository_path": "/tmp/oakridge-proof/registration-2026-11-07T18-03-10-914Z/821860ee-fa18-453f-ac2a-97b0020dac5c",
+        "push_remote_owner": "RankOneLabs"
+      },
+      "kind": "revision_published",
+      "unit": "run-9e06447c6e4abade/prepare/oakridge",
+      "subject": null,
+      "artifact": "workspace",
+      "predecessor": null
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/prepare/oakridge"
+  },
+  {
+    "id": "218cb77e-2aab-40f4-86a1-7c8d938e3ab1",
+    "commit_txid": 1012,
+    "created_at": "2026-11-07T18:03:21.628833+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "0c9b7c5066c08fb6a19ace0067de6398",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/prepare/oakridge"
+  },
+  {
+    "id": "1610df32-7a50-48d6-adb7-a11237b58664",
+    "commit_txid": 1050,
+    "created_at": "2026-11-07T18:03:30.560756+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "0401f43ef9d72bf6a04673edb0c06020",
+      "kbbl_session_id": "7eeb8b6a-8e45-4069-b92c-9c607548500f"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/analysis"
+  },
+  {
+    "id": "bb9b5022-fde3-4830-bf49-9c8c51713f54",
+    "commit_txid": 1183,
+    "created_at": "2026-11-07T18:06:21.997601+00:00",
+    "payload": {
+      "by": "0401f43ef9d72bf6a04673edb0c06020",
+      "body": {
+        "risks": [
+          {
+            "mitigation": "Do not proceed past analysis until the operator chooses and records one of F1’s execution modes.",
+            "description": "A builder following the committed prompt may push the audit branch or open a duplicate PR despite the specification."
+          },
+          {
+            "mitigation": "If the operator selects the audit override, explicitly suppress set_pr_draft and stop before cohort completion or integration; record that the workflow run remains incomplete.",
+            "description": "A passing assessor will mark the currently draft PR ready, and later workflow progression can launch a mutating integration unit."
+          },
+          {
+            "mitigation": "Preserve the specification’s rule to publish the actual output and counts and record inability or failure as a known issue without inventing results.",
+            "description": "The single prescribed test invocation may be unable to run or may fail, so no trustworthy passing counts may exist."
+          }
+        ],
+        "summary": "The audited branch and PR both point to commit 07eb9ab191d74f7aba6775d50a7bd81b13d5be1e. The repository already contains direct implementation and test evidence for T1 and T2, and the artifact schemas can represent the requested build and assessment evidence. The run is not executable as a strictly immutable audit under the committed development definition without an operator decision, because its builder, assessor, cohort completion, and integration contracts require pull-request or repository lifecycle actions that the specification forbids.",
+        "findings": [
+          {
+            "id": "F1",
+            "severity": "blocking",
+            "description": "The immutable audit contract conflicts with the committed development worker contract. workflow-config/prompts/development/build.md:21-42 requires commits, a push, a newly opened draft PR, and a PR artifact sourced from open_pr, while the specification forbids those actions and requires existing PR 790. workflow-config/prompts/development/assess.md:43-48 requires changing PR draft state; PR 790 is currently OPEN and draft, so a passing assessment would mark it ready. workflow-config/development.yaml:395-425 then requires PR completion and schedules an integration worker, whose workflow-config/prompts/development/integrate.md:1-1 requires commit, push, and another PR. The operator must choose among: (A) authorize an audit-specific override that skips builder commit/push/open, skips assessor draft mutation, publishes PR 790, and stops after assessment capture with the run intentionally incomplete; (B) authorize feature work to add an immutable audit path to the committed workflow, then rerun; or (C) relax the no-mutation requirement and accept the ordinary development PR/integration lifecycle. A performs the requested observation but cannot complete the current workflow, B changes the definition being verified, and C violates the stated isolation constraint."
+          },
+          {
+            "id": "F2",
+            "severity": "info",
+            "description": "T1 is concretely assessable at the audited commit. observation/src/grading/configuration.ts:17-54 defines and strictly parses graders.json as the selection source; observation/src/grading/configuration.ts:123-148 maps it to registered evaluators and capture pins; observation/src/main.ts:17-33 reads the configured selection through preparation; and observation/src/main.ts:65-85 validates credentials and registers definitions before serving. observation/tests/grader-configuration.test.ts directly covers selection uniqueness, validation, and startup preparation."
+          },
+          {
+            "id": "F3",
+            "severity": "info",
+            "description": "T2 is concretely assessable at the audited commit. observation/src/producers/oakridge/evidence.ts:81-101 obtains assessment head_sha, finds the repository holding that commit, reads each cited path with that commit, and emits is_absent:true/content:null for an absent file. observation/src/storage/git-repository-reader.ts:22-42 uses git cat-file against the exact commit and distinguishes absent from unavailable. observation/tests/producer-evidence.test.ts and observation/tests/git-repository-reader.test.ts directly cover exact-commit reads and missing-file evidence."
+          },
+          {
+            "id": "F4",
+            "severity": "info",
+            "description": "The requested evidence shape is supported: workflow-config/development.yaml defines build_result head_sha plus integer passed/failed/output test evidence and assessment findings with file, test, or output references; the assessor prompt requires assessment.head_sha to equal build_result.head_sha and requires evidence on every finding (workflow-config/prompts/development/assess.md:50-74). No observation test command was run during analysis, preserving the specification’s single builder test run."
+          }
+        ],
+        "requirements": [
+          {
+            "id": "R1",
+            "status": "blocked",
+            "description": "Execute an isolated, immutable audit using the committed development definition and produce only the intended observation artifacts."
+          },
+          {
+            "id": "R2",
+            "status": "implementable",
+            "description": "Create exactly one cohort named audit with tasks T1 and T2 and keep analysis, tasks, plan, and brief short."
+          },
+          {
+            "id": "R3",
+            "status": "implementable",
+            "description": "Assess T1: graders.json is the only grader selection and startup validates and registers it."
+          },
+          {
+            "id": "R4",
+            "status": "implementable",
+            "description": "Assess T2: file citations are read at assessment head_sha and absent files are retained as explicit absence evidence."
+          },
+          {
+            "id": "R5",
+            "status": "blocked",
+            "description": "Have the builder make no repository or PR changes, run bun run --filter observation test exactly once, report actual results and inspected head_sha, and publish existing PR 790."
+          },
+          {
+            "id": "R6",
+            "status": "blocked",
+            "description": "Have the assessor review the same commit without changing state, provide at least one file-cited finding per task with separate test/output evidence, and report build test results as test_evidence."
+          }
+        ],
+        "source_spec_refs": [
+          "Purpose and topology: isolated verification, exactly one cohort named audit, tasks T1 and T2",
+          "T1: observation/graders.json is the sole grader selection and startup validates and registers it",
+          "T2: cited files are read at the assessed commit and missing files are recorded as absent",
+          "Builder constraints: no edits, commits, pushes, PR mutation, merge, database reset, or deploy; one observation test run; actual results",
+          "Existing PR publication: PR 790 on cohort/configured-question-evidence/79693b",
+          "Assessor constraints: same commit, at least one file-cited finding per task, separate test/output evidence, and test_evidence"
+        ],
+        "proposed_spec_updates": [
+          {
+            "change": "Add an operator-selected execution rule choosing exactly one of: (A) audit override—builder publishes existing PR 790 without commit/push/open, assessor does not change draft state, and execution stops after assessment capture with the workflow intentionally incomplete; (B) authorize a prior workflow-definition change that adds a non-mutating audit path and then start a new verification run; or (C) permit the normal development builder/assessor/integration PR lifecycle and remove the immutability constraints.",
+            "reason": "The committed development definition has no non-mutating completion path, so the current specification and worker contracts cannot both be followed. The alternatives have materially different repository, PR, and run-completion consequences and require operator selection.",
+            "section": "Execution mode and lifecycle",
+            "finding_ids": [
+              "F1"
+            ]
+          }
+        ]
+      },
+      "kind": "revision_published",
+      "unit": "run-9e06447c6e4abade/analysis",
+      "subject": null,
+      "artifact": "analysis",
+      "predecessor": null
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/analysis"
+  },
+  {
+    "id": "9c5cb719-3832-489b-9476-6f29894a41e5",
+    "commit_txid": 1190,
+    "created_at": "2026-11-07T18:06:22.968873+00:00",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-9e06447c6e4abade/analysis",
+      "review": "analysis_review",
+      "target": "run-9e06447c6e4abade/analysis:analysis:1",
+      "payload": {
+        "feedback": "Accepted for the isolated live verification run."
+      },
+      "decision": "accept"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/analysis"
+  },
+  {
+    "id": "75477bd9-b898-4cd8-9105-bb3e8dd42a6f",
+    "commit_txid": 1204,
+    "created_at": "2026-11-07T18:06:25.513186+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "c656166f7cb03a4812f395c9f6dd21b8",
+      "kbbl_session_id": "ec9f9d87-5c6a-4fe1-88dc-a54212d77276"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/analysis"
+  },
+  {
+    "id": "d3e5b2fd-2c37-4d99-b906-bf06aeb9b716",
+    "commit_txid": 1212,
+    "created_at": "2026-11-07T18:06:26.395688+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "0401f43ef9d72bf6a04673edb0c06020",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/analysis"
+  },
+  {
+    "id": "ab171a46-5d34-45e4-ae61-41f854342c10",
+    "commit_txid": 1270,
+    "created_at": "2026-11-07T18:07:26.743799+00:00",
+    "payload": {
+      "by": "c656166f7cb03a4812f395c9f6dd21b8",
+      "body": "Audit pull request https://github.com/RankOneLabs/oakridge/pull/790 (branch cohort/configured-question-evidence/79693b) in repository oakridge. This is an isolated verification run of the committed development definition, not feature work: its only purpose is real plan, brief, build_result and assessment artifacts for observation to capture. Produce exactly one cohort, named audit, with two tasks. T1: observation/graders.json is the only grader selection, and startup validates and registers it (observation/src/grading/configuration.ts, observation/src/main.ts). T2: cited files are read at the assessed commit, and a file missing there is recorded as absent (observation/src/producers/oakridge/evidence.ts, observation/src/storage/git-repository-reader.ts).\nThe builder must not edit files, create commits, push, open or update any pull request, merge, reset a database or deploy. It inspects the checked-out branch, runs bun install if needed and then bun run --filter observation test once, and publishes build_result with the commit it inspected as head_sha and the actual test counts and output. A test that cannot run is a known issue, never a reason to invent results. It then publishes the existing pull request https://github.com/RankOneLabs/oakridge/pull/790 as the pr artifact, with branch cohort/configured-question-evidence/79693b.\nThe assessor assesses that same commit without changing anything. Give at least one finding per task. Every finding cites at least one file as path:start-end at that commit, for example observation/src/main.ts:20-40, and cites test output separately as test or output evidence. Report the builder's test run as test_evidence.\nKeep the analysis, spec, tasks, plan and brief short; there are no ambiguous requirements to resolve.\n\nExecution mode and lifecycle: Before proceeding past analysis, the operator must choose and record exactly one of: (A) authorize an audit-specific override that skips builder commit, push, and PR creation; publishes existing PR 790; skips assessor draft-state mutation; and stops after assessment capture with the workflow intentionally incomplete; (B) authorize feature work to add a non-mutating audit path to the committed workflow definition, then start a new verification run; or (C) permit the normal development builder, assessor, cohort-completion, and integration PR lifecycle and remove the immutability constraints.",
+      "kind": "revision_published",
+      "unit": "run-9e06447c6e4abade/analysis",
+      "subject": null,
+      "artifact": "spec",
+      "predecessor": null
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/analysis"
+  },
+  {
+    "id": "0a06356b-8f41-4200-bf53-d3cda299dbe1",
+    "commit_txid": 1276,
+    "created_at": "2026-11-07T18:07:27.204938+00:00",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-9e06447c6e4abade/analysis",
+      "review": "spec_review",
+      "target": "run-9e06447c6e4abade/analysis:spec:1",
+      "payload": {
+        "feedback": "Accepted for the isolated live verification run."
+      },
+      "decision": "accept"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/analysis"
+  },
+  {
+    "id": "718e9ebb-888a-4d2a-bc21-36ea33029313",
+    "commit_txid": 1285,
+    "created_at": "2026-11-07T18:07:34.119295+00:00",
+    "payload": {
+      "by": "c656166f7cb03a4812f395c9f6dd21b8",
+      "body": {
+        "tasks": []
+      },
+      "kind": "revision_published",
+      "unit": "run-9e06447c6e4abade/analysis",
+      "subject": null,
+      "artifact": "tasks",
+      "predecessor": null
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/analysis"
+  },
+  {
+    "id": "27b7afd5-0314-426e-9f00-e041f2f0900a",
+    "commit_txid": 1291,
+    "created_at": "2026-11-07T18:07:34.391749+00:00",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-9e06447c6e4abade/analysis",
+      "review": "tasks_review",
+      "target": "run-9e06447c6e4abade/analysis:tasks:1",
+      "payload": {
+        "feedback": "Accepted for the isolated live verification run."
+      },
+      "decision": "accept"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/analysis"
+  },
+  {
+    "id": "8c212c1c-f075-4188-9c10-e0da66093620",
+    "commit_txid": 1316,
+    "created_at": "2026-11-07T18:07:34.562089+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "c656166f7cb03a4812f395c9f6dd21b8",
+      "result": {
+        "code": "attempt_stopped",
+        "kind": "failed",
+        "detail": "stopped because its unit is no longer active"
+      }
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/analysis"
+  },
+  {
+    "id": "2e6d2923-84db-4c2b-a167-4d125b635a8f",
+    "commit_txid": 1350,
+    "created_at": "2026-11-07T18:07:41.45149+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "0c9ef6a002cd0239c4e18bb6bc2b4e19",
+      "kbbl_session_id": "c40a3804-a6ce-4782-8503-41112abfbe9e"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/planning"
+  },
+  {
+    "id": "3368c50f-eaa3-4e28-b093-4d3156bab403",
+    "commit_txid": 1429,
+    "created_at": "2026-11-07T18:09:22.320305+00:00",
+    "payload": {
+      "by": "0c9ef6a002cd0239c4e18bb6bc2b4e19",
+      "body": {
+        "risks": [
+          {
+            "mitigation": "Operator records one choice before any builder or assessor work. Under A, capture the immutable audit and intentionally stop after assessment; under B, do feature work in a new run; under C, remove the immutability constraints.",
+            "description": "Execution is blocked because the operator has not recorded exactly one lifecycle choice (A, B, or C); proceeding would violate the specification's pre-analysis gate."
+          },
+          {
+            "mitigation": "Operator supplies an approved task list containing T1 and T2 with their stated obligations, then revise this cohort to add those exact acceptance entries without changing their identities.",
+            "description": "The approved task list is empty, so T1 and T2 named only in narrative cannot legally be used as cohort acceptance ids; the requested two-task cohort is therefore not executable from this plan."
+          },
+          {
+            "mitigation": "The builder may run bun install only if needed, runs bun run --filter observation test exactly once, and reports the real counts and output; inability to run is recorded as a known issue without fabricated results.",
+            "description": "The observation test command may be unable to run because of installation, environment, or service prerequisites."
+          }
+        ],
+        "scope": {
+          "in_scope": [
+            "Read-only audit of the checked-out commit corresponding to PR 790 and branch cohort/configured-question-evidence/79693b.",
+            "Verify graders.json is the sole grader selection and startup validates and registers it.",
+            "Verify cited files are read at the assessment head_sha and a missing file at that commit is recorded as absent.",
+            "Capture the actual single observation test run, publish the existing PR metadata, and assess the same immutable commit with file and test/output evidence once the lifecycle and task gates are resolved."
+          ],
+          "out_of_scope": [
+            "Editing files, adding feature work, creating commits, pushing, creating or updating pull requests, merging, rebasing, or repairing the prepared base branch.",
+            "Database reset, deployment, assessor draft-state mutation, invented test outcomes, or assessment of a different commit.",
+            "Cohort completion and integration lifecycle when option A is selected; the workflow intentionally remains incomplete after assessment capture."
+          ]
+        },
+        "cohorts": [
+          {
+            "id": "audit",
+            "scope": "One read-only review unit for PR 790: inspect the two related observation behaviors at one commit, run the observation tests once, and capture build and assessment evidence without repository mutation.",
+            "title": "Audit configured graders and commit-pinned citation evidence",
+            "decisions": [
+              {
+                "id": "D1",
+                "text": "Audit grader selection from observation/graders.json through startup validation, credential checking, definition registration, and capture pins; do not treat runner registration or fixtures as alternate selection."
+              },
+              {
+                "id": "D2",
+                "text": "Audit repository evidence through the assessment head_sha using commit-tree reads, distinguishing an absent path at a readable commit from an unavailable repository or commit."
+              },
+              {
+                "id": "D3",
+                "text": "Keep verification non-mutating: inspect one head_sha, run bun install only if needed and the filtered observation test command exactly once, report actual output, and assess that identical commit."
+              },
+              {
+                "id": "D4",
+                "text": "Publish the already-existing PR 790 with branch cohort/configured-question-evidence/79693b only under an operator-authorized lifecycle path; never create or mutate a pull request in this audit."
+              }
+            ],
+            "depends_on": [],
+            "description": "Both verification concerns are small, share the observation package and one immutable commit, and form a single readily reviewable audit boundary. Execution remains gated on an operator lifecycle choice and approved T1/T2 entries.",
+            "files_in_scope": [
+              "observation/graders.json",
+              "observation/src/grading/configuration.ts",
+              "observation/src/main.ts",
+              "observation/src/producers/oakridge/evidence.ts",
+              "observation/src/storage/git-repository-reader.ts",
+              "observation/tests/grader-configuration.test.ts",
+              "observation/tests/grading-startup.test.ts",
+              "observation/tests/git-repository-reader.test.ts",
+              "observation/tests/producer-evidence.test.ts"
+            ],
+            "repository_key": "oakridge",
+            "acceptance_criteria": []
+          }
+        ],
+        "summary": "Blocked read-only audit plan for PR 790. The repository supports one coherent audit cohort, but execution cannot begin until the operator records lifecycle option A, B, or C and the approved task list supplies the narrative T1 and T2 ids.",
+        "dependency_order": [
+          "audit"
+        ],
+        "acceptance_criteria": [
+          "Before execution, the operator records exactly one lifecycle choice A, B, or C.",
+          "Before execution, the approved task list supplies T1 and T2 so their obligations can be carried through briefing, assessment, and integration without invented ids.",
+          "The builder and assessor inspect the same recorded head_sha without changing repository or remote state.",
+          "The builder runs bun run --filter observation test exactly once after bun install only if needed, and publishes actual counts and output or an honest known issue if it cannot run.",
+          "The assessment contains at least one finding for each approved task, with file path:start-end evidence at head_sha and separate test or output evidence, and reports the builder run as test_evidence.",
+          "The PR artifact identifies existing PR 790 and branch cohort/configured-question-evidence/79693b."
+        ]
+      },
+      "kind": "revision_published",
+      "unit": "run-9e06447c6e4abade/planning",
+      "subject": null,
+      "artifact": "plan",
+      "predecessor": null
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/planning"
+  },
+  {
+    "id": "c0b65548-75b9-4c0f-9461-fab7729d343e",
+    "commit_txid": 1435,
+    "created_at": "2026-11-07T18:09:22.585432+00:00",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-9e06447c6e4abade/planning",
+      "review": "plan_review",
+      "target": "run-9e06447c6e4abade/planning:plan:1",
+      "payload": {
+        "feedback": "Accepted for the isolated live verification run."
+      },
+      "decision": "accept"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/planning"
+  },
+  {
+    "id": "61b9e30e-8eb5-4861-aa8f-3565c040375a",
+    "commit_txid": 1453,
+    "created_at": "2026-11-07T18:09:22.757529+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "0c9ef6a002cd0239c4e18bb6bc2b4e19",
+      "result": {
+        "code": "attempt_stopped",
+        "kind": "failed",
+        "detail": "stopped because its unit is no longer active"
+      }
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/planning"
+  },
+  {
+    "id": "a26799e0-883c-467b-a40b-aae17c577df1",
+    "commit_txid": 1477,
+    "created_at": "2026-11-07T18:09:33.791933+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "212b6982121ccd98b00381d38dbde282",
+      "kbbl_session_id": "e0a96225-1880-4804-a67f-ce49f2b9c678"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/briefs/audit"
+  },
+  {
+    "id": "4f971952-acc9-4a87-bf38-0c131be1eb6e",
+    "commit_txid": 1572,
+    "created_at": "2026-11-07T18:11:35.278222+00:00",
+    "payload": {
+      "by": "212b6982121ccd98b00381d38dbde282",
+      "body": {
+        "goal": "Audit PR 790 at one immutable assessed commit, verifying configured-grader startup behavior and commit-pinned citation evidence through a single non-mutating observation test run, while capturing truthful build and assessment evidence.",
+        "title": "Audit configured graders and commit-pinned citation evidence",
+        "cohort_id": "audit",
+        "depends_on": [],
+        "next_action": "Before any repository action, verify that the operator recorded exactly one lifecycle choice (A, B, or C). If choice A authorizes this audit override, resolve and record the checked-out branch cohort/configured-question-evidence/79693b HEAD as the sole head_sha, then begin T1 by reading observation/graders.json at that commit; choices B or C require leaving this immutable audit path and following the newly authorized workflow.",
+        "decisions_made": [
+          {
+            "id": "D1",
+            "decision": "Treat observation/graders.json as the only grader selection and trace it through startup validation, credential checking, definition registration, and capture pins.",
+            "rationale": "The audit must verify the configured selection path; runner registration and test fixtures are supporting mechanisms, not alternate grader-selection sources."
+          },
+          {
+            "id": "D2",
+            "decision": "Read and cite repository evidence through the assessment head_sha using commit-tree reads, recording a missing path at a readable commit as absent.",
+            "rationale": "Evidence must describe the exact assessed commit and distinguish commit-local absence from an unavailable repository or unreadable commit."
+          },
+          {
+            "id": "D3",
+            "decision": "Keep verification non-mutating and commit-pinned: inspect one head_sha, run bun install only if dependencies are needed, run bun run --filter observation test exactly once, report its actual counts and output, and assess the same commit.",
+            "rationale": "This is an isolated verification run, so reproducible evidence and truthful reporting take precedence over retries or repository changes; inability to run a test is a known issue, not permission to invent results."
+          },
+          {
+            "id": "D4",
+            "decision": "Publish only the already-existing PR 790 at https://github.com/RankOneLabs/oakridge/pull/790 for branch cohort/configured-question-evidence/79693b, and only through an operator-authorized lifecycle path; do not create, update, or otherwise mutate a pull request.",
+            "rationale": "The audit targets an existing review object and may proceed beyond analysis only after the operator records exactly one lifecycle choice: A audit override, B feature work followed by a new verification run, or C normal mutable development lifecycle."
+          }
+        ],
+        "files_in_scope": [
+          "observation/graders.json",
+          "observation/src/grading/configuration.ts",
+          "observation/src/main.ts",
+          "observation/src/producers/oakridge/evidence.ts",
+          "observation/src/storage/git-repository-reader.ts",
+          "observation/tests/grader-configuration.test.ts",
+          "observation/tests/grading-startup.test.ts",
+          "observation/tests/git-repository-reader.test.ts",
+          "observation/tests/producer-evidence.test.ts"
+        ],
+        "repository_key": "oakridge",
+        "acceptance_criteria": [
+          {
+            "id": "T1",
+            "text": "At the single recorded head_sha for the checked-out PR 790 branch cohort/configured-question-evidence/79693b, audit that observation/graders.json is the only grader selection and that observation/src/grading/configuration.ts and observation/src/main.ts validate the configuration and credentials, register the selected definitions, and preserve capture pins; do not count runner registration or fixtures as alternate selection. Without editing files or repository state, report at least one T1 finding citing one or more files as path:start-end at that commit, cite test or output evidence separately, and include the builder's one actual `bun run --filter observation test` execution as test_evidence with truthful counts and output or a known issue if it cannot run.",
+            "decision_ids": [
+              "D1",
+              "D3",
+              "D4"
+            ]
+          },
+          {
+            "id": "T2",
+            "text": "At that same recorded head_sha, audit that observation/src/producers/oakridge/evidence.ts and observation/src/storage/git-repository-reader.ts read cited files from the assessed commit tree and record a path missing at a readable commit as absent, while distinguishing that state from an unavailable repository or commit. Without editing files or repository state, report at least one T2 finding citing one or more files as path:start-end at that commit, cite test or output evidence separately, and use the builder's same single `bun run --filter observation test` execution as test_evidence with truthful counts and output or a known issue if it cannot run; the assessor must assess this identical head_sha.",
+            "decision_ids": [
+              "D2",
+              "D3",
+              "D4"
+            ]
+          }
+        ],
+        "approaches_rejected": [
+          {
+            "id": "R1",
+            "reason": "It would confuse grader execution support with the authoritative configured selection.",
+            "approach": "Treat runner registration or test fixtures as alternate grader-selection sources.",
+            "decision_ids": [
+              "D1"
+            ]
+          },
+          {
+            "id": "R2",
+            "reason": "Working-tree state can differ from the assessed commit and cannot prove commit-pinned citation evidence.",
+            "approach": "Read cited evidence from the mutable working tree instead of the assessment head_sha commit tree.",
+            "decision_ids": [
+              "D2"
+            ]
+          },
+          {
+            "id": "R3",
+            "reason": "Retries, mutations, or fabricated counts would violate the isolated audit and make the captured evidence untrustworthy.",
+            "approach": "Edit files, create commits, push, deploy, reset a database, rerun the filtered observation tests, or invent results when tests cannot run.",
+            "decision_ids": [
+              "D3"
+            ]
+          },
+          {
+            "id": "R4",
+            "reason": "PR mutation is outside this audit and the lifecycle choice must be operator-authorized before execution proceeds.",
+            "approach": "Create or update a pull request, mutate assessor draft state, or continue through cohort completion and integration without the recorded lifecycle authorization.",
+            "decision_ids": [
+              "D4"
+            ]
+          }
+        ]
+      },
+      "kind": "revision_published",
+      "unit": "run-9e06447c6e4abade/briefs/audit",
+      "subject": null,
+      "artifact": "brief",
+      "predecessor": null
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/briefs/audit"
+  },
+  {
+    "id": "307cab2d-db42-40e7-a66e-be2fc5b066ff",
+    "commit_txid": 1584,
+    "created_at": "2026-11-07T18:11:39.29716+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "212b6982121ccd98b00381d38dbde282",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/briefs/audit"
+  },
+  {
+    "id": "567f54d0-49ea-4c3d-8edc-bcdc353a725c",
+    "commit_txid": 1604,
+    "created_at": "2026-11-07T18:11:39.435868+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "3732e04b00bee7bfd052188425ed3597",
+      "kbbl_session_id": "e0a96225-1880-4804-a67f-ce49f2b9c678"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/briefs/audit"
+  },
+  {
+    "id": "b83dcfbf-0470-4e1d-b454-4fed7360fa9a",
+    "commit_txid": 1651,
+    "created_at": "2026-11-07T18:12:05.576199+00:00",
+    "payload": {
+      "by": "3732e04b00bee7bfd052188425ed3597",
+      "body": {
+        "goal": "Audit PR 790 at one immutable assessed commit, verifying configured-grader startup behavior and commit-pinned citation evidence through a single non-mutating observation test run, while capturing truthful build and assessment evidence.",
+        "title": "Audit configured graders and commit-pinned citation evidence",
+        "cohort_id": "audit",
+        "depends_on": [],
+        "next_action": "Before any repository action, verify that the operator recorded exactly one lifecycle choice (A, B, or C). If choice A authorizes this audit override, resolve and record the checked-out branch cohort/configured-question-evidence/79693b HEAD as the sole head_sha, then begin T1 by reading observation/graders.json at that commit; choices B or C require leaving this immutable audit path and following the newly authorized workflow.",
+        "decisions_made": [
+          {
+            "id": "D1",
+            "decision": "Treat observation/graders.json as the only grader selection and trace it through startup validation, credential checking, definition registration, and capture pins.",
+            "rationale": "The audit must verify the configured selection path; runner registration and test fixtures are supporting mechanisms, not alternate grader-selection sources."
+          },
+          {
+            "id": "D2",
+            "decision": "Read and cite repository evidence through the assessment head_sha using commit-tree reads, recording a missing path at a readable commit as absent.",
+            "rationale": "Evidence must describe the exact assessed commit and distinguish commit-local absence from an unavailable repository or unreadable commit."
+          },
+          {
+            "id": "D3",
+            "decision": "Keep verification non-mutating and commit-pinned: inspect one head_sha, run bun install only if dependencies are needed, run bun run --filter observation test exactly once, report its actual counts and output, and assess the same commit.",
+            "rationale": "This is an isolated verification run, so reproducible evidence and truthful reporting take precedence over retries or repository changes; inability to run a test is a known issue, not permission to invent results."
+          },
+          {
+            "id": "D4",
+            "decision": "Publish only the already-existing PR 790 at https://github.com/RankOneLabs/oakridge/pull/790 for branch cohort/configured-question-evidence/79693b, and only through an operator-authorized lifecycle path; do not create, update, or otherwise mutate a pull request.",
+            "rationale": "The audit targets an existing review object and may proceed beyond analysis only after the operator records exactly one lifecycle choice: A audit override, B feature work followed by a new verification run, or C normal mutable development lifecycle."
+          }
+        ],
+        "files_in_scope": [
+          "observation/graders.json",
+          "observation/src/grading/configuration.ts",
+          "observation/src/main.ts",
+          "observation/src/producers/oakridge/evidence.ts",
+          "observation/src/storage/git-repository-reader.ts",
+          "observation/tests/grader-configuration.test.ts",
+          "observation/tests/grading-startup.test.ts",
+          "observation/tests/git-repository-reader.test.ts",
+          "observation/tests/producer-evidence.test.ts"
+        ],
+        "repository_key": "oakridge",
+        "acceptance_criteria": [],
+        "approaches_rejected": [
+          {
+            "id": "R1",
+            "reason": "It would confuse grader execution support with the authoritative configured selection.",
+            "approach": "Treat runner registration or test fixtures as alternate grader-selection sources.",
+            "decision_ids": [
+              "D1"
+            ]
+          },
+          {
+            "id": "R2",
+            "reason": "Working-tree state can differ from the assessed commit and cannot prove commit-pinned citation evidence.",
+            "approach": "Read cited evidence from the mutable working tree instead of the assessment head_sha commit tree.",
+            "decision_ids": [
+              "D2"
+            ]
+          },
+          {
+            "id": "R3",
+            "reason": "Retries, mutations, or fabricated counts would violate the isolated audit and make the captured evidence untrustworthy.",
+            "approach": "Edit files, create commits, push, deploy, reset a database, rerun the filtered observation tests, or invent results when tests cannot run.",
+            "decision_ids": [
+              "D3"
+            ]
+          },
+          {
+            "id": "R4",
+            "reason": "PR mutation is outside this audit and the lifecycle choice must be operator-authorized before execution proceeds.",
+            "approach": "Create or update a pull request, mutate assessor draft state, or continue through cohort completion and integration without the recorded lifecycle authorization.",
+            "decision_ids": [
+              "D4"
+            ]
+          }
+        ]
+      },
+      "kind": "revision_published",
+      "unit": "run-9e06447c6e4abade/briefs/audit",
+      "subject": null,
+      "artifact": "brief",
+      "predecessor": "run-9e06447c6e4abade/briefs/audit:brief:1"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/briefs/audit"
+  },
+  {
+    "id": "4419c92b-b6a6-4a76-aaab-ed8719c49b81",
+    "commit_txid": 1657,
+    "created_at": "2026-11-07T18:12:05.82174+00:00",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-9e06447c6e4abade/briefs/audit",
+      "review": "brief_review",
+      "target": "run-9e06447c6e4abade/briefs/audit:brief:2",
+      "payload": {
+        "feedback": "Accepted for the isolated live verification run."
+      },
+      "decision": "accept"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/briefs/audit"
+  },
+  {
+    "id": "9f6f2ecd-6092-40d1-9646-e77fdce17ee1",
+    "commit_txid": 1683,
+    "created_at": "2026-11-07T18:12:06.012635+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "3732e04b00bee7bfd052188425ed3597",
+      "result": {
+        "code": "attempt_stopped",
+        "kind": "failed",
+        "detail": "stopped because its unit is no longer active"
+      }
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/briefs/audit"
+  },
+  {
+    "id": "7a15e228-61c2-449d-b31d-ebbd579e8c73",
+    "commit_txid": 1722,
+    "created_at": "2026-11-07T18:12:10.997288+00:00",
+    "payload": {
+      "kind": "worker_started",
+      "action": "f74362a2d279e7854afdc4934c9fa396",
+      "kbbl_session_id": "901265ea-29d5-40c9-ba67-0ffb6e3b8674"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/implementation/audit"
+  },
+  {
+    "id": "63ef8833-8122-4fc8-bd34-1009c68b74be",
+    "commit_txid": 1749,
+    "created_at": "2026-11-07T18:12:41.166159+00:00",
+    "payload": {
+      "kind": "worker_ended",
+      "action": "f74362a2d279e7854afdc4934c9fa396",
+      "result": {
+        "kind": "succeeded"
+      }
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": "run-9e06447c6e4abade/implementation/audit"
+  },
+  {
+    "id": "b288d6fd-df5b-42ec-af78-3acc5bbe94cc",
+    "commit_txid": 1761,
+    "created_at": "2026-11-07T18:12:41.565581+00:00",
+    "payload": {
+      "kind": "cancel_requested"
+    },
+    "run_id": "run-9e06447c6e4abade",
+    "unit_id": null
+  }
+]

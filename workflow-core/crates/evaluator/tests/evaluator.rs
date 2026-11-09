@@ -467,7 +467,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
     let body = serde_json::json!({
         "head_sha": "abc123",
         "verdict": "pass_with_notes",
-        "findings": [{"description": "One non-blocking follow-up", "evidence": []}],
+        "findings": [{"task_ids": [], "description": "One non-blocking follow-up", "evidence": []}],
         "recommended_next_actions": []
     });
 
@@ -483,7 +483,12 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
     ));
     assert!(!check_type(
         &program.input,
-        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"status": "unknown", "evidence": []}],
+        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"task_ids": [], "status": "unknown", "evidence": []}],
+            "recommended_next_actions": []})
+    ));
+    assert!(!check_type(
+        &program.input,
+        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"evidence": []}],
             "recommended_next_actions": []})
     ));
 }
@@ -2883,7 +2888,167 @@ fn frozen_trace_replay_matches_after_w6_projection() {
         // canonical-key-order digest; w6_projection restores its old shape.
         // A second review of a newer subject resolves `previous` and
         // `feedback`, which a review left null before. Validation failures
-        // also remain in revise feedback with their check messages.
-        "641f80a7799e3559c5ae1bcbc984346b510458ed2bf0d4aef62f6880059e50e3"
+        // also remain in revise feedback with their check messages, and an
+        // approval is not offered on a revision that failed validation.
+        "e492c3ffc799b13c6c8cba5b69071ebc61b624baf50756e12e49657821e609d6"
     );
+}
+
+/// A stage validating its draft with one declared check over `input.groups`.
+fn list_check_program(check: &str) -> CheckedWorkflow {
+    let source: Workflow = serde_json::from_value(serde_json::json!({
+        "workflow": "list_check", "input": {"groups": "list(list(text))"},
+        "run": {"units": {"document": {"stage": "document", "input": {"groups": "input.groups"}}},
+                "outcome": {}},
+        "stages": {"document": {
+            "input": {"groups": "list(list(text))"},
+            "artifacts": {"draft": {"schema": "text", "validate": [{"check": check, "message": "failed"}]}},
+            "workers": {"writer": {"kind": "agent", "prompts": {"initial": "write.md", "revise": "write.md"},
+                                   "inputs": {}, "creates": ["draft"]}},
+            "done_when": "published(draft)", "outcome": {}
+        }}
+    }))
+    .unwrap();
+    let prompts = [("write.md".to_owned(), String::new())]
+        .into_iter()
+        .collect();
+    compile_workflow(&source, &[], &prompts).unwrap()
+}
+
+fn list_check_holds(check: &str, groups: Value) -> Result<bool, StepError> {
+    let program = list_check_program(check);
+    let launched = step(
+        &program,
+        &snapshot(),
+        &incoming(
+            Event::Launched {
+                input: serde_json::json!({"groups": groups}),
+            },
+            "launch",
+        ),
+    )?;
+    let action = launched.snapshot.attempts[0].action_id.clone();
+    let published = step_with_limits(
+        &program,
+        &launched.snapshot,
+        &incoming(
+            Event::RevisionPublished {
+                unit: UnitId::from("run/document"),
+                artifact: SymbolKey::from("draft"),
+                body: serde_json::json!("body"),
+                predecessor: None,
+                subject: None,
+                by: Some(action),
+            },
+            "publish",
+        ),
+        &ResourceLimits {
+            max_list_items: 3,
+            ..ResourceLimits::default()
+        },
+    )?;
+    Ok(!published
+        .snapshot
+        .decisions
+        .iter()
+        .any(|decision| matches!(decision, DecisionState::Validation { .. })))
+}
+
+#[test]
+fn flatten_keeps_every_item_of_every_list_in_order() {
+    let literal = |value: Value| Expression::Literal {
+        schema: SchemaId::from("list"),
+        value,
+    };
+    let unit = UnitState {
+        id: UnitId::from("run"),
+        parent: None,
+        declaration: SymbolKey::from("run"),
+        kind: UnitKind::Group,
+        collection_key: None,
+        status: UnitStatus::Active,
+        input: None,
+        after: vec![],
+        pool: None,
+    };
+    let limits = ResourceLimits::default();
+    let flattened = eval_expression(
+        &Expression::Flatten {
+            value: Box::new(literal(serde_json::json!([["a"], [], ["b", "a"]]))),
+        },
+        &unit,
+        &snapshot(),
+        None,
+        None,
+        &mut EvaluationContext::new(&limits),
+    );
+    assert_eq!(flattened, Ok(Some(serde_json::json!(["a", "b", "a"]))));
+}
+
+#[test]
+fn flatten_is_held_to_the_list_limit_on_its_joined_length() {
+    let check = "len(flatten(input.groups)) > 0";
+    assert!(matches!(
+        list_check_holds(check, serde_json::json!([["a", "b"], ["c", "d"]])),
+        Err(StepError::Rejected { reason, .. }) if reason == "max_list_items exceeded"
+    ));
+}
+
+#[test]
+fn unique_holds_only_when_no_two_items_are_equal() {
+    let check = "every(input.groups, unique(item))";
+    assert_eq!(
+        list_check_holds(check, serde_json::json!([["a", "b"], [], ["a"]])),
+        Ok(true)
+    );
+    assert_eq!(
+        list_check_holds(check, serde_json::json!([["a", "b", "a"]])),
+        Ok(false)
+    );
+}
+
+fn failed_draft() -> (CheckedWorkflow, StepResult) {
+    let program = sample("review-loop");
+    let failed = step_specs(
+        &program,
+        &snapshot(),
+        &[
+            serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+            serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"writer",
+                "artifact":"draft","body":{"title":"Empty","body":""}}),
+        ],
+    );
+    (program, failed)
+}
+
+#[test]
+fn approving_a_revision_that_failed_validation_is_refused() {
+    let (program, failed) = failed_draft();
+    let accept = incoming(
+        Event::OperatorDecided {
+            unit: UnitId::from("run/document"),
+            review: SymbolKey::from("editor"),
+            decision: SymbolKey::from("approve"),
+            target: RevisionId::from("run/document:draft:1"),
+            payload: serde_json::json!({}),
+        },
+        "approve",
+    );
+    assert!(matches!(
+        step(&program, &failed.snapshot, &accept),
+        Err(StepError::Rejected { reason, .. }) if reason == "target revision failed validation"
+    ));
+}
+
+#[test]
+fn a_revision_that_failed_validation_offers_only_request_changes() {
+    let (_, failed) = failed_draft();
+    let offered: Vec<&str> = failed
+        .reviews
+        .iter()
+        .flat_map(|review| &review.decisions)
+        .map(|decision| decision.decision.0.as_str())
+        .collect();
+    assert_eq!(offered, ["request_changes"]);
 }

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { updateProject } from "../client";
+import { updateProject } from "../client-projects";
 import type { Result } from "../../lib/result";
 import type { Project, ProjectUpdateCommand, ProjectUpdateError } from "../project-types";
 

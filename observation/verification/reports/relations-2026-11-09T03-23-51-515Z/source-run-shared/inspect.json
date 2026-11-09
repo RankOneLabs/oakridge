@@ -1,0 +1,2703 @@
+{
+  "run_id": "run-06d65e66dc69c5d1",
+  "status": {
+    "kind": "active"
+  },
+  "units": [
+    {
+      "id": "run-06d65e66dc69c5d1",
+      "unit_key": "$root",
+      "label": "Development",
+      "stage": null,
+      "status": {
+        "kind": "active"
+      }
+    },
+    {
+      "id": "run-06d65e66dc69c5d1/analysis",
+      "unit_key": "analysis",
+      "label": "Analysis",
+      "stage": "analysis",
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "spec": "Audit pull request https://github.com/RankOneLabs/oakridge/pull/793 (branch cohort/task-lineage-composites/ba9a7e) in repository oakridge. This is an isolated verification run of the committed development definition, not feature work: its only purpose is real analysis, plan, brief, build_result and assessment artifacts for observation to capture and grade. The analysis reports at least three separate findings about this spec, each a distinct observation. Produce exactly three tasks and exactly two cohorts, named alpha and beta, neither depending on the other. T1: a composite counts each finding once per task and keeps stages apart (observation/src/grading/composite.ts). T2: a declaration is journaled only after its exact tasks revision is approved (oakridge-dbos/src/storage/commit.ts). T3: a drilldown's nested lists page separately (observation/src/grading/composite.ts). Cohort alpha carries T1 and T2. Cohort beta carries T1 and T3. T1 is the same task in both cohorts, under the same id.\nThe operator authorizes this audit path: each builder publishes the existing PR #793 as its pr artifact instead of pushing or opening one. No brief may add a further operator choice or confirmation. Each builder must not edit files, create commits, push, open or update any pull request, merge, reset a database or deploy. Its worktree starts from epic/grade-pray, the base of pull request #793, so it first checks out the head of branch cohort/task-lineage-composites/ba9a7e locally (git checkout --detach origin/cohort/task-lineage-composites/ba9a7e) and inspects that commit, runs bun install if needed and then bun run --filter observation test once, and publishes the existing pull request https://github.com/RankOneLabs/oakridge/pull/793 as the pr artifact first, with branch cohort/task-lineage-composites/ba9a7e. It then publishes build_result as the assessor handoff, with the commit it inspected as head_sha and the actual test counts and output. A test that cannot run is a known issue, never a reason to invent results.\nEach assessor assesses that same commit without changing anything. Give at least one finding per task of its cohort, naming that task id. Every finding cites at least one file as path:start-end at that commit, for example observation/src/grading/composite.ts:20-40, and cites test output separately as test or output evidence. Report the builder's test run as test_evidence. For this isolated audit, publishing assessment is the assessor's only write. The assessor must not call set_pr_draft or otherwise update pull request #793, regardless of verdict.\nKeep the spec, tasks, plan and briefs short; there are no ambiguous requirements to resolve.",
+          "tasks": {
+            "tasks": [
+              {
+                "id": "T1",
+                "description": "Update composite grading logic so each finding is counted once per logical task and contributions remain separated by stage, with tests covering the same task id shared across cohorts.",
+                "requirement_ids": [
+                  "T1"
+                ]
+              },
+              {
+                "id": "T2",
+                "description": "Update declaration journaling so a declaration is recorded only after approval of its exact tasks revision, with tests for approval, refusal, rollback, and retry behavior.",
+                "requirement_ids": [
+                  "T2"
+                ]
+              },
+              {
+                "id": "T3",
+                "description": "Update composite drilldown selection so each nested list is paged independently while retaining whole-list totals, with tests for independent pagination windows.",
+                "requirement_ids": [
+                  "T3"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "unit_key": "briefs",
+      "label": "Brief",
+      "stage": "brief",
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "brief": {
+            "goal": "Audit T1 and T2 at the exact pinned head of PR #793, publish the authorized existing PR before build_result, execute the required observation test once, and hand the assessor actual commit, test, and output evidence without changing code or operational state. This revision was requested by the live verification run.",
+            "title": "Audit lineage and declaration approval",
+            "cohort_id": "alpha",
+            "depends_on": [],
+            "next_action": "Run git checkout --detach origin/cohort/task-lineage-composites/ba9a7e, record the resulting head commit, and immediately publish https://github.com/RankOneLabs/oakridge/pull/793 as the pr artifact with branch cohort/task-lineage-composites/ba9a7e before running the required test.",
+            "decisions_made": [
+              {
+                "id": "alpha-audit",
+                "decision": "Audit only the detached local head of origin/cohort/task-lineage-composites/ba9a7e for existing PR https://github.com/RankOneLabs/oakridge/pull/793. Publish that PR first as the pr artifact with branch cohort/task-lineage-composites/ba9a7e; run bun install only if needed, then run bun run --filter observation test exactly once; inspect only the four scoped files; publish build_result afterward with the inspected commit as head_sha and the actual test counts and output, recording a non-runnable test as a known issue. The assessor must assess that same commit, keep code citations in path:start-end form separate from test or output evidence, publish assessment as its only write, and never update the PR. No builder or assessor may edit files, create commits, push, open or update a PR, merge, reset a database, or deploy.",
+                "rationale": "A detached exact-revision audit makes the PR lineage reproducible, while separate commit-pinned code evidence and actual command output let assessment distinguish implementation behavior from test execution without mutating repository or operational state."
+              }
+            ],
+            "files_in_scope": [
+              "observation/src/grading/composite.ts",
+              "observation/tests/composite.test.ts",
+              "oakridge-dbos/src/storage/commit.ts",
+              "oakridge-dbos/tests/analysis-link-declaration.test.ts"
+            ],
+            "repository_key": "oakridge",
+            "acceptance_criteria": [
+              {
+                "id": "T1",
+                "text": "At the inspected head commit of branch cohort/task-lineage-composites/ba9a7e for PR #793, verify from observation/src/grading/composite.ts and observation/tests/composite.test.ts that composite grading counts every finding exactly once per logical task, keeps findings from different stages separate, and handles task id T1 shared across the independent alpha and beta cohorts without double-counting. The assessment must include at least one finding naming T1, cite commit-pinned code as path:start-end, and cite test or output evidence separately.",
+                "decision_ids": [
+                  "alpha-audit"
+                ]
+              },
+              {
+                "id": "T2",
+                "text": "At the same inspected head commit, verify from oakridge-dbos/src/storage/commit.ts and oakridge-dbos/tests/analysis-link-declaration.test.ts that a declaration is journaled only after approval of its exact tasks revision, covering approval, refusal, rollback, and retry behavior. The assessment must include at least one finding naming T2, cite commit-pinned code as path:start-end, cite test or output evidence separately, and report the builder test run as test_evidence.",
+                "decision_ids": [
+                  "alpha-audit"
+                ]
+              }
+            ],
+            "approaches_rejected": [
+              {
+                "id": "alpha-reject-wrong-revision",
+                "reason": "The authority gate and all findings require evidence from the exact pinned PR head commit.",
+                "approach": "Audit epic/grade-pray, a floating branch, or any revision other than the detached head of origin/cohort/task-lineage-composites/ba9a7e.",
+                "decision_ids": [
+                  "alpha-audit"
+                ]
+              },
+              {
+                "id": "alpha-reject-mutation",
+                "reason": "This cohort is an isolated read-only verification run; only its required artifact publications are permitted.",
+                "approach": "Edit files, create commits, push, open or update a pull request, call set_pr_draft, merge, reset a database, or deploy while auditing.",
+                "decision_ids": [
+                  "alpha-audit"
+                ]
+              },
+              {
+                "id": "alpha-reject-synthetic-tests",
+                "reason": "The mandated command must run once after bun install if needed, and actual output must be reported; inability to run is a known issue.",
+                "approach": "Run substitute or repeated test commands, or infer or invent test counts when the required test cannot run.",
+                "decision_ids": [
+                  "alpha-audit"
+                ]
+              },
+              {
+                "id": "alpha-reject-new-pr",
+                "reason": "The operator explicitly authorized PR #793 as the existing pr artifact, and it must be published before build_result.",
+                "approach": "Create a new pull request or publish build_result before identifying the authorized existing pull request as the pr artifact.",
+                "decision_ids": [
+                  "alpha-audit"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "run-06d65e66dc69c5d1/briefs/beta",
+      "unit_key": "briefs",
+      "label": "Brief",
+      "stage": "brief",
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "brief": {
+            "goal": "Audit T1 and T3 at the exact pinned head of PR #793, publish the authorized existing PR before build_result, execute the required observation test once, and hand the assessor actual commit, test, and output evidence without changing code or operational state. This revision was requested by the live verification run.",
+            "title": "Audit lineage and drilldown pagination",
+            "cohort_id": "beta",
+            "depends_on": [],
+            "next_action": "Run git checkout --detach origin/cohort/task-lineage-composites/ba9a7e, record the resulting head commit, and immediately publish https://github.com/RankOneLabs/oakridge/pull/793 as the pr artifact with branch cohort/task-lineage-composites/ba9a7e before running the required test.",
+            "decisions_made": [
+              {
+                "id": "beta-audit",
+                "decision": "Audit only the detached local head of origin/cohort/task-lineage-composites/ba9a7e for existing PR https://github.com/RankOneLabs/oakridge/pull/793. Publish that PR first as the pr artifact with branch cohort/task-lineage-composites/ba9a7e; run bun install only if needed, then run bun run --filter observation test exactly once; inspect only the two scoped files; publish build_result afterward with the inspected commit as head_sha and the actual test counts and output, recording a non-runnable test as a known issue. The assessor must assess that same commit, provide at least one finding for each of T1 and T3, keep code citations in path:start-end form separate from test or output evidence, publish assessment as its only write, and never update the PR. No builder or assessor may edit files, create commits, push, open or update a PR, merge, reset a database, or deploy.",
+                "rationale": "A detached exact-revision audit makes the PR lineage reproducible, while separate commit-pinned code evidence and actual command output let assessment distinguish composite and nested-pagination behavior from test execution without mutating repository or operational state."
+              }
+            ],
+            "files_in_scope": [
+              "observation/src/grading/composite.ts",
+              "observation/tests/composite.test.ts"
+            ],
+            "repository_key": "oakridge",
+            "acceptance_criteria": [
+              {
+                "id": "T1",
+                "text": "At the inspected head commit of branch cohort/task-lineage-composites/ba9a7e for PR #793, verify from observation/src/grading/composite.ts and observation/tests/composite.test.ts that composite grading counts every finding exactly once per logical task, keeps findings from different stages separate, and handles task id T1 shared across the independent alpha and beta cohorts without double-counting. The assessment must include at least one finding naming T1, cite commit-pinned code as path:start-end, and cite test or output evidence separately.",
+                "decision_ids": [
+                  "beta-audit"
+                ]
+              },
+              {
+                "id": "T3",
+                "text": "At the same inspected head commit, verify from observation/src/grading/composite.ts and observation/tests/composite.test.ts that every drilldown nested list paginates independently while retaining the total for its complete unpaged list. The assessment must include at least one finding naming T3, cite commit-pinned code as path:start-end, cite test or output evidence separately, and report the builder test run as test_evidence.",
+                "decision_ids": [
+                  "beta-audit"
+                ]
+              }
+            ],
+            "approaches_rejected": [
+              {
+                "id": "beta-reject-wrong-revision",
+                "reason": "The authority gate and all findings require evidence from the exact pinned PR head commit.",
+                "approach": "Audit epic/grade-pray, a floating branch, or any revision other than the detached head of origin/cohort/task-lineage-composites/ba9a7e.",
+                "decision_ids": [
+                  "beta-audit"
+                ]
+              },
+              {
+                "id": "beta-reject-mutation",
+                "reason": "This cohort is an isolated read-only verification run; only its required artifact publications are permitted.",
+                "approach": "Edit files, create commits, push, open or update a pull request, call set_pr_draft, merge, reset a database, or deploy while auditing.",
+                "decision_ids": [
+                  "beta-audit"
+                ]
+              },
+              {
+                "id": "beta-reject-synthetic-tests",
+                "reason": "The mandated command must run once after bun install if needed, and actual output must be reported; inability to run is a known issue.",
+                "approach": "Run substitute or repeated test commands, or infer or invent test counts when the required test cannot run.",
+                "decision_ids": [
+                  "beta-audit"
+                ]
+              },
+              {
+                "id": "beta-reject-new-pr",
+                "reason": "The operator explicitly authorized PR #793 as the existing pr artifact, and it must be published before build_result.",
+                "approach": "Create a new pull request or publish build_result before identifying the authorized existing pull request as the pr artifact.",
+                "decision_ids": [
+                  "beta-audit"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "unit_key": "implementation",
+      "label": "Cohort",
+      "stage": "cohort",
+      "status": {
+        "kind": "active"
+      }
+    },
+    {
+      "id": "run-06d65e66dc69c5d1/implementation/beta",
+      "unit_key": "implementation",
+      "label": "Cohort",
+      "stage": "cohort",
+      "status": {
+        "kind": "active"
+      }
+    },
+    {
+      "id": "run-06d65e66dc69c5d1/planning",
+      "unit_key": "planning",
+      "label": "Planning",
+      "stage": "planning",
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "plan": {
+            "risks": [
+              {
+                "mitigation": "Keep id T1 in both and verify one count per finding per task with stages separate.",
+                "description": "Shared T1 appears in both cohorts and could be treated as two tasks."
+              },
+              {
+                "mitigation": "Run it once; report actual output/counts and any inability as a known issue.",
+                "description": "The mandated observation test may not run."
+              }
+            ],
+            "scope": {
+              "in_scope": [
+                "Read-only audit of PR #793 head for T1 composite counting/stages, T2 exact-revision declaration approval, and T3 nested pagination.",
+                "Publish existing PR #793, actual observation test results, and assessments."
+              ],
+              "out_of_scope": [
+                "Edits, commits, remote or PR changes, merges, database resets, deployments, and feature implementation."
+              ]
+            },
+            "cohorts": [
+              {
+                "id": "alpha",
+                "scope": "Audit T1 and T2 at the pinned PR head; publish PR #793 first, run the required test once, and hand actual results to assessment.",
+                "title": "Audit lineage and declaration approval",
+                "decisions": [
+                  {
+                    "id": "alpha-audit",
+                    "text": "Inspect detached origin/cohort/task-lineage-composites/ba9a7e using commit code and separate test/output evidence; never mutate files, git, PR, database, or deployment state."
+                  }
+                ],
+                "depends_on": [],
+                "description": "The mandated alpha boundary reviews composite lineage with the authority exact-revision gate; it is independent of beta and read-only.",
+                "files_in_scope": [
+                  "observation/src/grading/composite.ts",
+                  "observation/tests/composite.test.ts",
+                  "oakridge-dbos/src/storage/commit.ts",
+                  "oakridge-dbos/tests/analysis-link-declaration.test.ts"
+                ],
+                "repository_key": "oakridge",
+                "acceptance_criteria": [
+                  {
+                    "id": "T1",
+                    "text": "Verify each finding is counted once per logical task and stages remain separate, including one task id shared across cohorts.",
+                    "decision_ids": [
+                      "alpha-audit"
+                    ]
+                  },
+                  {
+                    "id": "T2",
+                    "text": "Verify a declaration is journaled only after approval of its exact tasks revision, including approval, refusal, rollback, and retry.",
+                    "decision_ids": [
+                      "alpha-audit"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "beta",
+                "scope": "Audit T1 and T3 at the pinned PR head; publish PR #793 first, run the required test once, and hand actual results to assessment.",
+                "title": "Audit lineage and drilldown pagination",
+                "decisions": [
+                  {
+                    "id": "beta-audit",
+                    "text": "Inspect detached origin/cohort/task-lineage-composites/ba9a7e using commit code and separate test/output evidence; never mutate files, git, PR, database, or deployment state."
+                  }
+                ],
+                "depends_on": [],
+                "description": "The mandated beta boundary reviews shared-task composite logic with nested paging; it is independent of alpha and read-only.",
+                "files_in_scope": [
+                  "observation/src/grading/composite.ts",
+                  "observation/tests/composite.test.ts"
+                ],
+                "repository_key": "oakridge",
+                "acceptance_criteria": [
+                  {
+                    "id": "T1",
+                    "text": "Verify each finding is counted once per logical task and stages remain separate, including one task id shared across cohorts.",
+                    "decision_ids": [
+                      "beta-audit"
+                    ]
+                  },
+                  {
+                    "id": "T3",
+                    "text": "Verify every drilldown nested list pages independently while retaining its whole-list total.",
+                    "decision_ids": [
+                      "beta-audit"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "summary": "Read-only audit of existing PR #793: independent alpha covers T1/T2 and beta covers T1/T3 at the same pinned commit. This revision was requested by the live verification run.",
+            "dependency_order": [
+              "alpha",
+              "beta"
+            ],
+            "acceptance_criteria": [
+              "Analysis reports at least three distinct specification findings as separate observations.",
+              "Only T1, T2, and T3 are used: alpha has T1/T2, beta has T1/T3, and shared T1 keeps its id.",
+              "Each builder checks out the head detached, publishes existing PR #793 first for cohort/task-lineage-composites/ba9a7e, runs bun run --filter observation test once, then publishes build_result with head_sha and actual counts/output.",
+              "Each assessor publishes at least one finding per cohort task with task id, path:start-end evidence, separate test/output evidence, and builder test_evidence; assessment is its only write and set_pr_draft is forbidden."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "run-06d65e66dc69c5d1/prepare/oakridge",
+      "unit_key": "prepare",
+      "label": "Prepare",
+      "stage": "prepare",
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "key": "oakridge",
+          "workspace": {
+            "head": "a8856584aaaa44017ac1de2cdc710876b1fbb706",
+            "base_branch": "epic/grade-pray",
+            "repository_path": "/tmp/oakridge-proof/relations-2026-11-09T03-23-51-515Z/ab3dc833-046c-4111-970c-124a62a5c35e",
+            "push_remote_owner": "RankOneLabs"
+          }
+        }
+      }
+    }
+  ],
+  "attention": [
+    {
+      "kind": "awaiting_review",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "review": "assessment_review",
+      "target": "run-06d65e66dc69c5d1/implementation/beta:assessment:1",
+      "decisions": [
+        {
+          "key": "accept",
+          "label": "Accept",
+          "payload_schema": "{}",
+          "fields": [],
+          "submit": {
+            "kind": "review",
+            "review": "assessment_review",
+            "decision": "accept",
+            "effect": "approve",
+            "target_revision_id": "run-06d65e66dc69c5d1/implementation/beta:assessment:1"
+          }
+        },
+        {
+          "key": "request_assessment_changes",
+          "label": "Request assessment changes",
+          "payload_schema": "{feedback: text}",
+          "fields": [
+            {
+              "key": "feedback",
+              "label": "What must the assessment change?"
+            }
+          ],
+          "submit": {
+            "kind": "review",
+            "review": "assessment_review",
+            "decision": "request_assessment_changes",
+            "effect": "request_changes",
+            "target_revision_id": "run-06d65e66dc69c5d1/implementation/beta:assessment:1"
+          }
+        },
+        {
+          "key": "request_build_changes",
+          "label": "Send to builder",
+          "payload_schema": "{feedback: text}",
+          "fields": [
+            {
+              "key": "feedback",
+              "label": "What must the builder change?"
+            }
+          ],
+          "submit": {
+            "kind": "review",
+            "review": "assessment_review",
+            "decision": "request_build_changes",
+            "effect": "request_changes",
+            "target_revision_id": "run-06d65e66dc69c5d1/implementation/beta:build_result:1"
+          }
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "artifact_key": "analysis",
+      "schema": "analysis_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/analysis:analysis:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/analysis",
+        "artifact_key": "analysis",
+        "attempt_id": "4a25828a24f01d1eec5019d464d9ec8a",
+        "body": {
+          "risks": [
+            {
+              "mitigation": "After the required detached checkout, each builder must read HEAD and use c03533340ab94eb521315a29d0e76a9219c9b906 (or the exact branch head actually inspected if the ref changes) as build_result.head_sha; each assessor must use that build_result head_sha.",
+              "description": "The local epic/grade-pray tip is a8856584aaaa44017ac1de2cdc710876b1fbb706 while the required audit branch resolves to c03533340ab94eb521315a29d0e76a9219c9b906; their trees are currently identical, so recording the starting SHA instead of the detached audit SHA would make the evidence inaccurate."
+            },
+            {
+              "mitigation": "Run bun install only if needed, run bun run --filter observation test exactly once per builder, and publish the real counts and output; record an inability to run as a known issue rather than inventing results.",
+              "description": "The observation package test command includes integration tests and can fail because dependencies or test services are unavailable even when the audited code is unchanged."
+            },
+            {
+              "mitigation": "Adopt the proposed assessor-protocol clarification so the assessment artifact is the assessor's only write and no pull-request mutation is attempted.",
+              "description": "The generic assessor workflow attempts a pull-request draft-state mutation after assessment, which is incompatible with a strictly read-only audit of the existing PR and may also be inapplicable to an already merged PR."
+            }
+          ],
+          "summary": "The audit is implementable and the named PR head is available locally at c03533340ab94eb521315a29d0e76a9219c9b906. Repository evidence directly supports T1's per-task, stage-separated composite counting, T2's exact-approved-revision journal gate, and T3's independently paged nested drilldown lists. No operator decision or behavior conflict blocks the audit, but the specification should explicitly override two generic workflow instructions: publish the existing PR artifact before build_result, and suppress the assessor's PR draft-state mutation.",
+          "findings": [
+            {
+              "id": "F_T1",
+              "severity": "info",
+              "description": "T1 is directly auditable at the target tree: selectLinkedContributions admits an occurrence once when any link targets the logical task, and stageComposite filters contributions by stage before counting distinct occurrence/question/grader answer keys (observation/src/grading/composite.ts:157-158 and observation/src/grading/composite.ts:314-360). The shared-task integration case verifies one logical task across alpha and beta, four current implementation findings for T7, and one contribution for a finding also linked to T8 (observation/tests/composite.test.ts:198-216)."
+            },
+            {
+              "id": "F_T2",
+              "severity": "info",
+              "description": "T2 is directly auditable at the target tree: journaling looks up an approve decision whose target_revision_id exactly equals declaration.tasks_revision_id before inserting the declaration event (oakridge-dbos/src/storage/commit.ts:758-785), and the approval caller journals links inside the decision transaction only after the decision stands (oakridge-dbos/src/storage/commit.ts:792-807). Tests cover exact-revision approval, non-approval refusal, atomic rollback, and retry (oakridge-dbos/tests/analysis-link-declaration.test.ts:222-284)."
+            },
+            {
+              "id": "F_T3",
+              "severity": "info",
+              "description": "T3 is directly auditable at the target tree: DrilldownPages gives rows, questions, links, statuses, current answers, and superseded answers independent windows, and selectDrilldown applies each window separately while preserving whole-list totals (observation/src/grading/composite.ts:425-461). The integration case independently advances question, answer, superseded-answer, link, and status windows (observation/tests/composite.test.ts:406-455)."
+            },
+            {
+              "id": "F_BUILD_ORDER",
+              "severity": "warning",
+              "description": "The specification narrates build_result publication before the existing PR artifact, but the pinned builder contract requires pr first and build_result second and explicitly forbids publishing build_result before pr (workflow-config/prompts/development/build.md:37-44). This does not require an operator choice; the audit exception should retain the generic publication order while replacing only the push/open behavior."
+            },
+            {
+              "id": "F_ASSESSOR_MUTATION",
+              "severity": "warning",
+              "description": "The specification says each assessor assesses without changing anything, but the pinned assessor contract requires a post-publication set_pr_draft call for every verdict (workflow-config/prompts/development/assess.md:43-48). For a genuinely immutable audit of the existing PR, the specification must explicitly say that this audit overrides that draft-state step."
+            }
+          ],
+          "requirements": [
+            {
+              "id": "T1",
+              "status": "implementable",
+              "description": "Audit that a composite counts each finding once per task and keeps stages separate in observation/src/grading/composite.ts, with alpha and beta both assessing the same T1 id."
+            },
+            {
+              "id": "T2",
+              "status": "implementable",
+              "description": "Audit that oakridge-dbos/src/storage/commit.ts journals a declaration only after approval of the exact tasks revision, in cohort alpha."
+            },
+            {
+              "id": "T3",
+              "status": "implementable",
+              "description": "Audit that nested drilldown lists page independently in observation/src/grading/composite.ts, in cohort beta."
+            },
+            {
+              "id": "TOPOLOGY",
+              "status": "implementable",
+              "description": "Produce exactly tasks T1, T2, and T3 and exactly independent cohorts alpha and beta, assigning alpha T1/T2 and beta T1/T3 with the same T1 id."
+            },
+            {
+              "id": "AUDIT_PROTOCOL",
+              "status": "implementable",
+              "description": "Keep builders and assessors read-only over repository and PR state, inspect the named branch head, run and report the specified test honestly, publish the existing PR artifact and build evidence, and provide per-task file plus test/output assessment evidence."
+            }
+          ],
+          "source_spec_refs": [
+            "Audit target: pull request #793, branch cohort/task-lineage-composites/ba9a7e, based on epic/grade-pray.",
+            "Required analysis shape: at least three distinct findings; short specification, tasks, plan, and briefs.",
+            "Task topology: exactly T1, T2, T3 and exactly independent cohorts alpha and beta; alpha carries T1/T2 and beta carries T1/T3 with shared id T1.",
+            "T1: composite counts each finding once per task and keeps stages apart in observation/src/grading/composite.ts.",
+            "T2: declaration is journaled only after its exact tasks revision is approved in oakridge-dbos/src/storage/commit.ts.",
+            "T3: drilldown nested lists page separately in observation/src/grading/composite.ts.",
+            "Builder audit protocol: detached checkout of the named branch, no repository or PR mutation, one observation test run, actual build_result evidence, and publication of existing PR #793.",
+            "Assessor protocol: same commit, at least one finding per cohort task, file ranges plus separate test/output evidence, and builder test_evidence."
+          ],
+          "proposed_spec_updates": [
+            {
+              "change": "Replace the publication sequence with: publish the existing PR #793 as the pr artifact first, then publish build_result as the assessor handoff. Keep the required branch value cohort/task-lineage-composites/ba9a7e and retain all prohibitions on edits, commits, pushes, and PR creation or updates.",
+              "reason": "This preserves the intended no-change audit while matching the pinned builder artifact-order contract.",
+              "section": "Builder audit protocol",
+              "finding_ids": [
+                "F_BUILD_ORDER"
+              ]
+            },
+            {
+              "change": "Add: For this isolated audit, publishing assessment is the assessor's only write. The assessor must not call set_pr_draft or otherwise update pull request #793, regardless of verdict.",
+              "reason": "The generic assessor prompt otherwise mandates an external PR mutation that contradicts the specification's read-only audit requirement.",
+              "section": "Assessor audit protocol",
+              "finding_ids": [
+                "F_ASSESSOR_MUTATION"
+              ]
+            }
+          ]
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:40:51.768Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "artifact_key": "spec",
+      "schema": "text",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/analysis:spec:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/analysis",
+        "artifact_key": "spec",
+        "attempt_id": "b43df42a492d056766f4a1907b626b86",
+        "body": "Audit pull request https://github.com/RankOneLabs/oakridge/pull/793 (branch cohort/task-lineage-composites/ba9a7e) in repository oakridge. This is an isolated verification run of the committed development definition, not feature work: its only purpose is real analysis, plan, brief, build_result and assessment artifacts for observation to capture and grade. The analysis reports at least three separate findings about this spec, each a distinct observation. Produce exactly three tasks and exactly two cohorts, named alpha and beta, neither depending on the other. T1: a composite counts each finding once per task and keeps stages apart (observation/src/grading/composite.ts). T2: a declaration is journaled only after its exact tasks revision is approved (oakridge-dbos/src/storage/commit.ts). T3: a drilldown's nested lists page separately (observation/src/grading/composite.ts). Cohort alpha carries T1 and T2. Cohort beta carries T1 and T3. T1 is the same task in both cohorts, under the same id.\nThe operator authorizes this audit path: each builder publishes the existing PR #793 as its pr artifact instead of pushing or opening one. No brief may add a further operator choice or confirmation. Each builder must not edit files, create commits, push, open or update any pull request, merge, reset a database or deploy. Its worktree starts from epic/grade-pray, the base of pull request #793, so it first checks out the head of branch cohort/task-lineage-composites/ba9a7e locally (git checkout --detach origin/cohort/task-lineage-composites/ba9a7e) and inspects that commit, runs bun install if needed and then bun run --filter observation test once, and publishes the existing pull request https://github.com/RankOneLabs/oakridge/pull/793 as the pr artifact first, with branch cohort/task-lineage-composites/ba9a7e. It then publishes build_result as the assessor handoff, with the commit it inspected as head_sha and the actual test counts and output. A test that cannot run is a known issue, never a reason to invent results.\nEach assessor assesses that same commit without changing anything. Give at least one finding per task of its cohort, naming that task id. Every finding cites at least one file as path:start-end at that commit, for example observation/src/grading/composite.ts:20-40, and cites test output separately as test or output evidence. Report the builder's test run as test_evidence. For this isolated audit, publishing assessment is the assessor's only write. The assessor must not call set_pr_draft or otherwise update pull request #793, regardless of verdict.\nKeep the spec, tasks, plan and briefs short; there are no ambiguous requirements to resolve.",
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:41:43.291Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "artifact_key": "tasks",
+      "schema": "tasks_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/analysis:tasks:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/analysis",
+        "artifact_key": "tasks",
+        "attempt_id": "b43df42a492d056766f4a1907b626b86",
+        "body": {
+          "tasks": [
+            {
+              "id": "T1",
+              "description": "Update composite grading logic so each finding is counted once per logical task and contributions remain separated by stage, with tests covering the same task id shared across cohorts.",
+              "requirement_ids": [
+                "T1"
+              ]
+            },
+            {
+              "id": "T2",
+              "description": "Update declaration journaling so a declaration is recorded only after approval of its exact tasks revision, with tests for approval, refusal, rollback, and retry behavior.",
+              "requirement_ids": [
+                "T2"
+              ]
+            },
+            {
+              "id": "T3",
+              "description": "Update composite drilldown selection so each nested list is paged independently while retaining whole-list totals, with tests for independent pagination windows.",
+              "requirement_ids": [
+                "T3"
+              ]
+            }
+          ]
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:41:43.376Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "artifact_key": "brief",
+      "schema": "brief_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 2,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/briefs/alpha:brief:2",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+        "artifact_key": "brief",
+        "attempt_id": "1917c1e9d0049fc7e6ca2b4b48de2b2c",
+        "body": {
+          "goal": "Audit T1 and T2 at the exact pinned head of PR #793, publish the authorized existing PR before build_result, execute the required observation test once, and hand the assessor actual commit, test, and output evidence without changing code or operational state. This revision was requested by the live verification run.",
+          "title": "Audit lineage and declaration approval",
+          "cohort_id": "alpha",
+          "depends_on": [],
+          "next_action": "Run git checkout --detach origin/cohort/task-lineage-composites/ba9a7e, record the resulting head commit, and immediately publish https://github.com/RankOneLabs/oakridge/pull/793 as the pr artifact with branch cohort/task-lineage-composites/ba9a7e before running the required test.",
+          "decisions_made": [
+            {
+              "id": "alpha-audit",
+              "decision": "Audit only the detached local head of origin/cohort/task-lineage-composites/ba9a7e for existing PR https://github.com/RankOneLabs/oakridge/pull/793. Publish that PR first as the pr artifact with branch cohort/task-lineage-composites/ba9a7e; run bun install only if needed, then run bun run --filter observation test exactly once; inspect only the four scoped files; publish build_result afterward with the inspected commit as head_sha and the actual test counts and output, recording a non-runnable test as a known issue. The assessor must assess that same commit, keep code citations in path:start-end form separate from test or output evidence, publish assessment as its only write, and never update the PR. No builder or assessor may edit files, create commits, push, open or update a PR, merge, reset a database, or deploy.",
+              "rationale": "A detached exact-revision audit makes the PR lineage reproducible, while separate commit-pinned code evidence and actual command output let assessment distinguish implementation behavior from test execution without mutating repository or operational state."
+            }
+          ],
+          "files_in_scope": [
+            "observation/src/grading/composite.ts",
+            "observation/tests/composite.test.ts",
+            "oakridge-dbos/src/storage/commit.ts",
+            "oakridge-dbos/tests/analysis-link-declaration.test.ts"
+          ],
+          "repository_key": "oakridge",
+          "acceptance_criteria": [
+            {
+              "id": "T1",
+              "text": "At the inspected head commit of branch cohort/task-lineage-composites/ba9a7e for PR #793, verify from observation/src/grading/composite.ts and observation/tests/composite.test.ts that composite grading counts every finding exactly once per logical task, keeps findings from different stages separate, and handles task id T1 shared across the independent alpha and beta cohorts without double-counting. The assessment must include at least one finding naming T1, cite commit-pinned code as path:start-end, and cite test or output evidence separately.",
+              "decision_ids": [
+                "alpha-audit"
+              ]
+            },
+            {
+              "id": "T2",
+              "text": "At the same inspected head commit, verify from oakridge-dbos/src/storage/commit.ts and oakridge-dbos/tests/analysis-link-declaration.test.ts that a declaration is journaled only after approval of its exact tasks revision, covering approval, refusal, rollback, and retry behavior. The assessment must include at least one finding naming T2, cite commit-pinned code as path:start-end, cite test or output evidence separately, and report the builder test run as test_evidence.",
+              "decision_ids": [
+                "alpha-audit"
+              ]
+            }
+          ],
+          "approaches_rejected": [
+            {
+              "id": "alpha-reject-wrong-revision",
+              "reason": "The authority gate and all findings require evidence from the exact pinned PR head commit.",
+              "approach": "Audit epic/grade-pray, a floating branch, or any revision other than the detached head of origin/cohort/task-lineage-composites/ba9a7e.",
+              "decision_ids": [
+                "alpha-audit"
+              ]
+            },
+            {
+              "id": "alpha-reject-mutation",
+              "reason": "This cohort is an isolated read-only verification run; only its required artifact publications are permitted.",
+              "approach": "Edit files, create commits, push, open or update a pull request, call set_pr_draft, merge, reset a database, or deploy while auditing.",
+              "decision_ids": [
+                "alpha-audit"
+              ]
+            },
+            {
+              "id": "alpha-reject-synthetic-tests",
+              "reason": "The mandated command must run once after bun install if needed, and actual output must be reported; inability to run is a known issue.",
+              "approach": "Run substitute or repeated test commands, or infer or invent test counts when the required test cannot run.",
+              "decision_ids": [
+                "alpha-audit"
+              ]
+            },
+            {
+              "id": "alpha-reject-new-pr",
+              "reason": "The operator explicitly authorized PR #793 as the existing pr artifact, and it must be published before build_result.",
+              "approach": "Create a new pull request or publish build_result before identifying the authorized existing pull request as the pr artifact.",
+              "decision_ids": [
+                "alpha-audit"
+              ]
+            }
+          ]
+        },
+        "predecessor_id": "run-06d65e66dc69c5d1/briefs/alpha:brief:1",
+        "subject_id": null,
+        "created_at": "2026-11-09T03:51:19.972Z",
+        "number": 2
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "artifact_key": "brief",
+      "schema": "brief_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 2,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/briefs/beta:brief:2",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+        "artifact_key": "brief",
+        "attempt_id": "03c986404d007905f7aa2975572de311",
+        "body": {
+          "goal": "Audit T1 and T3 at the exact pinned head of PR #793, publish the authorized existing PR before build_result, execute the required observation test once, and hand the assessor actual commit, test, and output evidence without changing code or operational state. This revision was requested by the live verification run.",
+          "title": "Audit lineage and drilldown pagination",
+          "cohort_id": "beta",
+          "depends_on": [],
+          "next_action": "Run git checkout --detach origin/cohort/task-lineage-composites/ba9a7e, record the resulting head commit, and immediately publish https://github.com/RankOneLabs/oakridge/pull/793 as the pr artifact with branch cohort/task-lineage-composites/ba9a7e before running the required test.",
+          "decisions_made": [
+            {
+              "id": "beta-audit",
+              "decision": "Audit only the detached local head of origin/cohort/task-lineage-composites/ba9a7e for existing PR https://github.com/RankOneLabs/oakridge/pull/793. Publish that PR first as the pr artifact with branch cohort/task-lineage-composites/ba9a7e; run bun install only if needed, then run bun run --filter observation test exactly once; inspect only the two scoped files; publish build_result afterward with the inspected commit as head_sha and the actual test counts and output, recording a non-runnable test as a known issue. The assessor must assess that same commit, provide at least one finding for each of T1 and T3, keep code citations in path:start-end form separate from test or output evidence, publish assessment as its only write, and never update the PR. No builder or assessor may edit files, create commits, push, open or update a PR, merge, reset a database, or deploy.",
+              "rationale": "A detached exact-revision audit makes the PR lineage reproducible, while separate commit-pinned code evidence and actual command output let assessment distinguish composite and nested-pagination behavior from test execution without mutating repository or operational state."
+            }
+          ],
+          "files_in_scope": [
+            "observation/src/grading/composite.ts",
+            "observation/tests/composite.test.ts"
+          ],
+          "repository_key": "oakridge",
+          "acceptance_criteria": [
+            {
+              "id": "T1",
+              "text": "At the inspected head commit of branch cohort/task-lineage-composites/ba9a7e for PR #793, verify from observation/src/grading/composite.ts and observation/tests/composite.test.ts that composite grading counts every finding exactly once per logical task, keeps findings from different stages separate, and handles task id T1 shared across the independent alpha and beta cohorts without double-counting. The assessment must include at least one finding naming T1, cite commit-pinned code as path:start-end, and cite test or output evidence separately.",
+              "decision_ids": [
+                "beta-audit"
+              ]
+            },
+            {
+              "id": "T3",
+              "text": "At the same inspected head commit, verify from observation/src/grading/composite.ts and observation/tests/composite.test.ts that every drilldown nested list paginates independently while retaining the total for its complete unpaged list. The assessment must include at least one finding naming T3, cite commit-pinned code as path:start-end, cite test or output evidence separately, and report the builder test run as test_evidence.",
+              "decision_ids": [
+                "beta-audit"
+              ]
+            }
+          ],
+          "approaches_rejected": [
+            {
+              "id": "beta-reject-wrong-revision",
+              "reason": "The authority gate and all findings require evidence from the exact pinned PR head commit.",
+              "approach": "Audit epic/grade-pray, a floating branch, or any revision other than the detached head of origin/cohort/task-lineage-composites/ba9a7e.",
+              "decision_ids": [
+                "beta-audit"
+              ]
+            },
+            {
+              "id": "beta-reject-mutation",
+              "reason": "This cohort is an isolated read-only verification run; only its required artifact publications are permitted.",
+              "approach": "Edit files, create commits, push, open or update a pull request, call set_pr_draft, merge, reset a database, or deploy while auditing.",
+              "decision_ids": [
+                "beta-audit"
+              ]
+            },
+            {
+              "id": "beta-reject-synthetic-tests",
+              "reason": "The mandated command must run once after bun install if needed, and actual output must be reported; inability to run is a known issue.",
+              "approach": "Run substitute or repeated test commands, or infer or invent test counts when the required test cannot run.",
+              "decision_ids": [
+                "beta-audit"
+              ]
+            },
+            {
+              "id": "beta-reject-new-pr",
+              "reason": "The operator explicitly authorized PR #793 as the existing pr artifact, and it must be published before build_result.",
+              "approach": "Create a new pull request or publish build_result before identifying the authorized existing pull request as the pr artifact.",
+              "decision_ids": [
+                "beta-audit"
+              ]
+            }
+          ]
+        },
+        "predecessor_id": "run-06d65e66dc69c5d1/briefs/beta:brief:1",
+        "subject_id": null,
+        "created_at": "2026-11-09T03:51:50.351Z",
+        "number": 2
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "artifact_key": "assessment",
+      "schema": "assessment_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/implementation/alpha:assessment:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+        "artifact_key": "assessment",
+        "attempt_id": "be08b03b114ca61672eb04b614c9cf41",
+        "body": {
+          "verdict": "pass_with_notes",
+          "findings": [
+            {
+              "status": "met",
+              "evidence": [
+                {
+                  "ref": "observation/src/grading/composite.ts:139-159",
+                  "kind": "file",
+                  "detail": "selectContributions emits one contribution per occurrence and selectLinkedContributions uses link existence rather than duplicating the occurrence per link."
+                },
+                {
+                  "ref": "observation/src/grading/composite.ts:314-372",
+                  "kind": "file",
+                  "detail": "stageComposite filters linked contributions by stage and counts distinct occurrence-backed items; selectComposite constructs each stage independently."
+                },
+                {
+                  "ref": "one task through both cohorts, revised plan and briefs: one logical item, and every cohort's current findings",
+                  "kind": "test",
+                  "detail": "observation/tests/composite.test.ts:183-218 verifies independent alpha and beta findings for one shared logical task."
+                },
+                {
+                  "ref": "stages stand side by side: integration is pending, then final once published, whatever its answers and approvals",
+                  "kind": "test",
+                  "detail": "observation/tests/composite.test.ts:238-259 verifies implementation and integration answers remain separate."
+                },
+                {
+                  "ref": "the same statement along two paths still counts its item once",
+                  "kind": "test",
+                  "detail": "observation/tests/composite.test.ts:361-375 verifies two declaration paths yield one contribution and one answer count."
+                },
+                {
+                  "ref": "bun run --filter observation test",
+                  "kind": "output",
+                  "detail": "The builder reported 277 passed, 128 skipped, and 1 environment-prerequisite failure."
+                }
+              ],
+              "task_ids": [
+                "T1"
+              ],
+              "description": "T1 is met: at the pinned commit, each finding occurrence contributes once to its logical task despite multiple links, alpha and beta cohort findings remain distinct current contributions, and implementation and integration counts remain stage-local."
+            },
+            {
+              "status": "met",
+              "evidence": [
+                {
+                  "ref": "oakridge-dbos/src/storage/commit.ts:759-785",
+                  "kind": "file",
+                  "detail": "The journal path queries approval by declaration.tasks_revision_id and writes only after refusal selection succeeds."
+                },
+                {
+                  "ref": "oakridge-dbos/src/storage/commit.ts:788-807",
+                  "kind": "file",
+                  "detail": "commitDecisionWithLinks invokes declaration journaling inside commitEvent's transaction and only for a standing decision."
+                },
+                {
+                  "ref": "the named revision decides: a newer unapproved one is refused, and the approved one stays valid after it",
+                  "kind": "test",
+                  "detail": "oakridge-dbos/tests/analysis-link-declaration.test.ts:108-121 verifies exact-revision approval and refusal."
+                },
+                {
+                  "ref": "approved-tasks caller approval, refusal, retry, and rollback cases",
+                  "kind": "test",
+                  "detail": "oakridge-dbos/tests/analysis-link-declaration.test.ts:222-285 covers exact target journaling, refusal, no journaling for request changes or rejected decisions, idempotent retry, transaction rollback, and successful retry."
+                },
+                {
+                  "ref": "bun run --filter observation test",
+                  "kind": "output",
+                  "detail": "The required command ran exactly once and reported 277 passed, 128 skipped, and 1 failure because OAKRIDGE_TEST_DATABASE_URL was unset."
+                }
+              ],
+              "task_ids": [
+                "T2"
+              ],
+              "description": "T2 is met: journaling requires approval of the declaration's exact tasks revision, and decision-supplied declarations execute in the approval transaction with refusal, rollback, and idempotent retry behavior covered."
+            },
+            {
+              "status": "partial",
+              "evidence": [
+                {
+                  "ref": "bun run --filter observation test",
+                  "kind": "output",
+                  "detail": "277 passed, 128 skipped, 1 failed; the failure was attributed to OAKRIDGE_TEST_DATABASE_URL being unset, and the command was not rerun as required."
+                }
+              ],
+              "task_ids": [],
+              "description": "The required observation command did not finish green because its database prerequisite was unavailable; this is not evidence of a cohort behavior regression, but it leaves the database-backed cases without a green run in this verification."
+            }
+          ],
+          "head_sha": "c03533340ab94eb521315a29d0e76a9219c9b906",
+          "test_evidence": {
+            "failed": 1,
+            "output": "observation test: 277 pass\nobservation test: 128 skip\nobservation test: 1 fail\nobservation test: 658 expect() calls\nobservation test: Ran 406 tests across 36 files. [2.51s]\nobservation test: Exited with code 1",
+            "passed": 277,
+            "summary": "The builder ran the required command exactly once. It reported 277 passed, 128 skipped, and 1 failure caused by OAKRIDGE_TEST_DATABASE_URL being unset."
+          },
+          "recommended_next_actions": [
+            {
+              "id": "52840b9d-65bd-4834-992b-349dd7a7a5d9",
+              "text": "In a new authorized verification run, configure OAKRIDGE_TEST_DATABASE_URL and run bun run --filter observation test once to obtain green database-backed evidence."
+            }
+          ]
+        },
+        "predecessor_id": null,
+        "subject_id": "run-06d65e66dc69c5d1/implementation/alpha:build_result:1",
+        "created_at": "2026-11-09T03:57:23.639Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "artifact_key": "build_result",
+      "schema": "build_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/implementation/alpha:build_result:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+        "artifact_key": "build_result",
+        "attempt_id": "8c0193499ec52ce99dfb562c993d2ee2",
+        "body": {
+          "tests": {
+            "failed": 1,
+            "output": "observation test: 277 pass\nobservation test: 128 skip\nobservation test: 1 fail\nobservation test: 658 expect() calls\nobservation test: Ran 406 tests across 36 files. [2.51s]\nobservation test: Exited with code 1",
+            "passed": 277,
+            "summary": "The required command ran exactly once: 277 passed, 128 skipped, and 1 failed because OAKRIDGE_TEST_DATABASE_URL was unset."
+          },
+          "summary": "Read-only audit completed at the exact detached PR #793 head c03533340ab94eb521315a29d0e76a9219c9b906 with no tracked changes. T1 evidence shows each occurrence is selected once despite multiple links, cohort findings remain distinct contributions, and stage composites are counted independently (observation/src/grading/composite.ts:139-159,291-372; observation/tests/composite.test.ts:183-218,238-259,360-375). T2 evidence shows exact-revision approval is queried before journaling and decision-linked declarations share the approval transaction, with approval, refusal, rollback, and retry coverage (oakridge-dbos/src/storage/commit.ts:731-807; oakridge-dbos/tests/analysis-link-declaration.test.ts:90-121,222-287).",
+          "head_sha": "c03533340ab94eb521315a29d0e76a9219c9b906",
+          "known_issues": [
+            {
+              "severity": "warning",
+              "description": "The mandated observation test command could not complete green because OAKRIDGE_TEST_DATABASE_URL is unset; its prerequisite test failed, while the command reported 277 passes, 128 skips, and 1 failure. Per the audit decision, it was not rerun."
+            }
+          ],
+          "changed_files": [],
+          "repository_key": "oakridge"
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:54:43.532Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "artifact_key": "observed_state",
+      "schema": "pr_status",
+      "is_reviewable": false,
+      "is_editable": false,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/implementation/alpha:observed_state:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+        "artifact_key": "observed_state",
+        "attempt_id": "9525b1958d8f25057000d2405dd4c663",
+        "body": {
+          "url": "https://github.com/RankOneLabs/oakridge/pull/793",
+          "state": "merged",
+          "number": 793,
+          "head_sha": "c03533340ab94eb521315a29d0e76a9219c9b906",
+          "merged_at": "2026-11-09T00:13:46Z"
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:52:53.245Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "artifact_key": "pr",
+      "schema": "pr_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/implementation/alpha:pr:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+        "artifact_key": "pr",
+        "attempt_id": "8c0193499ec52ce99dfb562c993d2ee2",
+        "body": {
+          "branch": "cohort/task-lineage-composites/ba9a7e",
+          "pr_url": "https://github.com/RankOneLabs/oakridge/pull/793",
+          "summary": "Existing PR #793 containing the lineage composite grading and declaration approval behavior audited at pinned commit c03533340ab94eb521315a29d0e76a9219c9b906."
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:52:44.983Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "artifact_key": "pr_state",
+      "schema": "pr_status",
+      "is_reviewable": false,
+      "is_editable": false,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/implementation/alpha:pr_state:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+        "artifact_key": "pr_state",
+        "attempt_id": "d4998b9b25b0ce9da0c6dde0aa5d1055",
+        "body": {
+          "url": "https://github.com/RankOneLabs/oakridge/pull/793",
+          "state": "merged",
+          "number": 793,
+          "head_sha": "c03533340ab94eb521315a29d0e76a9219c9b906",
+          "merged_at": "2026-11-09T00:13:46Z"
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:52:53.068Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "artifact_key": "assessment",
+      "schema": "assessment_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/implementation/beta:assessment:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+        "artifact_key": "assessment",
+        "attempt_id": "6808197432892abc624a0f25d20380f3",
+        "body": {
+          "verdict": "pass_with_notes",
+          "findings": [
+            {
+              "status": "met",
+              "evidence": [
+                {
+                  "ref": "observation/src/grading/composite.ts:147-158",
+                  "kind": "file",
+                  "detail": "At commit c03533340ab94eb521315a29d0e76a9219c9b906, one Contribution is formed per occurrence and logical-task selection uses some(), preventing duplicate relation paths from duplicating the occurrence."
+                },
+                {
+                  "ref": "one task through both cohorts, revised plan and briefs: one logical item, and every cohort's current findings",
+                  "kind": "test",
+                  "detail": "The scoped test expects three alpha findings and one beta finding for the shared task, while a finding naming two tasks contributes once to each."
+                },
+                {
+                  "ref": "bun run --filter observation test",
+                  "kind": "output",
+                  "detail": "The builder ran the mandated command once; it reported 277 passed, 128 skipped, and one unrelated database-prerequisite failure."
+                }
+              ],
+              "task_ids": [
+                "T1"
+              ],
+              "description": "Each current finding contributes at most once to a logical task even when more than one relation path points to that task."
+            },
+            {
+              "status": "met",
+              "evidence": [
+                {
+                  "ref": "observation/src/grading/composite.ts:114-158",
+                  "kind": "file",
+                  "detail": "At the reviewed commit, current revisions are selected independently by unit and artifact kind before occurrences become stage-tagged contributions."
+                },
+                {
+                  "ref": "observation/src/grading/composite.ts:314-372",
+                  "kind": "file",
+                  "detail": "Each StageComposite filters linked contributions to its own stage, and the composite returns stage results side by side without a cross-stage aggregate."
+                },
+                {
+                  "ref": "stages stand side by side: integration is pending, then final once published, whatever its answers and approvals",
+                  "kind": "test",
+                  "detail": "The scoped test expects implementation and integration answers to remain separate."
+                }
+              ],
+              "task_ids": [
+                "T1"
+              ],
+              "description": "Independent unit streams retain findings from both alpha and beta, while per-stage filtering keeps implementation and integration counts and answers separate."
+            },
+            {
+              "status": "met",
+              "evidence": [
+                {
+                  "ref": "observation/src/grading/composite.ts:23-27",
+                  "kind": "file",
+                  "detail": "At the reviewed commit, pageOf slices only items and derives total from the complete input list."
+                },
+                {
+                  "ref": "observation/src/grading/composite.ts:425-461",
+                  "kind": "file",
+                  "detail": "DrilldownPages supplies separate windows for rows, questions, links, statuses, current answers, and superseded answers, each applied independently through pageOf."
+                },
+                {
+                  "ref": "a drilldown's questions and every list inside them continue separately, each reporting its whole size",
+                  "kind": "test",
+                  "detail": "The scoped test independently advances question, current-answer, superseded-answer, link, and status windows and asserts complete-list totals."
+                },
+                {
+                  "ref": "bun run --filter observation test",
+                  "kind": "output",
+                  "detail": "The actual mandated run produced 277 passes, 128 skips, and one environment-prerequisite failure rather than a scoped pagination failure."
+                }
+              ],
+              "task_ids": [
+                "T3"
+              ],
+              "description": "Rows and every nested drilldown list paginate with independent windows, and each page reports the total of its complete unpaged list."
+            },
+            {
+              "status": "partial",
+              "evidence": [
+                {
+                  "ref": "bun run --filter observation test",
+                  "kind": "output",
+                  "detail": "Exit 1: tests/target-schema.test.ts reported that storage suites require OAKRIDGE_TEST_DATABASE_URL; overall result was 277 pass, 128 skip, 1 fail."
+                }
+              ],
+              "task_ids": [],
+              "description": "The required suite did not complete green because OAKRIDGE_TEST_DATABASE_URL was unset, limiting runtime confirmation of database-backed cases without contradicting the inspected cohort code."
+            }
+          ],
+          "head_sha": "c03533340ab94eb521315a29d0e76a9219c9b906",
+          "test_evidence": {
+            "failed": 1,
+            "output": "Received: undefined\n(fail) the storage suites require OAKRIDGE_TEST_DATABASE_URL rather than skipping green\n277 pass\n128 skip\n1 fail\n658 expect() calls\nRan 406 tests across 36 files. [2.55s]\nExited with code 1",
+            "passed": 277,
+            "summary": "The builder ran bun run --filter observation test exactly once: 277 passed, 128 skipped, and 1 failed across 406 tests; the failure was the explicit missing OAKRIDGE_TEST_DATABASE_URL prerequisite."
+          },
+          "recommended_next_actions": [
+            {
+              "id": "2bb23b59-2a25-4122-8e8c-483e745a2887",
+              "text": "Provision OAKRIDGE_TEST_DATABASE_URL in a suitable verification environment and rerun the observation test suite to obtain full database-backed runtime evidence."
+            }
+          ]
+        },
+        "predecessor_id": null,
+        "subject_id": "run-06d65e66dc69c5d1/implementation/beta:build_result:1",
+        "created_at": "2026-11-09T03:55:59.002Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "artifact_key": "build_result",
+      "schema": "build_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/implementation/beta:build_result:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+        "artifact_key": "build_result",
+        "attempt_id": "822e680ad8e4e54ae089643ddad5c1dc",
+        "body": {
+          "tests": {
+            "failed": 1,
+            "output": "Received: undefined\n(fail) the storage suites require OAKRIDGE_TEST_DATABASE_URL rather than skipping green\n277 pass\n128 skip\n1 fail\n658 expect() calls\nRan 406 tests across 36 files. [2.55s]\nExited with code 1",
+            "passed": 277,
+            "summary": "bun run --filter observation test ran exactly once: 277 passed, 128 skipped, 1 failed across 406 tests."
+          },
+          "summary": "Read-only audit completed at the exact detached PR #793 head c03533340ab94eb521315a29d0e76a9219c9b906 with no source changes. The two scoped files were inspected for per-logical-item contribution counting, cross-stage/cohort separation, and independently paged drilldown lists with unpaged totals. The required observation test ran exactly once after dependency installation; it reported 277 passing, 128 skipped, and one environment-prerequisite failure.",
+          "head_sha": "c03533340ab94eb521315a29d0e76a9219c9b906",
+          "known_issues": [
+            {
+              "severity": "warning",
+              "description": "The mandated test command exited 1 because OAKRIDGE_TEST_DATABASE_URL was unset; tests/target-schema.test.ts explicitly fails instead of skipping, so the database-backed suite was not fully runnable in this environment."
+            }
+          ],
+          "changed_files": [],
+          "repository_key": "oakridge"
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:53:56.446Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "artifact_key": "observed_state",
+      "schema": "pr_status",
+      "is_reviewable": false,
+      "is_editable": false,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/implementation/beta:observed_state:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+        "artifact_key": "observed_state",
+        "attempt_id": "5a90db770fe96623a18810811feffa5e",
+        "body": {
+          "url": "https://github.com/RankOneLabs/oakridge/pull/793",
+          "state": "merged",
+          "number": 793,
+          "head_sha": "c03533340ab94eb521315a29d0e76a9219c9b906",
+          "merged_at": "2026-11-09T00:13:46Z"
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:52:55.063Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "artifact_key": "pr",
+      "schema": "pr_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/implementation/beta:pr:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+        "artifact_key": "pr",
+        "attempt_id": "822e680ad8e4e54ae089643ddad5c1dc",
+        "body": {
+          "branch": "cohort/task-lineage-composites/ba9a7e",
+          "pr_url": "https://github.com/RankOneLabs/oakridge/pull/793",
+          "summary": "Existing authorized PR for the exact pinned lineage-composite audit head; this cohort performs read-only verification and makes no PR changes."
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:52:53.551Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "artifact_key": "pr_state",
+      "schema": "pr_status",
+      "is_reviewable": false,
+      "is_editable": false,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/implementation/beta:pr_state:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+        "artifact_key": "pr_state",
+        "attempt_id": "c556a4790df675fecb5570c35a6574d6",
+        "body": {
+          "url": "https://github.com/RankOneLabs/oakridge/pull/793",
+          "state": "merged",
+          "number": 793,
+          "head_sha": "c03533340ab94eb521315a29d0e76a9219c9b906",
+          "merged_at": "2026-11-09T00:13:46Z"
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:52:54.860Z",
+        "number": 1
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/planning",
+      "artifact_key": "plan",
+      "schema": "plan_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "revision_count": 2,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/planning:plan:2",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/planning",
+        "artifact_key": "plan",
+        "attempt_id": "8f0d9d86572aaa5596b940691c7e2749",
+        "body": {
+          "risks": [
+            {
+              "mitigation": "Keep id T1 in both and verify one count per finding per task with stages separate.",
+              "description": "Shared T1 appears in both cohorts and could be treated as two tasks."
+            },
+            {
+              "mitigation": "Run it once; report actual output/counts and any inability as a known issue.",
+              "description": "The mandated observation test may not run."
+            }
+          ],
+          "scope": {
+            "in_scope": [
+              "Read-only audit of PR #793 head for T1 composite counting/stages, T2 exact-revision declaration approval, and T3 nested pagination.",
+              "Publish existing PR #793, actual observation test results, and assessments."
+            ],
+            "out_of_scope": [
+              "Edits, commits, remote or PR changes, merges, database resets, deployments, and feature implementation."
+            ]
+          },
+          "cohorts": [
+            {
+              "id": "alpha",
+              "scope": "Audit T1 and T2 at the pinned PR head; publish PR #793 first, run the required test once, and hand actual results to assessment.",
+              "title": "Audit lineage and declaration approval",
+              "decisions": [
+                {
+                  "id": "alpha-audit",
+                  "text": "Inspect detached origin/cohort/task-lineage-composites/ba9a7e using commit code and separate test/output evidence; never mutate files, git, PR, database, or deployment state."
+                }
+              ],
+              "depends_on": [],
+              "description": "The mandated alpha boundary reviews composite lineage with the authority exact-revision gate; it is independent of beta and read-only.",
+              "files_in_scope": [
+                "observation/src/grading/composite.ts",
+                "observation/tests/composite.test.ts",
+                "oakridge-dbos/src/storage/commit.ts",
+                "oakridge-dbos/tests/analysis-link-declaration.test.ts"
+              ],
+              "repository_key": "oakridge",
+              "acceptance_criteria": [
+                {
+                  "id": "T1",
+                  "text": "Verify each finding is counted once per logical task and stages remain separate, including one task id shared across cohorts.",
+                  "decision_ids": [
+                    "alpha-audit"
+                  ]
+                },
+                {
+                  "id": "T2",
+                  "text": "Verify a declaration is journaled only after approval of its exact tasks revision, including approval, refusal, rollback, and retry.",
+                  "decision_ids": [
+                    "alpha-audit"
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "beta",
+              "scope": "Audit T1 and T3 at the pinned PR head; publish PR #793 first, run the required test once, and hand actual results to assessment.",
+              "title": "Audit lineage and drilldown pagination",
+              "decisions": [
+                {
+                  "id": "beta-audit",
+                  "text": "Inspect detached origin/cohort/task-lineage-composites/ba9a7e using commit code and separate test/output evidence; never mutate files, git, PR, database, or deployment state."
+                }
+              ],
+              "depends_on": [],
+              "description": "The mandated beta boundary reviews shared-task composite logic with nested paging; it is independent of alpha and read-only.",
+              "files_in_scope": [
+                "observation/src/grading/composite.ts",
+                "observation/tests/composite.test.ts"
+              ],
+              "repository_key": "oakridge",
+              "acceptance_criteria": [
+                {
+                  "id": "T1",
+                  "text": "Verify each finding is counted once per logical task and stages remain separate, including one task id shared across cohorts.",
+                  "decision_ids": [
+                    "beta-audit"
+                  ]
+                },
+                {
+                  "id": "T3",
+                  "text": "Verify every drilldown nested list pages independently while retaining its whole-list total.",
+                  "decision_ids": [
+                    "beta-audit"
+                  ]
+                }
+              ]
+            }
+          ],
+          "summary": "Read-only audit of existing PR #793: independent alpha covers T1/T2 and beta covers T1/T3 at the same pinned commit. This revision was requested by the live verification run.",
+          "dependency_order": [
+            "alpha",
+            "beta"
+          ],
+          "acceptance_criteria": [
+            "Analysis reports at least three distinct specification findings as separate observations.",
+            "Only T1, T2, and T3 are used: alpha has T1/T2, beta has T1/T3, and shared T1 keeps its id.",
+            "Each builder checks out the head detached, publishes existing PR #793 first for cohort/task-lineage-composites/ba9a7e, runs bun run --filter observation test once, then publishes build_result with head_sha and actual counts/output.",
+            "Each assessor publishes at least one finding per cohort task with task id, path:start-end evidence, separate test/output evidence, and builder test_evidence; assessment is its only write and set_pr_draft is forbidden."
+          ]
+        },
+        "predecessor_id": "run-06d65e66dc69c5d1/planning:plan:1",
+        "subject_id": null,
+        "created_at": "2026-11-09T03:49:09.824Z",
+        "number": 2
+      }
+    },
+    {
+      "run_id": "run-06d65e66dc69c5d1",
+      "unit_id": "run-06d65e66dc69c5d1/prepare/oakridge",
+      "artifact_key": "workspace",
+      "schema": "workspace",
+      "is_reviewable": false,
+      "is_editable": false,
+      "revision_count": 1,
+      "latest_revision": {
+        "id": "run-06d65e66dc69c5d1/prepare/oakridge:workspace:1",
+        "run_id": "run-06d65e66dc69c5d1",
+        "unit_id": "run-06d65e66dc69c5d1/prepare/oakridge",
+        "artifact_key": "workspace",
+        "attempt_id": "dbc0cffcc4800f4c04b4b0f840497dbe",
+        "body": {
+          "head": "a8856584aaaa44017ac1de2cdc710876b1fbb706",
+          "base_branch": "epic/grade-pray",
+          "repository_path": "/tmp/oakridge-proof/relations-2026-11-09T03-23-51-515Z/ab3dc833-046c-4111-970c-124a62a5c35e",
+          "push_remote_owner": "RankOneLabs"
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-11-09T03:36:47.894Z",
+        "number": 1
+      }
+    }
+  ],
+  "attempts": [
+    {
+      "id": "dbc0cffcc4800f4c04b4b0f840497dbe:1",
+      "unit_id": "run-06d65e66dc69c5d1/prepare/oakridge",
+      "worker": "git",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:36:43.816Z",
+      "is_current": true
+    },
+    {
+      "id": "4a25828a24f01d1eec5019d464d9ec8a:1",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "worker": "author",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": "fcbf4fe1-79bb-42e6-89ef-6e2879d92bf5",
+      "created_at": "2026-11-09T03:36:47.893Z",
+      "is_current": true
+    },
+    {
+      "id": "b43df42a492d056766f4a1907b626b86:1",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "worker": "spec_editor",
+      "number": 1,
+      "status": "failed",
+      "failure": {
+        "code": "attempt_stopped",
+        "detail": "stopped because its unit is no longer active"
+      },
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": "2a125d19-ee0a-4c40-8a2c-d61524d08dd6",
+      "created_at": "2026-11-09T03:40:54.219Z",
+      "is_current": true
+    },
+    {
+      "id": "8f0d9d86572aaa5596b940691c7e2749:1",
+      "unit_id": "run-06d65e66dc69c5d1/planning",
+      "worker": "planner",
+      "number": 1,
+      "status": "failed",
+      "failure": {
+        "code": "attempt_stopped",
+        "detail": "stopped because its unit is no longer active"
+      },
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": "93c35401-9553-4b25-a0ff-1c527ab668c6",
+      "created_at": "2026-11-09T03:41:44.246Z",
+      "is_current": true
+    },
+    {
+      "id": "33a9b08845cb414e30852c1858936a38:1",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "worker": "writer",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": "c440ea83-c58e-466f-80a3-7667fa29bb25",
+      "created_at": "2026-11-09T03:49:10.054Z",
+      "is_current": false
+    },
+    {
+      "id": "7ce3bab2e185ced163aaa56c9879af7f:1",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "worker": "writer",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": "c440ea83-c58e-466f-80a3-7667fa29bb25",
+      "created_at": "2026-11-09T03:49:10.055Z",
+      "is_current": false
+    },
+    {
+      "id": "1917c1e9d0049fc7e6ca2b4b48de2b2c:1",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "worker": "writer",
+      "number": 2,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "revise",
+      "cause": {
+        "kind": "changes_requested",
+        "decision": "run-06d65e66dc69c5d1/briefs/alpha:d1"
+      },
+      "kbbl_session_id": "c440ea83-c58e-466f-80a3-7667fa29bb25",
+      "created_at": "2026-11-09T03:50:25.617Z",
+      "is_current": true
+    },
+    {
+      "id": "03c986404d007905f7aa2975572de311:1",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "worker": "writer",
+      "number": 2,
+      "status": "failed",
+      "failure": {
+        "code": "attempt_stopped",
+        "detail": "stopped because its unit is no longer active"
+      },
+      "mode": "revise",
+      "cause": {
+        "kind": "changes_requested",
+        "decision": "run-06d65e66dc69c5d1/briefs/beta:d1"
+      },
+      "kbbl_session_id": "c440ea83-c58e-466f-80a3-7667fa29bb25",
+      "created_at": "2026-11-09T03:50:54.543Z",
+      "is_current": true
+    },
+    {
+      "id": "8c0193499ec52ce99dfb562c993d2ee2:1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "worker": "builder",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": "cd2a5656-baff-4b3a-96d1-d552c4f7b1f8",
+      "created_at": "2026-11-09T03:51:51.069Z",
+      "is_current": true
+    },
+    {
+      "id": "822e680ad8e4e54ae089643ddad5c1dc:1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "worker": "builder",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "missing"
+      },
+      "kbbl_session_id": "45efc189-217a-4677-b0ca-66751a926f9c",
+      "created_at": "2026-11-09T03:51:51.070Z",
+      "is_current": true
+    },
+    {
+      "id": "d4998b9b25b0ce9da0c6dde0aa5d1055:1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "worker": "pr_watch",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "1213f704d2e14c53ecc7e1589f397638",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:52:44.982Z",
+      "is_current": false
+    },
+    {
+      "id": "9525b1958d8f25057000d2405dd4c663:1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "worker": "prepare_observed_state",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "ce866693af7c2d46f00f7fd1161b0ac2",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:52:53.067Z",
+      "is_current": false
+    },
+    {
+      "id": "c556a4790df675fecb5570c35a6574d6:1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "worker": "pr_watch",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "1213f704d2e14c53ecc7e1589f397638",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:52:53.550Z",
+      "is_current": false
+    },
+    {
+      "id": "5a90db770fe96623a18810811feffa5e:1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "worker": "prepare_observed_state",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "ce866693af7c2d46f00f7fd1161b0ac2",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:52:54.859Z",
+      "is_current": false
+    },
+    {
+      "id": "6808197432892abc624a0f25d20380f3:1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "worker": "assessor",
+      "number": 1,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "review",
+      "cause": {
+        "kind": "review_of",
+        "revision": "run-06d65e66dc69c5d1/implementation/beta:build_result:1"
+      },
+      "kbbl_session_id": "20439f7c-7a7b-403b-ba20-360204770896",
+      "created_at": "2026-11-09T03:54:04.075Z",
+      "is_current": true
+    },
+    {
+      "id": "be08b03b114ca61672eb04b614c9cf41:1",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "worker": "assessor",
+      "number": 1,
+      "status": "running",
+      "failure": null,
+      "mode": "review",
+      "cause": {
+        "kind": "review_of",
+        "revision": "run-06d65e66dc69c5d1/implementation/alpha:build_result:1"
+      },
+      "kbbl_session_id": "8c4e4028-4056-4602-bdf7-a33d3bda0a5a",
+      "created_at": "2026-11-09T03:54:48.811Z",
+      "is_current": true
+    },
+    {
+      "id": "d4998b9b25b0ce9da0c6dde0aa5d1055:2",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "worker": "pr_watch",
+      "number": 2,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "1213f704d2e14c53ecc7e1589f397638",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:54:53.189Z",
+      "is_current": false
+    },
+    {
+      "id": "9525b1958d8f25057000d2405dd4c663:2",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "worker": "prepare_observed_state",
+      "number": 2,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "ce866693af7c2d46f00f7fd1161b0ac2",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:54:53.379Z",
+      "is_current": false
+    },
+    {
+      "id": "c556a4790df675fecb5570c35a6574d6:2",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "worker": "pr_watch",
+      "number": 2,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "1213f704d2e14c53ecc7e1589f397638",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:54:54.987Z",
+      "is_current": false
+    },
+    {
+      "id": "5a90db770fe96623a18810811feffa5e:2",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "worker": "prepare_observed_state",
+      "number": 2,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "ce866693af7c2d46f00f7fd1161b0ac2",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:54:55.179Z",
+      "is_current": false
+    },
+    {
+      "id": "9525b1958d8f25057000d2405dd4c663:3",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "worker": "prepare_observed_state",
+      "number": 3,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "ce866693af7c2d46f00f7fd1161b0ac2",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:56:53.547Z",
+      "is_current": true
+    },
+    {
+      "id": "5a90db770fe96623a18810811feffa5e:3",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "worker": "prepare_observed_state",
+      "number": 3,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "ce866693af7c2d46f00f7fd1161b0ac2",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:56:55.347Z",
+      "is_current": true
+    },
+    {
+      "id": "c556a4790df675fecb5570c35a6574d6:3",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "worker": "pr_watch",
+      "number": 3,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "1213f704d2e14c53ecc7e1589f397638",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:57:01.988Z",
+      "is_current": true
+    },
+    {
+      "id": "d4998b9b25b0ce9da0c6dde0aa5d1055:3",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "worker": "pr_watch",
+      "number": 3,
+      "status": "succeeded",
+      "failure": null,
+      "mode": "initial",
+      "cause": {
+        "kind": "periodic",
+        "inputs": "1213f704d2e14c53ecc7e1589f397638",
+        "replaces": null
+      },
+      "kbbl_session_id": null,
+      "created_at": "2026-11-09T03:57:02.177Z",
+      "is_current": true
+    }
+  ],
+  "events": [
+    {
+      "id": "41be47d8-6a85-4922-986e-98b88b225a50",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "be08b03b114ca61672eb04b614c9cf41",
+        "session": "8c4e4028-4056-4602-bdf7-a33d3bda0a5a"
+      },
+      "created_at": "2026-11-09T03:57:23.640Z"
+    },
+    {
+      "id": "616f4ecb-4169-45e5-953a-9292af83a6f7",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "d4998b9b25b0ce9da0c6dde0aa5d1055"
+      },
+      "created_at": "2026-11-09T03:57:10.193Z"
+    },
+    {
+      "id": "40b9bb52-ac39-45ca-bd5d-28d73f7ce6b3",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "d4998b9b25b0ce9da0c6dde0aa5d1055"
+      },
+      "created_at": "2026-11-09T03:57:10.153Z"
+    },
+    {
+      "id": "2be5953e-58bc-4a47-9450-db03af050f39",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c556a4790df675fecb5570c35a6574d6"
+      },
+      "created_at": "2026-11-09T03:57:09.176Z"
+    },
+    {
+      "id": "d1740533-9fab-4437-916c-c8cb60cc41c2",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c556a4790df675fecb5570c35a6574d6"
+      },
+      "created_at": "2026-11-09T03:57:09.137Z"
+    },
+    {
+      "id": "85c81503-093e-4138-a9aa-bb90e558c1f5",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "d4998b9b25b0ce9da0c6dde0aa5d1055"
+      },
+      "created_at": "2026-11-09T03:57:02.178Z"
+    },
+    {
+      "id": "3a4653be-5a85-4eed-a1e7-9e9b86032072",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c556a4790df675fecb5570c35a6574d6"
+      },
+      "created_at": "2026-11-09T03:57:01.989Z"
+    },
+    {
+      "id": "3637fb48-8fc2-4d6c-800b-7c4929ebefb4",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "5a90db770fe96623a18810811feffa5e"
+      },
+      "created_at": "2026-11-09T03:56:55.434Z"
+    },
+    {
+      "id": "89efe9f5-8bcc-440b-a0f9-7d9001616aba",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "5a90db770fe96623a18810811feffa5e"
+      },
+      "created_at": "2026-11-09T03:56:55.395Z"
+    },
+    {
+      "id": "3331f4f4-79a4-4e5a-a1bc-90fd1113db47",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "5a90db770fe96623a18810811feffa5e"
+      },
+      "created_at": "2026-11-09T03:56:55.348Z"
+    },
+    {
+      "id": "f93c8b55-e581-452a-81b3-16af6df9af2b",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "9525b1958d8f25057000d2405dd4c663"
+      },
+      "created_at": "2026-11-09T03:56:53.637Z"
+    },
+    {
+      "id": "f5464b19-7c21-480a-90cf-74968165e089",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "9525b1958d8f25057000d2405dd4c663"
+      },
+      "created_at": "2026-11-09T03:56:53.596Z"
+    },
+    {
+      "id": "69f1c82e-e59a-48f6-a9c9-5aecc3bad166",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "9525b1958d8f25057000d2405dd4c663"
+      },
+      "created_at": "2026-11-09T03:56:53.547Z"
+    },
+    {
+      "id": "f30251a1-718e-4d94-9a8f-cb3579c2823e",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "6808197432892abc624a0f25d20380f3"
+      },
+      "created_at": "2026-11-09T03:56:09.083Z"
+    },
+    {
+      "id": "5a64dd2a-2aa0-4044-a2b0-e430cd31186a",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "6808197432892abc624a0f25d20380f3",
+        "session": "20439f7c-7a7b-403b-ba20-360204770896"
+      },
+      "created_at": "2026-11-09T03:55:59.004Z"
+    },
+    {
+      "id": "130beb88-eb55-4eb4-9854-6f60b94d6b96",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "d4998b9b25b0ce9da0c6dde0aa5d1055"
+      },
+      "created_at": "2026-11-09T03:55:02.112Z"
+    },
+    {
+      "id": "b181fee2-8057-4ce3-baad-3432e591fe72",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "d4998b9b25b0ce9da0c6dde0aa5d1055"
+      },
+      "created_at": "2026-11-09T03:55:02.074Z"
+    },
+    {
+      "id": "9522b89b-bfb4-4ec8-a6a6-700706467909",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c556a4790df675fecb5570c35a6574d6"
+      },
+      "created_at": "2026-11-09T03:55:01.892Z"
+    },
+    {
+      "id": "77d81969-eb89-405f-b83f-f9f82f61227f",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c556a4790df675fecb5570c35a6574d6"
+      },
+      "created_at": "2026-11-09T03:55:01.843Z"
+    },
+    {
+      "id": "86c31f8f-aae7-4ac0-bad6-5eff71d0fdfc",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "be08b03b114ca61672eb04b614c9cf41"
+      },
+      "created_at": "2026-11-09T03:54:58.708Z"
+    },
+    {
+      "id": "d0d59d92-3967-462f-a429-379e2293917d",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "5a90db770fe96623a18810811feffa5e"
+      },
+      "created_at": "2026-11-09T03:54:55.264Z"
+    },
+    {
+      "id": "2795b899-ce38-4229-bd39-18b417763ca0",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "5a90db770fe96623a18810811feffa5e"
+      },
+      "created_at": "2026-11-09T03:54:55.227Z"
+    },
+    {
+      "id": "98aab757-16c4-4183-9c8a-38db48070d8f",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "5a90db770fe96623a18810811feffa5e"
+      },
+      "created_at": "2026-11-09T03:54:55.180Z"
+    },
+    {
+      "id": "9fd0dfe2-0ca3-42e2-9cc7-435fc49d4e6f",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c556a4790df675fecb5570c35a6574d6"
+      },
+      "created_at": "2026-11-09T03:54:54.987Z"
+    },
+    {
+      "id": "1ce6a4b4-1a92-4058-9019-80e43aead34e",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "9525b1958d8f25057000d2405dd4c663"
+      },
+      "created_at": "2026-11-09T03:54:53.466Z"
+    },
+    {
+      "id": "2db686d7-94fd-402b-8391-2c18b6ea6451",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "9525b1958d8f25057000d2405dd4c663"
+      },
+      "created_at": "2026-11-09T03:54:53.428Z"
+    },
+    {
+      "id": "bacabcff-fcfe-43c4-9650-c4698d967532",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "9525b1958d8f25057000d2405dd4c663"
+      },
+      "created_at": "2026-11-09T03:54:53.379Z"
+    },
+    {
+      "id": "f6d59705-cded-4878-b404-d42069c1cb2a",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "d4998b9b25b0ce9da0c6dde0aa5d1055"
+      },
+      "created_at": "2026-11-09T03:54:53.189Z"
+    },
+    {
+      "id": "133d7f27-eff9-446c-a9c6-65ec7d4d7eba",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "8c0193499ec52ce99dfb562c993d2ee2"
+      },
+      "created_at": "2026-11-09T03:54:48.813Z"
+    },
+    {
+      "id": "85e431e7-f1f5-476f-9141-59ba4a2359b7",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "8c0193499ec52ce99dfb562c993d2ee2",
+        "session": "cd2a5656-baff-4b3a-96d1-d552c4f7b1f8"
+      },
+      "created_at": "2026-11-09T03:54:43.532Z"
+    },
+    {
+      "id": "f7037151-a5c7-4d61-95ed-12d64ab11965",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "6808197432892abc624a0f25d20380f3"
+      },
+      "created_at": "2026-11-09T03:54:13.642Z"
+    },
+    {
+      "id": "0e0bd8bd-be7b-4ea7-975a-25bd161c865a",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "822e680ad8e4e54ae089643ddad5c1dc"
+      },
+      "created_at": "2026-11-09T03:54:04.076Z"
+    },
+    {
+      "id": "c000e238-dc9f-4273-8aba-b9d62662e9fb",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "822e680ad8e4e54ae089643ddad5c1dc",
+        "session": "45efc189-217a-4677-b0ca-66751a926f9c"
+      },
+      "created_at": "2026-11-09T03:53:56.447Z"
+    },
+    {
+      "id": "ad2aca5e-4b7f-403c-93a6-7ce3e1cd903b",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "5a90db770fe96623a18810811feffa5e"
+      },
+      "created_at": "2026-11-09T03:52:55.104Z"
+    },
+    {
+      "id": "a59501c2-e2a4-401f-b7bd-9cbeacaf491e",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "5a90db770fe96623a18810811feffa5e"
+      },
+      "created_at": "2026-11-09T03:52:55.064Z"
+    },
+    {
+      "id": "c92efbba-a3a8-4f92-b006-8b004b7c4042",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "5a90db770fe96623a18810811feffa5e"
+      },
+      "created_at": "2026-11-09T03:52:55.012Z"
+    },
+    {
+      "id": "b835ee79-ea36-428a-b1d3-92ba7b1f99c8",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c556a4790df675fecb5570c35a6574d6"
+      },
+      "created_at": "2026-11-09T03:52:54.900Z"
+    },
+    {
+      "id": "69ec2bff-5297-4bde-a76b-d619117bee39",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c556a4790df675fecb5570c35a6574d6"
+      },
+      "created_at": "2026-11-09T03:52:54.861Z"
+    },
+    {
+      "id": "3226a7b8-11f4-4690-8cbb-61e0e203bf3a",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "c556a4790df675fecb5570c35a6574d6"
+      },
+      "created_at": "2026-11-09T03:52:53.659Z"
+    },
+    {
+      "id": "a9c34187-301c-4148-9c86-7268fcd094f9",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "822e680ad8e4e54ae089643ddad5c1dc",
+        "session": "45efc189-217a-4677-b0ca-66751a926f9c"
+      },
+      "created_at": "2026-11-09T03:52:53.551Z"
+    },
+    {
+      "id": "3a175572-a0cb-4dce-bd09-401251381a47",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "9525b1958d8f25057000d2405dd4c663"
+      },
+      "created_at": "2026-11-09T03:52:53.289Z"
+    },
+    {
+      "id": "a9dd8fd9-4528-468a-9592-ca5f9fd8ba14",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "9525b1958d8f25057000d2405dd4c663"
+      },
+      "created_at": "2026-11-09T03:52:53.246Z"
+    },
+    {
+      "id": "d0215ad1-e142-45fe-8f37-bbd9cc1d9d01",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "9525b1958d8f25057000d2405dd4c663"
+      },
+      "created_at": "2026-11-09T03:52:53.195Z"
+    },
+    {
+      "id": "4c813504-823f-40b8-9c27-8fbd07e5db85",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "d4998b9b25b0ce9da0c6dde0aa5d1055"
+      },
+      "created_at": "2026-11-09T03:52:53.108Z"
+    },
+    {
+      "id": "43d070dc-c4ec-4619-b7f2-7cbe3129950f",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "d4998b9b25b0ce9da0c6dde0aa5d1055"
+      },
+      "created_at": "2026-11-09T03:52:53.069Z"
+    },
+    {
+      "id": "e05a840c-f218-4f03-8fff-1ce462e3a594",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "d4998b9b25b0ce9da0c6dde0aa5d1055"
+      },
+      "created_at": "2026-11-09T03:52:45.088Z"
+    },
+    {
+      "id": "8c55b55f-1a59-46eb-a68f-c5286c99e42b",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "8c0193499ec52ce99dfb562c993d2ee2",
+        "session": "cd2a5656-baff-4b3a-96d1-d552c4f7b1f8"
+      },
+      "created_at": "2026-11-09T03:52:44.984Z"
+    },
+    {
+      "id": "98a7c337-b063-4f27-90c9-e0f2800f2e10",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/alpha",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "8c0193499ec52ce99dfb562c993d2ee2"
+      },
+      "created_at": "2026-11-09T03:52:08.092Z"
+    },
+    {
+      "id": "05fe19d7-8541-4db8-b6fb-61630aa3febd",
+      "unit_id": "run-06d65e66dc69c5d1/implementation/beta",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "822e680ad8e4e54ae089643ddad5c1dc"
+      },
+      "created_at": "2026-11-09T03:52:03.504Z"
+    },
+    {
+      "id": "cb01d997-967f-4fd7-9397-8cf9566e4798",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "03c986404d007905f7aa2975572de311"
+      },
+      "created_at": "2026-11-09T03:51:51.278Z"
+    },
+    {
+      "id": "928117de-8750-492a-82c0-3172d1f89d75",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "kind": "operator_decided",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:51:51.071Z"
+    },
+    {
+      "id": "8b91f348-5999-4ac0-9445-94383fb53354",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "03c986404d007905f7aa2975572de311",
+        "session": "c440ea83-c58e-466f-80a3-7667fa29bb25"
+      },
+      "created_at": "2026-11-09T03:51:50.353Z"
+    },
+    {
+      "id": "c3458ae7-7039-4161-901e-c17b23331236",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "1917c1e9d0049fc7e6ca2b4b48de2b2c"
+      },
+      "created_at": "2026-11-09T03:51:26.056Z"
+    },
+    {
+      "id": "fd4f0268-b212-4ca3-9ead-120406837120",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "kind": "operator_decided",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:51:20.441Z"
+    },
+    {
+      "id": "440001e3-98d7-4fed-8978-3ab16b0c74ab",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "1917c1e9d0049fc7e6ca2b4b48de2b2c",
+        "session": "c440ea83-c58e-466f-80a3-7667fa29bb25"
+      },
+      "created_at": "2026-11-09T03:51:19.973Z"
+    },
+    {
+      "id": "a5d858a8-cb82-4116-a05f-2d2121e17355",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "03c986404d007905f7aa2975572de311"
+      },
+      "created_at": "2026-11-09T03:50:54.666Z"
+    },
+    {
+      "id": "d74348d8-d895-43bb-8450-61d10632fc54",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "7ce3bab2e185ced163aaa56c9879af7f"
+      },
+      "created_at": "2026-11-09T03:50:54.546Z"
+    },
+    {
+      "id": "67085c9a-0093-4515-9418-fa3019082fd8",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "kind": "operator_decided",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:50:49.855Z"
+    },
+    {
+      "id": "4477d354-72d8-48c3-9062-c70b9c6a068d",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "7ce3bab2e185ced163aaa56c9879af7f",
+        "session": "c440ea83-c58e-466f-80a3-7667fa29bb25"
+      },
+      "created_at": "2026-11-09T03:50:49.447Z"
+    },
+    {
+      "id": "fe988a4f-f178-4d4f-a111-ae5d145ed2ba",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "1917c1e9d0049fc7e6ca2b4b48de2b2c"
+      },
+      "created_at": "2026-11-09T03:50:25.740Z"
+    },
+    {
+      "id": "462a6f45-1a02-4a54-b57e-317810074afe",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "33a9b08845cb414e30852c1858936a38"
+      },
+      "created_at": "2026-11-09T03:50:25.619Z"
+    },
+    {
+      "id": "afd57a65-081b-4366-a96b-e76440b14ab2",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "kind": "operator_decided",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:50:18.278Z"
+    },
+    {
+      "id": "d3be08e7-a7a0-4462-a297-7e52c1c5020c",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "33a9b08845cb414e30852c1858936a38",
+        "session": "c440ea83-c58e-466f-80a3-7667fa29bb25"
+      },
+      "created_at": "2026-11-09T03:50:17.342Z"
+    },
+    {
+      "id": "3a002af6-f5dc-4c77-86be-fda17cf2c1d0",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/beta",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "7ce3bab2e185ced163aaa56c9879af7f"
+      },
+      "created_at": "2026-11-09T03:49:14.084Z"
+    },
+    {
+      "id": "dc592242-e4a7-45a1-b3dd-cce5d29822d3",
+      "unit_id": "run-06d65e66dc69c5d1/planning",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "8f0d9d86572aaa5596b940691c7e2749"
+      },
+      "created_at": "2026-11-09T03:49:10.222Z"
+    },
+    {
+      "id": "92570705-1822-44d6-81a4-74a72f788857",
+      "unit_id": "run-06d65e66dc69c5d1/briefs/alpha",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "33a9b08845cb414e30852c1858936a38"
+      },
+      "created_at": "2026-11-09T03:49:10.184Z"
+    },
+    {
+      "id": "aed8c950-9fd7-49e2-95b0-d15786ff6d41",
+      "unit_id": "run-06d65e66dc69c5d1/planning",
+      "kind": "operator_decided",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:49:10.056Z"
+    },
+    {
+      "id": "86fff626-52a9-4444-9d05-d6b2ec444f1a",
+      "unit_id": "run-06d65e66dc69c5d1/planning",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "8f0d9d86572aaa5596b940691c7e2749",
+        "session": "93c35401-9553-4b25-a0ff-1c527ab668c6"
+      },
+      "created_at": "2026-11-09T03:49:09.826Z"
+    },
+    {
+      "id": "631f4402-fb5b-4bb3-b114-6c561767005f",
+      "unit_id": "run-06d65e66dc69c5d1/planning",
+      "kind": "operator_decided",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:48:33.406Z"
+    },
+    {
+      "id": "78364707-0695-4d94-8b8e-fc6e20dfcc09",
+      "unit_id": "run-06d65e66dc69c5d1/planning",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "8f0d9d86572aaa5596b940691c7e2749",
+        "session": "93c35401-9553-4b25-a0ff-1c527ab668c6"
+      },
+      "created_at": "2026-11-09T03:48:32.877Z"
+    },
+    {
+      "id": "9676202b-27dd-464b-98cd-bb389f9fde65",
+      "unit_id": "run-06d65e66dc69c5d1/planning",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "8f0d9d86572aaa5596b940691c7e2749"
+      },
+      "created_at": "2026-11-09T03:41:57.164Z"
+    },
+    {
+      "id": "a514d99c-6822-45f4-9746-f48c806bb6d2",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "b43df42a492d056766f4a1907b626b86"
+      },
+      "created_at": "2026-11-09T03:41:44.411Z"
+    },
+    {
+      "id": "6e8d796b-e885-4a6d-9ffb-8120b7f87b46",
+      "unit_id": null,
+      "kind": "analysis_links_declared",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:41:44.260Z"
+    },
+    {
+      "id": "bfa0b742-1743-4229-9c67-74e08817b995",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "kind": "operator_decided",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:41:44.247Z"
+    },
+    {
+      "id": "48c6f2c7-e780-4bbe-9e91-b95b6d756070",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "kind": "operator_decided",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:41:44.049Z"
+    },
+    {
+      "id": "ec29a26a-3eb5-42ae-af9b-b24c85f3c887",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "b43df42a492d056766f4a1907b626b86",
+        "session": "2a125d19-ee0a-4c40-8a2c-d61524d08dd6"
+      },
+      "created_at": "2026-11-09T03:41:43.377Z"
+    },
+    {
+      "id": "4c8ae0b5-619d-4c9c-a62f-13b6e490c38a",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "b43df42a492d056766f4a1907b626b86",
+        "session": "2a125d19-ee0a-4c40-8a2c-d61524d08dd6"
+      },
+      "created_at": "2026-11-09T03:41:43.293Z"
+    },
+    {
+      "id": "b9bcaa6e-445d-4ee3-b3ae-3afdb0b73260",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "4a25828a24f01d1eec5019d464d9ec8a"
+      },
+      "created_at": "2026-11-09T03:40:58.787Z"
+    },
+    {
+      "id": "a6099437-9d86-4d83-b43e-05106d85e876",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "b43df42a492d056766f4a1907b626b86"
+      },
+      "created_at": "2026-11-09T03:40:57.592Z"
+    },
+    {
+      "id": "0a2ed420-3ecc-4f19-a8cb-99a754c3aaf0",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "kind": "operator_decided",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:40:54.221Z"
+    },
+    {
+      "id": "c0447122-42d8-4f4e-ac26-f43ada3b33f7",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "session",
+        "attempt": "4a25828a24f01d1eec5019d464d9ec8a",
+        "session": "fcbf4fe1-79bb-42e6-89ef-6e2879d92bf5"
+      },
+      "created_at": "2026-11-09T03:40:51.770Z"
+    },
+    {
+      "id": "7a31fca5-9343-49fe-b448-e0aecf383eb2",
+      "unit_id": "run-06d65e66dc69c5d1/analysis",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "4a25828a24f01d1eec5019d464d9ec8a"
+      },
+      "created_at": "2026-11-09T03:36:52.717Z"
+    },
+    {
+      "id": "f82c8188-0417-4b4e-bc77-5af881c29b73",
+      "unit_id": "run-06d65e66dc69c5d1/prepare/oakridge",
+      "kind": "worker_ended",
+      "writer": {
+        "kind": "executor",
+        "attempt": "dbc0cffcc4800f4c04b4b0f840497dbe"
+      },
+      "created_at": "2026-11-09T03:36:47.941Z"
+    },
+    {
+      "id": "69e6e006-b129-4da2-b726-6642553065ed",
+      "unit_id": "run-06d65e66dc69c5d1/prepare/oakridge",
+      "kind": "revision_published",
+      "writer": {
+        "kind": "executor",
+        "attempt": "dbc0cffcc4800f4c04b4b0f840497dbe"
+      },
+      "created_at": "2026-11-09T03:36:47.895Z"
+    },
+    {
+      "id": "cee47b84-9219-41ce-ad99-e237e89ee737",
+      "unit_id": "run-06d65e66dc69c5d1/prepare/oakridge",
+      "kind": "worker_started",
+      "writer": {
+        "kind": "executor",
+        "attempt": "dbc0cffcc4800f4c04b4b0f840497dbe"
+      },
+      "created_at": "2026-11-09T03:36:43.906Z"
+    },
+    {
+      "id": "3fe76f5e-b31b-4dd2-a919-63e2e9f9333f",
+      "unit_id": null,
+      "kind": "launched",
+      "writer": {
+        "kind": "operator",
+        "subject": "local-control"
+      },
+      "created_at": "2026-11-09T03:36:43.817Z"
+    }
+  ]
+}

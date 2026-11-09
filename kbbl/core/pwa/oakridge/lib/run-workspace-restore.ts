@@ -116,9 +116,11 @@ export const indexRunEntities = ({
 };
 
 /**
- * Whether a pane still names something the run contains. The two bodiless
- * panes — overview and list — derive from the run itself, so they always
- * resolve for a run that loaded at all.
+ * Whether a pane still names something the run contains. The bodiless panes —
+ * overview, list and grading — derive from the run itself, so they always
+ * resolve for a run that loaded at all. An item or task pane is the service's
+ * to answer, not the run's: its own body says when it is not captured, and it
+ * has nothing the run's reads could disprove.
  *
  * A session pane asks two questions in order, because the answers come from
  * different places: a purge is positive knowledge that the transcript is gone
@@ -129,6 +131,9 @@ export const isPaneResolvable = (pane: RunWorkspacePane, index: RunEntityIndex):
   switch (pane.kind) {
     case "overview":
     case "list":
+    case "grading":
+    case "item":
+    case "task":
       return true;
     case "session":
       if (index.purged_session_ids.has(pane.session_id)) return false;

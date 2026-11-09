@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import sample from "../__fixtures__/v2-adapter-sample.json";
-import type { OperatorUnitView } from "../operator-contracts";
+import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { parseOakridgeRunEventFrame } from "./event";
 import { parseUnitHistory, runActivityEvents } from "./activity";
 import { selectRunActivity } from "../lib/run-activity";

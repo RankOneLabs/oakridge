@@ -3,126 +3,21 @@ import sample from "../__fixtures__/v2-adapter-sample.json";
 import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import planningRevise from "../__fixtures__/v2-planning-revise.json";
-import { retryUnit, withUnitFields } from "../__fixtures__/read-models";
-import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunInboxBatchEntry, OperatorRunView, OperatorUnitView } from "../operator-contracts";
-import type { RunStatus, StageStatus } from "../run-types";
-import { artifactType, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isVisibleDevelopmentArtifact, latestAttemptPerSession, latestUnitAttemptPerSession, objectValue, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, selectAggregateStatus, statusInputOf, unitToStages } from "./core";
-import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
+import { retryUnit, sampleCohort as cohort, sampleRun as run, sampleUnits as units, withUnitFields } from "../__fixtures__/read-models";
+import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
+import type { OperatorRunEvent } from "../operator-contracts/projections/run-event";
+import type { OperatorAttemptView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
+import { artifactType, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, developmentPullRequestUrl, isVisibleDevelopmentArtifact, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, unitToStages } from "./core";
 import { parseUnitViews } from "./parse";
 import { selectRunSessionRows } from "../lib/run-sessions";
 import { selectRunSidebarSessions } from "../lib/run-overview";
 import { selectCohortArtifactId } from "../lib/cohort-artifact";
 
-const run = sample.run as unknown as OperatorRunView;
-const units = sample.units as unknown as OperatorUnitView[];
-const cohort: OperatorUnitView = (() => {
-  const selected = units.find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review"));
-  if (!selected) throw new Error("captured fixture lacks a cohort review");
-  return selected;
-})();
-const rootUnit: OperatorUnitView = (() => {
-  const selected = units.find((unit) => unit.stage === null);
-  if (!selected) throw new Error("captured fixture lacks the root unit");
-  return selected;
-})();
-
-function childWithStatus(status: RunStatus, index: number, stage = "cohort"): OperatorUnitView {
-  const unitStatus: OperatorUnitView["status"] = status === "complete" ? { kind: "done", outcome: null }
-    : status === "cancelled" ? { kind: "cancelled" }
-      : status === "pending" ? { kind: "not_started" } : { kind: "active" };
-  return withUnitFields(cohort, {
-    unit_id: `${cohort.unit_id}-${index}`, unit_key: `${stage}-${index}`, collection_key: `${stage}-${index}`, stage,
-    status: unitStatus, is_terminal: status === "complete" || status === "cancelled",
-    attention: status === "parked" ? { kind: "waiting", reason: "awaiting review" }
-      : status === "failed" ? { kind: "stalled", detail: "worker failed" } : null,
-    decisions: status === "parked" ? cohort.decisions : [], attempts: [], artifacts: [],
-  });
-}
-
-describe("selectAggregateStatus", () => {
-  it.each<{ name: string; statuses: RunStatus[]; expected: StageStatus }>([
-    { name: "running with pending", statuses: ["running", "pending"], expected: "running" },
-    { name: "several running and pending", statuses: ["running", "pending", "running", "pending"], expected: "running" },
-    { name: "running with parked", statuses: ["running", "parked"], expected: "running" },
-    { name: "parked without running", statuses: ["parked", "pending"], expected: "parked" },
-    { name: "unstarted children", statuses: ["pending", "pending"], expected: "pending" },
-    { name: "all completed", statuses: ["complete", "complete"], expected: "complete" },
-    { name: "completed with running", statuses: ["complete", "complete", "running"], expected: "running" },
-    { name: "completed with parked", statuses: ["complete", "complete", "parked"], expected: "parked" },
-    { name: "cancelled with running", statuses: ["cancelled", "running"], expected: "running" },
-    { name: "cancelled with parked", statuses: ["cancelled", "parked"], expected: "parked" },
-    { name: "cancelled after all work ends", statuses: ["complete", "cancelled"], expected: "failed" },
-    { name: "failure with completed and pending", statuses: ["failed", "complete", "pending"], expected: "failed" },
-    { name: "no children", statuses: [], expected: "pending" },
-  ])("aggregates $name as $expected", ({ statuses, expected }) => {
-    expect(selectAggregateStatus(statuses)).toBe(expected);
-  });
-});
-
-describe("child status aggregation", () => {
-  it.each<{ name: string; statuses: RunStatus[]; expectedStage: StageStatus | null; expectedRun: RunStatus;
-    parkedCount: number; rootStatus?: OperatorRunView["status"]; rootUnit?: OperatorUnitView; isStuck?: boolean }>([
-    { name: "one running and one pending", statuses: ["running", "pending"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
-    { name: "several running and pending", statuses: ["running", "pending", "running", "pending"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
-    { name: "parked with no running", statuses: ["parked", "pending"], expectedStage: "parked", expectedRun: "parked", parkedCount: 1 },
-    { name: "unstarted children", statuses: ["pending", "pending"], expectedStage: "pending", expectedRun: "pending", parkedCount: 0 },
-    { name: "all completed with a completed root", statuses: ["complete", "complete"], expectedStage: "complete", expectedRun: "complete",
-      parkedCount: 0, rootStatus: { kind: "done", outcome: null } },
-    { name: "all completed with an active root", statuses: ["complete", "complete"], expectedStage: "complete", expectedRun: "running", parkedCount: 0 },
-    { name: "completed children with running", statuses: ["complete", "complete", "running"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
-    { name: "completed children with parked", statuses: ["complete", "complete", "parked"], expectedStage: "parked", expectedRun: "parked", parkedCount: 1 },
-    { name: "cancelled child with running", statuses: ["cancelled", "running"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
-    { name: "cancelled child with parked", statuses: ["cancelled", "parked"], expectedStage: "parked", expectedRun: "parked", parkedCount: 1 },
-    { name: "only terminal children including cancellation", statuses: ["complete", "cancelled"], expectedStage: "failed", expectedRun: "running", parkedCount: 0 },
-    { name: "only an active root unit", statuses: [], expectedStage: null, expectedRun: "running", parkedCount: 0, rootUnit },
-    { name: "a failed stage-null root unit", statuses: [], expectedStage: null, expectedRun: "running", parkedCount: 0,
-      rootUnit: withUnitFields(rootUnit, { attention: { kind: "stalled", detail: "root failed" } }), isStuck: true },
-  ])("uses the child and root statuses for $name", ({ statuses, expectedStage, expectedRun, parkedCount, rootStatus, rootUnit, isStuck }) => {
-    const children = statuses.map((status, index) => childWithStatus(status, index));
-    const stageUnits = rootUnit ? [rootUnit, ...children] : children;
-    const stages = unitToStages(stageUnits);
-    const detail = runSnapshot(rootStatus ? { ...run, status: rootStatus } : run, stageUnits);
-    expect(stages.ok && detail.ok && [stages.value[0]?.status ?? null, detail.value.status, detail.value.is_stuck,
-      detail.value.parked_count]).toEqual([expectedStage, expectedRun, isStuck ?? false, parkedCount]);
-  });
-
-  it("keeps failed ahead of complete and pending outside the active-root stuck case", () => {
-    const children = ["failed", "complete", "pending"].map((status, index) => childWithStatus(status as StageStatus, index));
-    const detail = runSnapshot({ ...run, status: { kind: "not_started" } }, children);
-    expect(detail.ok && [detail.value.stages[0]?.status, detail.value.status]).toEqual(["failed", "failed"]);
-  });
-
-  it("aggregates several brief outputs and the run from the same live children", () => {
-    const root = units.find((unit) => unit.stage === null);
-    if (!root) throw new Error("captured fixture lacks the root unit");
-    const children = ["complete", "parked", "running", "pending"].map((status, index) =>
-      childWithStatus(status as StageStatus, index, "brief"));
-    const stages = unitToStages(children);
-    const detail = runSnapshot(run, [root, ...children]);
-    expect(stages.ok && detail.ok && [stages.value[0]?.status, detail.value.stages[0]?.status,
-      detail.value.status, detail.value.parked_count]).toEqual(["running", "running", "running", 1]);
-  });
-});
-
 describe("v2 development adapters", () => {
-  it("maps a run snapshot and summary through the same status derivation", () => {
-    const detail = runSnapshot(run, units);
-    expect(detail.ok && [detail.value.status, runSummary(detail.value, run).status]).toEqual(["parked", "parked"]);
-  });
   it("keeps the server's update time after a decision with no new publication", () => {
     const updatedAt = "2099-01-01T00:00:00Z";
     const detail = runSnapshot({ ...run, updated_at: updatedAt }, units);
     expect(detail.ok && detail.value.updated_at).toBe(updatedAt);
-  });
-  it("shows a cancelled run even when a child unit still carries an old failure", () => {
-    const detail = runSnapshot({ ...run, status: { kind: "cancelled" } }, units);
-    expect(detail.ok && detail.value.status).toBe("cancelled");
-  });
-  it("keeps an active run stuck while a brief unit has failed", () => {
-    const failedBrief = withUnitFields(cohort, { stage: "brief", attention: { kind: "stalled", detail: "writer failed" } });
-    const detail = runSnapshot({ ...run, status: { kind: "active" } }, [failedBrief]);
-    expect(detail.ok && [detail.value.status, detail.value.is_stuck,
-      runSummary(detail.value, run).is_failed]).toEqual(["running", true, false]);
   });
   it("rejects malformed unit data at the API boundary", () => {
     expect(parseUnitViews([{ ...cohort, decisions: [{ ...cohort.decisions[0], submit: { kind: "review" } }] }]).ok).toBe(false);
@@ -319,58 +214,6 @@ describe("v2 development adapters", () => {
     const event = runEventKind({ ...sample.event, kind: "worker_ended" } as OperatorRunEvent);
     expect(event).toEqual({ ok: true, value: null });
   });
-  it("distinguishes a stalled worker from a parked review", () => {
-    expect(deriveStatus({ status: cohort.status, attention: { kind: "stalled", detail: "worker failed" }, attempts: cohort.attempts, decisions: cohort.decisions }).run).toBe("failed");
-  });
-  it.each(["invalid_instruction", "discovery_unsupported"])("parks a cohort with manual merge confirmation despite a %s PR watcher failure", (code) => {
-    const mergeRun = cohortMerge.run as unknown as OperatorRunView;
-    const mergeUnits = cohortMerge.units as unknown as OperatorUnitView[];
-    const mergeUnit = mergeUnits.find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
-      && decision.submit.decision === "confirm_merged"));
-    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
-    const observedState = mergeUnit.artifacts.find((artifact) => artifact.artifact_key === "pr_state");
-    if (!observedState) throw new Error("captured fixture lacks a PR state artifact");
-    const stalled = withUnitFields(mergeUnit, {
-      artifacts: [...mergeUnit.artifacts, { ...observedState, artifact_key: "observed_state" }],
-      attention: { kind: "stalled", detail: "pr_watch failed: no pull request reader is configured" },
-      attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
-        ? { ...attempt, status: "failed", failure: { code, detail: "no pull request reader is configured" } }
-        : attempt) });
-    const detail = runSnapshot(mergeRun, mergeUnits.map((unit) => unit.unit_id === mergeUnit.unit_id ? stalled : unit));
-    expect(detail.ok && [detail.value.stages.find((stage) => stage.name === "cohort")?.status,
-      detail.value.status, runSummary(detail.value, mergeRun).status]).toEqual(["parked", "parked", "parked"]);
-  });
-  it("keeps a cohort on the old pinned definition failed when its watcher blocks completion", () => {
-    const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
-      && decision.submit.decision === "confirm_merged"));
-    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
-    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", detail: "pr_watch failed: missing URL" },
-      attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
-        ? { ...attempt, status: "failed", failure: { code: "invalid_instruction", detail: "missing URL" } }
-        : attempt) }).run).toBe("failed");
-  });
-  it("keeps a PR mismatch visible as a failed cohort even with merge confirmation", () => {
-    const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
-      && decision.submit.decision === "confirm_merged"));
-    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
-    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", detail: "pr_watch failed: PR branch differs" },
-      attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
-        ? { ...attempt, status: "failed", failure: { code: "pull_request_mismatch", detail: "PR branch differs" } }
-        : attempt) }).run).toBe("failed");
-  });
-  it("parks a unit awaiting the operator and leaves a dependency wait pending", () => {
-    const blocked = units.find((unit) => unit.attention?.kind === "waiting" && unit.decisions.length === 0);
-    if (!blocked) throw new Error("captured fixture lacks a dependency wait");
-    expect([deriveStatus(statusInputOf(cohort)).run, deriveStatus(statusInputOf(blocked)).run]).toEqual(["parked", "pending"]);
-  });
-  it("shows a reviewable revision as parked after its worker failed, in both list and detail", () => {
-    const failed = { ...cohort, attention: { kind: "waiting" as const, reason: "awaiting assessment_review review" },
-      attempts: [{ ...cohort.attempts[0]!, status: "failed" as const,
-        failure: { code: "no_output", detail: "worker ended before publishing" }, is_current: true }] };
-    const detail = runSnapshot(run, units.map((unit) => unit.unit_id === cohort.unit_id ? failed : unit));
-    expect(detail.ok && [detail.value.stages.find((stage) => stage.name === cohort.stage)?.status,
-      detail.value.status, runSummary(detail.value, run).status]).toEqual(["parked", "parked", "parked"]);
-  });
   it("maps an approve-effect decision onto a v1 action the frozen gate UI renders", () => {
     const accept = cohort.decisions.find((decision) => decision.key === "accept");
     const merge = (cohortMerge.units as unknown as OperatorUnitView[])
@@ -378,110 +221,10 @@ describe("v2 development adapters", () => {
     if (!accept || !merge) throw new Error("captured fixtures lack the approve decisions");
     expect([decisionAction(accept), decisionAction(merge)]).toEqual(["approve", "confirm_merged"]);
   });
-  it("classifies a development workflow inbox with a cohort lifecycle", () => {
-    const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);
-    expect(inbox.ok && [inbox.value.items[0].kind, inbox.value.cohorts[0].lifecycle]).toEqual(["artifact_gate", "artifact_review"]);
-    expect(inbox.ok && inbox.value.items.filter((item) => item.kind === "artifact_gate")).toHaveLength(1);
-    expect(inbox.ok && inbox.value.items[0].resume_actions).toEqual(["approve"]);
-  });
-  it("labels two repositories and every stage from the captured multi-cohort run", () => {
-    const second = units.find((unit) => unit.stage === "cohort" && unit.collection_key === "b");
-    const analysis = units.find((unit) => unit.stage === "analysis");
-    const planning = units.find((unit) => unit.stage === "planning");
-    const brief = units.find((unit) => unit.stage === "brief" && unit.collection_key === "a");
-    const prepare = units.find((unit) => unit.stage === "prepare");
-    const integration = (integrationMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "integration");
-    if (!second || !analysis || !planning || !brief || !prepare || !integration) throw new Error("captured fixtures lack development stages");
-    const secondInDocs = withUnitFields(second, { input: { ...objectValue(second.input), repository: { key: "docs" } } });
-    const planningWithKey = withUnitFields(planning, { input: { ...objectValue(planning.input), repository_key: "app" } });
-    const runUnits = units.map((unit) => unit.unit_id === second.unit_id ? secondInDocs
-      : unit.unit_id === planning.unit_id ? planningWithKey : unit);
-    const entry: OperatorRunInboxBatchEntry = { run_id: run.run_id, items: [
-      ...sample.inbox.items as OperatorRunInboxBatchEntry["items"],
-      { kind: "waiting", run_id: run.run_id, unit_id: analysis.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
-      { kind: "waiting", run_id: run.run_id, unit_id: planning.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
-      { kind: "waiting", run_id: run.run_id, unit_id: brief.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
-    ] };
-    const result = classifyDevelopmentInbox(entry, runUnits, "Ship Oakridge");
-    if (!result.ok) throw new Error(result.error.detail);
-    const firstItem = result.value.items.find((item) => item.unit_id === "a");
-    const secondItem = result.value.items.find((item) => item.unit_id === "b");
-    const analysisItem = result.value.items.find((item) => item.stage_name === "analysis");
-    const planningItem = result.value.items.find((item) => item.stage_name === "planning");
-    const briefItem = result.value.items.find((item) => item.stage_name === "brief" && item.unit_id === "a");
-    expect([firstItem?.title, secondItem?.title, secondItem?.blocked_by.includes("a · Cohort a · app"), analysisItem?.title])
-      .toEqual(["a · Cohort a · app", "b · Cohort b · docs", true, ""]);
-    expect(result.value.cohorts.map((item) => [item.title, item.repository_key]))
-      .toEqual([["a · Cohort a · app", "app"], ["b · Cohort b · docs", "docs"]]);
-    expect(briefItem?.title).toBe("a · Cohort a · app");
-    expect([repositoryKeyOf(analysis), repositoryKeyOf(planningWithKey), repositoryKeyOf(brief), repositoryKeyOf(cohort),
-      repositoryKeyOf(prepare), repositoryKeyOf(integration), analysisItem?.repository_key, planningItem?.repository_key])
-      .toEqual([null, "app", "app", "app", "app", "app", null, "app"]);
-  });
-  it("keeps inbox work and other cohort summaries when one repository input is missing", () => {
-    const withoutRepository = withUnitFields(cohort, { input: {} });
-    const other = units.find((unit) => unit.stage === "cohort" && unit.unit_id !== cohort.unit_id);
-    if (!other) throw new Error("captured fixture lacks another cohort");
-    const result = classifyDevelopmentInbox({ run_id: run.run_id, items: [
-      { kind: "waiting", run_id: run.run_id, unit_id: cohort.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
-    ] }, [withoutRepository, other]);
-    expect(result.ok && [result.value.cohorts.map((summary) => summary.unit_id), result.value.items[0]?.repository_key])
-      .toEqual([[other.collection_key], null]);
-  });
-  it("uses an analysis blocker's unit id when it has no attention label", () => {
-    const analysis = units.find((unit) => unit.stage === "analysis");
-    if (!analysis) throw new Error("captured fixture lacks an analysis unit");
-    const blocked = withUnitFields(cohort, { depends_on: [analysis.unit_id] });
-    const result = classifyDevelopmentInbox({ run_id: run.run_id, items: [
-      { kind: "waiting", run_id: run.run_id, unit_id: blocked.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
-    ] }, [blocked, analysis]);
-    expect(result.ok && result.value.items[0]?.blocked_by).toEqual([analysis.unit_id]);
-  });
   it("parses repository keys from untrusted unit input", () => {
     const padded = withUnitFields(cohort, { input: { repository_key: "  app  " } });
     const blank = withUnitFields(cohort, { input: { repository_key: "  " } });
     expect([repositoryKeyOf(padded), repositoryKeyOf(blank)]).toEqual(["app", null]);
-  });
-  it("shows one recovery item per failed brief when each has a retry and a stalled diagnostic", () => {
-    const briefUnits = ["first", "second"].map((name) => withUnitFields(cohort, {
-      unit_id: `${run.run_id}/briefs/${name}`, unit_key: name, collection_key: name,
-      label: `Brief ${name}`, stage: "brief", decisions: [], artifacts: [],
-    }));
-    const entry: OperatorRunInboxBatchEntry = { run_id: run.run_id, items: briefUnits.flatMap((unit) => [
-      { kind: "decision" as const, run_id: run.run_id, unit_id: unit.unit_id, key: "retry:writer",
-        label: "Retry Writer", submit: { kind: "retry" as const, worker: "writer" }, prompt: null },
-      { kind: "stalled" as const, run_id: run.run_id, unit_id: unit.unit_id, detail: "writer failed" },
-    ]) };
-    const inbox = classifyDevelopmentInbox(entry, briefUnits);
-    expect(inbox.ok && inbox.value.items.map((item) => item.unit_id)).toEqual(["first", "second"]);
-  });
-  it("keeps the manual merge action as the only inbox row when the optional PR watcher fails", () => {
-    const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
-      && decision.submit.decision === "confirm_merged"));
-    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
-    const observation = mergeUnit.artifacts.find((artifact) => artifact.artifact_key === "pr_state");
-    const confirm = mergeUnit.decisions.find((decision) => decision.submit.kind === "review" && decision.submit.decision === "confirm_merged");
-    if (!observation || !confirm || confirm.submit.kind !== "review") throw new Error("captured fixture lacks PR evidence");
-    const stalled = withUnitFields(mergeUnit, {
-      artifacts: [...mergeUnit.artifacts, { ...observation, artifact_key: "observed_state" }],
-      attention: { kind: "stalled", detail: "pr_watch failed: no pull request reader is configured" },
-      attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
-        ? { ...attempt, status: "failed", failure: { code: "discovery_unsupported", detail: "no pull request reader is configured" } }
-        : attempt) });
-    const entry: OperatorRunInboxBatchEntry = { run_id: stalled.run_id, items: [
-      { kind: "decision", run_id: stalled.run_id, unit_id: stalled.unit_id, key: confirm.key,
-        label: confirm.label, submit: confirm.submit, prompt: null },
-      { kind: "decision", run_id: stalled.run_id, unit_id: stalled.unit_id, key: "retry:pr_watch",
-        label: "Retry PR watch", submit: { kind: "retry", worker: "pr_watch" }, prompt: null },
-      { kind: "stalled", run_id: stalled.run_id, unit_id: stalled.unit_id,
-        detail: "pr_watch failed: no pull request reader is configured" },
-    ] };
-    const inbox = classifyDevelopmentInbox(entry, [stalled]);
-    expect(inbox.ok && [inbox.value.items.map((item) => item.kind), inbox.value.cohorts[0]?.lifecycle])
-      .toEqual([["merge_confirmation"], "merge_confirmation"]);
-    expect(inbox.ok && inbox.value.items[0]?.pr_url).toBe("https://github.com/oakridge-e2e/app/pull/1");
-    const gates = reviewToGates(stalled);
-    expect(gates.ok && gates.value[0]?.pr_url).toBe("https://github.com/oakridge-e2e/app/pull/1");
   });
   it("does not expose an unsafe PR artifact URL as a clickable merge link", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) =>
@@ -493,31 +236,10 @@ describe("v2 development adapters", () => {
         : artifact) });
     expect(developmentPullRequestUrl(unsafe)).toBeNull();
   });
-  it("keeps both run slices when invalidate responses complete against an old inbox snapshot", () => {
-    const first = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);
-    if (!first.ok) throw new Error(first.error.detail);
-    const secondRun = "run-another";
-    const second = { cohorts: first.value.cohorts.map((cohort) => ({ ...cohort, run_id: secondRun })),
-      items: first.value.items.map((item) => ({ ...item, run_id: secondRun })) };
-    const latest = replaceDevelopmentInboxRun(first.value, secondRun, second);
-    const changedFirst = { cohorts: first.value.cohorts, items: [] };
-    const combined = replaceDevelopmentInboxRun(latest, run.run_id, changedFirst);
-    expect([combined.items.some((item) => item.run_id === run.run_id), combined.items.some((item) => item.run_id === secondRun)])
-      .toEqual([false, true]);
-  });
   it.each([cohortMerge, integrationMerge])("captures confirm_merged on the unit's current revision", (fixture) => {
     const unit = fixture.units.find((candidate) => candidate.decisions.some((decision) => decision.key === "confirm_merged"));
     if (!unit) throw new Error("captured merge fixture lacks confirm_merged");
     const gates = reviewToGates(unit as unknown as OperatorUnitView);
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "merge_confirmation")?.resume_actions).toEqual(["confirm_merged"]);
-  });
-  it("labels integration review work with the assessment it asks the operator to judge", () => {
-    const integration = (integrationMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "integration");
-    if (!integration) throw new Error("captured fixture lacks an integration unit");
-    const items = integration.decisions.flatMap((decision) => decision.submit.kind === "review" ? [{ kind: "decision" as const,
-      run_id: integration.run_id, unit_id: integration.unit_id, key: decision.key, label: decision.label, submit: decision.submit, prompt: null }] : []);
-    const result = classifyDevelopmentInbox({ run_id: integration.run_id, items }, [integration]);
-    expect(result.ok && result.value.items.map((item) => [item.kind, item.artifact_key]))
-      .toEqual([["artifact_gate", "assessment"], ["merge_confirmation", "pr_state"]]);
   });
 });

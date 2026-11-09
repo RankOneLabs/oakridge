@@ -24,6 +24,11 @@ export function configuredBrowserWritePolicy(raw = process.env.OAKRIDGE_ALLOWED_
 export function browserWriteRejection(policy: BrowserWritePolicy, request: Pick<Request, "method" | "headers">, path: string): Response | null {
   const route = matchRoute(request.method, path);
   if (!route || route.method === "GET") return null;
+  return browserJsonWriteRejection(policy, request);
+}
+
+/** The protections every browser write gets, for a route outside the authority's table too. */
+export function browserJsonWriteRejection(policy: BrowserWritePolicy, request: Pick<Request, "headers">): Response | null {
   const content_type = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (content_type !== "application/json") return errorResponse(new UnsupportedMediaTypeError("JSON content type required"));
   const origin = request.headers.get("origin");

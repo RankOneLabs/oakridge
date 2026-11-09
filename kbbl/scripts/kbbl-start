@@ -22,8 +22,13 @@ KBBL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # anything useful, so eat the cost unconditionally.
 (cd "$KBBL_ROOT" && bun run build:pwa)
 
+# Bun loads .env from the cwd, which here is wherever the launcher was run from.
+# An isolated stack sets KBBL_NO_ENV_FILE so that file cannot add to its environment.
+BUN_RUN=(bun run)
+if [ "${KBBL_NO_ENV_FILE:-}" = "1" ]; then BUN_RUN=(bun --no-env-file run); fi
+
 if [ "$WORKDIR" != "" ]; then
-  exec bun run "$KBBL_ROOT/core/server.ts" --workdir="$WORKDIR_ABS" "$@"
+  exec "${BUN_RUN[@]}" "$KBBL_ROOT/core/server.ts" --workdir="$WORKDIR_ABS" "$@"
 fi
 
-exec bun run "$KBBL_ROOT/core/server.ts" "$@"
+exec "${BUN_RUN[@]}" "$KBBL_ROOT/core/server.ts" "$@"

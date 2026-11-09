@@ -155,7 +155,7 @@ describe("ArtifactReview", () => {
           dependency_order: ["core"],
           scope: { in_scope: ["core"], out_of_scope: [] },
           acceptance_criteria: [],
-          risks: ["migration"],
+          risks: [{ description: "migration", mitigation: "Batch it." }],
         },
       }],
       review: {
@@ -195,7 +195,7 @@ describe("navigation inside the review", () => {
 });
 
 describe("assessment builder handoff inside the review", () => {
-  const ASSESSMENT_BODY = { head_sha: null, verdict: "pass_with_notes", findings: [], test_evidence: null, recommended_next_actions: [{"id": "00000000-0000-4000-8000-000000000001", "text": "Fix it"}] };
+  const ASSESSMENT_BODY = { head_sha: "abc123", verdict: "pass_with_notes", findings: [], test_evidence: null, recommended_next_actions: [{"id": "00000000-0000-4000-8000-000000000001", "text": "Fix it"}] };
   const CURRENT_ASSESSMENT_BODY = { ...ASSESSMENT_BODY, recommended_next_actions: [
     { id: "aa32c2d6-b93c-42e5-80c8-d4cb1081fab2", text: "Fix it" }] };
 

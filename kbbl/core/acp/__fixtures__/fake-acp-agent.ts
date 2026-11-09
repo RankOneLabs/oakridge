@@ -160,6 +160,7 @@ const app = agent({ name: `fake-acp-${behavior}` })
       throw RequestError.resourceNotFound(sessionId);
     }
     recordAdditionalDirectories(sessionId, ctx.params.additionalDirectories);
+    writeFileSync(join(stateDir, `${sessionId}.load-mcp-servers.json`), JSON.stringify(ctx.params.mcpServers));
     if (behavior === "delayed_load") await delay(Math.max(0, delayMs));
     const lines = readFileSync(path, "utf8")
       .split("\n")

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { id } from "../__fixtures__/grading";
 
 import type { ArtifactId, Sid } from "../../lib/ids";
+import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
 import { DEFAULT_RUN_WORKSPACE_STATE, LIST_PANE, OVERVIEW_PANE } from "./run-workspace";
 import {
   pruneStoredRunWorkspace,
@@ -168,5 +170,24 @@ describe("pruneStoredRunWorkspace", () => {
     useStorage(new ThrowingStorage());
 
     expect(() => pruneStoredRunWorkspace("run-1")).not.toThrow();
+  });
+});
+
+describe("the grading panes", () => {
+  const selection: ObservationItemAddress = { source_revision_id: id("run-1/integration/final:assessment:1"), item_path: "/findings/0" };
+  const store = (value: unknown) => localStorage.setItem(runWorkspaceStorageKey("run-g"), JSON.stringify(value));
+  it("restores an item by its exact revision and path, with nothing else stored", () => {
+    writeStoredRunWorkspace("run-g", { primary: { kind: "grading" }, secondary: { kind: "item", selection } });
+    expect(readStoredRunWorkspace("run-g")).toEqual({ primary: { kind: "grading" }, secondary: { kind: "item", selection } });
+  });
+  it("restores a task pane by its id", () => {
+    writeStoredRunWorkspace("run-g", { primary: { kind: "task", task_id: "T1" }, secondary: null });
+    expect(readStoredRunWorkspace("run-g").primary).toEqual({ kind: "task", task_id: "T1" });
+  });
+  it("refuses a selection addressed any other way, including a stored criterion or cohort", () => {
+    for (const stored of [{ kind: "item", selection: { criterion_id: "c1" } }, { kind: "item", selection: { source_revision_id: id("r") } }, { kind: "item", selection: { item_path: "/findings/0", cohort: "a" } }, { kind: "item" }, { kind: "task" }]) {
+      store({ primary: stored, secondary: null });
+      expect(readStoredRunWorkspace("run-g").primary).toEqual({ kind: "overview" });
+    }
   });
 });

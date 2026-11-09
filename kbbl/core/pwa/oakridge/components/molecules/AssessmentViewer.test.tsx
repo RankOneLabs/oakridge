@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { Assessment } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
+import type { PlanTraceId } from "../../lib/plan";
 import type { CohortId, RepositoryKey } from "../../run-types";
 import { parseAssessment } from "../../lib/assessment";
 import { readBuildBrief } from "../../lib/build-brief";
@@ -12,6 +13,8 @@ import emptyEvidenceAssessment from "../../lib/__fixtures__/empty-evidence-asses
 import unresolvedAssessment from "../../lib/__fixtures__/unresolved-assessment.json";
 import linkedBrief from "../../lib/__fixtures__/id-linked-brief.json";
 import { AssessmentViewer } from "./AssessmentViewer";
+
+const task = (id: string): PlanTraceId => id as PlanTraceId;
 
 const brief: BuildBrief = {
   cohort_id: "cm-cli" as CohortId,
@@ -22,7 +25,10 @@ const brief: BuildBrief = {
   files_in_scope: [],
   decisions_made: [],
   approaches_rejected: [],
-  acceptance_criteria: ["The CLI prints JSON.", "Every fixture exists."],
+  acceptance_criteria: [
+    { id: task("T1"), text: "The CLI prints JSON.", decision_ids: [] },
+    { id: task("T2"), text: "Every fixture exists.", decision_ids: [] },
+  ],
   next_action: "Start.",
 };
 
@@ -37,11 +43,11 @@ const result: BuildResult = {
 };
 
 const assessment: Assessment = {
-  head_sha: null,
+  head_sha: "abc123",
   verdict: "fail",
   findings: [
-    { criterion_id: null, criterion: "The CLI prints JSON.", status: "met", evidence: { kind: "legacy", text: "Snapshot test passes." }, description: null },
-    { criterion_id: null, criterion: "Every fixture exists.", status: "not_met", evidence: { kind: "legacy", text: "B, E, F and G are missing." }, description: null },
+    { item_path: "/findings/0", task_ids: [task("T1")], status: "met", evidence: [{ kind: "test", ref: "test_cli.py::snapshot", detail: "Snapshot test passes." }], description: null },
+    { item_path: "/findings/1", task_ids: [task("T2")], status: "not_met", evidence: [{ kind: "output", ref: "ls fixtures", detail: "B, E, F and G are missing." }], description: null },
   ],
   test_evidence: { passed: 1274, failed: 0, output: null, summary: "Independently re-run.", cargo_test_output: null },
   recommended_next_actions: [{ id: "00000000-0000-4000-8000-000000000001", text: "Supply the missing fixtures." }],
@@ -51,16 +57,32 @@ const renderViewer = () => render(
   <AssessmentViewer assessment={assessment} brief={{ kind: "found", value: brief }} result={{ kind: "found", value: result }} cohortLabel="cm-cli" />,
 );
 
+const renderFindings = (findings: Assessment["findings"]) => render(
+  <AssessmentViewer assessment={{ ...assessment, findings }} brief={{ kind: "found", value: brief }} result={{ kind: "loading" }} cohortLabel="cm-cli" />,
+);
+
+const attention = () => within(screen.getByTestId("or-assessment-attention"));
+
 afterEach(cleanup);
 
 describe("AssessmentViewer", () => {
-  test("numbers an unmet criterion as the brief does", () => {
+  test("names a finding's task with the brief's number", () => {
     renderViewer();
-    const attention = within(screen.getByTestId("or-assessment-attention"));
-    expect(attention.getByText("2.")).toBeTruthy();
+    expect(attention().getByTestId("or-criterion-tasks").textContent).toBe("Tasks: T2 (2)");
   });
 
-  test("keeps met criteria folded until asked", () => {
+  test("reads a finding with no description by the wording of its task", () => {
+    renderViewer();
+    expect(attention().getByText("Every fixture exists.")).toBeTruthy();
+  });
+
+  test("marks each line with its status and kind", () => {
+    renderViewer();
+    const check = attention().getByTestId("or-criterion-check");
+    expect([check.getAttribute("data-status"), check.getAttribute("data-kind")]).toEqual(["not_met", "finding"]);
+  });
+
+  test("keeps met findings folded until asked", () => {
     renderViewer();
     expect(screen.queryByText("Snapshot test passes.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Show met criteria/ }));
@@ -77,13 +99,12 @@ describe("AssessmentViewer", () => {
     expect(screen.getByTestId("or-assessment-verdict").textContent).toBe("Fail");
   });
 
-  test("labels a legacy assessment commit as not recorded", () => {
+  test("shows the commit the assessment assessed", () => {
     renderViewer();
-    expect(screen.getByTestId("or-assessment-head-sha").textContent).toContain("Not recorded");
-    expect(within(screen.getByTestId("or-assessment-attention")).getByText("Matched by normalized text")).toBeTruthy();
+    expect(screen.getByTestId("or-assessment-head-sha").textContent).toContain("abc123");
   });
 
-  test("shows linked evidence references and their matching provenance", () => {
+  test("shows evidence references, their kinds and the linked task", () => {
     const parsed = parseAssessment(linkedAssessment);
     const linked = readBuildBrief(linkedBrief);
     if (!parsed.ok || linked === null) throw new Error("fixture failed to parse");
@@ -91,7 +112,7 @@ describe("AssessmentViewer", () => {
     fireEvent.click(screen.getByRole("button", { name: /Show met criteria/ }));
     expect(screen.getByTestId("or-assessment-head-sha").textContent).toContain("abc123def456");
     const met = within(screen.getByTestId("or-assessment-met"));
-    expect(met.getByText("Matched by criterion ID")).toBeTruthy();
+    expect(met.getByTestId("or-criterion-tasks").textContent).toBe("Tasks: criterion-brief (1)");
     expect(met.getByText("file")).toBeTruthy();
     expect(met.getByText("kbbl/core/pwa/oakridge/lib/build-brief.ts:100-110")).toBeTruthy();
     expect(met.getByText("test")).toBeTruthy();
@@ -106,33 +127,45 @@ describe("AssessmentViewer", () => {
     expect(screen.getByText("Met with no evidence cited.")).toBeTruthy();
   });
 
-  test("shows an unresolved criterion id", () => {
+  test("shows a task id the brief does not hold as unresolved", () => {
     const parsed = parseAssessment(unresolvedAssessment);
     const linked = readBuildBrief(linkedBrief);
     if (!parsed.ok || linked === null) throw new Error("fixture failed to parse");
     render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "found", value: linked }} result={{ kind: "loading" }} cohortLabel="pwa" />);
-    expect(screen.getByText("criterion-missing")).toBeTruthy();
-    expect(screen.getByText("No brief criterion match")).toBeTruthy();
+    expect(screen.getByTestId("or-criterion-unresolved").textContent).toBe("Unresolved task IDs: criterion-missing");
   });
 
-  test("does not call an unassessed brief criterion unmatched to the brief", () => {
-    render(<AssessmentViewer assessment={{ ...assessment, findings: assessment.findings.slice(0, 1) }} brief={{ kind: "found", value: brief }} result={{ kind: "loading" }} cohortLabel="cm-cli" />);
-    const attention = within(screen.getByTestId("or-assessment-attention"));
-    expect(attention.getByText("Every fixture exists.")).toBeTruthy();
-    expect(attention.queryByText("No brief criterion match")).toBeNull();
+  test("shows every task of a finding linked to several as one line", () => {
+    renderFindings([{ ...assessment.findings[0]!, task_ids: [task("T1"), task("T2")] }]);
+    fireEvent.click(screen.getByRole("button", { name: /Show met criteria/ }));
+    expect(within(screen.getByTestId("or-assessment-met")).getAllByTestId("or-criterion-check")).toHaveLength(1);
+    expect(screen.getByTestId("or-criterion-tasks").textContent).toBe("Tasks: T1 (1)T2 (2)");
   });
 
-  test("still lists findings when the brief is missing", () => {
+  test("says when a finding is linked to no task", () => {
+    renderFindings([{ ...assessment.findings[1]!, task_ids: [], description: "A gap nobody planned." }]);
+    expect(attention().getByText("Linked to no task.")).toBeTruthy();
+  });
+
+  test("lists a brief task no finding names as unassessed, numbered as the brief does", () => {
+    renderFindings(assessment.findings.slice(0, 1));
+    const check = attention().getByTestId("or-criterion-check");
+    expect([check.getAttribute("data-status"), check.getAttribute("data-kind")]).toEqual(["unassessed", "unassessed"]);
+    expect(within(check).getByText("2.")).toBeTruthy();
+    expect(within(check).getByText("Every fixture exists.")).toBeTruthy();
+    expect(screen.queryByTestId("or-criterion-unresolved")).toBeNull();
+  });
+
+  test("still lists findings when the brief is missing, without judging their links", () => {
     render(<AssessmentViewer assessment={assessment} brief={{ kind: "missing", cohort_label: "cm-cli" }} result={{ kind: "loading" }} cohortLabel="cm-cli" />);
-    expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();
-    expect(screen.queryByText("No brief criterion match")).toBeNull();
+    expect(attention().getByText("B, E, F and G are missing.")).toBeTruthy();
+    expect(screen.queryByTestId("or-criterion-unresolved")).toBeNull();
   });
 
-  test("keeps the derived needs-attention criteria read-only", () => {
+  test("keeps the derived needs-attention findings read-only", () => {
     renderViewer();
-    const attention = within(screen.getByTestId("or-assessment-attention"));
-    expect(attention.queryByRole("checkbox")).toBeNull();
-    expect(attention.queryByRole("button", { name: /Edit/ })).toBeNull();
+    expect(attention().queryByRole("checkbox")).toBeNull();
+    expect(attention().queryByRole("button", { name: /Edit/ })).toBeNull();
   });
 
   test("renders an integration assessment without cohort artifact warnings", () => {
@@ -141,8 +174,13 @@ describe("AssessmentViewer", () => {
     expect(screen.getByText("Integration assessment")).toBeTruthy();
     expect(screen.queryByTestId("or-assessment-brief-note")).toBeNull();
     expect(screen.queryByTestId("or-assessment-result-note")).toBeNull();
-    expect(screen.queryByText("Not one of the brief's criteria.")).toBeNull();
-    expect(screen.queryByText("No brief criterion match")).toBeNull();
-    expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();
+    expect(screen.queryByTestId("or-criterion-unresolved")).toBeNull();
+    expect(attention().getByText("B, E, F and G are missing.")).toBeTruthy();
+  });
+
+  test("does not ask an integration finding to link to a task", () => {
+    render(<AssessmentViewer assessment={{ ...assessment, findings: [{ ...assessment.findings[1]!, task_ids: [] }] }} brief={{ kind: "missing", cohort_label: null }}
+      result={{ kind: "missing", cohort_label: null }} cohortLabel="assay" isIntegration />);
+    expect(screen.queryByText("Linked to no task.")).toBeNull();
   });
 });

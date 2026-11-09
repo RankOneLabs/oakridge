@@ -18,6 +18,8 @@ import { mountSkillsRoutes } from "../skills/routes";
 import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./handlers/oakridge-proxy";
 import { mountLiveStreamRoutes } from "./handlers/live-stream";
 import { compressEventStream } from "./event-stream-compression";
+import { mountHealthRoutes, type ObservationServerConfig } from "./handlers/observation-health";
+import { mountObservationProxyRoutes } from "./handlers/observation-proxy";
 import {
   isRuntimeId,
   RUNTIME_EFFORTS,
@@ -51,6 +53,8 @@ export interface CreateAppDeps {
    * is not set. Undefined when no token is configured.
    */
   coreControlToken?: string;
+  /** The observation service and its server-held capabilities; null or absent when it is not deployed. */
+  observation?: ObservationServerConfig | null;
 }
 
 /**
@@ -67,6 +71,7 @@ export function createApp(deps: CreateAppDeps): Hono {
     config,
     authPolicy = { mode: "loopback" },
     coreControlToken,
+    observation = null,
   } = deps;
   const app = new Hono();
 
@@ -92,6 +97,13 @@ export function createApp(deps: CreateAppDeps): Hono {
   // storing it in JS-accessible state).
   app.post("/auth/cookie", makeCookieHandler(authPolicy));
   app.get("/auth/status", makeAuthStatusHandler(authPolicy));
+
+  // ---- health ----
+  //
+  // Mounted ahead of the per-session routes. Reports the observation component
+  // beside kbbl's own availability: an observation outage degrades this answer
+  // and never stops kbbl serving.
+  mountHealthRoutes(app, { config: observation });
 
   // ---- ACP per-session routes (§14) ----
   mountAcpPerSidRoutes(app, { acp });
@@ -153,6 +165,15 @@ export function createApp(deps: CreateAppDeps): Hono {
     coreControlToken,
     browserControlToken: authPolicy.mode === "token" ? authPolicy.token : undefined,
     fallbackRefreshMs: parseFallbackRefreshMs(process.env.OAKRIDGE_FALLBACK_REFRESH_MS),
+  });
+
+  // ---- Observation forwarding ----
+  //
+  // /oakridge/observation/* → the listed reads and the one write, each with the
+  // server-held capability it needs. An outage answers these routes and no other.
+  mountObservationProxyRoutes(app, {
+    observation,
+    browserControlToken: authPolicy.mode === "token" ? authPolicy.token : undefined,
   });
 
   // ---- /inbox (always-on snapshot stream over the ACP session list) ----

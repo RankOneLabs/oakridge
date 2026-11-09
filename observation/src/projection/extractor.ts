@@ -2,7 +2,9 @@ import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { extractionIssue, type ExtractionIssue } from "./issues";
 
 export type RelationType = "derived_from" | "addresses" | "assesses" | "supersedes" | "split_from" | "merged_from";
-export interface LinkReference {
+/** A reference to a selected item in a captured revision, resolved to its occurrence. */
+export interface OccurrenceLink {
+  readonly target: "occurrence";
   readonly type: RelationType;
   readonly target_artifact_kind: string;
   readonly target_item_kind: string;
@@ -12,6 +14,15 @@ export interface LinkReference {
   /** A shared id links revisions only when the prior item actually exists. */
   readonly if_present?: boolean;
 }
+/** A reference to a run-scoped logical item. It stays visible until that item is captured. */
+export interface LogicalItemLink {
+  readonly target: "logical_item";
+  readonly type: RelationType;
+  readonly target_scope: string;
+  readonly target_local_id: string;
+  readonly evidence_ref: string;
+}
+export type LinkReference = OccurrenceLink | LogicalItemLink;
 export interface SelectedItem {
   readonly item_kind: string;
   readonly item_selector: string;

@@ -5,7 +5,7 @@ import type { ParkedGate } from "../artifact-types";
 import { compositeId } from "../adapters/core";
 
 const assessment: Assessment = {
-  head_sha: null, verdict: "pass_with_notes", findings: [], test_evidence: null,
+  head_sha: "abc123", verdict: "pass_with_notes", findings: [], test_evidence: null,
   recommended_next_actions: [
     { id: "a", text: "Fix the first issue" },
     { id: "b", text: "Add coverage" },

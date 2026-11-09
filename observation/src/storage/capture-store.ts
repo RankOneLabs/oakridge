@@ -1,12 +1,11 @@
 import { sql, type Selectable } from "kysely";
 import type { JsonValue } from "../domain/primitives";
-import type { CaptureDelivery } from "../ingest/capture";
+import type { CaptureDelivery, CaptureEnvelope } from "../ingest/capture";
 import type { SourceEventAck, SourceEventCursor, SourceEventDelivery, SourceEventOutcome } from "../ingest/cursor";
 import { INITIAL_SOURCE_CURSOR } from "../ingest/cursor";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationSourceRevision } from "./db-types";
-import { projectRevisionInTransaction } from "./projection-store";
-import { storeHumanGradeInTransaction } from "./backfill-store";
+import { declareRelationInTransaction, lockSourceCursor, projectRevisionInTransaction, type ProjectionContext } from "./projection-store";
 
 export interface SourceRevisionRead {
   readonly id: string;
@@ -25,11 +24,11 @@ export interface SourceRevisionRead {
   readonly recorded_at: string;
   readonly captured_at: string;
 }
-export interface CaptureResponse { readonly source_revision: SourceRevisionRead }
-export interface ConflictResponse { readonly error: { readonly code: "revision_identity_conflict"; readonly revision_id: string; readonly stored_digest: string; readonly incoming_digest: string } }
-export type DeliveryResponse = CaptureResponse | ConflictResponse;
-export interface DeliveryOutcome { readonly status: 201 | 409; readonly body: DeliveryResponse }
-export interface CaptureHooks { readonly afterMirror?: () => Promise<void> }
+export type CaptureOutcome =
+  | { readonly kind: "captured" }
+  /** A later event repeated a revision already held with the same identity and content. */
+  | { readonly kind: "identical" }
+  | { readonly kind: "revision_identity_conflict"; readonly stored_digest: string; readonly incoming_digest: string };
 
 function sourceRead(row: Selectable<ObservationSourceRevision>): SourceRevisionRead {
   const id = `${row.producer}:${row.namespace}:${row.revision_id}`;
@@ -43,54 +42,25 @@ function sourceRead(row: Selectable<ObservationSourceRevision>): SourceRevisionR
     recorded_at: row.recorded_at.toISOString(), captured_at: row.captured_at.toISOString() };
 }
 
-function receiptOutcome(outcome: string, response: JsonValue): DeliveryOutcome {
-  return { status: outcome === "revision_identity_conflict" ? 409 : 201, body: response as unknown as DeliveryResponse };
-}
-
-export async function captureInTransaction(trx: DatabaseTransaction, delivery: CaptureDelivery, hooks: CaptureHooks = {}): Promise<DeliveryOutcome> {
-  const { source, body, body_digest, recorded_at } = delivery.envelope;
+/** A revision id names one immutable body: a repeat is harmless, a different body is refused. */
+export async function captureInTransaction(trx: DatabaseTransaction, delivery: CaptureDelivery): Promise<CaptureOutcome> {
+  const { source, body, body_digest, recorded_at }: CaptureEnvelope = delivery.envelope;
   const { producer, namespace } = source;
   const revision_id = delivery.local_revision_id;
   const prefix = `${producer}:${namespace}:`;
   const predecessor_id = source.predecessor_id?.slice(prefix.length) ?? null;
   const subject_id = source.subject_id?.slice(prefix.length) ?? null;
-  await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${producer}:${namespace}:request:${delivery.request_key}`}, 0))`.execute(trx);
-  const receipt = await trx.selectFrom("observation.ingest_receipt").selectAll()
-    .where("producer", "=", producer).where("namespace", "=", namespace).where("request_key", "=", delivery.request_key).executeTakeFirst();
-  if (receipt) return receiptOutcome(receipt.outcome, receipt.response);
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${producer}:${namespace}:revision:${revision_id}`}, 0))`.execute(trx);
   const existing = await trx.selectFrom("observation.source_revision").selectAll()
     .where("producer", "=", producer).where("namespace", "=", namespace).where("revision_id", "=", revision_id).executeTakeFirst();
-  if (existing?.body_digest === body_digest && existing.predecessor_id === predecessor_id && existing.subject_id === subject_id) {
-    const first = await trx.selectFrom("observation.ingest_receipt").selectAll()
-      .where("producer", "=", producer).where("namespace", "=", namespace).where("revision_id", "=", revision_id)
-      .where("outcome", "=", "captured").orderBy("recorded_at", "asc").executeTakeFirstOrThrow();
-    return receiptOutcome(first.outcome, first.response);
-  }
-  if (existing) {
-    const response: ConflictResponse = { error: { code: "revision_identity_conflict", revision_id: source.revision_id,
-      stored_digest: existing.body_digest, incoming_digest: body_digest } };
-    await trx.insertInto("observation.ingest_receipt").values({ producer, namespace, request_key: delivery.request_key,
-      revision_id, outcome: "revision_identity_conflict", response: jsonText(response as unknown as JsonValue),
-      stored_digest: existing.body_digest, incoming_digest: body_digest }).execute();
-    return { status: 409, body: response };
-  }
-  const row = await trx.insertInto("observation.source_revision").values({ producer, namespace, revision_id,
+  if (existing?.body_digest === body_digest && existing.predecessor_id === predecessor_id && existing.subject_id === subject_id)
+    return { kind: "identical" };
+  if (existing) return { kind: "revision_identity_conflict", stored_digest: existing.body_digest, incoming_digest: body_digest };
+  await trx.insertInto("observation.source_revision").values({ producer, namespace, revision_id,
     run_id: source.run_id, unit_id: source.unit_id, artifact_kind: source.artifact_kind,
     artifact_schema_version: source.artifact_schema_version, definition_id: source.definition_id, body: jsonText(body),
-    body_digest, predecessor_id, subject_id, recorded_at: new Date(recorded_at) })
-    .returningAll().executeTakeFirstOrThrow();
-  await hooks.afterMirror?.();
-  const response: CaptureResponse = { source_revision: sourceRead(row) };
-  await trx.insertInto("observation.ingest_receipt").values({ producer, namespace, request_key: delivery.request_key,
-    revision_id, outcome: "captured", response: jsonText(response as unknown as JsonValue),
-    stored_digest: body_digest, incoming_digest: body_digest }).execute();
-  return { status: 201, body: response };
-}
-
-export function captureDelivery(db: Database, delivery: CaptureDelivery, hooks: CaptureHooks = {}): Promise<DeliveryOutcome> {
-  const { producer, namespace } = delivery.envelope.source;
-  return withTenant(db, { producer, namespace }, (trx) => captureInTransaction(trx, delivery, hooks));
+    body_digest, predecessor_id, subject_id, recorded_at: new Date(recorded_at) }).execute();
+  return { kind: "captured" };
 }
 
 /** Every read runs with the credential's tenant context and an explicit tenant predicate. */
@@ -113,15 +83,28 @@ export function readSourceCursor(db: Database, tenant: TenantScope): Promise<Sou
   });
 }
 
-/** Bootstrap a new replay namespace at its recorded starting position; never rewind an existing cursor. */
-export function initializeSourceCursor(db: Database, tenant: TenantScope, cursor: SourceEventCursor): Promise<boolean> {
-  return withTenant(db, tenant, async (trx) => {
-    const row = await trx.insertInto("observation.source_event_cursor").values({ producer: tenant.producer, namespace: tenant.namespace,
-      commit_txid: sql<number>`${cursor.commit_txid}::bigint`, event_id: cursor.id })
-      .onConflict((conflict) => conflict.columns(["producer", "namespace"]).doNothing())
-      .returning("event_id").executeTakeFirst();
-    return row !== undefined;
-  });
+/** A declared source this service holds no item for: the relation cannot exist, and this keeps it visible. */
+export interface UnresolvedDeclaredSource { readonly source_revision_id: string; readonly item_path: string; readonly detail: string }
+/** What a delivered declaration projected to. Stored with the outcome, in the delivery's transaction. */
+export interface DeclarationProjection { readonly relation_ids: readonly string[]; readonly unresolved_sources: readonly UnresolvedDeclaredSource[] }
+export type StoredRelationDeclaration = Extract<SourceEventOutcome, { readonly kind: "relation_declaration" }> & { readonly projection: DeclarationProjection };
+
+/** The outcome a delivery records: a declaration's relations are written here, under the cursor lock
+ * and in the cursor's own transaction, so they and the advance commit or vanish together. */
+async function applyDeclaration(trx: DatabaseTransaction, tenant: TenantScope, outcome: Extract<SourceEventOutcome, { readonly kind: "relation_declaration" }>,
+  context: ProjectionContext): Promise<SourceEventOutcome | StoredRelationDeclaration> {
+  const declared = context.extraction.declaredRelations(outcome.declaration, outcome.run_id);
+  if (!declared.ok) return { format: outcome.format, definition_id: outcome.definition_id, artifact_schema_version: outcome.artifact_schema_version,
+    kind: "unmapped", event_kind: outcome.event_kind, run_id: outcome.run_id, event_id: outcome.event_id,
+    reason: `${declared.error.entity_id}: ${declared.error.detail}` };
+  const relation_ids = new Set<string>();
+  const unresolved_sources: UnresolvedDeclaredSource[] = [];
+  for (const declaration of declared.value) {
+    const applied = await declareRelationInTransaction(trx, tenant, declaration);
+    if (applied.ok) relation_ids.add(applied.value);
+    else unresolved_sources.push({ source_revision_id: declaration.source_revision_id, item_path: declaration.item_path, detail: applied.error.detail });
+  }
+  return { ...outcome, projection: { relation_ids: [...relation_ids], unresolved_sources } };
 }
 
 export interface SourceEventConflict { readonly error: { readonly code: "cursor_conflict"; readonly cursor: SourceEventCursor } }
@@ -131,59 +114,49 @@ const afterCursor = (left: SourceEventCursor, right: SourceEventCursor): boolean
   BigInt(left.commit_txid) > BigInt(right.commit_txid) || left.commit_txid === right.commit_txid && left.id > right.id;
 
 /** Store the outcome and advance the tenant cursor in the same transaction. */
-export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: SourceEventDelivery): Promise<SourceEventDeliveryResult> {
+export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: SourceEventDelivery,
+  context: ProjectionContext): Promise<SourceEventDeliveryResult> {
   return withTenant(db, tenant, async (trx) => {
-    await sql`INSERT INTO observation.source_event_cursor (producer, namespace) VALUES (${tenant.producer}, ${tenant.namespace})
-      ON CONFLICT DO NOTHING`.execute(trx);
-    const selected = await sql<SourceEventCursor>`SELECT commit_txid::text AS commit_txid, event_id AS id
-      FROM observation.source_event_cursor WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} FOR UPDATE`.execute(trx);
-    const current = selected.rows[0] ?? INITIAL_SOURCE_CURSOR;
-    if (!sameCursor(current, delivery.previous)) {
-      return { status: 409, body: { error: { code: "cursor_conflict", cursor: current } } };
-    }
-    if (!afterCursor(delivery.cursor, current)) return { status: 409, body: { error: { code: "cursor_conflict", cursor: current } } };
-    const outcome: SourceEventOutcome = delivery.outcome;
-    if (outcome.kind === "artifact_revision") {
+    const current = await lockSourceCursor(trx, tenant);
+    const conflict: SourceEventDeliveryResult = { status: 409, body: { error: { code: "cursor_conflict", cursor: current } } };
+    if (!sameCursor(current, delivery.previous) || !afterCursor(delivery.cursor, current)) return conflict;
+    let outcome: SourceEventOutcome | StoredRelationDeclaration = delivery.outcome;
+    if (outcome.kind === "relation_declaration") outcome = await applyDeclaration(trx, tenant, outcome, context);
+    else if (outcome.kind === "artifact_revision") {
       const source = outcome.revision.source;
-      if (source.producer !== tenant.producer || source.namespace !== tenant.namespace || source.run_id !== outcome.run_id)
-        return { status: 409, body: { error: { code: "cursor_conflict", cursor: current } } };
-      const result = await captureInTransaction(trx, { request_key: outcome.event_id, envelope: outcome.revision,
-        local_revision_id: source.revision_id.slice(`${tenant.producer}:${tenant.namespace}:`.length) });
-      if (result.status !== 201) return { status: 409, body: { error: { code: "cursor_conflict", cursor: current } } };
-      await projectRevisionInTransaction(trx, tenant, source.revision_id.slice(`${tenant.producer}:${tenant.namespace}:`.length));
+      if (source.producer !== tenant.producer || source.namespace !== tenant.namespace || source.run_id !== outcome.run_id) return conflict;
+      const local_revision_id = source.revision_id.slice(`${tenant.producer}:${tenant.namespace}:`.length);
+      const captured = await captureInTransaction(trx, { envelope: outcome.revision, local_revision_id });
+      if (captured.kind === "revision_identity_conflict") return conflict;
+      await projectRevisionInTransaction(trx, tenant, local_revision_id, context);
     }
     await trx.insertInto("observation.source_event_outcome").values({ producer: tenant.producer, namespace: tenant.namespace,
       event_id: outcome.event_id, run_id: outcome.run_id, commit_txid: sql<number>`${delivery.cursor.commit_txid}::bigint`,
       event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: jsonText(outcome as unknown as JsonValue) })
-      .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
-    if (outcome.kind === "human_grade") {
-      await storeHumanGradeInTransaction(trx, tenant, outcome);
-      await trx.insertInto("observation.source_human_grade").values({ producer: tenant.producer, namespace: tenant.namespace,
-        event_id: outcome.event_id, run_id: outcome.run_id, unit_id: outcome.unit, review: outcome.review,
-        decision: outcome.decision, target_revision_id: outcome.target, evaluator_kind: "human",
-        feedback: jsonText(outcome.feedback as JsonValue) })
-        .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
-    }
+      .onConflict((target) => target.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
     await sql`UPDATE observation.source_event_cursor SET commit_txid = ${delivery.cursor.commit_txid}::bigint, event_id = ${delivery.cursor.id}
       WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx);
     return { status: 200, body: { cursor: delivery.cursor } };
   });
 }
 
-export function readUnmappedSourceEvents(db: Database, tenant: TenantScope): Promise<readonly SourceEventOutcome[]> {
+/** The declarations delivered for one run, oldest first, each with what it projected to. */
+export function readRelationDeclarations(db: Database, tenant: TenantScope, run_id: string): Promise<readonly StoredRelationDeclaration[]> {
   return withTenant(db, tenant, async (trx) => {
     const rows = await trx.selectFrom("observation.source_event_outcome").select("detail")
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("outcome_kind", "=", "unmapped").orderBy("commit_txid").orderBy("event_id").execute();
-    return rows.map((row) => row.detail as unknown as SourceEventOutcome);
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("run_id", "=", run_id)
+      .where("outcome_kind", "=", "relation_declaration").orderBy("commit_txid").orderBy("event_id").execute();
+    return rows.map((row) => row.detail as unknown as StoredRelationDeclaration);
   });
 }
 
-export function readSourceHumanGrades(db: Database, tenant: TenantScope): Promise<readonly SourceEventOutcome[]> {
+export interface UnmappedPage { readonly items: readonly SourceEventOutcome[]; readonly total: number; readonly limit: number; readonly offset: number }
+export function readUnmappedSourceEvents(db: Database, tenant: TenantScope, page: { readonly limit: number; readonly offset: number }): Promise<UnmappedPage> {
   return withTenant(db, tenant, async (trx) => {
-    const rows = await trx.selectFrom("observation.source_event_outcome").select("detail")
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("outcome_kind", "=", "human_grade").orderBy("commit_txid").orderBy("event_id").execute();
-    return rows.map((row) => row.detail as unknown as SourceEventOutcome);
+    const unmapped = trx.selectFrom("observation.source_event_outcome").where("producer", "=", tenant.producer)
+      .where("namespace", "=", tenant.namespace).where("outcome_kind", "=", "unmapped");
+    const count = await unmapped.select((eb) => eb.fn.countAll<string>().as("count")).executeTakeFirstOrThrow();
+    const rows = await unmapped.select("detail").orderBy("commit_txid").orderBy("event_id").limit(page.limit).offset(page.offset).execute();
+    return { items: rows.map((row) => row.detail as unknown as SourceEventOutcome), total: Number(count.count), ...page };
   });
 }

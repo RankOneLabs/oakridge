@@ -8,6 +8,10 @@ Review this repository's integration pull request. Accept it once you are satisf
 
 {{cohorts}}
 
+## The task obligations
+
+{{briefs}}
+
 ## The pull request
 
 {{pr}}
@@ -19,3 +23,5 @@ Review this repository's integration pull request. Accept it once you are satisf
 ## What the forge reports
 
 {{pr_state}}
+
+The briefs above are this repository's task obligations. Check that the assessment covers every distinct task id in them, on the integration branch and with the contributions of every cohort sharing that id. Findings carry `task_ids`: several findings for one task, several tasks on one finding and `task_ids: []` are all valid. The assessment has no build result subject.

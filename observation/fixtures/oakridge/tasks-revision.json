@@ -1,0 +1,4 @@
+{ "tasks": [
+  { "id": "T7", "description": "Handle the case in both services", "requirement_ids": ["req-a"] },
+  { "id": "T8", "description": "Document the behavior", "requirement_ids": [] }
+] }

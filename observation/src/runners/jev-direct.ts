@@ -1,8 +1,12 @@
 import { z } from "zod";
 import { err, ok, type JsonValue } from "../domain/primitives";
+import { providerEvidence } from "../grading/evidence";
+import type { QuestionDefinition } from "../grading/question";
 import type { GradingContext, GradingError, ProviderFailureCategory, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
-import { gradingLimits } from "../grading/jobs/budget";
+
+/** How long a provider call may run when its runner is built without an explicit deadline. */
+export const DEFAULT_PROVIDER_DEADLINE_MS = 30_000;
 
 const probability = z.number().finite().min(0).max(1);
 const probabilities = z.record(z.string(), probability);
@@ -31,6 +35,23 @@ export const systemOneResponseSchema = z.object({ model: z.string().min(1),
   cost: z.number().finite().nonnegative().optional(),
   id: z.string().min(1).optional(), provider_link: z.url().optional() }).catchall(z.json());
 
+const RESPONSE_KIND_FOR_TYPE = { choice: "choice", score: "structured", noul: "numeric" } as const;
+
+/** Why configured System One instructions cannot ask this question, or null when they can. A
+ * choice recipe's criteria must name exactly the question's allowed answers. */
+export function systemOneInstructionProblem(instructions: JsonValue, question: QuestionDefinition): string | null {
+  const recipe = systemOneRecipeSchema.safeParse(instructions);
+  if (!recipe.success) return "instructions must be a System One recipe";
+  const asked = recipe.data.system_one;
+  if (RESPONSE_KIND_FOR_TYPE[asked.type] !== question.response_kind)
+    return `a ${asked.type} recipe cannot answer a ${question.response_kind} question`;
+  if (asked.type !== "choice") return null;
+  const options = Object.keys(asked.criteria).toSorted();
+  const allowed = (question.allowed_values ?? []).map(String).toSorted();
+  return options.length === allowed.length && options.every((option, index) => option === allowed[index]) ? null
+    : `criteria must name exactly ${allowed.join(", ")}`;
+}
+
 export type SystemOneTransport = (url: string, init: RequestInit) => Promise<Response>;
 export interface SystemOneRunnerConfig {
   readonly operation: string;
@@ -56,7 +77,7 @@ export function systemOneRequest(context: GradingContext): ReturnType<typeof sys
   const state: Record<string, JsonValue> = { ...recipe.data.state_fields };
   for (const reference of context.evidence.references) {
     if (Object.hasOwn(state, reference.ref)) return systemOneRequestSchema.safeParse(null);
-    state[reference.ref] = reference.content;
+    state[reference.ref] = providerEvidence(reference);
   }
   return systemOneRequestSchema.safeParse({ model: context.evaluator.model, state,
     questions: { [context.question.question_id]: recipe.data.system_one } });
@@ -80,8 +101,7 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
       || (question.type === "score" && context.question.response_kind !== "structured")
       || (question.type === "noul" && context.question.response_kind !== "numeric"))
       return failure(context, config.operation, "question response kind does not match System One type", "invalid_request");
-    const unclear_choice = question.type === "choice" ? unclearChoice(context) : null;
-    if (question.type === "choice" && unclear_choice === null)
+    if (question.type === "choice" && unclearChoice(context) === null)
       return failure(context, config.operation, "question unclear semantics must name exactly one allowed choice",
         "invalid_unclear_designation");
     let response: Response;
@@ -119,11 +139,8 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
         return failure(context, config.operation, "provider choice distribution omits an option",
           "invalid_response", parsed.data.id, parsed.data.cost);
     }
-    const is_unclear = answer.type === "choice" && answer.choice === unclear_choice;
     const mapped = answer.type === "choice"
-      ? { answer: is_unclear
-        ? { state: "unclear", kind: "choice", reason: answer.choice } as const
-        : { state: "answered", kind: "choice", value: answer.choice } as const,
+      ? { answer: { state: "answered", kind: "choice", value: answer.choice } as const,
         probabilities: answer.probabilities, confidence: answer.confidence }
       : answer.type === "score"
         ? { answer: { state: "answered", kind: "structured", value: {
@@ -150,5 +167,5 @@ export interface JevDirectConfig {
 }
 export function createJevDirectRunner(config: JevDirectConfig): GradeRunner {
   return createSystemOneRunner({ operation: "jev_direct", ...config,
-    deadline_ms: config.deadline_ms ?? gradingLimits().provider_deadline_ms });
+    deadline_ms: config.deadline_ms ?? DEFAULT_PROVIDER_DEADLINE_MS });
 }

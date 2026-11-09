@@ -10,7 +10,7 @@ if [[ "$suite" == integration && -z "${OAKRIDGE_TEST_DATABASE_URL:-}" ]]; then
   exit 2
 fi
 # Integration files run against a real PostgreSQL server: each creates and drops its own scratch database.
-integration=' carrier-stop collaboration-store commit commit-atomicity concurrent-decisions definition-cutover development-e2e event-stream executor-e2e executor-restart executor-store fresh-boot ingress migrate observation-backfill observation-event-order observation-process-restart observation-publisher  ops-live periodic-workers read-models read-store review-collections operator-store run-deletion '
+integration=' analysis-link-declaration carrier-stop collaboration-store commit commit-atomicity concurrent-decisions definition-cutover development-e2e event-stream executor-e2e executor-restart executor-store fresh-boot ingress migrate observation-event-order observation-process-restart observation-publisher  ops-live periodic-workers read-models read-store review-collections operator-store run-deletion '
 mapfile -d '' files < <(find src tests -name '*.test.ts' -print0 | sort -z)
 selected=()
 for file in "${files[@]}"; do
