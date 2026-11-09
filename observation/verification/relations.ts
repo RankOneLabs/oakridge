@@ -80,7 +80,7 @@ async function itemFacts(io: ProofIo, occurrence_id: string): Promise<RelationCh
   return { occurrence_id, occurrence: await served(io, `/v1/items/${id}`), evidence: await served(io, `/v1/items/${id}/evidence`),
     grades: await served(io, `/v1/items/${id}/grades?limit=200`), measurements: await served(io, `/v1/items/${id}/status?limit=200&machine_limit=200&attempts_limit=200&answers_limit=200&superseded_answers_limit=200&references_limit=200&pinned_evaluators_limit=200&links_limit=200`) };
 }
-async function authorityEvents(io: ProofIo, run_id: string): Promise<number | null> {
+export async function authorityEvents(io: ProofIo, run_id: string): Promise<number | null> {
   if (!/^[\w.:/-]+$/.test(run_id)) return null;
   const counted = await io.shadowQuery(io.state.postgres.authority_database, `SELECT count(*) FROM authority.event WHERE run_id = '${run_id}'`);
   return counted.ok ? Number(counted.value) : null;

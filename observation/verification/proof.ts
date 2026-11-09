@@ -9,6 +9,7 @@
  *   bun observation/verification/proof.ts registration --input <file>
  *   bun observation/verification/proof.ts grading --input <file>
  *   bun observation/verification/proof.ts relations --input <file> --shared-input <file>
+ *   bun observation/verification/proof.ts workspace --input <file>
  *
  * Exits zero only when the requested scenario passed. The report is written
  * either way, so a failure keeps its diagnostics.
@@ -26,6 +27,7 @@ import { registryRunners } from "../src/grading/worker";
 import { openDatabase } from "../src/storage/database";
 import { gradingScenario, providerSettings, type GradingSource } from "./grading";
 import { relationsScenario, type RelationsSource } from "./relations";
+import { workspaceScenario } from "./workspace";
 import { liveScenario, runtimeScenario } from "./scenarios";
 import { createDisposableRepository, createShadowIo, readLauncherState, readSourceIdentity, type ProofIo } from "./shadow-session";
 import { sourceRunInputSchema, sourceRunScenario, type SourceRunInput, type SourceRunTarget } from "./source-run";
@@ -145,8 +147,8 @@ function relationsSource(io: ProofIo, grading: GradingSource, shared_input: Sour
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { input: { type: "string" }, "shared-input": { type: "string" }, through: { type: "string" } } });
   const [command] = positionals;
-  if (command !== "runtime" && command !== "live" && command !== "source-run" && command !== "registration" && command !== "grading" && command !== "relations") {
-    console.error("usage: proof.ts runtime | live | source-run --input <file> [--through analysis|plan|brief|assessment] | registration --input <file> | grading --input <file> | relations --input <file> --shared-input <file>");
+  if (command !== "runtime" && command !== "live" && command !== "source-run" && command !== "registration" && command !== "grading" && command !== "relations" && command !== "workspace") {
+    console.error("usage: proof.ts runtime | live | source-run --input <file> [--through analysis|plan|brief|assessment] | registration --input <file> | grading --input <file> | relations --input <file> --shared-input <file> | workspace --input <file>");
     return 2;
   }
   const proof_id = `${command}-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
@@ -170,6 +172,7 @@ async function main(): Promise<number> {
     const input = sourceRunInputSchema.parse(await Bun.file(values.input).json());
     if (command === "registration") return registrationScenario(io, await registrationSource(io, input, directory, proof_id));
     if (command === "grading") return gradingScenario(io, await gradingSource(io, input, directory, proof_id));
+    if (command === "workspace") return workspaceScenario(io, { ...await gradingSource(io, input, directory, proof_id), directory });
     if (command === "relations") {
       if (!values["shared-input"]) throw new Error("relations needs --shared-input");
       const shared = sourceRunInputSchema.parse(await Bun.file(values["shared-input"]).json());

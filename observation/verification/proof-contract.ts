@@ -29,7 +29,7 @@ export type ObservationStatus = z.infer<typeof observationStatusSchema>;
 export interface ProofFailure { readonly operation: string; readonly entity_id: string; readonly detail: string }
 export interface ProofCheck { readonly name: string; readonly passed: boolean; readonly detail: string }
 export type ScenarioStatus = "passed" | "failed" | "not_run";
-export type ScenarioId = "runtime" | "live" | "source-run" | "registration" | "grading" | "relations";
+export type ScenarioId = "runtime" | "live" | "source-run" | "registration" | "grading" | "relations" | "workspace";
 
 export interface RunReference { readonly run_id: string; readonly definition_id: string }
 /** Position in the ordered feed, as the authority and the service each report it. */
@@ -211,6 +211,35 @@ export interface RelationsReadback {
   readonly declarations: readonly unknown[];
   readonly reads: { readonly [read: string]: unknown };
 }
+/** One submission as kbbl answered it. */
+export interface HumanSubmissionReadback {
+  readonly label: string;
+  readonly status: number;
+  readonly code: string | null;
+  readonly submission_id: string;
+  readonly reviewer_id: string | null;
+  readonly observation_id: string | null;
+  readonly execution_id: string | null;
+  readonly evidence_set_id: string | null;
+  readonly corrects_observation_id: string | null;
+}
+/** What must not move when a reviewer answers. */
+export interface GradingCounts { readonly observations: number; readonly executions: number; readonly requests_sent: number; readonly authority_events: number | null }
+/** The operator proof's item, its real provider answer and every human answer around it, each as actually served. */
+export interface WorkspaceReadback {
+  readonly source_run_id: string | null;
+  readonly source_revision_id: string | null;
+  readonly item_path: string | null;
+  readonly occurrence_id: string | null;
+  readonly question_id: string | null;
+  readonly evidence_set_id: string | null;
+  readonly machine: { readonly evaluator_definition_id: string; readonly execution_id: string | null; readonly observation_id: string | null; readonly attempts: readonly unknown[] } | null;
+  readonly submissions: readonly HumanSubmissionReadback[];
+  readonly counts: { readonly [checkpoint: string]: GradingCounts };
+  readonly composite: unknown;
+  readonly browser: { readonly steps: readonly ProofCheck[]; readonly screenshots: readonly string[] };
+  readonly definition_scan: { readonly scanned: number; readonly with_discarded_field: readonly string[] };
+}
 export interface AuthorityCount { readonly events_before: number | null; readonly events_after: number | null }
 /** A scenario's evidence. Each list holds actual ids read back from the running services. */
 export interface ScenarioEvidence {
@@ -235,10 +264,11 @@ export interface ScenarioEvidence {
   readonly launch_configs: readonly LaunchConfigReadback[];
   readonly second_worker: SecondWorkerReadback | null;
   readonly relations: RelationsReadback | null;
+  readonly workspace: WorkspaceReadback | null;
 }
 export const NO_EVIDENCE: ScenarioEvidence = { runs: [], capture: null, run_capture: null, authority: null, source_revisions: [], item_paths: [],
   pinned_definitions: [], execution_ids: [], provider_attempt_ids: [], observation_ids: [], provider_request_count: null, pwa_readback: [],
-  registrations: [], pins: [], frozen_evidence: [], measurements: [], spend: [], launch_configs: [], second_worker: null, relations: null };
+  registrations: [], pins: [], frozen_evidence: [], measurements: [], spend: [], launch_configs: [], second_worker: null, relations: null, workspace: null };
 
 export interface ScenarioReport {
   readonly id: ScenarioId;
@@ -253,8 +283,6 @@ export const PENDING_SCENARIOS: readonly PendingScenario[] = [
     reason: "A real run reaches two cohorts' assessments here, with revised plan and briefs, and reads integration as pending. Publishing integration needs each cohort "
       + "complete: an operator's acceptance of its assessment and confirmation of a merge. This proof does not make those decisions on its own, so integration final is read only on the "
       + "supplementary synthetic matrix until an operator decides whether a verification run may." },
-  { id: "first-assessment-finding-end-to-end", owner: "operator-item-workspace" },
-  { id: "human-grading-and-pwa-readback", owner: "operator-item-workspace" },
   { id: "same-finding-correctness-awaits-subject-build", owner: "operator",
     reason: "Correctness alone waits only when an assessment names a subject build observation has not captured. Live assessments are "
       + "published with subject null, and the ordered feed captures any named subject before its assessment, so a real run cannot "
