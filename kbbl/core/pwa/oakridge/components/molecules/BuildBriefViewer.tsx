@@ -6,6 +6,7 @@ import { isBuildBrief } from "../../lib/build-brief";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { EditableBriefText } from "./EditableBriefText";
 import { ExpandableText } from "./ExpandableText";
+import { TaskIdLink } from "./TaskIdLink";
 
 type Editor = NonNullable<ViewerProps["edit"]> | null;
 
@@ -50,7 +51,7 @@ function ReasonedItem({ anchor, headline, reason, editor, id, decisionIds }: Rea
   );
 }
 
-export function BuildBriefViewer({ body, edit }: ViewerProps) {
+export function BuildBriefViewer({ body, edit, onOpenTask }: ViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
 
   if (!isBuildBrief(body)) {
@@ -135,12 +136,12 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
         ) : <EmptyNote>No rejected approaches.</EmptyNote>}
       </ArtifactSection>
 
-      <ArtifactSection title={`Acceptance criteria (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
+      <ArtifactSection title={`Tasks (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
         {body.acceptance_criteria.length > 0 ? (
           <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
             {body.acceptance_criteria.map((criterion, index) => (
               <li key={index}>
-                <code className="or-code mr-2">{criterion.id}</code>
+                <span className="mr-2"><TaskIdLink task_id={criterion.id} text={criterion.text} onOpenTask={onOpenTask} /></span>
                 <BriefText anchor={`/acceptance_criteria/${index}/text`} value={criterion.text} editor={editor} className="text-sm text-[var(--text-secondary)]" />
                 {criterion.decision_ids.length > 0 && (
                   <span className="block text-xs text-[var(--text-muted)]">
@@ -150,7 +151,7 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
               </li>
             ))}
           </ol>
-        ) : <EmptyNote>No acceptance criteria listed.</EmptyNote>}
+        ) : <EmptyNote>No tasks listed.</EmptyNote>}
       </ArtifactSection>
     </article>
   );

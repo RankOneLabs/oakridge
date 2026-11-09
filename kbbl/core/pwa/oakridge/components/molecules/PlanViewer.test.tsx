@@ -84,7 +84,7 @@ describe("PlanViewer", () => {
     const task = (id: string) => ({ id, text: `Task ${id}`, decision_ids: [] });
     render(<PlanViewer onOpenTask={onOpenTask} body={{ ...body, cohorts: [{ ...cohort("api", ["core"]), acceptance_criteria: [task("T1"), task("T2")] },
       { ...cohort("core"), acceptance_criteria: [task("T1"), task("T3")] }] }} />);
-    const tasksOf = (id: string) => within(screen.getAllByTestId("or-plan-cohort").find((card) => card.getAttribute("data-cohort-id") === id)!).getAllByTestId("or-plan-cohort-task");
+    const tasksOf = (id: string) => within(screen.getAllByTestId("or-plan-cohort").find((card) => card.getAttribute("data-cohort-id") === id)!).getAllByTestId("or-task-link");
     expect(tasksOf("api").map((chip) => chip.getAttribute("data-task-id"))).toEqual(["T1", "T2"]);
     expect(tasksOf("core").map((chip) => chip.getAttribute("data-task-id"))).toEqual(["T1", "T3"]);
     fireEvent.click(tasksOf("api")[0]!);
@@ -94,7 +94,7 @@ describe("PlanViewer", () => {
 
   test("without task navigation a cohort's tasks are listed but open nothing", () => {
     render(<PlanViewer body={{ ...body, cohorts: [{ ...cohort("core"), acceptance_criteria: [{ id: "T1", text: "t", decision_ids: [] }] }] }} />);
-    expect(screen.getByTestId("or-plan-cohort-task").tagName).toBe("CODE");
+    expect(screen.getByTestId("or-task-link").tagName).toBe("CODE");
   });
 
   test("refuses a bare-string risk, naming the entry", () => {

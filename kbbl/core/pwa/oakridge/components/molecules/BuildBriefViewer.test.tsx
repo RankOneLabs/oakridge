@@ -59,6 +59,13 @@ describe("BuildBriefViewer", () => {
     expect(onEdit.mock.calls.map((call) => call[0])).toEqual(["/decisions_made/0/decision", "/approaches_rejected/0/reason", "/acceptance_criteria/0/text"]);
   });
 
+  test("lists its tasks by id and opens one as the same task the plan opens", () => {
+    const onOpenTask = vi.fn();
+    render(<BuildBriefViewer body={{ ...body, acceptance_criteria: [{ id: "T1", text: "Shared task.", decision_ids: [] }] }} onOpenTask={onOpenTask} />);
+    fireEvent.click(screen.getByTestId("or-task-link"));
+    expect(onOpenTask).toHaveBeenCalledWith("T1");
+  });
+
   test("reads as text until the operator turns on editing", () => {
     render(<BuildBriefViewer body={body} edit={{ enabled: true, isPending: false, onEdit: vi.fn() }} />);
     expect(screen.queryByRole("button", { name: "Edit goal" })).toBeNull();

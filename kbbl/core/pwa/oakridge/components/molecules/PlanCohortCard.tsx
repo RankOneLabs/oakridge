@@ -5,6 +5,7 @@ import type { PlanCohort } from "../../lib/plan";
 import type { CohortId } from "../../run-types";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
+import { TaskIdLink } from "./TaskIdLink";
 
 interface Props {
   cohort: PlanCohort;
@@ -21,10 +22,7 @@ function CohortTasks({ cohort, onOpenTask }: { cohort: PlanCohort; onOpenTask?: 
   return (
     <div className="flex flex-wrap items-center gap-1.5" data-testid="or-plan-cohort-tasks">
       <span className={artifactLabelClass}>Tasks</span>
-      {cohort.acceptance_criteria.map(({ id, text }) => onOpenTask
-        ? <Button key={id} variant="secondary" size="xsmall" className="font-mono! text-xs!" title={text} aria-label={`Open task ${id}`} data-testid="or-plan-cohort-task" data-task-id={id}
-            onClick={() => onOpenTask(id)}>{id}</Button>
-        : <code key={id} className="or-code" title={text} data-testid="or-plan-cohort-task" data-task-id={id}>{id}</code>)}
+      {cohort.acceptance_criteria.map(({ id, text }) => <TaskIdLink key={id} task_id={id} text={text} onOpenTask={onOpenTask} />)}
     </div>
   );
 }
