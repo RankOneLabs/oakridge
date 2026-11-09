@@ -26,6 +26,8 @@ import { ArtifactReviewShell } from "./ArtifactReviewShell";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { selectStatusTone } from "../../lib/status-tone";
+import { ItemGradeAction } from "./ItemGradeAction";
+import { ShowAutomaticGrades } from "./ShowAutomaticGrades";
 
 /**
  * The review owns no navigation of its own.
@@ -224,6 +226,10 @@ export function ArtifactReview({ artifactId, onOpenItem }: ArtifactReviewProps) 
               } : undefined}
               gate={artifactGate && revIdx === revisions.length - 1 ? artifactGate : undefined}
               onOpenItem={onOpenItem}
+              itemGrading={onOpenItem ? {
+                renderItemAction: (selection) => <ItemGradeAction runId={artifact.run_id} selection={selection} onOpenItem={onOpenItem} />,
+                renderShowAll: (selections) => <ShowAutomaticGrades selections={selections} />,
+              } : undefined}
             />
           ) : (
             <ArtifactJsonRevisionPanel revision={revision} descriptor={artifact.review} />

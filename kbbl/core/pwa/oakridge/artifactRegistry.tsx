@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./artifact-types";
 import type { EditOutcome } from "./lib/edit-outcome";
 import type { ItemSelection } from "./grading-types";
@@ -26,6 +26,15 @@ export interface ViewerProps {
   gate?: ParkedGate;
   /** Opens the shared item panel. A finding needs only its revision and path: no task, cohort or review. */
   onOpenItem?: (selection: ItemSelection) => void;
+  /** Grading controls a stateful parent renders for a viewer's findings; without them a finding offers only Grade. */
+  itemGrading?: ItemGradingSlots;
+}
+
+export interface ItemGradingSlots {
+  /** One finding's control: its Grade button with the operator's own progress, and its automatic grades when revealed. */
+  renderItemAction: (selection: ItemSelection) => ReactNode;
+  /** One control over every finding on screen. */
+  renderShowAll: (selections: readonly ItemSelection[]) => ReactNode;
 }
 
 interface RegistryEntry {

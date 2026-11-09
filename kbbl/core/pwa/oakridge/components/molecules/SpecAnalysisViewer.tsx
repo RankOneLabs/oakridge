@@ -4,7 +4,7 @@ import { Chip } from "../../../components/atoms/Chip";
 import type { ViewerProps } from "../../artifactRegistry";
 import { isSpecAnalysis, selectSpecAnalysisView, selectUpdateFindings, type SpecAnalysis, type SpecBlocker, type SpecAnalysisTally, type SpecUpdate } from "../../lib/spec-analysis";
 import { selectStatusTone, type StatusToneSource } from "../../lib/status-tone";
-import { selectItemSelection } from "../../lib/grading";
+import { selectFindingSelections, selectItemSelection } from "../../lib/grading";
 import { GradeItemButton } from "./GradeItemButton";
 import { ArtifactSection } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
@@ -78,12 +78,15 @@ function UpdateFindingLinks({ update, analysis }: { update: SpecUpdate; analysis
   </div>;
 }
 
-export function SpecAnalysisViewer({ body, source, onOpenItem }: ViewerProps) {
+export function SpecAnalysisViewer({ body, source, onOpenItem, itemGrading }: ViewerProps) {
   if (!isSpecAnalysis(body)) {
     return <div className="or-error" role="alert">This spec analysis does not match the registered contract.</div>;
   }
   const view = selectSpecAnalysisView(body);
-  const gradeAction = (item_path: string) => <GradeItemButton selection={selectItemSelection(source, item_path)} onOpenItem={onOpenItem} />;
+  const gradeAction = (item_path: string) => {
+    const selection = selectItemSelection(source, item_path);
+    return selection && itemGrading ? itemGrading.renderItemAction(selection) : <GradeItemButton selection={selection} onOpenItem={onOpenItem} />;
+  };
 
   return (
     <article className="flex flex-col gap-5" data-testid="or-spec-analysis-viewer">
@@ -91,6 +94,7 @@ export function SpecAnalysisViewer({ body, source, onOpenItem }: ViewerProps) {
         <p className="text-sm leading-relaxed text-[var(--text-primary)]">{body.summary}</p>
         {body.source_spec_refs.length > 0 && <SourceRefs refs={body.source_spec_refs} />}
         <TallyRow tally={view.tally} />
+        {itemGrading?.renderShowAll(selectFindingSelections(source, view.findings.map((finding) => finding.item_path)))}
       </header>
 
       <BlockerCallout blockers={view.blockers} gradeAction={gradeAction} />

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
-import type { AnswerRead, EvidenceReference, MeasurementState, Paged, StageComposite, SubmissionAcknowledgment } from "../grading-types";
+import type { AnswerRead, EvidenceReference, MeasurementState, Paged, QuestionStatus, StageComposite, SubmissionAcknowledgment } from "../grading-types";
+import { itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
-import { answerTone, itemSelectionKey, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, stagePublicationLabel, taskLinkLabel } from "./grading";
+import { answerTone, gradeActionLabel, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, stagePublicationLabel, taskLinkLabel } from "./grading";
 
 const empty = <Item,>(): Paged<Item> => ({ items: [], total: 0, limit: 50, offset: 0 });
 const answer = (observation_id: string, supersedes_observation_id: string | null = null): AnswerRead => ({ observation_id, execution_id: observation_id, occurrence_id: "o", evidence_set_id: "e",
@@ -110,4 +111,33 @@ test("an item reads by its description, and says so when it has none", () => {
 test("an unresolved link says so", () => {
   expect(taskLinkLabel({ state: "unresolved", producer_local_id: "T9", unresolved_target_ref: "logical_item:task:T9", relation_id: "r", evidence_ref: "e" })).toBe("T9 (unresolved)");
   expect(taskLinkLabel({ state: "resolved", producer_local_id: "T1", logical_item_id: "l", relation_id: "r", evidence_ref: "e" })).toBe("T1");
+});
+
+describe("artifact glances", () => {
+  const ready = { state: "ready" } as const;
+  const question = (question_id: string, overrides: Partial<QuestionStatus> = {}): QuestionStatus => ({ ...supportQuestion(), question: { ...supportQuestion().question, question_id }, ...overrides });
+  const own = (question_id: string) => reviewerAnswer(`own-${question_id}`, "supports", "operator", { question: { question_id, question_version: "1" } });
+  test("Grade until every question the operator can answer has their answer, then Graded", () => {
+    const partly = itemStatus([question("a", { answers: paged([own("a")]) }), question("b", { answers: paged([reviewerAnswer("x", "unclear", "someone-else")]) })]);
+    const fully = itemStatus([question("a", { answers: paged([own("a")]) }), question("b", { answers: paged([own("b")]) })]);
+    expect([selectOwnGradeProgress(partly, "operator"), gradeActionLabel(selectOwnGradeProgress(partly, "operator"))]).toEqual([{ kind: "open", answered: 1, total: 2 }, "Grade"]);
+    expect([selectOwnGradeProgress(fully, "operator"), gradeActionLabel(selectOwnGradeProgress(fully, "operator"))]).toEqual([{ kind: "graded", total: 2 }, "Graded"]);
+  });
+  test("a question with no human evaluator is not waiting on the operator", () => {
+    const status = itemStatus([question("a", { answers: paged([own("a")]), human: ready }), question("b", { human: { state: "no_human_evaluator" } })]);
+    expect(gradeActionLabel(selectOwnGradeProgress(status, "operator"))).toBe("Graded");
+  });
+  test("one glyph per automatic evaluator and question, an actual negative answer apart from failed and waiting work", () => {
+    const status = itemStatus([
+      question("assessment_finding.evidence_support"),
+      question("assessment_finding.correctness", { machine: paged([machine({ state: "failed", terminal_cause: null, error: "boom" }), machine({ state: "budget_deferred" }), machine({ state: "pending", status: "queued" })]) }),
+    ]);
+    expect(selectAutomaticGlances(status).map(({ glyph, label }) => [glyph, label])).toEqual([
+      ["negative", "Evidence support: does not support"], ["failed", "Correctness: Failed"], ["budget_deferred", "Correctness: Budget deferred"], ["waiting", "Correctness: Pending"]]);
+  });
+  test("show all addresses exactly the findings each row addresses", () => {
+    const source = { revision_id: compositeId({ kind: "artifact", runId: "run-1", unitId: "u", name: "assessment:u:assessment:2" }) };
+    expect(selectFindingSelections(source, ["/findings/0", "/findings/1"])).toEqual([{ source_revision_id: "u:assessment:2", item_path: "/findings/0" }, { source_revision_id: "u:assessment:2", item_path: "/findings/1" }]);
+    expect(selectFindingSelections(undefined, ["/findings/0"])).toEqual([]);
+  });
 });

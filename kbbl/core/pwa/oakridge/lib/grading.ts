@@ -1,8 +1,8 @@
 // Pure derivations for the item panel and the grading section. Hidden mode is decided here, so a
 // component holding answers or composite counts never has them to render while they are hidden.
 import type { ChipTone } from "../../components/atoms/Chip";
-import type { AnswerCount, AnswerKey, AnswerRead, DisagreementCount, EvidenceReference, GradeAnswer, GraderKey, HumanReadiness, ItemSelection, ItemStatusKey, MeasurementState, QuestionKey, StageComposite,
-  StatusCount, SubmissionResult, TaskLink } from "../grading-types";
+import type { AnswerCount, AnswerKey, AnswerRead, DisagreementCount, EvidenceReference, GradeAnswer, GraderKey, HumanReadiness, ItemSelection, ItemStatus, ItemStatusKey, MeasurementState, QuestionKey,
+  StageComposite, StatusCount, SubmissionResult, TaskLink } from "../grading-types";
 import type { ArtifactSource } from "../artifact-types";
 import { parseCompositeId } from "../adapters/core";
 
@@ -14,6 +14,9 @@ export function selectItemSelection(source: Pick<ArtifactSource, "revision_id"> 
   const separator = parsed.value.name.indexOf(":");
   return separator < 0 ? null : { source_revision_id: parsed.value.name.slice(separator + 1), item_path };
 }
+/** Every finding an artifact revision shows, addressed the same way each row addresses its own. */
+export const selectFindingSelections = (source: Pick<ArtifactSource, "revision_id"> | undefined, item_paths: readonly string[]): readonly ItemSelection[] =>
+  item_paths.flatMap((item_path) => { const selection = selectItemSelection(source, item_path); return selection ? [selection] : []; });
 export const itemSelectionKey = ({ source_revision_id, item_path }: ItemSelection): string => JSON.stringify([source_revision_id, item_path]);
 export const areSelectionsEqual = (left: ItemSelection, right: ItemSelection): boolean => itemSelectionKey(left) === itemSelectionKey(right);
 
@@ -63,6 +66,41 @@ export function statusKeyLabel(status: ItemStatusKey): string {
     case "failed": return status.terminal_cause ? `Failed (${status.terminal_cause})` : "Failed";
   }
 }
+
+/** The operator's own progress on one item. Only their own answers are read, so it reveals nothing hidden mode omits. */
+export type OwnGradeProgress =
+  | { readonly kind: "no_human_question" }
+  | { readonly kind: "open"; readonly answered: number; readonly total: number }
+  | { readonly kind: "graded"; readonly total: number };
+export function selectOwnGradeProgress(status: ItemStatus, reviewer_id: string): OwnGradeProgress {
+  const answerable = status.questions.items.filter((question) => question.human.state !== "no_human_evaluator");
+  if (answerable.length === 0) return { kind: "no_human_question" };
+  const answered = answerable.filter((question) => question.answers.items.some((answer) => answer.reviewer_id === reviewer_id)).length;
+  return answered === answerable.length ? { kind: "graded", total: answerable.length } : { kind: "open", answered, total: answerable.length };
+}
+/** "Graded" only once every question the operator can answer has their answer. */
+export const gradeActionLabel = (progress: OwnGradeProgress | null): string => progress?.kind === "graded" ? "Graded" : "Grade";
+
+export type AutomaticGlyph = "affirmative" | "negative" | "unclear" | "not_ready" | "waiting" | "budget_deferred" | "failed" | "grading_off";
+/** One automatic evaluator's state on one question, at a glance. The item panel holds everything else. */
+export interface AutomaticGlance { readonly key: string; readonly glyph: AutomaticGlyph; readonly tone: ChipTone; readonly label: string }
+function glyphOf(measurement: MeasurementState): AutomaticGlyph {
+  switch (measurement.state) {
+    case "answered":
+      if (measurement.answer.state !== "answered") return "unclear";
+      return AFFIRMATIVE_ANSWERS.has(measurement.answer.value) ? "affirmative" : NEGATIVE_ANSWERS.has(measurement.answer.value) ? "negative" : "unclear";
+    case "not_ready": return "not_ready";
+    case "awaiting_admission": case "pending": return "waiting";
+    case "budget_deferred": return "budget_deferred";
+    case "failed": return "failed";
+    case "grading_off": return "grading_off";
+  }
+}
+export const selectAutomaticGlances = (status: ItemStatus): readonly AutomaticGlance[] =>
+  status.questions.items.flatMap((question) => question.machine.items.map((machine) => {
+    const display = measurementDisplay(machine.measurement);
+    return { key: `${question.question.question_id}/${machine.evaluator_definition_id}`, glyph: glyphOf(machine.measurement), tone: display.tone, label: `${questionLabel(question.question)}: ${display.label}` };
+  }));
 
 export type HumanFormState =
   | { readonly kind: "open"; readonly choices: readonly string[] }
