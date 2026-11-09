@@ -18,7 +18,7 @@ const base: OperatorUnitView = (() => {
   return found;
 })();
 const assessment = (id = "a", revision = "assessment-rev"): Assessment => ({
-  head_sha: null, verdict: "pass_with_notes", findings: [], test_evidence: null,
+  head_sha: "abc123", verdict: "pass_with_notes", findings: [], test_evidence: null,
   recommended_next_actions: [{ id, text: `Fix ${revision}` }, { id: `${id}-2`, text: "Add coverage" }],
 });
 function unitFor(revision: string, sent: boolean): OperatorUnitView {

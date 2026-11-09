@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./artifact-types";
 import type { EditOutcome } from "./lib/edit-outcome";
+import type { ItemSelection } from "./grading-types";
 import { SpecViewer } from "./components/molecules/SpecViewer";
 import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
 import { PlanViewer } from "./components/molecules/PlanViewer";
@@ -23,6 +24,8 @@ export interface ViewerProps {
   };
   /** The open review of the revision on screen, when it is the latest; a viewer may record a decision on it. */
   gate?: ParkedGate;
+  /** Opens the shared item panel. A finding needs only its revision and path: no task, cohort or review. */
+  onOpenItem?: (selection: ItemSelection) => void;
 }
 
 interface RegistryEntry {

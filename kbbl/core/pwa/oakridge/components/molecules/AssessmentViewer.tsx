@@ -1,14 +1,17 @@
 import { useState, type ReactNode } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { selectCriterionCounts, selectCriterionReport, type Assessment, type CriterionTally } from "../../lib/assessment";
+import { selectCriterionCounts, selectCriterionReport, type Assessment, type CriterionCheck, type CriterionTally } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
 import { selectStatusTone } from "../../lib/status-tone";
-import type { AssessmentVerdict } from "../../artifact-types";
+import type { ArtifactSource, AssessmentVerdict } from "../../artifact-types";
+import type { ItemSelection } from "../../grading-types";
+import { selectItemSelection } from "../../lib/grading";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { CohortArtifactNote } from "./CohortArtifactNote";
+import { GradeItemButton } from "./GradeItemButton";
 import { CRITERION_STATUS_LABEL, CriterionCheckItem } from "./CriterionCheckItem";
 import { TestEvidenceBlock } from "./TestEvidenceBlock";
 
@@ -19,6 +22,9 @@ interface Props {
   cohortLabel: string | null;
   isIntegration?: boolean;
   handoff?: ReactNode;
+  /** The revision on screen, which addresses its findings. */
+  source?: Pick<ArtifactSource, "revision_id">;
+  onOpenItem?: (selection: ItemSelection) => void;
 }
 
 const VERDICT_LABEL: Record<AssessmentVerdict, string> = { pass: "Pass", pass_with_notes: "Pass with notes", fail: "Fail" };
@@ -41,9 +47,11 @@ function VerdictBanner({ verdict, tally }: { verdict: AssessmentVerdict; tally: 
   );
 }
 
-export function AssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false, handoff }: Props) {
+export function AssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false, handoff, source, onOpenItem }: Props) {
   const [isMetOpen, setIsMetOpen] = useState(false);
   const report = selectCriterionReport(!isIntegration && brief.kind === "found" ? brief.value.acceptance_criteria : null, assessment.findings);
+  const showBriefComparison = !isIntegration && brief.kind === "found";
+  const renderGradeAction = (check: Extract<CriterionCheck, { kind: "finding" }>) => <GradeItemButton selection={selectItemSelection(source, check.finding.item_path)} onOpenItem={onOpenItem} />;
 
   return (
     <article className="flex flex-col gap-5" data-testid="or-assessment-viewer">
@@ -54,7 +62,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
           {brief.kind === "found" && <Chip tone="neutral">{brief.value.repository_key}</Chip>}
         </div>
         {brief.kind === "found" && <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{brief.value.title}</h2>}
-        <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-assessment-head-sha">Commit: <code className="or-code">{assessment.head_sha ?? "Not recorded"}</code></p>
+        <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-assessment-head-sha">Commit: <code className="or-code">{assessment.head_sha}</code></p>
         <VerdictBanner verdict={assessment.verdict} tally={report.tally} />
         {!isIntegration && brief.kind !== "found" && <CohortArtifactNote lookup={brief} artifactName="build brief" testId="or-assessment-brief-note" />}
       </header>
@@ -62,9 +70,9 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
       <ArtifactSection title={`Needs attention (${report.needs_attention.length})`} testId="or-assessment-attention">
         {report.needs_attention.length > 0 ? (
           <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
-            {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration && brief.kind === "found"} />)}
+            {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={showBriefComparison} renderGradeAction={renderGradeAction} />)}
           </ul>
-        ) : <p className="text-sm text-[var(--success-fg)]">Every criterion is met.</p>}
+        ) : <p className="text-sm text-[var(--success-fg)]">Every finding is met and every task assessed.</p>}
       </ArtifactSection>
 
       {handoff ?? (assessment.recommended_next_actions.length > 0 && (
@@ -93,7 +101,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
           </Button>
           {isMetOpen && (
             <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
-              {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration && brief.kind === "found"} />)}
+              {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={showBriefComparison} renderGradeAction={renderGradeAction} />)}
             </ul>
           )}
         </ArtifactSection>

@@ -2,8 +2,7 @@ import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ViewerProps } from "../../artifactRegistry";
-import { isBuildBrief, isBuildBriefIdLinked } from "../../lib/build-brief";
-import { planCriterionText } from "../../lib/plan";
+import { isBuildBrief } from "../../lib/build-brief";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { EditableBriefText } from "./EditableBriefText";
 import { ExpandableText } from "./ExpandableText";
@@ -65,7 +64,6 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
         <div className="flex flex-wrap items-center gap-2">
           <code className="or-code">{body.cohort_id}</code>
           <Chip tone="neutral">{body.repository_key}</Chip>
-          {!isBuildBriefIdLinked(body) && <Chip tone="muted">Not id-linked</Chip>}
           {body.depends_on.length > 0 && <span className={artifactLabelClass}>After</span>}
           {body.depends_on.map((id) => <Chip key={id} tone="muted" className="font-mono">{id}</Chip>)}
           {edit?.enabled && (
@@ -130,7 +128,7 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
                 reason={{ key: "reason", label: "Why not", value: item.reason }}
                 editor={editor}
                 id={item.id}
-                decisionIds={"decision_ids" in item ? item.decision_ids : undefined}
+                decisionIds={item.decision_ids}
               />
             ))}
           </ul>
@@ -142,11 +140,11 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
           <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
             {body.acceptance_criteria.map((criterion, index) => (
               <li key={index}>
-                {typeof criterion !== "string" && <code className="or-code mr-2">{criterion.id}</code>}
-                <BriefText anchor={`/acceptance_criteria/${index}${typeof criterion === "string" ? "" : "/text"}`} value={planCriterionText(criterion)} editor={editor} className="text-sm text-[var(--text-secondary)]" />
-                {typeof criterion !== "string" && criterion.decision_ids.length > 0 && (
+                <code className="or-code mr-2">{criterion.id}</code>
+                <BriefText anchor={`/acceptance_criteria/${index}/text`} value={criterion.text} editor={editor} className="text-sm text-[var(--text-secondary)]" />
+                {criterion.decision_ids.length > 0 && (
                   <span className="block text-xs text-[var(--text-muted)]">
-                    {criterion.decision_ids.length > 0 && <>Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
+                    Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}
                   </span>
                 )}
               </li>

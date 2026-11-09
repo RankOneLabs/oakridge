@@ -14,6 +14,7 @@ import { settleEdit } from "../../lib/edit-outcome";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ArtifactRevision } from "../../artifact-types";
+import type { ItemSelection } from "../../grading-types";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";
@@ -39,9 +40,10 @@ import { selectStatusTone } from "../../lib/status-tone";
  */
 interface ArtifactReviewProps {
   artifactId: string;
+  onOpenItem?: (selection: ItemSelection) => void;
 }
 
-export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
+export function ArtifactReview({ artifactId, onOpenItem }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -221,6 +223,7 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
                 onSubmitBody: (_previousBody, nextBody) => settleEdit(bodyEdit.mutateAsync(nextBody)),
               } : undefined}
               gate={artifactGate && revIdx === revisions.length - 1 ? artifactGate : undefined}
+              onOpenItem={onOpenItem}
             />
           ) : (
             <ArtifactJsonRevisionPanel revision={revision} descriptor={artifact.review} />

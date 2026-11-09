@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { isPlanCohortIdLinked, planCriterionText, planDecisionText, type PlanCohort } from "../../lib/plan";
+import type { PlanCohort } from "../../lib/plan";
 import type { CohortId } from "../../run-types";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
@@ -45,7 +45,6 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort }: Pr
         <span className="font-mono text-xs text-[var(--text-muted)]">{order}.</span>
         <code className="or-code">{cohort.id}</code>
         {cohort.repository_key && <Chip tone="neutral">{cohort.repository_key}</Chip>}
-        {!isPlanCohortIdLinked(cohort) && <Chip tone="muted">Not id-linked</Chip>}
       </div>
       <p className="text-sm font-medium text-[var(--text-primary)]">{cohort.title}</p>
       {cohort.depends_on.length > 0 && (
@@ -74,8 +73,8 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort }: Pr
               <div className={artifactLabelClass}>Decisions</div>
               <ul className="m-0 mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
                 {cohort.decisions.map((decision, index) => <li key={index}>
-                  {typeof decision !== "string" && <code className="or-code mr-2">{decision.id}</code>}
-                  {planDecisionText(decision)}
+                  <code className="or-code mr-2">{decision.id}</code>
+                  {decision.text}
                 </li>)}
               </ul>
             </div>
@@ -85,11 +84,11 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort }: Pr
               <div className={artifactLabelClass}>Acceptance criteria</div>
               <ul className="m-0 mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
                 {cohort.acceptance_criteria.map((criterion, index) => <li key={index}>
-                  {typeof criterion !== "string" && <code className="or-code mr-2">{criterion.id}</code>}
-                  {planCriterionText(criterion)}
-                  {typeof criterion !== "string" && criterion.decision_ids.length > 0 && (
+                  <code className="or-code mr-2">{criterion.id}</code>
+                  {criterion.text}
+                  {criterion.decision_ids.length > 0 && (
                     <span className="block text-xs text-[var(--text-muted)]">
-                      {criterion.decision_ids.length > 0 && <>Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
+                      Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}
                     </span>
                   )}
                 </li>)}

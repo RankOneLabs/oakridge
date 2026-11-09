@@ -16,6 +16,7 @@ import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { FinalIntegrationPanel } from "./FinalIntegrationPanel";
+import type { ItemSelection } from "../../grading-types";
 
 const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
@@ -45,9 +46,10 @@ interface RunDetailProps {
    */
   onRunDeleted: () => void;
   onSelectArtifact: (artifactId: string) => void;
+  onOpenItem?: (selection: ItemSelection) => void;
 }
 
-export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailProps) {
+export function RunDetail({ runId, onRunDeleted, onSelectArtifact, onOpenItem }: RunDetailProps) {
   const qc = useQueryClient();
   const query = useRun(runId);
   const cancelMutation = useCancelRun(runId);
@@ -157,7 +159,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
         </div>
       </header>
 
-      {run.epic_profile && <FinalIntegrationPanel runId={runId} profile={run.epic_profile} />}
+      {run.epic_profile && <FinalIntegrationPanel runId={runId} profile={run.epic_profile} onOpenItem={onOpenItem} />}
 
       <section className="flex flex-col">
         <h3 className="mb-3 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Stages</h3>

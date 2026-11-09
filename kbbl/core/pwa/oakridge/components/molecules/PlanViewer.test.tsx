@@ -2,7 +2,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "vitest";
 import { PlanViewer } from "./PlanViewer";
-import legacyPlan from "../../lib/__fixtures__/legacy-plan.json";
 import linkedPlan from "../../lib/__fixtures__/id-linked-plan.json";
 
 const cohort = (id: string, depends_on: string[] = []) => ({
@@ -23,7 +22,7 @@ const body = {
   dependency_order: ["core", "api"],
   scope: { in_scope: ["The API"], out_of_scope: ["The UI"] },
   acceptance_criteria: ["Ships."],
-  risks: ["Pin drift"],
+  risks: [{ description: "Pin drift", mitigation: "Pin the digest." }],
 };
 
 const selectedCardId = () =>
@@ -32,20 +31,18 @@ const selectedCardId = () =>
 afterEach(cleanup);
 
 describe("PlanViewer", () => {
-  test("shows a legacy cohort's text and marks its revision", () => {
-    render(<PlanViewer body={legacyPlan} />);
-    expect(screen.getAllByText(/not id-linked/i)).toHaveLength(2);
-    fireEvent.click(within(screen.getByTestId("or-plan-cohort")).getByRole("button", { name: /Details/ }));
-    expect(screen.getByText("Keep the existing layout.")).toBeTruthy();
-    expect(screen.getByText("The plan is readable.")).toBeTruthy();
-  });
-
-  test("shows decision and criterion ids with their task and decision links", () => {
+  test("shows decision and criterion ids with their decision links", () => {
     render(<PlanViewer body={linkedPlan} />);
-    expect(screen.queryByText(/not id-linked/i)).toBeNull();
     fireEvent.click(within(screen.getByTestId("or-plan-cohort")).getByRole("button", { name: /Details/ }));
     expect(screen.getByText("criterion-plan")).toBeTruthy();
     expect(screen.getAllByText("decision-layout")).toHaveLength(2);
+  });
+
+  test("shows decision and criterion text", () => {
+    render(<PlanViewer body={linkedPlan} />);
+    fireEvent.click(within(screen.getByTestId("or-plan-cohort")).getByRole("button", { name: /Details/ }));
+    expect(screen.getByText("Keep the existing layout.")).toBeTruthy();
+    expect(screen.getByText("The plan is readable.")).toBeTruthy();
   });
 
   test("draws every cohort in the graph", () => {
@@ -77,9 +74,19 @@ describe("PlanViewer", () => {
     expect(within(card).getByText("src/core.ts")).toBeTruthy();
   });
 
-  test("shows a bare-string risk without a mitigation", () => {
+  test("shows a risk with its mitigation", () => {
     render(<PlanViewer body={body} />);
-    expect(within(screen.getByTestId("or-risk-card")).getByText("No mitigation given.")).toBeTruthy();
+    expect(within(screen.getByTestId("or-risk-card")).getByText("Pin the digest.")).toBeTruthy();
+  });
+
+  test("refuses a bare-string risk, naming the entry", () => {
+    render(<PlanViewer body={{ ...body, risks: ["Pin drift"] }} />);
+    expect(screen.getByRole("alert").textContent).toContain("risks[0]: expected an object");
+  });
+
+  test("refuses a string criterion, naming the entry", () => {
+    render(<PlanViewer body={{ ...body, cohorts: [{ ...cohort("core"), acceptance_criteria: ["Tests pass."] }] }} />);
+    expect(screen.getByRole("alert").textContent).toContain("cohorts[0].acceptance_criteria[0]: expected a plan criterion");
   });
 
   test("names the broken field when the body breaks the contract", () => {

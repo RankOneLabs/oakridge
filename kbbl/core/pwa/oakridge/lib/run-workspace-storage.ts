@@ -14,6 +14,7 @@
 import type { ArtifactId, Sid } from "../../lib/ids";
 import {
   DEFAULT_RUN_WORKSPACE_STATE,
+  GRADING_PANE,
   LIST_PANE,
   OVERVIEW_PANE,
   arePanesEqual,
@@ -45,6 +46,18 @@ const parseStoredPane = (value: unknown): RunWorkspacePane | null => {
       return OVERVIEW_PANE;
     case "list":
       return LIST_PANE;
+    case "grading":
+      return GRADING_PANE;
+    case "item": {
+      if (!isRecord(value.selection)) return null;
+      const source_revision_id = nonEmptyString(value.selection.source_revision_id);
+      const item_path = nonEmptyString(value.selection.item_path);
+      return source_revision_id === null || item_path === null ? null : { kind: "item", selection: { source_revision_id, item_path } };
+    }
+    case "task": {
+      const taskId = nonEmptyString(value.task_id);
+      return taskId === null ? null : { kind: "task", task_id: taskId };
+    }
     case "session": {
       const sessionId = nonEmptyString(value.session_id);
       return sessionId === null ? null : { kind: "session", session_id: sessionId as Sid };

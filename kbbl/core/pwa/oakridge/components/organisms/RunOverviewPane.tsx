@@ -1,3 +1,4 @@
+import { GRADING_PANE } from "../../lib/run-workspace";
 import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId, Sid } from "../../../lib/ids";
 import type { RunOverview, RunOverviewGates } from "../../lib/run-overview";
@@ -29,6 +30,7 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
   return (
     <div className="flex flex-col gap-5" data-testid="or-run-overview">
       <section className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" size="xsmall" type="button" onClick={() => onOpenPane(GRADING_PANE)} data-testid="or-overview-open-grading">Grading</Button>
         <StatusBadge status={overview.status} testId="or-overview-status" />
         {overview.is_stuck && <span className="text-xs text-red-500">stuck</span>}
         <span className="text-xs text-[var(--text-muted)]" data-testid="or-overview-progress">

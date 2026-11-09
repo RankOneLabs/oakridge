@@ -6,6 +6,8 @@ import { randomUuid } from "../../../lib/random-uuid";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
+import type { ItemSelection } from "../../grading-types";
+import { StageFindings } from "./StageFindings";
 
 const stateLabels = {
   pending: "Waiting for final PR",
@@ -81,7 +83,14 @@ function FinalRepositoryCard({ runId, policy, baseBranch, repository }: FinalRep
   );
 }
 
-export function FinalIntegrationPanel({ runId, profile }: { runId: string; profile: EpicWorkflowProfile }) {
+interface FinalIntegrationPanelProps {
+  runId: string;
+  profile: EpicWorkflowProfile;
+  /** Integration findings open the same item panel as every other finding. */
+  onOpenItem?: (selection: ItemSelection) => void;
+}
+
+export function FinalIntegrationPanel({ runId, profile, onOpenItem }: FinalIntegrationPanelProps) {
   return (
     <section className="or-final-integration" aria-labelledby="or-final-integration-title" data-testid="or-final-integration">
       <div>
@@ -103,6 +112,7 @@ export function FinalIntegrationPanel({ runId, profile }: { runId: string; profi
           />
         ))}
       </div>
+      {onOpenItem && <StageFindings runId={runId} stage="integration" onOpenItem={onOpenItem} canShowOlder={false} />}
     </section>
   );
 }

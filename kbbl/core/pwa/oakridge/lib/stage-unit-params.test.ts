@@ -9,7 +9,9 @@ import assessorParams from "./__fixtures__/run-fd23c8b3-assessor-params.json";
 // fd23c8b3-e896-4928-8114-db3b8a490eaa), not written from the
 // StageUnitParams type — that's exactly how the params type this
 // replaces went wrong unnoticed: it compiled cleanly and rendered
-// blank against every real build unit.
+// blank against every real build unit. The build fixture keeps that run's
+// content, with ids added to its decisions, rejected approaches and
+// acceptance entries to carry it onto the current brief contract.
 
 function makeUnit(params: StageUnit["params"]): StageUnit {
   return {
