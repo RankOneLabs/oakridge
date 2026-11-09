@@ -14,6 +14,7 @@ import { launcherStateSchema, NO_EVIDENCE, PENDING_SCENARIOS, redactReport, repo
 import { liveScenario, runtimeScenario } from "../verification/scenarios";
 import { awaitRunCapture, isRunCaptured, readRunCapture } from "../verification/run-capture";
 import { awaitLaunch, type LaunchedProcess, type ProofIo } from "../verification/shadow-session";
+import { relationsScenario } from "../verification/relations";
 import { sourceRunScenario, type ReviewCheckpoint, type SourceRunInput } from "../verification/source-run";
 
 const repository = resolve(import.meta.dir, "../..");
@@ -216,6 +217,15 @@ describe("a run's capture", () => {
   });
 });
 
+test("a relations run that gave the proof none of its steps cannot read as a pass", async () => {
+  const graders = await Bun.file(resolve(import.meta.dir, "../graders.json")).text();
+  const run = { run_id: "run-1", definition_id: "definition-1" };
+  const report = await relationsScenario(fakeIo({ readGraders: async () => graders }), { shared_input: {} as SourceRunInput,
+    run: async () => ({ report: { id: "source-run", status: "passed", checks: [], evidence: NO_EVIDENCE }, run }),
+    openObservation: async () => ok({ db: {} as never, tenant: { producer: "oakridge", namespace: "n" }, close: async () => {} }) }, "matrix");
+  expect([report.status, failing(report)]).toEqual(["failed", ["the links run gave the proof its findings and tasks"]]);
+});
+
 describe("the source run", () => {
   const input: SourceRunInput = { title: "t", spec: "s", primary_repository_key: "r", final_merge_policy: "require_merge", repositories: [{ key: "r",
     preparation: { repository_path: "/r", expected_head: null }, forge: { owner: "o", name: "n", build_base: "b", final_base: "f" } }] };
@@ -280,27 +290,42 @@ describe("the source run", () => {
     expect([report.status, reads, posted.map((body) => body.analysis_links)]).toEqual(["passed", 2, [links]]);
   });
 
-  test("a refused acceptance keeps its checkpoint: the retry carries the links, and each step runs once", async () => {
-    const steps: string[] = [];
+  describe("a decision whose result is not known", () => {
     const passed = { name: "step", passed: true, detail: "" };
     const links = [{ source_revision_id: "analysis:1", item_path: "/findings/0", task_ids: ["T1"] }];
-    const waiting = { artifacts: [], attention: [awaiting("plan_review")] };
-    const views = [waiting, waiting, { artifacts: [{ artifact_key: "plan", latest_revision: { id: "revision-1" } }], attention: [] }];
-    const carried: unknown[] = [];
-    const directory = mkdtempSync(join(tmpdir(), "source-run-"));
-    let reads = 0;
-    const report = await sourceRunScenario(fakeIo({ dbos: async (path, body) => {
-      if (path === "/api/runs") return ok({ run_id: "run-1" });
-      if (path.endsWith("/inspect")) { reads += 1; return ok(views[Math.min(reads, views.length) - 1]); }
-      if (path.endsWith("/decide")) {
-        carried.push((body as { analysis_links?: unknown }).analysis_links);
-        if (carried.length === 1) return err({ operation: "dbos", entity_id: path, detail: "409 contended" });
-      }
-      return ok({});
-    }, ...feedIo(() => caughtUp("plan")) }), { input, directory, through: "plan", timeout_ms: 60_000, capture_timeout_ms: 5_000, reviews: [{ review: "plan_review", analysis_links: () => links,
-      before: async () => { steps.push("before"); return passed; }, after: async () => { steps.push("after"); return passed; } }] });
-    rmSync(directory, { recursive: true, force: true });
-    expect([report.status, steps, carried]).toEqual(["passed", ["before", "after"], [links, links]]);
+    const reached = { artifacts: [{ artifact_key: "plan", latest_revision: { id: "revision-1" } }], attention: [] };
+    interface Sent { readonly request_id: string; readonly analysis_links?: unknown }
+    async function accepting(script: { readonly views: readonly unknown[]; readonly answer: (attempt: number) => ReturnType<ProofIo["dbos"]>; readonly reviews?: readonly ReviewCheckpoint[] }) {
+      const steps: string[] = [];
+      const sent: Sent[] = [];
+      const directory = mkdtempSync(join(tmpdir(), "source-run-"));
+      let reads = 0;
+      const report = await sourceRunScenario(fakeIo({ dbos: async (path, body) => {
+        if (path === "/api/runs") return ok({ run_id: "run-1" });
+        if (path.endsWith("/inspect")) { reads += 1; return ok(script.views[Math.min(reads, script.views.length) - 1]); }
+        if (path.endsWith("/decide")) { sent.push(body as Sent); return script.answer(sent.length); }
+        return ok({});
+      }, ...feedIo(() => caughtUp("plan")) }), { input, directory, through: "plan", timeout_ms: 60_000, capture_timeout_ms: 5_000, reviews: script.reviews ?? [{ review: "plan_review", analysis_links: () => links,
+        before: async () => { steps.push("before"); return passed; }, after: async () => { steps.push("after"); return passed; } }] });
+      rmSync(directory, { recursive: true, force: true });
+      return { report, steps, sent };
+    }
+    const lostResponse = () => Promise.resolve(err({ operation: "dbos", entity_id: "decide", detail: "response timed out" }));
+
+    test("a committed acceptance whose response was lost is asked again under the same id, and its steps still run", async () => {
+      // The review has gone from the next view: only repeating the request can learn the outcome.
+      const { report, steps, sent } = await accepting({ views: [{ artifacts: [], attention: [awaiting("plan_review")] }, reached], answer: (attempt) => attempt === 1 ? lostResponse() : Promise.resolve(ok({ kind: "committed" })) });
+      expect([report.status, steps, sent.map((body) => body.analysis_links), new Set(sent.map((body) => body.request_id)).size]).toEqual(["passed", ["before", "after"], [links, links], 1]);
+    });
+    test("a decision that never becomes known fails the proof and skips nothing silently", async () => {
+      const { report, steps, sent } = await accepting({ views: [{ artifacts: [], attention: [awaiting("plan_review")] }], answer: lostResponse });
+      const failed = report.checks.find((entry) => entry.name === "plan_review is accepted");
+      expect([report.status, steps, failed?.detail, sent.length > 1]).toEqual(["failed", ["before"], "after 30 attempts: response timed out", true]);
+    });
+    test("a run reaching its target without a step the proof asked for fails", async () => {
+      const { report, steps } = await accepting({ views: [reached], answer: () => Promise.resolve(ok({})) });
+      expect([report.status, steps, report.checks.find((entry) => !entry.passed)?.detail]).toEqual(["failed", [], "never taken: plan_review"]);
+    });
   });
 
   test("a failed step ahead of a review ends the run there, without accepting it", async () => {

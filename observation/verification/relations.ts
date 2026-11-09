@@ -299,7 +299,10 @@ async function sharedRun(io: ProofIo, source: RelationsSource, open: Observation
   checks.push(check("the shared run reaches both cohorts' assessments on the real stack", report.status === "passed" && run !== null,
     report.checks.filter((entry) => !entry.passed).map((entry) => `${entry.name}: ${entry.detail}`).join("; ") || run?.run_id || "no run"));
   if (run) runs.push(run);
-  if (!run || !first || !control) return;
+  if (!run || !first || !control) {
+    checks.push(check("the shared run gave the proof its findings", false, run?.run_id ?? "no run"));
+    return;
+  }
   const { occurrence_id: control_id } = control as FindingAddress;
   measurements.push(...await readUntil(io, run.run_id, "shared-settled", settledRun));
   checkpoints.push(await relationCheckpoint(io, { checkpoint: "shared-settled", run_id: run.run_id, linked: (first as FindingAddress).occurrence_id, control: control_id }));
@@ -564,7 +567,10 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
     checks.push(check("the links run reaches its assessment on the real stack", reached,
       report.checks.filter((entry) => !entry.passed).map((entry) => `${entry.name}: ${entry.detail}`).join("; ") || run?.run_id || "no run"));
     if (run) runs.push(run);
-    if (!run || !linked || !control || task_ids.length === 0) return finish();
+    if (!run || !linked || !control || task_ids.length === 0) {
+      checks.push(check("the links run gave the proof its findings and tasks", false, `run ${run?.run_id ?? "none"}, ${task_ids.length} task(s)`));
+      return finish();
+    }
     const addresses = { run_id: run.run_id, linked: (linked as FindingAddress).occurrence_id, control: (control as FindingAddress).occurrence_id };
 
     // The run was canceled at its assessment, so no agent is mid-turn when the stack stops.

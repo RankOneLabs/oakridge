@@ -55,6 +55,7 @@ export interface ReviewCheckpoint {
 
 const POLL_MS = 1_000;
 const DEFAULT_TIMEOUT_MS = 1_800_000;
+const DECISION_ATTEMPTS = 30;
 
 interface InspectView {
   readonly artifacts: readonly { readonly artifact_key: string; readonly latest_revision: unknown }[];
@@ -70,8 +71,25 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 const acceptableReviews = (through: SourceRunTarget): readonly string[] => through === "analysis" ? []
   : ["analysis_review", "spec_review", "tasks_review", "plan_review", ...(through === "assessment" ? ["brief_review"] : [])];
 
+/**
+ * One decision, until its result is known. A failed call may have committed with its response lost, and
+ * the next poll would no longer show that review, so it is repeated with the same request id: a replay
+ * answers from the commit's receipt and repeats nothing. Returns why it never became known.
+ */
+async function decideUntilKnown(io: ProofIo, path: string, body: { readonly [field: string]: unknown }): Promise<string | null> {
+  const request = { ...body, request_id: crypto.randomUUID() };
+  let detail = "never attempted";
+  for (let attempt = 0; attempt < DECISION_ATTEMPTS; attempt++) {
+    if (attempt > 0) await io.sleep(POLL_MS);
+    const sent = await io.dbos(path, request);
+    if (sent.ok) return null;
+    detail = sent.error.detail;
+  }
+  return `after ${DECISION_ATTEMPTS} attempts: ${detail}`;
+}
+
 interface ReviewProgress { readonly taken: Set<string>; readonly revised: Set<string>; readonly prepared: Set<string> }
-/** Accepts what the capture needs, taking each review's checkpoint steps. Returns a `before` step that failed. */
+/** Accepts what the capture needs, taking each review's checkpoint steps. Returns the step or decision that failed. */
 async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectView, options: SourceRunOptions, progress: ReviewProgress): Promise<ProofCheck | null> {
   const { run_id } = run;
   const { taken, revised, prepared } = progress;
@@ -80,11 +98,11 @@ async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectVie
     const target = typeof review.target === "string" ? review.target : "";
     const configured = options.reviews?.find((candidate) => candidate.review === review.review);
     const unit_review = JSON.stringify([review.unit_id, review.review]);
+    const decide = `/api/runs/${run_id}/units/${encodeURIComponent(review.unit_id ?? "")}/reviews/${review.review}/decide`;
     if (configured?.revision_feedback && !revised.has(unit_review)) {
       revised.add(unit_review);
-      const sent = await io.dbos(`/api/runs/${run_id}/units/${encodeURIComponent(review.unit_id ?? "")}/reviews/${review.review}/decide`, {
-        request_id: crypto.randomUUID(), decision: "request_changes", target: review.target, payload: { feedback: configured.revision_feedback } });
-      if (!sent.ok) return { name: `${review.review} is sent back for a revision`, passed: false, detail: sent.error.detail };
+      const unknown = await decideUntilKnown(io, decide, { decision: "request_changes", target: review.target, payload: { feedback: configured.revision_feedback } });
+      if (unknown) return { name: `${review.review} is sent back for a revision`, passed: false, detail: unknown };
       continue;
     }
     const checkpoint = taken.has(review.review) ? undefined : configured;
@@ -93,12 +111,10 @@ async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectVie
       if (!step.passed) return step;
       prepared.add(review.review);
     }
-    const accepted = await io.dbos(`/api/runs/${run_id}/units/${encodeURIComponent(review.unit_id ?? "")}/reviews/${review.review}/decide`, {
-      request_id: crypto.randomUUID(), decision: "accept", target: review.target,
+    const unknown = await decideUntilKnown(io, decide, { decision: "accept", target: review.target,
       payload: { feedback: "Accepted for the isolated live verification run." },
       ...(checkpoint?.analysis_links ? { analysis_links: checkpoint.analysis_links(run, target) } : {}) });
-    // Refused: the checkpoint stands, so the next poll's acceptance still carries its links and runs `after`.
-    if (!accepted.ok) continue;
+    if (unknown) return { name: `${review.review} is accepted`, passed: false, detail: unknown };
     if (checkpoint) {
       taken.add(review.review);
       const step = await checkpoint.after?.(run, target);
@@ -117,8 +133,12 @@ async function driveToTarget(io: ProofIo, run: RunReference, options: SourceRunO
     if (!read.ok) return { name: "the run reaches its target", passed: false, detail: read.error.detail };
     const inspect = read.value as InspectView;
     await writeJson(join(options.directory, "inspect.json"), inspect);
-    if (inspect.artifacts.filter((artifact) => artifact.latest_revision && artifact.artifact_key === options.through).length >= (options.target_units ?? 1))
-      return { name: "the run reaches its target", passed: true, detail: options.through };
+    if (inspect.artifacts.filter((artifact) => artifact.latest_revision && artifact.artifact_key === options.through).length >= (options.target_units ?? 1)) {
+      // A proof's steps are its checks: a run that got here without them proved nothing they cover.
+      const skipped = (options.reviews ?? []).map((checkpoint) => checkpoint.review).filter((review) => !progress.taken.has(review));
+      return skipped.length > 0 ? { name: "every review step the proof asked for ran", passed: false, detail: `never taken: ${skipped.join(", ")}` }
+        : { name: "the run reaches its target", passed: true, detail: options.through };
+    }
     const stalled = inspect.attention.find((item) => item.kind !== "awaiting_review");
     if (stalled) return { name: "the run reaches its target", passed: false, detail: `needs intervention: ${JSON.stringify(stalled)}` };
     const refused = await acceptReviews(io, run, inspect, options, progress);

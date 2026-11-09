@@ -387,9 +387,10 @@ observation baseline, core contract or generated definition changed for declarat
 On the shadow, through `observation/verification/proof.ts`:
 
 - `relations` passed all 68 checks (`observation/verification/reports/relations-2026-11-08T20-31-17-449Z`)
-  at `100000b5`, with real provider answers, 44 real requests across two runs. Three later fixes (a count of
-  items rather than rows, the namespace of a decision's link receipt, and a refused acceptance keeping its
-  checkpoint) are covered by the offline tests above, not by this report.
+  at `100000b5`, with real provider answers, 44 real requests across two runs. Later fixes (a count of items rather
+  than rows, the namespace of a decision's link receipt, and the proof repeating a decision under one id until
+  its result is known, and failing if a step it asked for never ran) are covered by offline tests, not by this
+  report.
 - Its first run, `run-8734e674c984b0f3` from `inputs/relations-audit.json`, measures the late link. 5 analysis
   questions were answered in 5 requests before the run had any task. A mapping naming the unapproved tasks
   revision was refused, the approval changed nothing, and every task read as a coverage gap. After the mapping
