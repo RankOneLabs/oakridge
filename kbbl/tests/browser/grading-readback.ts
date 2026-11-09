@@ -5,7 +5,7 @@
  */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { chromium, type Page } from "@playwright/test";
+import { chromium, type Locator, type Page } from "@playwright/test";
 
 export interface ItemAddress { readonly source_revision_id: string; readonly item_path: string }
 export interface ReadbackStep { readonly name: string; readonly passed: boolean; readonly detail: string }
@@ -16,6 +16,10 @@ const NAVIGATION_MS = 30_000;
 const FLOW_MS = 300_000;
 /** Closing a browser has been seen never to settle after the browser has gone, so it is not waited on past this. */
 const CLOSE_MS = 10_000;
+const ACTION_MS = 10_000;
+/** Headless Chromium occasionally stops producing the frames a stability check waits for, with the page
+ * itself still live. Then the element is clicked directly, since this flow reads back what follows. */
+const click = (target: Locator): Promise<void> => target.click({ timeout: ACTION_MS }).catch(() => target.evaluate((element) => { (element as HTMLElement).click(); }));
 const expired = (ms: number, value: string): Promise<string> => new Promise((resolve) => { setTimeout(() => resolve(value), ms).unref?.(); });
 
 async function withPage(target: LiveTarget, work: (page: Page, step: (name: string, passed: boolean, detail: string) => void, shot: (name: string) => Promise<void>) => Promise<void>): Promise<ReadbackResult> {
@@ -32,7 +36,7 @@ async function withPage(target: LiveTarget, work: (page: Page, step: (name: stri
     await page.goto(`${target.kbbl_url}/#oakridge/run/${encodeURIComponent(target.run_id)}`);
     const flow = work(page, (name, passed, detail) => { steps.push({ name, passed, detail }); }, async (name) => {
       const path = join(target.screenshot_dir, `${name}.png`);
-      await page.screenshot({ path, fullPage: true });
+      await page.screenshot({ path });
       screenshots.push(path);
     }).then(() => "completed").catch((cause: unknown) => cause instanceof Error ? cause.message : String(cause));
     const ended = await Promise.race([flow, expired(FLOW_MS, `no result within ${FLOW_MS} ms`)]);
@@ -46,12 +50,12 @@ const findingRow = (page: Page, address: ItemAddress) => page.locator(`[data-tes
 const panelOf = (page: Page, address: ItemAddress) => page.locator(`[data-testid="or-item-panel"][data-revision="${address.source_revision_id}"][data-item-path="${address.item_path}"]`);
 
 async function openGrading(page: Page): Promise<void> {
-  await page.getByTestId("or-sidebar-pane-grading").click();
+  await click(page.getByTestId("or-sidebar-pane-grading"));
   await page.getByTestId("or-grading-section").waitFor();
 }
 async function openFromGrading(page: Page, address: ItemAddress): Promise<void> {
   await findingRow(page, address).waitFor();
-  await findingRow(page, address).getByTestId("or-grade-item").click();
+  await click(findingRow(page, address).getByTestId("or-grade-item"));
   await panelOf(page, address).waitFor();
 }
 
@@ -61,7 +65,7 @@ export function readNotReadyPanel(input: NotReadyInput): Promise<ReadbackResult>
   return withPage(input, async (page, step, shot) => {
     await openGrading(page);
     await openFromGrading(page, input.item);
-    await page.locator(`[data-testid="or-item-question"][data-question="${input.question_id}"]`).click();
+    await click(page.locator(`[data-testid="or-item-question"][data-question="${input.question_id}"]`));
     const reason = await page.getByTestId("or-your-grade-not-ready").innerText();
     step("the not-ready question shows its reason", reason.includes(input.code), reason);
     step("the not-ready question offers no choice", await page.getByTestId("or-your-grade-choice").count() === 0, "no radio rendered");
@@ -103,13 +107,13 @@ export async function readWorkspace(input: WorkspaceReadbackInput): Promise<Work
     await openFromGrading(page, input.answered);
     const panel = panelOf(page, input.answered);
     const occurrence = await panel.getAttribute("data-occurrence");
-    await page.locator(`[data-testid="or-item-question"][data-question="${input.answered_question_id}"]`).click();
+    await click(page.locator(`[data-testid="or-item-question"][data-question="${input.answered_question_id}"]`));
     await page.getByTestId("or-item-answers-hidden").waitFor();
     const evaluators = await page.getByTestId("or-item-machine-status").count();
     const others = await page.getByTestId("or-item-answers").count();
     step("hidden: the panel omits other answers and evaluators and keeps the form", evaluators === 0 && others === 0 && await page.getByTestId("or-your-grade").count() === 1, `${evaluators} evaluator rows, ${others} answer sections`);
     await shot("item-hidden");
-    await page.getByTestId("or-item-reveal").click();
+    await click(page.getByTestId("or-item-reveal"));
     await page.getByTestId("or-item-answers").waitFor();
     const rows = page.getByTestId("or-item-answers").getByTestId("or-item-answer");
     const seen = await rows.evaluateAll((elements) => elements.map((element) => [element.getAttribute("data-observation"), element.getAttribute("data-grader")]));
@@ -118,14 +122,14 @@ export async function readWorkspace(input: WorkspaceReadbackInput): Promise<Work
     await shot("item-revealed");
 
     // A browser answer and correction: saved only with the acknowledgment.
-    await page.getByTestId("or-item-hide").click();
+    await click(page.getByTestId("or-item-hide"));
     await openFromGrading(page, input.browser_item);
     const browserPanel = panelOf(page, input.browser_item);
     const submit = async (choice: string, label: string): Promise<void> => {
-      await browserPanel.locator(`[data-testid="or-your-grade-choice"][value="${choice}"]`).check();
+      await click(browserPanel.locator(`[data-testid="or-your-grade-choice"][value="${choice}"]`));
       step(`${label}: saved is not shown before the acknowledgment`, await page.getByTestId("or-your-grade-saved").count() === 0, "absent");
       const answered = page.waitForResponse((response) => response.request().method() === "POST" && response.url().includes("/oakridge/observation/items/"));
-      await page.getByTestId("or-your-grade-submit").click();
+      await click(page.getByTestId("or-your-grade-submit"));
       const response = await answered;
       const body = await response.json() as { readonly observation_id?: string; readonly corrects_observation_id?: string | null; readonly reviewer_id?: string };
       submissions.push({ status: response.status(), observation_id: body.observation_id ?? null, corrects_observation_id: body.corrects_observation_id ?? null, reviewer_id: body.reviewer_id ?? null });
@@ -144,12 +148,12 @@ export async function readWorkspace(input: WorkspaceReadbackInput): Promise<Work
 
     // The same finding from the artifact viewers.
     const fromViewer = async (artifact: RegExp, address: ItemAddress, name: string): Promise<void> => {
-      await page.getByTestId("or-sidebar-artifact").filter({ hasText: artifact }).first().click();
+      await click(page.getByTestId("or-sidebar-artifact").filter({ hasText: artifact }).first());
       await page.getByTestId("or-artifact-type").waitFor();
       const toggle = page.getByText(/Show met criteria/);
-      if (await toggle.count() > 0) await toggle.click();
+      if (await toggle.count() > 0) await click(toggle);
       const button = page.locator(`[data-testid="or-grade-item"][data-item-path="${address.item_path}"]`).first();
-      await button.click();
+      await click(button);
       await panelOf(page, address).waitFor();
       step(`${name} opens the same occurrence`, await panelOf(page, address).getAttribute("data-occurrence") !== null, address.item_path);
       await shot(name.replaceAll(" ", "-"));
@@ -161,9 +165,9 @@ export async function readWorkspace(input: WorkspaceReadbackInput): Promise<Work
     // Composites stay hidden through all of that, and reveal on their own.
     await openGrading(page);
     step("hidden: submitting revealed no composite", await page.getByTestId("or-task-answer-count").count() === 0, "no count rendered");
-    await page.getByTestId("or-composites-reveal").click();
+    await click(page.getByTestId("or-composites-reveal"));
     await page.getByTestId("or-task-answer-count").first().waitFor();
-    await page.getByTestId("or-task-answer-count").first().click();
+    await click(page.getByTestId("or-task-answer-count").first());
     await page.getByTestId("or-task-drilldown-row").first().waitFor();
     step("a composite count opens its raw answers", await page.getByTestId("or-task-drilldown").getByTestId("or-item-answer").count() > 0, "raw answers listed");
     await shot("task-drilldown");
