@@ -19,3 +19,10 @@ export async function withTenant<Value>(db: Database, tenant: TenantScope, work:
     return work(trx);
   });
 }
+/** A read of several tables from one snapshot, so what it derives never mixes two commits. */
+export async function withTenantSnapshot<Value>(db: Database, tenant: TenantScope, work: (trx: DatabaseTransaction) => Promise<Value>): Promise<Value> {
+  return db.transaction().setIsolationLevel("repeatable read").setAccessMode("read only").execute(async (trx) => {
+    await sql`SELECT set_config('observation.producer', ${tenant.producer}, true), set_config('observation.namespace', ${tenant.namespace}, true)`.execute(trx);
+    return work(trx);
+  });
+}

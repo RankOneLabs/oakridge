@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { CORE_PROTOCOL_SCHEMA, type Event } from "../src/core-client/core-types";
+import { ANALYSIS_LINKS_DECLARED } from "../src/domain/analysis-link-declaration";
+import type { CoreEvent } from "../src/storage/json-column-types";
 import { artifactSchemaVersion } from "../src/adapters/observation-schema-version";
 import { DELIBERATELY_UNMAPPED_EVENTS, MAPPED_EVENTS, mapObservationEvent } from "../src/adapters/observation-mapping";
 import { runOps } from "../src/ops";
@@ -12,7 +14,7 @@ const definition = (schema: unknown, digest = "bundle-a"): PinnedDefinitionRead 
     stages: { writing: { input: { kind: "text" }, artifacts: { draft: { schema: schema as { kind: "text" } } },
       workers: {}, outcome: {} } } } },
 });
-const row = (payload: Event): CommittedEventRow<Event> => ({ id: "event-1", run_id: "run-1", unit_id: "run-1/writing",
+const row = (payload: CoreEvent): CommittedEventRow<CoreEvent> => ({ id: "event-1", run_id: "run-1", unit_id: "run-1/writing",
   payload, created_at: new Date("2026-10-28T00:00:00Z"), commit_txid: "10", was_visible_at_subscription: false });
 
 test("schema digest changes with the artifact declaration, not the bundle digest", () => {
@@ -24,7 +26,9 @@ test("schema digest changes with the artifact declaration, not the bundle digest
 
 test("every current event variant is explicitly mapped or deliberately excluded", () => {
   const coreEventKinds = CORE_PROTOCOL_SCHEMA.request.$defs.Event.oneOf.map((variant) => variant.properties.kind.const);
-  expect([...MAPPED_EVENTS, ...DELIBERATELY_UNMAPPED_EVENTS].sort()).toEqual(coreEventKinds.sort());
+  // The declaration is journaled beside the core's events, and the core never steps it.
+  expect([...MAPPED_EVENTS, ...DELIBERATELY_UNMAPPED_EVENTS].filter((kind) => kind !== ANALYSIS_LINKS_DECLARED).sort()).toEqual(coreEventKinds.sort());
+  expect(coreEventKinds).not.toContain(ANALYSIS_LINKS_DECLARED);
 });
 
 test("new variants and unknown artifact declarations become unmapped outcomes", () => {
@@ -40,6 +44,15 @@ for (const decision of ["accept", "request_changes"]) test(`an operator ${decisi
     decision, target: "rev-1", payload: { note: "revise" } }), definition: null, namespace: "test", stage: null, revision_sequence: null, run_config: null });
   expect(outcome).toEqual({ format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
     kind: "ignored", event_kind: "operator_decided", run_id: "run-1", event_id: "event-1" });
+});
+
+test("a declaration maps to its own event with the exact journaled addresses", () => {
+  const outcome = mapObservationEvent({ row: row({ kind: ANALYSIS_LINKS_DECLARED, run_id: "run-1", tasks_revision_id: "run-1/analysis:tasks:2",
+    entries: [{ source_revision_id: "run-1/analysis:analysis:1", item_path: "/findings/3", task_ids: ["T1", "T9"] }] }),
+    definition: null, namespace: "test", stage: null, revision_sequence: null, run_config: null });
+  expect(outcome).toEqual({ format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null, kind: "relation_declaration",
+    event_kind: ANALYSIS_LINKS_DECLARED, run_id: "run-1", event_id: "event-1", declaration: { run_id: "run-1", tasks_revision_id: "run-1/analysis:tasks:2",
+      entries: [{ source_revision_id: "run-1/analysis:analysis:1", item_path: "/findings/3", task_ids: ["T1", "T9"] }] } });
 });
 
 test("no adapter or ops command remains for the retired observation surfaces", async () => {

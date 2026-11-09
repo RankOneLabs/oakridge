@@ -1,3 +1,4 @@
+import type { JsonValue } from "../domain/primitives";
 import type { CaptureEnvelope } from "./capture";
 
 /** The producer's durable position in authority.event, represented as decimal text to avoid bigint precision loss. */
@@ -19,6 +20,8 @@ export type SourceEventOutcome = SourceEventProvenance & (
       readonly input_schema_version: string; readonly config: RunConfigWire | null }
   | { readonly kind: "ignored"; readonly event_kind: "operator_decided" | "worker_started" | "worker_ended" | "retry_requested" | "cancel_requested";
       readonly run_id: string; readonly event_id: string }
+  /** A producer's explicit relations, carried as journaled: the injected profile reads them. */
+  | { readonly kind: "relation_declaration"; readonly event_kind: string; readonly run_id: string; readonly event_id: string; readonly declaration: JsonValue }
   | { readonly kind: "unmapped"; readonly event_kind: string; readonly run_id: string; readonly event_id: string; readonly reason: string });
 
 export interface SourceEventDelivery { readonly previous: SourceEventCursor; readonly cursor: SourceEventCursor; readonly outcome: SourceEventOutcome }
@@ -45,6 +48,7 @@ export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery |
   if (outcome.kind === "artifact_revision" && (!record(outcome.revision) || outcome.revision.format !== "observation.artifact-revision/v2")) return null;
   if (outcome.kind === "unmapped" && typeof outcome.reason !== "string") return null;
   if (outcome.kind === "run_input" && !runConfig(outcome.config)) return null;
-  if (!["artifact_revision", "run_input", "ignored", "unmapped"].includes(outcome.kind)) return null;
+  if (outcome.kind === "relation_declaration" && !record(outcome.declaration)) return null;
+  if (!["artifact_revision", "run_input", "ignored", "relation_declaration", "unmapped"].includes(outcome.kind)) return null;
   return value as unknown as SourceEventDelivery;
 }

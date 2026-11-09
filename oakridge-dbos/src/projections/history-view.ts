@@ -1,4 +1,5 @@
 import type { Event, Writer } from "../core-client/core-types";
+import { ANALYSIS_LINKS_DECLARED } from "../domain/analysis-link-declaration";
 import type { UnitId } from "../domain/primitives";
 import type { AuthorityEffectStatus } from "../storage/db-types";
 import type { HistoryPage, UnitDiagnosticsRead } from "../storage/read-store";
@@ -17,8 +18,9 @@ export interface EventHistory {
 export interface UnitHistory { readonly unit_id: UnitId; readonly events: readonly EventHistory[]; readonly next_cursor: string | null }
 
 export function selectUnitHistory(unit_id: UnitId, page: HistoryPage, next_cursor: string | null): UnitHistory {
-  return { unit_id, next_cursor, events: page.items.map(({ event }) => ({ id: event.id, ingress_id: event.ingress_id, event: event.payload,
-    writer: event.writer, created_at: event.created_at })) };
+  // A declaration addresses the run and no unit, so a unit's history never holds one.
+  return { unit_id, next_cursor, events: page.items.flatMap(({ event }) => event.payload.kind === ANALYSIS_LINKS_DECLARED ? [] : [{ id: event.id, ingress_id: event.ingress_id,
+    event: event.payload, writer: event.writer, created_at: event.created_at }]) };
 }
 
 /** What the executor has made of one effect intent. */

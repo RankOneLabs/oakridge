@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileDefinition, selectWanted, type WantedForUnit } from "../core-client/client";
 import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer } from "../core-client/core-types";
+import { ANALYSIS_LINKS_DECLARED, selectDeclarationRefusal, type AnalysisLinkDeclaration, type AnalysisLinkEntry, type AnalysisLinksDeclared } from "../domain/analysis-link-declaration";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
@@ -126,7 +127,7 @@ function canonical(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 /** A launch's definition, project and config are part of what it asks for: a replay naming another is other content. */
-export function requestDigest(request: Pick<CommitRequest, "event" | "writer" | "publication_secret_hash" | "launch">): string {
+export function requestDigest(request: Pick<CommitRequest, "writer" | "publication_secret_hash" | "launch"> & { readonly event: Event | AnalysisLinksDeclared }): string {
   const { event, writer, publication_secret_hash, launch } = request;
   return createHash("sha256").update(canonical({ event, writer, ...(publication_secret_hash ? { publication_secret_hash } : {}),
     ...(launch ? { launch } : {}) })).digest("hex");
@@ -140,7 +141,8 @@ export function requestDigest(request: Pick<CommitRequest, "event" | "writer" | 
  * and the operator event, in one transaction. A step rejection is stored, not
  * rolled back. The executor is woken after commit.
  */
-export async function commitEvent(deps: CommitDependencies, request: CommitRequest): Promise<CommitResult> {
+export async function commitEvent(deps: CommitDependencies, request: CommitRequest,
+  within?: (trx: DatabaseTransaction, outcome: CommitOutcome) => Promise<void>): Promise<CommitResult> {
   const scoped = { ...request, ingress_id: scopeIngressId(request.writer, request.ingress_id) };
   let trx: Awaited<ReturnType<ReturnType<Database["startTransaction"]>["execute"]>> | null = null;
   try {
@@ -158,6 +160,7 @@ export async function commitEvent(deps: CommitDependencies, request: CommitReque
       trx = null;
       return await storeLaunchRefusal(deps.db, scoped, { outcome, refusal });
     }
+    await within?.(trx, outcome);
     await trx.commit().execute();
     trx = null;
     // A replay wakes too: the original commit's wake may have been lost.
@@ -224,7 +227,9 @@ async function isFaultStanding(trx: DatabaseTransaction, input: FaultIdentity): 
 
 /** The latest event committed on a unit, or on the run as a whole for null: what a stall or a fault stands after. */
 async function readLatestEventId(trx: DatabaseTransaction, run_id: string, unit_id: string | null): Promise<string | null> {
-  let latest = trx.selectFrom("authority.event").select("id").where("run_id", "=", run_id);
+  // A declaration moves no workflow state, so a refused event's stall or fault still stands after one.
+  let latest = trx.selectFrom("authority.event").select("id").where("run_id", "=", run_id)
+    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "<>", ANALYSIS_LINKS_DECLARED));
   if (unit_id !== null) latest = latest.where("unit_id", "=", unit_id);
   return (await latest.orderBy("created_at", "desc").orderBy("id", "desc").limit(1).executeTakeFirst())?.id ?? null;
 }
@@ -709,7 +714,7 @@ export function selectChangedWanted(wanted: readonly WantedForUnit[], logged: Re
   });
 }
 
-interface ReceiptInput { readonly request: CommitRequest; readonly unit_id: string | null; readonly digest: string; readonly result: CommitReceipt }
+interface ReceiptInput { readonly request: Pick<CommitRequest, "run_id" | "ingress_id">; readonly unit_id: string | null; readonly digest: string; readonly result: CommitReceipt }
 /**
  * Under the run row lock no other receipt can race this one. A launch that
  * created its run row holds no lock a refused launch's receipt waits on, and
@@ -721,6 +726,85 @@ async function storeReceipt(trx: DatabaseTransaction, input: ReceiptInput): Prom
   await trx.insertInto("authority.ingress_receipt").values({ id: crypto.randomUUID(), run_id: input.request.run_id, unit_id: input.unit_id,
     ingress_id: input.request.ingress_id, request_digest: input.digest, result: jsonText(input.result) })
     .onConflict((conflict) => conflict.columns(["run_id", "ingress_id"]).doNothing()).execute();
+}
+
+/** A declaration as ingress hands it over: the writer is resolved from the credential, never the body. */
+export interface DeclarationRequest {
+  readonly declaration: AnalysisLinkDeclaration;
+  readonly ingress_id: string;
+  readonly writer: Writer;
+}
+
+/**
+ * Journals an explicit analysis-link declaration on the ordered event table, after checking its
+ * exact addresses against this run's authority. It takes the run row lock, so it orders with the
+ * run's other events and answers a replayed ingress id from its receipt, but it never steps the
+ * core: it starts no worker, changes no unit and is no decision. A refusal is stored like a rejected
+ * event, so a replay returns it again. Delivery to observation happens later, from the journal, so
+ * an outage there cannot touch the approval or the run.
+ */
+export async function commitAnalysisLinkDeclaration(db: Database, request: DeclarationRequest): Promise<CommitResult> {
+  const { run_id } = request.declaration;
+  const scoped_ingress_id = scopeIngressId(request.writer, request.ingress_id);
+  try {
+    return { ok: true, value: await db.transaction().execute((trx) => journalAnalysisLinkDeclaration(trx, { ...request, scoped_ingress_id })) };
+  } catch (error) {
+    const conflict = concurrencyConflict(error);
+    if (conflict) return { ok: true, value: { kind: "contended", detail: conflict } };
+    return { ok: false, error: { operation: "commit_analysis_link_declaration", entity_id: run_id, detail: String(error) } };
+  }
+}
+
+/** The writer's work inside a caller's transaction, so a tasks approval and what it supplies commit together. */
+async function journalAnalysisLinkDeclaration(trx: DatabaseTransaction, request: Omit<DeclarationRequest, "ingress_id"> & { readonly scoped_ingress_id: IngressId | null }): Promise<CommitOutcome> {
+  const { declaration, writer } = request;
+  const { run_id } = declaration;
+  const scoped = { run_id: run_id as RunId, ingress_id: request.scoped_ingress_id };
+  const event: AnalysisLinksDeclared = { kind: ANALYSIS_LINKS_DECLARED, ...declaration };
+  const digest = requestDigest({ event, writer });
+  const run = await trx.selectFrom("authority.run").select("id").where("id", "=", run_id).where("root_unit_id", "is not", null).forUpdate().executeTakeFirst();
+  if (!run) return { kind: "missing", detail: "run not found" };
+  const receipt = await readReceipt(trx, scoped);
+  if (receipt) return receipt.request_digest === digest ? { kind: "replayed", receipt: receipt.result }
+    : { kind: "conflict", detail: "ingress id reused with different content" };
+  const revision_ids = [declaration.tasks_revision_id, ...declaration.entries.map((entry) => entry.source_revision_id)];
+  const revisions = await trx.selectFrom("authority.artifact_revision").select(["id", "artifact", "body"]).where("run_id", "=", run_id)
+    .where("id", "=", anyOf(revision_ids)).execute();
+  const approval = await trx.selectFrom("authority.review_decision").select("id").where("run_id", "=", run_id)
+    .where("target_revision_id", "=", declaration.tasks_revision_id).where("effect", "=", "approve").limit(1).executeTakeFirst();
+  const refusal = selectDeclarationRefusal(declaration, { tasks_revision: revisions.find((revision) => revision.id === declaration.tasks_revision_id) ?? null,
+    is_tasks_revision_approved: approval !== undefined, sources: new Map(revisions.map((revision) => [revision.id, revision])) });
+  if (refusal !== null) {
+    await storeReceipt(trx, { request: scoped, unit_id: null, digest, result: { kind: "rejected", reason: refusal } });
+    return { kind: "rejected", reason: refusal };
+  }
+  const event_id = crypto.randomUUID();
+  await trx.insertInto("authority.event").values({ id: event_id, run_id, unit_id: null, ingress_id: scoped.ingress_id,
+    payload: jsonText(event), writer: jsonText(writer) }).execute();
+  await storeReceipt(trx, { request: scoped, unit_id: null, digest, result: { kind: "committed", event_id } });
+  return { kind: "committed", event_id };
+}
+
+/** What a decision's own supplied links came to. The decision stands whichever it is. */
+export interface DecisionWithLinks { readonly decision: CommitResult; readonly links: CommitOutcome | null }
+const decisionStands = (outcome: CommitOutcome): boolean => outcome.kind === "committed" || (outcome.kind === "replayed" && outcome.receipt.kind === "committed");
+
+/**
+ * The approved-tasks caller. An approval naming entries journals them against the revision it decides,
+ * in its own transaction, so no crash can leave the approval without what came with it. A refused
+ * entry refuses only the declaration: links never decide an approval. A replay answers from both
+ * receipts, so a retried request can neither repeat the links nor lose them.
+ */
+export async function commitDecisionWithLinks(deps: CommitDependencies, request: CommitRequest & { readonly event: Extract<Event, { readonly kind: "operator_decided" }> }, entries: readonly AnalysisLinkEntry[]): Promise<DecisionWithLinks> {
+  let links: CommitOutcome | null = null;
+  const decision = await commitEvent(deps, request, async (trx, outcome) => {
+    if (!decisionStands(outcome)) return;
+    // Outside every writer's namespace, so no id a caller may choose can land on this receipt.
+    const scoped_ingress_id = `decision-links:${scopeIngressId(request.writer, request.ingress_id)}` as IngressId;
+    links = await journalAnalysisLinkDeclaration(trx, { scoped_ingress_id, writer: request.writer,
+      declaration: { run_id: request.run_id, tasks_revision_id: request.event.target, entries } });
+  });
+  return { decision, links };
 }
 
 /**

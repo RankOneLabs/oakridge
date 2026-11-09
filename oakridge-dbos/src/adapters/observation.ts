@@ -2,7 +2,7 @@ import type { Kysely } from "kysely";
 import type { DB } from "../storage/db-types";
 import { readCommittedEventsAfter, readCommittedRunConfig, readEventRevisionSequence, readEventUnitStage, readPinnedDefinition,
   type CommittedEventRow } from "../storage/read-store";
-import type { Event } from "../core-client/core-types";
+import type { CoreEvent } from "../storage/json-column-types";
 import { mapObservationEvent } from "./observation-mapping";
 import type { SourceEventAck, SourceEventCursor, SourceEventDelivery } from "./observation-wire";
 
@@ -10,7 +10,7 @@ export interface ObservationOptions { readonly url: string; readonly namespace: 
   readonly poll_ms?: number; readonly fetcher?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   readonly log?: (detail: string) => void }
 
-async function deliveryFor(db: Kysely<DB>, row: CommittedEventRow<Event>, namespace: string, previous: SourceEventCursor): Promise<SourceEventDelivery> {
+async function deliveryFor(db: Kysely<DB>, row: CommittedEventRow<CoreEvent>, namespace: string, previous: SourceEventCursor): Promise<SourceEventDelivery> {
   const event = row.payload;
   const definition = await readPinnedDefinition(db, row.run_id ?? "");
   const stage = event.kind === "revision_published" ? await readEventUnitStage(db, row.run_id ?? "", event.unit) : null;

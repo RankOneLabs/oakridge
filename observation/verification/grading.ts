@@ -44,7 +44,7 @@ import { editedGraders, graderPlans, readRunPins, type RunLabel } from "./regist
 import { awaitRunCapture, runCaptureChecks } from "./run-capture";
 import { observationSettled, settleObservation } from "./scenarios";
 import type { ProofIo, StackOptions } from "./shadow-session";
-import type { SourceRunTarget } from "./source-run";
+import type { ReviewCheckpoint, SourceRunTarget, SourceRunInput } from "./source-run";
 
 const PAGE = 200;
 const POLL_MS = 1_000;
@@ -60,12 +60,17 @@ export const CONCURRENT_ESTIMATE_PER_CALL = 2;
 const check = (name: string, passed: boolean, detail: string): ProofCheck => ({ name, passed, detail });
 
 export type GradingRunLabel = RunLabel | "analysis-on" | "analysis-off" | "assessment-on" | "analysis-edited" | "analysis-failing"
-  | "analysis-concurrent";
+  | "analysis-concurrent" | "links" | "shared";
 export interface GradingRunOptions {
   readonly grading_enabled: boolean;
   readonly through: SourceRunTarget;
   readonly capture: "await" | "deferred";
   readonly after_launch?: (run: RunReference) => Promise<ProofCheck>;
+  readonly reviews?: readonly ReviewCheckpoint[];
+  /** Another input than the proof's own, for a run that needs a different plan. */
+  readonly input?: SourceRunInput;
+  readonly target_units?: number;
+  readonly timeout_ms?: number;
 }
 /**
  * A second observation worker on the shadow's own database, as a second observation process would
@@ -114,7 +119,7 @@ interface ServedMeasurements {
   }[];
 }
 
-async function runItems(io: ProofIo, run_id: string): Promise<readonly ServedItem[]> {
+export async function runItems(io: ProofIo, run_id: string): Promise<readonly ServedItem[]> {
   const items: ServedItem[] = [];
   for (let offset = 0; ; offset += PAGE) {
     const page = await io.observationGet(`/v1/runs/${encodeURIComponent(run_id)}/items?limit=${PAGE}&offset=${offset}`, "read");
@@ -164,7 +169,7 @@ export const settledRun = (measurements: readonly MeasurementReadback[]): boolea
   measurements.length > 0 && !measurements.some(isUnsettled);
 
 /** Reads until `done` holds or the attempts run out; the last read is returned either way. */
-async function readUntil(io: ProofIo, run_id: string, checkpoint: string, done: (read: readonly MeasurementReadback[]) => boolean)
+export async function readUntil(io: ProofIo, run_id: string, checkpoint: string, done: (read: readonly MeasurementReadback[]) => boolean)
   : Promise<readonly MeasurementReadback[]> {
   let read: readonly MeasurementReadback[] = [];
   for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt++) {
