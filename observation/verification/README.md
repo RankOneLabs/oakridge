@@ -63,6 +63,14 @@ reasons, failed reads, observation health, the launcher's status and the publish
 latest refusals. Those refusals appear only when this proof started the stack, since
 only then does it hold the launcher's log.
 
+## Cumulative report
+
+`bun observation/verification/cumulative.ts --workspace <proof_id> --grading <proof_id> --relations <proof_id>`
+ties the live matrix to the proof reports that hold it, beside the review-endpoint result, a scan of every
+retained definition, and the target-schema, import-boundary and task-contract test results. It starts no stack
+and sends no provider request. It writes `reports/cumulative-<time>/report.json` and passes only if every named
+report passed. Offline results sit beside the live ones and stand in for none of them.
+
 ## Contracts
 
 `proof-contract.ts` holds the named types: `LauncherState` is what `--print-state`

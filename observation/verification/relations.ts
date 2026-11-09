@@ -74,11 +74,17 @@ async function served(io: ProofIo, route: string): Promise<unknown> {
   if (!read.ok) throw new Error(`${route}: ${read.error.detail}`);
   return read.value;
 }
+/** An item's state apart from its links, which an explicit link is meant to change. */
+export function withoutLinks(status: unknown): unknown {
+  if (status === null || typeof status !== "object") return status;
+  const { links: _links, ...measured } = status as { readonly links?: unknown };
+  return measured;
+}
 /** What must not move for one item, each as its own read route serves it. */
 async function itemFacts(io: ProofIo, occurrence_id: string): Promise<RelationCheckpoint["linked"]> {
   const id = encodeURIComponent(occurrence_id);
   return { occurrence_id, occurrence: await served(io, `/v1/items/${id}`), evidence: await served(io, `/v1/items/${id}/evidence`),
-    grades: await served(io, `/v1/items/${id}/grades?limit=200`), measurements: await served(io, `/v1/items/${id}/status?limit=200&machine_limit=200&attempts_limit=200&answers_limit=200&superseded_answers_limit=200&references_limit=200&pinned_evaluators_limit=200&links_limit=200`) };
+    grades: await served(io, `/v1/items/${id}/grades?limit=200`), measurements: withoutLinks(await served(io, `/v1/items/${id}/status?limit=200&machine_limit=200&attempts_limit=200&answers_limit=200&superseded_answers_limit=200&references_limit=200&pinned_evaluators_limit=200`)) };
 }
 export async function authorityEvents(io: ProofIo, run_id: string): Promise<number | null> {
   if (!/^[\w.:/-]+$/.test(run_id)) return null;
