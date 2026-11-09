@@ -1,3 +1,4 @@
+import { canonicalDigest } from "canonical-json";
 import type { ExecutionId, GradeObservationId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import type { EvaluationExecution } from "./execution";
@@ -12,6 +13,13 @@ export type GradeAnswer =
   | { readonly state: "answered"; readonly kind: "text"; readonly value: string }
   | { readonly state: "answered"; readonly kind: "structured"; readonly value: JsonValue }
   | { readonly state: "abstain" | "unclear"; readonly kind: ResponseKind; readonly reason: string };
+
+/** An execution holds one answer, so its answer's id follows from it. */
+export function observationIdOf(execution_id: ExecutionId): GradeObservationId {
+  const digest = canonicalDigest(["grade-observation/v1", execution_id]);
+  if (!digest.ok) throw new Error(digest.error.detail);
+  return digest.value as unknown as GradeObservationId;
+}
 
 /** Mirrors observation.grade_observation. Measurement identity is read through the execution. */
 export interface GradeObservation {

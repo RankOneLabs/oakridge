@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import type { ReviewerId } from "../domain/identity";
 import type { TenantScope } from "../storage/database";
 
 export interface Credential extends TenantScope { readonly token: string; readonly reviewer_id?: string }
@@ -20,8 +21,8 @@ export function credentialFor(header: string | undefined, credentials: readonly 
   return credentials.find((credential) => sameSecret(token, credential.token)) ?? null;
 }
 /** A token has one immutable reviewer identity, including in-process credentials. */
-export function boundReviewer(credential: Credential): string {
-  return credential.reviewer_id ?? `credential:${createHash("sha256").update(credential.token).digest("hex")}`;
+export function boundReviewer(credential: Credential): ReviewerId {
+  return (credential.reviewer_id ?? `credential:${createHash("sha256").update(credential.token).digest("hex")}`) as ReviewerId;
 }
 
 function configuredCredentials(raw: string | undefined): readonly Credential[] {

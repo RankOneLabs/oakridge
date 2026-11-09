@@ -119,7 +119,7 @@ replaces the estimate. A request that would not fit is `budget_deferred`: nothin
 is answered. Deferred work is offered again when a reservation is released without a request, and at
 every start. There are no stage caps or stage concurrency limits.
 
-`GET /v1/items/:id/measurements` serves each pinned question's readiness, whether a reviewer can answer it,
+`GET /v1/items/:id/status` serves each pinned question's readiness, whether a reviewer can answer it,
 and for each pinned machine evaluator one of `not_ready` (with its reason), `grading_off`,
 `awaiting_admission`, `pending`, `budget_deferred`, `failed` (with its cause) or `answered`, with its
 attempts. `GET /v1/runs/:run_id/grading-spend` serves the run's choice, the exact config its launch
@@ -129,6 +129,15 @@ Oakridge, and an outage or failure never stops a workflow.
 The live proof is `bun observation/verification/proof.ts grading --input
 observation/verification/inputs/grading-audit.json`, on the isolated shadow below; its report is
 `observation/verification/reports/grading-<time>/report.json`. See `observation/verification/README.md`.
+
+## Human grading
+
+The operator grades in the run workspace: the Grading pane, or Grade on any finding in an analysis,
+assessment or integration view. Each opens one item panel, addressed by exact revision and path.
+kbbl forwards `/oakridge/observation/*` with its server-held read and grade tokens after its own control
+policy. Missing configuration answers `503` (`observation_not_configured`, `observation_capability_missing`)
+and an outage `502` on these routes only; DBOS, workflows and every other kbbl route are unaffected, and the
+PWA says the grading view is unavailable. The panel says saved only on the service's acknowledgment.
 
 ## Isolated shadow
 

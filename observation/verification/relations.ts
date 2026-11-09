@@ -21,7 +21,7 @@
  */
 import { resolve } from "node:path";
 import { canonicalDigest } from "canonical-json";
-import type { EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId } from "../src/domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId } from "../src/domain/identity";
 import type { JsonValue, Result } from "../src/domain/primitives";
 import { uniformDrilldownPages, type DrilldownRow, type LogicalItemComposite, type LogicalItemLineage, type Paged, type StageComposite } from "../src/grading/composite";
 import type { GradingRegistration } from "../src/grading/configuration";
@@ -74,13 +74,19 @@ async function served(io: ProofIo, route: string): Promise<unknown> {
   if (!read.ok) throw new Error(`${route}: ${read.error.detail}`);
   return read.value;
 }
+/** An item's state apart from its links, which an explicit link is meant to change. */
+export function withoutLinks(status: unknown): unknown {
+  if (status === null || typeof status !== "object") return status;
+  const { links: _links, ...measured } = status as { readonly links?: unknown };
+  return measured;
+}
 /** What must not move for one item, each as its own read route serves it. */
 async function itemFacts(io: ProofIo, occurrence_id: string): Promise<RelationCheckpoint["linked"]> {
   const id = encodeURIComponent(occurrence_id);
   return { occurrence_id, occurrence: await served(io, `/v1/items/${id}`), evidence: await served(io, `/v1/items/${id}/evidence`),
-    grades: await served(io, `/v1/items/${id}/grades?limit=200`), measurements: await served(io, `/v1/items/${id}/measurements`) };
+    grades: await served(io, `/v1/items/${id}/grades?limit=200`), measurements: withoutLinks(await served(io, `/v1/items/${id}/status?limit=200&machine_limit=200&attempts_limit=200&answers_limit=200&superseded_answers_limit=200&references_limit=200&pinned_evaluators_limit=200`)) };
 }
-async function authorityEvents(io: ProofIo, run_id: string): Promise<number | null> {
+export async function authorityEvents(io: ProofIo, run_id: string): Promise<number | null> {
   if (!/^[\w.:/-]+$/.test(run_id)) return null;
   const counted = await io.shadowQuery(io.state.postgres.authority_database, `SELECT count(*) FROM authority.event WHERE run_id = '${run_id}'`);
   return counted.ok ? Number(counted.value) : null;
@@ -380,7 +386,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
   const ready = async (occurrence_id: ItemOccurrenceId): Promise<EvidenceSetId> => {
     const sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
     for (const set of sets) await recordCollection(db, tenant, set.evidence_set_id, { state: "ready",
-      references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "synthetic", item_path: "/findings/0", content: `synthetic evidence of ${occurrence_id}` }] });
+      references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "synthetic" as ArtifactRevisionId, item_path: "/findings/0", content: `synthetic evidence of ${occurrence_id}` }] });
     return sets[0]!.evidence_set_id;
   };
   const answer = async (input: { readonly occurrence_id: ItemOccurrenceId; readonly question_id: string; readonly value: string; readonly reviewer?: string; readonly supersedes?: string }): Promise<string> => {

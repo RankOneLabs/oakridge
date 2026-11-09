@@ -45,7 +45,7 @@ integration("acknowledgement commits outcome and cursor together; stale delivery
       const unmapped = await app.request("/v1/sources/oakridge/unmapped", { headers: { authorization: "Bearer read-secret" } });
       const stored = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_event_outcome").select("event_id").execute());
       expect({ cursor: await cursor.json(), unmapped: await unmapped.json(), stored: stored.map((row) => row.event_id) }).toEqual({
-        cursor: { cursor: delivery.cursor }, unmapped: { items: [delivery.outcome] }, stored: ["event-1"] });
+        cursor: { cursor: delivery.cursor }, unmapped: { items: [delivery.outcome], total: 1, limit: 50, offset: 0 }, stored: ["event-1"] });
     } finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
 });

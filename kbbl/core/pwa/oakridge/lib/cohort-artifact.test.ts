@@ -13,7 +13,7 @@ const brief = {
   files_in_scope: ["src/api.py"],
   decisions_made: [],
   approaches_rejected: [],
-  acceptance_criteria: ["It works."],
+  acceptance_criteria: [{ id: "it-works", text: "It works.", decision_ids: [] }],
   next_action: "Start.",
 };
 

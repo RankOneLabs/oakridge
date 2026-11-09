@@ -1,0 +1,1947 @@
+{
+  "proof_id": "workspace-2026-11-09T02-14-08-499Z",
+  "started_at": "2026-11-09T02:14:08.635Z",
+  "finished_at": "2026-11-09T02:36:25.056Z",
+  "source": {
+    "git_head": "38222caf9d45542b556d3a6bed716e319cf11f07",
+    "worktree_clean": true
+  },
+  "launcher": {
+    "name": "item-workspace",
+    "state_dir": "/home/steve/.local/state/oakridge-item-workspace",
+    "kbbl": {
+      "port": 8798,
+      "url": "http://127.0.0.1:8798",
+      "data_dir": "/home/steve/.local/state/oakridge-item-workspace/kbbl"
+    },
+    "dbos": {
+      "port": 8800,
+      "url": "http://127.0.0.1:8800"
+    },
+    "postgres": {
+      "container": "oakridge-item-workspace-postgres",
+      "volume": "oakridge-item-workspace-postgres-data",
+      "port": 54349,
+      "authority_database": "oakridge"
+    },
+    "observation": {
+      "port": 8801,
+      "url": "http://127.0.0.1:8801",
+      "database": "observation",
+      "namespace": "shadow-item-workspace",
+      "ingest_token_file": "/home/steve/.local/state/oakridge-item-workspace/observation-ingest.token",
+      "read_token_file": "/home/steve/.local/state/oakridge-item-workspace/observation-read.token",
+      "grade_token_file": "/home/steve/.local/state/oakridge-item-workspace/observation-grade.token",
+      "status_file": "/home/steve/.local/state/oakridge-item-workspace/observation-status.json"
+    },
+    "provider_env_file": "/home/steve/codes/rol/oakridge/observation/.env"
+  },
+  "status": "failed",
+  "scenario": {
+    "id": "workspace",
+    "status": "failed",
+    "checks": [
+      {
+        "name": "no retained definition carries a discarded review field",
+        "passed": true,
+        "detail": "6 scanned: none carry one"
+      },
+      {
+        "name": "the stack starts (fresh)",
+        "passed": true,
+        "detail": "answered"
+      },
+      {
+        "name": "startup registered the configured graders (fresh)",
+        "passed": true,
+        "detail": "jev_direct:canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4, jev_direct:canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420, jev_direct:canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047"
+      },
+      {
+        "name": "kbbl holds both capabilities and returns no token (fresh)",
+        "passed": true,
+        "detail": "{\"read\":true,\"grade\":true}"
+      },
+      {
+        "name": "the grading-off run reaches its analysis",
+        "passed": true,
+        "detail": "run-117ae2d17558a9ea"
+      },
+      {
+        "name": "automatic grading off reads as grading_off, not as a negative answer",
+        "passed": true,
+        "detail": "grading_off"
+      },
+      {
+        "name": "a human answer is accepted with automatic grading off, and no request is sent",
+        "passed": true,
+        "detail": "201; 0 request(s)"
+      },
+      {
+        "name": "the enabled run reaches its assessment, with an accepted and a sent-back review",
+        "passed": true,
+        "detail": "run-cdad0ad3e816cd15"
+      },
+      {
+        "name": "the repository is withheld from observation",
+        "passed": true,
+        "detail": "/tmp/oakridge-proof/workspace-2026-11-09T02-14-08-499Z/10060d3f-8cc0-4f45-82a7-3367c936c145 moved to /tmp/oakridge-proof/workspace-2026-11-09T02-14-08-499Z/10060d3f-8cc0-4f45-82a7-3367c936c145.withheld"
+      },
+      {
+        "name": "the stack starts (repository withheld)",
+        "passed": true,
+        "detail": "answered"
+      },
+      {
+        "name": "startup registered the configured graders (repository withheld)",
+        "passed": true,
+        "detail": "jev_direct:canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4, jev_direct:canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420, jev_direct:canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047"
+      },
+      {
+        "name": "kbbl holds both capabilities and returns no token (repository withheld)",
+        "passed": true,
+        "detail": "{\"read\":true,\"grade\":true}"
+      },
+      {
+        "name": "the ordered feed delivered every event of the run",
+        "passed": true,
+        "detail": "46 of 46 events; cursor 2443/22ebf643-bc60-4c36-b587-c270e8c98250, run's last event 2443/22ebf643-bc60-4c36-b587-c270e8c98250"
+      },
+      {
+        "name": "the service mapped every event of the run",
+        "passed": true,
+        "detail": "0 unmapped: []"
+      },
+      {
+        "name": "the service serves the target revision",
+        "passed": true,
+        "detail": "assessment: oakridge:shadow-item-workspace:run-cdad0ad3e816cd15/implementation/audit:assessment:1"
+      },
+      {
+        "name": "accepting and sending back reviews created no grade",
+        "passed": true,
+        "detail": "0 reviewer answer(s)"
+      },
+      {
+        "name": "a not-ready question refuses its answer with its own reason",
+        "passed": true,
+        "detail": "{\"label\":\"not-ready\",\"status\":409,\"code\":\"not_ready\",\"submission_id\":\"not-ready-cff7a14c-9f92-43b4-a965-8a20b7692670\",\"reviewer_id\":null,\"observation_id\":null,\"execution_id\":null,\"evidence_set_id\":null,\"corrects_observation_id\":null}"
+      },
+      {
+        "name": "a ready question stays answerable beside it",
+        "passed": true,
+        "detail": "{\"label\":\"ready-beside\",\"status\":201,\"code\":null,\"submission_id\":\"ready-beside-f7002242-089f-46d0-97e2-9f39220c282c\",\"reviewer_id\":\"oakridge-operator\",\"observation_id\":\"canonical-json/v1:00db6e75fbeeb65c03afaa3d316fa12ebf5b8f76dc87d75dbfa7d725e2a37df1\",\"execution_id\":\"canonical-json/v1:c8e8e29746dbe5bacb471ab86b7203a3017716aefd110eb706c5de79d2421a8c\",\"evidence_set_id\":\"canonical-json/v1:52aeacde1712103b61ef27ca98f054040239c530c22878a1e8fb6a876292752e\",\"corrects_observation_id\":null}"
+      },
+      {
+        "name": "browser: the not-ready question shows its reason",
+        "passed": true,
+        "detail": "Not ready to answer: no launch repository holds commit db2a5d49b8fbcaff9faf03094ddd0757b9c9ecef (repository_unavailable)"
+      },
+      {
+        "name": "browser: the not-ready question offers no choice",
+        "passed": true,
+        "detail": "no radio rendered"
+      },
+      {
+        "name": "browser: the page raised no error",
+        "passed": true,
+        "detail": "none"
+      },
+      {
+        "name": "the repository is supplied",
+        "passed": true,
+        "detail": "/tmp/oakridge-proof/workspace-2026-11-09T02-14-08-499Z/10060d3f-8cc0-4f45-82a7-3367c936c145.withheld moved back to /tmp/oakridge-proof/workspace-2026-11-09T02-14-08-499Z/10060d3f-8cc0-4f45-82a7-3367c936c145"
+      },
+      {
+        "name": "the stack starts (repository supplied)",
+        "passed": true,
+        "detail": "answered"
+      },
+      {
+        "name": "startup registered the configured graders (repository supplied)",
+        "passed": true,
+        "detail": "jev_direct:canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4, jev_direct:canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420, jev_direct:canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047"
+      },
+      {
+        "name": "kbbl holds both capabilities and returns no token (repository supplied)",
+        "passed": true,
+        "detail": "{\"read\":true,\"grade\":true}"
+      },
+      {
+        "name": "the configured provider answered assessment findings in real requests",
+        "passed": true,
+        "detail": "12 answered: canonical-json/v1:28bfdc3ce343a8aa4c28d6a4b24bb7d6345da2268af92f884a106078e9f4a52a#1, canonical-json/v1:cccd6aefe652cbd26151e9526c62effb93821ba89140bafa0a861fb424227482#1, canonical-json/v1:ee0c0a15b099934097cdf488773c00338ac691efd14e07821fe6f7ed591013a3#1, canonical-json/v1:dadf7e0bab74568ed7ca755a1eb3c3835f7c30f47f93f82ad08760411575ec46#1, canonical-json/v1:1c8d0e4e8c5c1638050d7a4644bfb8d1ea17331965de31e25afdad3dfd396ac1#1"
+      },
+      {
+        "name": "exact revision and path resolve the occurrence, with no task or cohort",
+        "passed": true,
+        "detail": "200"
+      },
+      {
+        "name": "an answer outside the question's choices is refused",
+        "passed": true,
+        "detail": "{\"label\":\"invalid-choice\",\"status\":422,\"code\":\"invalid_answer\",\"submission_id\":\"invalid-choice-94e47aef-4b6e-40c5-b800-430ca45f7fd6\",\"reviewer_id\":null,\"observation_id\":null,\"execution_id\":null,\"evidence_set_id\":null,\"corrects_observation_id\":null}"
+      },
+      {
+        "name": "an authenticated human answer is acknowledged with the credential's reviewer",
+        "passed": true,
+        "detail": "{\"label\":\"first\",\"status\":201,\"code\":null,\"submission_id\":\"first-6cbfc7fb-173d-46ea-b84e-b4890486c0c2\",\"reviewer_id\":\"oakridge-operator\",\"observation_id\":\"canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44\",\"execution_id\":\"canonical-json/v1:edff4d419e681cfab290863cad55ec45a8e1331fd49427c4771aadcbd62a6534\",\"evidence_set_id\":\"canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d\",\"corrects_observation_id\":null}"
+      },
+      {
+        "name": "it shares the frozen evidence the machine answer used",
+        "passed": true,
+        "detail": "canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d and canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d"
+      },
+      {
+        "name": "browser reviewer and evaluator fields impersonate nobody",
+        "passed": true,
+        "detail": "{\"label\":\"spoofed\",\"status\":200,\"code\":null,\"submission_id\":\"first-6cbfc7fb-173d-46ea-b84e-b4890486c0c2\",\"reviewer_id\":\"oakridge-operator\",\"observation_id\":\"canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44\",\"execution_id\":\"canonical-json/v1:edff4d419e681cfab290863cad55ec45a8e1331fd49427c4771aadcbd62a6534\",\"evidence_set_id\":\"canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d\",\"corrects_observation_id\":null}"
+      },
+      {
+        "name": "a duplicate submission id acknowledges the original and changes nothing",
+        "passed": true,
+        "detail": "{\"observations\":21,\"executions\":21,\"requests_sent\":18,\"authority_events\":46} then {\"observations\":21,\"executions\":21,\"requests_sent\":18,\"authority_events\":46}"
+      },
+      {
+        "name": "a correction appends one linked answer on the same evidence",
+        "passed": true,
+        "detail": "{\"label\":\"correction\",\"status\":201,\"code\":null,\"submission_id\":\"correction-bb11b2cc-2bac-4677-87b8-ef6d7dcfec25\",\"reviewer_id\":\"oakridge-operator\",\"observation_id\":\"canonical-json/v1:247efcb74fe4392e47bc97f795667f7fa9d0f128734ef66d0bb9833477b7b4e5\",\"execution_id\":\"canonical-json/v1:c1e5cc9fab69410085ae068a884f2c28cbd705e3b4a2b7bd32449bc29135df57\",\"evidence_set_id\":\"canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d\",\"corrects_observation_id\":\"canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44\"}"
+      },
+      {
+        "name": "no human answer or correction sent a provider request",
+        "passed": true,
+        "detail": "18 then 18"
+      },
+      {
+        "name": "no human answer or correction wrote an authority event",
+        "passed": true,
+        "detail": "46 then 46"
+      },
+      {
+        "name": "a grade capability reads nothing, and a read capability writes nothing",
+        "passed": true,
+        "detail": "grade read refused; read write 403"
+      },
+      {
+        "name": "under a control token, kbbl's forwarding refuses before forwarding and admits the operator, against the real service",
+        "passed": true,
+        "detail": "401, 401, 200"
+      },
+      {
+        "name": "machine and human answers read back with distinct identities",
+        "passed": true,
+        "detail": "[[\"canonical-json/v1:412c46ca5381bb3024e2de3ef662022f98617dc5bd6cedf9a1d0943bb0e91995\",null],[\"canonical-json/v1:247efcb74fe4392e47bc97f795667f7fa9d0f128734ef66d0bb9833477b7b4e5\",\"oakridge-operator\"]]"
+      },
+      {
+        "name": "the earlier human answer stays in history, not current",
+        "passed": true,
+        "detail": "canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44"
+      },
+      {
+        "name": "composites count the corrected answer, by item and grader",
+        "passed": true,
+        "detail": "status 200"
+      },
+      {
+        "name": "browser: hidden: the grading section shows no composite count",
+        "passed": true,
+        "detail": "no count rendered"
+      },
+      {
+        "name": "browser: hidden: no other answer, reviewer or grader is anywhere on the page",
+        "passed": true,
+        "detail": "leaked: none"
+      },
+      {
+        "name": "browser: hidden: the panel omits other answers and evaluators and keeps the form",
+        "passed": true,
+        "detail": "0 evaluator rows, 0 answer sections"
+      },
+      {
+        "name": "browser: revealed before this page answered anything: the real provider answer is shown as a machine's",
+        "passed": true,
+        "detail": "[[\"canonical-json/v1:412c46ca5381bb3024e2de3ef662022f98617dc5bd6cedf9a1d0943bb0e91995\",\"machine\"],[\"canonical-json/v1:247efcb74fe4392e47bc97f795667f7fa9d0f128734ef66d0bb9833477b7b4e5\",\"human\"],[\"canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44\",\"human\"]]"
+      },
+      {
+        "name": "browser: the authenticated human answer is shown as a reviewer's",
+        "passed": true,
+        "detail": "[[\"canonical-json/v1:412c46ca5381bb3024e2de3ef662022f98617dc5bd6cedf9a1d0943bb0e91995\",\"machine\"],[\"canonical-json/v1:247efcb74fe4392e47bc97f795667f7fa9d0f128734ef66d0bb9833477b7b4e5\",\"human\"],[\"canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44\",\"human\"]]"
+      },
+      {
+        "name": "browser: the browser flow completes",
+        "passed": false,
+        "detail": "click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByTestId('or-item-hide')\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" data-testid=\"or-item-hide\" class=\"inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-blue)] disabled:cursor-not-allowed disabled:opacity-50 border border-[var(--border-muted)] bg-[var(--bg-surface)] font-normal text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)] px-2 py-0.5 text-xs  text-xs!\">Hide other answers</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n"
+      },
+      {
+        "name": "browser: the page raised no error",
+        "passed": true,
+        "detail": "none"
+      },
+      {
+        "name": "browser answers write no authority event",
+        "passed": true,
+        "detail": "46 then 46"
+      },
+      {
+        "name": "browser answers bind the credential's reviewer and link the correction",
+        "passed": false,
+        "detail": "[]"
+      },
+      {
+        "name": "the run's request count matches its sent attempts after every human answer",
+        "passed": true,
+        "detail": "18 request(s) in 18 attempt(s)"
+      }
+    ],
+    "evidence": {
+      "runs": [
+        {
+          "run_id": "run-117ae2d17558a9ea",
+          "definition_id": "4a2facdb9c6ea9abbdb263a35aee19357744057896da226ff17d319f8eb600c5"
+        },
+        {
+          "run_id": "run-cdad0ad3e816cd15",
+          "definition_id": "4a2facdb9c6ea9abbdb263a35aee19357744057896da226ff17d319f8eb600c5"
+        }
+      ],
+      "capture": null,
+      "run_capture": null,
+      "authority": null,
+      "source_revisions": [
+        "run-cdad0ad3e816cd15/implementation/audit:assessment:1"
+      ],
+      "item_paths": [
+        "run-cdad0ad3e816cd15/implementation/audit:assessment:1/findings/1"
+      ],
+      "pinned_definitions": [
+        "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420"
+      ],
+      "execution_ids": [
+        "canonical-json/v1:a15b11f1d771250a1556b70aa533455bcda0fa6d96c68747a2ce5c82717929cf",
+        "canonical-json/v1:a010a1d173a21baaa74773b90028f53ae318ae96a6c725a71b0f2c95a5c0ac07",
+        "canonical-json/v1:840db7a3aea6dddeb9274e749177c8377b12c2be1627d165750acca1b107c675",
+        "canonical-json/v1:0b0bb31efbd34a73d7b774fb6384b28ded7c1e3399c0fa72b097e1b8a35ea31b",
+        "canonical-json/v1:19913b41098112d62e75153a1bb91993a442de548c0530a0d247e445e3c753f1",
+        "canonical-json/v1:7e92e1bc4726e3ef8436443351d62a25ea8917e057a87eece47db6ef97bfd9e0",
+        "canonical-json/v1:28bfdc3ce343a8aa4c28d6a4b24bb7d6345da2268af92f884a106078e9f4a52a",
+        "canonical-json/v1:cccd6aefe652cbd26151e9526c62effb93821ba89140bafa0a861fb424227482",
+        "canonical-json/v1:ee0c0a15b099934097cdf488773c00338ac691efd14e07821fe6f7ed591013a3",
+        "canonical-json/v1:dadf7e0bab74568ed7ca755a1eb3c3835f7c30f47f93f82ad08760411575ec46",
+        "canonical-json/v1:1c8d0e4e8c5c1638050d7a4644bfb8d1ea17331965de31e25afdad3dfd396ac1",
+        "canonical-json/v1:815e0bd8853626ada47bc643f0eed9c2735675f78695e431ec7214e47ad1b5f2",
+        "canonical-json/v1:4d4ce73b3d645eb1ea614c1e5c5097c3feceba69b0412e04f806860580b71aa0",
+        "canonical-json/v1:5c0428a302c8da65c1f556f0c7980a1972f02519e6382b7a85eb5101e21a9e27",
+        "canonical-json/v1:076f04e1c5fdff1b5a8cf6afd918892773d1ecd054aa54832eba08af0f4d1cfd",
+        "canonical-json/v1:d7b8eb5fdc57bd2845e6f2af91a5d74812bb79c3f032ef4392589ab2f3849947",
+        "canonical-json/v1:c495adfad98d9059c5c5558fe72c6fb09df002ed76ceb7d83356c5591cd933f3",
+        "canonical-json/v1:aef6bacd116f0dfacfc937db3c3ab62e88a9e09e077ee8b1b4757e59769156e0"
+      ],
+      "provider_attempt_ids": [
+        "canonical-json/v1:a15b11f1d771250a1556b70aa533455bcda0fa6d96c68747a2ce5c82717929cf#1",
+        "canonical-json/v1:a010a1d173a21baaa74773b90028f53ae318ae96a6c725a71b0f2c95a5c0ac07#1",
+        "canonical-json/v1:840db7a3aea6dddeb9274e749177c8377b12c2be1627d165750acca1b107c675#1",
+        "canonical-json/v1:0b0bb31efbd34a73d7b774fb6384b28ded7c1e3399c0fa72b097e1b8a35ea31b#1",
+        "canonical-json/v1:19913b41098112d62e75153a1bb91993a442de548c0530a0d247e445e3c753f1#1",
+        "canonical-json/v1:7e92e1bc4726e3ef8436443351d62a25ea8917e057a87eece47db6ef97bfd9e0#1",
+        "canonical-json/v1:28bfdc3ce343a8aa4c28d6a4b24bb7d6345da2268af92f884a106078e9f4a52a#1",
+        "canonical-json/v1:cccd6aefe652cbd26151e9526c62effb93821ba89140bafa0a861fb424227482#1",
+        "canonical-json/v1:ee0c0a15b099934097cdf488773c00338ac691efd14e07821fe6f7ed591013a3#1",
+        "canonical-json/v1:dadf7e0bab74568ed7ca755a1eb3c3835f7c30f47f93f82ad08760411575ec46#1",
+        "canonical-json/v1:1c8d0e4e8c5c1638050d7a4644bfb8d1ea17331965de31e25afdad3dfd396ac1#1",
+        "canonical-json/v1:815e0bd8853626ada47bc643f0eed9c2735675f78695e431ec7214e47ad1b5f2#1",
+        "canonical-json/v1:4d4ce73b3d645eb1ea614c1e5c5097c3feceba69b0412e04f806860580b71aa0#1",
+        "canonical-json/v1:5c0428a302c8da65c1f556f0c7980a1972f02519e6382b7a85eb5101e21a9e27#1",
+        "canonical-json/v1:076f04e1c5fdff1b5a8cf6afd918892773d1ecd054aa54832eba08af0f4d1cfd#1",
+        "canonical-json/v1:d7b8eb5fdc57bd2845e6f2af91a5d74812bb79c3f032ef4392589ab2f3849947#1",
+        "canonical-json/v1:c495adfad98d9059c5c5558fe72c6fb09df002ed76ceb7d83356c5591cd933f3#1",
+        "canonical-json/v1:aef6bacd116f0dfacfc937db3c3ab62e88a9e09e077ee8b1b4757e59769156e0#1"
+      ],
+      "observation_ids": [
+        "canonical-json/v1:7f50ab86caf77e4f27c1855587fdd161e5571eef9ff88a8cd5d4443816c1c21a",
+        "canonical-json/v1:4f17cdf3387a18a15d2641a1116c6502a169eb2c7f77b93119efbf6b5e961bca",
+        "canonical-json/v1:831cb4789d57263ae08acd03d4d6e46570c4750a528138633773a42d8c37208a",
+        "canonical-json/v1:142cc709304830a19239ccbb35798e712aede3c3a028fa637d914e84f0b801a7",
+        "canonical-json/v1:92ab4f0d15fa0d8ebbc9cd4eba11516cbfdb66b72aae4df823cefec4ca1bb735",
+        "canonical-json/v1:3db83663d520557b2272332d58f79a84987cfea5221a0159f03dc22f91f514a7",
+        "canonical-json/v1:412c46ca5381bb3024e2de3ef662022f98617dc5bd6cedf9a1d0943bb0e91995",
+        "canonical-json/v1:e41a8f135d8fa6b869242aa111c6a8e1e197c39e6b0e78b0264f1cdf7402c747",
+        "canonical-json/v1:3edbfcaa74f07620694097b767529cccf981b40f2272299cf71cbda5ce96bd1c",
+        "canonical-json/v1:dbce7a955f3e8e4ef4d5000f1fb00acf0a606aa9d8c4bde1ce7aba22f3e8419e",
+        "canonical-json/v1:f246882f7c7f92c71436dce3c89a7935081a99fb6383d9880bb6e143b737e8dd",
+        "canonical-json/v1:8bb6d5d61c6ff406fe4b405adf77d050e8f8e8f174672b1d0913d20536feef33",
+        "canonical-json/v1:306f9b655aab821f40abc10629e022b7426bfd684181b62539570f3ec6c51333",
+        "canonical-json/v1:2204dde6bd6b3e84f63050491b4f7367afc379964f4a2e2fe1cca14e62b1d1ed",
+        "canonical-json/v1:a91072bacfab671732a3390b5ea60b69dbfc6b40a76afb25a3e8999ee587c124",
+        "canonical-json/v1:9b961ad320ec3407aa1899b4cd821c2cb26e6eef4c113ec3020626a110417af6",
+        "canonical-json/v1:fc7dd2a9c5738c6272644319ab7ffd86a7f86c578ffb326d3821b35c7eb8d0dd",
+        "canonical-json/v1:8ee652c64bac89b49fd683b250856798139e0afc2c201b3ba334fdd8e5a25946",
+        "canonical-json/v1:fecaa8df5b0c7eabe1a43ce0a50a0ce74f84543df06f38a7045d16e9f3ab5baf",
+        "canonical-json/v1:00db6e75fbeeb65c03afaa3d316fa12ebf5b8f76dc87d75dbfa7d725e2a37df1",
+        "canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44",
+        "canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44",
+        "canonical-json/v1:247efcb74fe4392e47bc97f795667f7fa9d0f128734ef66d0bb9833477b7b4e5",
+        "canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44"
+      ],
+      "provider_request_count": 18,
+      "pwa_readback": [
+        "the not-ready question shows its reason",
+        "the not-ready question offers no choice",
+        "the page raised no error",
+        "hidden: the grading section shows no composite count",
+        "hidden: no other answer, reviewer or grader is anywhere on the page",
+        "hidden: the panel omits other answers and evaluators and keeps the form",
+        "revealed before this page answered anything: the real provider answer is shown as a machine's",
+        "the authenticated human answer is shown as a reviewer's",
+        "the page raised no error"
+      ],
+      "registrations": [],
+      "pins": [],
+      "frozen_evidence": [],
+      "measurements": [
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:00777deacd82277ce791f1b8ff133db8b900cdb1755bf696ccf10cd7796561f1",
+          "revision_id": "run-cdad0ad3e816cd15/analysis:analysis:1",
+          "item_path": "/findings/2",
+          "item_kind": "finding",
+          "question_id": "finding.relevance",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:52aeacde1712103b61ef27ca98f054040239c530c22878a1e8fb6a876292752e",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:a15b11f1d771250a1556b70aa533455bcda0fa6d96c68747a2ce5c82717929cf",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:7f50ab86caf77e4f27c1855587fdd161e5571eef9ff88a8cd5d4443816c1c21a",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "relevant"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:04fe867a640d6ed3c84370bd16ec03ef138f23c19ef84064362f1821d2ade30b",
+          "revision_id": "run-cdad0ad3e816cd15/analysis:analysis:1",
+          "item_path": "/findings/4",
+          "item_kind": "finding",
+          "question_id": "finding.relevance",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:c4feafda18708b2abe2cd688965374412b61d0a3a74fce57d41cf03229aaa7b0",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:a010a1d173a21baaa74773b90028f53ae318ae96a6c725a71b0f2c95a5c0ac07",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:4f17cdf3387a18a15d2641a1116c6502a169eb2c7f77b93119efbf6b5e961bca",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "relevant"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:11410ebef5d7fcb3adfe89823c6668bb0d9032e02f18f232215965e4e4ee7491",
+          "revision_id": "run-cdad0ad3e816cd15/analysis:analysis:1",
+          "item_path": "/findings/5",
+          "item_kind": "finding",
+          "question_id": "finding.relevance",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:4c6c3ed0b4cdd39b721396f86b7e1784503f313cae34a57804cad0a4082aeae7",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:840db7a3aea6dddeb9274e749177c8377b12c2be1627d165750acca1b107c675",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:831cb4789d57263ae08acd03d4d6e46570c4750a528138633773a42d8c37208a",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "relevant"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:4d7b7b6e07c8c64996c3ff19254f000b54bce869c6be94a0d356d648965209a5",
+          "revision_id": "run-cdad0ad3e816cd15/analysis:analysis:1",
+          "item_path": "/findings/0",
+          "item_kind": "finding",
+          "question_id": "finding.relevance",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:304aa299cc9c8667f18ce1c61eb5b4510b569060016fc2644a8296e674c1345d",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:0b0bb31efbd34a73d7b774fb6384b28ded7c1e3399c0fa72b097e1b8a35ea31b",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:142cc709304830a19239ccbb35798e712aede3c3a028fa637d914e84f0b801a7",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "relevant"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:caf07db1c816198362da312a781b4eb10fbf3e49a710dca946f22dd291cc400a",
+          "revision_id": "run-cdad0ad3e816cd15/analysis:analysis:1",
+          "item_path": "/findings/3",
+          "item_kind": "finding",
+          "question_id": "finding.relevance",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:a4189d5e25818b5ae500feda131805f6cb978a74a99de8d83ef5fad20c730acf",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:19913b41098112d62e75153a1bb91993a442de548c0530a0d247e445e3c753f1",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:92ab4f0d15fa0d8ebbc9cd4eba11516cbfdb66b72aae4df823cefec4ca1bb735",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "relevant"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:d9d889cbee960edba256ced99af4017c6295049ab316705df200db7d92cc85e9",
+          "revision_id": "run-cdad0ad3e816cd15/analysis:analysis:1",
+          "item_path": "/findings/1",
+          "item_kind": "finding",
+          "question_id": "finding.relevance",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:b2f30105320dbc8dbf7b546fbe5a6032610e2bbd127305989fa431591e00a4df",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:d0e7ae56536c8565b2cdbdaeef9d6ad0d6e6ad6e9561614ce74fd98015dc18b4",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:7e92e1bc4726e3ef8436443351d62a25ea8917e057a87eece47db6ef97bfd9e0",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:3db83663d520557b2272332d58f79a84987cfea5221a0159f03dc22f91f514a7",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "relevant"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:009e460a42a1b1fd922f014e2520024fb7a9875d2196000b9fe886ef07594c6c",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/1",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.correctness",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:28bfdc3ce343a8aa4c28d6a4b24bb7d6345da2268af92f884a106078e9f4a52a",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:412c46ca5381bb3024e2de3ef662022f98617dc5bd6cedf9a1d0943bb0e91995",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "unclear"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:009e460a42a1b1fd922f014e2520024fb7a9875d2196000b9fe886ef07594c6c",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/1",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.evidence_support",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:b9a54bc4130445f9ce92ed20aa9d9911e7d402da56afb5dbbd297af81e726f30",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:cccd6aefe652cbd26151e9526c62effb93821ba89140bafa0a861fb424227482",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:e41a8f135d8fa6b869242aa111c6a8e1e197c39e6b0e78b0264f1cdf7402c747",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "supports"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:14ceac418f0dddf4ce2f65cd37a3cea4cac06e2189375f22fbcb7a8968c17315",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/2",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.correctness",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:2b6f9b85f2d19711dc9b39edd07d5dfbf6364fd33a8d83e8b87581c4403653cd",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:ee0c0a15b099934097cdf488773c00338ac691efd14e07821fe6f7ed591013a3",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:3edbfcaa74f07620694097b767529cccf981b40f2272299cf71cbda5ce96bd1c",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "supported"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:14ceac418f0dddf4ce2f65cd37a3cea4cac06e2189375f22fbcb7a8968c17315",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/2",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.evidence_support",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:86af88131f1b5e2c2ca87b6cb33d172e1f9b3fd72e09a7b72a75cd33686b8864",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:dadf7e0bab74568ed7ca755a1eb3c3835f7c30f47f93f82ad08760411575ec46",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:dbce7a955f3e8e4ef4d5000f1fb00acf0a606aa9d8c4bde1ce7aba22f3e8419e",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "supports"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:4ab3c229991c2d56ceca1bfbdf0cee5c02254dff5906c9ff4ea74c4b818ee1c1",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/5",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.correctness",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:3edb548c27d3041ff8d2f8fe041f33c83b68c48991133626b403120c5c5326e3",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:1c8d0e4e8c5c1638050d7a4644bfb8d1ea17331965de31e25afdad3dfd396ac1",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:f246882f7c7f92c71436dce3c89a7935081a99fb6383d9880bb6e143b737e8dd",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "supported"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:4ab3c229991c2d56ceca1bfbdf0cee5c02254dff5906c9ff4ea74c4b818ee1c1",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/5",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.evidence_support",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:c5a8957c48ee1320eb3134cf9aed7369015a18fb2238530132bac5db945da11f",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:815e0bd8853626ada47bc643f0eed9c2735675f78695e431ec7214e47ad1b5f2",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:8bb6d5d61c6ff406fe4b405adf77d050e8f8e8f174672b1d0913d20536feef33",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "supports"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:4b912bb43818bb00e9dc0bfe1893bb5e7a43f39c79fd526546de2554822152a0",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/3",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.correctness",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:c90d1fef127ff1725c18bc049656dcaa9f009079a01a9e1b311482f779286231",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:4d4ce73b3d645eb1ea614c1e5c5097c3feceba69b0412e04f806860580b71aa0",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:306f9b655aab821f40abc10629e022b7426bfd684181b62539570f3ec6c51333",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "supported"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:4b912bb43818bb00e9dc0bfe1893bb5e7a43f39c79fd526546de2554822152a0",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/3",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.evidence_support",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:2f2fb81dff8b9cab605a51928f176f108078392b8b4e79f7c320e13dc4989488",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:5c0428a302c8da65c1f556f0c7980a1972f02519e6382b7a85eb5101e21a9e27",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:2204dde6bd6b3e84f63050491b4f7367afc379964f4a2e2fe1cca14e62b1d1ed",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "supports"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:65bbe98dbb37e38cb83eccc98d99c5bf21b63f14e5fa888ad2115beb11cbff99",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/0",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.correctness",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:7fd3a48394659fb6fdd6a12462a84f8965afd9001a2780bf8236f7aeb0ce10a6",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:076f04e1c5fdff1b5a8cf6afd918892773d1ecd054aa54832eba08af0f4d1cfd",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:a91072bacfab671732a3390b5ea60b69dbfc6b40a76afb25a3e8999ee587c124",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "unclear"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:65bbe98dbb37e38cb83eccc98d99c5bf21b63f14e5fa888ad2115beb11cbff99",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/0",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.evidence_support",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:e097401a41446e1db5a5ad1147a12db29ad935b8ddb5db0a06d1060834f66339",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:d7b8eb5fdc57bd2845e6f2af91a5d74812bb79c3f032ef4392589ab2f3849947",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:9b961ad320ec3407aa1899b4cd821c2cb26e6eef4c113ec3020626a110417af6",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "supports"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:72d5eb9e57661c6ec4246e86ce510ebeac45571e77e31a8d4a6922f5d20b7baa",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/4",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.correctness",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:6b24f5b093ae5769d909ec1d4cf4a521efc827d4335035c3e1ae18b8af8396e7",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:c495adfad98d9059c5c5558fe72c6fb09df002ed76ceb7d83356c5591cd933f3",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:fc7dd2a9c5738c6272644319ab7ffd86a7f86c578ffb326d3821b35c7eb8d0dd",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "supported"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        {
+          "checkpoint": "final",
+          "run_id": "run-cdad0ad3e816cd15",
+          "occurrence_id": "canonical-json/v1:72d5eb9e57661c6ec4246e86ce510ebeac45571e77e31a8d4a6922f5d20b7baa",
+          "revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+          "item_path": "/findings/4",
+          "item_kind": "assessment_finding",
+          "question_id": "assessment_finding.evidence_support",
+          "question_version": "1",
+          "evidence_set_id": "canonical-json/v1:4adc1834a042856df7f867e0eabe590084333ff41c0e20fc636390187464e55f",
+          "readiness": "ready",
+          "is_human_ready": true,
+          "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+          "model": "jev-1.14.0",
+          "execution_id": "canonical-json/v1:aef6bacd116f0dfacfc937db3c3ab62e88a9e09e077ee8b1b4757e59769156e0",
+          "state": "answered",
+          "detail": null,
+          "observation_id": "canonical-json/v1:8ee652c64bac89b49fd683b250856798139e0afc2c201b3ba334fdd8e5a25946",
+          "answer": {
+            "kind": "choice",
+            "state": "answered",
+            "value": "supports"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        }
+      ],
+      "spend": [],
+      "launch_configs": [],
+      "second_worker": null,
+      "relations": null,
+      "workspace": {
+        "source_run_id": "run-cdad0ad3e816cd15",
+        "source_revision_id": "run-cdad0ad3e816cd15/implementation/audit:assessment:1",
+        "item_path": "/findings/1",
+        "occurrence_id": "canonical-json/v1:009e460a42a1b1fd922f014e2520024fb7a9875d2196000b9fe886ef07594c6c",
+        "question_id": "assessment_finding.correctness",
+        "evidence_set_id": "canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d",
+        "machine": {
+          "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+          "execution_id": "canonical-json/v1:28bfdc3ce343a8aa4c28d6a4b24bb7d6345da2268af92f884a106078e9f4a52a",
+          "observation_id": "canonical-json/v1:412c46ca5381bb3024e2de3ef662022f98617dc5bd6cedf9a1d0943bb0e91995",
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_sent": true,
+              "outcome": "completed",
+              "failure_category": null,
+              "charged_cost": 0.01,
+              "admitted_estimate": 0.01,
+              "provider_request_id": null
+            }
+          ]
+        },
+        "submissions": [
+          {
+            "label": "grading-off",
+            "status": 201,
+            "code": null,
+            "submission_id": "grading-off-11122512-997a-4a71-9de3-1c6b914f9d40",
+            "reviewer_id": "oakridge-operator",
+            "observation_id": "canonical-json/v1:fecaa8df5b0c7eabe1a43ce0a50a0ce74f84543df06f38a7045d16e9f3ab5baf",
+            "execution_id": "canonical-json/v1:efab061dbac8b2331dd4bc053b6f3be2bcd34f7823ae0cc98d75009d587326f3",
+            "evidence_set_id": "canonical-json/v1:149c361acbc1a0a84d26786ee1d6bfe9eefa1b36aed4e30fdf5562a4307f61f0",
+            "corrects_observation_id": null
+          },
+          {
+            "label": "not-ready",
+            "status": 409,
+            "code": "not_ready",
+            "submission_id": "not-ready-cff7a14c-9f92-43b4-a965-8a20b7692670",
+            "reviewer_id": null,
+            "observation_id": null,
+            "execution_id": null,
+            "evidence_set_id": null,
+            "corrects_observation_id": null
+          },
+          {
+            "label": "ready-beside",
+            "status": 201,
+            "code": null,
+            "submission_id": "ready-beside-f7002242-089f-46d0-97e2-9f39220c282c",
+            "reviewer_id": "oakridge-operator",
+            "observation_id": "canonical-json/v1:00db6e75fbeeb65c03afaa3d316fa12ebf5b8f76dc87d75dbfa7d725e2a37df1",
+            "execution_id": "canonical-json/v1:c8e8e29746dbe5bacb471ab86b7203a3017716aefd110eb706c5de79d2421a8c",
+            "evidence_set_id": "canonical-json/v1:52aeacde1712103b61ef27ca98f054040239c530c22878a1e8fb6a876292752e",
+            "corrects_observation_id": null
+          },
+          {
+            "label": "invalid-choice",
+            "status": 422,
+            "code": "invalid_answer",
+            "submission_id": "invalid-choice-94e47aef-4b6e-40c5-b800-430ca45f7fd6",
+            "reviewer_id": null,
+            "observation_id": null,
+            "execution_id": null,
+            "evidence_set_id": null,
+            "corrects_observation_id": null
+          },
+          {
+            "label": "first",
+            "status": 201,
+            "code": null,
+            "submission_id": "first-6cbfc7fb-173d-46ea-b84e-b4890486c0c2",
+            "reviewer_id": "oakridge-operator",
+            "observation_id": "canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44",
+            "execution_id": "canonical-json/v1:edff4d419e681cfab290863cad55ec45a8e1331fd49427c4771aadcbd62a6534",
+            "evidence_set_id": "canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d",
+            "corrects_observation_id": null
+          },
+          {
+            "label": "duplicate",
+            "status": 200,
+            "code": null,
+            "submission_id": "first-6cbfc7fb-173d-46ea-b84e-b4890486c0c2",
+            "reviewer_id": "oakridge-operator",
+            "observation_id": "canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44",
+            "execution_id": "canonical-json/v1:edff4d419e681cfab290863cad55ec45a8e1331fd49427c4771aadcbd62a6534",
+            "evidence_set_id": "canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d",
+            "corrects_observation_id": null
+          },
+          {
+            "label": "correction",
+            "status": 201,
+            "code": null,
+            "submission_id": "correction-bb11b2cc-2bac-4677-87b8-ef6d7dcfec25",
+            "reviewer_id": "oakridge-operator",
+            "observation_id": "canonical-json/v1:247efcb74fe4392e47bc97f795667f7fa9d0f128734ef66d0bb9833477b7b4e5",
+            "execution_id": "canonical-json/v1:c1e5cc9fab69410085ae068a884f2c28cbd705e3b4a2b7bd32449bc29135df57",
+            "evidence_set_id": "canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d",
+            "corrects_observation_id": "canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44"
+          },
+          {
+            "label": "spoofed",
+            "status": 200,
+            "code": null,
+            "submission_id": "first-6cbfc7fb-173d-46ea-b84e-b4890486c0c2",
+            "reviewer_id": "oakridge-operator",
+            "observation_id": "canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44",
+            "execution_id": "canonical-json/v1:edff4d419e681cfab290863cad55ec45a8e1331fd49427c4771aadcbd62a6534",
+            "evidence_set_id": "canonical-json/v1:72179b9010130f356443113a10e8388ce8b697f7883952110f420ebd369c0c7d",
+            "corrects_observation_id": null
+          }
+        ],
+        "counts": {
+          "before": {
+            "observations": 20,
+            "executions": 20,
+            "requests_sent": 18,
+            "authority_events": 46
+          },
+          "after_first": {
+            "observations": 21,
+            "executions": 21,
+            "requests_sent": 18,
+            "authority_events": 46
+          },
+          "after_duplicate": {
+            "observations": 21,
+            "executions": 21,
+            "requests_sent": 18,
+            "authority_events": 46
+          },
+          "after_correction": {
+            "observations": 22,
+            "executions": 22,
+            "requests_sent": 18,
+            "authority_events": 46
+          }
+        },
+        "composite": {
+          "items": [
+            {
+              "run_id": "run-cdad0ad3e816cd15",
+              "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+              "scope": "task",
+              "producer_local_id": "T1",
+              "coverage": "linked",
+              "stages": {
+                "items": [
+                  {
+                    "stage": "analysis",
+                    "publication": {
+                      "state": "published",
+                      "is_final": false,
+                      "unit_ids": {
+                        "items": [
+                          "run-cdad0ad3e816cd15/analysis"
+                        ],
+                        "total": 1,
+                        "limit": 50,
+                        "offset": 0
+                      }
+                    },
+                    "coverage": "gap",
+                    "totals": {
+                      "contributing_items": 0,
+                      "not_ready_items": 0,
+                      "pending_items": 0,
+                      "failed_items": 0,
+                      "budget_deferred_items": 0,
+                      "grading_off_items": 0,
+                      "superseded_items": 0,
+                      "superseded_answers": 0
+                    },
+                    "questions": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "answers": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 200,
+                      "offset": 0
+                    },
+                    "statuses": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "disagreements": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "items": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                      "stage": "analysis",
+                      "selector": {
+                        "kind": "items"
+                      }
+                    },
+                    "history": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                      "stage": "analysis",
+                      "selector": {
+                        "kind": "history"
+                      }
+                    }
+                  },
+                  {
+                    "stage": "implementation",
+                    "publication": {
+                      "state": "published",
+                      "is_final": false,
+                      "unit_ids": {
+                        "items": [
+                          "run-cdad0ad3e816cd15/implementation/audit"
+                        ],
+                        "total": 1,
+                        "limit": 50,
+                        "offset": 0
+                      }
+                    },
+                    "coverage": "linked",
+                    "totals": {
+                      "contributing_items": 3,
+                      "not_ready_items": 0,
+                      "pending_items": 0,
+                      "failed_items": 0,
+                      "budget_deferred_items": 0,
+                      "grading_off_items": 0,
+                      "superseded_items": 0,
+                      "superseded_answers": 1
+                    },
+                    "questions": {
+                      "items": [
+                        {
+                          "question_id": "assessment_finding.correctness",
+                          "question_version": "1",
+                          "item_kind": "assessment_finding",
+                          "question_text": "Is this assessment finding correct, given its cited evidence and the build it assesses?",
+                          "allowed_values": [
+                            "supported",
+                            "contradicted",
+                            "unclear"
+                          ]
+                        },
+                        {
+                          "question_id": "assessment_finding.evidence_support",
+                          "question_version": "1",
+                          "item_kind": "assessment_finding",
+                          "question_text": "Does this assessment finding's cited evidence support it?",
+                          "allowed_values": [
+                            "supports",
+                            "does_not_support",
+                            "unclear"
+                          ]
+                        }
+                      ],
+                      "total": 2,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "answers": {
+                      "items": [
+                        {
+                          "question": {
+                            "question_id": "assessment_finding.correctness",
+                            "question_version": "1"
+                          },
+                          "grader": {
+                            "kind": "machine",
+                            "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+                            "backend_kind": "jev_direct",
+                            "model": "jev-1.14.0"
+                          },
+                          "answer": {
+                            "state": "answered",
+                            "value": "supported"
+                          },
+                          "count": 1,
+                          "drilldown": {
+                            "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                            "stage": "implementation",
+                            "selector": {
+                              "kind": "answer",
+                              "question": {
+                                "question_id": "assessment_finding.correctness",
+                                "question_version": "1"
+                              },
+                              "grader": {
+                                "kind": "machine",
+                                "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+                                "backend_kind": "jev_direct",
+                                "model": "jev-1.14.0"
+                              },
+                              "answer": {
+                                "state": "answered",
+                                "value": "supported"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "question": {
+                            "question_id": "assessment_finding.correctness",
+                            "question_version": "1"
+                          },
+                          "grader": {
+                            "kind": "human",
+                            "evaluator_definition_id": "canonical-json/v1:50d09be45aa536ca9c127764c8435374f0ae050ebfde0877e329b793bafa7527",
+                            "reviewer_id": "oakridge-operator"
+                          },
+                          "answer": {
+                            "state": "answered",
+                            "value": "supported"
+                          },
+                          "count": 1,
+                          "drilldown": {
+                            "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                            "stage": "implementation",
+                            "selector": {
+                              "kind": "answer",
+                              "question": {
+                                "question_id": "assessment_finding.correctness",
+                                "question_version": "1"
+                              },
+                              "grader": {
+                                "kind": "human",
+                                "evaluator_definition_id": "canonical-json/v1:50d09be45aa536ca9c127764c8435374f0ae050ebfde0877e329b793bafa7527",
+                                "reviewer_id": "oakridge-operator"
+                              },
+                              "answer": {
+                                "state": "answered",
+                                "value": "supported"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "question": {
+                            "question_id": "assessment_finding.evidence_support",
+                            "question_version": "1"
+                          },
+                          "grader": {
+                            "kind": "machine",
+                            "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+                            "backend_kind": "jev_direct",
+                            "model": "jev-1.14.0"
+                          },
+                          "answer": {
+                            "state": "answered",
+                            "value": "supports"
+                          },
+                          "count": 3,
+                          "drilldown": {
+                            "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                            "stage": "implementation",
+                            "selector": {
+                              "kind": "answer",
+                              "question": {
+                                "question_id": "assessment_finding.evidence_support",
+                                "question_version": "1"
+                              },
+                              "grader": {
+                                "kind": "machine",
+                                "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+                                "backend_kind": "jev_direct",
+                                "model": "jev-1.14.0"
+                              },
+                              "answer": {
+                                "state": "answered",
+                                "value": "supports"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "question": {
+                            "question_id": "assessment_finding.correctness",
+                            "question_version": "1"
+                          },
+                          "grader": {
+                            "kind": "machine",
+                            "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+                            "backend_kind": "jev_direct",
+                            "model": "jev-1.14.0"
+                          },
+                          "answer": {
+                            "state": "answered",
+                            "value": "unclear"
+                          },
+                          "count": 2,
+                          "drilldown": {
+                            "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                            "stage": "implementation",
+                            "selector": {
+                              "kind": "answer",
+                              "question": {
+                                "question_id": "assessment_finding.correctness",
+                                "question_version": "1"
+                              },
+                              "grader": {
+                                "kind": "machine",
+                                "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+                                "backend_kind": "jev_direct",
+                                "model": "jev-1.14.0"
+                              },
+                              "answer": {
+                                "state": "answered",
+                                "value": "unclear"
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "total": 4,
+                      "limit": 200,
+                      "offset": 0
+                    },
+                    "statuses": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "disagreements": {
+                      "items": [
+                        {
+                          "question": {
+                            "question_id": "assessment_finding.correctness",
+                            "question_version": "1"
+                          },
+                          "item_count": 1,
+                          "drilldown": {
+                            "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                            "stage": "implementation",
+                            "selector": {
+                              "kind": "disagreement",
+                              "question": {
+                                "question_id": "assessment_finding.correctness",
+                                "question_version": "1"
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "total": 1,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "items": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                      "stage": "implementation",
+                      "selector": {
+                        "kind": "items"
+                      }
+                    },
+                    "history": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                      "stage": "implementation",
+                      "selector": {
+                        "kind": "history"
+                      }
+                    }
+                  },
+                  {
+                    "stage": "integration",
+                    "publication": {
+                      "state": "pending"
+                    },
+                    "coverage": "gap",
+                    "totals": {
+                      "contributing_items": 0,
+                      "not_ready_items": 0,
+                      "pending_items": 0,
+                      "failed_items": 0,
+                      "budget_deferred_items": 0,
+                      "grading_off_items": 0,
+                      "superseded_items": 0,
+                      "superseded_answers": 0
+                    },
+                    "questions": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "answers": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 200,
+                      "offset": 0
+                    },
+                    "statuses": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "disagreements": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "items": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                      "stage": "integration",
+                      "selector": {
+                        "kind": "items"
+                      }
+                    },
+                    "history": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T1",
+                      "stage": "integration",
+                      "selector": {
+                        "kind": "history"
+                      }
+                    }
+                  }
+                ],
+                "total": 3,
+                "limit": 3,
+                "offset": 0
+              }
+            },
+            {
+              "run_id": "run-cdad0ad3e816cd15",
+              "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T2",
+              "scope": "task",
+              "producer_local_id": "T2",
+              "coverage": "linked",
+              "stages": {
+                "items": [
+                  {
+                    "stage": "analysis",
+                    "publication": {
+                      "state": "published",
+                      "is_final": false,
+                      "unit_ids": {
+                        "items": [
+                          "run-cdad0ad3e816cd15/analysis"
+                        ],
+                        "total": 1,
+                        "limit": 50,
+                        "offset": 0
+                      }
+                    },
+                    "coverage": "gap",
+                    "totals": {
+                      "contributing_items": 0,
+                      "not_ready_items": 0,
+                      "pending_items": 0,
+                      "failed_items": 0,
+                      "budget_deferred_items": 0,
+                      "grading_off_items": 0,
+                      "superseded_items": 0,
+                      "superseded_answers": 0
+                    },
+                    "questions": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "answers": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 200,
+                      "offset": 0
+                    },
+                    "statuses": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "disagreements": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "items": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T2",
+                      "stage": "analysis",
+                      "selector": {
+                        "kind": "items"
+                      }
+                    },
+                    "history": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T2",
+                      "stage": "analysis",
+                      "selector": {
+                        "kind": "history"
+                      }
+                    }
+                  },
+                  {
+                    "stage": "implementation",
+                    "publication": {
+                      "state": "published",
+                      "is_final": false,
+                      "unit_ids": {
+                        "items": [
+                          "run-cdad0ad3e816cd15/implementation/audit"
+                        ],
+                        "total": 1,
+                        "limit": 50,
+                        "offset": 0
+                      }
+                    },
+                    "coverage": "linked",
+                    "totals": {
+                      "contributing_items": 3,
+                      "not_ready_items": 0,
+                      "pending_items": 0,
+                      "failed_items": 0,
+                      "budget_deferred_items": 0,
+                      "grading_off_items": 0,
+                      "superseded_items": 0,
+                      "superseded_answers": 0
+                    },
+                    "questions": {
+                      "items": [
+                        {
+                          "question_id": "assessment_finding.correctness",
+                          "question_version": "1",
+                          "item_kind": "assessment_finding",
+                          "question_text": "Is this assessment finding correct, given its cited evidence and the build it assesses?",
+                          "allowed_values": [
+                            "supported",
+                            "contradicted",
+                            "unclear"
+                          ]
+                        },
+                        {
+                          "question_id": "assessment_finding.evidence_support",
+                          "question_version": "1",
+                          "item_kind": "assessment_finding",
+                          "question_text": "Does this assessment finding's cited evidence support it?",
+                          "allowed_values": [
+                            "supports",
+                            "does_not_support",
+                            "unclear"
+                          ]
+                        }
+                      ],
+                      "total": 2,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "answers": {
+                      "items": [
+                        {
+                          "question": {
+                            "question_id": "assessment_finding.correctness",
+                            "question_version": "1"
+                          },
+                          "grader": {
+                            "kind": "machine",
+                            "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+                            "backend_kind": "jev_direct",
+                            "model": "jev-1.14.0"
+                          },
+                          "answer": {
+                            "state": "answered",
+                            "value": "supported"
+                          },
+                          "count": 3,
+                          "drilldown": {
+                            "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T2",
+                            "stage": "implementation",
+                            "selector": {
+                              "kind": "answer",
+                              "question": {
+                                "question_id": "assessment_finding.correctness",
+                                "question_version": "1"
+                              },
+                              "grader": {
+                                "kind": "machine",
+                                "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+                                "backend_kind": "jev_direct",
+                                "model": "jev-1.14.0"
+                              },
+                              "answer": {
+                                "state": "answered",
+                                "value": "supported"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "question": {
+                            "question_id": "assessment_finding.evidence_support",
+                            "question_version": "1"
+                          },
+                          "grader": {
+                            "kind": "machine",
+                            "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+                            "backend_kind": "jev_direct",
+                            "model": "jev-1.14.0"
+                          },
+                          "answer": {
+                            "state": "answered",
+                            "value": "supports"
+                          },
+                          "count": 3,
+                          "drilldown": {
+                            "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T2",
+                            "stage": "implementation",
+                            "selector": {
+                              "kind": "answer",
+                              "question": {
+                                "question_id": "assessment_finding.evidence_support",
+                                "question_version": "1"
+                              },
+                              "grader": {
+                                "kind": "machine",
+                                "evaluator_definition_id": "canonical-json/v1:2a0873718e958f394964e8ab76dddac403dd151adf649db6d62fac6d4ac19047",
+                                "backend_kind": "jev_direct",
+                                "model": "jev-1.14.0"
+                              },
+                              "answer": {
+                                "state": "answered",
+                                "value": "supports"
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "total": 2,
+                      "limit": 200,
+                      "offset": 0
+                    },
+                    "statuses": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "disagreements": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "items": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T2",
+                      "stage": "implementation",
+                      "selector": {
+                        "kind": "items"
+                      }
+                    },
+                    "history": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T2",
+                      "stage": "implementation",
+                      "selector": {
+                        "kind": "history"
+                      }
+                    }
+                  },
+                  {
+                    "stage": "integration",
+                    "publication": {
+                      "state": "pending"
+                    },
+                    "coverage": "gap",
+                    "totals": {
+                      "contributing_items": 0,
+                      "not_ready_items": 0,
+                      "pending_items": 0,
+                      "failed_items": 0,
+                      "budget_deferred_items": 0,
+                      "grading_off_items": 0,
+                      "superseded_items": 0,
+                      "superseded_answers": 0
+                    },
+                    "questions": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "answers": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 200,
+                      "offset": 0
+                    },
+                    "statuses": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "disagreements": {
+                      "items": [],
+                      "total": 0,
+                      "limit": 50,
+                      "offset": 0
+                    },
+                    "items": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T2",
+                      "stage": "integration",
+                      "selector": {
+                        "kind": "items"
+                      }
+                    },
+                    "history": {
+                      "logical_item_id": "oakridge:shadow-item-workspace:run-cdad0ad3e816cd15:task:T2",
+                      "stage": "integration",
+                      "selector": {
+                        "kind": "history"
+                      }
+                    }
+                  }
+                ],
+                "total": 3,
+                "limit": 3,
+                "offset": 0
+              }
+            }
+          ],
+          "total": 2,
+          "limit": 200,
+          "offset": 0
+        },
+        "browser": {
+          "steps": [
+            {
+              "name": "the not-ready question shows its reason",
+              "passed": true,
+              "detail": "Not ready to answer: no launch repository holds commit db2a5d49b8fbcaff9faf03094ddd0757b9c9ecef (repository_unavailable)"
+            },
+            {
+              "name": "the not-ready question offers no choice",
+              "passed": true,
+              "detail": "no radio rendered"
+            },
+            {
+              "name": "the page raised no error",
+              "passed": true,
+              "detail": "none"
+            },
+            {
+              "name": "hidden: the grading section shows no composite count",
+              "passed": true,
+              "detail": "no count rendered"
+            },
+            {
+              "name": "hidden: no other answer, reviewer or grader is anywhere on the page",
+              "passed": true,
+              "detail": "leaked: none"
+            },
+            {
+              "name": "hidden: the panel omits other answers and evaluators and keeps the form",
+              "passed": true,
+              "detail": "0 evaluator rows, 0 answer sections"
+            },
+            {
+              "name": "revealed before this page answered anything: the real provider answer is shown as a machine's",
+              "passed": true,
+              "detail": "[[\"canonical-json/v1:412c46ca5381bb3024e2de3ef662022f98617dc5bd6cedf9a1d0943bb0e91995\",\"machine\"],[\"canonical-json/v1:247efcb74fe4392e47bc97f795667f7fa9d0f128734ef66d0bb9833477b7b4e5\",\"human\"],[\"canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44\",\"human\"]]"
+            },
+            {
+              "name": "the authenticated human answer is shown as a reviewer's",
+              "passed": true,
+              "detail": "[[\"canonical-json/v1:412c46ca5381bb3024e2de3ef662022f98617dc5bd6cedf9a1d0943bb0e91995\",\"machine\"],[\"canonical-json/v1:247efcb74fe4392e47bc97f795667f7fa9d0f128734ef66d0bb9833477b7b4e5\",\"human\"],[\"canonical-json/v1:d29ac225ed42e52449a95dd97fc3b4a5d235815767dd96afcc93fb9bc1660d44\",\"human\"]]"
+            },
+            {
+              "name": "the browser flow completes",
+              "passed": false,
+              "detail": "click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByTestId('or-item-hide')\u001b[22m\n\u001b[2m    - locator resolved to <button type=\"button\" data-testid=\"or-item-hide\" class=\"inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-blue)] disabled:cursor-not-allowed disabled:opacity-50 border border-[var(--border-muted)] bg-[var(--bg-surface)] font-normal text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)] px-2 py-0.5 text-xs  text-xs!\">Hide other answers</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    - waiting for element to be visible, enabled and stable\u001b[22m\n"
+            },
+            {
+              "name": "the page raised no error",
+              "passed": true,
+              "detail": "none"
+            }
+          ],
+          "screenshots": [
+            "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/oakridge/3aac6e5b-4ace-4a69-9f72-f36bbac1d49e/observation/verification/reports/workspace-2026-11-09T02-14-08-499Z/screenshots/question-not-ready.png",
+            "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/oakridge/3aac6e5b-4ace-4a69-9f72-f36bbac1d49e/observation/verification/reports/workspace-2026-11-09T02-14-08-499Z/screenshots/grading-hidden.png",
+            "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/oakridge/3aac6e5b-4ace-4a69-9f72-f36bbac1d49e/observation/verification/reports/workspace-2026-11-09T02-14-08-499Z/screenshots/item-hidden.png",
+            "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/oakridge/3aac6e5b-4ace-4a69-9f72-f36bbac1d49e/observation/verification/reports/workspace-2026-11-09T02-14-08-499Z/screenshots/item-revealed.png"
+          ]
+        },
+        "definition_scan": {
+          "scanned": 6,
+          "with_discarded_field": []
+        }
+      }
+    }
+  },
+  "pending": [
+    {
+      "id": "real-integration-publication",
+      "owner": "operator",
+      "reason": "A real run reaches two cohorts' assessments here, with revised plan and briefs, and reads integration as pending. Publishing integration needs each cohort complete: an operator's acceptance of its assessment and confirmation of a merge. This proof does not make those decisions on its own, so integration final is read only on the supplementary synthetic matrix until an operator decides whether a verification run may."
+    },
+    {
+      "id": "same-finding-correctness-awaits-subject-build",
+      "owner": "operator",
+      "reason": "Correctness alone waits only when an assessment names a subject build observation has not captured. Live assessments are published with subject null, and the ordered feed captures any named subject before its assessment, so a real run cannot reach the split; it is proven offline in observation/tests/execution-lifecycle.test.ts. Reaching it live needs a product change."
+    }
+  ]
+}

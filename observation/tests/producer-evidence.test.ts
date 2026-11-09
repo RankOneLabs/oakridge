@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ItemOccurrenceId, QuestionId } from "../src/domain/identity";
+import type { ArtifactRevisionId, ItemOccurrenceId, QuestionId, RunId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import type { EvidenceReference } from "../src/grading/evidence";
 import type { CapturedRevision, CapturedSources, LinkedItem, RepositoryFile, SourceArtifact } from "../src/ports/artifact-source";
@@ -15,7 +15,7 @@ const HEAD = "1111111111111111111111111111111111111111";
 const launch = { spec: "The whole spec", repositories: [
   { key: "other", preparation: { repository_path: "/repos/other" } },
   { key: "oakridge", preparation: { repository_path: "/repos/oakridge" } }] };
-const finding = (evidence: JsonValue): SourceArtifact => ({ occurrence_id: "occurrence" as ItemOccurrenceId, run_id: "run-1", revision_id: "assessment-1",
+const finding = (evidence: JsonValue): SourceArtifact => ({ occurrence_id: "occurrence" as ItemOccurrenceId, run_id: "run-1" as RunId, revision_id: "assessment-1" as ArtifactRevisionId,
   item_path: "/findings/0", item_kind: "assessment_finding", selected_value: { task_ids: [], evidence } });
 interface SourceOptions {
   readonly input?: JsonValue | null;
@@ -26,12 +26,12 @@ interface SourceOptions {
   readonly linked?: readonly LinkedItem[];
   readonly assessment?: JsonValue;
 }
-const build: CapturedRevision = { revision_id: "build-1", artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } };
+const build: CapturedRevision = { revision_id: "build-1" as ArtifactRevisionId, artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } };
 function sources(options: SourceOptions = {}): CapturedSources & { readonly paths: readonly string[] } {
   const paths: string[] = [];
   return { paths, readRunInput: async () => options.input === undefined ? launch : options.input,
     readRevision: async (revision_id) => revision_id === "assessment-1"
-      ? { revision_id, artifact_kind: "assessment", subject_id: options.subject_id ?? null, body: options.assessment ?? { head_sha: HEAD } }
+      ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: options.subject_id ?? null, body: options.assessment ?? { head_sha: HEAD } }
       : revision_id === "build-1" ? options.build === undefined ? build : options.build : null,
     readLinkedItems: async () => options.linked ?? [],
     repository: { hasCommit: async (path) => path === (options.commit_in === undefined ? "/repos/oakridge" : options.commit_in),
@@ -56,7 +56,7 @@ test("a file citation is a path with optional lines; anything else stays text", 
 });
 
 test("relevance needs the captured spec and records where it came from", async () => {
-  const artifact = { ...finding([]), item_kind: "finding", item_path: "/findings/1", revision_id: "analysis-1" };
+  const artifact = { ...finding([]), item_kind: "finding", item_path: "/findings/1", revision_id: "analysis-1" as ArtifactRevisionId };
   expect(await oakridgeEvidence.collect(artifact, key(RELEVANCE_ID), sources({ input: null })))
     .toMatchObject({ state: "not_ready", reason: { code: "spec_unavailable" } });
   const ready = await oakridgeEvidence.collect(artifact, key(RELEVANCE_ID), sources());
@@ -80,7 +80,7 @@ test("an integration finding with no subject is ready for correctness", async ()
 });
 
 test("correctness names the exact build and optional linked context", async () => {
-  const linked: readonly LinkedItem[] = [{ revision_id: "plan-1", item_path: "/cohorts/0/acceptance_criteria/0", item_kind: "acceptance_entry", selected_value: { id: "T7" } }];
+  const linked: readonly LinkedItem[] = [{ revision_id: "plan-1" as ArtifactRevisionId, item_path: "/cohorts/0/acceptance_criteria/0", item_kind: "acceptance_entry", selected_value: { id: "T7" } }];
   const result = await oakridgeEvidence.collect(finding([]), key(CORRECTNESS_ID), sources({ subject_id: "build-1", linked }));
   expect(result).toMatchObject({ state: "ready", references: [{ ref: "subject" },
     { source: "revision", ref: "build_result", revision_id: "build-1", item_path: null, content: { head_sha: HEAD } },
@@ -123,7 +123,7 @@ test("the assessment's test results, cargo output included, are shared agent-rep
   // An integration assessment: no build subject, and no task linked to the finding.
   const source = sources({ assessment: { head_sha: HEAD, test_evidence: reportedTests } });
   const cited = finding([{ kind: "file", ref: "src/alpha.ts:2" }]);
-  const expected: EvidenceReference = { source: "reported", reported_by: "agent", ref: "test_evidence", revision_id: "assessment-1", item_path: "/test_evidence",
+  const expected: EvidenceReference = { source: "reported", reported_by: "agent", ref: "test_evidence", revision_id: "assessment-1" as ArtifactRevisionId, item_path: "/test_evidence",
     content: reportedTests };
   const correctness = await oakridgeEvidence.collect(cited, key(CORRECTNESS_ID), source);
   const support = await oakridgeEvidence.collect(cited, key(EVIDENCE_SUPPORT_ID), source);

@@ -102,6 +102,7 @@ jobs:
       - run: bunx tsc --noEmit -p oakridge-dbos/tsconfig.json
       - run: bunx tsc --noEmit -p canonical-json/tsconfig.json
       - run: bun kbbl/scripts/generate-operator-contracts.ts --check
+      - run: bun kbbl/scripts/generate-grading-contracts.ts --check
       - run: bunx tsc --noEmit -p kbbl/tsconfig.json
       - run: bunx tsc --noEmit -p observation/tsconfig.json
       - run: bunx tsc --noEmit -p scripts/tsconfig.json

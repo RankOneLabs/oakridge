@@ -7,6 +7,8 @@
 // secondary rather than mint an illegal state a renderer would have to guess at.
 
 import type { ArtifactId, Sid } from "../../lib/ids";
+import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
+import { areSelectionsEqual } from "./grading";
 
 /**
  * The pane variants that name a domain entity, and so the only ones a URL can
@@ -33,6 +35,11 @@ export type RoutePaneTarget =
 export type RunWorkspacePane =
   | { kind: "overview" }
   | { kind: "list" }
+  | { kind: "grading" }
+  /** One finding by its exact revision and path, whichever view opened it. */
+  | { kind: "item"; selection: ObservationItemAddress }
+  /** One run-scoped task. Navigation only: a task is never an item's address. */
+  | { kind: "task"; task_id: string }
   | RoutePaneTarget;
 
 export type RunWorkspacePaneKind = RunWorkspacePane["kind"];
@@ -46,6 +53,7 @@ export interface RunWorkspaceState {
 
 export const OVERVIEW_PANE: RunWorkspacePane = { kind: "overview" };
 export const LIST_PANE: RunWorkspacePane = { kind: "list" };
+export const GRADING_PANE: RunWorkspacePane = { kind: "grading" };
 
 /** What a run shows before the operator has arranged anything. */
 export const DEFAULT_RUN_WORKSPACE_STATE: RunWorkspaceState = {
@@ -70,6 +78,8 @@ export const arePanesEqual = (
   if (left.kind === "artifact" && right.kind === "artifact") {
     return left.artifact_id === right.artifact_id;
   }
+  if (left.kind === "item" && right.kind === "item") return areSelectionsEqual(left.selection, right.selection);
+  if (left.kind === "task" && right.kind === "task") return left.task_id === right.task_id;
   return true;
 };
 
@@ -93,6 +103,12 @@ export const describePane = (pane: RunWorkspacePane): RunPaneHeading => {
       return { title: "Session", subtitle: pane.session_id.slice(0, 8) };
     case "artifact":
       return { title: "Artifact", subtitle: pane.artifact_id.slice(0, 8) };
+    case "grading":
+      return { title: "Grading", subtitle: null };
+    case "item":
+      return { title: "Item", subtitle: pane.selection.item_path };
+    case "task":
+      return { title: "Task", subtitle: pane.task_id };
   }
 };
 
@@ -144,6 +160,9 @@ export const openInPane = (
   if (arePanesEqual(state.primary, pane)) return state;
   return { primary: state.primary, secondary: pane };
 };
+
+/** The slot beside this one, where a pane opened from this one's content lands. */
+export const otherSlot = (slot: RunWorkspaceSlot): RunWorkspaceSlot => slot === "primary" ? "secondary" : "primary";
 
 /**
  * Close `slot`. Closing the primary promotes the secondary into it; with no

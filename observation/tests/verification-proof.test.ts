@@ -634,8 +634,9 @@ describe("the registration scenario", () => {
         if (revision) return ok({ revision_id: decodeURIComponent(revision), run_id: "run-first", artifact_kind: "assessment" });
         const occurrence = occurrences.find((entry) => path.includes(`/v1/items/${entry.id}/`))!;
         return ok({ items: questionsOf(occurrence).map((pin) => ({ evidence_set_id: `${occurrence.id}:${pin.question_id}`, question_id: pin.question_id,
-          question_version: pin.question_version, pinned_evaluator_definition_ids: pin.evaluator_definition_ids,
-          readiness: isReady(occurrence) ? { state: "ready", ready_at: occurrence.ready_at, references: references(occurrence) }
+          question_version: pin.question_version, pinned_evaluator_definition_ids: { items: pin.evaluator_definition_ids },
+          references: { items: isReady(occurrence) ? references(occurrence) : [] },
+          readiness: isReady(occurrence) ? { state: "ready", ready_at: occurrence.ready_at }
             : { state: "not_ready", reason: { code: occurrence.cites_file ? "repository_unavailable" : "collection_pending" } } })) });
       },
     });

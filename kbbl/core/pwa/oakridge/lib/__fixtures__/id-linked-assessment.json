@@ -3,7 +3,6 @@
   "verdict": "pass_with_notes",
   "findings": [{
     "task_ids": ["criterion-brief"],
-    "criterion": "The brief remains readable.",
     "status": "met",
     "evidence": [
       { "kind": "file", "ref": "kbbl/core/pwa/oakridge/lib/build-brief.ts:100-110", "detail": "Parser accepts linked criteria." },

@@ -3,7 +3,7 @@ import { parseGraderConfiguration, planRegistration } from "../src/grading/confi
 import type { LogicalItemComposite, LogicalItemLineage } from "../src/grading/composite";
 import { oakridgeProfile } from "../src/producers/oakridge/profile";
 import type { MeasurementReadback, RelationCheckpoint } from "../verification/proof-contract";
-import { compositeOriginalAnswerChecks, lineageChecks, sharedRunChecks, sharedTaskMatrix, totalRequests, unchangedChecks, UNRESOLVED_TASK, type SharedRunReads } from "../verification/relations";
+import { compositeOriginalAnswerChecks, lineageChecks, sharedRunChecks, sharedTaskMatrix, totalRequests, unchangedChecks, UNRESOLVED_TASK, withoutLinks, type SharedRunReads } from "../verification/relations";
 import { committedGraders, integration, scratchDatabase } from "./grading-fixture";
 
 const facts = (occurrence_id: string, grades: unknown = { items: ["g1"] }) => ({ occurrence_id, occurrence: { occurrence_id }, evidence: { items: ["e1"] }, grades, measurements: { questions: [] } });
@@ -84,3 +84,9 @@ integration("the shared-task matrix passes through real delivery, and sends no r
   } finally { globalThis.fetch = realFetch; }
   expect(outbound).toBe(0);
 }));
+
+test("a link changes an item's links and none of what must not move", () => {
+  const status = { item: { occurrence_id: "o" }, questions: { items: ["q"] } };
+  expect(withoutLinks({ ...status, links: { items: [{ task: "T1" }], total: 1 } })).toEqual(withoutLinks({ ...status, links: { items: [], total: 0 } }));
+  expect(withoutLinks({ ...status, links: { items: [] } })).toEqual(status);
+});

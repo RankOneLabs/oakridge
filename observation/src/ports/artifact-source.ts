@@ -1,4 +1,4 @@
-import type { ItemOccurrenceId } from "../domain/identity";
+import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import type { EvidenceReference, NotReadyReason } from "../grading/evidence";
 import type { QuestionKey } from "../grading/question";
@@ -6,8 +6,8 @@ import type { QuestionKey } from "../grading/question";
 /** One selected item, addressed by the exact revision and path it was captured from. */
 export interface SourceArtifact {
   readonly occurrence_id: ItemOccurrenceId;
-  readonly run_id: string;
-  readonly revision_id: string;
+  readonly run_id: RunId;
+  readonly revision_id: ArtifactRevisionId;
   readonly item_path: string;
   readonly item_kind: string;
   readonly selected_value: JsonValue;
@@ -25,14 +25,14 @@ export interface ArtifactSource {
 }
 
 export interface CapturedRevision {
-  readonly revision_id: string;
+  readonly revision_id: ArtifactRevisionId;
   readonly artifact_kind: string;
   readonly subject_id: string | null;
   readonly body: JsonValue;
 }
 /** An item reached through an explicit relation, with the address it was captured at. */
 export interface LinkedItem {
-  readonly revision_id: string;
+  readonly revision_id: ArtifactRevisionId;
   readonly item_path: string;
   readonly item_kind: string;
   readonly selected_value: JsonValue;

@@ -18,6 +18,7 @@ import {
   canMoveToOtherSlot,
   describePane,
   isTwinView,
+  otherSlot,
   shouldReadRunActivity,
   type RoutePaneTarget,
   type RunWorkspacePane,
@@ -28,7 +29,12 @@ import { useStore } from "../../../state/store";
 import { selectArchivedSessionIds } from "../../../lib/session";
 import { RunIdentityHeader } from "../molecules/RunIdentityHeader";
 import { RunPaneChrome } from "../molecules/RunPaneChrome";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
+import { itemSelectionKey } from "../../lib/grading";
 import { ArtifactReview } from "./ArtifactReview";
+import { ItemPanel } from "./ItemPanel";
+import { RunGradingSection } from "./RunGradingSection";
+import { TaskPanel } from "./TaskPanel";
 import { RunOverviewPane } from "./RunOverviewPane";
 import { RunSessionPane } from "./RunSessionPane";
 import { RunWorkspaceSidebar } from "./RunWorkspaceSidebar";
@@ -145,6 +151,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
           runId={runId}
           onRunDeleted={onBack}
           onOpenPane={(next) => workspace.openPane(next, slot)}
+          onOpenBeside={(next) => workspace.openPane(next, otherSlot(slot))}
           overview={overview}
           activity={activity}
         />
@@ -194,6 +201,8 @@ interface PaneBodyProps {
   /** Leave the run because it was deleted from inside the list pane. */
   onRunDeleted: () => void;
   onOpenPane: (pane: RunWorkspacePane) => void;
+  /** Opens beside this pane, so what opened an item or a task stays on screen. */
+  onOpenBeside: (pane: RunWorkspacePane) => void;
 }
 
 /**
@@ -207,7 +216,9 @@ interface PaneBodyProps {
  * would give one renderer two fetching paths, which is the duplication reuse
  * was meant to avoid.
  */
-function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane }: PaneBodyProps) {
+function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane, onOpenBeside }: PaneBodyProps) {
+  const openItem = (selection: ObservationItemAddress) => onOpenBeside({ kind: "item", selection });
+  const openTask = (task_id: string) => onOpenBeside({ kind: "task", task_id });
   switch (pane.kind) {
     case "overview":
       return <RunOverviewPane overview={overview} activity={activity} onOpenPane={onOpenPane} />;
@@ -219,10 +230,17 @@ function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane }:
           onSelectArtifact={(artifactId) =>
             onOpenPane({ kind: "artifact", artifact_id: artifactId as ArtifactId })
           }
+          onOpenItem={openItem}
         />
       );
     case "artifact":
-      return <ArtifactReview artifactId={pane.artifact_id} />;
+      return <ArtifactReview artifactId={pane.artifact_id} onOpenItem={openItem} onOpenTask={openTask} />;
+    case "grading":
+      return <RunGradingSection runId={runId} onOpenItem={openItem} onOpenTask={openTask} />;
+    case "item":
+      return <ItemPanel key={itemSelectionKey(pane.selection)} runId={runId} selection={pane.selection} onOpenTask={openTask} />;
+    case "task":
+      return <TaskPanel key={pane.task_id} runId={runId} taskId={pane.task_id} onOpenItem={openItem} />;
     case "session":
       return (
         <RunSessionPane

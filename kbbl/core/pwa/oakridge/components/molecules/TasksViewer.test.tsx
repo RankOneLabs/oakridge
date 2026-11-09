@@ -82,10 +82,7 @@ describe("SpecAnalysisViewer finding links", () => {
     expect(screen.getByText("Why: Avoid ambiguity.")).toBeTruthy();
   });
 
-  test("accepts and displays a legacy update without finding_ids", () => {
-    const legacy = { ...analysis, proposed_spec_updates: [{ section: "API", change: "Add the contract.", reason: "Avoid ambiguity." }] };
-    expect(isSpecAnalysis(legacy)).toBe(true);
-    render(<SpecAnalysisViewer body={legacy} />);
-    expect(screen.getByTestId("or-spec-update-findings").textContent).toContain("Unlinked");
+  test("refuses an update without finding_ids", () => {
+    expect(isSpecAnalysis({ ...analysis, proposed_spec_updates: [{ section: "API", change: "Add the contract.", reason: "Avoid ambiguity." }] })).toBe(false);
   });
 });

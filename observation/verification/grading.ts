@@ -108,15 +108,15 @@ export function gradingEdit(configuration: GraderConfiguration): GraderConfigura
 
 interface ServedItem { readonly occurrence_id: string; readonly revision_id: string; readonly json_pointer: string; readonly item_kind: string }
 interface ServedMeasurements {
-  readonly questions: readonly {
+  readonly questions: { readonly items: readonly {
     readonly evidence: { readonly evidence_set_id: string; readonly question_id: string; readonly question_version: string;
       readonly readiness: { readonly state: "ready" | "not_ready" } };
-    readonly is_human_ready: boolean;
-    readonly machine: readonly { readonly evaluator_definition_id: string; readonly model: string | null; readonly execution_id: string | null;
+    readonly human: { readonly state: string };
+    readonly machine: { readonly items: readonly { readonly evaluator_definition_id: string; readonly model: string | null; readonly execution_id: string | null;
       readonly measurement: { readonly state: string; readonly code?: string; readonly error?: string; readonly terminal_cause?: string | null;
         readonly status?: string; readonly observation_id?: string; readonly answer?: unknown };
-      readonly attempts: MeasurementReadback["attempts"] }[];
-  }[];
+      readonly attempts: { readonly items: MeasurementReadback["attempts"] } }[] };
+  }[] };
 }
 
 export async function runItems(io: ProofIo, run_id: string): Promise<readonly ServedItem[]> {
@@ -134,16 +134,16 @@ export async function runItems(io: ProofIo, run_id: string): Promise<readonly Se
 export async function readRunMeasurements(io: ProofIo, run_id: string, checkpoint: string): Promise<readonly MeasurementReadback[]> {
   const readbacks: MeasurementReadback[] = [];
   for (const item of await runItems(io, run_id)) {
-    const read = await io.observationGet(`/v1/items/${encodeURIComponent(item.occurrence_id)}/measurements`, "read");
+    const read = await io.observationGet(`/v1/items/${encodeURIComponent(item.occurrence_id)}/status?limit=200&machine_limit=200&attempts_limit=200`, "read");
     if (!read.ok) throw new Error(read.error.detail);
-    for (const question of (read.value as ServedMeasurements).questions) for (const machine of question.machine) {
+    for (const question of (read.value as ServedMeasurements).questions.items) for (const machine of question.machine.items) {
       const measurement = machine.measurement;
       readbacks.push({ checkpoint, run_id, occurrence_id: item.occurrence_id, revision_id: item.revision_id, item_path: item.json_pointer,
         item_kind: item.item_kind, question_id: question.evidence.question_id, question_version: question.evidence.question_version,
-        evidence_set_id: question.evidence.evidence_set_id, readiness: question.evidence.readiness.state, is_human_ready: question.is_human_ready,
+        evidence_set_id: question.evidence.evidence_set_id, readiness: question.evidence.readiness.state, is_human_ready: question.human.state === "ready",
         evaluator_definition_id: machine.evaluator_definition_id, model: machine.model, execution_id: machine.execution_id, state: measurement.state,
         detail: measurement.code ?? measurement.status ?? measurement.error ?? null, observation_id: measurement.observation_id ?? null,
-        answer: measurement.answer ?? null, attempts: machine.attempts });
+        answer: measurement.answer ?? null, attempts: machine.attempts.items });
     }
   }
   return readbacks;

@@ -4,7 +4,7 @@
  * path, line range, source revision and item path survives serialization. No real provider call.
  */
 import { expect, test } from "bun:test";
-import type { EvidenceSetId, ItemOccurrenceId } from "../src/domain/identity";
+import type { ArtifactRevisionId, EvidenceSetId, ItemOccurrenceId, RunId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import { configuredEvaluator, parseGraderConfiguration, type GraderEntry } from "../src/grading/configuration";
 import type { EvidenceReference } from "../src/grading/evidence";
@@ -21,15 +21,15 @@ import { committedGraders } from "./grading-fixture";
 
 const HEAD = "2222222222222222222222222222222222222222";
 const reportedTests = { passed: 3, failed: 1, output: null, summary: null, cargo_test_output: "test result: FAILED. 3 passed; 1 failed" };
-const artifact: SourceArtifact = { occurrence_id: "occurrence" as ItemOccurrenceId, run_id: "run-1", revision_id: "assessment-1",
+const artifact: SourceArtifact = { occurrence_id: "occurrence" as ItemOccurrenceId, run_id: "run-1" as RunId, revision_id: "assessment-1" as ArtifactRevisionId,
   item_path: "/findings/2", item_kind: "assessment_finding", selected_value: { task_ids: ["T1"], status: "met", evidence: [
     { kind: "file", ref: "core/decision-record.ts:2-3" }, { kind: "file", ref: "core/gone.ts" }, { kind: "test", ref: "decision_record::reads" }] } };
 const sources: CapturedSources = {
   readRunInput: async () => ({ spec: "s", repositories: [{ key: "primary", preparation: { repository_path: "/repos/primary" } },
     { key: "other", preparation: { repository_path: "/repos/other" } }] }),
   readRevision: async (revision_id): Promise<CapturedRevision | null> => revision_id === "assessment-1"
-    ? { revision_id, artifact_kind: "assessment", subject_id: "build-1", body: { head_sha: HEAD, test_evidence: reportedTests } }
-    : revision_id === "build-1" ? { revision_id, artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } } : null,
+    ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: "build-1", body: { head_sha: HEAD, test_evidence: reportedTests } }
+    : revision_id === "build-1" ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } } : null,
   readLinkedItems: async () => [],
   repository: { hasCommit: async (path) => path === "/repos/other",
     readFile: async ({ path }) => path === "core/gone.ts" ? { state: "absent" } : { state: "present", content: "one\ntwo\nthree\nfour" } },

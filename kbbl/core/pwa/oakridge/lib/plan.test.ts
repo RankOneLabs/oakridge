@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { parsePlan, selectOrderedCohorts, type Plan } from "./plan";
-import legacyPlan from "./__fixtures__/legacy-plan.json";
 import linkedPlan from "./__fixtures__/id-linked-plan.json";
+
+const decision = { id: "keep-small", text: "Keep it small." };
+const criterion = { id: "tests-pass", text: "Tests pass.", decision_ids: ["keep-small"] };
 
 const cohort = (id: string, depends_on: string[] = []) => ({
   id,
@@ -11,8 +13,8 @@ const cohort = (id: string, depends_on: string[] = []) => ({
   depends_on,
   description: "Does the work.",
   files_in_scope: ["src/a.ts"],
-  decisions: ["Keep it small."],
-  acceptance_criteria: ["Tests pass."],
+  decisions: [decision],
+  acceptance_criteria: [criterion],
 });
 
 const body = {
@@ -31,11 +33,6 @@ function parsed(value: unknown): Plan {
 }
 
 describe("parsePlan", () => {
-  test("reads a legacy cohort without inventing ids", () => {
-    expect(parsed(legacyPlan).cohorts[0]?.decisions).toEqual(["Keep the existing layout."]);
-    expect(parsed(legacyPlan).cohorts[0]?.acceptance_criteria).toEqual(["The plan is readable.", "The brief is readable."]);
-  });
-
   test("reads linked decisions and criteria, including empty link lists", () => {
     const linked = parsed(linkedPlan).cohorts[0];
     expect(linked?.decisions[0]).toEqual({ id: "decision-layout", text: "Keep the existing layout." });
@@ -43,18 +40,31 @@ describe("parsePlan", () => {
     expect(linked?.acceptance_criteria[1]).toEqual({ id: "criterion-brief", text: "The brief is readable.", decision_ids: [] });
   });
 
-  test.each(["decisions", "acceptance_criteria"] as const)("rejects a mixed %s list at the offending entry", (field) => {
-    const mixed = { ...linkedPlan, cohorts: [legacyPlan.cohorts[0], { ...linkedPlan.cohorts[0], [field]: [legacyPlan.cohorts[0][field][0], linkedPlan.cohorts[0][field][0]] }] };
-    const result = parsePlan(mixed);
-    expect(result.ok ? null : result.error).toMatchObject({ operation: "parse_plan", field: `cohorts[1].${field}[1]` });
-  });
-
   test("accepts the registered artifact body", () => {
     expect(parsePlan(body).ok).toBe(true);
   });
 
-  test("reads a bare-string risk as a risk without a mitigation", () => {
-    expect(parsed({ ...body, risks: ["Pin drift"] }).risks).toEqual([{ description: "Pin drift", mitigation: null }]);
+  test.each([
+    ["a string decision", { decisions: ["Keep it small."] }, "cohorts[0].decisions[0]"],
+    ["a decision with no id", { decisions: [{ text: "Keep it small." }] }, "cohorts[0].decisions[0].id"],
+    ["a decision with a blank id", { decisions: [{ id: "  ", text: "Keep it small." }] }, "cohorts[0].decisions[0].id"],
+    ["a string criterion", { acceptance_criteria: ["Tests pass."] }, "cohorts[0].acceptance_criteria[0]"],
+    ["a criterion with no id", { acceptance_criteria: [{ text: "Tests pass.", decision_ids: [] }] }, "cohorts[0].acceptance_criteria[0].id"],
+    ["a criterion with no decision_ids", { acceptance_criteria: [{ id: "tests-pass", text: "Tests pass." }] }, "cohorts[0].acceptance_criteria[0].decision_ids"],
+    ["a string among object criteria", { acceptance_criteria: [criterion, "Tests pass."] }, "cohorts[0].acceptance_criteria[1]"],
+  ])("refuses %s, naming the entry", (_, fields, field) => {
+    const result = parsePlan({ ...body, cohorts: [{ ...cohort("core"), ...fields }] });
+    expect(result.ok ? null : result.error).toMatchObject({ operation: "parse_plan", field });
+  });
+
+  test("refuses a bare-string risk", () => {
+    const result = parsePlan({ ...body, risks: ["Pin drift"] });
+    expect(result.ok ? null : result.error.field).toBe("risks[0]");
+  });
+
+  test("refuses a risk with no mitigation", () => {
+    const result = parsePlan({ ...body, risks: [{ description: "Pin drift" }] });
+    expect(result.ok ? null : result.error.field).toBe("risks[0].mitigation");
   });
 
   test("reads a missing cohort description as null", () => {

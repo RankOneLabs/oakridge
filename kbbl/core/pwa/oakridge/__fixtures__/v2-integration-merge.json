@@ -72,7 +72,11 @@
               "files_in_scope": [],
               "repository_key": "app",
               "acceptance_criteria": [
-                "it works"
+                {
+                  "id": "task-1",
+                  "text": "it works",
+                  "decision_ids": []
+                }
               ],
               "approaches_rejected": []
             }
@@ -101,7 +105,11 @@
               "files_in_scope": [],
               "repository_key": "app",
               "acceptance_criteria": [
-                "it works"
+                {
+                  "id": "task-1",
+                  "text": "it works",
+                  "decision_ids": []
+                }
               ],
               "approaches_rejected": []
             }
@@ -220,7 +228,11 @@
                   "files_in_scope": [],
                   "repository_key": "app",
                   "acceptance_criteria": [
-                    "it works"
+                    {
+                      "id": "task-1",
+                      "text": "it works",
+                      "decision_ids": []
+                    }
                   ]
                 },
                 {
@@ -235,7 +247,11 @@
                   "files_in_scope": [],
                   "repository_key": "app",
                   "acceptance_criteria": [
-                    "it works"
+                    {
+                      "id": "task-1",
+                      "text": "it works",
+                      "decision_ids": []
+                    }
                   ]
                 }
               ],

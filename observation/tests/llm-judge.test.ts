@@ -2,11 +2,12 @@ import { expect, test } from "bun:test";
 import { createLlmJudgeRunner } from "../src/runners/llm-judge";
 import type { GradingContext } from "../src/grading/runner";
 import { evidence, evaluator, question } from "./grading-fixture";
+import type { ArtifactRevisionId } from "../src/domain/identity";
 
 const instruction = JSON.stringify({ rubric: "Does the evidence support the claim?", max_evidence_chars: 500 });
 const context: GradingContext = { question: { ...question, response_kind: "choice",
   allowed_values: ["supported", "contradicted", "unclear"] },
-  evidence: { ...evidence, references: [{ source: "reported", reported_by: "agent", ref: "citation", revision_id: "revision-1", item_path: "/findings/0", content: "Reported excerpt" }] },
+  evidence: { ...evidence, references: [{ source: "reported", reported_by: "agent", ref: "citation", revision_id: "revision-1" as ArtifactRevisionId, item_path: "/findings/0", content: "Reported excerpt" }] },
   evaluator: { ...evaluator("model"), evaluator_definition_id: "judge", provider: "openai",
     model: "pinned-judge", runtime_revision: "rubric-v1", instruction_text: instruction } };
 const answer = { choice: "contradicted", probabilities: { supported: 0.12, contradicted: 0.68, unclear: 0.2 }, confidence: 0.59 };

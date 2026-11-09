@@ -150,11 +150,13 @@ export function readRelationDeclarations(db: Database, tenant: TenantScope, run_
   });
 }
 
-export function readUnmappedSourceEvents(db: Database, tenant: TenantScope): Promise<readonly SourceEventOutcome[]> {
+export interface UnmappedPage { readonly items: readonly SourceEventOutcome[]; readonly total: number; readonly limit: number; readonly offset: number }
+export function readUnmappedSourceEvents(db: Database, tenant: TenantScope, page: { readonly limit: number; readonly offset: number }): Promise<UnmappedPage> {
   return withTenant(db, tenant, async (trx) => {
-    const rows = await trx.selectFrom("observation.source_event_outcome").select("detail")
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("outcome_kind", "=", "unmapped").orderBy("commit_txid").orderBy("event_id").execute();
-    return rows.map((row) => row.detail as unknown as SourceEventOutcome);
+    const unmapped = trx.selectFrom("observation.source_event_outcome").where("producer", "=", tenant.producer)
+      .where("namespace", "=", tenant.namespace).where("outcome_kind", "=", "unmapped");
+    const count = await unmapped.select((eb) => eb.fn.countAll<string>().as("count")).executeTakeFirstOrThrow();
+    const rows = await unmapped.select("detail").orderBy("commit_txid").orderBy("event_id").limit(page.limit).offset(page.offset).execute();
+    return { items: rows.map((row) => row.detail as unknown as SourceEventOutcome), total: Number(count.count), ...page };
   });
 }

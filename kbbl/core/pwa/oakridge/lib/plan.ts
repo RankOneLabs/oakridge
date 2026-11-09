@@ -3,11 +3,9 @@ import type { CohortId, RepositoryKey } from "../run-types";
 
 /** Cohort item shapes mirror `plan_cohort` in workflow-config/development.yaml. */
 export type PlanTraceId = string & { readonly __brand: "PlanTraceId" };
-export type PlanDecision = string | { id: PlanTraceId; text: string };
-export type PlanCriterion = string | { id: PlanTraceId; text: string; decision_ids: PlanTraceId[] };
-
-export const planDecisionText = (decision: PlanDecision): string => typeof decision === "string" ? decision : decision.text;
-export const planCriterionText = (criterion: PlanCriterion): string => typeof criterion === "string" ? criterion : criterion.text;
+export interface PlanDecision { id: PlanTraceId; text: string }
+/** One acceptance entry: `id` is the run's task id, so the same task may appear in several cohorts. */
+export interface PlanCriterion { id: PlanTraceId; text: string; decision_ids: PlanTraceId[] }
 
 /** Mirrors `plan_cohort` in workflow-config/development.yaml. */
 export interface PlanCohort {
@@ -22,23 +20,16 @@ export interface PlanCohort {
   acceptance_criteria: PlanCriterion[];
 }
 
-export const isPlanCohortIdLinked = (cohort: PlanCohort): boolean =>
-  cohort.decisions.some((decision) => typeof decision !== "string")
-  || cohort.acceptance_criteria.some((criterion) => typeof criterion !== "string");
-
 /** Mirrors `plan_body.scope` in workflow-config/development.yaml. */
 export interface PlanScope {
   in_scope: string[];
   out_of_scope: string[];
 }
 
-/**
- * Mirrors `risk` in workflow-config/development.yaml, except that `mitigation` is nullable: plan writers have
- * published risks as bare strings, and the dbos emit path does not reject them.
- */
+/** Mirrors `risk` in workflow-config/development.yaml. */
 export interface PlanRisk {
   description: string;
-  mitigation: string | null;
+  mitigation: string;
 }
 
 /** Mirrors the registered oakridge-dbos `dev.plan` artifact body. */
@@ -91,8 +82,7 @@ function parseIdentList(value: unknown, field: string): Parsed<PlanTraceId[]> {
 }
 
 export function parsePlanDecision(value: unknown, field: string): Parsed<PlanDecision> {
-  if (typeof value === "string") return ok(value);
-  if (!isRecord(value)) return fail(field, "expected a string or plan decision");
+  if (!isRecord(value)) return fail(field, "expected a plan decision");
   const id = parseIdent(value.id, `${field}.id`);
   if (!id.ok) return id;
   const itemText = parseString(value.text, `${field}.text`);
@@ -101,8 +91,7 @@ export function parsePlanDecision(value: unknown, field: string): Parsed<PlanDec
 }
 
 export function parsePlanCriterion(value: unknown, field: string): Parsed<PlanCriterion> {
-  if (typeof value === "string") return ok(value);
-  if (!isRecord(value)) return fail(field, "expected a string or plan criterion");
+  if (!isRecord(value)) return fail(field, "expected a plan criterion");
   const id = parseIdent(value.id, `${field}.id`);
   if (!id.ok) return id;
   const itemText = parseString(value.text, `${field}.text`);
@@ -112,21 +101,12 @@ export function parsePlanCriterion(value: unknown, field: string): Parsed<PlanCr
   return ok({ id: id.value, text: itemText.value, decision_ids: decisionIds.value });
 }
 
-function parseGenerationList<T extends string | object>(value: unknown, field: string, parseEntry: (entry: unknown, entryField: string) => Parsed<T>): Parsed<T[]> {
-  if (!Array.isArray(value)) return fail(field, "expected an array");
-  const generation = value.length > 0 ? typeof value[0] : null;
-  return parseEach(value, field, (entry, entryField) =>
-    generation !== typeof entry
-      ? fail(entryField, "mixed legacy and id-linked entries")
-      : parseEntry(entry, entryField));
-}
-
 export function parsePlanDecisionList(value: unknown, field: string): Parsed<PlanDecision[]> {
-  return parseGenerationList(value, field, parsePlanDecision);
+  return parseEach(value, field, parsePlanDecision);
 }
 
 export function parsePlanCriterionList(value: unknown, field: string): Parsed<PlanCriterion[]> {
-  return parseGenerationList(value, field, parsePlanCriterion);
+  return parseEach(value, field, parsePlanCriterion);
 }
 
 function parseEach<T>(value: unknown, field: string, parseEntry: (entry: unknown, entryField: string) => Parsed<T>): Parsed<T[]> {
@@ -174,11 +154,10 @@ function parseCohort(value: unknown, field: string): Parsed<PlanCohort> {
 }
 
 function parseRisk(value: unknown, field: string): Parsed<PlanRisk> {
-  if (typeof value === "string") return ok({ description: value, mitigation: null });
-  if (!isRecord(value)) return fail(field, "expected a string or an object");
+  if (!isRecord(value)) return fail(field, "expected an object");
   const description = parseString(value.description, `${field}.description`);
   if (!description.ok) return description;
-  const mitigation = parseNullableString(value.mitigation, `${field}.mitigation`);
+  const mitigation = parseString(value.mitigation, `${field}.mitigation`);
   if (!mitigation.ok) return mitigation;
   return ok({ description: description.value, mitigation: mitigation.value });
 }

@@ -9,6 +9,7 @@ import { RunDetail as RunDetailOrganism } from "../components/organisms/RunDetai
 import type { RunSummary, RunDetail, RepositoryKey, CohortId, EpicProfileId, StageUnitParams, WorkflowRunId } from "../run-types";
 import type { ParkedGate } from "../artifact-types";
 import type { BuildBrief } from "../lib/build-brief";
+import type { PlanTraceId } from "../lib/plan";
 import { compositeId } from "../adapters/core";
 import { invalidateCachedRunUnits } from "../client";
 import mergeFixture from "../__fixtures__/v2-integration-merge.json";
@@ -341,8 +342,8 @@ describe("RunDetail stage list", () => {
             goal: "Operator workflow",
             next_action: "Expose the materialized cohort brief.",
             files_in_scope: ["kbbl/core/pwa/oakridge"],
-            decisions_made: [{ decision: "Reuse the run table", rationale: "Avoids a second table" }],
-            acceptance_criteria: ["Review is explicit"],
+            decisions_made: [{ id: "reuse-run-table" as PlanTraceId, decision: "Reuse the run table", rationale: "Avoids a second table" }],
+            acceptance_criteria: [{ id: "explicit-review" as PlanTraceId, text: "Review is explicit", decision_ids: [] }],
             depends_on: ["spec"],
             repository_key: "oakridge" as RepositoryKey,
           }),

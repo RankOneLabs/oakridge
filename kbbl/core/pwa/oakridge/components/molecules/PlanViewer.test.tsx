@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { PlanViewer } from "./PlanViewer";
-import legacyPlan from "../../lib/__fixtures__/legacy-plan.json";
 import linkedPlan from "../../lib/__fixtures__/id-linked-plan.json";
 
 const cohort = (id: string, depends_on: string[] = []) => ({
@@ -23,7 +22,7 @@ const body = {
   dependency_order: ["core", "api"],
   scope: { in_scope: ["The API"], out_of_scope: ["The UI"] },
   acceptance_criteria: ["Ships."],
-  risks: ["Pin drift"],
+  risks: [{ description: "Pin drift", mitigation: "Pin the digest." }],
 };
 
 const selectedCardId = () =>
@@ -32,20 +31,18 @@ const selectedCardId = () =>
 afterEach(cleanup);
 
 describe("PlanViewer", () => {
-  test("shows a legacy cohort's text and marks its revision", () => {
-    render(<PlanViewer body={legacyPlan} />);
-    expect(screen.getAllByText(/not id-linked/i)).toHaveLength(2);
+  test("shows decision and criterion ids with their decision links", () => {
+    render(<PlanViewer body={linkedPlan} />);
+    fireEvent.click(within(screen.getByTestId("or-plan-cohort")).getByRole("button", { name: /Details/ }));
+    expect(within(screen.getByTestId("or-plan-cohort-details")).getByText("criterion-plan")).toBeTruthy();
+    expect(screen.getAllByText("decision-layout")).toHaveLength(2);
+  });
+
+  test("shows decision and criterion text", () => {
+    render(<PlanViewer body={linkedPlan} />);
     fireEvent.click(within(screen.getByTestId("or-plan-cohort")).getByRole("button", { name: /Details/ }));
     expect(screen.getByText("Keep the existing layout.")).toBeTruthy();
     expect(screen.getByText("The plan is readable.")).toBeTruthy();
-  });
-
-  test("shows decision and criterion ids with their task and decision links", () => {
-    render(<PlanViewer body={linkedPlan} />);
-    expect(screen.queryByText(/not id-linked/i)).toBeNull();
-    fireEvent.click(within(screen.getByTestId("or-plan-cohort")).getByRole("button", { name: /Details/ }));
-    expect(screen.getByText("criterion-plan")).toBeTruthy();
-    expect(screen.getAllByText("decision-layout")).toHaveLength(2);
   });
 
   test("draws every cohort in the graph", () => {
@@ -77,9 +74,37 @@ describe("PlanViewer", () => {
     expect(within(card).getByText("src/core.ts")).toBeTruthy();
   });
 
-  test("shows a bare-string risk without a mitigation", () => {
+  test("shows a risk with its mitigation", () => {
     render(<PlanViewer body={body} />);
-    expect(within(screen.getByTestId("or-risk-card")).getByText("No mitigation given.")).toBeTruthy();
+    expect(within(screen.getByTestId("or-risk-card")).getByText("Pin the digest.")).toBeTruthy();
+  });
+
+  test("each cohort lists its tasks by id, and a task two cohorts share opens the same task from both", () => {
+    const onOpenTask = vi.fn();
+    const task = (id: string) => ({ id, text: `Task ${id}`, decision_ids: [] });
+    render(<PlanViewer onOpenTask={onOpenTask} body={{ ...body, cohorts: [{ ...cohort("api", ["core"]), acceptance_criteria: [task("T1"), task("T2")] },
+      { ...cohort("core"), acceptance_criteria: [task("T1"), task("T3")] }] }} />);
+    const tasksOf = (id: string) => within(screen.getAllByTestId("or-plan-cohort").find((card) => card.getAttribute("data-cohort-id") === id)!).getAllByTestId("or-task-link");
+    expect(tasksOf("api").map((chip) => chip.getAttribute("data-task-id"))).toEqual(["T1", "T2"]);
+    expect(tasksOf("core").map((chip) => chip.getAttribute("data-task-id"))).toEqual(["T1", "T3"]);
+    fireEvent.click(tasksOf("api")[0]!);
+    fireEvent.click(tasksOf("core")[0]!);
+    expect(onOpenTask.mock.calls).toEqual([["T1"], ["T1"]]);
+  });
+
+  test("without task navigation a cohort's tasks are listed but open nothing", () => {
+    render(<PlanViewer body={{ ...body, cohorts: [{ ...cohort("core"), acceptance_criteria: [{ id: "T1", text: "t", decision_ids: [] }] }] }} />);
+    expect(screen.getByTestId("or-task-link").tagName).toBe("CODE");
+  });
+
+  test("refuses a bare-string risk, naming the entry", () => {
+    render(<PlanViewer body={{ ...body, risks: ["Pin drift"] }} />);
+    expect(screen.getByRole("alert").textContent).toContain("risks[0]: expected an object");
+  });
+
+  test("refuses a string criterion, naming the entry", () => {
+    render(<PlanViewer body={{ ...body, cohorts: [{ ...cohort("core"), acceptance_criteria: ["Tests pass."] }] }} />);
+    expect(screen.getByRole("alert").textContent).toContain("cohorts[0].acceptance_criteria[0]: expected a plan criterion");
   });
 
   test("names the broken field when the body breaks the contract", () => {

@@ -1,6 +1,5 @@
 import { sql, type Selectable, type UpdateObject } from "kysely";
-import { canonicalDigest } from "canonical-json";
-import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
+import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId, RunId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { estimatedCostPerCall, fitsRunAllowance } from "../grading/budget";
 import type { EvaluatorDefinition } from "../grading/evaluator";
@@ -8,7 +7,7 @@ import type { EvidenceReference, EvidenceSet, ReadyEvidence } from "../grading/e
 import { AUTOMATIC_ATTEMPT_LABEL, automaticIdentity, evaluationDigest, failureDisposition, measurementState, type AdmissionCandidate,
   type AttemptFailure, type ClaimResult, type ExecutionClaim, type ExecutionStatus, type ExecutionTerminalCause, type MeasurementState,
   type RunAdmission, type SettlementResult } from "../grading/execution";
-import type { GradeAnswer } from "../grading/observation";
+import { observationIdOf, type GradeAnswer } from "../grading/observation";
 import type { RunConfigWire } from "../ingest/cursor";
 import type { QuestionDefinition } from "../grading/question";
 import type { EvaluationOutcome } from "../grading/runner";
@@ -255,11 +254,6 @@ async function settlement(db: Database, tenant: TenantScope, claim: ExecutionCla
   }
 }
 
-function observationId(execution_id: ExecutionId): GradeObservationId {
-  const digest = canonicalDigest(["grade-observation/v1", execution_id]);
-  if (!digest.ok) throw new Error(digest.error.detail);
-  return digest.value as unknown as GradeObservationId;
-}
 const overage = (provider_cost: number | null | undefined) =>
   provider_cost === null || provider_cost === undefined ? sql<number>`0`
     : sql<number>`greatest(0, ${provider_cost}::double precision - admitted_estimate)`;
@@ -280,7 +274,7 @@ export async function completeExecution(db: Database, tenant: TenantScope, claim
         provider_request_id: outcome.external_execution_id ?? null, cost_overage: overage(outcome.cost) })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("execution_id", "=", claim.execution_id)
         .where("attempt", "=", claim.claim_attempt).execute();
-      const observation_id = observationId(claim.execution_id);
+      const observation_id = observationIdOf(claim.execution_id);
       await trx.insertInto("observation.grade_observation").values({ producer: tenant.producer, namespace: tenant.namespace, observation_id,
         execution_id: claim.execution_id, answer_kind: outcome.answer.kind, answer_state: outcome.answer.state,
         answer_payload: jsonText(outcome.answer as unknown as JsonValue),
@@ -386,8 +380,12 @@ export interface ItemMeasurements {
   readonly questions: readonly QuestionMeasurements[];
 }
 
-export async function readItemMeasurements(db: Database, tenant: TenantScope, occurrence_id: string): Promise<ItemMeasurements | null> {
-  return withTenant(db, tenant, async (trx) => {
+export function readItemMeasurements(db: Database, tenant: TenantScope, occurrence_id: string): Promise<ItemMeasurements | null> {
+  return withTenant(db, tenant, (trx) => readItemMeasurementsIn(trx, tenant, occurrence_id));
+}
+/** The same read inside a caller's transaction, so it can share a snapshot. */
+export async function readItemMeasurementsIn(trx: DatabaseTransaction, tenant: TenantScope, occurrence_id: string): Promise<ItemMeasurements | null> {
+  {
     const item = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "run_id"]).where("producer", "=", tenant.producer)
       .where("namespace", "=", tenant.namespace).where("occurrence_id", "=", occurrence_id).executeTakeFirst();
     if (!item) return null;
@@ -425,12 +423,12 @@ export async function readItemMeasurements(db: Database, tenant: TenantScope, oc
               charged_cost: row.charged_cost, admitted_estimate: row.admitted_estimate, provider_request_id: row.provider_request_id })) };
         }) }));
     return { occurrence_id: item.occurrence_id as ItemOccurrenceId, run_id: item.run_id, is_grading_enabled, questions };
-  });
+  }
 }
 
 /** A run's automatic-grading spend: what its claims sent or hold in reservation, against its allowance. */
 export interface RunSpend {
-  readonly run_id: string;
+  readonly run_id: RunId;
   /** The choice the run's captured launch committed. */
   readonly is_grading_enabled: boolean;
   /** The exact config the launch delivered, or null when it carried none. */
@@ -451,7 +449,7 @@ export async function readRunSpend(db: Database, tenant: TenantScope, run_id: st
       .groupBy("status").execute();
     const executions: Record<ExecutionStatus, number> = { queued: 0, claimed: 0, reclaimable: 0, budget_deferred: 0, completed: 0, failed: 0 };
     for (const row of statuses) executions[row.status as ExecutionStatus] = Number(row.count);
-    return { run_id, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id),
+    return { run_id: run_id as RunId, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id),
       captured_config: await readCapturedRunConfig(trx, tenant, run_id), committed, requests_sent: Number(counted.requests_sent),
       attempts: Number(counted.attempts), executions };
   });

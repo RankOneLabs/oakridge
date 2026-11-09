@@ -50,7 +50,7 @@ integration("a late link adds only an edge: the item, its neighbours and every g
   expect(linked.every((edge) => edge.asserted_by === "producer_explicit" && edge.type === "assesses")).toBe(true);
   const [stored] = await readRelationDeclarations(db, tenant, "run-1");
   expect(stored?.projection).toEqual({ relation_ids: ["T7", "T404"].map((task) => linked.find((edge) => edge.evidence_ref.endsWith(`:${task}`))!.relation_id), unresolved_sources: [] });
-  expect(await readUnmappedSourceEvents(db, tenant)).toEqual([]);
+  expect((await readUnmappedSourceEvents(db, tenant, { limit: 200, offset: 0 })).items).toEqual([]);
 }));
 
 integration("a repeated statement is one relation, and a replay keeps its first identity", async () => scratchDatabase(async (db) => {
@@ -106,7 +106,7 @@ integration("a declaration the profile cannot read is unmapped, visible, and doe
   await capturedAnalysis(feed);
   await feed.send({ ...provenance, kind: "relation_declaration", event_kind: "analysis_links_declared", run_id: "run-1", event_id: "malformed",
     declaration: { run_id: "run-1", entries: "T7" } });
-  expect((await readUnmappedSourceEvents(db, tenant)).map((outcome) => [outcome.event_id, outcome.kind])).toEqual([["malformed", "unmapped"]]);
+  expect(((await readUnmappedSourceEvents(db, tenant, { limit: 200, offset: 0 })).items).map((outcome) => [outcome.event_id, outcome.kind])).toEqual([["malformed", "unmapped"]]);
   expect(await edges(db)).toEqual([]);
   await feed.send(declared([{ source_revision_id: "analysis-1", item_path: "/findings/0", task_ids: ["T7"] }]));
   expect(await edges(db)).toHaveLength(1);

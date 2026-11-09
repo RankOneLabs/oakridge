@@ -105,8 +105,8 @@ Collection runs after each accepted source event, for the waiting questions of t
 once at startup for every run with a waiting question. Each question is collected and recorded on its
 own, and the acknowledgement does not wait for it. Collection consults no automatic-grading setting,
 task, approval or human action, so it behaves the same whether automatic grading is on or off.
-`GET /v1/items/:id/evidence` serves each pinned question of an item with its version, evaluator set
-and readiness.
+`GET /v1/items/:id/evidence` serves each pinned question of an item with its version, evaluator set,
+readiness and frozen references, each list paged.
 
 ## Evidence references
 
@@ -157,6 +157,35 @@ A correction is a new submission whose observation sets `supersedes_observation_
 requires it to measure the same occurrence, question, evidence and evaluator for the same reviewer,
 through both executions. The one-successor key keeps each history linear, and the earlier answer and
 its evidence stay unchanged. Machine answers are not corrected.
+
+### Human submission
+
+`POST /v1/items/:id/answers`, with the grade credential, takes `question_id`, `question_version`,
+`submission_id`, `answer`, optional `rationale` and, for a correction, `corrects_observation_id`
+(`HumanSubmissionRequest` in `observation/src/http/grades.ts`). Parsing is strict: a field naming a
+reviewer, evaluator or evidence set is refused. The reviewer comes from the credential, and the human
+evaluator and frozen evidence are resolved from the question's pin, so a human answer shares the
+evidence set machine answers use.
+
+| Response | Meaning |
+| --- | --- |
+| `201` `recorded` | The answer was appended. This acknowledgment is what a client may call saved. |
+| `200` `duplicate` | This reviewer already used this submission id. Nothing changed; the original result returns, whatever the repeat carried. |
+| `404` `item_not_found`, `question_not_pinned` | Outside this tenant, or a question not pinned to this item. |
+| `409` `not_ready` | The selected question is not ready, with its reason. Another ready question on the item stays answerable. |
+| `409` `correction_required` | This reviewer already holds a current answer to this question; a new answer must link it. |
+| `409` `stale_correction`, `not_correctable` | The link is not this reviewer's current answer to this question. |
+| `422` `invalid_answer` | The answer is not one of the question's choices. |
+
+A submission writes one completed execution and one observation. It needs no task, link, approval or
+automatic grading, makes no provider request, and writes nothing to Oakridge. `GET /v1/reviewer`, with
+the grade credential, names the reviewer that credential answers as.
+
+The operator reaches these through kbbl's `/oakridge/observation/*` (`kbbl/core/server/handlers/observation-proxy.ts`),
+a closed list of routes. kbbl applies its control policy and browser-write protections first, then
+replaces every browser credential with the server-held capability the route needs, and forwards only the
+request fields above. Hiding answers is a preference in that browser: no visibility or assignment record
+exists, and no read depends on having answered.
 
 ## Oakridge profile
 
@@ -327,17 +356,29 @@ item navigation and panel belong to the later operator cohort, on these same con
 ## HTTP routes
 
 The ingest credential uses `GET /v1/sources/oakridge/cursor` and `POST /v1/sources/oakridge/events`.
-The read credential uses:
+The grade credential uses `POST /v1/items/:id/answers` and `GET /v1/reviewer`. The read credential uses:
 
 - `GET /v1/sources/oakridge/unmapped`, `GET /v1/source-revisions/:id`
 - `GET /v1/runs/:run_id/items`, `GET /v1/items/:id`, `GET /v1/items/:id/lineage`, `GET /v1/items/:id/grades`
-- `GET /v1/questions/:id/versions/:version`, `GET /v1/evidence-sets/:id`
+- `GET /v1/runs/:run_id/items/at?source_revision_id=&item_path=`: one item by its exact address, with no task or cohort
+- `GET /v1/items/:id/status`: each pinned question's definition, own readiness, frozen evidence, each machine evaluator's state and attempts, every answer and correction history, and the item's explicit links
+- `GET /v1/items/:id/answers?question_id=&question_version=&reviewer_id=`, `GET /v1/items/:id/evidence`
+- `GET /v1/runs/:run_id/grading-spend`: the run's choice, spend, request count and execution statuses
+- `GET /v1/runs/:run_id/gradeable-items?stage=&revisions=all`, `GET /v1/runs/:run_id/unlinked-items`, `GET /v1/runs/:run_id/unresolved-references`
+- `GET /v1/runs/:run_id/logical-items`, `GET /v1/runs/:run_id/logical-items/:local_id`, `.../lineage`, `GET /v1/runs/:run_id/composite-drilldown?key=`
+- `GET /v1/questions/:id/versions/:version`; `GET /v1/evidence-sets/:id?references_limit=&pinned_evaluators_limit=`: one frozen evidence set in the same paged shape as an item's evidence
 - `GET /v1/evaluations/by-digest/:digest`, `GET /v1/evaluation-executions/:id` (also the grade credential)
 
-- `GET /v1/items/:id/evidence`
+Every read carries its credential's tenant and needs only the read credential: none is unlocked by an
+answer. Every returned list is paged. `limit` and `offset` window the list itself, up to 200; a nested list
+has its own `<name>_limit` and `<name>_offset`, so a reader continues it while holding the others still. A bad
+window refuses the read rather than clamping. Each page says its `total`. Question choices are part of the
+definition and are not paged. An unknown task id is a 404 from the logical-item route and stays visible as an
+`unresolved` link on the items that named it.
 
-Every read carries its credential's tenant. No route dispatches a provider or writes an answer yet.
-Composite reads are store functions so far; the operator cohort adds their HTTP routes.
+The types are in `observation/src/grading/item-reads.ts`, and `kbbl/core/pwa/oakridge/grading-types.ts` mirrors
+them for the PWA. kbbl serves the same reads under task names: `/runs/:run_id/tasks`, `/findings`,
+`/unlinked-findings`, `/unresolved-task-references`, `/drilldown` and `/grading`.
 
 ## Verification
 
@@ -386,26 +427,23 @@ observation baseline, core contract or generated definition changed for declarat
 
 On the shadow, through `observation/verification/proof.ts`:
 
-- `relations` passed all 68 checks (`observation/verification/reports/relations-2026-11-08T20-31-17-449Z`)
-  at `100000b5`, with real provider answers, 44 real requests across two runs. Later fixes (a count of items rather
-  than rows, the namespace of a decision's link receipt, and the proof repeating a decision under one id until
-  its result is known, and failing if a step it asked for never ran) are covered by offline tests, not by this
-  report.
-- Its first run, `run-8734e674c984b0f3` from `inputs/relations-audit.json`, measures the late link. 5 analysis
-  questions were answered in 5 requests before the run had any task. A mapping naming the unapproved tasks
-  revision was refused, the approval changed nothing, and every task read as a coverage gap. After the mapping
-  was delivered, its composite opened the original observation, with the item, pins, evidence, measurements,
-  answers, the unlinked control and the request count all unchanged. A second mapping was journaled with
-  observation killed and the whole stack restarted before any acknowledgement: it arrived once, with 19 requests
-  before and after, and the authority's events went from 43 to 44, the mapping alone.
-- Its second run, `run-ac2e5f66cae38631` from `inputs/relations-shared-audit.json`, is the real shared task. Its
-  tasks approval itself carried explicit links, delivered as one declaration with the 5 requests unchanged. Its
-  plan and both briefs were sent back and really revised. Cohorts `alpha` and `beta` both reached their
-  assessments, and `T1` reads 2 analysis findings and 6 implementation findings across both cohorts, all
-  answered, 25 requests in all. One finding reads under both `T1` and `T2`, the unknown task stays a visible
-  reference, the control stays unlinked, and integration reads pending. Its lineage holds the task list, both plan
-  revisions and both revisions of each brief. Every count opened as many rows as it reported, and one-entry windows
-  reached every nested question and raw answer.
+- `relations` passed all 68 checks (`observation/verification/reports/relations-2026-11-09T16-43-58-923Z`) on this
+  cohort's code, with real provider answers: 33 real requests, executions and attempts across two runs.
+- Its first run, `run-b45b133f584a3d10` from `inputs/relations-audit.json`, measures the late link. Its analysis was
+  answered in 6 requests before the run had any task. A mapping naming the unapproved tasks revision was refused (409),
+  the approval changed nothing, and every task read as a coverage gap. After the mapping was delivered, its composite
+  opened the original observation, with the item, pins, evidence, measurements, answers, the unlinked control and the
+  request count (6 then 6) all unchanged. A second mapping was journaled with observation killed and the whole stack
+  restarted before any acknowledgement: it arrived once, with 18 requests before and after, and the authority's events
+  went from 43 to 44, the mapping alone.
+- Its second run, `run-a2044f9791413a7c` from `inputs/relations-shared-audit.json`, is the real shared task. Its
+  tasks approval itself carried explicit links, delivered as one declaration with the 5 requests unchanged. Its plan
+  and both briefs were sent back and really revised. Cohorts `alpha` and `beta` both reached their assessments, and
+  one task stands under both, as one logical item through 4 plan and 4 brief occurrences. Analysis and implementation
+  read side by side with integration pending, the unknown task stays a visible reference and the control stays
+  unlinked. One-entry windows reached every nested question and raw answer.
+- The earlier `relations-2026-11-09T03-23-51-515Z` failed 3 of 68 checks because its unchanged-facts snapshot included
+  an item's links, which a late link is meant to change. It is kept as it ran.
 - **What that proof does not show.** No real run published integration. A cohort completes only on an operator's
   acceptance of its assessment and confirmation of a merge, and this proof does not make those decisions by itself.
   The report's `shared_task_matrix` is a supplement for integration final, corrections and disagreement, on the
@@ -413,8 +451,25 @@ On the shadow, through `observation/verification/proof.ts`:
   and is labelled so. No provider request is made for it. Both shared-run assessors returned `fail` because their
   environment had no test database for the suite the audit spec asks them to run, which says nothing about the
   reads above. A lost acknowledgement is proven against a real process in
-  `observation-process-restart.test.ts`, not on the shadow. The human and PWA continuation stays with the operator
-  workspace, and this does not complete that cumulative proof.
+  `observation-process-restart.test.ts`, not on the shadow. The human and PWA continuation is the `workspace` proof.
+- **Operator proof.** `workspace` passed all 60 checks (`observation/verification/reports/workspace-2026-11-09T04-00-03-424Z`)
+  on a freshly started service. On real run `run-d71318e8959a6801`, assessment finding
+  `run-d71318e8959a6801/implementation/audit:assessment:1` `/findings/2` was answered by the configured provider in
+  a real request and by an authenticated reviewer, both read back in the PWA with nothing but that address. Corrections,
+  duplicates, spoofing, a refused not-ready question, grading off, hidden and revealed views and each viewer entry point
+  are in its checks, with 20 provider requests and 61 authority events unchanged by every human answer. An earlier attempt on
+  an empty database (`workspace-2026-11-09T02-14-08-499Z`) passed its registration, capture, provider, human and readback
+  checks, then failed on a stalled browser click; it and `workspace-2026-11-09T00-54-15-507Z`, which failed on faults in the
+  proof's own script, are kept as they ran.
+- **Current cumulative state.** `reports/cumulative-2026-11-09T17-24-35-214Z` **passed**: `workspace`, `grading`
+  (`grading-2026-11-09T02-36-25-820Z`, 97 of 97) and `relations` all passed, the review endpoint lists neither
+  `merge_pr` nor `mark_merge_ready`, no stored definition names `gated_review`, and the target-schema,
+  import-boundary and both task-contract suites pass. It records the head each proof ran on; the only product change
+  since is the paged `GET /v1/evidence-sets/:id`, which no proof reads. Its `pending` still lists
+  `real-integration-publication` and `same-finding-correctness-awaits-subject-build`, which wait on an operator
+  decision. The earlier `cumulative-2026-11-09T04-24-32-505Z` failed on the failed `relations` report. The shadow's
+  kbbl runs in its loopback control policy, so token authentication is proven by the real forwarding code in-process
+  against the real service.
 - **A side effect to know before rerunning.** Audit assessors follow `assess.md`, so they call `set_pr_draft` on
   the real pull request the audit input names. A proof run can therefore flip that pull request's draft state.
 - Earlier `relations` runs (`relations-2026-11-08T17-31-33-853Z`, `relations-2026-11-08T17-46-21-583Z`) predate the

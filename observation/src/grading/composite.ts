@@ -8,7 +8,7 @@
  *     -> current answers per correction chain -> counts per stage -> drilldown to raw rows
  */
 import { canonicalJson } from "canonical-json";
-import type { EvaluatorDefinitionId, ExecutionId, GradeObservationId, ItemOccurrenceId } from "../domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, RelationId, ReviewerId, RunId, UnitId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import type { CompositePath } from "../ports/producer-profile";
 import type { RelationType } from "../projection/extractor";
@@ -28,29 +28,29 @@ export const pageOf = <Item>(items: readonly Item[], page: PageRequest): Paged<I
 
 // --------------------------------------------------------------- what is read ---
 
-export interface CompositeLogicalItem { readonly logical_item_id: string; readonly scope: string; readonly producer_local_id: string }
+export interface CompositeLogicalItem { readonly logical_item_id: LogicalItemId; readonly scope: string; readonly producer_local_id: string }
 export interface CompositeRevision {
-  readonly revision_id: string;
-  readonly unit_id: string;
+  readonly revision_id: ArtifactRevisionId;
+  readonly unit_id: UnitId;
   readonly artifact_kind: string;
-  readonly predecessor_id: string | null;
+  readonly predecessor_id: ArtifactRevisionId | null;
   readonly recorded_at: Date;
   readonly captured_at: Date;
 }
 export interface CompositeOccurrence {
   readonly occurrence_id: ItemOccurrenceId;
-  readonly revision_id: string;
+  readonly revision_id: ArtifactRevisionId;
   readonly artifact_kind: string;
   readonly item_kind: string;
   readonly item_path: string;
-  readonly logical_item_id: string | null;
+  readonly logical_item_id: LogicalItemId | null;
   readonly selected_value: JsonValue;
 }
 export interface CompositeRelation {
-  readonly relation_id: string;
+  readonly relation_id: RelationId;
   readonly source_occurrence_id: ItemOccurrenceId;
   readonly target_occurrence_id: ItemOccurrenceId | null;
-  readonly target_logical_item_id: string | null;
+  readonly target_logical_item_id: LogicalItemId | null;
   readonly unresolved_target_ref: string | null;
   readonly type: RelationType;
   readonly asserted_by: string;
@@ -66,7 +66,7 @@ export interface CompositeEvaluator {
 export interface CompositeExecution {
   readonly execution_id: ExecutionId;
   readonly occurrence_id: ItemOccurrenceId;
-  readonly evidence_set_id: string;
+  readonly evidence_set_id: EvidenceSetId;
   readonly evaluator_definition_id: EvaluatorDefinitionId;
   readonly attempt_label: string;
   readonly status: ExecutionStatus;
@@ -78,10 +78,10 @@ export interface CompositeAnswer {
   readonly observation_id: GradeObservationId;
   readonly execution_id: ExecutionId;
   readonly occurrence_id: ItemOccurrenceId;
-  readonly evidence_set_id: string;
+  readonly evidence_set_id: EvidenceSetId;
   readonly question: QuestionKey;
   readonly evaluator_definition_id: EvaluatorDefinitionId;
-  readonly reviewer_id: string | null;
+  readonly reviewer_id: ReviewerId | null;
   readonly answer: GradeAnswer;
   readonly supersedes_observation_id: GradeObservationId | null;
   readonly confidence: number | null;
@@ -91,7 +91,7 @@ export interface CompositeAnswer {
 }
 /** Everything one run holds that a composite reads, from one snapshot. */
 export interface CompositeInputs {
-  readonly run_id: string;
+  readonly run_id: RunId;
   readonly is_grading_enabled: boolean;
   readonly logical_items: readonly CompositeLogicalItem[];
   readonly revisions: readonly CompositeRevision[];
@@ -140,7 +140,7 @@ export function selectRevisionStandings(revisions: readonly CompositeRevision[],
 export interface Contribution {
   readonly occurrence: CompositeOccurrence;
   readonly stage: string;
-  readonly unit_id: string;
+  readonly unit_id: UnitId;
   readonly is_current: boolean;
   readonly links: readonly CompositeRelation[];
 }
@@ -171,7 +171,7 @@ export const selectSupersededAnswers = (answers: readonly CompositeAnswer[]): re
 
 export type GraderKey =
   | { readonly kind: "machine"; readonly evaluator_definition_id: EvaluatorDefinitionId; readonly backend_kind: string; readonly model: string | null }
-  | { readonly kind: "human"; readonly evaluator_definition_id: EvaluatorDefinitionId; readonly reviewer_id: string };
+  | { readonly kind: "human"; readonly evaluator_definition_id: EvaluatorDefinitionId; readonly reviewer_id: ReviewerId };
 /** An actual answer as counted. A choice of "unclear" is `answered`; `abstain` and `unclear` here are the states that carry no value. */
 export type AnswerKey =
   | { readonly state: "answered"; readonly value: JsonValue }
@@ -186,21 +186,21 @@ const questionKey = (question: QuestionKey): QuestionKey => ({ question_id: ques
 const sameQuestion = (left: QuestionKey, right: QuestionKey): boolean =>
   left.question_id === right.question_id && left.question_version === right.question_version;
 
-function graderOf(answer: CompositeAnswer, evaluators: ReadonlyMap<string, CompositeEvaluator>): GraderKey {
+export function graderOf(answer: CompositeAnswer, evaluators: ReadonlyMap<string, CompositeEvaluator>): GraderKey {
   const evaluator = evaluators.get(answer.evaluator_definition_id);
   return answer.reviewer_id !== null ? { kind: "human", evaluator_definition_id: answer.evaluator_definition_id, reviewer_id: answer.reviewer_id }
     : { kind: "machine", evaluator_definition_id: answer.evaluator_definition_id, backend_kind: evaluator?.backend_kind ?? "", model: evaluator?.model ?? null };
 }
 
 /** A machine evaluator's status that is not an answer. A human with no answer yet owes nothing, so has none. */
-export type ItemStatus =
+export type ItemStatusKey =
   | { readonly state: "not_ready"; readonly code: string }
   | { readonly state: "grading_off" }
   | { readonly state: "awaiting_admission" }
   | { readonly state: "pending" }
   | { readonly state: "budget_deferred" }
   | { readonly state: "failed"; readonly terminal_cause: ExecutionTerminalCause | null };
-const itemStatus = (state: MeasurementState): ItemStatus | null => {
+const itemStatus = (state: MeasurementState): ItemStatusKey | null => {
   switch (state.state) {
     case "not_ready": return { state: "not_ready", code: state.code };
     case "failed": return { state: "failed", terminal_cause: state.terminal_cause };
@@ -215,7 +215,7 @@ export interface MeasurementRead {
   /** Null for a question's own not-ready status, which every evaluator of it shares. */
   readonly evaluator_definition_id: EvaluatorDefinitionId | null;
   readonly execution_id: ExecutionId | null;
-  readonly status: ItemStatus;
+  readonly status: ItemStatusKey;
   readonly detail: string | null;
 }
 const failureDetail = (state: MeasurementState): string | null => state.state === "failed" ? state.error : state.state === "not_ready" ? state.detail : null;
@@ -251,12 +251,12 @@ export type CompositeSelector =
   | { readonly kind: "items" }
   | { readonly kind: "history" }
   | { readonly kind: "answer"; readonly question: QuestionKey; readonly grader: GraderKey; readonly answer: AnswerKey }
-  | { readonly kind: "status"; readonly question: QuestionKey; readonly evaluator_definition_id: EvaluatorDefinitionId | null; readonly status: ItemStatus }
+  | { readonly kind: "status"; readonly question: QuestionKey; readonly evaluator_definition_id: EvaluatorDefinitionId | null; readonly status: ItemStatusKey }
   | { readonly kind: "disagreement"; readonly question: QuestionKey };
-export interface CompositeDrilldownKey { readonly logical_item_id: string; readonly stage: string; readonly selector: CompositeSelector }
+export interface CompositeDrilldownKey { readonly logical_item_id: LogicalItemId; readonly stage: string; readonly selector: CompositeSelector }
 
 export interface AnswerCount { readonly question: QuestionKey; readonly grader: GraderKey; readonly answer: AnswerKey; readonly count: number; readonly drilldown: CompositeDrilldownKey }
-export interface StatusCount { readonly question: QuestionKey; readonly evaluator_definition_id: EvaluatorDefinitionId | null; readonly status: ItemStatus; readonly count: number; readonly drilldown: CompositeDrilldownKey }
+export interface StatusCount { readonly question: QuestionKey; readonly evaluator_definition_id: EvaluatorDefinitionId | null; readonly status: ItemStatusKey; readonly count: number; readonly drilldown: CompositeDrilldownKey }
 /** Differing current answers on the same occurrence and question. Different items answering differently is no disagreement. */
 export interface DisagreementCount { readonly question: QuestionKey; readonly item_count: number; readonly drilldown: CompositeDrilldownKey }
 export interface QuestionSummary extends QuestionKey { readonly item_kind: string; readonly question_text: string | null; readonly allowed_values: readonly JsonValue[] | null }
@@ -274,7 +274,7 @@ export interface StageTotals {
 export type StagePublication =
   | { readonly state: "pending" }
   /** `is_final` comes from the stage alone: answers, links and approvals never decide it. */
-  | { readonly state: "published"; readonly is_final: boolean; readonly unit_ids: readonly string[] };
+  | { readonly state: "published"; readonly is_final: boolean; readonly unit_ids: readonly UnitId[] };
 export interface StageComposite {
   readonly stage: string;
   readonly publication: StagePublication;
@@ -290,8 +290,8 @@ export interface StageComposite {
 }
 /** One logical item's stages side by side. There is deliberately no figure across them. */
 export interface LogicalItemComposite {
-  readonly run_id: string;
-  readonly logical_item_id: string;
+  readonly run_id: RunId;
+  readonly logical_item_id: LogicalItemId;
   readonly scope: string;
   readonly producer_local_id: string;
   readonly coverage: "linked" | "gap";
@@ -311,7 +311,7 @@ const countInto = <Value>(counts: Map<string, { readonly value: Value; count: nu
 const sortedEntries = <Value>(counts: ReadonlyMap<string, { readonly value: Value; readonly count: number }>): readonly { readonly value: Value; readonly count: number }[] =>
   [...counts.keys()].sort().map((key) => counts.get(key)!);
 
-function stageComposite(stage: CompositePath["stages"][number], logical_item_id: string, linked: readonly Contribution[], inputs: CompositeInputs,
+function stageComposite(stage: CompositePath["stages"][number], logical_item_id: LogicalItemId, linked: readonly Contribution[], inputs: CompositeInputs,
   standings: readonly RevisionStanding[]): StageComposite {
   const key = (selector: CompositeSelector): CompositeDrilldownKey => ({ logical_item_id, stage: stage.stage, selector });
   const inStage = linked.filter((contribution) => contribution.stage === stage.stage);
@@ -331,7 +331,7 @@ function stageComposite(stage: CompositePath["stages"][number], logical_item_id:
     countInto(answerCounts, key, value);
   }
   const statusCounts = new Map<string, { readonly value: Omit<StatusCount, "count" | "drilldown">; count: number }>();
-  const inCondition = (states: readonly ItemStatus["state"][]) => new Set(current.filter((contribution) =>
+  const inCondition = (states: readonly ItemStatusKey["state"][]) => new Set(current.filter((contribution) =>
     selectMeasurements(contribution.occurrence.occurrence_id, inputs).some((measurement) => states.includes(measurement.status.state))).map((contribution) => contribution.occurrence.occurrence_id)).size;
   for (const contribution of current) for (const measurement of selectMeasurements(contribution.occurrence.occurrence_id, inputs)) {
     const value = { question: measurement.question, evaluator_definition_id: measurement.evaluator_definition_id, status: measurement.status };
@@ -385,13 +385,13 @@ export interface DrilldownQuestion {
 }
 export interface ContributionItem {
   readonly occurrence_id: ItemOccurrenceId;
-  readonly revision_id: string;
+  readonly revision_id: ArtifactRevisionId;
   readonly item_path: string;
   readonly artifact_kind: string;
   readonly item_kind: string;
   readonly selected_value: JsonValue;
   readonly stage: string;
-  readonly unit_id: string;
+  readonly unit_id: UnitId;
   readonly is_current: boolean;
 }
 export interface DrilldownRow {
@@ -399,10 +399,10 @@ export interface DrilldownRow {
   readonly links: Paged<CompositeRelation>;
   readonly questions: Paged<DrilldownQuestion>;
 }
-const contributionItem = ({ occurrence, stage, unit_id, is_current }: Contribution): ContributionItem => ({ occurrence_id: occurrence.occurrence_id, revision_id: occurrence.revision_id,
+export const contributionItem = ({ occurrence, stage, unit_id, is_current }: Contribution): ContributionItem => ({ occurrence_id: occurrence.occurrence_id, revision_id: occurrence.revision_id,
   item_path: occurrence.item_path, artifact_kind: occurrence.artifact_kind, item_kind: occurrence.item_kind, selected_value: occurrence.selected_value, stage, unit_id, is_current });
 /** By revision, then by path as a reader would count them: /x/2 before /x/10. */
-const orderedItems = (contributions: readonly Contribution[]): readonly Contribution[] => [...contributions].sort((left, right) =>
+export const orderedItems = (contributions: readonly Contribution[]): readonly Contribution[] => [...contributions].sort((left, right) =>
   left.occurrence.revision_id < right.occurrence.revision_id ? -1 : left.occurrence.revision_id > right.occurrence.revision_id ? 1
     : left.occurrence.item_path.localeCompare(right.occurrence.item_path, undefined, { numeric: true }));
 
@@ -465,15 +465,15 @@ export function selectDrilldown(inputs: CompositeInputs, path: CompositePath, ke
 
 export type LineageEntry =
   /** The logical item's own occurrence in a defining revision. */
-  | { readonly kind: "occurrence"; readonly artifact_kind: string; readonly item_kind: string; readonly revision_id: string; readonly item_path: string; readonly occurrence_id: ItemOccurrenceId; readonly unit_id: string; readonly is_current: boolean }
+  | { readonly kind: "occurrence"; readonly artifact_kind: string; readonly item_kind: string; readonly revision_id: ArtifactRevisionId; readonly item_path: string; readonly occurrence_id: ItemOccurrenceId; readonly unit_id: UnitId | null; readonly is_current: boolean }
   /** An edge such an occurrence declared; `unresolved_target_ref` keeps a target not captured visible. */
-  | { readonly kind: "edge"; readonly relation: CompositeRelation; readonly revision_id: string; readonly item_path: string }
+  | { readonly kind: "edge"; readonly relation: CompositeRelation; readonly revision_id: ArtifactRevisionId; readonly item_path: string }
   /** An item linked to it, current or superseded, with the explicit edge that links them. */
-  | { readonly kind: "contribution"; readonly item: ContributionItem; readonly relation_id: string; readonly evidence_ref: string; readonly asserted_by: string }
+  | { readonly kind: "contribution"; readonly item: ContributionItem; readonly relation_id: RelationId; readonly evidence_ref: string; readonly asserted_by: string }
   /** An item that named this logical item before any such item was captured. */
-  | { readonly kind: "unresolved"; readonly item: ContributionItem; readonly relation_id: string; readonly unresolved_target_ref: string; readonly evidence_ref: string };
+  | { readonly kind: "unresolved"; readonly item: ContributionItem; readonly relation_id: RelationId; readonly unresolved_target_ref: string; readonly evidence_ref: string };
 export interface LogicalItemLineage extends Paged<LineageEntry> {
-  readonly run_id: string;
+  readonly run_id: RunId;
   readonly scope: string;
   readonly producer_local_id: string;
   /** False when items name this id but the run has captured no logical item for it. */
@@ -492,7 +492,7 @@ export function selectLineage(inputs: CompositeInputs, path: CompositePath, prod
   });
   const definitions = own.flatMap((occurrence): readonly LineageEntry[] => [
     { kind: "occurrence", artifact_kind: occurrence.artifact_kind, item_kind: occurrence.item_kind, revision_id: occurrence.revision_id, item_path: occurrence.item_path,
-      occurrence_id: occurrence.occurrence_id, unit_id: stream(occurrence.revision_id)?.revision.unit_id ?? "", is_current: stream(occurrence.revision_id)?.is_current ?? false },
+      occurrence_id: occurrence.occurrence_id, unit_id: stream(occurrence.revision_id)?.revision.unit_id ?? null, is_current: stream(occurrence.revision_id)?.is_current ?? false },
     ...inputs.relations.filter((relation) => relation.source_occurrence_id === occurrence.occurrence_id)
       .map((relation): LineageEntry => ({ kind: "edge", relation, revision_id: occurrence.revision_id, item_path: occurrence.item_path })),
   ]);
@@ -515,7 +515,7 @@ export function selectLineage(inputs: CompositeInputs, path: CompositePath, prod
 export const selectUnlinkedItems = (inputs: CompositeInputs, path: CompositePath, page: PageRequest): Paged<ContributionItem> =>
   pageOf(orderedItems(selectContributions(inputs, path).filter((contribution) => contribution.links.length === 0)).map(contributionItem), page);
 
-export interface UnresolvedReference { readonly item: ContributionItem; readonly relation_id: string; readonly unresolved_target_ref: string; readonly evidence_ref: string }
+export interface UnresolvedReference { readonly item: ContributionItem; readonly relation_id: RelationId; readonly unresolved_target_ref: string; readonly evidence_ref: string }
 /** Every edge that names a target the run has not captured, and the item that named it. */
 export const selectUnresolvedReferences = (inputs: CompositeInputs, path: CompositePath, page: PageRequest): Paged<UnresolvedReference> =>
   pageOf(orderedItems(selectContributions(inputs, path)).flatMap((contribution) => contribution.links.flatMap((link) => link.unresolved_target_ref === null ? []
