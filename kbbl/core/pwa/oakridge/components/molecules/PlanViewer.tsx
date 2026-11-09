@@ -35,7 +35,7 @@ function ScopeColumns({ scope }: { scope: PlanScope }) {
   );
 }
 
-export function PlanViewer({ body, descriptor }: ViewerProps) {
+export function PlanViewer({ body, descriptor, onOpenTask }: ViewerProps) {
   const [selectedCohortId, setSelectedCohortId] = useState<CohortId | null>(null);
   const parsed = useMemo(() => parsePlan(body), [body]);
   const layout = useMemo(() => parsed.ok ? selectPlanGraphLayout(parsed.value.cohorts) : null, [parsed]);
@@ -71,7 +71,7 @@ export function PlanViewer({ body, descriptor }: ViewerProps) {
         <ArtifactSection title="Cohorts, in dependency order" testId="or-plan-cohorts">
           <ol className="m-0 flex list-none flex-col gap-2 p-0">
             {cohorts.map((cohort, index) => (
-              <PlanCohortCard key={cohort.id} cohort={cohort} order={index + 1} isSelected={cohort.id === selectedCohortId} onSelectCohort={setSelectedCohortId} />
+              <PlanCohortCard key={cohort.id} cohort={cohort} order={index + 1} isSelected={cohort.id === selectedCohortId} onSelectCohort={setSelectedCohortId} onOpenTask={onOpenTask} />
             ))}
           </ol>
         </ArtifactSection>

@@ -234,7 +234,7 @@ function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane, o
         />
       );
     case "artifact":
-      return <ArtifactReview artifactId={pane.artifact_id} onOpenItem={openItem} />;
+      return <ArtifactReview artifactId={pane.artifact_id} onOpenItem={openItem} onOpenTask={openTask} />;
     case "grading":
       return <RunGradingSection runId={runId} onOpenItem={openItem} onOpenTask={openTask} />;
     case "item":

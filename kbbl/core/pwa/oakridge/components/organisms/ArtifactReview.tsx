@@ -43,9 +43,10 @@ import { ShowAutomaticGrades } from "./ShowAutomaticGrades";
 interface ArtifactReviewProps {
   artifactId: string;
   onOpenItem?: (selection: ItemSelection) => void;
+  onOpenTask?: (task_id: string) => void;
 }
 
-export function ArtifactReview({ artifactId, onOpenItem }: ArtifactReviewProps) {
+export function ArtifactReview({ artifactId, onOpenItem, onOpenTask }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -226,6 +227,7 @@ export function ArtifactReview({ artifactId, onOpenItem }: ArtifactReviewProps) 
               } : undefined}
               gate={artifactGate && revIdx === revisions.length - 1 ? artifactGate : undefined}
               onOpenItem={onOpenItem}
+              onOpenTask={onOpenTask}
               itemGrading={onOpenItem ? {
                 renderItemAction: (selection) => <ItemGradeAction runId={artifact.run_id} selection={selection} onOpenItem={onOpenItem} />,
                 renderShowAll: (selections) => <ShowAutomaticGrades selections={selections} />,

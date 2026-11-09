@@ -11,6 +11,22 @@ interface Props {
   order: number;
   isSelected: boolean;
   onSelectCohort: (id: CohortId) => void;
+  /** Opens one of this cohort's tasks. A task shared with another cohort opens the same task from both. */
+  onOpenTask?: (task_id: string) => void;
+}
+
+/** The cohort's tasks by their run-scoped ids: the acceptance entries a plan assigns it. */
+function CohortTasks({ cohort, onOpenTask }: { cohort: PlanCohort; onOpenTask?: (task_id: string) => void }) {
+  if (cohort.acceptance_criteria.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" data-testid="or-plan-cohort-tasks">
+      <span className={artifactLabelClass}>Tasks</span>
+      {cohort.acceptance_criteria.map(({ id, text }) => onOpenTask
+        ? <Button key={id} variant="secondary" size="xsmall" className="font-mono! text-xs!" title={text} aria-label={`Open task ${id}`} data-testid="or-plan-cohort-task" data-task-id={id}
+            onClick={() => onOpenTask(id)}>{id}</Button>
+        : <code key={id} className="or-code" title={text} data-testid="or-plan-cohort-task" data-task-id={id}>{id}</code>)}
+    </div>
+  );
 }
 
 function DetailList({ label, values, isMono = false }: { label: string; values: string[]; isMono?: boolean }) {
@@ -25,7 +41,7 @@ function DetailList({ label, values, isMono = false }: { label: string; values: 
   );
 }
 
-export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort }: Props) {
+export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort, onOpenTask }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const cardRef = useRef<HTMLLIElement>(null);
 
@@ -55,9 +71,10 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort }: Pr
           ))}
         </div>
       )}
+      <CohortTasks cohort={cohort} onOpenTask={onOpenTask} />
       {cohort.description && <ExpandableText text={cohort.description} className="text-sm text-[var(--text-secondary)]" />}
       <Button variant="link" className="self-start text-xs! no-underline! hover:underline!" aria-expanded={isOpen} onClick={() => setIsOpen(!isOpen)}>
-        {isOpen ? "Hide details" : `Details · ${cohort.files_in_scope.length} files · ${cohort.decisions.length} decisions · ${cohort.acceptance_criteria.length} criteria`}
+        {isOpen ? "Hide details" : `Details · ${cohort.files_in_scope.length} files · ${cohort.decisions.length} decisions · ${cohort.acceptance_criteria.length} ${cohort.acceptance_criteria.length === 1 ? "task" : "tasks"}`}
       </Button>
       {isOpen && (
         <div className="flex flex-col gap-3 border-t border-[var(--border-subtle)] pt-2" data-testid="or-plan-cohort-details">
@@ -81,7 +98,7 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort }: Pr
           )}
           {cohort.acceptance_criteria.length > 0 && (
             <div>
-              <div className={artifactLabelClass}>Acceptance criteria</div>
+              <div className={artifactLabelClass}>Tasks</div>
               <ul className="m-0 mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
                 {cohort.acceptance_criteria.map((criterion, index) => <li key={index}>
                   <code className="or-code mr-2">{criterion.id}</code>

@@ -28,6 +28,8 @@ export interface ViewerProps {
   onOpenItem?: (selection: ItemSelection) => void;
   /** Grading controls a stateful parent renders for a viewer's findings; without them a finding offers only Grade. */
   itemGrading?: ItemGradingSlots;
+  /** Opens a task by its run-scoped id: navigation only, never an item address. */
+  onOpenTask?: (task_id: string) => void;
 }
 
 export interface ItemGradingSlots {

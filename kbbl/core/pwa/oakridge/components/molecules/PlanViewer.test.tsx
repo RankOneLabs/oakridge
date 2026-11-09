@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { PlanViewer } from "./PlanViewer";
 import linkedPlan from "../../lib/__fixtures__/id-linked-plan.json";
 
@@ -34,7 +34,7 @@ describe("PlanViewer", () => {
   test("shows decision and criterion ids with their decision links", () => {
     render(<PlanViewer body={linkedPlan} />);
     fireEvent.click(within(screen.getByTestId("or-plan-cohort")).getByRole("button", { name: /Details/ }));
-    expect(screen.getByText("criterion-plan")).toBeTruthy();
+    expect(within(screen.getByTestId("or-plan-cohort-details")).getByText("criterion-plan")).toBeTruthy();
     expect(screen.getAllByText("decision-layout")).toHaveLength(2);
   });
 
@@ -77,6 +77,24 @@ describe("PlanViewer", () => {
   test("shows a risk with its mitigation", () => {
     render(<PlanViewer body={body} />);
     expect(within(screen.getByTestId("or-risk-card")).getByText("Pin the digest.")).toBeTruthy();
+  });
+
+  test("each cohort lists its tasks by id, and a task two cohorts share opens the same task from both", () => {
+    const onOpenTask = vi.fn();
+    const task = (id: string) => ({ id, text: `Task ${id}`, decision_ids: [] });
+    render(<PlanViewer onOpenTask={onOpenTask} body={{ ...body, cohorts: [{ ...cohort("api", ["core"]), acceptance_criteria: [task("T1"), task("T2")] },
+      { ...cohort("core"), acceptance_criteria: [task("T1"), task("T3")] }] }} />);
+    const tasksOf = (id: string) => within(screen.getAllByTestId("or-plan-cohort").find((card) => card.getAttribute("data-cohort-id") === id)!).getAllByTestId("or-plan-cohort-task");
+    expect(tasksOf("api").map((chip) => chip.getAttribute("data-task-id"))).toEqual(["T1", "T2"]);
+    expect(tasksOf("core").map((chip) => chip.getAttribute("data-task-id"))).toEqual(["T1", "T3"]);
+    fireEvent.click(tasksOf("api")[0]!);
+    fireEvent.click(tasksOf("core")[0]!);
+    expect(onOpenTask.mock.calls).toEqual([["T1"], ["T1"]]);
+  });
+
+  test("without task navigation a cohort's tasks are listed but open nothing", () => {
+    render(<PlanViewer body={{ ...body, cohorts: [{ ...cohort("core"), acceptance_criteria: [{ id: "T1", text: "t", decision_ids: [] }] }] }} />);
+    expect(screen.getByTestId("or-plan-cohort-task").tagName).toBe("CODE");
   });
 
   test("refuses a bare-string risk, naming the entry", () => {
