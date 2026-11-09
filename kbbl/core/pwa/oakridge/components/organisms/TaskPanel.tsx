@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import { GradingReadError, type WindowQuery } from "../../client-grading";
+import { GradingReadError } from "../../client-grading";
 import type { DrilldownKey, ItemSelection, PageWindow } from "../../grading-types";
 import { useTask } from "../../hooks/useTask";
 import { useTaskLineage } from "../../hooks/useTaskLineage";
@@ -11,8 +11,8 @@ import { useGradingVisibility } from "../../state/gradingVisibility";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
 import { GradeItemButton } from "../molecules/GradeItemButton";
 import { ListPager } from "../molecules/ListPager";
-import { StageCompositeColumn } from "../molecules/StageCompositeColumn";
 import { CompositeDrilldown } from "./CompositeDrilldown";
+import { TaskStageComposites } from "./TaskStageComposites";
 
 const FIRST: PageWindow = { limit: 50, offset: 0 };
 
@@ -27,10 +27,9 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
   const isRevealed = useGradingVisibility((state) => state.revealed_composite_run_ids.has(runId));
   const reveal = useGradingVisibility((state) => state.revealComposites);
   const hide = useGradingVisibility((state) => state.hideComposites);
-  const [windows, setWindows] = useState<WindowQuery>({});
   const [lineagePage, setLineagePage] = useState(FIRST);
   const [drill, setDrill] = useState<{ readonly key: DrilldownKey; readonly label: string } | null>(null);
-  const composite = useTask(runId, taskId, windows);
+  const composite = useTask({ run_id: runId, task_id: taskId, nested: {} });
   const lineage = useTaskLineage(runId, taskId, lineagePage);
   const isUncaptured = composite.error instanceof GradingReadError && composite.error.status === 404;
   return (
@@ -44,15 +43,7 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
       </header>
       {isUncaptured && <FeedbackMessage testId="or-task-unresolved">This run has captured no task with this id. Items naming it stay listed below, unresolved.</FeedbackMessage>}
       {composite.isError && !isUncaptured && <FeedbackMessage tone="danger" testId="or-task-unavailable">{composite.error instanceof Error ? composite.error.message : "observation did not answer"}</FeedbackMessage>}
-      {composite.data && (
-        <div className="grid gap-2 md:grid-cols-3" data-testid="or-task-stages">
-          {composite.data.stages.items.map((stage) => (
-            <StageCompositeColumn key={stage.stage} stage={stage} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })}
-              onWindow={(name, window) => setWindows((current) => ({ ...current, [name]: window }))} />
-          ))}
-        </div>
-      )}
-      {composite.data && <ListPager name="stages" page={composite.data.stages} onWindow={(window) => setWindows((current) => ({ ...current, stages: window }))} />}
+      {composite.data && <TaskStageComposites runId={runId} taskId={taskId} stages={composite.data.stages} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })} />}
       {isRevealed && drill && <CompositeDrilldown runId={runId} drilldownKey={drill.key} label={drill.label} onClose={() => setDrill(null)} onOpenItem={onOpenItem} />}
       <section className="flex flex-col gap-1" data-testid="or-task-lineage">
         <div className={artifactLabelClass}>Definitions and linked items</div>

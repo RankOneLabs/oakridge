@@ -202,6 +202,8 @@ integration("every list pages to its end, nested lists included, with its own wi
   const itemsDrill = (await drill(implementation.items, "&limit=1&offset=1")).body;
   expect(itemsDrill).toMatchObject({ limit: 1, offset: 1, total: 2 });
   expect((await get(h, `/v1/runs/run-1/composite-drilldown?key=nonsense`)).status).toBe(400);
+  const malformed = await drill({ logical_item_id: "l", stage: "implementation", selector: { kind: "disagreement" } });
+  expect([malformed.status, (malformed.body as unknown as { error: { code: string } }).error.code]).toEqual([400, "invalid_drilldown"]);
 
   const lineage = (await get<Paged<{ kind: string }> & { is_captured: boolean }>(h, "/v1/runs/run-1/logical-items/T1/lineage?limit=1")).body;
   expect(lineage).toMatchObject({ limit: 1, is_captured: true });

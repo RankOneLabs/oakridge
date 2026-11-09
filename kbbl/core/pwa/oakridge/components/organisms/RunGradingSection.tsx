@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import type { WindowQuery } from "../../client-grading";
 import type { DrilldownKey, ItemSelection, PageWindow } from "../../grading-types";
 import { useRunGrading } from "../../hooks/useRunGrading";
 import { useRunTasks } from "../../hooks/useRunTasks";
@@ -11,9 +10,9 @@ import { GRADING_STAGES, selectItemText } from "../../lib/grading";
 import { useGradingVisibility } from "../../state/gradingVisibility";
 import { GradeItemButton } from "../molecules/GradeItemButton";
 import { ListPager } from "../molecules/ListPager";
-import { StageCompositeColumn } from "../molecules/StageCompositeColumn";
 import { CompositeDrilldown } from "./CompositeDrilldown";
 import { StageFindings } from "./StageFindings";
+import { TaskStageComposites } from "./TaskStageComposites";
 
 const FIRST: PageWindow = { limit: 50, offset: 0 };
 
@@ -30,9 +29,8 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
   const hide = useGradingVisibility((state) => state.hideComposites);
   const grading = useRunGrading(runId);
   const [taskPage, setTaskPage] = useState(FIRST);
-  const [windows, setWindows] = useState<WindowQuery>({});
   const [drill, setDrill] = useState<{ readonly key: DrilldownKey; readonly label: string } | null>(null);
-  const tasks = useRunTasks(runId, taskPage, windows);
+  const tasks = useRunTasks({ run_id: runId, page: taskPage, nested: {} });
   const [unresolvedPage, setUnresolvedPage] = useState(FIRST);
   const unresolved = useRunUnresolvedReferences(runId, unresolvedPage);
   return (
@@ -56,13 +54,7 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
               <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(task.producer_local_id)} data-testid="or-grading-task-open">{task.producer_local_id}</Button>
               {task.coverage === "gap" && <Chip tone="warning" testId="or-task-coverage-gap-all">No linked items</Chip>}
             </div>
-            <div className="grid gap-2 md:grid-cols-3">
-              {task.stages.items.map((stage) => (
-                <StageCompositeColumn key={stage.stage} stage={stage} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })}
-                  onWindow={(name, window) => setWindows((current) => ({ ...current, [name]: window }))} />
-              ))}
-            </div>
-            <ListPager name="stages" page={task.stages} onWindow={(window) => setWindows((current) => ({ ...current, stages: window }))} />
+            <TaskStageComposites runId={runId} taskId={task.producer_local_id} stages={task.stages} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })} />
           </div>
         ))}
         {tasks.data && <ListPager name="tasks" page={tasks.data} onWindow={setTaskPage} />}

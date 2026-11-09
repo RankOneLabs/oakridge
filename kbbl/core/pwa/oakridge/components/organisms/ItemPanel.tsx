@@ -46,7 +46,7 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
   const [windows, setWindows] = useState<WindowQuery>({});
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [lineagePage, setLineagePage] = useState(FIRST_LINEAGE);
-  const status = useItemStatus(occurrenceId, QUESTIONS, windows);
+  const status = useItemStatus(occurrenceId === null ? null : { occurrence_id: occurrenceId, top: QUESTIONS, nested: windows });
   const lineage = useItemLineage(occurrenceId, lineagePage);
   const setWindow = (name: string, window: PageWindow) => setWindows((current) => ({ ...current, [name]: window }));
 

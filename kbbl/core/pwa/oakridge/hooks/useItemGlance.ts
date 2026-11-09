@@ -15,6 +15,6 @@ export function useItemGlance(run_id: string, selection: ItemSelection) {
   return useQuery({ queryKey: ["oakridge", "grading", "item-glance", run_id, selection.source_revision_id, selection.item_path], retry: false,
     queryFn: async () => {
       const item = await readItemAt(run_id, selection);
-      return readItemStatus(item.occurrence_id, QUESTIONS, GLANCE_WINDOWS);
+      return readItemStatus({ occurrence_id: item.occurrence_id, top: QUESTIONS, nested: GLANCE_WINDOWS });
     } });
 }

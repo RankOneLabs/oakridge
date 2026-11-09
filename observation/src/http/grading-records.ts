@@ -11,13 +11,32 @@ import { listWindows, pagination } from "./items";
 import type { SourceDependencies } from "./sources";
 
 const INVALID = "limit must be 1..200 and offset nonnegative, for the list and for each nested list";
-/** A key is echoed from a composite this service served; its rows are still read inside the requested run. */
-const drilldownKeySchema = z.object({ logical_item_id: z.string().min(1), stage: z.string().min(1),
-  selector: z.looseObject({ kind: z.enum(["items", "history", "answer", "status", "disagreement"]) }) });
-const parseDrilldownKey = (raw: string | undefined): CompositeDrilldownKey | null => {
+/**
+ * A key is echoed from a composite this service served; its rows are still read inside the requested
+ * run. Every selector variant is checked in full, so a malformed key is refused here and never reaches
+ * the read. The final cast only adds the id brands, which have no runtime form.
+ */
+const text = z.string().min(1);
+const questionKeySchema = z.strictObject({ question_id: text, question_version: text });
+const graderKeySchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("machine"), evaluator_definition_id: text, backend_kind: z.string(), model: z.string().nullable() }),
+  z.strictObject({ kind: z.literal("human"), evaluator_definition_id: text, reviewer_id: text })]);
+const answerKeySchema = z.union([z.strictObject({ state: z.literal("answered"), value: z.json() }), z.strictObject({ state: z.enum(["abstain", "unclear"]) })]);
+const statusKeySchema = z.union([
+  z.strictObject({ state: z.literal("not_ready"), code: text }),
+  z.strictObject({ state: z.enum(["grading_off", "awaiting_admission", "pending", "budget_deferred"]) }),
+  z.strictObject({ state: z.literal("failed"), terminal_cause: z.enum(["retry_exhausted", "runner_failed", "invalid_outcome"]).nullable() })]);
+const selectorSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("items") }),
+  z.strictObject({ kind: z.literal("history") }),
+  z.strictObject({ kind: z.literal("answer"), question: questionKeySchema, grader: graderKeySchema, answer: answerKeySchema }),
+  z.strictObject({ kind: z.literal("status"), question: questionKeySchema, evaluator_definition_id: text.nullable(), status: statusKeySchema }),
+  z.strictObject({ kind: z.literal("disagreement"), question: questionKeySchema })]);
+const drilldownKeySchema = z.strictObject({ logical_item_id: text, stage: text, selector: selectorSchema });
+export const parseDrilldownKey = (raw: string | undefined): CompositeDrilldownKey | null => {
   try {
     const parsed = drilldownKeySchema.safeParse(JSON.parse(raw ?? ""));
-    return parsed.success ? parsed.data as unknown as CompositeDrilldownKey : null;
+    return parsed.success ? parsed.data as CompositeDrilldownKey : null;
   } catch { return null; }
 };
 

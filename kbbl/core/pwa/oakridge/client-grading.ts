@@ -38,7 +38,9 @@ const id = encodeURIComponent;
 
 export const readItemAt = (run_id: string, selection: ItemSelection): Promise<AddressedItem> =>
   read(`/runs/${id(run_id)}/items/at`, new URLSearchParams({ source_revision_id: selection.source_revision_id, item_path: selection.item_path }));
-export const readItemStatus = (occurrence_id: string, top: PageWindow, nested: WindowQuery): Promise<ItemStatus> =>
+/** One item's status: its questions' own window and every nested list's. */
+export interface ItemStatusRequest { readonly occurrence_id: string; readonly top: PageWindow; readonly nested: WindowQuery }
+export const readItemStatus = ({ occurrence_id, top, nested }: ItemStatusRequest): Promise<ItemStatus> =>
   read(`/items/${id(occurrence_id)}/status`, windowParams(top, nested));
 export const readItemLineage = (occurrence_id: string, top: PageWindow): Promise<ItemLineage> =>
   read(`/items/${id(occurrence_id)}/lineage`, windowParams(top));
@@ -59,13 +61,19 @@ export function readRunFindings(run_id: string, query: { readonly stage: string;
 }
 export const readRunUnresolved = (run_id: string, page: PageWindow): Promise<Paged<UnresolvedTaskReference>> =>
   read(`/runs/${id(run_id)}/unresolved-task-references`, windowParams(page));
-export const readRunTasks = (run_id: string, page: PageWindow, nested: WindowQuery): Promise<Paged<TaskComposite>> =>
+/** A page of a run's tasks. Each nested window applies to that list in every task on the page. */
+export interface RunTasksRequest { readonly run_id: string; readonly page: PageWindow; readonly nested: WindowQuery }
+export const readRunTasks = ({ run_id, page, nested }: RunTasksRequest): Promise<Paged<TaskComposite>> =>
   read(`/runs/${id(run_id)}/tasks`, windowParams(page, nested));
-export const readTask = (run_id: string, task_id: string, nested: WindowQuery): Promise<TaskComposite> =>
+/** One task of a run, with its nested windows. */
+export interface TaskRequest { readonly run_id: string; readonly task_id: string; readonly nested: WindowQuery }
+export const readTask = ({ run_id, task_id, nested }: TaskRequest): Promise<TaskComposite> =>
   read(`/runs/${id(run_id)}/tasks/${id(task_id)}`, windowParams(null, nested));
 export const readTaskLineage = (run_id: string, task_id: string, page: PageWindow): Promise<TaskLineage> =>
   read(`/runs/${id(run_id)}/tasks/${id(task_id)}/lineage`, windowParams(page));
-export function readDrilldown(run_id: string, key: DrilldownKey, page: PageWindow, nested: WindowQuery): Promise<Paged<DrilldownRow>> {
+/** The rows behind one composite count. */
+export interface DrilldownRequest { readonly run_id: string; readonly key: DrilldownKey; readonly page: PageWindow; readonly nested: WindowQuery }
+export function readDrilldown({ run_id, key, page, nested }: DrilldownRequest): Promise<Paged<DrilldownRow>> {
   const params = windowParams(page, nested);
   params.set("key", JSON.stringify(key));
   return read(`/runs/${id(run_id)}/drilldown`, params);

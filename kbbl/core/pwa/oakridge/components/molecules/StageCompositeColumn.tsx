@@ -18,7 +18,10 @@ function CountButton({ label, count, drill, testId }: { label: string; count: nu
   );
 }
 
-/** One stage of one task, kept apart from the others. There is no figure across stages. */
+/**
+ * One stage of one task, kept apart from the others. There is no figure across stages. A list with any
+ * entries keeps its pager even when the page shown is empty, so the reader can always page back.
+ */
 export function StageCompositeColumn({ stage, isRevealed, onDrill, onWindow }: Props) {
   const view = selectStageView(stage, isRevealed);
   return (
@@ -31,7 +34,7 @@ export function StageCompositeColumn({ stage, isRevealed, onDrill, onWindow }: P
       {view.coverage === "linked" && <p className="m-0 text-xs text-[var(--text-muted)]">{view.contributing_items} linked {view.contributing_items === 1 ? "item" : "items"}</p>}
       {view.kind === "revealed" && (
         <div className="flex flex-col gap-2" data-testid="or-task-stage-counts">
-          {view.answers.length > 0 && <div className="flex flex-col gap-1">
+          {stage.answers.total > 0 && <div className="flex flex-col gap-1">
             <div className={artifactLabelClass}>Answers</div>
             <ul className="m-0 flex list-none flex-col gap-1 p-0">
               {view.answers.map((count) => (
@@ -45,7 +48,7 @@ export function StageCompositeColumn({ stage, isRevealed, onDrill, onWindow }: P
             </ul>
             <ListPager name="answers" page={stage.answers} onWindow={(window) => onWindow("answers", window)} />
           </div>}
-          {view.statuses.length > 0 && <div className="flex flex-col gap-1">
+          {stage.statuses.total > 0 && <div className="flex flex-col gap-1">
             <div className={artifactLabelClass}>Without an answer</div>
             <ul className="m-0 flex list-none flex-col gap-1 p-0">
               {view.statuses.map((count) => (
@@ -57,7 +60,7 @@ export function StageCompositeColumn({ stage, isRevealed, onDrill, onWindow }: P
             </ul>
             <ListPager name="statuses" page={stage.statuses} onWindow={(window) => onWindow("statuses", window)} />
           </div>}
-          {view.disagreements.length > 0 && <div className="flex flex-col gap-1">
+          {stage.disagreements.total > 0 && <div className="flex flex-col gap-1">
             <div className={artifactLabelClass}>Disagreement on one item</div>
             <ul className="m-0 flex list-none flex-col gap-1 p-0">
               {view.disagreements.map((count) => (

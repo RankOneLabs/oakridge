@@ -1,8 +1,8 @@
 // Pure derivations for the item panel and the grading section. Hidden mode is decided here, so a
 // component holding answers or composite counts never has them to render while they are hidden.
 import type { ChipTone } from "../../components/atoms/Chip";
-import type { AnswerCount, AnswerKey, AnswerRead, DisagreementCount, EvidenceReference, GradeAnswer, GraderKey, HumanReadiness, ItemSelection, ItemStatus, ItemStatusKey, MeasurementState, QuestionKey,
-  StageComposite, StatusCount, SubmissionResult, TaskLink } from "../grading-types";
+import type { AnswerCount, AnswerKey, AnswerRead, AttemptRead, DisagreementCount, DrilldownKey, EvidenceReference, GradeAnswer, GraderKey, HumanReadiness, ItemSelection, ItemStatus, ItemStatusKey, MeasurementState, QuestionKey,
+  StageComposite, StatusCount, SubmissionResult, TaskComposite, TaskLink } from "../grading-types";
 import type { ArtifactSource } from "../artifact-types";
 import { parseCompositeId } from "../adapters/core";
 
@@ -118,6 +118,49 @@ export const selectOwnCurrentAnswer = (own: readonly AnswerRead[]): AnswerRead |
   const replaced = new Set(own.flatMap((answer) => answer.supersedes_observation_id ? [answer.supersedes_observation_id] : []));
   return own.filter((answer) => !replaced.has(answer.observation_id)).at(-1) ?? null;
 };
+
+/** The operator's replaced answers: everything but the one that stands. */
+export const selectEarlierOwnAnswers = (own: readonly AnswerRead[], current: AnswerRead | null): readonly AnswerRead[] =>
+  own.filter((answer) => answer.observation_id !== current?.observation_id);
+
+/** What the operator has edited; null in a field means it still shows the current answer's value. */
+export interface GradeDraft { readonly choice: string | null; readonly rationale: string | null }
+export const EMPTY_GRADE_DRAFT: GradeDraft = { choice: null, rationale: null };
+export interface GradeEditor { readonly choice: string | null; readonly rationale: string; readonly is_changed: boolean }
+const answerChoice = (answer: AnswerRead | null): string | null => answer?.answer.state === "answered" && typeof answer.answer.value === "string" ? answer.answer.value : null;
+/** A blank explanation is no explanation. */
+export const normalizeRationale = (rationale: string): string | null => rationale.trim() === "" ? null : rationale;
+/**
+ * The form as shown: the current answer's choice and explanation unless edited. Either field changing
+ * makes a correction; an explanation alone can be corrected while the choice stays.
+ */
+export function selectGradeEditor(current: AnswerRead | null, draft: GradeDraft): GradeEditor {
+  const choice = draft.choice ?? answerChoice(current);
+  const rationale = draft.rationale ?? current?.rationale ?? "";
+  const is_changed = choice !== null && (choice !== answerChoice(current) || normalizeRationale(rationale) !== (current?.rationale ?? null));
+  return { choice, rationale, is_changed };
+}
+
+/** Refusals that mean this form's view of the operator's own answers is out of date. */
+export const isStaleAnswerRefusal = (result: SubmissionResult): boolean =>
+  result.kind === "refused" && (result.code === "stale_correction" || result.code === "correction_required");
+
+export interface AttemptDisplay { readonly label: string; readonly outcome: string; readonly tone: ChipTone; readonly request: string; readonly cost: string; readonly failure_category: string | null }
+/** One provider attempt as a reviewer inspects it: outcome, whether a request left, what it cost and why it failed. */
+export function attemptDisplay(attempt: AttemptRead): AttemptDisplay {
+  const outcome = attempt.outcome === "completed" ? { outcome: "Completed", tone: "success" as const }
+    : attempt.outcome === "failed" ? { outcome: "Failed", tone: "danger" as const } : { outcome: "In flight", tone: "muted" as const };
+  return { label: `Attempt ${attempt.attempt}`, ...outcome,
+    request: attempt.request_sent ? `request sent${attempt.provider_request_id ? ` (${attempt.provider_request_id})` : ""}` : "no request sent",
+    cost: `cost ${attempt.charged_cost.toFixed(4)} of ${attempt.admitted_estimate.toFixed(4)} admitted`, failure_category: attempt.failure_category };
+}
+
+/** One stage of a task as that task's read returned it; null when the read has none by that name. */
+export const selectTaskStage = (task: TaskComposite | undefined, stage: string): StageComposite | null =>
+  task?.stages.items.find((candidate) => candidate.stage === stage) ?? null;
+
+/** One count's drilldown identity: the same key always names the same rows, and any field differing names others. */
+export const drilldownIdentity = (key: DrilldownKey): string => JSON.stringify([key.logical_item_id, key.stage, key.selector]);
 
 export type SubmissionNotice =
   | { readonly kind: "none" }

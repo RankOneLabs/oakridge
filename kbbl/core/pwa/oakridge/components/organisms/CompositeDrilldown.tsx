@@ -5,8 +5,9 @@ import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import type { WindowQuery } from "../../client-grading";
 import type { DrilldownKey, ItemSelection, PageWindow } from "../../grading-types";
 import { useCompositeDrilldown } from "../../hooks/useCompositeDrilldown";
-import { questionLabel, selectItemText, statusKeyLabel } from "../../lib/grading";
+import { drilldownIdentity, questionLabel, selectItemText, statusKeyLabel } from "../../lib/grading";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
+import { FrozenEvidenceList } from "../molecules/FrozenEvidenceList";
 import { GradeItemButton } from "../molecules/GradeItemButton";
 import { AnswerRow } from "../molecules/ItemAnswers";
 import { ListPager } from "../molecules/ListPager";
@@ -21,11 +22,18 @@ interface Props {
   onOpenItem: (selection: ItemSelection) => void;
 }
 
-/** The exact items and raw answers behind one count. Mounted only while composites are revealed. */
-export function CompositeDrilldown({ runId, drilldownKey, label, onClose, onOpenItem }: Props) {
+/**
+ * The exact items and raw answers behind one count. Mounted only while composites are revealed. Each
+ * count starts on its own first page: choosing another one remounts, so no earlier offset carries over.
+ */
+export function CompositeDrilldown(props: Props) {
+  return <DrilldownPages key={drilldownIdentity(props.drilldownKey)} {...props} />;
+}
+
+function DrilldownPages({ runId, drilldownKey, label, onClose, onOpenItem }: Props) {
   const [page, setPage] = useState(FIRST);
   const [windows, setWindows] = useState<WindowQuery>({});
-  const query = useCompositeDrilldown(runId, drilldownKey, page, windows);
+  const query = useCompositeDrilldown({ run_id: runId, key: drilldownKey, page, nested: windows });
   const setWindow = (name: string) => (window: PageWindow) => setWindows((current) => ({ ...current, [name]: window }));
   return (
     <section className="flex flex-col gap-2 rounded-md border border-[var(--border-muted)] p-2" data-testid="or-task-drilldown">
@@ -47,7 +55,7 @@ export function CompositeDrilldown({ runId, drilldownKey, label, onClose, onOpen
             </div>
             {row.questions.items.map((question) => (
               <div key={question.evidence.evidence_set_id} className="flex flex-col gap-1">
-                <div className={artifactLabelClass}>{questionLabel(question.question)} · {question.evidence.references.total} frozen references</div>
+                <div className={artifactLabelClass}>{questionLabel(question.question)}</div>
                 <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
                   {question.answers.items.map((answer) => <AnswerRow key={answer.observation_id} answer={answer} />)}
                   {question.superseded_answers.items.map((answer) => <AnswerRow key={answer.observation_id} answer={answer} isCorrected />)}
@@ -58,7 +66,7 @@ export function CompositeDrilldown({ runId, drilldownKey, label, onClose, onOpen
                 <ListPager name="answers" page={question.answers} onWindow={setWindow("answers")} />
                 <ListPager name="superseded_answers" page={question.superseded_answers} onWindow={setWindow("superseded_answers")} />
                 <ListPager name="statuses" page={question.statuses} onWindow={setWindow("statuses")} />
-                <ListPager name="references" page={question.evidence.references} onWindow={setWindow("references")} />
+                <FrozenEvidenceList evidence={question.evidence} onWindow={setWindow("references")} />
               </div>
             ))}
             <ListPager name="questions" page={row.questions} onWindow={setWindow("questions")} />

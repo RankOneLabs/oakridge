@@ -11,7 +11,7 @@ import { FinalIntegrationPanel } from "../components/organisms/FinalIntegrationP
 import { ItemPanel } from "../components/organisms/ItemPanel";
 import { RunGradingSection } from "../components/organisms/RunGradingSection";
 import { TaskPanel } from "../components/organisms/TaskPanel";
-import type { ItemStatus } from "../grading-types";
+import type { ItemStatus, TaskComposite } from "../grading-types";
 import { parseAssessment } from "../lib/assessment";
 import { useGradingVisibility } from "../state/gradingVisibility";
 import type { EpicWorkflowProfile } from "../run-types";
@@ -137,6 +137,16 @@ describe("the panel's question states", () => {
     expect(rows.map((row) => row.querySelector("span.inline-block")?.textContent)).toEqual(["Not ready", "Automatic grading off", "Pending", "Failed", "Budget deferred", "does not support"]);
     expect(screen.getByTestId("or-item-grading-off")).toBeTruthy();
   });
+  it("shows each provider attempt's outcome, failure, request and cost when revealed", async () => {
+    world.status = itemStatus([supportQuestion({ machine: paged([machine({ state: "failed", terminal_cause: "retry_exhausted", error: "rate limited" }, { attempts: paged([
+      { attempt: 1, request_sent: true, outcome: "failed", failure_category: "rate_limited", charged_cost: 0.01, admitted_estimate: 0.02, provider_request_id: "req-1" },
+      { attempt: 2, request_sent: false, outcome: null, failure_category: null, charged_cost: 0, admitted_estimate: 0.02, provider_request_id: null }]) })]) })]);
+    panel();
+    fireEvent.click(await screen.findByTestId("or-item-reveal"));
+    const attempts = await screen.findAllByTestId("or-item-attempt");
+    expect(attempts.map((attempt) => attempt.textContent)).toEqual([
+      "Attempt 1Failedrate_limitedrequest sent (req-1)cost 0.0100 of 0.0200 admitted", "Attempt 2In flightno request sentcost 0.0000 of 0.0200 admitted"]);
+  });
   it("labels frozen references: repository provenance and agent-reported output", async () => {
     panel();
     const references = await screen.findAllByTestId("or-item-evidence-reference");
@@ -239,6 +249,46 @@ describe("saving", () => {
     await screen.findByTestId("or-your-grade-saved");
     expect(world.sent).toMatchObject([{ answer: "supports", corrects_observation_id: "second" }]);
   });
+  it("after another tab corrects first, a stale refusal reloads the operator's answers and the retry corrects the new one", async () => {
+    world.own = [reviewerAnswer("first", "does_not_support")];
+    world.submit = () => { world.own = [...world.own, reviewerAnswer("other-tab", "unclear", "oakridge-operator", { supersedes_observation_id: "first" })];
+      return json({ error: { code: "stale_correction", message: "that answer has already been corrected" } }, 409); };
+    panel();
+    expect((await screen.findByTestId("or-your-grade-current")).textContent).toContain("does not support");
+    await choose(0);
+    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
+    await screen.findByTestId("or-your-grade-refused");
+    expect(screen.getByTestId("or-your-grade-current").textContent).toContain("unclear");
+    world.submit = () => json(acknowledged("supports"), 201);
+    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
+    await screen.findByTestId("or-your-grade-saved");
+    expect(world.sent).toMatchObject([{ corrects_observation_id: "first" }, { corrects_observation_id: "other-tab" }]);
+  });
+  it("nothing can be edited while a submission is out", async () => {
+    let answer: (response: Response) => void = () => {};
+    world.submit = () => new Promise<Response>((resolve) => { answer = resolve; });
+    panel();
+    await choose(0);
+    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
+    await screen.findByTestId("or-your-grade-pending");
+    expect(screen.getAllByTestId("or-your-grade-choice").every((input) => (input as HTMLInputElement).disabled)).toBe(true);
+    expect((screen.getByTestId("or-your-grade-rationale") as HTMLTextAreaElement).disabled).toBe(true);
+    answer(json(acknowledged("supports"), 201));
+    await screen.findByTestId("or-your-grade-saved");
+    expect((screen.getByTestId("or-your-grade-rationale") as HTMLTextAreaElement).disabled).toBe(false);
+  });
+  it("an explanation alone can be corrected, starting from the stored one", async () => {
+    world.own = [reviewerAnswer("first", "unclear", "oakridge-operator", { rationale: "line 4" })];
+    panel();
+    await screen.findByTestId("or-your-grade-current");
+    const rationale = screen.getByTestId("or-your-grade-rationale") as HTMLTextAreaElement;
+    expect(rationale.value).toBe("line 4");
+    expect((screen.getByTestId("or-your-grade-submit") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(rationale, { target: { value: "line 5" } });
+    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
+    await screen.findByTestId("or-your-grade-saved");
+    expect(world.sent).toMatchObject([{ answer: "unclear", rationale: "line 5", corrects_observation_id: "first" }]);
+  });
 });
 
 describe("the grading section and task drilldown", () => {
@@ -275,6 +325,57 @@ describe("the grading section and task drilldown", () => {
     fireEvent.click(screen.getByTestId("or-composites-hide"));
     expect(screen.queryByTestId("or-task-drilldown")).toBeNull();
     expect(documentText()).not.toContain("second-reviewer");
+  });
+  it("paging one task's stage moves only that list, and its pager stays when the page is empty", async () => {
+    const many = (id: string, offset = 0): TaskComposite => {
+      const task = taskComposite(id);
+      return { ...task, stages: { ...task.stages, items: task.stages.items.map((stage) => stage.stage !== "implementation" ? stage
+        : { ...stage, answers: offset === 0 ? { ...stage.answers, total: 51 } : paged([], 51, 50, offset) }) } };
+    };
+    const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://kbbl.test");
+      if (url.pathname.endsWith("/runs/run-1/tasks")) { world.paths.push(url.pathname + url.search); return json(paged([many("T1"), many("T2")])); }
+      if (url.pathname.endsWith("/runs/run-1/tasks/T1")) { world.paths.push(url.pathname + url.search); return json(many("T1", Number(url.searchParams.get("answers_offset") ?? 0))); }
+      return base(input, init);
+    });
+    section();
+    fireEvent.click(await screen.findByTestId("or-composites-reveal"));
+    const [first, second] = await screen.findAllByTestId("or-grading-task");
+    const implementation = (task: HTMLElement) => within(task).getAllByTestId("or-task-stage").find((stage) => stage.getAttribute("data-stage") === "implementation")!;
+    fireEvent.click(within(implementation(first!)).getByTestId("or-pager-answers-next"));
+    await waitFor(() => expect(within(implementation(first!)).getByTestId("or-pager-answers").textContent).toContain("51–51 of 51"));
+    expect(within(implementation(first!)).queryByTestId("or-task-answer-count")).toBeNull();
+    expect(within(implementation(second!)).getByTestId("or-task-answer-count").textContent).toBe("items: 7");
+    expect(world.paths.filter((path) => path.includes("answers_offset=50"))).toEqual([expect.stringContaining("/tasks/T1?")]);
+  });
+  it("a drilldown shows the frozen evidence behind its count", async () => {
+    section();
+    fireEvent.click(await screen.findByTestId("or-composites-reveal"));
+    fireEvent.click((await screen.findAllByTestId("or-task-answer-count"))[0]!);
+    const row = await screen.findByTestId("or-task-drilldown-row");
+    expect(within(row).getByTestId("or-item-evidence")).toBeTruthy();
+    expect(within(row).getAllByTestId("or-item-evidence-reference").length).toBe(supportQuestion().evidence.references.items.length);
+  });
+  it("choosing another count starts its drilldown on the first page", async () => {
+    const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://kbbl.test");
+      if (!url.pathname.endsWith("/drilldown")) return base(input, init);
+      world.paths.push(url.pathname + url.search);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      return json(paged([{ item: item(IMPLEMENTATION), links: paged([]), questions: paged([]) }], 41, 20, offset));
+    });
+    section();
+    fireEvent.click(await screen.findByTestId("or-composites-reveal"));
+    const stages = await screen.findAllByTestId("or-task-stage");
+    fireEvent.click(within(stages[1]!).getByTestId("or-task-answer-count"));
+    fireEvent.click(await screen.findByTestId("or-pager-drilldown-next"));
+    await waitFor(() => expect(world.paths.some((path) => path.includes("/drilldown") && path.includes("offset=20"))).toBe(true));
+    world.paths = [];
+    fireEvent.click(within(stages[1]!).getByTestId("or-task-status-count"));
+    await waitFor(() => expect(world.paths.some((path) => path.includes("/drilldown"))).toBe(true));
+    expect(world.paths.filter((path) => path.includes("/drilldown")).every((path) => !path.includes("offset=20"))).toBe(true);
   });
   it("lists findings by stage, marks the unlinked and keeps unresolved references visible", async () => {
     section();

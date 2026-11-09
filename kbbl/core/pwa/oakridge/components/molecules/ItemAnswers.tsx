@@ -1,6 +1,6 @@
 import { Chip } from "../../../components/atoms/Chip";
 import type { AnswerRead, PageWindow, QuestionStatus } from "../../grading-types";
-import { answerTone, gradeAnswerLabel, graderLabel, measurementDisplay } from "../../lib/grading";
+import { answerTone, attemptDisplay, gradeAnswerLabel, graderLabel, measurementDisplay } from "../../lib/grading";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ListPager } from "./ListPager";
 
@@ -40,6 +40,20 @@ export function ItemAnswers({ question, onWindow }: Props) {
                   <span className="text-xs text-[var(--text-muted)]">{machine.attempts.total} {machine.attempts.total === 1 ? "attempt" : "attempts"}</span>
                 </div>
                 {display.detail && <p className="m-0 text-xs text-[var(--text-muted)]">{display.detail}</p>}
+                <ul className="m-0 flex list-none flex-col gap-1 p-0 pl-2">
+                  {machine.attempts.items.map((attempt) => {
+                    const shown = attemptDisplay(attempt);
+                    return (
+                      <li key={attempt.attempt} className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]" data-testid="or-item-attempt" data-attempt={attempt.attempt}>
+                        <span>{shown.label}</span>
+                        <Chip tone={shown.tone}>{shown.outcome}</Chip>
+                        {shown.failure_category && <code className="or-code">{shown.failure_category}</code>}
+                        <span>{shown.request}</span>
+                        <span>{shown.cost}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
                 <ListPager name="attempts" page={machine.attempts} onWindow={(window) => onWindow("attempts", window)} />
               </li>
             );

@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { AnswerRead, EvidenceReference, MeasurementState, Paged, QuestionStatus, StageComposite, SubmissionAcknowledgment } from "../grading-types";
 import { itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
-import { answerTone, gradeActionLabel, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, stagePublicationLabel, taskLinkLabel } from "./grading";
+import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, stagePublicationLabel, taskLinkLabel } from "./grading";
 
 const empty = <Item,>(): Paged<Item> => ({ items: [], total: 0, limit: 50, offset: 0 });
 const answer = (observation_id: string, supersedes_observation_id: string | null = null): AnswerRead => ({ observation_id, execution_id: observation_id, occurrence_id: "o", evidence_set_id: "e",
@@ -54,6 +54,38 @@ describe("the human form", () => {
   test("the current answer is the end of the reviewer's own correction chain", () => {
     expect(selectOwnCurrentAnswer([answer("a"), answer("b", "a"), answer("c", "b")])?.observation_id).toBe("c");
     expect(selectOwnCurrentAnswer([])).toBeNull();
+  });
+});
+
+describe("the operator's grade editor", () => {
+  const current = reviewerAnswer("now", "supports", "oakridge-operator", { rationale: "cited line 4" });
+  test("starts from the current answer's choice and explanation, unchanged", () => {
+    expect(selectGradeEditor(current, EMPTY_GRADE_DRAFT)).toEqual({ choice: "supports", rationale: "cited line 4", is_changed: false });
+  });
+  test("a new explanation alone is a correction", () => {
+    expect(selectGradeEditor(current, { choice: null, rationale: "cited line 5" }).is_changed).toBe(true);
+  });
+  test("clearing the explanation is a correction, and whitespace counts as clear", () => {
+    expect(selectGradeEditor(current, { choice: null, rationale: "  " }).is_changed).toBe(true);
+    expect(selectGradeEditor({ ...current, rationale: null }, { choice: null, rationale: "  " }).is_changed).toBe(false);
+  });
+  test("picking the same choice again changes nothing", () => {
+    expect(selectGradeEditor(current, { choice: "supports", rationale: null }).is_changed).toBe(false);
+  });
+  test("with no answer yet, nothing is saveable until a choice is picked", () => {
+    expect(selectGradeEditor(null, { choice: null, rationale: "why" }).is_changed).toBe(false);
+    expect(selectGradeEditor(null, { choice: "supports", rationale: null })).toEqual({ choice: "supports", rationale: "", is_changed: true });
+  });
+  test("earlier answers are every own answer but the current one", () => {
+    const first = reviewerAnswer("first", "does_not_support");
+    expect(selectEarlierOwnAnswers([first, current], current).map((answer) => answer.observation_id)).toEqual(["first"]);
+    expect(selectEarlierOwnAnswers([], null)).toEqual([]);
+  });
+  test("only stale-correction refusals mean the form's own answers are out of date", () => {
+    expect(isStaleAnswerRefusal({ kind: "refused", code: "stale_correction", message: "m" })).toBe(true);
+    expect(isStaleAnswerRefusal({ kind: "refused", code: "correction_required", message: "m" })).toBe(true);
+    expect(isStaleAnswerRefusal({ kind: "refused", code: "not_ready", message: "m" })).toBe(false);
+    expect(isStaleAnswerRefusal({ kind: "failed", message: "m" })).toBe(false);
   });
 });
 
