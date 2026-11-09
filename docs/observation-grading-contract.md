@@ -427,26 +427,23 @@ observation baseline, core contract or generated definition changed for declarat
 
 On the shadow, through `observation/verification/proof.ts`:
 
-- `relations` passed all 68 checks (`observation/verification/reports/relations-2026-11-08T20-31-17-449Z`)
-  at `100000b5`, with real provider answers, 44 real requests across two runs. Later fixes (a count of items rather
-  than rows, the namespace of a decision's link receipt, and the proof repeating a decision under one id until
-  its result is known, and failing if a step it asked for never ran) are covered by offline tests, not by this
-  report.
-- Its first run, `run-8734e674c984b0f3` from `inputs/relations-audit.json`, measures the late link. 5 analysis
-  questions were answered in 5 requests before the run had any task. A mapping naming the unapproved tasks
-  revision was refused, the approval changed nothing, and every task read as a coverage gap. After the mapping
-  was delivered, its composite opened the original observation, with the item, pins, evidence, measurements,
-  answers, the unlinked control and the request count all unchanged. A second mapping was journaled with
-  observation killed and the whole stack restarted before any acknowledgement: it arrived once, with 19 requests
-  before and after, and the authority's events went from 43 to 44, the mapping alone.
-- Its second run, `run-ac2e5f66cae38631` from `inputs/relations-shared-audit.json`, is the real shared task. Its
-  tasks approval itself carried explicit links, delivered as one declaration with the 5 requests unchanged. Its
-  plan and both briefs were sent back and really revised. Cohorts `alpha` and `beta` both reached their
-  assessments, and `T1` reads 2 analysis findings and 6 implementation findings across both cohorts, all
-  answered, 25 requests in all. One finding reads under both `T1` and `T2`, the unknown task stays a visible
-  reference, the control stays unlinked, and integration reads pending. Its lineage holds the task list, both plan
-  revisions and both revisions of each brief. Every count opened as many rows as it reported, and one-entry windows
-  reached every nested question and raw answer.
+- `relations` passed all 68 checks (`observation/verification/reports/relations-2026-11-09T16-43-58-923Z`) on this
+  cohort's code, with real provider answers: 33 real requests, executions and attempts across two runs.
+- Its first run, `run-b45b133f584a3d10` from `inputs/relations-audit.json`, measures the late link. Its analysis was
+  answered in 6 requests before the run had any task. A mapping naming the unapproved tasks revision was refused (409),
+  the approval changed nothing, and every task read as a coverage gap. After the mapping was delivered, its composite
+  opened the original observation, with the item, pins, evidence, measurements, answers, the unlinked control and the
+  request count (6 then 6) all unchanged. A second mapping was journaled with observation killed and the whole stack
+  restarted before any acknowledgement: it arrived once, with 18 requests before and after, and the authority's events
+  went from 43 to 44, the mapping alone.
+- Its second run, `run-a2044f9791413a7c` from `inputs/relations-shared-audit.json`, is the real shared task. Its
+  tasks approval itself carried explicit links, delivered as one declaration with the 5 requests unchanged. Its plan
+  and both briefs were sent back and really revised. Cohorts `alpha` and `beta` both reached their assessments, and
+  one task stands under both, as one logical item through 4 plan and 4 brief occurrences. Analysis and implementation
+  read side by side with integration pending, the unknown task stays a visible reference and the control stays
+  unlinked. One-entry windows reached every nested question and raw answer.
+- The earlier `relations-2026-11-09T03-23-51-515Z` failed 3 of 68 checks because its unchanged-facts snapshot included
+  an item's links, which a late link is meant to change. It is kept as it ran.
 - **What that proof does not show.** No real run published integration. A cohort completes only on an operator's
   acceptance of its assessment and confirmation of a merge, and this proof does not make those decisions by itself.
   The report's `shared_task_matrix` is a supplement for integration final, corrections and disagreement, on the
@@ -464,12 +461,15 @@ On the shadow, through `observation/verification/proof.ts`:
   an empty database (`workspace-2026-11-09T02-14-08-499Z`) passed its registration, capture, provider, human and readback
   checks, then failed on a stalled browser click; it and `workspace-2026-11-09T00-54-15-507Z`, which failed on faults in the
   proof's own script, are kept as they ran.
-- **Current cumulative state.** `reports/cumulative-2026-11-09T04-24-32-505Z` reads **failed**, because its `relations` report
-  (`relations-2026-11-09T03-23-51-515Z`) failed 3 of 68 checks: its unchanged-facts snapshot then included an item's links,
-  which a late link is meant to change. The fix is at `8c96d05a` and unit-tested, and **`relations` has not been rerun with it**, so that
-  scenario is incomplete. `grading-2026-11-09T02-36-25-820Z` passed 97 of 97. Real integration findings need an operator's merge
-  and are read only on labelled synthetic revisions and browser fixtures. The shadow's kbbl runs in its loopback control policy, so
-  token authentication is proven by the real forwarding code in-process against the real service.
+- **Current cumulative state.** `reports/cumulative-2026-11-09T17-24-35-214Z` **passed**: `workspace`, `grading`
+  (`grading-2026-11-09T02-36-25-820Z`, 97 of 97) and `relations` all passed, the review endpoint lists neither
+  `merge_pr` nor `mark_merge_ready`, no stored definition names `gated_review`, and the target-schema,
+  import-boundary and both task-contract suites pass. It records the head each proof ran on; the only product change
+  since is the paged `GET /v1/evidence-sets/:id`, which no proof reads. Its `pending` still lists
+  `real-integration-publication` and `same-finding-correctness-awaits-subject-build`, which wait on an operator
+  decision. The earlier `cumulative-2026-11-09T04-24-32-505Z` failed on the failed `relations` report. The shadow's
+  kbbl runs in its loopback control policy, so token authentication is proven by the real forwarding code in-process
+  against the real service.
 - **A side effect to know before rerunning.** Audit assessors follow `assess.md`, so they call `set_pr_draft` on
   the real pull request the audit input names. A proof run can therefore flip that pull request's draft state.
 - Earlier `relations` runs (`relations-2026-11-08T17-31-33-853Z`, `relations-2026-11-08T17-46-21-583Z`) predate the
