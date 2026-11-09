@@ -366,7 +366,7 @@ The grade credential uses `POST /v1/items/:id/answers` and `GET /v1/reviewer`. T
 - `GET /v1/runs/:run_id/grading-spend`: the run's choice, spend, request count and execution statuses
 - `GET /v1/runs/:run_id/gradeable-items?stage=&revisions=all`, `GET /v1/runs/:run_id/unlinked-items`, `GET /v1/runs/:run_id/unresolved-references`
 - `GET /v1/runs/:run_id/logical-items`, `GET /v1/runs/:run_id/logical-items/:local_id`, `.../lineage`, `GET /v1/runs/:run_id/composite-drilldown?key=`
-- `GET /v1/questions/:id/versions/:version`, `GET /v1/evidence-sets/:id`
+- `GET /v1/questions/:id/versions/:version`; `GET /v1/evidence-sets/:id?references_limit=&pinned_evaluators_limit=`: one frozen evidence set in the same paged shape as an item's evidence
 - `GET /v1/evaluations/by-digest/:digest`, `GET /v1/evaluation-executions/:id` (also the grade credential)
 
 Every read carries its credential's tenant and needs only the read credential: none is unlocked by an

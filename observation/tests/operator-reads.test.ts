@@ -242,3 +242,28 @@ integration("an older revision stays inspectable, marked not current, and is lef
   expect(all.items.map((row) => row.item.source_revision_id)).toEqual(["assessment-1", "assessment-2"]);
 }));
 
+
+integration("an evidence set by id is the named paged evidence read: each nested window pages, refuses a bad window and stays in its tenant", async () => scratchDatabase(async (db) => {
+  const h = await setup(db);
+  await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one", body: assessment([finding([], "x")]) });
+  const item = await addressed(h, "assessment-1", "/findings/0");
+  await ready(h, item.occurrence_id, EVIDENCE_SUPPORT_ID);
+  const set = (await readOccurrenceEvidence(h.db, tenant, item.occurrence_id)).find((candidate) => candidate.question_id === EVIDENCE_SUPPORT_ID)!;
+  interface EvidenceBody { evidence_set_id: string; question_id: string; readiness: { state: string }; references: Paged<{ ref: string }>; pinned_evaluator_definition_ids: Paged<string> }
+  const route = (query = "") => `/v1/evidence-sets/${encodeURIComponent(set.evidence_set_id)}${query}`;
+  const whole = await get<EvidenceBody>(h, route());
+  expect(whole.status).toBe(200);
+  expect(whole.body).toMatchObject({ evidence_set_id: set.evidence_set_id, question_id: EVIDENCE_SUPPORT_ID, readiness: { state: "ready" } });
+  expect(whole.body.references.total).toBe(2);
+  expect(whole.body.pinned_evaluator_definition_ids.total).toBe(2);
+  const pages = await Promise.all([0, 1].map(async (offset) => (await get<EvidenceBody>(h, route(`?references_limit=1&references_offset=${offset}&pinned_evaluators_limit=1&pinned_evaluators_offset=${offset}`))).body));
+  expect(pages.map((page) => page.references.items.map((reference) => reference.ref))).toEqual([["a"], ["b"]]);
+  expect(pages.map((page) => page.references.limit)).toEqual([1, 1]);
+  expect(new Set(pages.flatMap((page) => page.pinned_evaluator_definition_ids.items)).size).toBe(2);
+  for (const bad of ["?references_limit=0", "?references_limit=999", "?pinned_evaluators_limit=201", "?references_offset=-1", "?pinned_evaluators_offset=x"])
+    expect({ bad, status: (await get(h, route(bad))).status }).toEqual({ bad, status: 400 });
+  expect((await get(h, route(), "other-read")).status).toBe(404);
+  expect((await get(h, route(), "grade")).status).toBe(403);
+  expect((await h.app.request(route())).status).toBe(403);
+  expect((await get(h, "/v1/evidence-sets/unknown")).status).toBe(404);
+}));

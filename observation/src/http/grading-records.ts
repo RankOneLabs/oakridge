@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import { COMPOSITE_WINDOWS, EVIDENCE_WINDOWS, compositeRead, drilldownRowRead } from "../grading/item-reads";
 import type { CompositeDrilldownKey } from "../grading/composite";
-import { listRunComposites, listRunGradeableItems, listRunUnlinkedAddressed, listRunUnresolvedAddressed, readCompositeDrilldown, readEvidenceSetRecord, readLogicalItemComposite,
+import { listRunComposites, listRunGradeableItems, listRunUnlinkedAddressed, listRunUnresolvedAddressed, readCompositeDrilldown, readEvidenceSet, readLogicalItemComposite,
   readLogicalItemLineage, readQuestionRecord } from "../storage/grading-record-store";
 import { readRunSpend } from "../storage/execution-store";
 import { credentialFor } from "./ingest-auth";
@@ -37,11 +37,14 @@ export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies)
     if (!tenant) return errorResponse(c, 403, "forbidden", "read credential required");
     return c.json(await readRunSpend(deps.db, tenant, c.req.param("run_id")));
   });
+  /** One frozen evidence set as the named paged evidence read; references and pinned evaluators each page through their own window. */
   app.get("/v1/evidence-sets/:id", async (c) => {
     const tenant = credentialFor(c.req.header("authorization"), deps.credentials.read);
     if (!tenant) return errorResponse(c, 403, "forbidden", "read credential required");
-    const record = await readEvidenceSetRecord(deps.db, tenant, c.req.param("id"));
-    return record ? c.json(record) : errorResponse(c, 404, "not_found", "evidence set not found");
+    const windows = listWindows(c.req.url, EVIDENCE_WINDOWS);
+    if (!windows) return errorResponse(c, 400, "invalid_pagination", INVALID);
+    const evidence = await readEvidenceSet(deps.db, tenant, c.req.param("id"), windows);
+    return evidence ? c.json(evidence) : errorResponse(c, 404, "not_found", "evidence set not found");
   });
   /** Every gradeable item of one stage, or of every stage. Links are explicit; an item with none is listed like any other. */
   app.get("/v1/runs/:run_id/gradeable-items", async (c) => {

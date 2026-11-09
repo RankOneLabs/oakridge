@@ -22,10 +22,12 @@ export function readQuestionRecord(db: Database, tenant: TenantScope, key: Quest
     .where("question_id", "=", key.question_id).where("question_version", "=", key.question_version)
     .executeTakeFirst());
 }
-export function readEvidenceSetRecord(db: Database, tenant: TenantScope, evidence_set_id: string) {
-  return withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set").selectAll()
+/** One frozen evidence set by id, with its references and pinned evaluators each read one window at a time. */
+export async function readEvidenceSet(db: Database, tenant: TenantScope, evidence_set_id: string, windows: EvidenceWindows): Promise<EvidenceRead | null> {
+  const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set").selectAll()
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("evidence_set_id", "=", evidence_set_id).executeTakeFirst());
+  return row ? evidenceRead(evidenceSetFromRow(row), windows) : null;
 }
 
 // ------------------------------------------------------------------- composite reads ---
