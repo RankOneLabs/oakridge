@@ -455,6 +455,21 @@ On the shadow, through `observation/verification/proof.ts`:
   environment had no test database for the suite the audit spec asks them to run, which says nothing about the
   reads above. A lost acknowledgement is proven against a real process in
   `observation-process-restart.test.ts`, not on the shadow. The human and PWA continuation is the `workspace` proof.
+- **Operator proof.** `workspace` passed all 60 checks (`observation/verification/reports/workspace-2026-11-09T04-00-03-424Z`)
+  on a freshly started service. On real run `run-d71318e8959a6801`, assessment finding
+  `run-d71318e8959a6801/implementation/audit:assessment:1` `/findings/2` was answered by the configured provider in
+  a real request and by an authenticated reviewer, both read back in the PWA with nothing but that address. Corrections,
+  duplicates, spoofing, a refused not-ready question, grading off, hidden and revealed views and each viewer entry point
+  are in its checks, with 20 provider requests and 61 authority events unchanged by every human answer. An earlier attempt on
+  an empty database (`workspace-2026-11-09T02-14-08-499Z`) passed its registration, capture, provider, human and readback
+  checks, then failed on a stalled browser click; it and `workspace-2026-11-09T00-54-15-507Z`, which failed on faults in the
+  proof's own script, are kept as they ran.
+- **Current cumulative state.** `reports/cumulative-2026-11-09T04-24-32-505Z` reads **failed**, because its `relations` report
+  (`relations-2026-11-09T03-23-51-515Z`) failed 3 of 68 checks: its unchanged-facts snapshot then included an item's links,
+  which a late link is meant to change. The fix is at `8c96d05a` and unit-tested, and **`relations` has not been rerun with it**, so that
+  scenario is incomplete. `grading-2026-11-09T02-36-25-820Z` passed 97 of 97. Real integration findings need an operator's merge
+  and are read only on labelled synthetic revisions and browser fixtures. The shadow's kbbl runs in its loopback control policy, so
+  token authentication is proven by the real forwarding code in-process against the real service.
 - **A side effect to know before rerunning.** Audit assessors follow `assess.md`, so they call `set_pr_draft` on
   the real pull request the audit input names. A proof run can therefore flip that pull request's draft state.
 - Earlier `relations` runs (`relations-2026-11-08T17-31-33-853Z`, `relations-2026-11-08T17-46-21-583Z`) predate the
