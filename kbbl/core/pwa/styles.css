@@ -613,7 +613,7 @@ body {
 }
 .btn-approve {
   background: var(--accent-blue);
-  color: #ffffff;
+  color: var(--accent-contrast-fg);
 }
 .card-permission-buttons button:disabled {
   opacity: 0.5;
@@ -864,7 +864,7 @@ body {
 
 .directory-picker-select {
   background: var(--accent-blue);
-  color: #ffffff;
+  color: var(--accent-contrast-fg);
   border: 0;
 }
 
@@ -1150,7 +1150,7 @@ body {
   padding: 0 1.25rem;
   min-height: 44px;
   background: var(--accent-blue);
-  color: #ffffff;
+  color: var(--accent-contrast-fg);
   border: none;
   border-radius: 8px;
   font: inherit;
@@ -1914,7 +1914,7 @@ body {
   min-height: 44px;
   padding: 0 1.25rem;
   background: var(--accent-blue);
-  color: #ffffff;
+  color: var(--accent-contrast-fg);
   border: none;
   border-radius: 8px;
   font: inherit;
