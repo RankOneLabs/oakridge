@@ -2,7 +2,7 @@ import { Chip } from "../../../components/atoms/Chip";
 import type { AutomaticGlance, AutomaticGlyph } from "../../lib/grading";
 
 const GLYPHS: Readonly<Record<AutomaticGlyph, string>> = {
-  affirmative: "✓", negative: "✗", unclear: "?", not_ready: "◌", waiting: "…", budget_deferred: "$", failed: "!", grading_off: "⊘",
+  affirmative: "✓", negative: "✗", unclear: "?", not_ready: "◌", waiting: "…", budget_deferred: "$", failed: "!", grading_off: "Auto off",
 };
 
 /** Each automatic evaluator's state on each question, as one glyph. Rendered only when revealed. */
