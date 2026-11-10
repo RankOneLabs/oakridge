@@ -89,6 +89,12 @@ const PAIRS: readonly ContrastPair[] = [
 for (const theme of ["dark", "light"] as const) {
   describe(`${theme} theme WCAG AA`, () => {
     const tokens = readTokens(theme);
+    it("skill-group count text meets 4.5:1 on its declared background", () => {
+      const rule = /\.skill-rail__group-count\s*\{([^}]+)\}/.exec(stylesheet)?.[1] ?? "";
+      const foreground = /(?:^|;)\s*color:\s*var\(--([\w-]+)\)/.exec(rule)?.[1] ?? "";
+      const background = /(?:^|;)\s*background:\s*var\(--([\w-]+)\)/.exec(rule)?.[1] ?? "";
+      expect(contrast(resolveColor(tokens, foreground), resolveColor(tokens, background))).toBeGreaterThanOrEqual(4.5);
+    });
     for (const { foreground, background, minimum } of PAIRS) {
       it(`${foreground} on ${background} meets ${minimum}:1`, () => {
         expect(contrast(resolveColor(tokens, foreground), resolveColor(tokens, background))).toBeGreaterThanOrEqual(minimum);

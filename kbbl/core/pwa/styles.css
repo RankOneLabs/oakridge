@@ -1659,8 +1659,8 @@ body {
 .skill-rail__group-count {
   padding: 0 0.3rem;
   border-radius: 999px;
-  background: var(--border-subtle);
-  color: var(--text-muted);
+  background: var(--tone-muted-bg);
+  color: var(--tone-muted-fg);
   font-size: 0.65rem;
   line-height: 1.4;
 }
