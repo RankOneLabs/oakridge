@@ -1,174 +1,68 @@
 import type { Hono } from "hono";
 import { decodeCapture } from "../ingest/capture";
-import { captureDelivery, deliverSourceEvent, readSourceCursor, readSourceHumanGrades, readSourceRevision, readUnmappedSourceEvents, type CaptureHooks } from "../storage/capture-store";
-import { decodeSourceEventDelivery } from "../ingest/cursor";
+import { decodeSourceEventDelivery, type SourceEventOutcome } from "../ingest/cursor";
+import type { ProducerProfile } from "../ports/producer-profile";
+import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../grading/evidence";
+import { deliverSourceEvent, readSourceCursor, readSourceRevision, readUnmappedSourceEvents } from "../storage/capture-store";
 import type { Database } from "../storage/database";
+import type { EvidenceReconciler } from "../storage/evidence-pipeline";
 import { errorResponse } from "./errors";
 import { credentialFor, type Credentials } from "./ingest-auth";
-import { projectRevision } from "../storage/projection-store";
-import { sql } from "kysely";
-import { withTenant } from "../storage/database";
-import { handleOperatorEvent, type OperatorEventDelivery } from "../purge/trigger";
-import { deliverBackfill, readBackfillCheckpoint, type BackfillDelivery, type BackfillPosition } from "../storage/backfill-store";
-import type { GradingLimits } from "../grading/jobs/budget";
+import { pagination } from "./items";
 
-export interface SourceDependencies { readonly db: Database; readonly credentials: Credentials; readonly captureHooks?: CaptureHooks;
-  readonly exportRoot?: string; readonly gradingLimits?: GradingLimits }
-interface OperatorCursor { readonly commit_txid: string; readonly id: string }
-interface OperatorDelivery { readonly previous: OperatorCursor; readonly cursor: OperatorCursor; readonly event: OperatorEventDelivery }
-const isRecord = (value: unknown): value is { readonly [key: string]: unknown } =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
-const isCursor = (value: unknown): value is OperatorCursor => isRecord(value)
-  && typeof value.commit_txid === "string" && /^(0|[1-9][0-9]*)$/.test(value.commit_txid)
-  && typeof value.id === "string";
-function decodeOperatorDelivery(value: unknown): OperatorDelivery | null {
-  if (!isRecord(value) || !isCursor(value.previous) || !isCursor(value.cursor) || !isRecord(value.event)) return null;
-  const event = value.event;
-  if (typeof event.id !== "string" || event.id !== value.cursor.id || typeof event.run_key !== "string"
-    || !isRecord(event.payload) || typeof event.payload.kind !== "string"
-    || typeof event.run_exists !== "boolean" || typeof event.operator_override !== "boolean") return null;
-  if (event.payload.kind === "invalidate" && (!isRecord(event.payload.data)
-    || typeof event.payload.data.target !== "string"
-    || !(typeof event.payload.data.run_id === "string" || event.payload.data.run_id === null))) return null;
-  return value as unknown as OperatorDelivery;
+export interface SourceDependencies {
+  readonly db: Database;
+  readonly credentials: Credentials;
+  readonly profile: ProducerProfile;
+  /** Absent until a configuration is composed: occurrences are captured with no pins. */
+  readonly capture_configuration?: CaptureConfiguration;
+  /** Reconciles a run after each accepted revision or launch: collects its waiting questions and
+   * admits ready ones if its grading is on. Absent means neither. */
+  readonly evidence?: EvidenceReconciler;
 }
-function isBackfillPosition(value: unknown): value is BackfillPosition {
-  if (!isRecord(value)) return false;
-  if (value.source === "done") return true;
-  return value.source === "collaboration_thread"
-    && typeof value.created_at === "string" && !Number.isNaN(Date.parse(value.created_at)) && typeof value.id === "string";
-}
-function decodeBackfillDelivery(value: unknown): BackfillDelivery | null {
-  if (!isRecord(value) || !isBackfillPosition(value.previous) || !isBackfillPosition(value.position)
-    || !isRecord(value.counts)) return null;
-  if (value.replay !== undefined && typeof value.replay !== "boolean") return null;
-  for (const source of ["collaboration_thread"]) {
-    const counts = value.counts[source];
-    if (!isRecord(counts) || !Number.isSafeInteger(counts.active) || !Number.isSafeInteger(counts.archived)
-      || Number(counts.active) < 0 || Number(counts.archived) < 0) return null;
-  }
-  const outcome = value.outcome;
-  if (outcome !== null && (!isRecord(outcome) || typeof outcome.event_id !== "string"
-    || typeof outcome.run_id !== "string" || outcome.format !== "observation.source-event/v1"
-    || !(outcome.definition_id === null || typeof outcome.definition_id === "string")
-    || !(outcome.artifact_schema_version === null || typeof outcome.artifact_schema_version === "string"))) return null;
-  if (isRecord(outcome) && outcome.kind === "collaboration_thread" && (!isRecord(outcome.context)
-    || typeof outcome.context.title !== "string" || !(outcome.context.anchor === null || typeof outcome.context.anchor === "string")
-    || !Array.isArray(outcome.messages))) return null;
-  if (isRecord(outcome) && !["collaboration_thread"].includes(String(outcome.kind))) return null;
-  return value as unknown as BackfillDelivery;
-}
-async function readOperatorCursor(db: Database, tenant: { readonly producer: string; readonly namespace: string }): Promise<OperatorCursor> {
-  return withTenant(db, tenant, async (trx) => {
-    const result = await sql<OperatorCursor>`SELECT commit_txid::text AS commit_txid, event_id AS id
-      FROM observation.source_operator_cursor WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx);
-    return result.rows[0] ?? { commit_txid: "0", id: "" };
-  });
-}
+
+/** Whether an accepted event can change what a run has ready: a captured revision adds items or the
+ * inputs they cite, and a run input supplies what its questions read. Ignored and unmapped events
+ * never start a pass, so they can never cause an admission; the periodic sweep and restart still
+ * revisit every waiting run. */
+export const startsReconciliation = (outcome: SourceEventOutcome): boolean =>
+  outcome.kind === "artifact_revision" || outcome.kind === "run_input";
+
+/** The one ordered source feed, served under the injected producer's name. */
 export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void {
-  app.get("/v1/sources/oakridge/backfill", async (c) => {
+  const { producer, extraction } = deps.profile;
+  const context = { extraction, configuration: deps.capture_configuration ?? NO_CAPTURE_PINS };
+  app.get(`/v1/sources/${producer}/cursor`, async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
-    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
-    return c.json(await readBackfillCheckpoint(deps.db, credential));
-  });
-  app.post("/v1/sources/oakridge/backfill", async (c) => {
-    const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
-    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
-    let input: unknown;
-    try { input = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
-    const delivery = decodeBackfillDelivery(input);
-    if (!delivery) return errorResponse(c, 400, "invalid_backfill", "valid backfill delivery required");
-    try {
-      const result = await deliverBackfill(deps.db, credential, delivery);
-      return result === "accepted" ? c.json({ position: delivery.position, counts: delivery.counts })
-        : errorResponse(c, 409, "position_conflict", "backfill position changed");
-    } catch (cause) { return errorResponse(c, 409, "backfill_refused", String(cause)); }
-  });
-  app.get("/v1/sources/oakridge/operator-cursor", async (c) => {
-    const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
-    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
-    return c.json({ cursor: await readOperatorCursor(deps.db, credential) });
-  });
-  app.post("/v1/sources/oakridge/operator-events", async (c) => {
-    const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
-    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
-    let input: unknown;
-    try { input = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
-    const delivery = decodeOperatorDelivery(input);
-    if (!delivery) return errorResponse(c, 400, "invalid_event", "valid operator event delivery required");
-    const current = await readOperatorCursor(deps.db, credential);
-    if (current.commit_txid !== delivery.previous.commit_txid || current.id !== delivery.previous.id)
-      return errorResponse(c, 409, "cursor_conflict", "operator cursor changed");
-    if (BigInt(delivery.cursor.commit_txid) < BigInt(current.commit_txid)
-      || delivery.cursor.commit_txid === current.commit_txid && delivery.cursor.id <= current.id)
-      return errorResponse(c, 409, "cursor_conflict", "operator event is not after cursor");
-    const handled = await handleOperatorEvent(deps.db, credential, delivery.event);
-    if (!handled.ok) return errorResponse(c, handled.error.code === "frozen_export" ? 409 : 500,
-      handled.error.code, handled.error.detail);
-    await withTenant(deps.db, credential, async (trx) => {
-      await sql`INSERT INTO observation.source_operator_cursor (producer, namespace, commit_txid, event_id)
-        VALUES (${credential.producer}, ${credential.namespace}, ${delivery.cursor.commit_txid}::bigint, ${delivery.cursor.id})
-        ON CONFLICT (producer, namespace) DO UPDATE SET commit_txid = excluded.commit_txid, event_id = excluded.event_id
-        WHERE (observation.source_operator_cursor.commit_txid, observation.source_operator_cursor.event_id)
-          = (${current.commit_txid}::bigint, ${current.id})`.execute(trx);
-    });
-    return c.json({ cursor: delivery.cursor, purge: handled.value });
-  });
-  app.get("/v1/sources/oakridge/cursor", async (c) => {
-    const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
-    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
+    if (!credential || credential.producer !== producer) return errorResponse(c, 401, "unauthorized", "ingest credential required");
     return c.json(await readSourceCursor(deps.db, credential));
   });
-  app.post("/v1/sources/oakridge/events", async (c) => {
+  app.post(`/v1/sources/${producer}/events`, async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
-    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
+    if (!credential || credential.producer !== producer) return errorResponse(c, 401, "unauthorized", "ingest credential required");
     let input: unknown;
     try { input = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
     const delivery = decodeSourceEventDelivery(input);
     if (!delivery) return errorResponse(c, 400, "invalid_event", "valid source event delivery required");
     if (delivery.outcome.kind === "artifact_revision") {
-      const decoded = decodeCapture(delivery.outcome.revision, delivery.outcome.event_id);
+      const decoded = decodeCapture(delivery.outcome.revision);
       if (!decoded.ok) return errorResponse(c, 400, "invalid_capture", decoded.error.detail);
       if (decoded.value.envelope.source.producer !== credential.producer || decoded.value.envelope.source.namespace !== credential.namespace)
         return errorResponse(c, 403, "forbidden", "credential cannot ingest this source");
     }
-    const result = await deliverSourceEvent(deps.db, credential, delivery);
+    const result = await deliverSourceEvent(deps.db, credential, delivery, context);
+    // Reconciliation reads repositories, so the acknowledgement does not wait for it; a failed pass
+    // leaves its questions waiting for the next event, sweep or restart.
+    if (result.status === 200 && startsReconciliation(delivery.outcome)) deps.evidence?.reconcileRun(credential, delivery.outcome.run_id)
+      .catch((error: unknown) => console.error("[observation] reconciliation failed", { run_id: delivery.outcome.run_id, error }));
     return c.json(result.body, result.status);
   });
-  app.get("/v1/sources/oakridge/unmapped", async (c) => {
+  app.get(`/v1/sources/${producer}/unmapped`, async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
-    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 403, "forbidden", "read credential required");
-    return c.json({ items: await readUnmappedSourceEvents(deps.db, credential) });
-  });
-  app.get("/v1/sources/oakridge/human-grades", async (c) => {
-    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
-    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 403, "forbidden", "read credential required");
-    return c.json({ items: await readSourceHumanGrades(deps.db, credential) });
-  });
-  app.get("/v1/sources/oakridge/collaboration-comments", async (c) => {
-    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
-    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 403, "forbidden", "read credential required");
-    const run_id = new URL(c.req.url).searchParams.get("run_id");
-    if (!run_id) return errorResponse(c, 400, "invalid_run", "run_id is required");
-    const items = await withTenant(deps.db, credential, (trx) => trx.selectFrom("observation.source_collaboration_comment")
-      .selectAll().where("producer", "=", credential.producer).where("namespace", "=", credential.namespace)
-      .where("run_id", "=", run_id).orderBy("recorded_at").orderBy("message_id").limit(200).execute());
-    return c.json({ items });
-  });
-  app.post("/v1/sources/oakridge/sync", async (c) => {
-    const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
-    if (!credential) return errorResponse(c, 401, "unauthorized", "ingest credential required");
-    let input: unknown;
-    try { input = await c.req.json(); }
-    catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
-    const delivery = decodeCapture(input, c.req.header("idempotency-key") ?? null);
-    if (!delivery.ok) return errorResponse(c, 400, "invalid_capture", delivery.error.detail);
-    const source = delivery.value.envelope.source;
-    if (source.producer !== "oakridge" || source.producer !== credential.producer || source.namespace !== credential.namespace)
-      return errorResponse(c, 403, "forbidden", "credential cannot ingest this source");
-    const result = await captureDelivery(deps.db, delivery.value, deps.captureHooks);
-    if (result.status === 201) await projectRevision(deps.db, credential, delivery.value.local_revision_id);
-    return c.json(result.body, result.status);
+    if (!credential || credential.producer !== producer) return errorResponse(c, 403, "forbidden", "read credential required");
+    const page = pagination(c.req.url);
+    if (!page) return errorResponse(c, 400, "invalid_pagination", "limit must be 1..200 and offset nonnegative");
+    return c.json(await readUnmappedSourceEvents(deps.db, credential, page));
   });
   app.get("/v1/source-revisions/:id", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);

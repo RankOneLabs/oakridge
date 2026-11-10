@@ -1,0 +1,111 @@
+{
+  "questions": [
+    {
+      "question_id": "finding.relevance",
+      "graders": [
+        {
+          "runner": "jev_direct",
+          "model": "jev-1.14.0",
+          "estimated_cost_per_call": 0.01,
+          "instructions": {
+            "system_one": {
+              "type": "choice",
+              "instructions": "Is the finding in state.subject relevant to the full spec in state.spec? Each entry of state is one evidence reference: its source, where it came from and its content. The finding is the content of state.subject and the spec is the content of state.spec. Choose relevant when the finding bears on what the spec asks for; irrelevant when it does not; unclear when the finding and the spec cannot settle its relevance. Judge only this finding against the whole spec.",
+              "criteria": {
+                "relevant": "The finding bears on what the spec asks for",
+                "irrelevant": "The finding does not bear on what the spec asks for",
+                "unclear": "The finding and the spec cannot settle its relevance"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "question_id": "assessment_finding.correctness",
+      "graders": [
+        {
+          "runner": "jev_direct",
+          "model": "jev-1.14.0",
+          "estimated_cost_per_call": 0.01,
+          "instructions": {
+            "system_one": {
+              "type": "choice",
+              "instructions": "Is the assessment finding in state.subject correct? Each entry of state is one evidence reference: its source, where it came from and its content. Use its citations (citation:N), the assessment's test results (test_evidence), the build result it assessed (build_result) when present, and any linked task context (task_context:N). A repository entry is the file at path in commit_sha, limited to line_range when one is given; is_absent true means that file does not exist at that commit. An entry whose source is reported, and the tests inside build_result, are the agent's own report and were not independently verified. Choose supported when the evidence shows the finding is correct; contradicted when the evidence shows it is wrong; unclear when the evidence cannot establish either.",
+              "criteria": {
+                "supported": "The evidence shows the finding is correct",
+                "contradicted": "The evidence shows the finding is wrong",
+                "unclear": "The evidence cannot establish whether the finding is correct"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "question_id": "assessment_finding.evidence_support",
+      "graders": [
+        {
+          "runner": "jev_direct",
+          "model": "jev-1.14.0",
+          "estimated_cost_per_call": 0.01,
+          "instructions": {
+            "system_one": {
+              "type": "choice",
+              "instructions": "Does the cited evidence support the assessment finding in state.subject? Each entry of state is one evidence reference: its source, where it came from and its content. The evidence is its citations (citation:N) and the assessment's test results (test_evidence). A repository entry is the file at path in commit_sha, limited to line_range when one is given; is_absent true means that file does not exist at that commit. An entry whose source is reported is the agent's own report and was not independently verified. Choose supports when the citations support the finding; does_not_support when they do not; unclear when they cannot be judged either way, including when there are none.",
+              "criteria": {
+                "supports": "The citations support the finding",
+                "does_not_support": "The citations do not support the finding",
+                "unclear": "The citations cannot be judged either way"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "question_id": "task.requirement_coverage",
+      "graders": [
+        {
+          "runner": "jev_direct",
+          "model": "jev-1.14.0",
+          "estimated_cost_per_call": 0.01,
+          "instructions": {
+            "system_one": {
+              "type": "choice",
+              "instructions": "Each entry of state is an evidence reference with source, revision_id, item_path and content; judge the referenced content, not the wrapper. How well does the spec task in state.subject account for its explicitly linked requirements? state.spec_task is its canonical definition, state.requirement:N contains each linked requirement at its captured revision, and state.spec is the captured specification. Judge the proposed task, not completed implementation. fully_covers means its description concretely accounts for all linked requirements; partially_covers means it accounts for some but omits or weakens a material part; does_not_cover means its proposed work fails to address the linked requirements. Choose unclear when no requirements are explicitly linked or the evidence cannot establish coverage. Do not invent links or require unrelated work.",
+              "criteria": {
+                "fully_covers": "The proposed work concretely accounts for the entire explicitly assigned obligation",
+                "partially_covers": "The proposed work accounts for some but omits or weakens a material part",
+                "does_not_cover": "The proposed work does not address its assigned obligation",
+                "unclear": "The evidence cannot establish coverage or no requirements are explicitly linked"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "question_id": "acceptance_entry.task_coverage",
+      "graders": [
+        {
+          "runner": "jev_direct",
+          "model": "jev-1.14.0",
+          "estimated_cost_per_call": 0.01,
+          "instructions": {
+            "system_one": {
+              "type": "choice",
+              "instructions": "Each entry of state is an evidence reference with source, revision_id, item_path and content; judge the referenced content, not the wrapper. How well does the cohort contribution in state.subject cover its assigned spec task in state.spec_task? state.spec and state.requirement:N give the specification context. state.plan is the full plan and state.contribution_context is the surrounding plan cohort or build brief. The subject id is the spec task id, not a separate implementation task. A spec task may span cohorts: evaluate this cohort's declared share in the combined plan, not whether every cohort implements the entire task. For a plan entry, judge whether its stated contribution meaningfully covers the assigned share without losing obligations across cohorts. For a brief entry, judge whether the brief preserves its plan contribution and makes that share concrete enough to implement. fully_covers means it preserves and concretely addresses the assigned share; partially_covers means material parts are omitted, weakened or insufficiently specified; does_not_cover means it does not address the assigned share. Choose unclear when the evidence cannot establish the contribution or its intended share. Judge proposed work, not whether code has already passed tests.",
+              "criteria": {
+                "fully_covers": "The proposed work concretely accounts for the entire explicitly assigned obligation",
+                "partially_covers": "The proposed work accounts for some but omits or weakens a material part",
+                "does_not_cover": "The proposed work does not address its assigned obligation",
+                "unclear": "The evidence cannot establish coverage or no requirements are explicitly linked"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

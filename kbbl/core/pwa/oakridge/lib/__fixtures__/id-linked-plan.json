@@ -10,8 +10,8 @@
     "files_in_scope": ["kbbl/core/pwa"],
     "decisions": [{ "id": "decision-layout", "text": "Keep the existing layout." }],
     "acceptance_criteria": [
-      { "id": "criterion-plan", "text": "The plan is readable.", "task_ids": ["task-plan"], "decision_ids": ["decision-layout"] },
-      { "id": "criterion-brief", "text": "The brief is readable.", "task_ids": [], "decision_ids": [] }
+      { "id": "criterion-plan", "text": "The plan is readable.", "decision_ids": ["decision-layout"] },
+      { "id": "criterion-brief", "text": "The brief is readable.", "decision_ids": [] }
     ]
   }],
   "dependency_order": ["pwa"],

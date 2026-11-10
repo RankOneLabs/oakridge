@@ -276,3 +276,52 @@ fn workspace_expression_span_includes_leading_whitespace() {
     assert_eq!(errors[0].path.0, "stages.document.workers.writer.workspace");
     assert_eq!(errors[0].span, SourceSpan { start: 13, end: 26 });
 }
+
+/// The review-loop sample with its draft check replaced.
+fn with_draft_check(check: &str) -> Value {
+    review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!(check),
+    )])
+}
+
+#[test]
+fn flatten_joins_a_list_of_lists_into_their_items() {
+    let check = "contains(flatten(map(input.groups, item.names)), \"a\")";
+    let mut source = with_draft_check(check);
+    source["stages"]["document"]["input"]["groups"] = json!("list({names: list(text)})");
+    source["run"]["units"]["document"]["input"]["groups"] = json!("input.groups");
+    source["input"]["groups"] = json!("list({names: list(text)})");
+    assert!(compile(&source).is_ok());
+}
+
+#[test]
+fn flatten_refuses_a_list_of_non_lists() {
+    let error = compile(&with_draft_check(
+        "len(flatten(map(draft.title, item))) > 0",
+    ));
+    assert!(error.is_err());
+    let mut source = with_draft_check("len(flatten(input.names)) > 0");
+    source["stages"]["document"]["input"]["names"] = json!("list(text)");
+    source["run"]["units"]["document"]["input"]["names"] = json!("input.names");
+    source["input"]["names"] = json!("list(text)");
+    let error = compile(&source).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("flatten of a list of lists requires a list"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn unique_is_a_boolean_over_a_list_and_refuses_anything_else() {
+    let mut source = with_draft_check("unique(input.names)");
+    source["stages"]["document"]["input"]["names"] = json!("list(text)");
+    source["run"]["units"]["document"]["input"]["names"] = json!("input.names");
+    source["input"]["names"] = json!("list(text)");
+    assert!(compile(&source).is_ok());
+    let error = compile(&with_draft_check("unique(draft.title)")).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("unique requires a list"),
+        "{error:?}"
+    );
+}

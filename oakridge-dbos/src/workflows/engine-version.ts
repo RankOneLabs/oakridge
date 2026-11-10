@@ -14,6 +14,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "core-client/core-types.ts",
   "core-client/source-types.ts",
   "adapters/kbbl.ts",
+  "domain/analysis-link-declaration.ts",
   "domain/effect-instruction.ts",
   "domain/run-config.ts",
   "domain/unit-status.ts",

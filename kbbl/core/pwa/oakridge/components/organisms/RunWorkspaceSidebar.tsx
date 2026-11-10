@@ -4,6 +4,7 @@ import type { ArtifactId, Sid } from "../../../lib/ids";
 import type { RunArtifactRef, RunSidebarSessionsView } from "../../lib/run-overview";
 import { selectFilteredRunArtifacts, type RunArtifactFilter } from "../../lib/artifact-filter";
 import {
+  GRADING_PANE,
   LIST_PANE,
   OVERVIEW_PANE,
   arePanesEqual,
@@ -34,6 +35,7 @@ interface PaneShortcut {
 const PANE_SHORTCUTS: readonly PaneShortcut[] = [
   { pane: OVERVIEW_PANE, label: "Overview", testId: "or-sidebar-pane-overview" },
   { pane: LIST_PANE, label: "Stages", testId: "or-sidebar-pane-list" },
+  { pane: GRADING_PANE, label: "Grading", testId: "or-sidebar-pane-grading" },
 ];
 
 /**

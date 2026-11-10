@@ -1,7 +1,7 @@
 import type { Result } from "../../lib/result";
 import type { AssessmentVerdict, CriterionStatus } from "../artifact-types";
 import { parseTestEvidence, type TestEvidence } from "./build-result";
-import { planCriterionText, type PlanCriterion, type PlanTraceId } from "./plan";
+import type { PlanCriterion, PlanTraceId } from "./plan";
 
 /** Mirrors `evidence_ref` in workflow-config/development.yaml. */
 export interface EvidenceRef {
@@ -10,30 +10,27 @@ export interface EvidenceRef {
   detail: string | null;
 }
 
-/** Keeps historical prose distinct from current structured references. */
-export type FindingEvidence =
-  | { kind: "legacy"; text: string | null }
-  | { kind: "current"; refs: EvidenceRef[] };
-
-/** Mirrors `assessment_finding` in workflow-config/development.yaml. */
+/** Mirrors `assessment_finding` in workflow-config/development.yaml, plus where it sits in its revision. */
 export interface AssessmentFinding {
-  criterion_id: PlanTraceId | null;
-  criterion: string | null;
+  /** The exact path that addresses this finding within its revision. */
+  item_path: string;
+  /** Explicit task links; empty is valid. A link is navigation, never the finding's address. */
+  task_ids: PlanTraceId[];
   status: CriterionStatus | null;
-  evidence: FindingEvidence;
+  evidence: EvidenceRef[];
   description: string | null;
 }
 
 /** Mirrors `assessment_body` in workflow-config/development.yaml, for current revisions. */
 export interface Assessment {
-  head_sha: string | null;
+  head_sha: string;
   verdict: AssessmentVerdict;
   findings: AssessmentFinding[];
   test_evidence: TestEvidence | null;
   recommended_next_actions: NextAction[];
 }
 
-/** Stored next_action from the authored assessment schema. Older revisions contain strings. */
+/** Stored next_action from the authored assessment schema. */
 export interface NextAction { readonly id: string; readonly text: string }
 
 export interface AssessmentParseError {
@@ -53,8 +50,6 @@ function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const TEXT_FIELDS = ["criterion", "description"] as const;
-
 /** A nullable text field: absent or null reads as null, as does a blank string; anything else that is not a string is refused. */
 function parseNullableText(value: unknown, field: string): Parsed<string | null> {
   if (value === undefined || value === null) return { ok: true, value: null };
@@ -62,11 +57,8 @@ function parseNullableText(value: unknown, field: string): Parsed<string | null>
   return { ok: true, value: value.trim() === "" ? null : value };
 }
 
-function parseEvidence(value: unknown, field: string): Parsed<FindingEvidence> {
-  if (!Array.isArray(value)) {
-    const text = parseNullableText(value, field);
-    return text.ok ? { ok: true, value: { kind: "legacy", text: text.value } } : text;
-  }
+function parseEvidence(value: unknown, field: string): Parsed<EvidenceRef[]> {
+  if (!Array.isArray(value)) return fail(field, "expected a list of evidence references");
   const refs: EvidenceRef[] = [];
   for (const [index, entry] of value.entries()) {
     const entryField = `${field}[${index}]`;
@@ -79,46 +71,39 @@ function parseEvidence(value: unknown, field: string): Parsed<FindingEvidence> {
     if (!detail.ok) return detail;
     refs.push({ kind: entry.kind, ref: entry.ref, detail: detail.value });
   }
-  return { ok: true, value: { kind: "current", refs } };
+  return { ok: true, value: refs };
 }
 
-function parseFinding(value: unknown, field: string): Parsed<AssessmentFinding> {
+function parseTaskIds(value: unknown, field: string): Parsed<PlanTraceId[]> {
+  if (!Array.isArray(value) || value.some((id) => typeof id !== "string" || id.trim() === "")) return fail(field, "expected a list of ids");
+  return { ok: true, value: value as PlanTraceId[] };
+}
+
+function parseFinding(value: unknown, field: string, item_path: string): Parsed<AssessmentFinding> {
   if (!isRecord(value)) return fail(field, "expected an object");
-  const criterionId = parseNullableText(value.criterion_id, `${field}.criterion_id`);
-  if (!criterionId.ok) return criterionId;
+  const taskIds = parseTaskIds(value.task_ids, `${field}.task_ids`);
+  if (!taskIds.ok) return taskIds;
   const evidence = parseEvidence(value.evidence, `${field}.evidence`);
   if (!evidence.ok) return evidence;
-  const text: Partial<Record<(typeof TEXT_FIELDS)[number], string | null>> = {};
-  for (const key of TEXT_FIELDS) {
-    const parsed = parseNullableText(value[key], `${field}.${key}`);
-    if (!parsed.ok) return parsed;
-    text[key] = parsed.value;
-  }
+  const description = parseNullableText(value.description, `${field}.description`);
+  if (!description.ok) return description;
   const status = value.status === undefined || value.status === null
     ? null
     : CRITERION_STATUSES.find((candidate) => candidate === value.status);
   if (status === undefined) return fail(`${field}.status`, "expected met, partial, not_met or null");
-  return { ok: true, value: { criterion_id: criterionId.value as PlanTraceId | null, criterion: text.criterion ?? null, status, evidence: evidence.value, description: text.description ?? null } };
+  return { ok: true, value: { item_path, task_ids: taskIds.value, status, evidence: evidence.value, description: description.value } };
 }
 
 export function parseAssessment(body: unknown): Parsed<Assessment> {
   if (!isRecord(body)) return fail("body", "expected an object");
   const verdict = VERDICTS.find((candidate) => candidate === body.verdict);
   if (!verdict) return fail("verdict", "expected pass, pass_with_notes or fail");
-  const headSha = parseNullableText(body.head_sha, "head_sha");
-  if (!headSha.ok) return headSha;
+  if (typeof body.head_sha !== "string" || body.head_sha.trim() === "") return fail("head_sha", "expected the assessed commit");
   if (!Array.isArray(body.findings)) return fail("findings", "expected an array");
   const findings: AssessmentFinding[] = [];
-  let evidenceGeneration: FindingEvidence["kind"] | null = null;
   for (const [index, entry] of body.findings.entries()) {
-    const finding = parseFinding(entry, `findings[${index}]`);
+    const finding = parseFinding(entry, `findings[${index}]`, `/findings/${index}`);
     if (!finding.ok) return finding;
-    if (isRecord(entry) && entry.evidence !== undefined && entry.evidence !== null) {
-      if (evidenceGeneration !== null && finding.value.evidence.kind !== evidenceGeneration) {
-        return fail(`findings[${index}].evidence`, "mixed legacy and current evidence generations");
-      }
-      evidenceGeneration = finding.value.evidence.kind;
-    }
     findings.push(finding.value);
   }
   const actions = body.recommended_next_actions;
@@ -134,7 +119,7 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
   return {
     ok: true,
     value: {
-      head_sha: headSha.value,
+      head_sha: body.head_sha,
       verdict,
       findings,
       test_evidence: testEvidence,
@@ -143,16 +128,17 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
   };
 }
 
+/** A task a finding names, with the brief's wording when this cohort's brief carries it. */
+export interface CheckTask { readonly id: PlanTraceId; readonly number: number | null; readonly text: string | null }
+
 /**
- * One line of the review: a brief criterion with the finding the assessor
- * recorded against it (null when it went unassessed), or a finding that names
- * no criterion from the brief.
+ * One line of the review. Every finding is one line, however many tasks it names and however many
+ * findings share a task; a brief task no finding names is its own line. Links are explicit task ids,
+ * nothing is matched by wording, and an id the brief does not hold stays visible as unresolved.
  */
 export type CriterionCheck =
-  | { kind: "brief"; number: number; criterion: string; finding: AssessmentFinding | null; match: CriterionMatch }
-  | { kind: "assessment_only"; finding: AssessmentFinding; match: "unmatched" };
-
-export type CriterionMatch = "id" | "normalized_text" | "unmatched";
+  | { kind: "finding"; finding: AssessmentFinding; tasks: CheckTask[]; unresolved_task_ids: PlanTraceId[] }
+  | { kind: "unassessed"; number: number; criterion: PlanCriterion };
 
 export interface CriterionTally {
   met: number;
@@ -162,14 +148,14 @@ export interface CriterionTally {
 }
 
 export interface CriterionReport {
-  /** Not met, then partial, then unassessed; brief order within each. */
+  /** Not met, then partial, then unassessed; finding order, then brief order, within each. */
   needs_attention: CriterionCheck[];
   met: CriterionCheck[];
   tally: CriterionTally;
 }
 
 export interface CriterionCount {
-  /** null counts criteria the assessor never assessed. */
+  /** null counts brief tasks no finding names and findings recorded with no status. */
   status: CriterionStatus | null;
   count: number;
 }
@@ -186,44 +172,26 @@ export function selectCriterionCounts(tally: CriterionTally): CriterionCount[] {
 }
 
 export function selectCheckStatus(check: CriterionCheck): CriterionStatus | null {
-  return check.finding?.status ?? null;
+  return check.kind === "finding" ? check.finding.status : null;
 }
 
-/** The line a check is read by: the brief's criterion, else what the finding says about itself. */
-export function selectCheckCriterionText(check: CriterionCheck): string {
-  if (check.kind === "brief") return check.criterion;
-  return check.finding.criterion ?? check.finding.description ?? "Unnamed finding";
+/** The line a check is read by: what the finding says, else the task it names, else the brief's task. */
+export function selectCheckText(check: CriterionCheck): string {
+  if (check.kind === "unassessed") return check.criterion.text;
+  return check.finding.description ?? check.tasks.find((task) => task.text !== null)?.text ?? "Unnamed finding";
 }
 
-/** A finding's description, when it adds something beyond the criterion line. */
-export function selectCheckNote(check: CriterionCheck): string | null {
-  const description = check.finding?.description ?? null;
-  return description !== null && description !== selectCheckCriterionText(check) ? description : null;
-}
-
-const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 const ATTENTION_ORDER: readonly (CriterionStatus | null)[] = ["not_met", "partial", null];
 
-/**
- * Lays the assessment over the brief's criteria. Linked briefs use stable IDs;
- * historical string criteria retain whitespace-normalised text matching.
- */
+/** Lays the assessment over the brief's tasks by explicit task id. A null brief (integration) has no comparison to make. */
 export function selectCriterionReport(briefCriteria: PlanCriterion[] | null, findings: AssessmentFinding[]): CriterionReport {
-  const unmatched = [...findings];
-  const takeFinding = (criterion: PlanCriterion): AssessmentFinding | null => {
-    const index = typeof criterion === "string"
-      ? unmatched.findIndex((finding) => finding.criterion !== null && normalize(finding.criterion) === normalize(criterion))
-      : unmatched.findIndex((finding) => finding.criterion_id === criterion.id);
-    return index === -1 ? null : unmatched.splice(index, 1)[0] ?? null;
-  };
-  const briefChecks: CriterionCheck[] = (briefCriteria ?? []).map((criterion, index) => {
-    const finding = takeFinding(criterion);
-    return {
-      kind: "brief", number: index + 1, criterion: planCriterionText(criterion), finding,
-      match: finding === null ? "unmatched" : typeof criterion === "string" ? "normalized_text" : "id",
-    };
-  });
-  const checks = [...briefChecks, ...unmatched.map((finding): CriterionCheck => ({ kind: "assessment_only", finding, match: "unmatched" }))];
+  const briefTasks = new Map((briefCriteria ?? []).map((criterion, index) => [criterion.id, { number: index + 1, text: criterion.text }]));
+  const named = new Set(findings.flatMap((finding) => finding.task_ids));
+  const findingChecks = findings.map((finding): CriterionCheck => ({ kind: "finding", finding,
+    tasks: finding.task_ids.filter((id) => briefCriteria === null || briefTasks.has(id)).map((id) => ({ id, number: briefTasks.get(id)?.number ?? null, text: briefTasks.get(id)?.text ?? null })),
+    unresolved_task_ids: briefCriteria === null ? [] : finding.task_ids.filter((id) => !briefTasks.has(id)) }));
+  const unassessed = (briefCriteria ?? []).flatMap((criterion, index): CriterionCheck[] => named.has(criterion.id) ? [] : [{ kind: "unassessed", number: index + 1, criterion }]);
+  const checks = [...findingChecks, ...unassessed];
   const statuses = checks.map(selectCheckStatus);
   return {
     needs_attention: ATTENTION_ORDER.flatMap((status) => checks.filter((check) => selectCheckStatus(check) === status)),

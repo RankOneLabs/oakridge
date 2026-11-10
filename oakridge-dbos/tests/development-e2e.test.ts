@@ -139,7 +139,7 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
           acceptance_criteria: ["it works"], risks: [], cohorts: COHORTS.map((cohort) => ({ ...cohort, repository_key: "app",
             title: `Cohort ${cohort.id}`, scope: "part", description: null, files_in_scope: [],
             decisions: [{ id: "choice", text: "Use the simple implementation." }],
-            acceptance_criteria: [{ id: "works", text: "it works", task_ids: ["task-a"], decision_ids: ["choice"] }] })) });
+            acceptance_criteria: [{ id: "task-a", text: "it works", decision_ids: ["choice"] }] })) });
         break;
       case "writer":
         if (!turn.task.includes(APPROVED_SPEC)) throw new Error("brief writer did not receive the approved specification");
@@ -147,7 +147,7 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
           goal: "Build it.", files_in_scope: [],
           decisions_made: [{ id: "choice", decision: "Use the simple implementation.", rationale: "It meets the task." }],
           approaches_rejected: [{ id: "alternative", approach: "Use a complex implementation.", reason: "Unneeded complexity.", decision_ids: ["choice"] }],
-          acceptance_criteria: [{ id: "works", text: "it works", task_ids: ["task-a"], decision_ids: ["choice"] }], next_action: "build" });
+          acceptance_criteria: [{ id: "task-a", text: "it works", decision_ids: ["choice"] }], next_action: "build" });
         break;
       case "builder": {
         timeline.set(`build:${member}`, Date.now());
@@ -158,12 +158,12 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
         break;
       }
       case "assessor":
-        await publish("assessment", { head_sha: "abc123", verdict: "pass", findings: [{ criterion_id: "works", criterion: "it works", status: "met",
-          evidence: [{ kind: "test", ref: "development-e2e" }], description: null }],
+        await publish("assessment", { head_sha: "abc123", verdict: "pass", findings: [{ task_ids: ["task-a"], status: "met",
+          evidence: [{ kind: "test", ref: "development-e2e" }], description: "it works" }],
           test_evidence: null, recommended_next_actions: [] }, turn.subject());
         break;
       case "integrator":
-        await publish("assessment", { head_sha: "abc123", verdict: "pass", findings: [{ criterion_id: null, criterion: null, status: "met",
+        await publish("assessment", { head_sha: "abc123", verdict: "pass", findings: [{ task_ids: [], status: "met",
           evidence: [{ kind: "test", ref: "integration suite", detail: "Both cohort changes pass together on the integration branch." }],
           description: "Cross-cohort integration" }],
           test_evidence: { passed: 2, failed: 0, output: null, summary: "Integration suite", cargo_test_output: null },
@@ -375,7 +375,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }],
     b_built_after_a_merged: true,
     schemas: { ...BODY_SCHEMAS, integration_assessment: "assessment_body" },
-    integration_assessment: { head_sha: "abc123", verdict: "pass", findings: [{ criterion_id: null, criterion: null, status: "met",
+    integration_assessment: { head_sha: "abc123", verdict: "pass", findings: [{ task_ids: [], status: "met",
       evidence: [{ kind: "test", ref: "integration suite", detail: "Both cohort changes pass together on the integration branch." }],
       description: "Cross-cohort integration" }],
     test_evidence: { passed: 2, failed: 0, output: null, summary: "Integration suite", cargo_test_output: null },

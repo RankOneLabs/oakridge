@@ -1,96 +1,130 @@
-# Live verification records
+# Live verification
 
-The prepared `pr.json` and `build_result.json` are artifact bodies awaiting
-republication. The original task secret was refused with HTTP 401 after its
-builder attempt had already succeeded. No PR artifact revision was recorded,
-so the build result was not sent out of order. A current task credential is
-required; these files contain no credentials.
-
-The verified source run is `run-5ca31bc6c2414610`; `latest.json` locates its
-committed capture, original authority rows and HTTP readback report. Real
-TypeSafe execution `9bdc9b8d-9c7b-4065-b663-7b35a56adae6` answered
-`traceable` (confidence 0.88): probabilities 0.92 traceable, 0.04 unsupported,
-0.04 unclear_insufficient_evidence. The report retains the question, evidence,
-evaluator, execution, raw answer and provider attempt metadata obtained from
-authenticated HTTP response bodies. The provider returned no request ID;
-the stored attempt records that absence as null, alongside its actual local
-job ID, attempt, completed status and admitted cost estimate.
-
-`gated-review.json` records the actual role tool lists and the live server's
-HTTP 200 response to a deliberately invalid bearer. Role credentials cannot
-be issued by the checked-out server: it scopes sessions by endpoint path and
-has no bearer validator or issuer. This is failed authentication evidence,
-not a passing credential check. The gated smoke test keeps requiring issued
-`GATED_REVIEW_BUILDER_TOKEN` and `GATED_REVIEW_ASSESSOR_TOKEN` and refuses to
-substitute invented credentials.
-
-Launch an isolated source run with the installed Codex ACP agent's ordinary
-authentication and `OAKRIDGE_TEST_DATABASE_URL`:
+One program, `proof.ts`, holds every live proof. It runs on the stack that
+`scripts/oakridge-shadow` starts and reuses that shadow's resolved state across
+scenarios and restarts. There is no second launcher, database setup or capability
+set: extend these scenarios rather than adding another entrypoint. Real provider
+requests happen only here, never in an offline test command.
 
 ```sh
-bun oakridge-dbos/scripts/live-source-run.ts --input input.json \
-  --output observation/verification --through brief
+bun observation/verification/proof.ts runtime
+bun observation/verification/proof.ts live
+bun observation/verification/proof.ts source-run --input input.json [--through analysis|plan|brief|assessment]
+bun observation/verification/proof.ts registration --input observation/verification/inputs/registration-audit.json
+bun observation/verification/proof.ts grading --input observation/verification/inputs/grading-audit.json
+bun observation/verification/proof.ts relations --input observation/verification/inputs/relations-audit.json --shared-input observation/verification/inputs/relations-shared-audit.json
+bun observation/verification/proof.ts workspace --input observation/verification/inputs/grading-audit.json
 ```
 
-`input.json` has the committed development workflow's input shape. Its
-repository must have an existing remote build base. Preparation and per-agent
-base refreshes use gated-review's `git.fetch`; no source-run helper runs a
-remote git shell command. Agents run through the production ACP service and
-session handlers, in separate local worktrees. Planning reviews are accepted
-only within this fresh run. `--through assessment` also accepts brief reviews
-and permits the input's actual build, stopping before assessment approval or
-integration. The selected run is canceled after its target artifact arrives.
+Configure the shadow with the usual `OAKRIDGE_SHADOW_*` variables. Set
+`OAKRIDGE_SHADOW_PROVIDER_ENV_FILE` when running from a worktree, which has no
+`observation/.env` of its own. The program takes its paths and ports from
+`scripts/oakridge-shadow --print-state`, and reads token files from that state
+directory only.
 
-Each new directory retains `run.json`, the exact ordered production
-`SourceEventDelivery[]` in `capture.json`, `inspect.json`, the selected run's
-actual `authority-rows.json`, and a `complete.json` marker. Both fresh databases
-remain available; their names are recorded, without connection secrets. The
-isolated ACP ledger and worktrees are retained locally under ignored `agents/`.
-An interrupted or failed run retains its partial capture and latest inspect
-response without claiming completion. `/tmp` is refused as an output root.
+Each proof writes `reports/<proof_id>/report.json`, and exits zero only if the
+requested scenario passed. Reports, captured run data, screenshots and launcher
+logs are local validation output and must not be committed. The report directory
+and generated endpoint result are ignored by Git.
 
-With `TYPESAFE_API_KEY` and `OAKRIDGE_TEST_DATABASE_URL` in the environment:
+| Scenario | What it proves | Stack |
+| --- | --- | --- |
+| `runtime` | Isolation and supervision on the real services: shadow-owned role, database, ports and tokens; kbbl reporting observation down after it is killed; DBOS serving and a real run launching and canceling meanwhile; the run not reading as captured meanwhile; a restart reusing the same state; ordered delivery catching up to the authority and covering that run. | Starts and stops its own, and refuses a running one. |
+| `live` | The prerequisites of a real-provider proof: a reachable service, registered graders and both kbbl capabilities. | Attaches to a running stack, or starts one. |
+| `registration` | Startup registration, capture pins and per-question evidence across a `graders.json` edit and restart, with a required lookup waiting on a real capture. Clones the input's primary repository to a disposable path under the system temp directory, with the same origin, and launches both runs from it. Starts on the committed selection; launches the first run and stops observation once it has launched, so the run reaches its assessment unobserved; withholds the clone (renames it away from its launch path) and restarts, so observation captures the whole run, every captured item carries exactly the questions its kind applies, pinned to the selection in force, and every file-citing question waits with `repository_unavailable` while the rest are ready; edits every grader's instructions in `graders.json` and restarts, checking the edit registered new definitions and kept the old ones, and that the first run kept its pins, its frozen evidence and its waits; supplies the clone and restarts, checking every waiting question became ready on its capture-time pins and that each of its file references matches what the proof reads itself from the clone: the assessment's `head_sha`, the cited path and line range, and the content there; launches a second run with observation up, which must take the edited selection, reading it every ten seconds to check evidence frozen earlier stays ready and unchanged through every later revision and task link; and checks no execution, provider attempt or answer exists throughout. A capture where nothing waits, or a wait that never ends, fails. Restores `graders.json` and the clone whatever happens. Records `registrations`, `pins` (provenance at every checkpoint) and `frozen_evidence` (each set's full content when first seen ready). Spends the real agent turns of two runs through assessment. | Starts, restarts and stops its own, and refuses a running one. |
+| `grading` | Automatic grading with real provider requests, continuing `registration` with executions. Starts on the committed selection. An enabled run driven only to its analysis is answered by the configured provider before it has any task, each answer using the evaluator pinned at capture, with the run's request count matching its attempts and its authority events unchanged by grading. A run with grading off gets human-ready evidence, reads `grading_off` and sends nothing. An enabled run captured through its assessment with observation down and its launch repository withheld answers its ready questions while file-citing ones wait unadmitted. An edit of `graders.json` (new instructions, and `estimated_cost_per_call` 3 so one request fits the $5 run allowance) and a restart leave those waits unadmitted and send nothing again; supplying the repository and restarting answers them with the evaluators pinned at capture. A later enabled run captured under the edit is measured with the new evaluators: one request is answered and what cannot fit is `budget_deferred` with no request. A restart then admits, sends and regrades nothing for any run. Last, the provider settings point at an address that never answers, observation is killed while a claim's request is in flight, and the stack restarts with a key the provider refuses: the expired claim is reclaimed with its request kept as a retry, every refusal is a recorded request, retries are exhausted and no grade exists, with authority events unchanged. Then, under an edit with `estimated_cost_per_call` 2 (two requests fit the $5 allowance), an enabled run's claim is left in flight against the unanswering address and observation is killed; the proof acts as a second observation worker on the shadow's own database (its provisioned role, the shadow's tenant, the default controls, the real provider settings, the same store and worker code). It fires more simultaneous claims than there is due work: exactly what fits beside the killed claim's charged request is claimed and the rest are `budget_deferred`, with each reservation counted once. Once every lease has expired another worker reclaims the contested execution as its next claim attempt; the earlier owner's claim, the reclaiming owner's older claim attempt and the killed service's claim are each refused by request marking, completion and failure alike; and the reclaiming worker sends a real request and completes it with an observation, which the restarted service serves without sending anything more, with authority events unchanged. Records `measurements` (each item's served status with execution, attempt and observation ids), `spend` (each run's committed choice, exact captured config, spend, request count and statuses), `pins` (every question and evaluator pin) at every checkpoint, `frozen_evidence` (each evidence set's references as first served ready, which every later checkpoint must serve unchanged), `launch_configs` (each run's captured config beside the authority's committed one, which must match) and `second_worker` (every claim call, stale settlement and spend readback). A checkpoint whose measurements lack pins or whose ready questions lack frozen references fails the proof. Restores `graders.json`, the repository and the provider settings whatever happens. Spends real agent turns of five analysis runs and one run through assessment. | Starts, restarts and stops its own, and refuses a running one. |
+| `relations` | Explicit late links and composites on a real run with real provider answers: a finding answered before any task, a refused mapping before approval, an approval that links nothing, an explicit mapping whose composite reads the original answer with identity, pins, evidence, executions, attempts and request counts unchanged beside an unlinked control, and a second mapping journaled with observation down and delivered once across a whole-stack restart. Then a second real run from `--shared-input`: its tasks approval carries explicit links, its plan and both briefs are sent back and really revised, and two cohorts sharing one task reach their assessments, read through the composite, lineage and every page window, with integration pending. It stops before any operator acceptance of an assessment or merge confirmation. Last, the shared-task matrix as a supplement, in a tenant of its own on synthetic revisions labelled as such: integration final, corrections and disagreement. | Starts its own stack; refuses one already up. |
+| `workspace` | The operator flow, on real services and the real PWA. A run with grading off takes a human answer and sends nothing. An enabled run reaches its assessment with observation down, with one plan review sent back and the rest accepted, none of which creates a grade. With its repository withheld, a not-ready question refuses its answer with its reason, in the API and the browser, while a ready question takes one. With it supplied, the configured provider answers. On one real assessment finding, addressed only by revision and path: an authenticated human answer on the machine's frozen evidence, a refused invalid choice, a duplicate id carrying spoofed reviewer and evaluator fields that changes nothing, and a linked correction, with counts of answers, executions, provider requests and authority events read at each step. Read and grade capabilities are shown separate, and the real forwarding code under a control token refuses before forwarding; the shadow's own kbbl runs in its loopback control policy. In a real browser: hidden views omit answers and composites from the text and DOM, reveal works first, the machine and human answers read back with their identities, an answer and correction are saved in the page only on acknowledgment, each viewer opens the same occurrence, and a composite count opens raw answers. Records `workspace` (ids, submissions, counts, composites, browser steps and screenshot paths). Also scans every retained definition for a discarded review field. | Starts, restarts and stops its own, and refuses a running one. |
+| `source-run` | Launches the committed development workflow to its target artifact, cancels it, and requires the ordered feed to cover the run. Retains `run.json`, `inspect.json` and `authority-rows.json` under `source-run/`. Spends real agent turns and needs the installed Codex agent's authentication. | Attaches, or starts one. |
+
+`live` fails on a missing key, invalid grader or unavailable database, with the
+launcher's reason in its checks, even though DBOS and kbbl stay up. A healthy
+service reports the graders it registered from `observation/graders.json`.
+
+`registration` needs an input whose sessions change nothing outside the shadow.
+`inputs/registration-audit.json` is the one used: an audit of this branch's pull request
+whose spec forbids edits, commits, pushes and pull requests, and whose `build_base` is the
+pull request's existing base, so `prepare` finds it on the forge and pushes nothing; the builder
+checks out the pull request's head locally to inspect it. Analysis findings are captured and frozen before the run has tasks, so
+the second run's check on evidence frozen earlier is the late-link case: their Relevance evidence
+must stay unchanged through every later task, plan, brief and assessment link. On a real capture the
+ordered feed always delivers a build before its assessment, so Correctness cannot wait on its
+subject there; that same-finding case is proven through the real service in
+`observation/tests/grading-startup.test.ts`, and the proof reports how many findings it saw in that
+state.
+
+`source-run` checks that observation is reachable before it launches, so a service
+already down fails without spending a turn. After canceling, it waits up to two
+minutes for `run-capture.ts` to find every authority event of the run recorded by the
+service, none of them `unmapped`, the service cursor at or past the run's last event,
+and the target revision served back through the read capability. A cursor alone is
+not enough, and neither is a run that reached its target on a healthy DBOS and kbbl.
+A failure keeps `run_capture` in the report: the undelivered event ids, unmapped
+reasons, failed reads, observation health, the launcher's status and the publisher's
+latest refusals. Those refusals appear only when this proof started the stack, since
+only then does it hold the launcher's log.
+
+## Cumulative report
+
+`bun observation/verification/cumulative.ts --workspace <proof_id> --grading <proof_id> --relations <proof_id>`
+ties the live matrix to the local proof reports that hold it, beside the review-endpoint result, a scan of every
+retained stored definition (workflow worker contracts field by field; workflows, operation registries and
+`launchable.json` whole for any `gated_review` key), and the target-schema, import-boundary and task-contract
+results, both the TypeScript contract test and the Rust evaluator's `task_contracts` tests. It starts no stack
+and sends no provider request. It writes `reports/cumulative-<time>/report.json`, a `CumulativeReport`, and passes
+only if every named report passed. Run the review-endpoint check below first; the cumulative command reads its local
+`gated-review-tools.json` output. It records the head it was made on and, for each proof, the head it ran on and
+the product files changed since, so a proof run on earlier code reads as such. Its `pending` holds every pending
+scenario the named reports list. Offline results sit beside the live ones and stand in for none of them.
+
+## Contracts
+
+`proof-contract.ts` holds the named types: `LauncherState` is what `--print-state`
+emits, `ObservationStatus` is `observation-status.json`, and `ProofReport` is the
+report. `shadow-session.ts` holds all IO behind `ProofIo`, so scenario logic is
+tested offline in `observation/tests/verification-proof.test.ts`.
+
+A report records the source revision, the resolved launcher state, each check, and
+`ScenarioEvidence`: run and definition ids, the authority head and service cursor,
+the run's event-by-event capture, authority event counts, source revisions, item paths, pinned definitions,
+execution, provider-attempt and observation ids, the provider request count and
+PWA readback. Every value is read back from a running service. A value not yet
+observed stays empty or null: a provider that returns no request id records null,
+and `provider_request_count` is null until a scenario counts requests. Reports
+carry no token, key or connection secret; `runProof` scans for those values,
+removes any it finds and fails the report.
+
+## Verification boundaries
+
+`pending` in a report lists what that invocation does not prove. A passing report
+must not be read as approval of source correctness or a merge decision.
+
+The automated `relations` scenario stops before an operator's assessment
+acceptance and merge confirmation. Final integration can be checked on a real run
+after the operator supplies those decisions; the verification program does not
+make them itself.
+
+The same-finding Correctness-only wait is covered offline. Through the ordered
+live feed, an assessment's named build is captured before the assessment, while
+assessments with no named subject do not wait for one. A required repository
+lookup can still make a question wait independently of other questions.
+
+## Review endpoint
+
+The ignored local `gated-review-tools.json` is the endpoint proof: the complete `tools/list` result
+from the exact `OAKRIDGE_GATED_REVIEW_URL` every agent session receives. The server
+has no client authentication, so the check sends no credential:
 
 ```sh
-bun observation/scripts/jev-live-walkthrough.ts \
-  --capture observation/verification/<directory>/capture.json \
-  --question plan.criterion_traceability --estimated-cost 0.01 \
-  --report observation/verification/<directory>/grade.json
+OAKRIDGE_GATED_REVIEW_URL=<url> bun observation/verification/gated-review-tools.ts \
+  --run-id <run> --unit-id <unit>
 ```
 
-This creates another empty database, ingests the exact capture through the
-authenticated API, derives evidence at queue admission and calls the real
-direct adapter. The report contains the execution ID, raw answer,
-probabilities and records read from authenticated HTTP response bodies.
-Question versions use `GET /v1/questions/:id/versions/:version`; evidence
-sets use `GET /v1/evidence-sets/:id`. These routes require read authority and
-scope every lookup to its credential's producer and namespace.
-
-A later run can start after an existing namespace cursor. Its recorded
-starting cursor seeds only the new verification namespace; the original
-deliveries remain unchanged, and gaps or backwards positions are refused.
-Subject selection pages through the eligibility API for the captured revision,
-skipping uncited or unlinked criteria before any provider call. Grade readback
-also follows every result page.
-
-`--resume-database observation_jev_live_<16 hex digits>` resumes a retained
-verification database after a readback interruption. Every captured revision
-is compared to its stored HTTP response before selecting the exact provider
-evaluation identity. Re-enqueueing the same terminal job is idempotent and
-does not send a second provider request. Other human grades on the criterion
-remain visible. Execution timestamps are compared as UTC instants, retaining
-all other field comparisons.
-
-Regenerate the run slice only from a completed grade report for the exact
-capture, with an assessment included (`--through assessment`):
-
-```sh
-bun observation/scripts/regenerate-live-fixtures.ts \
-  --capture observation/verification/<directory>/capture.json \
-  --rows observation/verification/<directory>/authority-rows.json \
-  --grade observation/verification/<directory>/grade.json
-```
-
-The command replaces published bodies without editing them, retains the
-original v2 provenance, re-derives the nine hand-written failure-case
-references and records the source run and execution in `PROVENANCE.md`.
+It negotiates a real MCP session, follows every continuation page and calls no
+tool. The report retains the server's initialize and `tools/list` results, the
+advertised names and its assertions: `merge_pr` and `mark_merge_ready` are absent,
+the agent catalogue is present, and `selectMcpServers` supplies the URL unchanged
+with no header. Status is `passed`, `failed` for a complete list that breaks an
+assertion, or `incomplete` for a missing or unreachable endpoint, protocol failure
+or unfinished list. Only `passed` exits zero. The check needs no database, launcher
+or provider.

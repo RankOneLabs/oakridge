@@ -1,4 +1,7 @@
-import type { OperatorArtifactDetail, OperatorRunInboxBatch, OperatorRunView, OperatorUnitView } from "../operator-contracts";
+import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
+import type { OperatorRunInboxBatch } from "../operator-contracts/projections/inbox";
+import type { OperatorRunView } from "../operator-contracts/projections/run-view";
+import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { fail, ok, type AdapterResult } from "./core";
 
 const record = (value: unknown): value is { readonly [key: string]: unknown } =>

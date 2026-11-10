@@ -6,7 +6,8 @@ import integrationMerge from "./__fixtures__/v2-integration-merge.json";
 import definitionFixture from "./__fixtures__/v2-definition-detail.json";
 import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, putArtifactRevisionBody, refreshReviewInboxRun, resumeGate, retryRunUnit } from "./client";
 import { compositeId } from "./adapters/core";
-import type { OperatorDefinitionDetail, OperatorUnitView } from "./operator-contracts";
+import type { OperatorDefinitionDetail } from "./operator-contracts/projections/definition-view";
+import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
 import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./lib/agent-session-targets";
 import type { CreateRunRequest, RepositoryKey } from "./run-types";
 
@@ -35,7 +36,8 @@ afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 const createRunRequest = (): CreateRunRequest => ({
   workflow_def_id: sample.run.definition_id, project_id: null,
   context: { brief_notes: "Build it", repositories: [{ key: "api" as RepositoryKey, path: "/repo", integration_branch: "main" }],
-    worktree_path: "/repo", base_branch: "epic/x", oakridge_url: "http://oakridge", session_settings: sessionSettings },
+    worktree_path: "/repo", base_branch: "epic/x", oakridge_url: "http://oakridge", session_settings: sessionSettings,
+    grading_enabled: false },
   epic_profile: { title: "Build it", slug: "build-it", final_merge_policy: "guarded",
     repositories: [{ repository_key: "api" as RepositoryKey, repository_path: "/repo", integration_branch: "main",
       forge_repository: { provider: "github", owner: "acme", name: "api" } }] },
@@ -121,6 +123,16 @@ describe("v2 Oakridge client", () => {
       { harness: "claude-code", model: "sonnet", effort: null },
       { harness: "codex", model: "gpt-6-sol", effort: null },
     ]);
+  });
+
+  it.each([true, false])("launches with the run's automatic grading choice %s in its config", async (grading_enabled) => {
+    const fetch = calls((path) => path.includes("/api/definitions/") ? definition
+      : path.endsWith("/api/runs") ? { kind: "committed", run_id: runId, event_id: "event-grading" }
+      : path.includes("/units") ? sample.units : sample.run);
+    const request = createRunRequest();
+    await createRun({ ...request, context: { ...request.context, grading_enabled } }, `launch-grading-${grading_enabled}`);
+    const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
+    expect(JSON.parse(String(launch?.[1]?.body)).config.grading_enabled).toBe(grading_enabled);
   });
 
   it("launches every selected repository with the first as primary", async () => {

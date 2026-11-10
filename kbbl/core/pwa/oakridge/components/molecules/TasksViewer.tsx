@@ -6,6 +6,8 @@ import { parseTasks, type Task } from "../../lib/tasks";
 import { ArtifactSection } from "./ArtifactSection";
 import { EditableBriefText } from "./EditableBriefText";
 import { ExpandableText } from "./ExpandableText";
+import { ArtifactItemGrade } from "./ArtifactItemGrade";
+import { selectFindingSelections } from "../../lib/grading";
 
 type Editor = NonNullable<ViewerProps["edit"]> | null;
 
@@ -50,7 +52,7 @@ function RequirementLinks({ task, anchor, editor }: { task: Task; anchor: string
   );
 }
 
-export function TasksViewer({ body, edit }: ViewerProps) {
+export function TasksViewer({ body, edit, source, onOpenItem, itemGrading }: ViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
   const parsed = parseTasks(body);
   if (!parsed.ok) {
@@ -61,7 +63,7 @@ export function TasksViewer({ body, edit }: ViewerProps) {
   return (
     <article className="flex flex-col gap-5" data-testid="or-tasks-viewer">
       <header className="flex items-center justify-between gap-2">
-        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Tasks</h2>
+        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Spec tasks</h2>
         {edit?.enabled && <div className="flex items-center gap-2">
           {editor?.isPending && <span className="text-xs text-[var(--text-muted)]">Saving…</span>}
           <Button variant={isEditing ? "primary" : "secondary"} size="xsmall" className="text-xs!" aria-pressed={isEditing} onClick={() => setIsEditing(!isEditing)}>
@@ -69,12 +71,16 @@ export function TasksViewer({ body, edit }: ViewerProps) {
           </Button>
         </div>}
       </header>
+      {itemGrading?.renderShowAll(selectFindingSelections(source, parsed.value.tasks.map((_, index) => `/tasks/${index}`)))}
       <ArtifactSection title={`Tasks (${parsed.value.tasks.length})`} testId="or-tasks-list">
         {parsed.value.tasks.length === 0
           ? <p className="text-sm text-[var(--text-muted)]">No tasks listed.</p>
           : <ol className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
             {parsed.value.tasks.map((task, index) => <li key={`${index}-${task.id}`} className="flex flex-col gap-2 py-3">
-              <TaskText anchor={`/tasks/${index}/id`} value={task.id} editor={editor} />
+              <div className="flex items-center justify-between gap-2">
+                <TaskText anchor={`/tasks/${index}/id`} value={task.id} editor={editor} />
+                <ArtifactItemGrade source={source} itemPath={`/tasks/${index}`} itemGrading={itemGrading} onOpenItem={onOpenItem} />
+              </div>
               <TaskText anchor={`/tasks/${index}/description`} value={task.description} editor={editor} isProse />
               <RequirementLinks task={task} anchor={`/tasks/${index}`} editor={editor} />
             </li>)}

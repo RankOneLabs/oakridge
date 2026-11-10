@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import YAML from "yaml";
@@ -7,7 +7,7 @@ import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry"
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type DefinitionOrder, type LaunchableCatalog, type PromptReferences } from "./definition-objects";
-import { isPromptPath } from "./definition-store";
+import { isPromptPath, selectDiscardedFields } from "./definition-store";
 
 const root = resolve(import.meta.dir, "../..");
 const isCheck = process.argv.includes("--check");
@@ -16,6 +16,7 @@ const promptRoot = resolve(root, "workflow-config/prompts");
 
 interface GeneratedFile { readonly path: string; readonly bytes: Buffer }
 interface AuthoredPrompt { readonly path: string; readonly id: PromptId; readonly bytes: Buffer }
+interface DiscardedDefinition { readonly path: string; readonly fields: readonly string[] }
 function required<Value, Failure>(result: Result<Value, Failure>): Value {
   if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.value;
@@ -38,6 +39,20 @@ function readPrompt(path: string): AuthoredPrompt {
     throw new Error(`${path}: invalid UTF-8: ${error}`);
   }
   return { path: relative(promptRoot, path).split(sep).join("/"), id: bytesIdentity(bytes), bytes };
+}
+
+/** Scans every retained workflow object, not only the ones this run generates. */
+function selectDiscardedDefinitions(): DiscardedDefinition[] {
+  return filesUnder(resolve(storeRoot, "workflows")).flatMap((path) => {
+    let definition: unknown;
+    try {
+      definition = JSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+      throw new Error(`${path} cannot be scanned for discarded fields: ${error}`);
+    }
+    const fields = selectDiscardedFields(definition);
+    return fields.length > 0 ? [{ path, fields }] : [];
+  });
 }
 
 const prompts = filesUnder(promptRoot).map(readPrompt);
@@ -103,4 +118,11 @@ for (const file of outputs.values()) {
   }
 }
 // Object identities outlive the launchable catalog: existing runs still resolve
-// their pinned definitions, prompts and operations after authoring changes.
+// their pinned definitions, prompts and operations after authoring changes. The
+// exception is a definition carrying a discarded field: hash-valid bytes under
+// their own filename do not earn retention, so it is not kept for old runs.
+const discarded = selectDiscardedDefinitions();
+if (isCheck && discarded.length > 0) {
+  throw new Error(discarded.map(({ path, fields }) => `${path} retains discarded ${fields.join(", ")}; run bun workflow-config/src/generate.ts`).join("\n"));
+}
+for (const { path } of discarded) rmSync(path);

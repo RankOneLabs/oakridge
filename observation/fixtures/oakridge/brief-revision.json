@@ -7,6 +7,6 @@
   "files_in_scope": [],
   "decisions_made": [{ "id": "decision-a", "decision": "Choose A", "rationale": "Fits" }],
   "approaches_rejected": [{ "id": "rejected-a", "approach": "Choose B", "reason": "Worse", "decision_ids": ["decision-a"] }],
-  "acceptance_criteria": [{ "id": "crit-a", "text": "A works reliably", "task_ids": [], "decision_ids": [] }],
+  "acceptance_criteria": [{ "id": "T7", "text": "Alpha's part of the case works reliably", "decision_ids": ["decision-a"] }],
   "next_action": "Implement"
 }

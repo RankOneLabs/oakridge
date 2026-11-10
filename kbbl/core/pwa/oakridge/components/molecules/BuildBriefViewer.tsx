@@ -2,11 +2,13 @@ import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ViewerProps } from "../../artifactRegistry";
-import { isBuildBrief, isBuildBriefIdLinked } from "../../lib/build-brief";
-import { planCriterionText } from "../../lib/plan";
+import { isBuildBrief } from "../../lib/build-brief";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { EditableBriefText } from "./EditableBriefText";
 import { ExpandableText } from "./ExpandableText";
+import { TaskIdLink } from "./TaskIdLink";
+import { ArtifactItemGrade } from "./ArtifactItemGrade";
+import { selectFindingSelections } from "../../lib/grading";
 
 type Editor = NonNullable<ViewerProps["edit"]> | null;
 
@@ -51,7 +53,7 @@ function ReasonedItem({ anchor, headline, reason, editor, id, decisionIds }: Rea
   );
 }
 
-export function BuildBriefViewer({ body, edit }: ViewerProps) {
+export function BuildBriefViewer({ body, edit, onOpenTask, source, onOpenItem, itemGrading }: ViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
 
   if (!isBuildBrief(body)) {
@@ -65,7 +67,6 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
         <div className="flex flex-wrap items-center gap-2">
           <code className="or-code">{body.cohort_id}</code>
           <Chip tone="neutral">{body.repository_key}</Chip>
-          {!isBuildBriefIdLinked(body) && <Chip tone="muted">Not id-linked</Chip>}
           {body.depends_on.length > 0 && <span className={artifactLabelClass}>After</span>}
           {body.depends_on.map((id) => <Chip key={id} tone="muted" className="font-mono">{id}</Chip>)}
           {edit?.enabled && (
@@ -79,6 +80,7 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
         </div>
         <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{body.title}</h2>
       </header>
+      {itemGrading?.renderShowAll(selectFindingSelections(source, body.acceptance_criteria.map((_, index) => `/acceptance_criteria/${index}`)))}
 
       <ArtifactSection title="Goal" testId="or-brief-goal">
         <BriefText anchor="/goal" value={body.goal} editor={editor} isProse lineCount={6} className="text-sm leading-relaxed text-[var(--text-primary)]" />
@@ -130,30 +132,32 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
                 reason={{ key: "reason", label: "Why not", value: item.reason }}
                 editor={editor}
                 id={item.id}
-                decisionIds={"decision_ids" in item ? item.decision_ids : undefined}
+                decisionIds={item.decision_ids}
               />
             ))}
           </ul>
         ) : <EmptyNote>No rejected approaches.</EmptyNote>}
       </ArtifactSection>
 
-      <ArtifactSection title={`Acceptance criteria (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
+      <ArtifactSection title={`Contributions to spec tasks (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
         {body.acceptance_criteria.length > 0 ? (
           <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
             {body.acceptance_criteria.map((criterion, index) => (
               <li key={index}>
-                {typeof criterion !== "string" && <code className="or-code mr-2">{criterion.id}</code>}
-                <BriefText anchor={`/acceptance_criteria/${index}${typeof criterion === "string" ? "" : "/text"}`} value={planCriterionText(criterion)} editor={editor} className="text-sm text-[var(--text-secondary)]" />
-                {typeof criterion !== "string" && (criterion.task_ids.length > 0 || criterion.decision_ids.length > 0) && (
+                <div className="flex items-start justify-between gap-2">
+                  <TaskIdLink task_id={criterion.id} text={criterion.text} onOpenTask={onOpenTask} />
+                  <ArtifactItemGrade source={source} itemPath={`/acceptance_criteria/${index}`} itemGrading={itemGrading} onOpenItem={onOpenItem} />
+                </div>
+                <BriefText anchor={`/acceptance_criteria/${index}/text`} value={criterion.text} editor={editor} className="text-sm text-[var(--text-secondary)]" />
+                {criterion.decision_ids.length > 0 && (
                   <span className="block text-xs text-[var(--text-muted)]">
-                    {criterion.task_ids.length > 0 && <>Tasks: {criterion.task_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
-                    {criterion.decision_ids.length > 0 && <>Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
+                    Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}
                   </span>
                 )}
               </li>
             ))}
           </ol>
-        ) : <EmptyNote>No acceptance criteria listed.</EmptyNote>}
+        ) : <EmptyNote>No tasks listed.</EmptyNote>}
       </ArtifactSection>
     </article>
   );

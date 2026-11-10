@@ -23,7 +23,7 @@ export interface CaptureEnvelope {
   readonly body: JsonValue;
   readonly body_digest: CanonicalDigest;
 }
-export interface CaptureDelivery { readonly request_key: string; readonly envelope: CaptureEnvelope; readonly local_revision_id: string }
+export interface CaptureDelivery { readonly envelope: CaptureEnvelope; readonly local_revision_id: string }
 export interface CaptureError { readonly operation: "decode_capture"; readonly entity_id: string; readonly detail: string }
 
 function object(value: unknown): value is { readonly [key: string]: unknown } {
@@ -43,10 +43,8 @@ function revisionReference(value: unknown, prefix: string, field: string): Resul
 }
 
 /** Decode only fields from the accepted L0 envelope; canonical body hashing is the integrity check. */
-export function decodeCapture(input: unknown, request_key: string | null): Result<CaptureDelivery, CaptureError> {
+export function decodeCapture(input: unknown): Result<CaptureDelivery, CaptureError> {
   if (!object(input) || input.format !== "observation.artifact-revision/v2") return failure("envelope", "invalid capture format");
-  const key = request_key ?? input.request_key;
-  if (!nonempty(key)) return failure("request_key", "a non-empty request key is required");
   if (!object(input.source)) return failure("source", "source is required");
   const source = input.source;
   for (const field of ["producer", "namespace", "revision_id", "run_id", "unit_id", "artifact_kind", "artifact_schema_version", "definition_id"] as const)
@@ -67,5 +65,5 @@ export function decodeCapture(input: unknown, request_key: string | null): Resul
   if (input.body_digest !== digest.value) return failure("body_digest", "body_digest does not match the canonical body");
   const envelope: CaptureEnvelope = { ...(input as unknown as CaptureEnvelope),
     source: { ...(source as unknown as CaptureSource), predecessor_id: predecessor.value, subject_id: subject.value } };
-  return ok({ request_key: key, local_revision_id: revision_id.slice(prefix.length), envelope });
+  return ok({ local_revision_id: revision_id.slice(prefix.length), envelope });
 }

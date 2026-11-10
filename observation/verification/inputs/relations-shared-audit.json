@@ -1,0 +1,21 @@
+{
+  "title": "Shared task audit",
+  "spec": "Audit pull request https://github.com/RankOneLabs/oakridge/pull/793 (branch cohort/task-lineage-composites/ba9a7e) in repository oakridge. This is an isolated verification run of the committed development definition, not feature work: its only purpose is real analysis, plan, brief, build_result and assessment artifacts for observation to capture and grade. The analysis reports at least three separate findings about this spec, each a distinct observation. Produce exactly three tasks and exactly two cohorts, named alpha and beta, neither depending on the other. T1: a composite counts each finding once per task and keeps stages apart (observation/src/grading/composite.ts). T2: a declaration is journaled only after its exact tasks revision is approved (oakridge-dbos/src/storage/commit.ts). T3: a drilldown's nested lists page separately (observation/src/grading/composite.ts). Cohort alpha carries T1 and T2. Cohort beta carries T1 and T3. T1 is the same task in both cohorts, under the same id.\nThe operator authorizes this audit path: each builder publishes the existing PR #793 as its pr artifact instead of pushing or opening one. No brief may add a further operator choice or confirmation. Each builder must not edit files, create commits, push, open or update any pull request, merge, reset a database or deploy. Its worktree starts from epic/grade-pray, the base of pull request #793, so it first checks out the head of branch cohort/task-lineage-composites/ba9a7e locally (git checkout --detach origin/cohort/task-lineage-composites/ba9a7e) and inspects that commit, runs bun install if needed and then bun run --filter observation test once, and publishes build_result with the commit it inspected as head_sha and the actual test counts and output. A test that cannot run is a known issue, never a reason to invent results. It then publishes the existing pull request https://github.com/RankOneLabs/oakridge/pull/793 as the pr artifact, with branch cohort/task-lineage-composites/ba9a7e.\nEach assessor assesses that same commit without changing anything. Give at least one finding per task of its cohort, naming that task id. Every finding cites at least one file as path:start-end at that commit, for example observation/src/grading/composite.ts:20-40, and cites test output separately as test or output evidence. Report the builder's test run as test_evidence.\nKeep the spec, tasks, plan and briefs short; there are no ambiguous requirements to resolve.\n",
+  "primary_repository_key": "oakridge",
+  "final_merge_policy": "require_merge",
+  "repositories": [
+    {
+      "key": "oakridge",
+      "preparation": {
+        "repository_path": "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/oakridge/ab3dc833-046c-4111-970c-124a62a5c35e",
+        "expected_head": null
+      },
+      "forge": {
+        "owner": "RankOneLabs",
+        "name": "oakridge",
+        "build_base": "epic/grade-pray",
+        "final_base": "epic/grade-pray"
+      }
+    }
+  ]
+}

@@ -15,3 +15,5 @@ Review the assessment of this cohort's build. Accept it once you are satisfied w
 ## The assessment
 
 {{assessment}}
+
+Each finding's `task_ids` names the brief's tasks it addresses. A task may have several findings, a finding may address several tasks, and `task_ids: []` marks a finding about something else.

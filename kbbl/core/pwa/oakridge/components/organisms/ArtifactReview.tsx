@@ -14,6 +14,7 @@ import { settleEdit } from "../../lib/edit-outcome";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ArtifactRevision } from "../../artifact-types";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";
@@ -25,6 +26,8 @@ import { ArtifactReviewShell } from "./ArtifactReviewShell";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { selectStatusTone } from "../../lib/status-tone";
+import { ItemGradeAction } from "./ItemGradeAction";
+import { ShowAutomaticGrades } from "./ShowAutomaticGrades";
 
 /**
  * The review owns no navigation of its own.
@@ -39,9 +42,11 @@ import { selectStatusTone } from "../../lib/status-tone";
  */
 interface ArtifactReviewProps {
   artifactId: string;
+  onOpenItem?: (selection: ObservationItemAddress) => void;
+  onOpenTask?: (task_id: string) => void;
 }
 
-export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
+export function ArtifactReview({ artifactId, onOpenItem, onOpenTask }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -221,6 +226,12 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
                 onSubmitBody: (_previousBody, nextBody) => settleEdit(bodyEdit.mutateAsync(nextBody)),
               } : undefined}
               gate={artifactGate && revIdx === revisions.length - 1 ? artifactGate : undefined}
+              onOpenItem={onOpenItem}
+              onOpenTask={onOpenTask}
+              itemGrading={onOpenItem ? {
+                renderItemAction: (selection) => <ItemGradeAction runId={artifact.run_id} selection={selection} onOpenItem={onOpenItem} />,
+                renderShowAll: (selections) => <ShowAutomaticGrades selections={selections} />,
+              } : undefined}
             />
           ) : (
             <ArtifactJsonRevisionPanel revision={revision} descriptor={artifact.review} />

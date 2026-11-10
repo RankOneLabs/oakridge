@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { updateProject } from "./client";
+import { updateProject } from "./client-projects";
 import type { ProjectId } from "./project-types";
 
 const projectId = "00000000-0000-4000-8000-000000000001" as ProjectId;

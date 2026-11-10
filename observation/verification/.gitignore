@@ -1,2 +1,2 @@
-*/agents/
 *.pending
+reports/*/launcher.log

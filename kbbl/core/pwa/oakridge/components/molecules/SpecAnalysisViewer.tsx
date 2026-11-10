@@ -1,19 +1,22 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ViewerProps } from "../../artifactRegistry";
 import { isSpecAnalysis, selectSpecAnalysisView, selectUpdateFindings, type SpecAnalysis, type SpecBlocker, type SpecAnalysisTally, type SpecUpdate } from "../../lib/spec-analysis";
 import { selectStatusTone, type StatusToneSource } from "../../lib/status-tone";
+import { selectFindingSelections, selectItemSelection } from "../../lib/grading";
+import { GradeItemButton } from "./GradeItemButton";
 import { ArtifactSection } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
 import { RiskCard } from "./RiskCard";
 
-function ItemRow({ status, id, description }: { status: StatusToneSource; id: string; description: string }) {
+function ItemRow({ status, id, description, action }: { status: StatusToneSource; id: string; description: string; action?: ReactNode }) {
   return (
     <li className="flex items-start gap-2 py-2">
       <Chip tone={selectStatusTone(status)} className="shrink-0">{status}</Chip>
       <code className="or-code shrink-0">{id}</code>
-      <ExpandableText text={description} className="text-sm text-[var(--text-secondary)]" />
+      <div className="min-w-0 flex-1"><ExpandableText text={description} className="text-sm text-[var(--text-secondary)]" /></div>
+      {action}
     </li>
   );
 }
@@ -45,7 +48,7 @@ function TallyRow({ tally }: { tally: SpecAnalysisTally }) {
   );
 }
 
-function BlockerCallout({ blockers }: { blockers: SpecBlocker[] }) {
+function BlockerCallout({ blockers, gradeAction }: { blockers: SpecBlocker[]; gradeAction: (item_path: string) => ReactNode }) {
   if (blockers.length === 0) {
     return <p className="text-sm text-[var(--success-fg)]" data-testid="or-spec-no-blockers">No blocking findings or blocked requirements.</p>;
   }
@@ -54,7 +57,7 @@ function BlockerCallout({ blockers }: { blockers: SpecBlocker[] }) {
       <h3 className="text-sm font-semibold text-[var(--danger-fg)]">Blockers ({blockers.length})</h3>
       <ul className="divide-y divide-[var(--danger-card-border)]">
         {blockers.map((blocker, index) => blocker.kind === "finding"
-          ? <ItemRow key={`${index}-${blocker.finding.id}`} status={blocker.finding.severity} id={blocker.finding.id} description={blocker.finding.description} />
+          ? <ItemRow key={`${index}-${blocker.finding.id}`} status={blocker.finding.severity} id={blocker.finding.id} description={blocker.finding.description} action={gradeAction(blocker.finding.item_path)} />
           : <ItemRow key={`${index}-${blocker.requirement.id}`} status={blocker.requirement.status} id={blocker.requirement.id} description={blocker.requirement.description} />)}
       </ul>
     </section>
@@ -75,11 +78,15 @@ function UpdateFindingLinks({ update, analysis }: { update: SpecUpdate; analysis
   </div>;
 }
 
-export function SpecAnalysisViewer({ body }: ViewerProps) {
+export function SpecAnalysisViewer({ body, source, onOpenItem, itemGrading }: ViewerProps) {
   if (!isSpecAnalysis(body)) {
     return <div className="or-error" role="alert">This spec analysis does not match the registered contract.</div>;
   }
   const view = selectSpecAnalysisView(body);
+  const gradeAction = (item_path: string) => {
+    const selection = selectItemSelection(source, item_path);
+    return selection && itemGrading ? itemGrading.renderItemAction(selection) : <GradeItemButton selection={selection} onOpenItem={onOpenItem} />;
+  };
 
   return (
     <article className="flex flex-col gap-5" data-testid="or-spec-analysis-viewer">
@@ -87,9 +94,10 @@ export function SpecAnalysisViewer({ body }: ViewerProps) {
         <p className="text-sm leading-relaxed text-[var(--text-primary)]">{body.summary}</p>
         {body.source_spec_refs.length > 0 && <SourceRefs refs={body.source_spec_refs} />}
         <TallyRow tally={view.tally} />
+        {itemGrading?.renderShowAll(selectFindingSelections(source, view.findings.map((finding) => finding.item_path)))}
       </header>
 
-      <BlockerCallout blockers={view.blockers} />
+      <BlockerCallout blockers={view.blockers} gradeAction={gradeAction} />
 
       <ArtifactSection title={`Proposed spec updates (${view.proposed_spec_updates.length})`} testId="or-spec-updates">
         {view.proposed_spec_updates.length > 0
@@ -113,7 +121,7 @@ export function SpecAnalysisViewer({ body }: ViewerProps) {
       {view.findings.length > 0 && (
         <ArtifactSection title={`Findings (${view.findings.length})`} testId="or-spec-findings">
           <ul className="divide-y divide-[var(--border-subtle)]">
-            {view.findings.map((finding, index) => <ItemRow key={`${index}-${finding.id}`} status={finding.severity} id={finding.id} description={finding.description} />)}
+            {view.findings.map((finding, index) => <ItemRow key={`${index}-${finding.id}`} status={finding.severity} id={finding.id} description={finding.description} action={gradeAction(finding.item_path)} />)}
           </ul>
         </ArtifactSection>
       )}

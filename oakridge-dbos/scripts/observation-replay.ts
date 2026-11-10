@@ -11,13 +11,13 @@
  *   bun oakridge-dbos/scripts/observation-replay.ts [--from-start]
  *
  * It reads the live observation cursor and replays the backlog after it
- * (`--from-start` replays the whole history). The scratch database starts empty,
- * so a decision on a revision the live service captured takes the
- * uncaptured-target path here: this checks deliverability, not identical grading.
+ * (`--from-start` replays the whole history). The scratch database starts empty:
+ * this checks deliverability of the ordered feed, not identical capture.
  * Nothing is written to the live databases.
  */
 import { sql } from "kysely";
 import { createApp } from "../../observation/src/http/app";
+import { oakridgeProfile } from "../../observation/src/producers/oakridge/profile";
 import { openDatabase as openObservationDatabase, withTenant, type Database as ObservationDatabase } from "../../observation/src/storage/database";
 import { migrateEmptyDatabase as migrateObservation } from "../../observation/src/storage/migrate";
 import { publishObservationOnce, type ObservationOptions } from "../src/adapters/observation";
@@ -65,7 +65,7 @@ export async function replayIntoObservation(input: ReplayInput): Promise<ReplayR
   await withTenant(input.observation, tenant, (trx) => sql`INSERT INTO observation.source_event_cursor
     (producer, namespace, commit_txid, event_id) VALUES (${tenant.producer}, ${tenant.namespace}, ${input.start.commit_txid}::bigint, ${input.start.id})
     ON CONFLICT (producer, namespace) DO UPDATE SET commit_txid = EXCLUDED.commit_txid, event_id = EXCLUDED.event_id`.execute(trx));
-  const app = createApp({ db: input.observation, credentials: { ingest: [{ ...tenant, token: TOKEN }], read: [] } });
+  const app = createApp({ db: input.observation, credentials: { ingest: [{ ...tenant, token: TOKEN }], read: [] }, profile: oakridgeProfile });
   // What the last refused delivery carried, and the exception behind a 500, for the report.
   const failure: { exception: string | null; sent: DeliveryShape | null; response: string | null } =
     { exception: null, sent: null, response: null };

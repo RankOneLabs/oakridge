@@ -5,6 +5,7 @@ import type { BuildBrief } from "../../lib/build-brief";
 import { readBuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import linkedBrief from "../../lib/__fixtures__/id-linked-brief.json";
+import type { PlanTraceId } from "../../lib/plan";
 import type { CohortId, RepositoryKey } from "../../run-types";
 import { BuildResultViewer } from "./BuildResultViewer";
 
@@ -27,7 +28,7 @@ const brief: BuildBrief = {
   files_in_scope: ["src/api.py", "src/errors.py"],
   decisions_made: [],
   approaches_rejected: [],
-  acceptance_criteria: ["The golden fixture matches."],
+  acceptance_criteria: [{ id: "golden-fixture" as PlanTraceId, text: "The golden fixture matches.", decision_ids: [] }],
   next_action: "Start.",
 };
 

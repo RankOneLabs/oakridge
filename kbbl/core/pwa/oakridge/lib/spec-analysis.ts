@@ -25,8 +25,7 @@ export interface SpecUpdate {
   section: string;
   change: string;
   reason: string;
-  /** Missing on analysis revisions published before finding links were introduced. */
-  finding_ids?: string[];
+  finding_ids: string[];
 }
 
 export interface SpecFindingReference {
@@ -44,9 +43,12 @@ export interface SpecAnalysis {
   proposed_spec_updates: SpecUpdate[];
 }
 
+/** A finding with the exact path that addresses it. The view reorders findings, so the index must travel with it. */
+export interface AddressedSpecFinding extends SpecFinding { item_path: string }
+
 /** Anything in a spec analysis that stops the work: a blocking finding or a blocked requirement. */
 export type SpecBlocker =
-  | { kind: "finding"; finding: SpecFinding }
+  | { kind: "finding"; finding: AddressedSpecFinding }
   | { kind: "requirement"; requirement: SpecRequirement };
 
 export interface SpecStatusCount {
@@ -63,7 +65,7 @@ export interface SpecAnalysisTally {
 /** What the viewer renders: blockers pulled out, every other item listed once, most urgent first. */
 export interface SpecAnalysisView {
   blockers: SpecBlocker[];
-  findings: SpecFinding[];
+  findings: AddressedSpecFinding[];
   requirements: SpecRequirement[];
   risks: SpecRisk[];
   proposed_spec_updates: SpecUpdate[];
@@ -106,13 +108,13 @@ function isSpecUpdate(value: unknown): value is SpecUpdate {
     && typeof value.section === "string"
     && typeof value.change === "string"
     && typeof value.reason === "string"
-    && (value.finding_ids === undefined || isStringArray(value.finding_ids));
+    && isStringArray(value.finding_ids);
 }
 
 /** Resolve an update's explicit finding ids without hiding broken references. */
 export function selectUpdateFindings(update: SpecUpdate, analysis: SpecAnalysis): SpecFindingReference[] {
   const byId = new Map(analysis.findings.map((finding) => [finding.id, finding]));
-  return (update.finding_ids ?? []).map((id) => ({ id, finding: byId.get(id) ?? null }));
+  return update.finding_ids.map((id) => ({ id, finding: byId.get(id) ?? null }));
 }
 
 export function isSpecAnalysis(value: unknown): value is SpecAnalysis {
@@ -137,13 +139,14 @@ function orderBy<K extends string, T>(order: readonly K[], items: readonly T[], 
 }
 
 export function selectSpecAnalysisView(analysis: SpecAnalysis): SpecAnalysisView {
+  const findings: AddressedSpecFinding[] = analysis.findings.map((finding, index) => ({ ...finding, item_path: `/findings/${index}` }));
   const blockers: SpecBlocker[] = [
-    ...analysis.findings.filter((finding) => finding.severity === "blocking").map((finding) => ({ kind: "finding" as const, finding })),
+    ...findings.filter((finding) => finding.severity === "blocking").map((finding) => ({ kind: "finding" as const, finding })),
     ...analysis.requirements.filter((requirement) => requirement.status === "blocked").map((requirement) => ({ kind: "requirement" as const, requirement })),
   ];
   return {
     blockers,
-    findings: orderBy(FINDING_SEVERITIES, analysis.findings.filter((finding) => finding.severity !== "blocking"), (finding) => finding.severity),
+    findings: orderBy(FINDING_SEVERITIES, findings.filter((finding) => finding.severity !== "blocking"), (finding) => finding.severity),
     requirements: orderBy(REQUIREMENT_STATUSES, analysis.requirements.filter((requirement) => requirement.status !== "blocked"), (requirement) => requirement.status),
     risks: analysis.risks,
     proposed_spec_updates: analysis.proposed_spec_updates,

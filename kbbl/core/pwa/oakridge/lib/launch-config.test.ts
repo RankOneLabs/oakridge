@@ -49,10 +49,18 @@ describe("buildRunExecutionContext", () => {
       oakridge_url: "http://oakridge",
       session_settings: { cohort: { assessor: { harness: "claude-code", model: "opus", effort: null },
         builder: { harness: "codex", model: "gpt-6-sol", effort: "high" } } },
+      grading_enabled: false,
     })).toEqual({ ok: true, value: expect.objectContaining({ session_settings: {
       cohort: { assessor: { harness: "claude-code", model: "opus", effort: null },
         builder: { harness: "codex", model: "gpt-6-sol", effort: "high" } },
     } }) });
+  });
+
+  it.each([true, false])("carries the operator's automatic grading choice %s into the context", (grading_enabled) => {
+    const context = buildRunExecutionContext({ brief_notes: "Build it", base_branch: "epic/build-it",
+      repositories: [{ key: "oakridge" as RepositoryKey, path: "/code/oakridge", integration_branch: "main" }],
+      oakridge_url: "http://oakridge", session_settings: {}, grading_enabled });
+    expect(context.ok && context.value.grading_enabled).toBe(grading_enabled);
   });
 
   it("rejects an empty repository list instead of creating an empty worktree path", () => {
@@ -62,6 +70,7 @@ describe("buildRunExecutionContext", () => {
       repositories: [],
       oakridge_url: "http://oakridge",
       session_settings: {},
+      grading_enabled: false,
     })).toEqual({
       ok: false,
       error: { operation: "build_run_execution_context", detail: "At least one repository with a worktree path is required." },

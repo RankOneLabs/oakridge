@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ViewerProps } from "../../artifactRegistry";
-import { isPlanCohortIdLinked, parsePlan, selectOrderedCohorts, type PlanScope } from "../../lib/plan";
+import { parsePlan, selectOrderedCohorts, type PlanScope } from "../../lib/plan";
 import { selectPlanGraphLayout } from "../../lib/plan-graph";
 import type { ArtifactReviewDescriptor } from "../../artifact-types";
 import type { CohortId } from "../../run-types";
@@ -8,6 +8,7 @@ import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { PlanCohortCard } from "./PlanCohortCard";
 import { PlanGraph } from "./PlanGraph";
 import { RiskCard } from "./RiskCard";
+import { selectFindingSelections } from "../../lib/grading";
 
 type PlanSection = "summary" | "scope" | "cohorts" | "risks" | "acceptance_criteria";
 
@@ -35,7 +36,7 @@ function ScopeColumns({ scope }: { scope: PlanScope }) {
   );
 }
 
-export function PlanViewer({ body, descriptor }: ViewerProps) {
+export function PlanViewer({ body, descriptor, onOpenTask, source, onOpenItem, itemGrading }: ViewerProps) {
   const [selectedCohortId, setSelectedCohortId] = useState<CohortId | null>(null);
   const parsed = useMemo(() => parsePlan(body), [body]);
   const layout = useMemo(() => parsed.ok ? selectPlanGraphLayout(parsed.value.cohorts) : null, [parsed]);
@@ -46,10 +47,11 @@ export function PlanViewer({ body, descriptor }: ViewerProps) {
   }
   const plan = parsed.value;
   const cohorts = selectOrderedCohorts(plan);
+  const contributionPaths = plan.cohorts.flatMap((cohort, cohortIndex) => cohort.acceptance_criteria.map((_, index) => `/cohorts/${cohortIndex}/acceptance_criteria/${index}`));
 
   return (
     <article className="flex flex-col gap-5" data-testid="or-plan-viewer">
-      {!plan.cohorts.some(isPlanCohortIdLinked) && <p className="text-xs text-[var(--text-muted)]">This revision is not id-linked.</p>}
+      {itemGrading?.renderShowAll(selectFindingSelections(source, contributionPaths))}
       {isSectionVisible(descriptor, "summary") && (
         <p className="text-sm leading-relaxed text-[var(--text-primary)]">{plan.summary}</p>
       )}
@@ -72,7 +74,8 @@ export function PlanViewer({ body, descriptor }: ViewerProps) {
         <ArtifactSection title="Cohorts, in dependency order" testId="or-plan-cohorts">
           <ol className="m-0 flex list-none flex-col gap-2 p-0">
             {cohorts.map((cohort, index) => (
-              <PlanCohortCard key={cohort.id} cohort={cohort} order={index + 1} isSelected={cohort.id === selectedCohortId} onSelectCohort={setSelectedCohortId} />
+              <PlanCohortCard key={cohort.id} cohort={cohort} order={index + 1} isSelected={cohort.id === selectedCohortId} onSelectCohort={setSelectedCohortId} onOpenTask={onOpenTask}
+                source={source} itemGrading={itemGrading} onOpenItem={onOpenItem} cohortIndex={plan.cohorts.findIndex((entry) => entry.id === cohort.id)} />
             ))}
           </ol>
         </ArtifactSection>

@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Assessment } from "../lib/assessment";
 import type { EditOutcome } from "../lib/edit-outcome";
 import type { ParkedGate } from "../artifact-types";
-import type { OperatorUnitView } from "../operator-contracts";
+import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { BuilderHandoffPanel } from "../components/organisms/BuilderHandoffPanel";
 import { reviewToGates } from "../adapters/core";
 import { invalidateCachedRunUnits } from "../client";
@@ -18,7 +18,7 @@ const base: OperatorUnitView = (() => {
   return found;
 })();
 const assessment = (id = "a", revision = "assessment-rev"): Assessment => ({
-  head_sha: null, verdict: "pass_with_notes", findings: [], test_evidence: null,
+  head_sha: "abc123", verdict: "pass_with_notes", findings: [], test_evidence: null,
   recommended_next_actions: [{ id, text: `Fix ${revision}` }, { id: `${id}-2`, text: "Add coverage" }],
 });
 function unitFor(revision: string, sent: boolean): OperatorUnitView {

@@ -54,6 +54,12 @@ pub(crate) fn resolve(expression: &StageExpr) -> Expression {
         StageExpr::Len(inner) => Expression::Len {
             value: boxed(inner),
         },
+        StageExpr::Flatten(inner) => Expression::Flatten {
+            value: boxed(inner),
+        },
+        StageExpr::Unique(inner) => Expression::Unique {
+            value: boxed(inner),
+        },
         StageExpr::Published(key) => reference(
             ReferenceRoot::Published {
                 artifact: artifact(key),

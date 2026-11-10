@@ -21,6 +21,42 @@ bundle's prompt keys through it.
 The PWA's definition editor authors a workflow source as JSON; the authority
 compiles it against these prompts and pins it.
 
+## Task contracts in the development workflow
+
+The revised specification contains the canonical **Spec tasks** section, with stable ids, descriptions and explicit requirement links. The separate tasks artifact mirrors it exactly; task edits revise that section and republish both artifacts. The spec editor publishes the spec before tasks. The approved task list is the one source of identity for the work. A plan cohort
+and a brief share the `task_acceptance` entry, exactly `{ id, text, decision_ids }`.
+`id` is an approved task's id. No other id is allocated for an entry, and a task
+spanning cohorts keeps the same id in each, so `T7` is `T7` in cohorts A and B.
+Tests, typechecks and process milestones are verification, not entries.
+
+Declared `validate` checks enforce this on publication:
+
+- A plan's entries name only approved tasks, every task appears in at least one
+  cohort, and no id repeats within a cohort. Repeating an id across cohorts is valid.
+- A brief's ids equal its plan cohort's ids in the same order, beside its
+  `cohort_id`, `repository_key` and `depends_on` checks. Its text may change;
+  prompts and review enforce that the obligation survives.
+
+The checks use the generic `flatten(list_of_lists)` and `unique(list)` expressions.
+A failed check keeps the revision and its feedback, and the Rust authority then
+refuses any approve decision on that revision and stops offering one. Request
+changes stays available, and a corrected revision is judged on its own publication.
+Record types are open, so an undeclared field on a body is ignored rather than
+refused; the checks read only declared fields.
+
+An `assessment_finding` carries a required `task_ids` list, with a narrow
+`description`, `status` (`met`, `not_met`, `partial`) and cited `evidence` (`file`,
+`test`, `output`). One task may have several findings, one finding may list several
+tasks, and `task_ids: []` marks an unlinked finding. Verdicts and statuses are
+workflow assessment values, not grades, and no task link gates grading.
+
+Integration's `briefs` input is every brief whose `repository_key` equals the
+integration repository's `key`. The integrator groups entries by id, reads every
+cohort's contribution to a shared task and assesses each distinct task on the
+integration branch. An integration assessment has no build result subject.
+
+## Definition store
+
 The generator also writes the committed definition store under `definitions/`:
 
 - `workflows/<definition_id>.json` carries the authored source, one
@@ -62,7 +98,9 @@ Run `bun workflow-config/src/generate.ts` to generate the store and update the
 launchable catalog. Historical definitions, prompts, and operation registries are
 retained so existing runs can resolve their pinned inputs after regeneration.
 `--check` reports differing or missing current output files without writing and
-allows historical objects alongside them. The existing
+allows historical objects alongside them. A retained definition declaring a
+removed worker field (`DISCARDED_WORKER_FIELDS`, currently `gated_review`) is the
+exception: `--check` fails naming it, and generation deletes it. The existing
 pretty-printed Rust bundle fixtures remain unchanged, and the source-less
 `r5-cohort.json` fixture has no committed definition. Run `bun test
 workflow-config/src` for the identity and store boundary tests; `bun run typecheck`

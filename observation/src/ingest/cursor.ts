@@ -1,27 +1,27 @@
+import type { JsonValue } from "../domain/primitives";
 import type { CaptureEnvelope } from "./capture";
 
 /** The producer's durable position in authority.event, represented as decimal text to avoid bigint precision loss. */
 export interface SourceEventCursor { readonly commit_txid: string; readonly id: string }
 export const INITIAL_SOURCE_CURSOR: SourceEventCursor = { commit_txid: "0", id: "" };
 
+export interface SessionSettingsWire { readonly harness: string; readonly model: string; readonly effort: string | null }
+/** The exact config a run was launched with, carried beside its input. Only `grading_enabled` is
+ * read here: it is the run's own automatic-grading choice, and null means the launch made none. */
+export interface RunConfigWire {
+  readonly sessions: { readonly [stage: string]: { readonly [worker: string]: SessionSettingsWire } };
+  readonly grading_enabled: boolean;
+}
 export interface SourceEventProvenance { readonly format: "observation.source-event/v1";
   readonly definition_id: string | null; readonly artifact_schema_version: string | null }
 export type SourceEventOutcome = SourceEventProvenance & (
   | { readonly kind: "artifact_revision"; readonly event_kind: "revision_published"; readonly run_id: string; readonly event_id: string; readonly revision: CaptureEnvelope }
-  | { readonly kind: "human_grade"; readonly event_kind: "operator_decided"; readonly run_id: string; readonly event_id: string;
-      readonly decision_id: string | null;
-      readonly evaluator: { readonly kind: "human" }; readonly unit: string; readonly review: string; readonly decision: string;
-      readonly target: string; readonly feedback: unknown; readonly effect: "approve" | "request_changes" | null;
-      readonly decided_at: string }
-  | { readonly kind: "collaboration_thread"; readonly event_kind: "collaboration_thread"; readonly run_id: string;
-      readonly event_id: string; readonly unit: string; readonly revision_id: string | null;
-      readonly context: { readonly title: string; readonly anchor: string | null };
-      readonly messages: readonly { readonly id: string; readonly body: { readonly text: string; readonly author: string };
-        readonly created_at: string }[] }
   | { readonly kind: "run_input"; readonly event_kind: "launched"; readonly run_id: string; readonly event_id: string; readonly input: unknown;
-      readonly input_schema_version: string }
-  | { readonly kind: "ignored"; readonly event_kind: "worker_started" | "worker_ended" | "retry_requested" | "cancel_requested";
+      readonly input_schema_version: string; readonly config: RunConfigWire | null }
+  | { readonly kind: "ignored"; readonly event_kind: "operator_decided" | "worker_started" | "worker_ended" | "retry_requested" | "cancel_requested";
       readonly run_id: string; readonly event_id: string }
+  /** A producer's explicit relations, carried as journaled: the injected profile reads them. */
+  | { readonly kind: "relation_declaration"; readonly event_kind: string; readonly run_id: string; readonly event_id: string; readonly declaration: JsonValue }
   | { readonly kind: "unmapped"; readonly event_kind: string; readonly run_id: string; readonly event_id: string; readonly reason: string });
 
 export interface SourceEventDelivery { readonly previous: SourceEventCursor; readonly cursor: SourceEventCursor; readonly outcome: SourceEventOutcome }
@@ -34,6 +34,10 @@ function cursor(value: unknown): value is SourceEventCursor {
   return record(value) && typeof value.commit_txid === "string" && /^(0|[1-9][0-9]*)$/.test(value.commit_txid)
     && BigInt(value.commit_txid) <= 9223372036854775807n && typeof value.id === "string";
 }
+/** A launch carries its committed config, or null when it supplied none. */
+function runConfig(value: unknown): value is RunConfigWire | null {
+  return value === null || (record(value) && typeof value.grading_enabled === "boolean" && record(value.sessions));
+}
 export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery | null {
   if (!record(value) || !cursor(value.previous) || !cursor(value.cursor) || !record(value.outcome)) return null;
   const outcome = value.outcome;
@@ -42,9 +46,9 @@ export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery |
   if (outcome.format !== "observation.source-event/v1" || !(outcome.artifact_schema_version === null || typeof outcome.artifact_schema_version === "string")) return null;
   if (!(outcome.definition_id === null || typeof outcome.definition_id === "string")) return null;
   if (outcome.kind === "artifact_revision" && (!record(outcome.revision) || outcome.revision.format !== "observation.artifact-revision/v2")) return null;
-  if (outcome.kind === "human_grade" && (!record(outcome.evaluator) || outcome.evaluator.kind !== "human" || typeof outcome.target !== "string"
-    || !(outcome.decision_id === null || typeof outcome.decision_id === "string"))) return null;
   if (outcome.kind === "unmapped" && typeof outcome.reason !== "string") return null;
-  if (!["artifact_revision", "human_grade", "run_input", "ignored", "unmapped"].includes(outcome.kind)) return null;
+  if (outcome.kind === "run_input" && !runConfig(outcome.config)) return null;
+  if (outcome.kind === "relation_declaration" && !record(outcome.declaration)) return null;
+  if (!["artifact_revision", "run_input", "ignored", "relation_declaration", "unmapped"].includes(outcome.kind)) return null;
   return value as unknown as SourceEventDelivery;
 }

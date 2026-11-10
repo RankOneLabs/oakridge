@@ -4,7 +4,12 @@
  */
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { OperatorArtifactDetail, OperatorDefinitionDetail, OperatorInboxPage, OperatorRunEvent, OperatorRunView, OperatorUnitView } from "../../kbbl/core/pwa/oakridge/operator-contracts";
+import type { OperatorArtifactDetail } from "../../kbbl/core/pwa/oakridge/operator-contracts/projections/artifact-view";
+import type { OperatorDefinitionDetail } from "../../kbbl/core/pwa/oakridge/operator-contracts/projections/definition-view";
+import type { OperatorInboxPage } from "../../kbbl/core/pwa/oakridge/operator-contracts/projections/inbox";
+import type { OperatorRunEvent } from "../../kbbl/core/pwa/oakridge/operator-contracts/projections/run-event";
+import type { OperatorRunView } from "../../kbbl/core/pwa/oakridge/operator-contracts/projections/run-view";
+import type { OperatorUnitView } from "../../kbbl/core/pwa/oakridge/operator-contracts/projections/unit-view";
 
 /** Frozen execution snapshots keep their evidence; their definition projection is generated from the committed store. */
 async function reconcileFixtures(should_check: boolean): Promise<void> {

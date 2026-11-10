@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
+import { AcpSessionStore } from "../acp/store";
+import type { AcpAgentSessionId, KbblSessionId, ResumableKey } from "../acp/types";
 import { applyMigrations } from "./migrations";
 import { openTestDb } from "./test-db";
 
@@ -131,5 +133,88 @@ describe("the baseline schema", () => {
       .all().map((row) => row.name);
     expect(tables).toEqual(["_migrations", "acp_session_archives", "acp_session_summaries", "acp_sessions", "acp_turns"]);
     db.close();
+  });
+});
+
+describe("kbbl ledger migrations", () => {
+  const ledgerMigrations = join(import.meta.dir, "migrations");
+  const dropMigration = "004_drop_gated_review.sql";
+  const sessionColumns = (ledger: Database): string[] =>
+    ledger.query<{ name: string }, []>("SELECT name FROM pragma_table_info('acp_sessions')").all().map((column) => column.name);
+  const ledgerTables = (ledger: Database): string[] =>
+    ledger.query<{ name: string }, []>("SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'acp_%' ORDER BY name").all().map((table) => table.name);
+  /** Every retained ledger row, without the column 004 removes. */
+  const retainedRows = (ledger: Database): Record<string, unknown[]> => Object.fromEntries(ledgerTables(ledger).map((table) => [table,
+    ledger.query<Record<string, unknown>, []>(`SELECT * FROM ${table} ORDER BY rowid`).all()
+      .map(({ gated_review_json: _removed, ...row }) => row)]));
+
+  function ledgerThrough003(): Database {
+    const through = join(migrationsDir, "through-003");
+    mkdirSync(through);
+    for (const name of readdirSync(ledgerMigrations).filter((file) => file < "004")) {
+      copyFileSync(join(ledgerMigrations, name), join(through, name));
+    }
+    const ledger = new Database(":memory:");
+    ledger.exec("PRAGMA foreign_keys = ON");
+    expect(applyMigrations(ledger, through).applied).toEqual(["001_sessions.sql", "002_session_archive.sql", "003_gated_review.sql"]);
+    const session = ledger.prepare(`INSERT INTO acp_sessions (sid, resumable_key, start_spec_hash, agent_profile, acp_session_id, name,
+        project_workdir, worktree_path, status, run_id, unit_id, worker, gated_review_json, last_activity_at, created_at, updated_at)
+      VALUES (?, ?, 'hash', 'claude-code', ?, ?, '/work', '/work/tree', 'idle', ?, ?, ?, ?, 't0', 't0', 't0')`);
+    session.run("sid-restricted", "key-restricted", "agent-1", "restricted", "run-1", "run-1/cohort/a", "builder", '{"kind":"restricted","role":"builder"}');
+    session.run("sid-unscoped", "key-unscoped", "agent-2", "unscoped", "run-1", "run-1/cohort/a", "assessor", '{"kind":"unscoped"}');
+    session.run("sid-hand", null, "agent-3", "hand-started", null, null, null, null);
+    ledger.run(`INSERT INTO acp_turns (sid, turn_key, source, payload_hash, payload, status, created_at)
+      VALUES ('sid-restricted', 'turn-1', 'initial', 'hash', 'build it', 'succeeded', 't0')`);
+    ledger.run(`INSERT INTO acp_session_summaries (sid, schema_version, method, summary_json, produced_at, created_at, updated_at)
+      VALUES ('sid-unscoped', 1, 'final_response', '{"text":"done"}', 't1', 't1', 't1')`);
+    ledger.run("INSERT INTO acp_session_archives (sid, archived_at) VALUES ('sid-hand', 't2')");
+    return ledger;
+  }
+
+  test("003 keeps the bytes it shipped with", () => {
+    const bytes = readFileSync(join(ledgerMigrations, "003_gated_review.sql"));
+    expect(new Bun.CryptoHasher("sha256").update(bytes).digest("hex"))
+      .toBe("0051d5c4feed3b1c3c8677f8a0b47ee0075e3e17c3115e18fe8ce5f63fdd494d");
+  });
+
+  test("a fresh database applies the complete numbered sequence and has no grant column", () => {
+    const ledger = new Database(":memory:");
+    const { applied } = applyMigrations(ledger, ledgerMigrations);
+    expect(applied).toEqual(["001_sessions.sql", "002_session_archive.sql", "003_gated_review.sql", dropMigration]);
+    expect(sessionColumns(ledger)).not.toContain("gated_review_json");
+    ledger.close();
+  });
+
+  test("a ledger populated through 003 loses only the grant column", () => {
+    const ledger = ledgerThrough003();
+    const rows = retainedRows(ledger);
+    const columns = sessionColumns(ledger);
+    expect(applyMigrations(ledger, ledgerMigrations).applied).toEqual([dropMigration]);
+    expect(sessionColumns(ledger)).toEqual(columns.filter((column) => column !== "gated_review_json"));
+    expect(retainedRows(ledger)).toEqual(rows);
+    ledger.close();
+  });
+
+  test("reapplying the runner neither repeats the drop nor loses rows", () => {
+    const ledger = ledgerThrough003();
+    applyMigrations(ledger, ledgerMigrations);
+    const rows = retainedRows(ledger);
+    expect(applyMigrations(ledger, ledgerMigrations).applied).toEqual([]);
+    expect(retainedRows(ledger)).toEqual(rows);
+    ledger.close();
+  });
+
+  test("an upgraded session keeps its workflow identity and resumes by key", () => {
+    const ledger = ledgerThrough003();
+    applyMigrations(ledger, ledgerMigrations);
+    const store = new AcpSessionStore(ledger);
+    const claim = { sid: "sid-new" as KbblSessionId, resumable_key: "key-restricted" as ResumableKey, start_spec_hash: "hash", agent_profile: "claude-code", name: "restricted",
+      artifact_id: null, project_workdir: "/work", worktree_path: "/work/tree", requested_model: null, requested_effort: null, requested_mode: null,
+      workflow: { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder" } };
+    const claimed = store.claimResumable("key-restricted" as ResumableKey, claim);
+    expect({ kind: claimed.kind, sid: claimed.row.sid, workflow: claimed.row.workflow, acp_session_id: claimed.row.acp_session_id }).toEqual({
+      kind: "existing", sid: "sid-restricted" as KbblSessionId, workflow: claim.workflow, acp_session_id: "agent-1" as AcpAgentSessionId });
+    expect(store.insertSession({ ...claim, sid: "sid-fresh" as KbblSessionId, resumable_key: "key-fresh" as ResumableKey }).workflow).toEqual(claim.workflow);
+    ledger.close();
   });
 });

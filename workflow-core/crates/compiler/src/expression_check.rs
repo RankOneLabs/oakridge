@@ -179,6 +179,17 @@ pub(crate) fn infer(
             }
             Ok(integer())
         }
+        StageExpr::Flatten(inner) => {
+            let outer = list_item(&infer(inner, scope)?, &scope.for_expr(inner), "flatten")?;
+            let item = list_item(&outer, &scope.for_expr(inner), "flatten of a list of lists")?;
+            Ok(Type::List {
+                item: Box::new(item),
+            })
+        }
+        StageExpr::Unique(inner) => {
+            list_item(&infer(inner, scope)?, &scope.for_expr(inner), "unique")?;
+            Ok(boolean())
+        }
         StageExpr::Published(artifact)
         | StageExpr::Approved(artifact)
         | StageExpr::ChangesRequested(artifact) => {

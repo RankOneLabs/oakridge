@@ -103,16 +103,15 @@
       "description": "optional(text)",
       "files_in_scope": "list(text)",
       "decisions": "list(plan_decision)",
-      "acceptance_criteria": "list(plan_criterion)"
+      "acceptance_criteria": "list(task_acceptance)"
     },
     "plan_decision": {
       "id": "ident",
       "text": "text"
     },
-    "plan_criterion": {
+    "task_acceptance": {
       "id": "ident",
       "text": "text",
-      "task_ids": "list(ident)",
       "decision_ids": "list(ident)"
     },
     "brief_body": {
@@ -124,7 +123,7 @@
       "files_in_scope": "list(text)",
       "decisions_made": "list(brief_decision)",
       "approaches_rejected": "list(rejected_approach)",
-      "acceptance_criteria": "list(plan_criterion)",
+      "acceptance_criteria": "list(task_acceptance)",
       "next_action": "text"
     },
     "brief_decision": {
@@ -171,8 +170,7 @@
       "text": "text"
     },
     "assessment_finding": {
-      "criterion_id": "optional(ident)",
-      "criterion": "optional(text)",
+      "task_ids": "list(ident)",
       "status": "optional(enum(met, not_met, partial))",
       "evidence": "list(evidence_ref)",
       "description": "optional(text)"
@@ -301,6 +299,7 @@
           "repository": "each",
           "workspace": "require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace",
           "cohorts": "filter(map(implementation, implementation.outcome), item.repository_key == each.key)",
+          "briefs": "filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key)",
           "final_merge_policy": "input.final_merge_policy"
         }
       }
@@ -472,6 +471,18 @@
             {
               "check": "valid_graph(plan.cohorts, id, depends_on)",
               "message": "Cohort ids must be unique idents, and each depends_on must name other cohorts without repeats or a cycle."
+            },
+            {
+              "check": "every(plan.cohorts, every(item.acceptance_criteria, contains(map(input.tasks.tasks, item.id), item.id)))",
+              "message": "Every cohort acceptance id must be the id of a task in the approved task list."
+            },
+            {
+              "check": "every(map(input.tasks.tasks, item.id), contains(flatten(map(plan.cohorts, map(item.acceptance_criteria, item.id))), item))",
+              "message": "Every task in the approved task list must appear in at least one cohort's acceptance_criteria."
+            },
+            {
+              "check": "every(plan.cohorts, unique(map(item.acceptance_criteria, item.id)))",
+              "message": "A task id may appear only once within a cohort's acceptance_criteria; repeating it in another cohort is valid."
             }
           ]
         }
@@ -501,6 +512,7 @@
           "prompt": "development/plan-review.md",
           "inputs": {
             "spec": "input.spec",
+            "tasks": "input.tasks",
             "plan": "latest(plan)"
           },
           "decisions": {
@@ -541,6 +553,10 @@
             {
               "check": "brief.depends_on == input.cohort.depends_on",
               "message": "The brief's depends_on must be its plan cohort's, in the same order."
+            },
+            {
+              "check": "map(brief.acceptance_criteria, item.id) == map(input.cohort.acceptance_criteria, item.id)",
+              "message": "The brief's acceptance_criteria ids must be its plan cohort's, in the same order."
             }
           ]
         }
@@ -628,9 +644,6 @@
       "workers": {
         "builder": {
           "kind": "agent",
-          "gated_review": {
-            "kind": "unscoped"
-          },
           "prompts": {
             "initial": "development/build.md",
             "revise": "development/build-revise.md"
@@ -648,9 +661,6 @@
         },
         "assessor": {
           "kind": "agent",
-          "gated_review": {
-            "kind": "unscoped"
-          },
           "prompts": {
             "review": "development/assess.md",
             "revise": "development/assess-revise.md"
@@ -749,6 +759,7 @@
         "repository": "repository",
         "workspace": "workspace",
         "cohorts": "list(completed_cohort)",
+        "briefs": "list(brief_body)",
         "final_merge_policy": "final_merge_policy"
       },
       "let": {
@@ -782,16 +793,14 @@
       "workers": {
         "integrator": {
           "kind": "agent",
-          "gated_review": {
-            "kind": "unscoped"
-          },
           "prompts": {
             "initial": "development/integrate.md",
             "revise": "development/integrate-revise.md"
           },
           "inputs": {
             "repository": "input.repository",
-            "cohorts": "input.cohorts"
+            "cohorts": "input.cohorts",
+            "briefs": "input.briefs"
           },
           "workspace": "repository(input.workspace)",
           "creates": [
@@ -835,6 +844,7 @@
           "inputs": {
             "repository": "input.repository",
             "cohorts": "input.cohorts",
+            "briefs": "input.briefs",
             "assessment": "latest(assessment)",
             "pr": "latest(pr)",
             "pr_state": "latest(pr_state)"

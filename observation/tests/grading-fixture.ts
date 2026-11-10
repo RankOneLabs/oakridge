@@ -1,46 +1,48 @@
-import type { GradeOrigin } from "../src/grading/observation";
-import type { GradeDetails } from "../src/storage/grading-store";
-import { captureDelivery } from "../src/storage/capture-store";
-import { projectRevision, listRunItems } from "../src/storage/projection-store";
-import type { JsonValue } from "../src/domain/primitives";
-import { instructionDigest } from "../src/grading/evaluator";
+import { test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { canonicalDigest } from "canonical-json";
 import { Client } from "pg";
 import { sql } from "kysely";
-import { canonicalDigest } from "canonical-json";
-import type { ItemOccurrenceId, QuestionId, EvidenceSetId } from "../src/domain/identity";
+import { configuredRunnerNames, credentialsForRunners } from "../src/grading/provider-credentials";
+import { GRADERS_FILE } from "../src/main";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../src/domain/identity";
+import type { JsonValue } from "../src/domain/primitives";
+import { instructionDigest, type EvaluatorDefinition } from "../src/grading/evaluator";
+import type { ReadyEvidence } from "../src/grading/evidence";
 import type { QuestionDefinition } from "../src/grading/question";
-import type { EvidenceSet } from "../src/grading/evidence";
-import type { EvaluatorDefinition } from "../src/grading/evaluator";
-import { openDatabase, withTenant, type Database } from "../src/storage/database";
+import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../src/grading/evidence";
+import { deliverSourceEvent } from "../src/storage/capture-store";
+import { openDatabase, type Database, type TenantScope } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
+import type { RunConfigWire, SourceEventCursor, SourceEventDelivery, SourceEventOutcome } from "../src/ingest/cursor";
 import { dropScratchDatabase } from "./database-fixture";
+
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
-export const tenant = { producer: "oakridge", namespace: "grading-test" };
-export const pinnedExpectation = { definition_id: "definition-1", artifact_schema_version: "1" };
-export const pilotExpectations = {
-  "analysis.finding_relevance": pinnedExpectation,
-  "plan.criterion_traceability": pinnedExpectation,
-  "brief.source_fidelity": pinnedExpectation,
-  "assessment.coverage": pinnedExpectation,
-};
+export const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
+export const tenant: TenantScope = { producer: "oakridge", namespace: "grading-test" };
+export const SCHEMA_VERSION = "schema-1";
+export const DEFINITION_ID = "definition-1";
+
 export const question: QuestionDefinition = {
-  pinned_expectation: pinnedExpectation,
-  question_id: "relevance" as QuestionId, question_version: "1", target_item_kinds: ["cohort_criterion"],
-  input_recipe: { source: "selected_value" }, response_kind: "boolean", allowed_values: null,
-  missing_evidence_policy: "fail", abstain_semantics: "not enough evidence", unclear_semantics: "ambiguous",
-  interpretation_caveats: "relevance is not acceptance", requires_repository_snapshot: false,
+  question_id: "relevance" as QuestionId, question_version: "1", item_kind: "finding", question_text: "Is it relevant?",
+  response_kind: "boolean", allowed_values: null, missing_evidence_policy: "abstain", abstain_semantics: "not enough evidence",
+  unclear_semantics: "ambiguous", interpretation_caveats: "relevance is not acceptance",
 };
-export const evidence: EvidenceSet = { evidence_set_id: "evidence-1" as EvidenceSetId,
-  references: [{ ref: "fixture", kind: "public", content: "sample", digest: null }], is_incomplete: false, incompleteness_reason: null };
-export function evaluator(kind: "code" | "model" | "human"): EvaluatorDefinition {
-  return { evaluator_definition_id: kind, kind, backend_kind: "local", provider: `fixture-${kind}`,
+export const evidence: ReadyEvidence = { evidence_set_id: "evidence-1" as EvidenceSetId,
+  references: [{ source: "reported", reported_by: "agent", ref: "fixture", revision_id: "revision-1" as ArtifactRevisionId, item_path: "/findings/0", content: "sample" }],
+  is_incomplete: false, incompleteness_reason: null };
+export function evaluator(kind: "model" | "human", id: string = kind): EvaluatorDefinition {
+  return { evaluator_definition_id: id, kind, backend_kind: "local", provider: `fixture-${id}`,
     model: kind === "model" ? "pinned" : null, instruction_text: "prompt-1", prompt_digest: instructionDigest("prompt-1"), config_digest: "config-1",
     runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null };
 }
-export async function scratchGrading(work: (db: Database, occurrence_id: ItemOccurrenceId) => Promise<void>): Promise<void> {
+export const evaluatorId = (id: string): EvaluatorDefinitionId => id as EvaluatorDefinitionId;
+
+/** A fresh, isolated database holding only the target baseline. */
+export async function scratchDatabase(work: (db: Database) => Promise<void>): Promise<void> {
   if (!serverUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
-  const name = `observation_grading_${randomBytes(6).toString("hex")}`;
+  const name = `observation_test_${randomBytes(6).toString("hex")}`;
   const admin = new Client({ connectionString: serverUrl });
   await admin.connect();
   try {
@@ -49,74 +51,93 @@ export async function scratchGrading(work: (db: Database, occurrence_id: ItemOcc
     const db = openDatabase(url.href);
     try {
       await migrateEmptyDatabase(db);
-      const id = canonicalDigest(["grading-fixture"]);
-      if (!id.ok) throw new Error(id.error.detail);
-      const occurrence_id = id.value as unknown as ItemOccurrenceId;
-      await withTenant(db, tenant, async (trx) => {
-        await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
-          artifact_kind, artifact_schema_version, definition_id, body, body_digest, recorded_at)
-          VALUES (${tenant.producer}, ${tenant.namespace}, 'rev-1', 'run-1', 'unit-1', 'brief', '1', 'definition-1',
-          '{}'::jsonb, ${id.value}, now())`.execute(trx);
-        await sql`INSERT INTO observation.extractor_definition (producer, namespace, artifact_kind, schema_version,
-          extractor_id, extractor_version, item_kind, item_selector) VALUES
-          (${tenant.producer}, ${tenant.namespace}, 'brief', '1', 'fixture', '1', 'cohort_criterion', '/criterion')`.execute(trx);
-        await sql`INSERT INTO observation.item_occurrence (producer, namespace, occurrence_id, revision_id, run_id,
-          artifact_kind, schema_version, extractor_id, extractor_version, item_kind, item_selector, item_id_or_path, selected_value)
-          VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, 'rev-1', 'run-1', 'brief', '1',
-          'fixture', '1', 'cohort_criterion', '/criterion', 'criterion-1', '{}'::jsonb)`.execute(trx);
-      });
-      await work(db, occurrence_id);
+      await work(db);
     } finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
 }
 
-export interface CapturedFixtureRevision {
+export interface FixtureRevision {
   readonly revision_id: string;
-  readonly run_id?: string;
-  readonly unit_id?: string;
   readonly artifact_kind: string;
   readonly body: JsonValue;
-  readonly recorded_at?: string;
+  readonly run_id?: string;
+  readonly unit_id?: string;
+  readonly subject_id?: string;
   readonly predecessor_id?: string;
+  readonly recorded_at?: string;
 }
-/** Exercise the real capture and projection boundaries in database grading tests. */
-export async function captureProjectedFixture(db: Database, input: CapturedFixtureRevision) {
-  const run_id = input.run_id ?? "run-1";
+export const fixtureBody = async (name: string): Promise<JsonValue> =>
+  await Bun.file(new URL(`../fixtures/oakridge/${name}-revision.json`, import.meta.url)).json() as JsonValue;
+
+const provenance = { format: "observation.source-event/v1", definition_id: DEFINITION_ID, artifact_schema_version: SCHEMA_VERSION } as const;
+
+/** The envelope the ordered feed carries for one revision. */
+export function revisionOutcome(input: FixtureRevision, scope: TenantScope = tenant, event_id = `event:${input.revision_id}`): SourceEventOutcome {
   const digest = canonicalDigest(input.body);
   if (!digest.ok) throw new Error(digest.error.detail);
-  const captured = await captureDelivery(db, { local_revision_id: input.revision_id, request_key: input.revision_id,
-    envelope: { format: "observation.artifact-revision/v2", source: { ...tenant, ...pinnedExpectation,
-      revision_id: `${tenant.producer}:${tenant.namespace}:${input.revision_id}`, run_id, unit_id: input.unit_id ?? (input.artifact_kind === "assessment" ? "implementation/cohort" : input.artifact_kind),
-      artifact_kind: input.artifact_kind, predecessor_id: input.predecessor_id ? `${tenant.producer}:${tenant.namespace}:${input.predecessor_id}` : null, subject_id: null },
-      body: input.body, body_digest: digest.value, recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z" } });
-  if (captured.status !== 201) throw new Error("fixture capture refused");
-  await projectRevision(db, tenant, input.revision_id);
-  const page = await listRunItems(db, tenant, run_id, { limit: 200, offset: 0 });
-  return page.items.filter((item) => item.revision_id === input.revision_id);
+  const prefix = `${scope.producer}:${scope.namespace}:`;
+  const run_id = input.run_id ?? "run-1";
+  return { ...provenance, kind: "artifact_revision", event_kind: "revision_published", run_id, event_id,
+    revision: { format: "observation.artifact-revision/v2", source: { ...scope, revision_id: `${prefix}${input.revision_id}`, run_id,
+      unit_id: input.unit_id ?? input.artifact_kind, artifact_kind: input.artifact_kind, artifact_schema_version: SCHEMA_VERSION,
+      definition_id: DEFINITION_ID, predecessor_id: input.predecessor_id ? `${prefix}${input.predecessor_id}` : null,
+      subject_id: input.subject_id ? `${prefix}${input.subject_id}` : null },
+    recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z", body: input.body,
+    body_digest: digest.value as `canonical-json/v1:${string}` & { readonly __brand: "CanonicalDigest" } } };
 }
 
-/** Explicit facts supplied by a caller recording a human grade. */
-export function humanGradeDetails(origin: GradeOrigin): GradeDetails {
-  return { origin, answer: { state: "answered", kind: "boolean", value: true },
-    collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false,
-    probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
-    decision_policy_version: null, reviewer_id: "reviewer", reviewer_details: null,
-    comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null };
+/** The run setting a launch commits: automatic grading on or off, no session overrides. */
+export const runConfig = (grading_enabled: boolean): RunConfigWire => ({ sessions: {}, grading_enabled });
+/** The launch event that captures a run's input and its committed config. A launch that
+ * committed no config carries null, which leaves automatic grading off. */
+export const launchOutcome = (input: JsonValue, run_id = "run-1", config: RunConfigWire | null = null): SourceEventOutcome => ({ ...provenance,
+  kind: "run_input", event_kind: "launched", run_id, event_id: `launch:${run_id}`, input, input_schema_version: SCHEMA_VERSION, config });
+
+export interface Feed {
+  send(outcome: SourceEventOutcome, override?: CaptureConfiguration): Promise<SourceEventCursor>;
+  /** A configuration override stands for a restart under an edited configuration. */
+  revision(input: FixtureRevision, override?: CaptureConfiguration): Promise<SourceEventCursor>;
+  launch(input: JsonValue, run_id?: string, config?: RunConfigWire | null): Promise<SourceEventCursor>;
+  decide(event_kind: "operator_decided", run_id?: string): Promise<SourceEventCursor>;
 }
 
-/** A real captured subject for admission tests; callers send only question/evaluator context. */
-export async function capturedCoverage(db: Database) {
-  const { oakridgeQuestions } = await import("../src/grading/catalogue/oakridge-questions");
-  const { deriveCapturedEvidence } = await import("../src/storage/captured-evidence-store");
-  const items = await captureProjectedFixture(db, { revision_id: "captured-brief", artifact_kind: "brief", body: {
-    cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
-    acceptance_criteria: [{ id: "criterion", text: "Works" }],
-  } });
-  await captureProjectedFixture(db, { revision_id: "captured-assessment", artifact_kind: "assessment",
-    body: { head_sha: "commit-1", findings: [] }, recorded_at: "2026-11-01T01:00:00Z" });
-  const occurrence_id = items.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId;
-  const question = oakridgeQuestions(pilotExpectations)["assessment.coverage"].definition;
-  const derived = await deriveCapturedEvidence(db, tenant, "run-1", { subject_occurrence_id: occurrence_id, question });
-  if (!derived.ok || !derived.value.evidence) throw new Error("captured coverage fixture has no evidence");
-  return { occurrence_id, question, evidence: derived.value.evidence };
+/** Drives the real ordered capture path, one acknowledged event at a time. */
+export function createFeed(db: Database, scope: TenantScope = tenant, configuration: CaptureConfiguration = NO_CAPTURE_PINS): Feed {
+  let cursor: SourceEventCursor = { commit_txid: "0", id: "" };
+  let sequence = 0;
+  const send = async (outcome: SourceEventOutcome, override: CaptureConfiguration = configuration): Promise<SourceEventCursor> => {
+    const next = { commit_txid: String(++sequence), id: outcome.event_id };
+    const delivery: SourceEventDelivery = { previous: cursor, cursor: next, outcome };
+    const result = await deliverSourceEvent(db, scope, delivery, { extraction: oakridgeProfile.extraction, configuration: override });
+    if (result.status !== 200) throw new Error(`delivery refused: ${JSON.stringify(result.body)}`);
+    cursor = next;
+    return cursor;
+  };
+  return {
+    send,
+    revision: (input, override) => send(revisionOutcome(input, scope), override),
+    launch: (input, run_id = "run-1", config = null) => send(launchOutcome(input, run_id, config)),
+    decide: (event_kind, run_id = "run-1") => send({ ...provenance, kind: "ignored", event_kind, run_id, event_id: `decision:${sequence}` }),
+  };
+}
+
+export const occurrenceIdOf = (value: string): ItemOccurrenceId => value as ItemOccurrenceId;
+
+/** The committed selection, read from the file the service reads. Tests take graders from here. */
+export const committedGraders = async (): Promise<unknown> => Bun.file(GRADERS_FILE).json();
+
+/** A placeholder for each setting the selection requires. The offline suite never reaches a provider. */
+export function credentialEnv(graders: unknown): Record<string, string> {
+  const runners = configuredRunnerNames(graders);
+  if (!runners.ok) throw new Error(runners.error.detail);
+  const required = credentialsForRunners(runners.value);
+  if (!required.ok) throw new Error(required.error.detail);
+  return Object.fromEntries(required.value.required.map((name) => [name, "offline-placeholder"]));
+}
+
+/** The connection URL of a scratch database, for starting the real service on it. */
+export async function databaseUrl(db: Database): Promise<string> {
+  const database = await sql<{ name: string }>`SELECT current_database() AS name`.execute(db);
+  const url = new URL(serverUrl ?? ""); url.pathname = `/${database.rows[0]?.name ?? ""}`;
+  return url.href;
 }

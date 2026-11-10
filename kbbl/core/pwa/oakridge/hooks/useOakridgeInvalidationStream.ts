@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { invalidateCachedRunUnits, refreshReviewInboxRun } from "../client";
 import { replaceDevelopmentInboxRun } from "../adapters/inbox";
-import type { OperatorStreamInvalidation } from "../operator-contracts";
+import type { OperatorStreamInvalidation } from "../operator-contracts/projections/operator-event";
 import type { ArtifactDetail, ReviewInbox } from "../artifact-types";
 import { subscribeOakridgeStream } from "./useOakridgeRunEventStream";
 
