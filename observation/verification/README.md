@@ -109,8 +109,24 @@ decisions, not an automated scenario that makes those decisions. Its report also
 records two negative integration answers and 15 unclear answers; completed
 executions do not mean affirmative grades. The run used the earlier pinned
 workflow and an explicit coverage-question upgrade, so the newer **Spec tasks**
-prompt wording still needs a fresh-run check. Analysis-to-task declarations were
-absent and remain visible as gaps.
+prompt wording was outside that report's coverage. Analysis-to-task declarations
+were absent and remain visible as gaps.
+
+The later `ui cleanup` run used the new `e9e5d79d` workflow:
+[fresh workflow readback](reports/manual-fresh-2026-11-10T21-32-49-001Z/report.json).
+Its eight spec tasks match the task artifact exactly, including descriptions and
+requirement ids. All 24 task/plan/brief coverage questions were pinned and graded
+automatically, without a manual upgrade. It captured all 784 authority events and
+served final integration composites for all eight tasks. The overall grading
+check **failed**: 132 machine executions completed and one integration Correctness
+execution exhausted three retries after four HTTP 400 responses. The successful
+sibling Evidence support request was 101,547 bytes; the failed request was
+103,358 bytes and included the whole stylesheet. A context-limit rejection is
+plausible, but the provider response body was not retained, so the cause remains
+unconfirmed. No provider replay or history change was made. The report preserves
+the failed attempts, two partial task answers and two negative integration
+Evidence support answers. The source assessment also records missing PR
+screenshot attachments. Analysis-to-task declarations remain absent.
 
 | Pending scenario | Owner |
 | --- | --- |

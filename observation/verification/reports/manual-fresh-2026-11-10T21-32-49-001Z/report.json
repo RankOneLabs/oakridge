@@ -1,0 +1,1007 @@
+{
+  "kind": "operator-completed-fresh-workflow-readback",
+  "status": "failed",
+  "scope": "The new prompt and automatic coverage-pin checks passed. Overall grading validation failed because one provider execution exhausted its retry limit. Neither this report nor completed execution statuses decide correctness or merge readiness.",
+  "generated_at": "2026-11-10T21:32:49.001Z",
+  "readback_source": {
+    "git_head": "abc358ea05f0c475657581c9b0e7afe6d1b921e2",
+    "worktree_clean": true
+  },
+  "run": {
+    "run_id": "run-4dacc912f84d85d5",
+    "title": "ui cleanup",
+    "definition_id": "e9e5d79d30eb6b6077d7c430b479b548b691afe06f2f56955a539aececfa08d9",
+    "status": "done",
+    "completed_at": "2026-11-10T21:30:39.520Z",
+    "cohorts": 1
+  },
+  "checks": [
+    {
+      "name": "the ordered feed delivered every event of the run",
+      "passed": true,
+      "detail": "784 of 784 events; cursor 44579/35357a20-3f72-4492-8adb-a7528e8c827f, run's last event 44579/35357a20-3f72-4492-8adb-a7528e8c827f"
+    },
+    {
+      "name": "the service mapped every event of the run",
+      "passed": true,
+      "detail": "0 unmapped: []"
+    },
+    {
+      "name": "the service serves the target revision",
+      "passed": true,
+      "detail": "assessment: oakridge:shadow-manual-91efddeff:run-4dacc912f84d85d5/integration/oakridge:assessment:1"
+    },
+    {
+      "name": "real integration assessment served unchanged",
+      "passed": true,
+      "detail": "run-4dacc912f84d85d5/integration/oakridge:assessment:1"
+    },
+    {
+      "name": "every integration finding has both configured-provider answers",
+      "passed": false,
+      "detail": "14 findings; 28 executions"
+    },
+    {
+      "name": "no grading execution failed or remained pending",
+      "passed": false,
+      "detail": "{\"completed\":132,\"failed\":1}"
+    },
+    {
+      "name": "no extraction issue or waiting evidence remains",
+      "passed": true,
+      "detail": "0 issues; 0 waiting"
+    },
+    {
+      "name": "published spec tasks and tasks artifact match exactly",
+      "passed": true,
+      "detail": "8 ids, full descriptions and requirement-id arrays match in order",
+      "spec_revision": "run-4dacc912f84d85d5/analysis:spec:1",
+      "tasks_revision": "run-4dacc912f84d85d5/analysis:tasks:1",
+      "task_ids": [
+        "t_light_palette",
+        "t_dark_palette",
+        "t_status_tokens",
+        "t_chip_runlist_tokens",
+        "t_button_tokens",
+        "t_badge_layered",
+        "t_inscope_badges",
+        "t_remove_or_badge"
+      ]
+    },
+    {
+      "name": "spec tasks, plan and brief contributions were automatically pinned and graded",
+      "passed": true,
+      "detail": "8 spec tasks; 24 pins and completed machine executions; no manual coverage upgrade was performed on this run"
+    },
+    {
+      "name": "real task composites serve integration as final",
+      "passed": true,
+      "detail": "8 task composites"
+    },
+    {
+      "name": "a final integration answer count opens its real raw findings and answers",
+      "passed": true,
+      "detail": "1 counted items; 1 drilldown rows"
+    }
+  ],
+  "capture": {
+    "run_id": "run-4dacc912f84d85d5",
+    "target_artifact": "assessment",
+    "authority_events": 784,
+    "delivered_events": 784,
+    "authority_last": "44579/35357a20-3f72-4492-8adb-a7528e8c827f",
+    "service_cursor": "44579/35357a20-3f72-4492-8adb-a7528e8c827f",
+    "cursor_reached_run": true,
+    "undelivered_event_ids": [],
+    "unmapped": [],
+    "target_revision": "oakridge:shadow-manual-91efddeff:run-4dacc912f84d85d5/integration/oakridge:assessment:1",
+    "read_failures": [],
+    "diagnostics": null,
+    "source_revision_count": 261
+  },
+  "counts": {
+    "items": 142,
+    "machine_executions": {
+      "completed": 132,
+      "failed": 1
+    },
+    "provider_requests": 136,
+    "human_answers": 1,
+    "answers": 133,
+    "evidence_sets": 133,
+    "extraction_issues": 0
+  },
+  "spec_task_mirror": {
+    "name": "published spec tasks and tasks artifact match exactly",
+    "passed": true,
+    "detail": "8 ids, full descriptions and requirement-id arrays match in order",
+    "spec_revision": "run-4dacc912f84d85d5/analysis:spec:1",
+    "tasks_revision": "run-4dacc912f84d85d5/analysis:tasks:1",
+    "task_ids": [
+      "t_light_palette",
+      "t_dark_palette",
+      "t_status_tokens",
+      "t_chip_runlist_tokens",
+      "t_button_tokens",
+      "t_badge_layered",
+      "t_inscope_badges",
+      "t_remove_or_badge"
+    ]
+  },
+  "coverage_grades": {
+    "distribution": {
+      "tasks:fully_covers": 6,
+      "tasks:partially_covers": 2,
+      "plan:fully_covers": 8,
+      "brief:fully_covers": 8
+    },
+    "manual_pin_upgrade": false,
+    "readback_sent_provider_requests": false
+  },
+  "grading": {
+    "is_grading_enabled": true,
+    "requests_sent": 136,
+    "configured_estimate_committed": 1.360000000000001,
+    "executions": {
+      "queued": 0,
+      "claimed": 0,
+      "reclaimable": 0,
+      "budget_deferred": 0,
+      "completed": 133,
+      "failed": 1
+    }
+  },
+  "integration": {
+    "revision_id": "run-4dacc912f84d85d5/integration/oakridge:assessment:1",
+    "verdict": "pass_with_notes",
+    "finding_count": 14,
+    "machine_executions": {
+      "completed": 27,
+      "failed": 1
+    },
+    "answer_distribution": {
+      "assessment_finding.correctness:supported": 8,
+      "assessment_finding.evidence_support:supports": 11,
+      "assessment_finding.correctness:unclear": 5,
+      "assessment_finding.evidence_support:unclear": 1,
+      "assessment_finding.evidence_support:does_not_support": 2
+    },
+    "negative_answers_for_operator_review": [
+      {
+        "question_id": "assessment_finding.evidence_support",
+        "answer": {
+          "kind": "choice",
+          "state": "answered",
+          "value": "does_not_support"
+        },
+        "item_path": "/findings/10",
+        "task_ids": [
+          "t_remove_or_badge"
+        ],
+        "rationale": null
+      },
+      {
+        "question_id": "assessment_finding.evidence_support",
+        "answer": {
+          "kind": "choice",
+          "state": "answered",
+          "value": "does_not_support"
+        },
+        "item_path": "/findings/12",
+        "task_ids": [],
+        "rationale": null
+      }
+    ],
+    "assessed_head": "5109f77be9a5f3991ca82c9cb7623841c0c86a03",
+    "reported_test_evidence": {
+      "failed": 0,
+      "output": "test:pwa: Test Files 91 passed, Tests 1358 passed\ntest:browser: 4 pass 0 fail\nkbbl test: 423 pass 2 skip 0 fail\ntypecheck: exit 0\nbuild:pwa: exit 0",
+      "passed": 1785,
+      "summary": "test:pwa 1358 + test:browser 4 + kbbl test 423 (2 skipped); typecheck and build:pwa exit 0"
+    }
+  },
+  "failed_grades": [
+    {
+      "execution_id": "canonical-json/v1:3dfb405852816466739e4fa98c6c88e2eb26d82786bfa387c9e4118958a321ae",
+      "question_id": "assessment_finding.correctness",
+      "revision_id": "run-4dacc912f84d85d5/integration/oakridge:assessment:1",
+      "item_path": "/findings/7",
+      "task_ids": [
+        "t_button_tokens"
+      ],
+      "evidence_set_id": "canonical-json/v1:74b64aa03430ce73c97bd417a6ce043f6a01d4cc3a88a01c7bb07e2f74eddd50",
+      "evaluator_definition_id": "canonical-json/v1:9071ad7a4d210d6f873801a4f41f3e100be4e2c363f63b99dd1bd7c8c5758420",
+      "status": "failed",
+      "terminal_cause": "retry_exhausted",
+      "error": "http_error: provider HTTP 400",
+      "attempts": 4,
+      "retries": 3,
+      "provider_attempts": [
+        {
+          "producer": "oakridge",
+          "namespace": "shadow-manual-91efddeff",
+          "execution_id": "canonical-json/v1:3dfb405852816466739e4fa98c6c88e2eb26d82786bfa387c9e4118958a321ae",
+          "attempt": 1,
+          "run_id": "run-4dacc912f84d85d5",
+          "request_sent": true,
+          "outcome": "failed",
+          "charged_cost": 0.01,
+          "admitted_estimate": 0.01,
+          "cost_overage": 0,
+          "provider_request_id": null,
+          "failure_category": "http_error",
+          "created_at": "2026-11-10T21:09:08.796Z",
+          "updated_at": "2026-11-10T21:09:09.262Z"
+        },
+        {
+          "producer": "oakridge",
+          "namespace": "shadow-manual-91efddeff",
+          "execution_id": "canonical-json/v1:3dfb405852816466739e4fa98c6c88e2eb26d82786bfa387c9e4118958a321ae",
+          "attempt": 2,
+          "run_id": "run-4dacc912f84d85d5",
+          "request_sent": true,
+          "outcome": "failed",
+          "charged_cost": 0.01,
+          "admitted_estimate": 0.01,
+          "cost_overage": 0,
+          "provider_request_id": null,
+          "failure_category": "http_error",
+          "created_at": "2026-11-10T21:09:12.730Z",
+          "updated_at": "2026-11-10T21:09:13.319Z"
+        },
+        {
+          "producer": "oakridge",
+          "namespace": "shadow-manual-91efddeff",
+          "execution_id": "canonical-json/v1:3dfb405852816466739e4fa98c6c88e2eb26d82786bfa387c9e4118958a321ae",
+          "attempt": 3,
+          "run_id": "run-4dacc912f84d85d5",
+          "request_sent": true,
+          "outcome": "failed",
+          "charged_cost": 0.01,
+          "admitted_estimate": 0.01,
+          "cost_overage": 0,
+          "provider_request_id": null,
+          "failure_category": "http_error",
+          "created_at": "2026-11-10T21:09:13.323Z",
+          "updated_at": "2026-11-10T21:09:14.161Z"
+        },
+        {
+          "producer": "oakridge",
+          "namespace": "shadow-manual-91efddeff",
+          "execution_id": "canonical-json/v1:3dfb405852816466739e4fa98c6c88e2eb26d82786bfa387c9e4118958a321ae",
+          "attempt": 4,
+          "run_id": "run-4dacc912f84d85d5",
+          "request_sent": true,
+          "outcome": "failed",
+          "charged_cost": 0.01,
+          "admitted_estimate": 0.01,
+          "cost_overage": 0,
+          "provider_request_id": null,
+          "failure_category": "http_error",
+          "created_at": "2026-11-10T21:09:14.176Z",
+          "updated_at": "2026-11-10T21:09:15.005Z"
+        }
+      ]
+    }
+  ],
+  "diagnostic": {
+    "no_provider_requests_made": true,
+    "failed_correctness_request": {
+      "request_bytes": 103358,
+      "state_bytes": 102259,
+      "state_references": 9
+    },
+    "successful_sibling_evidence_support_request": {
+      "request_bytes": 101547,
+      "state_bytes": 100569,
+      "state_references": 6
+    },
+    "whole_file_evidence": "The finding names file paths in ref and line hints in detail. The collector reads the whole files, including an 88,743-byte serialized stylesheet reference, because it parses line ranges from ref only.",
+    "root_cause": "Unconfirmed: only HTTP 400 was retained. A provider context-limit rejection is plausible; the response body is deliberately not stored and no replay was performed.",
+    "provider_reference": "https://docs.typesafe.ai/models#context-length"
+  },
+  "task_composites": [
+    {
+      "task_id": "t_badge_layered",
+      "coverage": "linked",
+      "stages": [
+        {
+          "stage": "analysis",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/analysis"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "gap",
+          "totals": {
+            "contributing_items": 0,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "implementation",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/implementation/pwa_theme_badges"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 1,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 2,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "integration",
+          "publication": {
+            "state": "published",
+            "is_final": true,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/integration/oakridge"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 1,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        }
+      ]
+    },
+    {
+      "task_id": "t_button_tokens",
+      "coverage": "linked",
+      "stages": [
+        {
+          "stage": "analysis",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/analysis"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "gap",
+          "totals": {
+            "contributing_items": 0,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "implementation",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/implementation/pwa_theme_badges"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 2,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 4,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "integration",
+          "publication": {
+            "state": "published",
+            "is_final": true,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/integration/oakridge"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 1,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 1,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        }
+      ]
+    },
+    {
+      "task_id": "t_chip_runlist_tokens",
+      "coverage": "linked",
+      "stages": [
+        {
+          "stage": "analysis",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/analysis"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "gap",
+          "totals": {
+            "contributing_items": 0,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "implementation",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/implementation/pwa_theme_badges"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 1,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 2,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "integration",
+          "publication": {
+            "state": "published",
+            "is_final": true,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/integration/oakridge"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 1,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        }
+      ]
+    },
+    {
+      "task_id": "t_dark_palette",
+      "coverage": "linked",
+      "stages": [
+        {
+          "stage": "analysis",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/analysis"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "gap",
+          "totals": {
+            "contributing_items": 0,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "implementation",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/implementation/pwa_theme_badges"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 2,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 4,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "integration",
+          "publication": {
+            "state": "published",
+            "is_final": true,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/integration/oakridge"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 2,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        }
+      ]
+    },
+    {
+      "task_id": "t_inscope_badges",
+      "coverage": "linked",
+      "stages": [
+        {
+          "stage": "analysis",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/analysis"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "gap",
+          "totals": {
+            "contributing_items": 0,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "implementation",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/implementation/pwa_theme_badges"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 1,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 2,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "integration",
+          "publication": {
+            "state": "published",
+            "is_final": true,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/integration/oakridge"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 1,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        }
+      ]
+    },
+    {
+      "task_id": "t_light_palette",
+      "coverage": "linked",
+      "stages": [
+        {
+          "stage": "analysis",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/analysis"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "gap",
+          "totals": {
+            "contributing_items": 0,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "implementation",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/implementation/pwa_theme_badges"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 2,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 4,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "integration",
+          "publication": {
+            "state": "published",
+            "is_final": true,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/integration/oakridge"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 2,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        }
+      ]
+    },
+    {
+      "task_id": "t_remove_or_badge",
+      "coverage": "linked",
+      "stages": [
+        {
+          "stage": "analysis",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/analysis"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "gap",
+          "totals": {
+            "contributing_items": 0,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "implementation",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/implementation/pwa_theme_badges"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 1,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 2,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "integration",
+          "publication": {
+            "state": "published",
+            "is_final": true,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/integration/oakridge"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 1,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        }
+      ]
+    },
+    {
+      "task_id": "t_status_tokens",
+      "coverage": "linked",
+      "stages": [
+        {
+          "stage": "analysis",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/analysis"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "gap",
+          "totals": {
+            "contributing_items": 0,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "implementation",
+          "publication": {
+            "state": "published",
+            "is_final": false,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/implementation/pwa_theme_badges"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 2,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 4,
+            "superseded_answers": 0
+          }
+        },
+        {
+          "stage": "integration",
+          "publication": {
+            "state": "published",
+            "is_final": true,
+            "unit_ids": {
+              "items": [
+                "run-4dacc912f84d85d5/integration/oakridge"
+              ],
+              "total": 1,
+              "limit": 50,
+              "offset": 0
+            }
+          },
+          "coverage": "linked",
+          "totals": {
+            "contributing_items": 2,
+            "not_ready_items": 0,
+            "pending_items": 0,
+            "failed_items": 0,
+            "budget_deferred_items": 0,
+            "grading_off_items": 0,
+            "superseded_items": 0,
+            "superseded_answers": 0
+          }
+        }
+      ]
+    }
+  ],
+  "merged_source": {
+    "repository": "RankOneLabs/oakridge",
+    "pr_url": "https://github.com/RankOneLabs/oakridge/pull/797",
+    "merged_at": "2026-11-10T21:30:32Z",
+    "head_sha": "5109f77be9a5f3991ca82c9cb7623841c0c86a03",
+    "matches_assessed_head": true,
+    "tests_reported_by_integrator_not_rerun_by_this_readback": true
+  },
+  "browser_readback": {
+    "task_count": 8,
+    "provider_request_label": "136 provider requests \u00b7 $1.36 committed",
+    "integration_label": "Final results",
+    "page_errors": [],
+    "no_decisions_or_answers_submitted": true
+  },
+  "notes": [
+    "The eight canonical spec tasks and the tasks artifact match exactly, including requirement links. All eight task, eight plan and eight brief questions were captured and graded automatically without the earlier run's manual coverage-pin upgrade.",
+    "Two spec-task answers are partially_covers and six are fully_covers; all eight plan and eight brief contribution answers are fully_covers. These values are independent provider judgments, not workflow acceptance.",
+    "There are two negative final integration Evidence support answers, on /findings/10 (unused badge removal) and /findings/12 (PR screenshot attachment gap); the provider supplied no rationale. They were preserved.",
+    "The source integration assessment reports 1,785 passing tests and zero failed tests at the same head GitHub reports merged. This readback did not rerun those source suites.",
+    "The source assessment records a screenshot attachment review gap: screenshot files remained on the worker host rather than attached to the PR.",
+    "All eight task analysis stages still have no linked items: no explicit analysis-finding-to-task declarations were supplied. Requirement-to-task IDs in the spec are a different, explicit link.",
+    "This readback attaches to the operator-completed run; it makes no workflow decisions, publications, merges, or provider requests.",
+    "Same-finding Correctness-only waiting remains unreachable through the ordered live feed and is still proven offline."
+  ],
+  "recommended_next_actions": [
+    "Diagnose the rejected HTTP 400 grade using the captured request and provider limits; retain a safe bounded failure classification in future without persisting arbitrary response bodies.",
+    "Preserve the failed execution and its four attempts; any later corrective grading must keep that history visible.",
+    "Use path:start-end in assessment file refs when citing a range; prose line hints in detail do not limit the captured file."
+  ]
+}
