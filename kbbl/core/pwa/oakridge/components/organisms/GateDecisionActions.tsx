@@ -153,7 +153,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
             <Button
               key={action}
               variant={isPrimary ? "primary" : "secondary"}
-              className={`${decisionButtonClass} ${isPrimary ? "text-white!" : "text-[var(--text-primary)]!"}`}
+              className={`${decisionButtonClass} ${isPrimary ? "" : "text-[var(--text-primary)]!"}`}
               disabled={mutation.isPending || isCheckingMerge || disabled}
               onClick={() => choose(action, needsFeedback)}
               onBlur={isConfirming && !mutation.isPending ? () => setIsConfirmingApproval(false) : undefined}
@@ -174,7 +174,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
           <div className="or-decision-feedback__buttons">
             <Button variant="secondary" className={`${decisionButtonClass} text-[var(--text-primary)]!`}
               onClick={() => setMergeStatus(null)}>Cancel</Button>
-            <Button variant="danger" className={`${decisionButtonClass} border-transparent! bg-[var(--danger-fg)]! text-white!`}
+            <Button variant="danger" className={`${decisionButtonClass} border-transparent! bg-[var(--danger-fg)]! text-[var(--bg-app)]!`}
               disabled={mutation.isPending} onClick={() => submit("confirm_merged", undefined, true)}>Confirm anyway</Button>
           </div>
         </div>
@@ -193,7 +193,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
           />
           <div className="or-decision-feedback__buttons">
             <Button variant="secondary" className={`${decisionButtonClass} text-[var(--text-primary)]!`} onClick={() => setFeedbackAction(null)}>Cancel</Button>
-            <Button variant="danger" className={`${decisionButtonClass} border-transparent! bg-[var(--danger-fg)]! text-white!`} disabled={disabled || !feedback.trim() || mutation.isPending} onClick={() => submit(feedbackAction, feedback)}>Send feedback</Button>
+            <Button variant="danger" className={`${decisionButtonClass} border-transparent! bg-[var(--danger-fg)]! text-[var(--bg-app)]!`} disabled={disabled || !feedback.trim() || mutation.isPending} onClick={() => submit(feedbackAction, feedback)}>Send feedback</Button>
           </div>
         </div>
       )}
