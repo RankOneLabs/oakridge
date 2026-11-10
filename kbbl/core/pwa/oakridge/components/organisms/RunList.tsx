@@ -34,17 +34,6 @@ function statusRowClass(status: RunDisplayStatus): string {
   return `or-run-row or-run-row--${status}`;
 }
 
-// Tailwind v4's palette tokens differ from the previous status hexes.
-const STATUS_COLOR_CLASS = {
-  running: "[&&]:border-[#3b82f6] [&&]:text-[#3b82f6]",
-  stuck: "[&&]:border-[#fbbf24] [&&]:text-[#fbbf24]",
-  parked: "[&&]:border-[#f59e0b] [&&]:text-[#f59e0b]",
-  failed: "[&&]:border-[#ef4444] [&&]:text-[#ef4444]",
-  complete: "[&&]:border-[#10b981] [&&]:text-[#10b981]",
-  cancelled: "[&&]:border-[var(--text-muted)]",
-  pending: "[&&]:border-[var(--text-muted)]",
-} satisfies Record<RunDisplayStatus, string>;
-
 interface RunListProps {
   onSelectRun: (id: string) => void;
   onNewRun: () => void;
@@ -160,7 +149,7 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, runA
                     {run.repository_keys.length > 0 ? run.repository_keys.join(", ") : "-"}
                   </td>
                   <td className={tableCellClass}>
-                    <Chip tone={selectStatusTone(status)} className={STATUS_COLOR_CLASS[status]}>{status}</Chip>
+                    <Chip tone={selectStatusTone(status)}>{status}</Chip>
                   </td>
                   <td className={`${tableCellClass} text-[var(--text-secondary)]`}>
                     <div>{run.current_stage ?? "-"}</div>
