@@ -30,7 +30,7 @@ export function ItemGradeAction({ runId, selection, onOpenItem }: Props) {
       {isRevealed && glance.data && <AutomaticGradeIcons glances={selectAutomaticGlances(glance.data)} />}
       {glance.data && (
         <Button variant="secondary" size="xsmall" className="text-xs!" data-testid="or-item-automatic-toggle" aria-pressed={isRevealed}
-          aria-label={isRevealed ? `Hide answers for the finding at ${selection.item_path}` : `Show answers for the finding at ${selection.item_path}`}
+          aria-label={isRevealed ? `Hide answers for the item at ${selection.item_path}` : `Show answers for the item at ${selection.item_path}`}
           onClick={() => (isRevealed ? hide(key) : reveal(key))}>{isRevealed ? "Hide" : "Show"}</Button>
       )}
       <GradeItemButton selection={selection} onOpenItem={onOpenItem} label={gradeActionLabel(progress)} />

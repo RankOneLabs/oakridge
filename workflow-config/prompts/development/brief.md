@@ -17,3 +17,5 @@ Carry every plan cohort acceptance entry into the brief's `acceptance_criteria` 
 The brief is the builder's complete scope and the assessor's sole requirement source. Make each acceptance entry self-contained. When the specification requires exact copy, labels, values, or other source facts for this cohort, include those exact values in the brief's acceptance entries or decisions. Do not refer the builder or assessor back to the specification for missing details.
 
 Every field is required. Arrays may be empty when the cohort and specification contain no corresponding item. Never use placeholders or absolute paths.
+
+Terminology: **spec tasks** are the overall obligations explicitly written in the approved spec and mirrored by the tasks artifact. A cohort acceptance entry is a **cohort contribution** to that spec task, using the same id, not a new task. Several cohorts may contribute to one spec task; their combined contributions must cover its full obligation. A brief preserves its cohort's assigned contribution and supplies enough detail to implement it.

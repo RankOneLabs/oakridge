@@ -51,6 +51,22 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
     return row ? { ...row, revision_id: row.revision_id as ArtifactRevisionId } : null;
   }
 
+  async readRevisionAt(artifact_kind: string, subject_revision_id: ArtifactRevisionId): Promise<CapturedRevision | null> {
+    const { db, tenant, run_id } = this.dependencies;
+    const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_revision as context")
+      .innerJoin("observation.source_revision as subject", (join) => join.onRef("subject.producer", "=", "context.producer")
+        .onRef("subject.namespace", "=", "context.namespace").onRef("subject.run_id", "=", "context.run_id")
+        .on("subject.revision_id", "=", subject_revision_id))
+      .select(["context.revision_id", "context.artifact_kind", "context.subject_id", "context.body"])
+      .where("context.producer", "=", tenant.producer).where("context.namespace", "=", tenant.namespace)
+      .where("context.run_id", "=", run_id).where("context.artifact_kind", "=", artifact_kind)
+      .where((eb) => eb.or([eb("context.recorded_at", "<", eb.ref("subject.recorded_at")),
+        eb.and([eb("context.recorded_at", "=", eb.ref("subject.recorded_at")), eb("context.captured_at", "<=", eb.ref("subject.captured_at"))])]))
+      .orderBy("context.recorded_at", "desc").orderBy("context.captured_at", "desc").orderBy("context.revision_id", "desc")
+      .executeTakeFirst());
+    return row ? { ...row, revision_id: row.revision_id as ArtifactRevisionId } : null;
+  }
+
   /** Follows only resolved producer edges to a logical item, then that item's occurrences. */
   async readLinkedItems(occurrence_id: ItemOccurrenceId): Promise<readonly LinkedItem[]> {
     const { db, tenant, run_id } = this.dependencies;

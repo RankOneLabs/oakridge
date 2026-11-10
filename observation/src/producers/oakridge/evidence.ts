@@ -3,7 +3,7 @@ import type { EvidenceReference, LineRange, NotReadyReason, RepositoryEvidence }
 import type { QuestionKey } from "../../grading/question";
 import type { CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, SourceArtifact } from "../../ports/artifact-source";
 import type { EvidenceCollector } from "../../ports/producer-profile";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "./questions";
+import { CONTRIBUTION_COVERAGE_ID, CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID, TASK_COVERAGE_ID } from "./questions";
 
 type JsonObject = { readonly [key: string]: JsonValue };
 const objectOf = (value: JsonValue | undefined): JsonObject | null =>
@@ -142,12 +142,70 @@ async function correctness(artifact: SourceArtifact, sources: CapturedSources): 
     ...cited.evidence.references, ...context.map(contextReference)]);
 }
 
+/** A task or requirement addressed in its source artifact, preserving its original array position. */
+interface LocatedDefinition { readonly value: JsonObject; readonly item_path: string }
+function definitionAt(revision: CapturedRevision, field: "tasks" | "requirements", id: string): LocatedDefinition | null {
+  const entries = objectOf(revision.body)?.[field];
+  if (!Array.isArray(entries)) return null;
+  const index = entries.findIndex((entry) => objectOf(entry)?.id === id);
+  const value = index < 0 ? null : objectOf(entries[index]);
+  return value ? { value, item_path: `/${field}/${index}` } : null;
+}
+const revisionReference = (ref: string, revision: CapturedRevision, item_path: string | null, content: JsonValue): EvidenceReference =>
+  ({ source: "revision", ref, revision_id: revision.revision_id, item_path, content });
+
+/** Coverage uses explicit ids and the revisions available when the subject was published. A later
+ * spec, task list or plan cannot silently become the context of an older contribution. */
+async function coverage(artifact: SourceArtifact, sources: CapturedSources): Promise<EvidenceCollection> {
+  const subject = objectOf(artifact.selected_value);
+  if (typeof subject?.id !== "string") return notReady("task_unavailable", "the item names no spec task id");
+  const taskRevision = artifact.item_kind === "task" ? await sources.readRevision(artifact.revision_id)
+    : await sources.readRevisionAt("tasks", artifact.revision_id);
+  if (!taskRevision) return notReady("task_unavailable", `no task list is captured at ${artifact.revision_id}`);
+  const task = definitionAt(taskRevision, "tasks", subject.id);
+  if (!task) return notReady("task_unavailable", `task ${subject.id} is absent from ${taskRevision.revision_id}`);
+  const ids = task.value.requirement_ids;
+  if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string"))
+    return notReady("requirements_unavailable", `task ${subject.id} has no valid requirement_ids`);
+  const spec = await sources.readRevisionAt("spec", taskRevision.revision_id);
+  const launchSpec = objectOf(await sources.readRunInput())?.spec;
+  if (!spec && (typeof launchSpec !== "string" || launchSpec.length === 0))
+    return notReady("spec_unavailable", `run ${artifact.run_id} has no captured spec`);
+  const references: EvidenceReference[] = [subjectReference(artifact),
+    ...(spec ? [revisionReference("spec", spec, null, spec.body)]
+      : [{ source: "run_input", ref: "spec", run_id: artifact.run_id, input_path: "/spec", content: launchSpec as string } as const]),
+    revisionReference("spec_task", taskRevision, task.item_path, task.value)];
+  if (ids.length > 0) {
+    const analysis = await sources.readRevisionAt("analysis", taskRevision.revision_id);
+    if (!analysis) return notReady("requirements_unavailable", `no analysis is captured at ${taskRevision.revision_id}`);
+    for (const [index, id] of [...new Set(ids)].entries()) {
+      const requirement = definitionAt(analysis, "requirements", id);
+      if (!requirement) return notReady("requirements_unavailable", `requirement ${id} is absent from ${analysis.revision_id}`);
+      references.push(revisionReference(`requirement:${index}`, analysis, requirement.item_path, requirement.value));
+    }
+  }
+  if (artifact.item_kind === "acceptance_entry") {
+    const revision = await sources.readRevision(artifact.revision_id);
+    if (!revision) return notReady("revision_unavailable", `revision ${artifact.revision_id} is not captured`);
+    const plan = revision.artifact_kind === "plan" ? revision : await sources.readRevisionAt("plan", artifact.revision_id);
+    if (!plan) return notReady("plan_unavailable", `no plan is captured at ${artifact.revision_id}`);
+    references.push(revisionReference("plan", plan, null, plan.body));
+    const match = /^\/cohorts\/(\d+)\/acceptance_criteria\/\d+$/.exec(artifact.item_path);
+    const cohorts = objectOf(revision.body)?.cohorts;
+    const context = match && Array.isArray(cohorts) ? cohorts[Number(match[1])] : revision.body;
+    if (context === undefined) return notReady("cohort_unavailable", `cohort at ${artifact.item_path} is absent`);
+    references.push(revisionReference("contribution_context", revision, match ? `/cohorts/${match[1]}` : null, context));
+  }
+  return ready(references);
+}
+
 /** Each question is collected on its own, so one waiting lookup never delays another question. */
 export const oakridgeEvidence: EvidenceCollector = {
   collect(artifact: SourceArtifact, question: QuestionKey, sources: CapturedSources): Promise<EvidenceCollection> {
     if (question.question_id === RELEVANCE_ID) return relevance(artifact, sources);
     if (question.question_id === CORRECTNESS_ID) return correctness(artifact, sources);
     if (question.question_id === EVIDENCE_SUPPORT_ID) return evidenceSupport(artifact, sources);
+    if (question.question_id === TASK_COVERAGE_ID || question.question_id === CONTRIBUTION_COVERAGE_ID) return coverage(artifact, sources);
     return Promise.resolve(notReady("unsupported_question", `question ${question.question_id} has no evidence rule`));
   },
 };

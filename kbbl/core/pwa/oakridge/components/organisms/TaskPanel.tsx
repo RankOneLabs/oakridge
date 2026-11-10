@@ -14,6 +14,7 @@ import { GradeItemButton } from "../molecules/GradeItemButton";
 import { ListPager } from "../molecules/ListPager";
 import { CompositeDrilldown } from "./CompositeDrilldown";
 import { TaskStageComposites } from "./TaskStageComposites";
+import { ItemGradeAction } from "./ItemGradeAction";
 
 const FIRST: ObservationPageRequest = { limit: 50, offset: 0 };
 
@@ -47,11 +48,14 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
       {composite.data && <TaskStageComposites runId={runId} taskId={taskId} stages={composite.data.stages} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })} />}
       {isRevealed && drill && <CompositeDrilldown runId={runId} drilldownKey={drill.key} label={drill.label} onClose={() => setDrill(null)} onOpenItem={onOpenItem} />}
       <section className="flex flex-col gap-1" data-testid="or-task-lineage">
-        <div className={artifactLabelClass}>Definitions and linked items</div>
+        <div className={artifactLabelClass}>Spec task and cohort contributions</div>
         <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
           {lineage.data?.items.flatMap((entry, index) => {
             if (entry.kind === "edge") return [];
-            if (entry.kind === "occurrence") return [<li key={`${index}-${entry.occurrence_id}`} className="py-1.5 text-xs text-[var(--text-muted)]" data-testid="or-task-definition">Defined in {entry.artifact_kind} <code className="or-code">{entry.revision_id} {entry.item_path}</code>{entry.is_current ? "" : " (older revision)"}</li>];
+            if (entry.kind === "occurrence") return [<li key={`${index}-${entry.occurrence_id}`} className="flex flex-wrap items-center justify-between gap-2 py-1.5 text-xs text-[var(--text-muted)]" data-testid="or-task-definition">
+              <span>{entry.artifact_kind === "tasks" ? "Spec task" : "Cohort contribution"} · {entry.artifact_kind}{entry.is_current ? "" : " (older revision)"}</span>
+              <ItemGradeAction runId={runId} selection={{ source_revision_id: entry.revision_id, item_path: entry.item_path }} onOpenItem={onOpenItem} />
+            </li>];
             return [<li key={`${index}-${entry.relation_id}`} className="flex items-start gap-2 py-1.5" data-testid="or-task-linked-item" data-link-state={entry.kind}>
               <p className="m-0 min-w-0 flex-1 text-sm text-[var(--text-secondary)]">{selectItemText(entry.item.selected_value)}</p>
               {entry.kind === "unresolved" && <Chip tone="warning">Unresolved</Chip>}

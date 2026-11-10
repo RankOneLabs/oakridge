@@ -91,7 +91,7 @@ test("the collector reads a citation range from the non-primary launch repositor
   const artifact: SourceArtifact = { occurrence_id: "occurrence" as ItemOccurrenceId, run_id: "run-1" as RunId, revision_id: "assessment-1" as ArtifactRevisionId,
     item_path: "/findings/0", item_kind: "assessment_finding",
     selected_value: { task_ids: [], evidence: [{ kind: "file", ref: "core/decision-record.ts:18-31" }, { kind: "file", ref: "core/gone.ts" }] } };
-  const sources: CapturedSources = { repository: createGitRepositoryReader(), readLinkedItems: async () => [],
+  const sources: CapturedSources = { repository: createGitRepositoryReader(), readRevisionAt: async () => null, readLinkedItems: async () => [],
     readRunInput: async () => ({ spec: "s", primary_repository_key: "primary", repositories: [
       { key: "primary", preparation: { repository_path: primary } }, { key: "other", preparation: { repository_path: other } }] }),
     readRevision: async (revision_id) => ({ revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: null, body: { head_sha: cited_commit } }) };

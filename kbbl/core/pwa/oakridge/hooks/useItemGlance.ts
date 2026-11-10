@@ -10,10 +10,11 @@ const GLANCE_WINDOWS = { machine: QUESTIONS, answers: QUESTIONS, attempts: ONE, 
 
 /**
  * One finding row's grading summary on an artifact: its exact revision and path resolved to the
- * captured item, then that item's status. It does not poll; an acknowledged submission refreshes it.
+ * captured item, then that item's status. Polls alongside the item panel so a provider answer
+ * arriving after the artifact opened replaces its pending badge without a browser refresh.
  */
 export function useItemGlance(run_id: string, selection: ObservationItemAddress) {
-  return useQuery({ queryKey: ["oakridge", "grading", "item-glance", run_id, selection.source_revision_id, selection.item_path], retry: false,
+  return useQuery({ queryKey: ["oakridge", "grading", "item-glance", run_id, selection.source_revision_id, selection.item_path], retry: false, refetchInterval: 10_000,
     queryFn: async () => {
       const item = await readItemAt(run_id, selection);
       return readItemStatus({ occurrence_id: item.occurrence_id, top: QUESTIONS, nested: GLANCE_WINDOWS });

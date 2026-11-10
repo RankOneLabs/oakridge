@@ -151,15 +151,15 @@ integration("a launch that carried no config has grading off", async () => scrat
   expect(await readRunSpend(db, tenant, "run-1")).toMatchObject({ is_grading_enabled: false, captured_config: null });
 }));
 
-integration("only supported kinds are admitted: tasks, risks, decisions and whole artifacts get no execution", async () => scratchDatabase(async (db) => {
+integration("spec tasks are admitted alongside findings; risks, decisions and whole artifacts get no execution", async () => scratchDatabase(async (db) => {
   const life = await lifecycle(db);
   await captureAnalysis(life, true);
   await life.feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
   await captureAssessment(life);
   const kinds = [...new Set((await executionsOf(db)).map((row) => row.item_kind))].sort();
-  expect(kinds).toEqual(["assessment_finding", "finding"]);
-  // 1 Relevance + 4 assessment findings x (Correctness, Evidence support), one machine evaluator each.
-  expect((await executionsOf(db)).length).toBe(9);
+  expect(kinds).toEqual(["assessment_finding", "finding", "task"]);
+  // 1 Relevance + 4 assessment findings x 2 questions + 2 spec task coverage questions.
+  expect((await executionsOf(db)).length).toBe(11);
 }));
 
 integration("Correctness waits for its subject build while Evidence support of the same finding is admitted", async () => scratchDatabase(async (db) => {

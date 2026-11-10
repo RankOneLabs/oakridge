@@ -13,6 +13,6 @@ export function GradeItemButton({ selection, onOpenItem, label = "Grade" }: Prop
   if (!selection || !onOpenItem) return null;
   return (
     <Button variant="secondary" size="xsmall" className="shrink-0 text-xs!" onClick={() => onOpenItem(selection)} data-testid="or-grade-item" data-item-path={selection.item_path}
-      aria-label={`Open the finding at ${selection.item_path}`}>{label}</Button>
+      aria-label={`Open grading at ${selection.item_path}`}>{label}</Button>
   );
 }

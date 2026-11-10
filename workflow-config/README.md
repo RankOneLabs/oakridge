@@ -23,7 +23,7 @@ compiles it against these prompts and pins it.
 
 ## Task contracts in the development workflow
 
-The approved task list is the one source of identity for the work. A plan cohort
+The revised specification contains the canonical **Spec tasks** section, with stable ids, descriptions and explicit requirement links. The separate tasks artifact mirrors it exactly; task edits revise that section and republish both artifacts. The spec editor publishes the spec before tasks. The approved task list is the one source of identity for the work. A plan cohort
 and a brief share the `task_acceptance` entry, exactly `{ id, text, decision_ids }`.
 `id` is an approved task's id. No other id is allocated for an entry, and a task
 spanning cohorts keeps the same id in each, so `T7` is `T7` in cohorts A and B.

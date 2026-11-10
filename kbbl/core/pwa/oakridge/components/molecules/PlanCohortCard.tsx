@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import type { PlanCohort } from "../../lib/plan";
@@ -6,23 +6,30 @@ import type { CohortId } from "../../run-types";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
 import { TaskIdLink } from "./TaskIdLink";
+import type { ViewerProps } from "../../artifactRegistry";
+import { ArtifactItemGrade } from "./ArtifactItemGrade";
 
-interface Props {
+interface Props extends Pick<ViewerProps, "source" | "itemGrading" | "onOpenItem"> {
   cohort: PlanCohort;
   order: number;
   isSelected: boolean;
   onSelectCohort: (id: CohortId) => void;
   /** Opens one of this cohort's tasks. A task shared with another cohort opens the same task from both. */
   onOpenTask?: (task_id: string) => void;
+  cohortIndex?: number;
 }
 
 /** The cohort's tasks by their run-scoped ids: the acceptance entries a plan assigns it. */
-function CohortTasks({ cohort, onOpenTask }: { cohort: PlanCohort; onOpenTask?: (task_id: string) => void }) {
+function CohortTasks({ cohort, onOpenTask, gradeAction, isOpen }: { cohort: PlanCohort; onOpenTask?: (task_id: string) => void; gradeAction: (index: number) => ReactNode; isOpen: boolean }) {
   if (cohort.acceptance_criteria.length === 0) return null;
   return (
-    <div className="flex flex-wrap items-center gap-1.5" data-testid="or-plan-cohort-tasks">
-      <span className={artifactLabelClass}>Tasks</span>
-      {cohort.acceptance_criteria.map(({ id, text }) => <TaskIdLink key={id} task_id={id} text={text} onOpenTask={onOpenTask} />)}
+    <div className="flex flex-col gap-1.5" data-testid="or-plan-cohort-tasks">
+      <span className={artifactLabelClass}>Contributions to spec tasks</span>
+      {cohort.acceptance_criteria.map(({ id, text }, index) => <div key={id} className="flex items-start gap-2">
+        <TaskIdLink task_id={id} text={text} onOpenTask={onOpenTask} />
+        {!isOpen && <span className="min-w-0 flex-1 text-sm text-[var(--text-secondary)]">{text}</span>}
+        {gradeAction(index)}
+      </div>)}
     </div>
   );
 }
@@ -39,7 +46,7 @@ function DetailList({ label, values, isMono = false }: { label: string; values: 
   );
 }
 
-export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort, onOpenTask }: Props) {
+export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort, onOpenTask, cohortIndex, source, itemGrading, onOpenItem }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const cardRef = useRef<HTMLLIElement>(null);
 
@@ -69,7 +76,8 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort, onOp
           ))}
         </div>
       )}
-      <CohortTasks cohort={cohort} onOpenTask={onOpenTask} />
+      <CohortTasks cohort={cohort} isOpen={isOpen} onOpenTask={onOpenTask} gradeAction={(index) => cohortIndex === undefined ? null
+        : <ArtifactItemGrade source={source} itemPath={`/cohorts/${cohortIndex}/acceptance_criteria/${index}`} itemGrading={itemGrading} onOpenItem={onOpenItem} />} />
       {cohort.description && <ExpandableText text={cohort.description} className="text-sm text-[var(--text-secondary)]" />}
       <Button variant="link" className="self-start text-xs! no-underline! hover:underline!" aria-expanded={isOpen} onClick={() => setIsOpen(!isOpen)}>
         {isOpen ? "Hide details" : `Details · ${cohort.files_in_scope.length} files · ${cohort.decisions.length} decisions · ${cohort.acceptance_criteria.length} ${cohort.acceptance_criteria.length === 1 ? "task" : "tasks"}`}
@@ -96,7 +104,7 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort, onOp
           )}
           {cohort.acceptance_criteria.length > 0 && (
             <div>
-              <div className={artifactLabelClass}>Tasks</div>
+              <div className={artifactLabelClass}>Contributions to spec tasks</div>
               <ul className="m-0 mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
                 {cohort.acceptance_criteria.map((criterion, index) => <li key={index}>
                   <code className="or-code mr-2">{criterion.id}</code>

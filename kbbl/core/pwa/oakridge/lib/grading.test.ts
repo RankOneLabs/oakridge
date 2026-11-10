@@ -179,4 +179,11 @@ describe("artifact glances", () => {
     expect(selectFindingSelections(source, ["/findings/0", "/findings/1"])).toEqual([{ source_revision_id: id("u:assessment:2"), item_path: "/findings/0" }, { source_revision_id: id("u:assessment:2"), item_path: "/findings/1" }]);
     expect(selectFindingSelections(undefined, ["/findings/0"])).toEqual([]);
   });
+  test("coverage grades distinguish full, partial and missing coverage from an unclear answer", () => {
+    const status = itemStatus([question("task.requirement_coverage", { machine: paged(
+      ["fully_covers", "partially_covers", "does_not_cover", "unclear"].map((value) => machine({ state: "answered", observation_id: id(`coverage-${value}`),
+        answer: { state: "answered", kind: "choice", value } }))) })]);
+    expect(selectAutomaticGlances(status).map(({ glyph, tone }) => [glyph, tone])).toEqual([
+      ["affirmative", "success"], ["partial", "warning"], ["negative", "warning"], ["unclear", "neutral"]]);
+  });
 });

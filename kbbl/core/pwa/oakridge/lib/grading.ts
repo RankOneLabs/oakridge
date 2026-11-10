@@ -34,6 +34,8 @@ const QUESTION_LABELS: Readonly<Record<string, string>> = {
   "finding.relevance": "Relevance",
   "assessment_finding.correctness": "Correctness",
   "assessment_finding.evidence_support": "Evidence support",
+  "task.requirement_coverage": "Spec requirement coverage",
+  "acceptance_entry.task_coverage": "Spec task coverage",
 };
 export const questionLabel = ({ question_id }: Pick<ObservationQuestionKey, "question_id">): string => QUESTION_LABELS[question_id] ?? question_id;
 export const sameQuestion = (left: ObservationQuestionKey, right: ObservationQuestionKey): boolean =>
@@ -43,10 +45,10 @@ export const answerValueLabel = (value: unknown): string => typeof value === "st
 export const gradeAnswerLabel = (answer: ObservationGradeAnswer): string =>
   answer.state === "answered" ? answerValueLabel(answer.value) : `${answer.state}: ${answer.reason}`;
 export const answerKeyLabel = (answer: ObservationAnswerKey): string => answer.state === "answered" ? answerValueLabel(answer.value) : answer.state;
-const NEGATIVE_ANSWERS: ReadonlySet<unknown> = new Set(["irrelevant", "contradicted", "does_not_support"]);
-const AFFIRMATIVE_ANSWERS: ReadonlySet<unknown> = new Set(["relevant", "supported", "supports"]);
+const NEGATIVE_ANSWERS: ReadonlySet<unknown> = new Set(["irrelevant", "contradicted", "does_not_support", "does_not_cover"]);
+const AFFIRMATIVE_ANSWERS: ReadonlySet<unknown> = new Set(["relevant", "supported", "supports", "fully_covers"]);
 /** A negative or unclear choice is an actual answer: it never takes a tone that reads as missing or failed work. */
-export const answerTone = (value: unknown): ChipTone => AFFIRMATIVE_ANSWERS.has(value) ? "success" : NEGATIVE_ANSWERS.has(value) ? "warning" : "neutral";
+export const answerTone = (value: unknown): ChipTone => AFFIRMATIVE_ANSWERS.has(value) ? "success" : NEGATIVE_ANSWERS.has(value) || value === "partially_covers" ? "warning" : "neutral";
 
 export function graderLabel(grader: ObservationGraderKey): string {
   if (grader.kind === "human") return `Reviewer ${grader.reviewer_id}`;
@@ -91,13 +93,14 @@ export function selectOwnGradeProgress(status: ObservationItemStatusResponse, re
 /** "Graded" only once every question the operator can answer has their answer. */
 export const gradeActionLabel = (progress: OwnGradeProgress | null): string => progress?.kind === "graded" ? "Graded" : "Grade";
 
-export type AutomaticGlyph = "affirmative" | "negative" | "unclear" | "not_ready" | "waiting" | "budget_deferred" | "failed" | "grading_off";
+export type AutomaticGlyph = "affirmative" | "partial" | "negative" | "unclear" | "not_ready" | "waiting" | "budget_deferred" | "failed" | "grading_off";
 /** One automatic evaluator's state on one question, at a glance. The item panel holds everything else. */
 export interface AutomaticGlance { readonly key: string; readonly glyph: AutomaticGlyph; readonly tone: ChipTone; readonly label: string }
 function glyphOf(measurement: ObservationMeasurementState): AutomaticGlyph {
   switch (measurement.state) {
     case "answered":
       if (measurement.answer.state !== "answered") return "unclear";
+      if (measurement.answer.value === "partially_covers") return "partial";
       return AFFIRMATIVE_ANSWERS.has(measurement.answer.value) ? "affirmative" : NEGATIVE_ANSWERS.has(measurement.answer.value) ? "negative" : "unclear";
     case "not_ready": return "not_ready";
     case "awaiting_admission": case "pending": return "waiting";

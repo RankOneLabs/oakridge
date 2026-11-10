@@ -4,7 +4,7 @@ import type { JsonValue } from "../src/domain/primitives";
 import type { EvidenceReference } from "../src/grading/evidence";
 import type { CapturedRevision, CapturedSources, LinkedItem, RepositoryFile, SourceArtifact } from "../src/ports/artifact-source";
 import { citationsOf, oakridgeEvidence, parseFileCitation } from "../src/producers/oakridge/evidence";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, OAKRIDGE_QUESTIONS, RELEVANCE_ID } from "../src/producers/oakridge/questions";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, OAKRIDGE_QUESTIONS, RELEVANCE_ID, TASK_COVERAGE_ID, CONTRIBUTION_COVERAGE_ID, COVERAGE_VALUES } from "../src/producers/oakridge/questions";
 import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
 import { readOccurrenceEvidence, collectPinnedQuestion } from "../src/storage/captured-evidence-store";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
@@ -33,18 +33,19 @@ function sources(options: SourceOptions = {}): CapturedSources & { readonly path
     readRevision: async (revision_id) => revision_id === "assessment-1"
       ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: options.subject_id ?? null, body: options.assessment ?? { head_sha: HEAD } }
       : revision_id === "build-1" ? options.build === undefined ? build : options.build : null,
-    readLinkedItems: async () => options.linked ?? [],
+    readRevisionAt: async () => null, readLinkedItems: async () => options.linked ?? [],
     repository: { hasCommit: async (path) => path === (options.commit_in === undefined ? "/repos/oakridge" : options.commit_in),
       readFile: async (request) => { paths.push(`${request.repository_path}@${request.commit_sha}:${request.path}`);
         return options.file ?? { state: "present", content: "one\ntwo\nthree\nfour" }; } } };
 }
 const key = (question_id: QuestionId) => ({ question_id, question_version: "1" });
 
-test("the supported questions are exactly three, with their item kinds and answers", () => {
+test("the supported questions grade findings, spec tasks and cohort contributions", () => {
   expect(OAKRIDGE_QUESTIONS.map(({ question_id, item_kind, allowed_values }) => [question_id, item_kind, allowed_values])).toEqual([
     [RELEVANCE_ID, "finding", ["relevant", "irrelevant", "unclear"]],
     [CORRECTNESS_ID, "assessment_finding", ["supported", "contradicted", "unclear"]],
-    [EVIDENCE_SUPPORT_ID, "assessment_finding", ["supports", "does_not_support", "unclear"]]]);
+    [EVIDENCE_SUPPORT_ID, "assessment_finding", ["supports", "does_not_support", "unclear"]],
+    [TASK_COVERAGE_ID, "task", COVERAGE_VALUES], [CONTRIBUTION_COVERAGE_ID, "acceptance_entry", COVERAGE_VALUES]]);
 });
 
 test("a file citation is a path with optional lines; anything else stays text", () => {

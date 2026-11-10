@@ -66,3 +66,5 @@ The plan-wide `acceptance_criteria` remains a list of text.
 Name at least one cohort. Give a `dependency_order`, the scope in and out, the plan's acceptance criteria and its risks. A plan that breaks these rules is returned to you with what to fix, and it cannot be accepted until a corrected revision passes.
 
 Plan only; do not implement.
+
+Terminology: **spec tasks** are the overall obligations explicitly written in the approved spec and mirrored by the tasks artifact. A cohort acceptance entry is a **cohort contribution** to that spec task, using the same id, not a new task. Several cohorts may contribute to one spec task; their combined contributions must cover its full obligation. A brief preserves its cohort's assigned contribution and supplies enough detail to implement it.

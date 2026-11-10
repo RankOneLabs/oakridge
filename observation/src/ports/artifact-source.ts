@@ -58,6 +58,8 @@ export interface RepositoryReader {
 export interface CapturedSources {
   readRunInput(): Promise<JsonValue | null>;
   readRevision(revision_id: string): Promise<CapturedRevision | null>;
+  /** Latest captured artifact in this run at the subject revision's recorded position. Later revisions are excluded. */
+  readRevisionAt(artifact_kind: string, subject_revision_id: ArtifactRevisionId): Promise<CapturedRevision | null>;
   readLinkedItems(occurrence_id: ItemOccurrenceId): Promise<readonly LinkedItem[]>;
   readonly repository: RepositoryReader;
 }

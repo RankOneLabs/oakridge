@@ -7,6 +7,8 @@ import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { EditableBriefText } from "./EditableBriefText";
 import { ExpandableText } from "./ExpandableText";
 import { TaskIdLink } from "./TaskIdLink";
+import { ArtifactItemGrade } from "./ArtifactItemGrade";
+import { selectFindingSelections } from "../../lib/grading";
 
 type Editor = NonNullable<ViewerProps["edit"]> | null;
 
@@ -51,7 +53,7 @@ function ReasonedItem({ anchor, headline, reason, editor, id, decisionIds }: Rea
   );
 }
 
-export function BuildBriefViewer({ body, edit, onOpenTask }: ViewerProps) {
+export function BuildBriefViewer({ body, edit, onOpenTask, source, onOpenItem, itemGrading }: ViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
 
   if (!isBuildBrief(body)) {
@@ -78,6 +80,7 @@ export function BuildBriefViewer({ body, edit, onOpenTask }: ViewerProps) {
         </div>
         <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{body.title}</h2>
       </header>
+      {itemGrading?.renderShowAll(selectFindingSelections(source, body.acceptance_criteria.map((_, index) => `/acceptance_criteria/${index}`)))}
 
       <ArtifactSection title="Goal" testId="or-brief-goal">
         <BriefText anchor="/goal" value={body.goal} editor={editor} isProse lineCount={6} className="text-sm leading-relaxed text-[var(--text-primary)]" />
@@ -136,12 +139,15 @@ export function BuildBriefViewer({ body, edit, onOpenTask }: ViewerProps) {
         ) : <EmptyNote>No rejected approaches.</EmptyNote>}
       </ArtifactSection>
 
-      <ArtifactSection title={`Tasks (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
+      <ArtifactSection title={`Contributions to spec tasks (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
         {body.acceptance_criteria.length > 0 ? (
           <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
             {body.acceptance_criteria.map((criterion, index) => (
               <li key={index}>
-                <span className="mr-2"><TaskIdLink task_id={criterion.id} text={criterion.text} onOpenTask={onOpenTask} /></span>
+                <div className="flex items-start justify-between gap-2">
+                  <TaskIdLink task_id={criterion.id} text={criterion.text} onOpenTask={onOpenTask} />
+                  <ArtifactItemGrade source={source} itemPath={`/acceptance_criteria/${index}`} itemGrading={itemGrading} onOpenItem={onOpenItem} />
+                </div>
                 <BriefText anchor={`/acceptance_criteria/${index}/text`} value={criterion.text} editor={editor} className="text-sm text-[var(--text-secondary)]" />
                 {criterion.decision_ids.length > 0 && (
                   <span className="block text-xs text-[var(--text-muted)]">

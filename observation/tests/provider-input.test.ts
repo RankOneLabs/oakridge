@@ -30,7 +30,7 @@ const sources: CapturedSources = {
   readRevision: async (revision_id): Promise<CapturedRevision | null> => revision_id === "assessment-1"
     ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: "build-1", body: { head_sha: HEAD, test_evidence: reportedTests } }
     : revision_id === "build-1" ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } } : null,
-  readLinkedItems: async () => [],
+  readRevisionAt: async () => null, readLinkedItems: async () => [],
   repository: { hasCommit: async (path) => path === "/repos/other",
     readFile: async ({ path }) => path === "core/gone.ts" ? { state: "absent" } : { state: "present", content: "one\ntwo\nthree\nfour" } },
 };
@@ -110,6 +110,8 @@ test("graders.json instructions describe the request the System One runners send
   for (const entry of parsed.value.questions) for (const grader of entry.graders) {
     const text = (grader.instructions as { system_one: { instructions: string } }).system_one.instructions;
     const labels = entry.question_id === "finding.relevance" ? ["state.subject", "state.spec"]
+      : entry.question_id === "task.requirement_coverage" ? ["state.subject", "state.spec_task", "state.spec", "state.requirement:N"]
+      : entry.question_id === "acceptance_entry.task_coverage" ? ["state.subject", "state.spec_task", "state.plan", "state.contribution_context"]
       : ["state.subject", "citation:N", "test_evidence", "is_absent", "commit_sha", "line_range", "reported"];
     for (const label of ["source", "content", ...labels]) expect(text).toContain(label);
   }

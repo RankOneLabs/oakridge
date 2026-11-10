@@ -207,6 +207,8 @@ exists, and no read depends on having answered.
 | `finding` | Relevance | The finding (`subject`) and the full captured launch spec (`spec`) | `relevant`, `irrelevant`, `unclear` |
 | `assessment_finding` | Correctness | The finding, its citations, the assessment's reported test results, the exact `subject_id` build when set, and available linked task context | `supported`, `contradicted`, `unclear` |
 | `assessment_finding` | Evidence support | The finding, its citations and the assessment's reported test results | `supports`, `does_not_support`, `unclear` |
+| `task` | Spec requirement coverage | Task, approved spec and explicitly referenced requirements | `fully_covers`, `partially_covers`, `does_not_cover`, `unclear` |
+| `acceptance_entry` | Spec task coverage | Contribution, spec task, requirements, combined plan and cohort or brief context | `fully_covers`, `partially_covers`, `does_not_cover`, `unclear` |
 
 Evidence references are labelled `subject`, `spec`, `build_result`, `citation:N`, `test_evidence`
 and `task_context:N`. `test_evidence` is the assessment's own `test_evidence` (passed, failed,
@@ -228,8 +230,8 @@ path, and is included only when an explicit link resolves.
 | `repository_unavailable` | Correctness, Evidence support | Only for file citations: a launch repository holds that commit. |
 | `build_result_unavailable` | Correctness | The `subject_id` build result is captured. |
 
-Risks and decisions are captured but not graded. Tasks, whole artifacts and verdicts have no direct
-grade. A missing task, link or approval never makes a question wait; neither does an integration
+Risks and decisions are captured but not graded. Whole artifacts and verdicts have no direct
+grade. Spec tasks and cohort contributions have the coverage questions below. A missing task, link or approval never makes a question wait; neither does an integration
 assessment's absent build subject or an empty citation list.
 
 ## Approvals
@@ -499,3 +501,12 @@ On the shadow, through `observation/verification/proof.ts`:
   (`observation/verification/reports/registration-2026-11-07T17-00-48-602Z`) recorded both
   startups' registrations, three new definitions after the edit with every earlier one kept, and
   no execution or provider request.
+## Spec task and cohort contribution coverage
+
+A **spec requirement** states required behavior. A **spec task** is an overall work obligation explicitly written in the approved spec and mirrored by the tasks artifact. A **cohort contribution** is a plan or brief acceptance entry whose `id` names that same spec task; it is not a second task identity. Several cohorts may contribute to one spec task.
+
+`task.requirement_coverage` grades each `/tasks/*` item against the complete requirement records explicitly named by its `requirement_ids`. `acceptance_entry.task_coverage` grades each plan and brief acceptance entry against its canonical spec task. Evidence includes the captured revised spec, the complete referenced requirement records, the original task definition, the combined plan and the surrounding cohort or brief. A plan contribution is judged as its declared share of the combined plan. A brief contribution must preserve that share and be concrete enough to implement. Neither question judges completed implementation.
+
+Both questions offer `fully_covers`, `partially_covers`, `does_not_cover` and `unclear`. An empty requirement list gives no inferred links; the grader is instructed to answer unclear for task coverage. A named requirement or task that is absent makes the question not ready. Context is selected at the graded revision's recorded position within its tenant and run; later spec, task-list or plan revisions are excluded, and ready evidence remains frozen.
+
+The task, plan and brief viewers each open the same item grading panel at an exact revision and path. Partial coverage has a distinct glyph. Existing finding assessment composites retain their meaning; definition and contribution coverage opens separately from the spec task's lineage. New questions are pinned on new captures. An explicit operator-requested upgrade may add coverage questions to previously ungraded task/contribution occurrences, using the normal immutable evidence rows and ordinary reconciler; existing question pins, answers and frozen evidence are never changed.
