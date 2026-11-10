@@ -148,7 +148,8 @@ describe("the panel's question states", () => {
     fireEvent.click(await screen.findByTestId("or-item-reveal"));
     const rows = await screen.findAllByTestId("or-item-machine-status");
     expect(rows.map((row) => row.getAttribute("data-state"))).toEqual(["not_ready", "grading_off", "pending", "failed", "budget_deferred", "answered"]);
-    expect(rows.map((row) => row.querySelector("span.inline-block")?.textContent)).toEqual(["Not ready", "Automatic grading off", "Pending", "Failed", "Budget deferred", "does not support"]);
+    const labels = ["Not ready", "Automatic grading off", "Pending", "Failed", "Budget deferred", "does not support"];
+    labels.forEach((label, index) => expect(within(rows[index]!).getByText(label, { exact: true })).toBeTruthy());
     expect(screen.getByTestId("or-item-grading-off")).toBeTruthy();
   });
   it("shows each provider attempt's outcome, failure, request and cost when revealed", async () => {
