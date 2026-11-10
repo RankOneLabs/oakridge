@@ -99,9 +99,22 @@ cannot read as a complete proof. `workspace` holds the first complete case; `gra
 and `relations`, on the same state, hold budget, recovery, pin swap, late links and
 shared-task composites.
 
+The operator-completed `model orgs` run now supplies real integration evidence:
+[manual final readback](reports/manual-final-2026-11-10T16-45-56-804Z/report.json).
+It captured all 2,643 authority events, completed 200 automatic grades (28 on the
+14 integration findings), and served final integration composites for all ten
+tasks, including a raw-answer drilldown. The exact merged Pipefitter head passed
+700 tests with one existing skip, typecheck and lint. This is a readback of human
+decisions, not an automated scenario that makes those decisions. Its report also
+records two negative integration answers and 15 unclear answers; completed
+executions do not mean affirmative grades. The run used the earlier pinned
+workflow and an explicit coverage-question upgrade, so the newer **Spec tasks**
+prompt wording still needs a fresh-run check. Analysis-to-task declarations were
+absent and remain visible as gaps.
+
 | Pending scenario | Owner |
 | --- | --- |
-| `real-integration-publication` | operator: a real run here reaches two cohorts' assessments, with revised plan and briefs, and reads integration as pending. Publishing integration needs an operator's acceptance of each assessment and confirmation of a merge, which a verification run does not make on its own, so integration final and a real integration finding are read only on `relations`' synthetic revisions, labelled as such, until an operator decides whether a verification run may. |
+| `real-integration-publication` | operator: the automated `relations` scenario still stops at integration pending because it does not accept assessments or confirm merges. The manual run linked above now proves real integration publication, configured-provider answers and final composites after the operator supplied those decisions. The pending id remains in automated reports to describe their own coverage. |
 | `same-finding-correctness-awaits-subject-build` | operator: Correctness alone waits only when an assessment names a subject build observation has not captured. Live assessments are published with subject null, and the ordered feed captures a named subject before its assessment, so a real run cannot leave Correctness waiting while its Evidence support is answered. It is proven offline in `observation/tests/execution-lifecycle.test.ts`; live, the not-ready refusal uses the withheld-repository wait. Reaching it live needs a product change or an operator decision on the requirement. |
 
 ## Review endpoint
