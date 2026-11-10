@@ -25,3 +25,8 @@ __pycache__/
 # prompt compatibility symlink without adding them back to the repository.
 /oakridge-core/
 /workflow-core/target/
+
+# Generated validation output stays local.
+/observation/verification/reports/
+/observation/verification/gated-review-tools.json
+/observation/verification/gated-review.json

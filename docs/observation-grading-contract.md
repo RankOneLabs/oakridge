@@ -427,80 +427,14 @@ observation baseline, core contract or generated definition changed for declarat
   integration pending then final, corrections, disagreement, every status, unknown tasks, duplicate
   paths, page boundaries with nested lists, and run and tenant scope.
 
-On the shadow, through `observation/verification/proof.ts`:
+Live verification uses `observation/verification/proof.ts`; see the
+[verification instructions](../observation/verification/README.md) for scenarios
+and commands. Generated reports and captured run data stay local and are not
+committed.
 
-- `relations` passed all 68 checks (`observation/verification/reports/relations-2026-11-09T16-43-58-923Z`) on this
-  cohort's code, with real provider answers: 33 real requests, executions and attempts across two runs.
-- Its first run, `run-b45b133f584a3d10` from `inputs/relations-audit.json`, measures the late link. Its analysis was
-  answered in 6 requests before the run had any task. A mapping naming the unapproved tasks revision was refused (409),
-  the approval changed nothing, and every task read as a coverage gap. After the mapping was delivered, its composite
-  opened the original observation, with the item, pins, evidence, measurements, answers, the unlinked control and the
-  request count (6 then 6) all unchanged. A second mapping was journaled with observation killed and the whole stack
-  restarted before any acknowledgement: it arrived once, with 18 requests before and after, and the authority's events
-  went from 43 to 44, the mapping alone.
-- Its second run, `run-a2044f9791413a7c` from `inputs/relations-shared-audit.json`, is the real shared task. Its
-  tasks approval itself carried explicit links, delivered as one declaration with the 5 requests unchanged. Its plan
-  and both briefs were sent back and really revised. Cohorts `alpha` and `beta` both reached their assessments, and
-  one task stands under both, as one logical item through 4 plan and 4 brief occurrences. Analysis and implementation
-  read side by side with integration pending, the unknown task stays a visible reference and the control stays
-  unlinked. One-entry windows reached every nested question and raw answer.
-- The earlier `relations-2026-11-09T03-23-51-515Z` failed 3 of 68 checks because its unchanged-facts snapshot included
-  an item's links, which a late link is meant to change. It is kept as it ran.
-- **What that proof does not show.** No real run published integration. A cohort completes only on an operator's
-  acceptance of its assessment and confirmation of a merge, and this proof does not make those decisions by itself.
-  The report's `shared_task_matrix` is a supplement for integration final, corrections and disagreement, on the
-  shadow's database through real ordered delivery, in a tenant of its own, on **synthetic** revisions and answers,
-  and is labelled so. No provider request is made for it. Both shared-run assessors returned `fail` because their
-  environment had no test database for the suite the audit spec asks them to run, which says nothing about the
-  reads above. A lost acknowledgement is proven against a real process in
-  `observation-process-restart.test.ts`, not on the shadow. The human and PWA continuation is the `workspace` proof.
-- **Operator proof.** `workspace` passed all 60 checks (`observation/verification/reports/workspace-2026-11-09T04-00-03-424Z`)
-  on a freshly started service. On real run `run-d71318e8959a6801`, assessment finding
-  `run-d71318e8959a6801/implementation/audit:assessment:1` `/findings/2` was answered by the configured provider in
-  a real request and by an authenticated reviewer, both read back in the PWA with nothing but that address. Corrections,
-  duplicates, spoofing, a refused not-ready question, grading off, hidden and revealed views and each viewer entry point
-  are in its checks, with 20 provider requests and 61 authority events unchanged by every human answer. An earlier attempt on
-  an empty database (`workspace-2026-11-09T02-14-08-499Z`) passed its registration, capture, provider, human and readback
-  checks, then failed on a stalled browser click; it and `workspace-2026-11-09T00-54-15-507Z`, which failed on faults in the
-  proof's own script, are kept as they ran.
-- **Current cumulative state.** `reports/cumulative-2026-11-09T17-24-35-214Z` **passed**: `workspace`, `grading`
-  (`grading-2026-11-09T02-36-25-820Z`, 97 of 97) and `relations` all passed, the review endpoint lists neither
-  `merge_pr` nor `mark_merge_ready`, no stored definition names `gated_review`, and the target-schema,
-  import-boundary and both task-contract suites pass. It records the head each proof ran on; the only product change
-  since is the paged `GET /v1/evidence-sets/:id`, which no proof reads. Its `pending` still lists
-  `real-integration-publication` and `same-finding-correctness-awaits-subject-build`, which wait on an operator
-  decision. The earlier `cumulative-2026-11-09T04-24-32-505Z` failed on the failed `relations` report. The shadow's
-  kbbl runs in its loopback control policy, so token authentication is proven by the real forwarding code in-process
-  against the real service.
-- **A side effect to know before rerunning.** Audit assessors follow `assess.md`, so they call `set_pr_draft` on
-  the real pull request the audit input names. A proof run can therefore flip that pull request's draft state.
-- Earlier `relations` runs (`relations-2026-11-08T17-31-33-853Z`, `relations-2026-11-08T17-46-21-583Z`) predate the
-  real shared run.
-- `live` passed (`observation/verification/reports/live-2026-11-07T16-59-47-486Z`): the service
-  started from `graders.json` and reported its three configured graders.
-- `registration` passed (`observation/verification/reports/registration-2026-11-07T18-48-17-496Z`)
-  on two real development runs through assessment, using `inputs/registration-audit.json`, at
-  `cdeba035`. The first run (`run-0e8c1a1cef8a656f`) reached its assessment with observation down.
-  With its launch repository withheld, observation captured all 45 of its events: 11 questions were
-  pinned to the committed selection, the 6 that cite files waited with `repository_unavailable`, and
-  the other 5 were ready. After a `graders.json` edit and restart, 3 new definitions were registered
-  and all 13 were stored; the first run kept every pin and frozen set, and the 6 still waited. With
-  the repository supplied and a restart, all 6 became ready on their capture-time pins, reading 20
-  file references at commit `cdeba035`. The second run (`run-3580ddecfbcd6c6c`) was pinned to the
-  edited selection. Its 5 analysis findings' Relevance evidence froze before the run's tasks
-  existed, and stayed unchanged through the tasks, plan, brief and assessment revisions and their
-  task links, across 79 reads. No execution, provider attempt or answer exists. On a real run the
-  ordered feed captures a build before its assessment, so the same finding with Correctness
-  waiting and Evidence support ready is not observed live (0 seen); it is proven through the real
-  service in `observation/tests/grading-startup.test.ts`.
-- Two earlier runs with that input stalled before any capture
-  (`registration-2026-11-07T18-03-10-914Z`: the brief made the audit wait for an operator choice;
-  `registration-2026-11-07T18-34-34-328Z`: `build_base` was the pull request's own branch, not its
-  base).
-- The earlier `registration` without `--input`
-  (`observation/verification/reports/registration-2026-11-07T17-00-48-602Z`) recorded both
-  startups' registrations, three new definitions after the edit with every earlier one kept, and
-  no execution or provider request.
+Audit assessors follow `assess.md`, which can change the draft state of the real
+pull request named by an audit input. Choose the audit target accordingly.
+
 ## Spec task and cohort contribution coverage
 
 A **spec requirement** states required behavior. A **spec task** is an overall work obligation explicitly written in the approved spec and mirrored by the tasks artifact. A **cohort contribution** is a plan or brief acceptance entry whose `id` names that same spec task; it is not a second task identity. Several cohorts may contribute to one spec task.

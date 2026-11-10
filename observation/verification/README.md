@@ -23,8 +23,9 @@ Configure the shadow with the usual `OAKRIDGE_SHADOW_*` variables. Set
 directory only.
 
 Each proof writes `reports/<proof_id>/report.json`, and exits zero only if the
-requested scenario passed. A failed proof keeps its report and `launcher.log`,
-which is not committed.
+requested scenario passed. Reports, captured run data, screenshots and launcher
+logs are local validation output and must not be committed. The report directory
+and generated endpoint result are ignored by Git.
 
 | Scenario | What it proves | Stack |
 | --- | --- | --- |
@@ -66,12 +67,13 @@ only then does it hold the launcher's log.
 ## Cumulative report
 
 `bun observation/verification/cumulative.ts --workspace <proof_id> --grading <proof_id> --relations <proof_id>`
-ties the live matrix to the proof reports that hold it, beside the review-endpoint result, a scan of every
+ties the live matrix to the local proof reports that hold it, beside the review-endpoint result, a scan of every
 retained stored definition (workflow worker contracts field by field; workflows, operation registries and
 `launchable.json` whole for any `gated_review` key), and the target-schema, import-boundary and task-contract
 results, both the TypeScript contract test and the Rust evaluator's `task_contracts` tests. It starts no stack
 and sends no provider request. It writes `reports/cumulative-<time>/report.json`, a `CumulativeReport`, and passes
-only if every named report passed. It records the head it was made on and, for each proof, the head it ran on and
+only if every named report passed. Run the review-endpoint check below first; the cumulative command reads its local
+`gated-review-tools.json` output. It records the head it was made on and, for each proof, the head it ran on and
 the product files changed since, so a proof run on earlier code reads as such. Its `pending` holds every pending
 scenario the named reports list. Offline results sit beside the live ones and stand in for none of them.
 
@@ -92,50 +94,24 @@ and `provider_request_count` is null until a scenario counts requests. Reports
 carry no token, key or connection secret; `runProof` scans for those values,
 removes any it finds and fails the report.
 
-## What remains
+## Verification boundaries
 
-`pending` in every report lists what this program does not prove, so a passed report
-cannot read as a complete proof. `workspace` holds the first complete case; `grading`
-and `relations`, on the same state, hold budget, recovery, pin swap, late links and
-shared-task composites.
+`pending` in a report lists what that invocation does not prove. A passing report
+must not be read as approval of source correctness or a merge decision.
 
-The operator-completed `model orgs` run now supplies real integration evidence:
-[manual final readback](reports/manual-final-2026-11-10T16-45-56-804Z/report.json).
-It captured all 2,643 authority events, completed 200 automatic grades (28 on the
-14 integration findings), and served final integration composites for all ten
-tasks, including a raw-answer drilldown. The exact merged Pipefitter head passed
-700 tests with one existing skip, typecheck and lint. This is a readback of human
-decisions, not an automated scenario that makes those decisions. Its report also
-records two negative integration answers and 15 unclear answers; completed
-executions do not mean affirmative grades. The run used the earlier pinned
-workflow and an explicit coverage-question upgrade, so the newer **Spec tasks**
-prompt wording was outside that report's coverage. Analysis-to-task declarations
-were absent and remain visible as gaps.
+The automated `relations` scenario stops before an operator's assessment
+acceptance and merge confirmation. Final integration can be checked on a real run
+after the operator supplies those decisions; the verification program does not
+make them itself.
 
-The later `ui cleanup` run used the new `e9e5d79d` workflow:
-[fresh workflow readback](reports/manual-fresh-2026-11-10T21-32-49-001Z/report.json).
-Its eight spec tasks match the task artifact exactly, including descriptions and
-requirement ids. All 24 task/plan/brief coverage questions were pinned and graded
-automatically, without a manual upgrade. It captured all 784 authority events and
-served final integration composites for all eight tasks. The overall grading
-check **failed**: 132 machine executions completed and one integration Correctness
-execution exhausted three retries after four HTTP 400 responses. The successful
-sibling Evidence support request was 101,547 bytes; the failed request was
-103,358 bytes and included the whole stylesheet. A context-limit rejection is
-plausible, but the provider response body was not retained, so the cause remains
-unconfirmed. No provider replay or history change was made. The report preserves
-the failed attempts, two partial task answers and two negative integration
-Evidence support answers. The source assessment also records missing PR
-screenshot attachments. Analysis-to-task declarations remain absent.
-
-| Pending scenario | Owner |
-| --- | --- |
-| `real-integration-publication` | operator: the automated `relations` scenario still stops at integration pending because it does not accept assessments or confirm merges. The manual run linked above now proves real integration publication, configured-provider answers and final composites after the operator supplied those decisions. The pending id remains in automated reports to describe their own coverage. |
-| `same-finding-correctness-awaits-subject-build` | operator: Correctness alone waits only when an assessment names a subject build observation has not captured. Live assessments are published with subject null, and the ordered feed captures a named subject before its assessment, so a real run cannot leave Correctness waiting while its Evidence support is answered. It is proven offline in `observation/tests/execution-lifecycle.test.ts`; live, the not-ready refusal uses the withheld-repository wait. Reaching it live needs a product change or an operator decision on the requirement. |
+The same-finding Correctness-only wait is covered offline. Through the ordered
+live feed, an assessment's named build is captured before the assessment, while
+assessments with no named subject do not wait for one. A required repository
+lookup can still make a question wait independently of other questions.
 
 ## Review endpoint
 
-`gated-review-tools.json` is the endpoint proof: the complete `tools/list` result
+The ignored local `gated-review-tools.json` is the endpoint proof: the complete `tools/list` result
 from the exact `OAKRIDGE_GATED_REVIEW_URL` every agent session receives. The server
 has no client authentication, so the check sends no credential:
 
