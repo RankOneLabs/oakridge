@@ -468,3 +468,27 @@ integration("reads stop at the run and the tenant, even for the same ids", async
   expect((await readCompositeDrilldown(h.db, other, path, "run-1", stage.items, pages)).total).toBe(0);
   expect((await readLogicalItemLineage(h.db, other, path, "run-1", "T7", all)).total).toBe(0);
 }));
+
+integration("a full task page reuses shared items and keeps corrections and page boundaries exact", async () => scratchDatabase(async (db) => {
+  const h = await harness(db);
+  const ids = Array.from({ length: 60 }, (_, index) => `T${String(index).padStart(2, "0")}`);
+  await h.feed.revision({ revision_id: "many-tasks", artifact_kind: "tasks", unit_id: "run-1/analysis",
+    body: { tasks: ids.map((id) => ({ id, description: id, requirement_ids: [] })) } });
+  await h.feed.revision({ revision_id: "shared", artifact_kind: "assessment", unit_id: "run-1/implementation/alpha",
+    body: { findings: [finding(ids)] } });
+  const occurrence_id = await occurrenceAt(h, "shared", "/findings/0");
+  await readyAll(h, occurrence_id);
+  await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: MACHINE_A, answer: choice("supported") });
+  const first = await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer", answer: choice("supported") });
+  await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer", answer: choice("contradicted"), supersedes: first });
+  const firstPage = await listRunComposites(db, tenant, path, "run-1", { limit: 50, offset: 0 });
+  const secondPage = await listRunComposites(db, tenant, path, "run-1", { limit: 50, offset: 50 });
+  expect([firstPage.total, firstPage.items.length, secondPage.total, secondPage.items.length]).toEqual([60, 50, 60, 10]);
+  expect([...firstPage.items, ...secondPage.items].map((item) => item.producer_local_id)).toEqual(ids);
+  for (const item of [...firstPage.items, ...secondPage.items]) {
+    const stage = stageOf(item, "implementation");
+    expect(stage.totals).toMatchObject({ contributing_items: 1, superseded_answers: 1 });
+    expect(answersIn(stage)).toEqual([[CORRECTNESS_ID, "human:reviewer", "contradicted", 1], [CORRECTNESS_ID, MACHINE_A, "supported", 1]]);
+    expect(stage.disagreements[0]?.item_count).toBe(1);
+  }
+}));

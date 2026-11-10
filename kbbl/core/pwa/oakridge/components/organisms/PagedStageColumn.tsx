@@ -3,8 +3,10 @@ import type { WindowQuery } from "../../client-grading";
 import type { ObservationCompositeDrilldownKey, ObservationPageRequest } from "../../grading-contracts/grading/composite";
 import type { ObservationStageCompositeRead } from "../../grading-contracts/grading/item-reads";
 import { useTask } from "../../hooks/useTask";
+import { useLastSuccessfulData } from "../../hooks/useLastSuccessfulData";
 import { selectTaskStage } from "../../lib/grading";
 import { StageCompositeColumn } from "../molecules/StageCompositeColumn";
+import { PagingReadError } from "../molecules/PagingReadError";
 
 interface Props {
   runId: string;
@@ -25,6 +27,12 @@ export function PagedStageColumn({ runId, taskId, stage, stagesWindow, isReveale
   const [windows, setWindows] = useState<WindowQuery>({});
   const isPaged = Object.keys(windows).length > 0;
   const read = useTask(isPaged ? { run_id: runId, task_id: taskId, nested: stagesWindow ? { ...windows, stages: stagesWindow } : windows } : null);
-  const shown = (isPaged ? selectTaskStage(read.data, stage.stage) : null) ?? stage;
-  return <StageCompositeColumn stage={shown} isRevealed={isRevealed} onDrill={onDrill} onWindow={(name, window) => setWindows((current) => ({ ...current, [name]: window }))} />;
+  const belongsToTask = read.data?.run_id === runId && read.data.producer_local_id === taskId;
+  const previous = useLastSuccessfulData(isPaged && belongsToTask ? selectTaskStage(read.data, stage.stage) ?? undefined : undefined,
+    JSON.stringify([runId, taskId, stage.stage]));
+  const shown = previous ?? stage;
+  return <div className="flex min-w-0 flex-col gap-2">
+    {isPaged && read.isError && <PagingReadError error={read.error} isRetrying={read.isFetching} onRetry={() => void read.refetch()} />}
+    <StageCompositeColumn stage={shown} isRevealed={isRevealed} onDrill={onDrill} onWindow={(name, window) => setWindows((current) => ({ ...current, [name]: window }))} />
+  </div>;
 }

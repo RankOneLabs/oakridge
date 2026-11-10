@@ -1,5 +1,5 @@
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, QuestionId, RelationId, ReviewerId, RunId, UnitId } from "../domain/identity";
-import { contributionItem, graderOf, orderedItems, pageOf, selectComposite, selectContributions, selectDrilldown, selectLineage, selectRevisionStandings, selectUnlinkedItems, selectUnresolvedReferences, type AnswerDetail, type CompositeAnswer, type CompositeDrilldownKey,
+import { contributionItem, graderOf, orderedItems, pageOf, selectComposite, selectCompositePage, selectContributions, selectDrilldown, selectLineage, selectRevisionStandings, selectUnlinkedItems, selectUnresolvedReferences, type AnswerDetail, type CompositeAnswer, type CompositeDrilldownKey,
   type CompositeEvaluator, type CompositeInputs, type CompositeLogicalItem, type CompositeRelation, type CompositeRevision, type ContributionItem, type DrilldownPages, type DrilldownRow, type LogicalItemComposite,
   type LogicalItemLineage, type PageRequest, type Paged, type UnresolvedReference } from "../grading/composite";
 import type { QuestionKey } from "../grading/question";
@@ -110,10 +110,7 @@ export function readLogicalItemComposite(db: Database, tenant: TenantScope, path
 }
 /** Every tracked logical item of a run, in id order. An item with no current link is listed, as a gap. */
 export function listRunComposites(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, page: PageRequest): Promise<Paged<LogicalItemComposite>> {
-  return readRun(db, tenant, path, run_id, (inputs) => {
-    const items = pageOf(inputs.logical_items, page);
-    return { ...items, items: items.items.map((item) => selectComposite(inputs, path, item)) };
-  });
+  return readRun(db, tenant, path, run_id, (inputs) => selectCompositePage({ inputs, path, page }));
 }
 /** The exact items, raw answers and frozen evidence behind one count. Needs only the read credential. */
 export function readCompositeDrilldown(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, key: CompositeDrilldownKey, pages: DrilldownPages): Promise<Paged<DrilldownRow>> {

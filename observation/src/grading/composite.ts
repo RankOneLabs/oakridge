@@ -8,13 +8,14 @@
  *     -> current answers per correction chain -> counts per stage -> drilldown to raw rows
  */
 import { canonicalJson } from "canonical-json";
+import { groupRows, indexCompositeInputs, questionIndexKey, type CompositeIndexes } from "./composite-index";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, RelationId, ReviewerId, RunId, UnitId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import type { CompositePath } from "../ports/producer-profile";
 import type { RelationType } from "../projection/extractor";
 import { logicalReference } from "../projection/relations";
 import type { EvidenceSet } from "./evidence";
-import { AUTOMATIC_ATTEMPT_LABEL, measurementState, type ExecutionStatus, type ExecutionTerminalCause, type MeasurementState } from "./execution";
+import { measurementState, type ExecutionStatus, type ExecutionTerminalCause, type MeasurementState } from "./execution";
 import type { GradeAnswer } from "./observation";
 import type { QuestionDefinition, QuestionKey } from "./question";
 
@@ -144,14 +145,23 @@ export interface Contribution {
   readonly is_current: boolean;
   readonly links: readonly CompositeRelation[];
 }
-export function selectContributions(inputs: CompositeInputs, path: CompositePath): readonly Contribution[] {
-  const standings = selectRevisionStandings(inputs.revisions, path);
+interface ContributionRead {
+  readonly inputs: CompositeInputs;
+  readonly path: CompositePath;
+  readonly standings: ReadonlyMap<string, RevisionStanding>;
+  readonly relations: CompositeIndexes["relations"];
+}
+function contributionsFrom({ inputs, path, standings, relations }: ContributionRead): readonly Contribution[] {
   return inputs.occurrences.flatMap((occurrence) => {
     const standing = standings.get(occurrence.revision_id);
     if (!standing?.stage || !path.item_kinds.includes(occurrence.item_kind)) return [];
     return [{ occurrence, stage: standing.stage, unit_id: standing.revision.unit_id, is_current: standing.is_current,
-      links: inputs.relations.filter((relation) => relation.source_occurrence_id === occurrence.occurrence_id && relation.type === path.relation_type) }];
+      links: (relations.get(occurrence.occurrence_id) ?? []).filter((relation) => relation.type === path.relation_type) }];
   });
+}
+export function selectContributions(inputs: CompositeInputs, path: CompositePath): readonly Contribution[] {
+  return contributionsFrom({ inputs, path, standings: selectRevisionStandings(inputs.revisions, path),
+    relations: groupRows(inputs.relations, (relation) => relation.source_occurrence_id) });
 }
 /** One occurrence once, however many explicit paths lead from it to this logical item. */
 export const selectLinkedContributions = (contributions: readonly Contribution[], logical_item_id: string): readonly Contribution[] =>
@@ -222,19 +232,17 @@ const failureDetail = (state: MeasurementState): string | null => state.state ==
 
 /** Every status an occurrence's pinned questions stand at. An unready question counts once; a ready
  * one once per pinned machine evaluator it has no answer from. */
-function selectMeasurements(occurrence_id: ItemOccurrenceId, inputs: CompositeInputs): readonly MeasurementRead[] {
-  const machines = new Set(inputs.evaluators.filter((evaluator) => evaluator.kind !== "human").map((evaluator) => evaluator.evaluator_definition_id));
-  return inputs.evidence_sets.filter((evidence) => evidence.subject_occurrence_id === occurrence_id).flatMap((evidence): readonly MeasurementRead[] => {
+function selectMeasurements(occurrence_id: ItemOccurrenceId, inputs: CompositeInputs, index: CompositeIndexes): readonly MeasurementRead[] {
+  return (index.evidence.get(occurrence_id) ?? []).flatMap((evidence): readonly MeasurementRead[] => {
     const question = questionKey(evidence);
     if (evidence.readiness.state === "not_ready") {
       const state = measurementState({ readiness: evidence.readiness, is_grading_enabled: inputs.is_grading_enabled, execution: null, observation: null });
       const status = itemStatus(state);
       return status ? [{ question, evidence, evaluator_definition_id: null, execution_id: null, status, detail: failureDetail(state) }] : [];
     }
-    return evidence.pinned_evaluator_definition_ids.filter((id) => machines.has(id)).flatMap((evaluator_definition_id) => {
-      const execution = inputs.executions.find((row) => row.evidence_set_id === evidence.evidence_set_id
-        && row.evaluator_definition_id === evaluator_definition_id && row.attempt_label === AUTOMATIC_ATTEMPT_LABEL) ?? null;
-      const answer = execution ? inputs.answers.find((row) => row.execution_id === execution.execution_id) ?? null : null;
+    return evidence.pinned_evaluator_definition_ids.filter((id) => index.machines.has(id)).flatMap((evaluator_definition_id) => {
+      const execution = index.executions.get(evidence.evidence_set_id)?.get(evaluator_definition_id) ?? null;
+      const answer = execution ? index.answers_by_execution.get(execution.execution_id) ?? null : null;
       const state = measurementState({ readiness: evidence.readiness, is_grading_enabled: inputs.is_grading_enabled,
         execution: execution ? { status: execution.status, terminal_cause: execution.terminal_cause, error: execution.error } : null,
         observation: answer ? { observation_id: answer.observation_id, answer: answer.answer } : null });
@@ -311,19 +319,42 @@ const countInto = <Value>(counts: Map<string, { readonly value: Value; count: nu
 const sortedEntries = <Value>(counts: ReadonlyMap<string, { readonly value: Value; readonly count: number }>): readonly { readonly value: Value; readonly count: number }[] =>
   [...counts.keys()].sort().map((key) => counts.get(key)!);
 
-function stageComposite(stage: CompositePath["stages"][number], logical_item_id: LogicalItemId, linked: readonly Contribution[], inputs: CompositeInputs,
-  standings: readonly RevisionStanding[]): StageComposite {
+interface PreparedCompositeRead {
+  readonly inputs: CompositeInputs;
+  readonly path: CompositePath;
+  readonly index: CompositeIndexes;
+  readonly linked: ReadonlyMap<LogicalItemId, readonly Contribution[]>;
+  readonly publications: ReadonlyMap<string, StagePublication>;
+  readonly measurements: ReadonlyMap<ItemOccurrenceId, readonly MeasurementRead[]>;
+}
+function prepareCompositeRead(inputs: CompositeInputs, path: CompositePath): PreparedCompositeRead {
+  const index = indexCompositeInputs(inputs);
+  const standings = selectRevisionStandings(inputs.revisions, path);
+  const contributions = contributionsFrom({ inputs, path, standings, relations: index.relations });
+  const linked = new Map<LogicalItemId, Contribution[]>();
+  for (const contribution of contributions) {
+    const targets = new Set(contribution.links.flatMap((link) => link.target_logical_item_id ? [link.target_logical_item_id] : []));
+    for (const target of targets) {
+      const group = linked.get(target);
+      if (group) group.push(contribution);
+      else linked.set(target, [contribution]);
+    }
+  }
+  return { inputs, path, index, linked,
+    publications: new Map(path.stages.map((stage) => [stage.stage, selectPublication(stage, [...standings.values()])])),
+    measurements: new Map(contributions.map(({ occurrence }) => [occurrence.occurrence_id, selectMeasurements(occurrence.occurrence_id, inputs, index)])) };
+}
+function stageComposite(stage: CompositePath["stages"][number], logical_item_id: LogicalItemId, linked: readonly Contribution[], read: PreparedCompositeRead): StageComposite {
+  const { index } = read;
   const key = (selector: CompositeSelector): CompositeDrilldownKey => ({ logical_item_id, stage: stage.stage, selector });
   const inStage = linked.filter((contribution) => contribution.stage === stage.stage);
   const current = inStage.filter((contribution) => contribution.is_current);
-  const currentIds = new Set(current.map((contribution) => contribution.occurrence.occurrence_id));
-  const evaluators = new Map(inputs.evaluators.map((evaluator) => [evaluator.evaluator_definition_id as string, evaluator]));
-  const standing = selectCurrentAnswers(inputs.answers).filter((answer) => currentIds.has(answer.occurrence_id));
+  const standing = current.flatMap(({ occurrence }) => index.current_answers.get(occurrence.occurrence_id) ?? []);
   // Items, not rows: two uncorrected answers alike from one reviewer on one item open as that one item.
   const answerCounts = new Map<string, { readonly value: Omit<AnswerCount, "count" | "drilldown">; count: number }>();
   const answeredItems = new Set<string>();
   for (const answer of standing) {
-    const value = { question: answer.question, grader: graderOf(answer, evaluators), answer: answerKey(answer.answer) };
+    const value = { question: answer.question, grader: graderOf(answer, index.evaluators), answer: answerKey(answer.answer) };
     const key = keyText(value);
     const item = JSON.stringify([key, answer.occurrence_id]);
     if (answeredItems.has(item)) continue;
@@ -332,27 +363,27 @@ function stageComposite(stage: CompositePath["stages"][number], logical_item_id:
   }
   const statusCounts = new Map<string, { readonly value: Omit<StatusCount, "count" | "drilldown">; count: number }>();
   const inCondition = (states: readonly ItemStatusKey["state"][]) => new Set(current.filter((contribution) =>
-    selectMeasurements(contribution.occurrence.occurrence_id, inputs).some((measurement) => states.includes(measurement.status.state))).map((contribution) => contribution.occurrence.occurrence_id)).size;
-  for (const contribution of current) for (const measurement of selectMeasurements(contribution.occurrence.occurrence_id, inputs)) {
+    (read.measurements.get(contribution.occurrence.occurrence_id) ?? []).some((measurement) => states.includes(measurement.status.state))).map((contribution) => contribution.occurrence.occurrence_id)).size;
+  for (const contribution of current) for (const measurement of (read.measurements.get(contribution.occurrence.occurrence_id) ?? [])) {
     const value = { question: measurement.question, evaluator_definition_id: measurement.evaluator_definition_id, status: measurement.status };
     countInto(statusCounts, keyText(value), value);
   }
   const disagreementCounts = new Map<string, { readonly value: QuestionKey; count: number }>();
   for (const contribution of current) {
-    const answers = standing.filter((answer) => answer.occurrence_id === contribution.occurrence.occurrence_id);
+    const answers = index.current_answers.get(contribution.occurrence.occurrence_id) ?? [];
     for (const question of uniqueQuestions(answers.map((answer) => answer.question)))
       if (new Set(answers.filter((answer) => sameQuestion(answer.question, question)).map((answer) => keyText(answerKey(answer.answer)))).size > 1)
         countInto(disagreementCounts, keyText(question), question);
   }
-  const pinned = uniqueQuestions(inputs.evidence_sets.filter((evidence) => currentIds.has(evidence.subject_occurrence_id)).map(questionKey));
+  const pinned = uniqueQuestions(current.flatMap(({ occurrence }) => index.evidence.get(occurrence.occurrence_id) ?? []).map(questionKey));
   const history = inStage.filter((contribution) => !contribution.is_current);
-  return { stage: stage.stage, publication: selectPublication(stage, standings), coverage: current.length > 0 ? "linked" : "gap",
+  return { stage: stage.stage, publication: read.publications.get(stage.stage)!, coverage: current.length > 0 ? "linked" : "gap",
     totals: { contributing_items: current.length, not_ready_items: inCondition(["not_ready"]), pending_items: inCondition(["pending", "awaiting_admission"]),
       failed_items: inCondition(["failed"]), budget_deferred_items: inCondition(["budget_deferred"]), grading_off_items: inCondition(["grading_off"]),
       superseded_items: history.length,
-      superseded_answers: selectSupersededAnswers(inputs.answers).filter((answer) => inStage.some((contribution) => contribution.occurrence.occurrence_id === answer.occurrence_id)).length },
+      superseded_answers: inStage.reduce((total, { occurrence }) => total + (index.superseded_answers.get(occurrence.occurrence_id)?.length ?? 0), 0) },
     questions: pinned.flatMap((question) => {
-      const definition = inputs.questions.find((candidate) => sameQuestion(candidate, question));
+      const definition = index.questions.get(questionIndexKey(question));
       return definition ? [{ ...question, item_kind: definition.item_kind, question_text: definition.question_text, allowed_values: definition.allowed_values }] : [];
     }),
     answers: sortedEntries(answerCounts).map(({ value, count }) => ({ ...value, count, drilldown: key({ kind: "answer", ...value }) })),
@@ -364,12 +395,21 @@ function uniqueQuestions(questions: readonly QuestionKey[]): readonly QuestionKe
   return [...new Map(questions.map((question) => [keyText(question), question])).entries()].sort(([left], [right]) => left < right ? -1 : 1).map(([, question]) => question);
 }
 
-export function selectComposite(inputs: CompositeInputs, path: CompositePath, item: CompositeLogicalItem): LogicalItemComposite {
-  const linked = selectLinkedContributions(selectContributions(inputs, path), item.logical_item_id);
-  const standings = [...selectRevisionStandings(inputs.revisions, path).values()];
-  return { run_id: inputs.run_id, logical_item_id: item.logical_item_id, scope: item.scope, producer_local_id: item.producer_local_id,
+function compositeFromRead(read: PreparedCompositeRead, item: CompositeLogicalItem): LogicalItemComposite {
+  const linked = read.linked.get(item.logical_item_id) ?? [];
+  return { run_id: read.inputs.run_id, logical_item_id: item.logical_item_id, scope: item.scope, producer_local_id: item.producer_local_id,
     coverage: linked.some((contribution) => contribution.is_current) ? "linked" : "gap",
-    stages: path.stages.map((stage) => stageComposite(stage, item.logical_item_id, linked, inputs, standings)) };
+    stages: read.path.stages.map((stage) => stageComposite(stage, item.logical_item_id, linked, read)) };
+}
+export function selectComposite(inputs: CompositeInputs, path: CompositePath, item: CompositeLogicalItem): LogicalItemComposite {
+  return compositeFromRead(prepareCompositeRead(inputs, path), item);
+}
+export interface CompositePageRequest { readonly inputs: CompositeInputs; readonly path: CompositePath; readonly page: PageRequest }
+/** All tasks on a page share one set of lookups, contributions, revision standings and measurements. */
+export function selectCompositePage({ inputs, path, page }: CompositePageRequest): Paged<LogicalItemComposite> {
+  const items = pageOf(inputs.logical_items, page);
+  const read = prepareCompositeRead(inputs, path);
+  return { ...items, items: items.items.map((item) => compositeFromRead(read, item)) };
 }
 
 // -------------------------------------------------------------------- drilldown ---
@@ -407,7 +447,7 @@ export const orderedItems = (contributions: readonly Contribution[]): readonly C
     : left.occurrence.item_path.localeCompare(right.occurrence.item_path, undefined, { numeric: true }));
 
 /** Which of one occurrence's questions a selector opens, or none when it does not contribute to the count. */
-function selectedQuestions(selector: CompositeSelector, occurrence_id: ItemOccurrenceId, inputs: CompositeInputs, evaluators: ReadonlyMap<string, CompositeEvaluator>): readonly QuestionKey[] {
+function selectedQuestions(selector: CompositeSelector, occurrence_id: ItemOccurrenceId, inputs: CompositeInputs, evaluators: ReadonlyMap<string, CompositeEvaluator>, index: CompositeIndexes): readonly QuestionKey[] {
   const pinned = uniqueQuestions(inputs.evidence_sets.filter((evidence) => evidence.subject_occurrence_id === occurrence_id).map(questionKey));
   const current = selectCurrentAnswers(inputs.answers).filter((answer) => answer.occurrence_id === occurrence_id);
   switch (selector.kind) {
@@ -415,7 +455,7 @@ function selectedQuestions(selector: CompositeSelector, occurrence_id: ItemOccur
     case "history": return pinned;
     case "answer": return current.some((answer) => sameQuestion(answer.question, selector.question)
       && keyText(graderOf(answer, evaluators)) === keyText(selector.grader) && keyText(answerKey(answer.answer)) === keyText(selector.answer)) ? [selector.question] : [];
-    case "status": return selectMeasurements(occurrence_id, inputs).some((measurement) => sameQuestion(measurement.question, selector.question)
+    case "status": return selectMeasurements(occurrence_id, inputs, index).some((measurement) => sameQuestion(measurement.question, selector.question)
       && measurement.evaluator_definition_id === selector.evaluator_definition_id && keyText(measurement.status) === keyText(selector.status)) ? [selector.question] : [];
     case "disagreement": return new Set(current.filter((answer) => sameQuestion(answer.question, selector.question)).map((answer) => keyText(answerKey(answer.answer)))).size > 1
       ? [selector.question] : [];
@@ -438,6 +478,7 @@ export const uniformDrilldownPages = (page: PageRequest): DrilldownPages =>
  * qualifying population before the page is cut, so a count and its drilldown's `total` agree. */
 export function selectDrilldown(inputs: CompositeInputs, path: CompositePath, key: CompositeDrilldownKey, pages: DrilldownPages): Paged<DrilldownRow> {
   const evaluators = new Map(inputs.evaluators.map((evaluator) => [evaluator.evaluator_definition_id as string, evaluator]));
+  const index = indexCompositeInputs(inputs);
   const linked = selectLinkedContributions(selectContributions(inputs, path), key.logical_item_id).filter((contribution) => contribution.stage === key.stage);
   const superseded = selectSupersededAnswers(inputs.answers);
   const detail = (answer: CompositeAnswer): AnswerDetail => ({ ...answer, grader: graderOf(answer, evaluators) });
@@ -446,9 +487,9 @@ export function selectDrilldown(inputs: CompositeInputs, path: CompositePath, ke
     : linked.filter((contribution) => contribution.is_current);
   const rows = orderedItems(eligible).flatMap((contribution): readonly DrilldownRow[] => {
     const occurrence_id = contribution.occurrence.occurrence_id;
-    const questions = selectedQuestions(key.selector, occurrence_id, inputs, evaluators);
+    const questions = selectedQuestions(key.selector, occurrence_id, inputs, evaluators, index);
     if (questions.length === 0 && key.selector.kind !== "items" && key.selector.kind !== "history") return [];
-    const measurements = selectMeasurements(occurrence_id, inputs);
+    const measurements = selectMeasurements(occurrence_id, inputs, index);
     const answersOf = selectCurrentAnswers(inputs.answers).filter((answer) => answer.occurrence_id === occurrence_id);
     const opened = questions.flatMap((question): readonly DrilldownQuestion[] => {
       const evidence = inputs.evidence_sets.find((set) => set.subject_occurrence_id === occurrence_id && sameQuestion(set, question));
