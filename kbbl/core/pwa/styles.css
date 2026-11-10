@@ -2,125 +2,140 @@
 
 :root {
   color-scheme: dark;
-
-  --bg-app: #0c100f;
-  --bg-surface: #131816;
-  --bg-code: #0d1117;
-  --bg-input-bar: #090d0b;
-  --bg-input-bar-desktop: #101512;
-  /* --bg-elevated: tier above --bg-surface for raised cards and modal surfaces.
-     --accent-muted: low-saturation fill for "selected" / "open-thread" affordances. */
-  --bg-elevated: #1a211e;
-
-  --border-subtle: #29312d;
-  --border-muted: #35413b;
-  --border-hover: #728079;
-
-  --text-primary: #e9eee9;
-  --text-secondary: #d2dad4;
-  --text-tertiary: #b3beb6;
-  --text-muted: #98a29b;
-  --text-session: #999;
-  --text-faint: #777;
-  --text-fainter: #666;
-  --text-faintest: #555;
-
-  --bubble-user-bg: #2563eb;
+  --bg-app: #0f172a;
+  --bg-surface: #172033;
+  --bg-elevated: #222e45;
+  --bg-code: #111b2e;
+  --bg-input-bar: #10192c;
+  --bg-input-bar-desktop: #172033;
+  --border-subtle: #70819e;
+  --border-muted: #8190aa;
+  --border-hover: #a4b2c8;
+  --text-primary: #edf2fb;
+  --text-secondary: #d5dfef;
+  --text-tertiary: #bac6d9;
+  --text-muted: #a4b2c8;
+  /* Quiet text tiers share an AA-safe floor across app, surface and elevated. */
+  --text-session: #a4b2c8;
+  --text-faint: #a4b2c8;
+  --text-fainter: #a4b2c8;
+  --text-faintest: #a4b2c8;
+  --bubble-user-bg: #2456c6;
   --bubble-user-fg: #ffffff;
-  --bubble-assistant-bg: #1f2937;
-  --bubble-assistant-fg: #e0e0e0;
-
-  --accent-blue: #a8f0b4;
-  --accent-name: #a8f0b4;
-  --accent-muted: #203426;
-
-  --status-connecting-bg: #3a3420;
-  --status-connecting-fg: #e6c670;
-  --status-connected-bg: #1f3a24;
-  --status-connected-fg: #7dd890;
-  --status-disconnected-bg: #3a2020;
-  --status-disconnected-fg: #e67070;
-  --status-stale-bg: #3a3420;
-  --status-stale-fg: #e6c670;
-
-  --amber-bg: #3a2a0a;
-  --amber-fg: #f5b050;
-  --amber-border: #6a4a18;
-  --amber-glow: rgba(245, 176, 80, 0.3);
-
-  --permission-bg: #26200f;
-  --permission-border: #4a3f1a;
-  --permission-fg: #e6c670;
-  --permission-glow: rgba(230, 198, 112, 0.15);
-
-  --danger-bg: #3a2020;
-  --danger-fg: #e67070;
-  --danger-card-bg: #1d0f0f;
-  --danger-card-border: #633;
-
-  --success-fg: #7dd890;
+  --bubble-assistant-bg: #222e45;
+  --bubble-assistant-fg: #edf2fb;
+  --accent-blue: #c4b5fd;
+  --accent-name: #c4b5fd;
+  --accent-muted: #302c50;
+  --accent-secondary: #5eead4;
+  --accent-contrast-fg: #17132c;
+  /* Shared inset highlight and single drop-shadow level for every badge. */
+  --badge-elevation: inset 0 1px 0 rgb(255 255 255 / 10%), 0 1px 2px rgb(0 0 0 / 22%);
+  --tone-info-fg: #93c5fd;
+  --tone-info-bg: #1e3450;
+  --tone-info-border: #6c9ed9;
+  --tone-success-fg: #86efac;
+  --tone-success-bg: #183c30;
+  --tone-success-border: #4caa79;
+  --tone-warning-fg: #fcd34d;
+  --tone-warning-bg: #403419;
+  --tone-warning-border: #ba9635;
+  --tone-danger-fg: #fda4af;
+  --tone-danger-bg: #462735;
+  --tone-danger-border: #d2758b;
+  --tone-muted-fg: #bac6d9;
+  --tone-muted-bg: #2b374d;
+  --tone-muted-border: #8190aa;
+  --status-connecting-fg: var(--tone-warning-fg);
+  --status-connecting-bg: var(--tone-warning-bg);
+  --status-connected-fg: var(--tone-success-fg);
+  --status-connected-bg: var(--tone-success-bg);
+  --status-disconnected-fg: var(--tone-danger-fg);
+  --status-disconnected-bg: var(--tone-danger-bg);
+  --status-stale-fg: var(--tone-warning-fg);
+  --status-stale-bg: var(--tone-warning-bg);
+  --amber-fg: var(--tone-warning-fg);
+  --amber-bg: var(--tone-warning-bg);
+  --amber-border: var(--tone-warning-border);
+  --permission-fg: var(--tone-warning-fg);
+  --permission-bg: var(--tone-warning-bg);
+  --permission-border: var(--tone-warning-border);
+  --danger-fg: var(--tone-danger-fg);
+  --danger-bg: var(--tone-danger-bg);
+  --danger-card-bg: var(--tone-danger-bg);
+  --danger-card-border: var(--tone-danger-border);
+  --success-fg: var(--tone-success-fg);
+  --amber-glow: rgba(186, 150, 53, 0.3);
+  --permission-glow: rgba(186, 150, 53, 0.15);
 }
 
 [data-theme="light"] {
   color-scheme: light;
-
-  --bg-app: #ffffff;
-  --bg-surface: #f3f4f6;
-  --bg-code: #f6f8fa;
-  --bg-input-bar: #f9fafb;
-  --bg-input-bar-desktop: #f3f4f6;
-  --bg-elevated: #fafafa;
-
-  --border-subtle: #e5e7eb;
-  --border-muted: #d1d5db;
-  --border-hover: #9ca3af;
-
-  --text-primary: #111827;
-  --text-secondary: #374151;
-  --text-tertiary: #4b5563;
-  --text-muted: #6b7280;
-  --text-session: #6b7280;
-  --text-faint: #6b7280;
-  /* On white the AA-passing gray range (>=4.5:1) is narrow, so the three
-     "quiet" tiers below --text-muted collapse into one color instead of
-     taking the dark palette's stepped hierarchy under the AA floor. */
-  --text-fainter: #6b7280;
-  --text-faintest: #6b7280;
-
-  --bubble-user-bg: #2563eb;
+  --bg-app: #f3f6fc;
+  --bg-surface: #ffffff;
+  --bg-elevated: #e8eef8;
+  --bg-code: #edf2fa;
+  --bg-input-bar: #f3f6fc;
+  --bg-input-bar-desktop: #ffffff;
+  --border-subtle: #748298;
+  --border-muted: #6b7c94;
+  --border-hover: #53647e;
+  --text-primary: #172033;
+  --text-secondary: #334155;
+  --text-tertiary: #475569;
+  --text-muted: #526176;
+  /* Quiet text tiers share an AA-safe floor across app, surface and elevated. */
+  --text-session: #526176;
+  --text-faint: #526176;
+  --text-fainter: #526176;
+  --text-faintest: #526176;
+  --bubble-user-bg: #2456c6;
   --bubble-user-fg: #ffffff;
-  --bubble-assistant-bg: #e5e7eb;
-  --bubble-assistant-fg: #111827;
-
-  --accent-blue: #2563eb;
-  --accent-name: #1d4ed8;
-  --accent-muted: #dbeafe;
-
-  --status-connecting-bg: #fef3c7;
-  --status-connecting-fg: #92400e;
-  --status-connected-bg: #d1fae5;
-  --status-connected-fg: #065f46;
-  --status-disconnected-bg: #fee2e2;
-  --status-disconnected-fg: #991b1b;
-  --status-stale-bg: #fef3c7;
-  --status-stale-fg: #92400e;
-
-  --amber-bg: #fef3c7;
-  --amber-fg: #92400e;
-  --amber-border: #fcd34d;
-  --amber-glow: rgba(252, 211, 77, 0.4);
-
-  --permission-bg: #fffbeb;
-  --permission-border: #fcd34d;
-  --permission-fg: #92400e;
-  --permission-glow: rgba(252, 211, 77, 0.3);
-
-  --danger-bg: #fee2e2;
-  --danger-fg: #991b1b;
-  --danger-card-bg: #fef2f2;
-  --danger-card-border: #fca5a5;
-
-  --success-fg: #047857;
+  --bubble-assistant-bg: #e8eef8;
+  --bubble-assistant-fg: #172033;
+  --accent-blue: #2456c6;
+  --accent-name: #2456c6;
+  --accent-muted: #e2eaff;
+  --accent-secondary: #0f766e;
+  --accent-contrast-fg: #ffffff;
+  /* Shared inset highlight and single drop-shadow level for every badge. */
+  --badge-elevation: inset 0 1px 0 rgb(255 255 255 / 80%), 0 1px 2px rgb(15 23 42 / 10%);
+  --tone-info-fg: #1e40af;
+  --tone-info-bg: #e5edff;
+  --tone-info-border: #4269be;
+  --tone-success-fg: #166534;
+  --tone-success-bg: #e4f4e8;
+  --tone-success-border: #378353;
+  --tone-warning-fg: #854d0e;
+  --tone-warning-bg: #fff3d6;
+  --tone-warning-border: #9a711f;
+  --tone-danger-fg: #9f1239;
+  --tone-danger-bg: #ffe8ee;
+  --tone-danger-border: #b34162;
+  --tone-muted-fg: #475569;
+  --tone-muted-bg: #e9eef6;
+  --tone-muted-border: #6b7c94;
+  --status-connecting-fg: var(--tone-warning-fg);
+  --status-connecting-bg: var(--tone-warning-bg);
+  --status-connected-fg: var(--tone-success-fg);
+  --status-connected-bg: var(--tone-success-bg);
+  --status-disconnected-fg: var(--tone-danger-fg);
+  --status-disconnected-bg: var(--tone-danger-bg);
+  --status-stale-fg: var(--tone-warning-fg);
+  --status-stale-bg: var(--tone-warning-bg);
+  --amber-fg: var(--tone-warning-fg);
+  --amber-bg: var(--tone-warning-bg);
+  --amber-border: var(--tone-warning-border);
+  --permission-fg: var(--tone-warning-fg);
+  --permission-bg: var(--tone-warning-bg);
+  --permission-border: var(--tone-warning-border);
+  --danger-fg: var(--tone-danger-fg);
+  --danger-bg: var(--tone-danger-bg);
+  --danger-card-bg: var(--tone-danger-bg);
+  --danger-card-border: var(--tone-danger-border);
+  --success-fg: var(--tone-success-fg);
+  --amber-glow: rgba(154, 113, 31, 0.2);
+  --permission-glow: rgba(154, 113, 31, 0.15);
 }
 
 * {
@@ -188,8 +203,9 @@ body {
   min-width: 1.25rem;
   padding: 0.1rem 0.35rem;
   border-radius: 999px;
-  background: var(--amber-bg);
-  color: var(--amber-fg);
+  background: var(--tone-warning-bg);
+  color: var(--tone-warning-fg);
+  border: 1px solid var(--tone-warning-border);
   font-size: 0.7rem;
   font-weight: 700;
   text-align: center;
@@ -686,7 +702,7 @@ body {
 
 .btn-new-session {
   background: var(--accent-blue);
-  color: #ffffff;
+  color: var(--accent-contrast-fg);
   border: none;
   border-radius: 8px;
   padding: 0 1rem;
@@ -1729,9 +1745,9 @@ body {
 
 .skill-btn__badge {
   font-size: 0.7rem;
-  color: var(--text-faint);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
+  color: var(--tone-muted-fg);
+  background: var(--tone-muted-bg);
+  border: 1px solid var(--tone-muted-border);
   border-radius: 4px;
   padding: 0 0.25rem;
   line-height: 1.4;
@@ -1949,19 +1965,7 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
-[data-theme="light"] {
-  --bg-app: #f4f6f2;
-  --bg-surface: #ffffff;
-  --bg-elevated: #edf2ed;
-  --bg-input-bar: #f7faf7;
-  --bg-input-bar-desktop: #ffffff;
-  --border-subtle: #d9e0da;
-  --border-muted: #bdc9c0;
-  --border-hover: #718078;
-  --accent-blue: #247a3b;
-  --accent-name: #247a3b;
-  --accent-muted: #dcebdd;
-}
+
 
 .app-list-shell {
   min-height: 100dvh;
@@ -2071,13 +2075,10 @@ a:focus-visible {
 
 .btn-new-session {
   background: var(--accent-blue);
-  color: #0b130d;
+  color: var(--accent-contrast-fg);
   font-weight: 700;
 }
 
-[data-theme="light"] .btn-new-session {
-  color: #fff;
-}
 
 .session-cohort-groups {
   display: flex;
@@ -2808,22 +2809,7 @@ a:focus-visible {
 .or-unavailable h2 { color: var(--text-primary); margin: 0; }
 .or-unavailable p  { margin: 0; }
 
-.or-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.25rem;
-  height: 1.25rem;
-  padding: 0 0.375rem;
-  border-radius: 10px;
-  font-size: 0.6875rem;
-  font-weight: 600;
-}
 
-.or-badge--parked {
-  background: #f59e0b;
-  color: #000;
-}
 
 .or-label {
   font-size: 0.6875rem;
@@ -3042,16 +3028,61 @@ a:focus-visible {
 
 /* === ACP session view (PWA cutover) ============================== */
 
-/* Tool-call status chip inside a card summary. */
-.card-tool-status-completed {
-  color: var(--success-fg);
-}
-.card-tool-status-failed {
-  color: var(--danger-fg);
-}
+/* One elevation and leading status marker for the scoped CSS badges. */
+.app-surface-nav__count,
+.skill-btn__badge,
+.card-tool-status-completed,
+.card-tool-status-failed,
 .card-tool-status-in_progress,
 .card-tool-status-pending {
-  color: var(--text-faintest);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  box-shadow: var(--badge-elevation);
+}
+
+.app-surface-nav__count::before,
+.skill-btn__badge::before,
+.card-tool-status-completed::before,
+.card-tool-status-failed::before,
+.card-tool-status-in_progress::before,
+.card-tool-status-pending::before {
+  content: "";
+  width: 0.4em;
+  height: 0.4em;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.card-tool-status-completed,
+.card-tool-status-failed,
+.card-tool-status-in_progress,
+.card-tool-status-pending {
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+}
+
+/* Tool-call status chip inside a card summary. */
+.card-tool-status-completed {
+  color: var(--tone-success-fg);
+  background: var(--tone-success-bg);
+  border: 1px solid var(--tone-success-border);
+}
+.card-tool-status-failed {
+  color: var(--tone-danger-fg);
+  background: var(--tone-danger-bg);
+  border: 1px solid var(--tone-danger-border);
+}
+.card-tool-status-in_progress {
+  color: var(--tone-info-fg);
+  background: var(--tone-info-bg);
+  border: 1px solid var(--tone-info-border);
+}
+.card-tool-status-pending {
+  color: var(--tone-muted-fg);
+  background: var(--tone-muted-bg);
+  border: 1px solid var(--tone-muted-border);
 }
 .card-tool-locations {
   display: flex;
