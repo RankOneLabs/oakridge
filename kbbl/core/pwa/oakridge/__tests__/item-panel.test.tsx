@@ -57,6 +57,18 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const wrap = (node: ReactNode) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } })}>{node}</QueryClientProvider>);
 const panel = (onOpenTask = vi.fn()) => wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={onOpenTask} />);
+it.each(["task", "acceptance_entry"])("shows a %s's captured text and explicit spec-task identity", async (item_kind) => {
+  const open = vi.fn();
+  world.status = itemStatus([supportQuestion()], { item: item(IMPLEMENTATION, { item_kind,
+    selected_value: item_kind === "task" ? { id: "T7", description: "Define organizations" } : { id: "T7", text: "Expose organization reads" } }), links: paged([]) });
+  panel(open);
+  const task = await screen.findByTestId("or-item-spec-task");
+  expect(task.textContent).toBe("T7");
+  expect(screen.getByText(item_kind === "task" ? "Define organizations" : "Expose organization reads")).toBeTruthy();
+  expect(screen.queryByText("None linked")).toBeNull();
+  fireEvent.click(task);
+  expect(open).toHaveBeenCalledWith("T7");
+});
 const documentText = () => document.body.textContent ?? "";
 const ariaText = () => Array.from(document.querySelectorAll("[aria-label]")).map((element) => element.getAttribute("aria-label")).join(" ");
 /** The operator's own form lists every choice, so a hidden answer is searched for by what only an answer row shows. */

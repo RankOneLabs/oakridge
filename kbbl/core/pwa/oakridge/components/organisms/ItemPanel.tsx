@@ -8,7 +8,7 @@ import type { ObservationItemAddress } from "../../grading-contracts/grading/ite
 import { useItemAt } from "../../hooks/useItemAt";
 import { useItemLineage } from "../../hooks/useItemLineage";
 import { useItemStatus } from "../../hooks/useItemStatus";
-import { itemSelectionKey, questionLabel, sameQuestion, selectItemText, stageLabel, taskLinkLabel } from "../../lib/grading";
+import { itemSelectionKey, questionLabel, sameQuestion, selectItemText, selectSpecTaskId, stageLabel, taskLinkLabel } from "../../lib/grading";
 import { useGradingVisibility } from "../../state/gradingVisibility";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
 import { FrozenEvidenceList } from "../molecules/FrozenEvidenceList";
@@ -56,12 +56,13 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
   if (!status.data) return <FeedbackMessage testId="or-item-loading">Loading item…</FeedbackMessage>;
 
   const { item, links, questions, is_grading_enabled: isGradingEnabled } = status.data;
+  const specTaskId = selectSpecTaskId(item);
   const question = questions.items[Math.min(selectedIndex, Math.max(0, questions.items.length - 1))] ?? null;
   return (
     <article className="flex flex-col gap-4 p-3" data-testid="or-item-panel" data-occurrence={item.occurrence_id} data-item-path={item.item_path} data-revision={item.source_revision_id}>
       <header className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
-          <Chip tone="neutral">{stageLabel(item.stage)}</Chip>
+          {item.stage && <Chip tone="neutral">{stageLabel(item.stage)}</Chip>}
           <code className="or-code">{item.source_revision_id}</code>
           <code className="or-code">{item.item_path}</code>
           {!item.is_current && <Chip tone="muted">Older revision</Chip>}
@@ -69,8 +70,9 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
         </div>
         <p className="m-0 whitespace-pre-wrap text-sm text-[var(--text-primary)]">{selectItemText(item.selected_value)}</p>
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-muted)]" data-testid="or-item-task-links">
-          <span>Tasks</span>
-          {links.total === 0 && <Chip tone="muted">None linked</Chip>}
+          <span>{specTaskId === null ? "Linked spec tasks" : "Spec task"}</span>
+          {specTaskId !== null && <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(specTaskId)} data-testid="or-item-spec-task">{specTaskId}</Button>}
+          {specTaskId === null && links.total === 0 && <Chip tone="muted">None linked</Chip>}
           {links.items.map((link) => (
             <Button key={link.relation_id} variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(link.producer_local_id)} data-testid="or-item-task-link" data-link-state={link.state}>{taskLinkLabel(link)}</Button>
           ))}

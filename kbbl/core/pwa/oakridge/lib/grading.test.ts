@@ -144,6 +144,7 @@ describe("stages", () => {
 
 test("an item reads by its description, and says so when it has none", () => {
   expect(selectItemText({ description: "It fails" })).toBe("It fails");
+  expect(selectItemText({ id: "T1", text: "The cohort's assigned share" })).toBe("The cohort's assigned share");
   expect(selectItemText({ status: "met" })).toBe("No description recorded.");
 });
 test("an unresolved link says so", () => {

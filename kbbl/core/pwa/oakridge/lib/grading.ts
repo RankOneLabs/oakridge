@@ -4,7 +4,7 @@ import type { ChipTone } from "../../components/atoms/Chip";
 import type { ObservationAnswerCount, ObservationAnswerKey, ObservationCompositeDrilldownKey, ObservationDisagreementCount, ObservationGraderKey, ObservationItemStatusKey, ObservationStatusCount } from "../grading-contracts/grading/composite";
 import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
 import type { ObservationMeasurementState } from "../grading-contracts/grading/execution";
-import type { ObservationAnswerRead, ObservationCompositeRead, ObservationHumanReadiness, ObservationItemAddress, ObservationLogicalLinkRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
+import type { ObservationAddressedItem, ObservationAnswerRead, ObservationCompositeRead, ObservationHumanReadiness, ObservationItemAddress, ObservationLogicalLinkRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
 import type { ObservationGradeAnswer } from "../grading-contracts/grading/observation";
 import type { ObservationQuestionKey } from "../grading-contracts/grading/question";
 import type { ObservationAttemptRead } from "../grading-contracts/storage/execution-store";
@@ -208,11 +208,19 @@ export function referenceDisplay(reference: ObservationEvidenceReference): Refer
   }
 }
 
-/** A finding's line, read from its own captured value. */
+/** A finding, task or contribution's text, read from its own captured value. */
 export function selectItemText(value: unknown): string {
   if (typeof value === "string") return value;
-  const description = (value as { readonly description?: unknown } | null)?.description;
-  return typeof description === "string" && description.trim() !== "" ? description : "No description recorded.";
+  const fields = value as { readonly description?: unknown; readonly text?: unknown } | null;
+  const content = [fields?.description, fields?.text].find((entry) => typeof entry === "string" && entry.trim() !== "");
+  return typeof content === "string" ? content : "No description recorded.";
+}
+
+/** Tasks and contributions declare their spec task directly; a finding's own id is never a task link. */
+export function selectSpecTaskId(item: Pick<ObservationAddressedItem, "item_kind" | "selected_value">): string | null {
+  if (item.item_kind !== "task" && item.item_kind !== "acceptance_entry") return null;
+  const id = (item.selected_value as { readonly id?: unknown } | null)?.id;
+  return typeof id === "string" && id.trim() !== "" ? id : null;
 }
 
 export const taskLinkLabel = (link: ObservationLogicalLinkRead): string => link.state === "resolved" ? link.producer_local_id : `${link.producer_local_id} (unresolved)`;
