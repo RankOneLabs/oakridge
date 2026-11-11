@@ -141,7 +141,7 @@ async function baselineSubject(db: import("../src/storage/database").Database) {
   const question = OAKRIDGE_QUESTIONS[0]!;
   await registerQuestion(db, tenant, question);
   await registerEvaluator(db, tenant, evaluator("human"));
-  await createFeed(db, tenant, { pins: [{ ...question, evaluator_definition_ids: [evaluatorId("human")] }] })
+  await createFeed(db, tenant, { pins: [{ scope: "per_item", ...question, evaluator_definition_ids: [evaluatorId("human")] }] })
     .revision({ revision_id: "analysis", artifact_kind: "analysis", body: await fixtureBody("analysis") });
   return (await db.selectFrom("observation.evidence_set").selectAll().executeTakeFirstOrThrow());
 }

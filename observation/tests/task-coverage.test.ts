@@ -28,7 +28,7 @@ const revisions = [revision("analysis-1", "analysis", analysis), revision("spec-
   revision("tasks-1", "tasks", tasks), revision("plan-1", "plan", plan), revision("brief-1", "brief", brief)];
 const repository = { hasCommit: async () => false, readFile: async () => ({ state: "absent" as const }) };
 function sources(context: readonly CapturedRevision[] = revisions): CapturedSources {
-  return { repository, readRunInput: async () => ({ spec: "Original specification" }), readLinkedItems: async () => [],
+  return { repository, readRunInput: async () => ({ spec: "Original specification" }), readLogicalItemAt: async () => ({ revision_id: "tasks-1" as ArtifactRevisionId, item_path: "/tasks/0", item_kind: "task", selected_value: { id: "T7" } }), readLinkedItems: async () => [],
     readRevision: async (id) => context.find((revision) => revision.revision_id === id) ?? null,
     readRevisionAt: async (kind) => context.find((revision) => revision.artifact_kind === kind) ?? null };
 }
@@ -37,7 +37,7 @@ const subject = (kind: "task" | "acceptance_entry", revision_id: string, path: s
     run_id: "run-1" as RunId, selected_value: kind === "task" ? TASK : contribution });
 
 test("a spec task is judged against full linked requirements at exact revision paths, not just their status", async () => {
-  const result = await oakridgeEvidence.collect(subject("task", "tasks-1", "/tasks/0"), { question_id: TASK_COVERAGE_ID, question_version: "1" }, sources());
+  const result = await oakridgeEvidence.collect(subject("task", "tasks-1", "/tasks/0"), { task_id: null, question_id: TASK_COVERAGE_ID, question_version: "1" }, sources());
   expect(result).toMatchObject({ state: "ready", references: [
     { ref: "subject", revision_id: "tasks-1", item_path: "/tasks/0" },
     { ref: "spec", revision_id: "spec-1", content: "Approved specification with explicit Spec tasks" },
@@ -47,13 +47,13 @@ test("a spec task is judged against full linked requirements at exact revision p
 
 test("an absent explicit requirement waits instead of silently grading the remaining context", async () => {
   const context = revisions.map((entry) => entry.artifact_kind === "analysis" ? revision("analysis-1", "analysis", { ...analysis, requirements: [] }) : entry);
-  const result = await oakridgeEvidence.collect(subject("task", "tasks-1", "/tasks/0"), { question_id: TASK_COVERAGE_ID, question_version: "1" }, sources(context));
+  const result = await oakridgeEvidence.collect(subject("task", "tasks-1", "/tasks/0"), { task_id: null, question_id: TASK_COVERAGE_ID, question_version: "1" }, sources(context));
   expect(result).toMatchObject({ state: "not_ready", reason: { code: "requirements_unavailable", detail: expect.stringContaining("R1") } });
 });
 
 test("a plan contribution retains its exact cohort context and the combined plan for a shared task", async () => {
   const result = await oakridgeEvidence.collect(subject("acceptance_entry", "plan-1", "/cohorts/0/acceptance_criteria/0"),
-    { question_id: CONTRIBUTION_COVERAGE_ID, question_version: "1" }, sources());
+    { task_id: null, question_id: CONTRIBUTION_COVERAGE_ID, question_version: "1" }, sources());
   expect(result).toMatchObject({ state: "ready", references: expect.arrayContaining([
     { source: "revision", ref: "plan", revision_id: "plan-1", item_path: null, content: plan },
     { source: "revision", ref: "contribution_context", revision_id: "plan-1", item_path: "/cohorts/0", content: cohort }]) });
@@ -61,7 +61,7 @@ test("a plan contribution retains its exact cohort context and the combined plan
 
 test("a brief contribution carries its brief and plan alongside the original spec task", async () => {
   const result = await oakridgeEvidence.collect(subject("acceptance_entry", "brief-1", "/acceptance_criteria/0"),
-    { question_id: CONTRIBUTION_COVERAGE_ID, question_version: "1" }, sources());
+    { task_id: null, question_id: CONTRIBUTION_COVERAGE_ID, question_version: "1" }, sources());
   expect(result).toMatchObject({ state: "ready", references: expect.arrayContaining([
     { source: "revision", ref: "spec_task", revision_id: "tasks-1", item_path: "/tasks/0", content: TASK },
     { source: "revision", ref: "plan", revision_id: "plan-1", item_path: null, content: plan },
@@ -70,7 +70,7 @@ test("a brief contribution carries its brief and plan alongside the original spe
 
 test("an unassigned contribution never guesses a spec task from similar wording", async () => {
   const artifact = { ...subject("acceptance_entry", "plan-1", "/cohorts/0/acceptance_criteria/0"), selected_value: { ...contribution, id: "T404" } };
-  expect(await oakridgeEvidence.collect(artifact, { question_id: CONTRIBUTION_COVERAGE_ID, question_version: "1" }, sources()))
+  expect(await oakridgeEvidence.collect(artifact, { task_id: null, question_id: CONTRIBUTION_COVERAGE_ID, question_version: "1" }, sources()))
     .toMatchObject({ state: "not_ready", reason: { code: "task_unavailable" } });
 });
 

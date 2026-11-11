@@ -157,3 +157,11 @@ export async function databaseUrl(db: Database): Promise<string> {
   const url = new URL(serverUrl ?? ""); url.pathname = `/${database.rows[0]?.name ?? ""}`;
   return url.href;
 }
+
+/** The scope from the same committed definition that supplies the question version. */
+export function scopeOf(question_id: string): import("../src/grading/evidence").QuestionScope {
+  if (!committedRegistration.ok) throw new Error(committedRegistration.error.detail);
+  const pin = committedRegistration.value.capture.pins.find((pin) => pin.question_id === question_id);
+  if (!pin) throw new Error(`no scope for ${question_id}`);
+  return pin.scope === "per_task" ? { scope: pin.scope, task_ids: pin.task_ids } : { scope: pin.scope };
+}

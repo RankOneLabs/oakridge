@@ -9,7 +9,7 @@ import { evaluationDigest, submissionAttemptLabel, submissionDigest } from "../s
 import type { GradeAnswer } from "../src/grading/observation";
 import type { SourceEventOutcome } from "../src/ingest/cursor";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
-import { OAKRIDGE_QUESTIONS, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
+import { scopeOf, OAKRIDGE_QUESTIONS, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { listRunComposites, listRunUnlinkedItems, listRunUnresolvedReferences, readCompositeDrilldown, readLogicalItemComposite, readLogicalItemLineage } from "../src/storage/grading-record-store";
@@ -20,7 +20,7 @@ const path = oakridgeProfile.composite;
 const all = { limit: 200, offset: 0 };
 const pages = uniformDrilldownPages(all);
 const MACHINE_A = "machine-a", MACHINE_B = "machine-b", HUMAN = "human";
-const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question,
+const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question,
   evaluator_definition_ids: [evaluatorId(MACHINE_A), evaluatorId(MACHINE_B), evaluatorId(HUMAN)] })) };
 const finding = (task_ids: readonly string[], extra: { readonly [key: string]: JsonValue } = {}): JsonValue => ({ task_ids: [...task_ids], criterion: "c", status: "met", evidence: [], ...extra });
 const choice = (value: string): GradeAnswer => ({ state: "answered", kind: "choice", value });
@@ -49,20 +49,20 @@ async function readyAll(h: Harness, occurrence_id: ItemOccurrenceId, only?: stri
   }
 }
 interface Measure { readonly occurrence_id: ItemOccurrenceId; readonly question_id: string; readonly evaluator_id: string; readonly reviewer?: string;
-  readonly answer?: GradeAnswer; readonly status?: "queued" | "budget_deferred" | "failed"; readonly supersedes?: string; readonly run_id?: string }
+  readonly task_id?: string; readonly answer?: GradeAnswer; readonly status?: "queued" | "budget_deferred" | "failed"; readonly supersedes?: string; readonly run_id?: string }
 /** One measurement as the execution contract stores it: automatic for a machine, a submission for a reviewer. */
 async function measure(h: Harness, input: Measure): Promise<string> {
-  const set = (await readOccurrenceEvidence(h.db, h.scope, input.occurrence_id)).find((candidate) => candidate.question_id === input.question_id)!;
+  const set = (await readOccurrenceEvidence(h.db, h.scope, input.occurrence_id)).find((candidate) => candidate.question_id === input.question_id && (input.task_id === undefined || candidate.task_id?.endsWith(`:${input.task_id}`)))!;
   const submission_id = randomUUID();
   const attempt_label = input.reviewer ? submissionAttemptLabel({ reviewer_id: input.reviewer, submission_id } as never) : "automatic";
-  const identity = { subject_occurrence_id: input.occurrence_id, evidence_set_id: set.evidence_set_id, question_id: set.question_id, question_version: set.question_version,
+  const identity = { task_id: set.task_id, subject_occurrence_id: input.occurrence_id, evidence_set_id: set.evidence_set_id, question_id: set.question_id, question_version: set.question_version,
     evaluator_definition_id: evaluatorId(input.evaluator_id), attempt_label };
   const digest = input.reviewer ? submissionDigest({ reviewer_id: input.reviewer, submission_id } as never) : evaluationDigest(identity);
   if (!digest.ok) throw new Error(digest.error.detail);
   const execution_id = randomUUID();
   const status = input.status ?? "completed";
   const ended = status === "completed" || status === "failed";
-  await withTenant(h.db, h.scope, (trx) => trx.insertInto("observation.evaluation_execution").values({ task_id: null, ...h.scope, ...identity, execution_id, run_id: input.run_id ?? "run-1",
+  await withTenant(h.db, h.scope, (trx) => trx.insertInto("observation.evaluation_execution").values({ ...h.scope, ...identity, execution_id, run_id: input.run_id ?? "run-1",
     idempotency_digest: digest.value, status, lease_owner: null, lease_expires_at: null, terminal_cause: status === "failed" ? "retry_exhausted" : null, started_at: null,
     ended_at: ended ? new Date() : null, error: status === "failed" ? "transport: refused" : null, model_usage: null, cost: null, external_execution_id: null, provider_link: null,
     reproducibility_metadata: null }).execute());
@@ -165,17 +165,17 @@ integration("an item graded before any task appears under its task as soon as an
   await h.feed.send(declare({ source: "analysis-1", path: "/findings/0", tasks: ["T7"] }));
   const read = await composite(h, "T7");
   expect(read.coverage).toBe("linked");
-  expect(answersIn(stageOf(read, "analysis"))).toEqual([[RELEVANCE_ID, MACHINE_B, "irrelevant", 1], [RELEVANCE_ID, MACHINE_A, "relevant", 1]]);
+  expect(answersIn(stageOf(read, "analysis"))).toEqual([]);
   expect(await facts()).toEqual(beforeLink);
   // The control is still whole on its own.
   const unlinked = await listRunUnlinkedItems(h.db, h.scope, path, "run-1", all);
   expect(unlinked.items.map((item) => [item.occurrence_id, item.stage, item.is_current])).toEqual([[control, "analysis", true]]);
   // The original answer and its frozen evidence are what a count opens.
-  const [count] = stageOf(read, "analysis").answers;
-  const rows = await readCompositeDrilldown(h.db, h.scope, path, "run-1", count!.drilldown, pages);
+  const rows = await readCompositeDrilldown(h.db, h.scope, path, "run-1", stageOf(read, "analysis").items, pages);
   expect(rows.total).toBe(1);
   const [question] = rows.items[0]!.questions.items;
   expect([rows.items[0]!.item.occurrence_id, question!.answers.items.map((answer) => answer.occurrence_id), question!.evidence.readiness.state]).toEqual([linked, [linked, linked], "ready"]);
+  expect(question!.is_linked_context).toBe(true);
   expect(question!.evidence.readiness.state === "ready" && question!.evidence.readiness.references[0]?.content).toBe(`evidence of ${linked}`);
 }));
 
@@ -368,7 +368,7 @@ integration("the same statement along two paths still counts its item once", asy
   await h.feed.send(declare({ source: "analysis-1", path: "/findings/0", tasks: ["T7"] }));
   await h.feed.send(declare({ source: "analysis-1", path: "/findings/0", tasks: ["T7"], tasks_revision: "tasks-2" }));
   const stage = stageOf(await composite(h, "T7"), "analysis");
-  expect([stage.totals.contributing_items, answersIn(stage)]).toEqual([1, [[RELEVANCE_ID, MACHINE_A, "relevant", 1]]]);
+  expect([stage.totals.contributing_items, answersIn(stage)]).toEqual([1, []]);
   const rows: readonly DrilldownRow[] = (await readCompositeDrilldown(h.db, h.scope, path, "run-1", stage.items, pages)).items;
   expect(rows.map((row) => row.links.total)).toEqual([2]);
 }));
@@ -468,7 +468,7 @@ integration("reads stop at the run and the tenant, even for the same ids", async
   expect((await readLogicalItemLineage(h.db, other, path, "run-1", "T7", all)).total).toBe(0);
 }));
 
-integration("a full task page reuses shared items and keeps corrections and page boundaries exact", async () => scratchDatabase(async (db) => {
+integration("a full task page keeps shared findings and independent task grades across page boundaries", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   const ids = Array.from({ length: 60 }, (_, index) => `T${String(index).padStart(2, "0")}`);
   await h.feed.revision({ revision_id: "many-tasks", artifact_kind: "tasks", unit_id: "run-1/analysis",
@@ -486,8 +486,31 @@ integration("a full task page reuses shared items and keeps corrections and page
   expect([...firstPage.items, ...secondPage.items].map((item) => item.producer_local_id)).toEqual(ids);
   for (const item of [...firstPage.items, ...secondPage.items]) {
     const stage = stageOf(item, "implementation");
+    if (item.producer_local_id !== ids[0]) {
+      expect(stage.totals).toMatchObject({ contributing_items: 1, superseded_answers: 0 });
+      expect(stage.answers).toEqual([]);
+      expect(stage.disagreements).toEqual([]);
+      continue;
+    }
     expect(stage.totals).toMatchObject({ contributing_items: 1, superseded_answers: 1 });
     expect(answersIn(stage)).toEqual([[CORRECTNESS_ID, "human:reviewer", "contradicted", 1], [CORRECTNESS_ID, MACHINE_A, "supported", 1]]);
     expect(stage.disagreements[0]?.item_count).toBe(1);
   }
+}));
+
+integration("a finding naming two tasks yields independent grades counted only under their own task", async () => scratchDatabase(async (db) => {
+  const h = await harness(db);
+  await sharedTaskRun(h, { alpha: [finding(["T7", "T8", "T7"])], beta: [] });
+  const occurrence_id = await occurrenceAt(h, "assessment-alpha-1", "/findings/0");
+  await readyAll(h, occurrence_id);
+  await measure(h, { occurrence_id, task_id: "T7", question_id: CORRECTNESS_ID, evaluator_id: MACHINE_A, answer: choice("supported") });
+  const t7 = stageOf(await composite(h, "T7"), "implementation");
+  const t8 = stageOf(await composite(h, "T8"), "implementation");
+  expect(answersIn(t7)).toEqual([[CORRECTNESS_ID, MACHINE_A, "supported", 1]]);
+  expect(t8.answers).toEqual([]);
+  expect(t8.totals.pending_items).toBe(1);
+  const drill = await readCompositeDrilldown(db, tenant, path, "run-1", t8.items, pages);
+  expect(drill.items[0]!.questions.items.flatMap((question) => question.answers.items)).toEqual([]);
+  const sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
+  expect(sets.filter((set) => set.question_id === CORRECTNESS_ID)).toHaveLength(2);
 }));

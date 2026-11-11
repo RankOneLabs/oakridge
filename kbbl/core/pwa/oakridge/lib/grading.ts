@@ -29,7 +29,7 @@ export function selectItemSelection(source: Pick<ArtifactSource, "revision_id"> 
 /** Every finding an artifact revision shows, addressed the same way each row addresses its own. */
 export const selectFindingSelections = (source: Pick<ArtifactSource, "revision_id"> | undefined, item_paths: readonly string[]): readonly ObservationItemAddress[] =>
   item_paths.flatMap((item_path) => { const selection = selectItemSelection(source, item_path); return selection ? [selection] : []; });
-export const itemSelectionKey = ({ source_revision_id, item_path }: ObservationItemAddress): string => JSON.stringify([source_revision_id, item_path]);
+export const itemSelectionKey = ({ source_revision_id, item_path, task_id }: ObservationItemAddress): string => JSON.stringify(task_id ? [source_revision_id, item_path, task_id] : [source_revision_id, item_path]);
 export const areSelectionsEqual = (left: ObservationItemAddress, right: ObservationItemAddress): boolean => itemSelectionKey(left) === itemSelectionKey(right);
 
 const QUESTION_LABELS: Readonly<Record<string, string>> = {

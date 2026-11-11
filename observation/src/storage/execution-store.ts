@@ -1,5 +1,5 @@
 import { sql, type Selectable, type UpdateObject } from "kysely";
-import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId, RunId } from "../domain/identity";
+import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, QuestionId, RunId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { estimatedCostPerCall, fitsRunAllowance } from "../grading/budget";
 import type { EvaluatorDefinition } from "../grading/evaluator";
@@ -29,13 +29,13 @@ const storeError = (operation: string, entity_id: string, detail: string): Resul
 // ------------------------------------------------------------------ admission ---
 
 interface CandidateRow {
-  readonly run_id: string; readonly evidence_set_id: string; readonly subject_occurrence_id: string; readonly question_id: string;
+  readonly task_id: string | null; readonly run_id: string; readonly evidence_set_id: string; readonly subject_occurrence_id: string; readonly question_id: string;
   readonly question_version: string; readonly evaluator_definition_id: string; readonly cost_metadata: JsonValue | null;
 }
 /** Ready questions of one run, crossed with each pinned machine evaluator still lacking its execution. */
 async function admissionCandidates(trx: DatabaseTransaction, tenant: TenantScope, run_id: string): Promise<readonly CandidateRow[]> {
   const rows = await sql<CandidateRow>`
-    SELECT i.run_id, e.evidence_set_id, e.subject_occurrence_id, e.question_id, e.question_version, d.evaluator_definition_id, d.cost_metadata
+    SELECT e.task_id, i.run_id, e.evidence_set_id, e.subject_occurrence_id, e.question_id, e.question_version, d.evaluator_definition_id, d.cost_metadata
     FROM observation.evidence_set e
     JOIN observation.item_occurrence i ON i.producer = e.producer AND i.namespace = e.namespace AND i.occurrence_id = e.subject_occurrence_id
     JOIN observation.evaluator_definition d ON d.producer = e.producer AND d.namespace = e.namespace
@@ -80,13 +80,13 @@ export async function admitRun(db: Database, tenant: TenantScope, run_id: string
       for (const row of await admissionCandidates(trx, tenant, run_id)) {
         const estimated_cost = estimatedCostPerCall(row.cost_metadata);
         if (estimated_cost === null) throw new Error(`evaluator ${row.evaluator_definition_id} carries no estimated cost per call`);
-        const candidate: AdmissionCandidate = { run_id: row.run_id, subject_occurrence_id: row.subject_occurrence_id as ItemOccurrenceId,
+        const candidate: AdmissionCandidate = { task_id: row.task_id as LogicalItemId | null, run_id: row.run_id, subject_occurrence_id: row.subject_occurrence_id as ItemOccurrenceId,
           evidence_set_id: row.evidence_set_id as EvidenceSetId, question_id: row.question_id as QuestionId,
           question_version: row.question_version, evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId, estimated_cost };
         const identity = automaticIdentity(candidate);
         const digest = evaluationDigest(identity);
         if (!digest.ok) throw new Error(digest.error.detail);
-        const inserted = await trx.insertInto("observation.evaluation_execution").values({ task_id: null, producer: tenant.producer, namespace: tenant.namespace,
+        const inserted = await trx.insertInto("observation.evaluation_execution").values({ producer: tenant.producer, namespace: tenant.namespace,
           execution_id: digest.value, run_id: candidate.run_id, ...identity, idempotency_digest: digest.value, status: "queued",
           retry_limit: controls.retry_limit, estimated_cost })
           .onConflict((conflict) => conflict.columns(["producer", "namespace", "idempotency_digest"]).doNothing())

@@ -206,7 +206,7 @@ describe("saving", () => {
     fireEvent.change(screen.getByTestId("or-your-grade-rationale"), { target: { value: "cited line disagrees" } });
     fireEvent.click(screen.getByTestId("or-your-grade-submit"));
     await screen.findByTestId("or-your-grade-saved");
-    expect(world.sent).toEqual([{ question_id: id("assessment_finding.evidence_support"), question_version: "1", submission_id: expect.any(String), answer: "does_not_support", rationale: "cited line disagrees", corrects_observation_id: null }]);
+    expect(world.sent).toEqual([{ task_id: null, question_id: id("assessment_finding.evidence_support"), question_version: "1", submission_id: expect.any(String), answer: "does_not_support", rationale: "cited line disagrees", corrects_observation_id: null }]);
     expect(world.paths.some((path) => path.startsWith(`/oakridge/observation/items/${encodeURIComponent(OCCURRENCE)}/answers`))).toBe(true);
   });
   it("says saved only after the acknowledgment arrives", async () => {
@@ -464,4 +464,22 @@ describe("every entry point opens the same item", () => {
     fireEvent.click((await screen.findAllByTestId("or-grade-item"))[0]!);
     expect(onOpenItem).toHaveBeenCalledWith(ANALYSIS);
   });
+});
+
+it("passes the selected task through status, lineage, own-answer reads and submission", async () => {
+  const task_id = id<import("../grading-contracts/domain/identity").ObservationLogicalItemId>("task-3");
+  const question = supportQuestion({ task_id });
+  world.status = itemStatus([{ ...question, evidence: { ...question.evidence, task_id } }]);
+  wrap(<ItemPanel runId="run-1" selection={{ ...IMPLEMENTATION, task_id }} onOpenTask={vi.fn()} />);
+  const choices = await screen.findAllByTestId("or-your-grade-choice");
+  fireEvent.click(choices[0]!);
+  fireEvent.click(screen.getByTestId("or-your-grade-submit"));
+  await screen.findByTestId("or-your-grade-saved");
+  expect(world.sent).toMatchObject([{ task_id }]);
+  for (const surface of ["status", "lineage", "answers"]) {
+    expect(world.paths.some((path) => {
+      const url = new URL(path, "http://kbbl.test");
+      return url.pathname.endsWith(`/${surface}`) && url.searchParams.get("task_id") === task_id;
+    })).toBe(true);
+  }
 });

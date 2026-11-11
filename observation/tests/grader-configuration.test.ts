@@ -25,7 +25,7 @@ test("the committed definitions load with the five target scopes, evidence decla
   expect(definitions.map(({ id, target, evidence }) => ({ id, target, evidence }))).toEqual([
     { id: "finding.relevance", target: { artifact: "analysis", selector: "/findings/*", scope: "per_item" }, evidence: ["subject", "spec"] },
     { id: "assessment_finding.correctness", target: { artifact: "assessment", selector: "/findings/*", scope: "per_task", task_ids: "/task_ids" }, evidence: ["subject", "build_result", "citation", "test_evidence", "task_context"] },
-    { id: "assessment_finding.evidence_support", target: { artifact: "assessment", selector: "/findings/*", scope: "per_task", task_ids: "/task_ids" }, evidence: ["subject", "citation", "test_evidence"] },
+    { id: "assessment_finding.evidence_support", target: { artifact: "assessment", selector: "/findings/*", scope: "per_task", task_ids: "/task_ids" }, evidence: ["subject", "citation", "test_evidence", "task_context"] },
     { id: "task.requirement_coverage", target: { artifact: "tasks", selector: "/tasks/*", scope: "per_item" }, evidence: ["subject", "spec", "spec_task", "requirement"] },
     { id: "acceptance_entry.task_coverage", target: { artifact: "plan", selector: "/cohorts/*/acceptance_criteria/*", scope: "per_item" }, evidence: ["subject", "spec", "spec_task", "requirement", "plan", "contribution_context"] },
   ]);

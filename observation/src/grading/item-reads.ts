@@ -12,7 +12,7 @@ import type { EvidenceReference, EvidenceSet } from "./evidence";
 import type { QuestionDefinition, QuestionKey } from "./question";
 
 /** An item as a client addresses it: exactly one revision and path, with nothing tracked in it. */
-export interface ItemAddress { readonly source_revision_id: ArtifactRevisionId; readonly item_path: string }
+export interface ItemAddress { readonly source_revision_id: ArtifactRevisionId; readonly item_path: string; readonly task_id?: LogicalItemId | null }
 export interface AddressedItem extends ContributionItem, ItemAddress {}
 export const addressedItem = (item: ContributionItem): AddressedItem => ({ ...item, source_revision_id: item.revision_id });
 
@@ -42,6 +42,7 @@ export type EvidenceReadinessRead =
 export interface EvidenceRead extends QuestionKey {
   readonly evidence_set_id: EvidenceSetId;
   readonly subject_occurrence_id: ItemOccurrenceId;
+  readonly task_id: LogicalItemId | null;
   readonly pinned_evaluator_definition_ids: Paged<EvaluatorDefinitionId>;
   readonly readiness: EvidenceReadinessRead;
   readonly references: Paged<EvidenceReference>;
@@ -51,7 +52,7 @@ export interface EvidenceRead extends QuestionKey {
 export interface EvidenceWindows { readonly references: PageRequest; readonly pinned_evaluators: PageRequest }
 export const EVIDENCE_WINDOWS = ["references", "pinned_evaluators"] as const;
 export const evidenceRead = (set: EvidenceSet, windows: EvidenceWindows): EvidenceRead => ({ question_id: set.question_id, question_version: set.question_version,
-  evidence_set_id: set.evidence_set_id, subject_occurrence_id: set.subject_occurrence_id, pinned_evaluator_definition_ids: pageOf(set.pinned_evaluator_definition_ids, windows.pinned_evaluators),
+  task_id: set.task_id, evidence_set_id: set.evidence_set_id, subject_occurrence_id: set.subject_occurrence_id, pinned_evaluator_definition_ids: pageOf(set.pinned_evaluator_definition_ids, windows.pinned_evaluators),
   readiness: set.readiness.state === "ready" ? { state: "ready", ready_at: set.readiness.ready_at } : { state: "not_ready", reason: set.readiness.reason },
   references: pageOf(set.readiness.state === "ready" ? set.readiness.references : [], windows.references),
   is_incomplete: set.is_incomplete, incompleteness_reason: set.incompleteness_reason });
@@ -82,6 +83,8 @@ export const compositeRead = (composite: LogicalItemComposite, windows: Composit
 
 export type MeasurementStatusRead = Omit<MeasurementRead, "evidence">;
 export interface DrilldownQuestionRead {
+  readonly task_id: LogicalItemId | null;
+  readonly is_linked_context: boolean;
   readonly question: QuestionKey;
   readonly evidence: EvidenceRead;
   readonly statuses: Paged<MeasurementStatusRead>;
@@ -94,7 +97,7 @@ export interface DrilldownRowRead {
   readonly questions: Paged<DrilldownQuestionRead>;
 }
 export const drilldownRowRead = (row: DrilldownRow, windows: EvidenceWindows): DrilldownRowRead => ({ item: addressedItem(row.item), links: row.links,
-  questions: { ...row.questions, items: row.questions.items.map((question) => ({ question: question.question, evidence: evidenceRead(question.evidence, windows),
+  questions: { ...row.questions, items: row.questions.items.map((question) => ({ task_id: question.task_id, is_linked_context: question.is_linked_context, question: question.question, evidence: evidenceRead(question.evidence, windows),
     statuses: { ...question.statuses, items: question.statuses.items.map(({ evidence: _evidence, ...status }) => status) },
     answers: question.answers, superseded_answers: question.superseded_answers })) } });
 
@@ -133,6 +136,7 @@ export interface MachineStatusRead<Measurement, Attempt> {
   readonly attempts: Paged<Attempt>;
 }
 export interface QuestionStatusRead<Measurement = JsonValue, Attempt = JsonValue> {
+  readonly task_id: LogicalItemId | null;
   readonly question: QuestionDefinition;
   readonly evidence: EvidenceRead;
   readonly human: HumanReadiness;

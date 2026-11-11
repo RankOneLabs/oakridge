@@ -2,6 +2,7 @@ import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, Executio
 import { contributionItem, graderOf, orderedItems, pageOf, selectComposite, selectCompositePage, selectContributions, selectDrilldown, selectLineage, selectRevisionStandings, selectUnlinkedItems, selectUnresolvedReferences, type AnswerDetail, type CompositeAnswer, type CompositeDrilldownKey,
   type CompositeEvaluator, type CompositeInputs, type CompositeLogicalItem, type CompositeRelation, type CompositeRevision, type ContributionItem, type DrilldownPages, type DrilldownRow, type LogicalItemComposite,
   type LogicalItemLineage, type PageRequest, type Paged, type UnresolvedReference } from "../grading/composite";
+import type { SubjectQuestion } from "../grading/evidence";
 import type { QuestionKey } from "../grading/question";
 import { addressedItem, answerReads, evidenceRead, humanReadiness, logicalLinks, type AddressedItem, type AnswerRead, type EvidenceRead, type EvidenceWindows, type GradeableItemRow, type ItemStatusRead,
   type MachineStatusRead, type QuestionStatusRead, type QuestionStatusWindows, type LogicalLinkRead, type UnresolvedReferenceRead } from "../grading/item-reads";
@@ -37,13 +38,13 @@ async function readAnswerRows(trx: DatabaseTransaction, tenant: TenantScope, wit
   const { producer, namespace } = tenant;
   const scoped = trx.selectFrom("observation.grade_observation as g")
     .innerJoin("observation.evaluation_execution as x", (join) => join.onRef("x.producer", "=", "g.producer").onRef("x.namespace", "=", "g.namespace").onRef("x.execution_id", "=", "g.execution_id"))
-    .select(["g.observation_id", "g.execution_id", "x.subject_occurrence_id", "x.evidence_set_id", "x.question_id", "x.question_version", "x.evaluator_definition_id", "g.reviewer_id",
+    .select(["g.observation_id", "g.execution_id", "x.subject_occurrence_id", "x.task_id", "x.evidence_set_id", "x.question_id", "x.question_version", "x.evaluator_definition_id", "g.reviewer_id",
       "g.answer_payload", "g.supersedes_observation_id", "g.confidence", "g.rationale", "g.comments", "g.recorded_at"])
     .where("g.producer", "=", producer).where("g.namespace", "=", namespace);
   const rows = await ("run_id" in within ? scoped.where("x.run_id", "=", within.run_id) : scoped.where("x.subject_occurrence_id", "=", within.occurrence_id))
     .orderBy("g.recorded_at").orderBy("g.observation_id").execute();
   return rows.map((row): CompositeAnswer => ({ observation_id: row.observation_id as GradeObservationId, execution_id: row.execution_id as ExecutionId,
-    occurrence_id: row.subject_occurrence_id as ItemOccurrenceId, evidence_set_id: row.evidence_set_id as EvidenceSetId,
+    task_id: row.task_id as LogicalItemId | null, occurrence_id: row.subject_occurrence_id as ItemOccurrenceId, evidence_set_id: row.evidence_set_id as EvidenceSetId,
     question: { question_id: row.question_id as QuestionId, question_version: row.question_version },
     evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId, reviewer_id: row.reviewer_id as ReviewerId | null, answer: row.answer_payload as unknown as GradeAnswer,
     supersedes_observation_id: row.supersedes_observation_id as GradeObservationId | null, confidence: row.confidence, rationale: row.rationale, comments: row.comments,
@@ -80,7 +81,7 @@ async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope
   const evaluators = await trx.selectFrom("observation.evaluator_definition").select(["evaluator_definition_id", "kind", "backend_kind", "provider", "model"])
     .where("producer", "=", producer).where("namespace", "=", namespace).execute();
   const executions = await trx.selectFrom("observation.evaluation_execution")
-    .select(["execution_id", "subject_occurrence_id", "evidence_set_id", "evaluator_definition_id", "attempt_label", "status", "terminal_cause", "error"])
+    .select(["execution_id", "subject_occurrence_id", "task_id", "evidence_set_id", "evaluator_definition_id", "attempt_label", "status", "terminal_cause", "error"])
     .where("producer", "=", producer).where("namespace", "=", namespace).where("run_id", "=", run_id).execute();
   const answers = await readAnswerRows(trx, tenant, { run_id });
   const questions = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", producer).where("namespace", "=", namespace).execute();
@@ -91,7 +92,7 @@ async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope
     relations: relations.flatMap((row) => row.source_occurrence_id === null ? [] : [relationFromRow(row.source_occurrence_id as ItemOccurrenceId, row)]),
     evidence_sets: evidence.map(evidenceSetFromRow),
     evaluators: evaluators.map((row) => ({ ...row, evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId, kind: row.kind as CompositeEvaluator["kind"] })),
-    executions: executions.map(({ subject_occurrence_id, ...row }) => ({ ...row, occurrence_id: subject_occurrence_id as ItemOccurrenceId, execution_id: row.execution_id as ExecutionId,
+    executions: executions.map(({ subject_occurrence_id, task_id, ...row }) => ({ ...row, task_id: task_id as LogicalItemId | null, occurrence_id: subject_occurrence_id as ItemOccurrenceId, execution_id: row.execution_id as ExecutionId,
       evidence_set_id: row.evidence_set_id as EvidenceSetId,
       evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId, status: row.status as ExecutionStatus,
       terminal_cause: row.terminal_cause as ExecutionTerminalCause | null })),
@@ -184,11 +185,11 @@ export function readItemAt(db: Database, tenant: TenantScope, path: CompositePat
   });
 }
 
-export async function readItemEvidence(db: Database, tenant: TenantScope, occurrence_id: string, page: PageRequest, windows: EvidenceWindows): Promise<Paged<EvidenceRead> | null> {
+export async function readItemEvidence(db: Database, tenant: TenantScope, occurrence_id: string, page: PageRequest, windows: EvidenceWindows, filter: ItemSubjectFilter = {}): Promise<Paged<EvidenceRead> | null> {
   const known = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select("occurrence_id").where("producer", "=", tenant.producer)
     .where("namespace", "=", tenant.namespace).where("occurrence_id", "=", occurrence_id).executeTakeFirst());
   if (!known) return null;
-  const sets = pageOf(await readOccurrenceEvidence(db, tenant, occurrence_id as ItemOccurrenceId), page);
+  const sets = pageOf((await readOccurrenceEvidence(db, tenant, occurrence_id as ItemOccurrenceId)).filter((set) => matchesSubject(set, filter)), page);
   return { ...sets, items: sets.items.map((set) => evidenceRead(set, windows)) };
 }
 
@@ -197,7 +198,7 @@ export interface ItemStatusWindows extends QuestionStatusWindows { readonly ques
 export type ItemStatusResponse = ItemStatusRead<MeasurementState, AttemptRead>;
 export type QuestionStatusResponse = QuestionStatusRead<MeasurementState, AttemptRead>;
 export type MachineStatusResponse = MachineStatusRead<MeasurementState, AttemptRead>;
-export function readItemStatus(db: Database, tenant: TenantScope, path: CompositePath, occurrence_id: string, windows: ItemStatusWindows): Promise<ItemStatusResponse | null> {
+export function readItemStatus(db: Database, tenant: TenantScope, path: CompositePath, occurrence_id: string, windows: ItemStatusWindows, filter: ItemSubjectFilter = {}): Promise<ItemStatusResponse | null> {
   return withTenantSnapshot(db, tenant, async (trx) => {
     const context = await readItemContext(trx, tenant, path, occurrence_id);
     const measurements = context ? await readItemMeasurementsIn(trx, tenant, occurrence_id) : null;
@@ -209,21 +210,26 @@ export function readItemStatus(db: Database, tenant: TenantScope, path: Composit
     const rows = await readAnswerRows(trx, tenant, { occurrence_id });
     const reads = answerReads(rows.map((answer): AnswerDetail => ({ ...answer, grader: graderOf(answer, byId) })));
     const definitions = (await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", producer).where("namespace", "=", namespace).execute()).map(questionFromRow);
-    const questions = pageOf(measurements.questions, windows.questions);
+    const questions = pageOf(measurements.questions.filter((question) => matchesSubject(question.evidence, filter)), windows.questions);
     return { item: addressedItem(context.item), is_grading_enabled: measurements.is_grading_enabled, links: pageOf(context.links, windows.links),
       questions: { ...questions, items: questions.items.map((question): QuestionStatusResponse => {
         const of = reads.filter((answer) => answer.evidence_set_id === question.evidence.evidence_set_id);
         const definition = definitions.find((candidate) => candidate.question_id === question.evidence.question_id && candidate.question_version === question.evidence.question_version);
         if (!definition) throw new Error(`question ${question.evidence.question_id}@${question.evidence.question_version} is pinned but not defined`);
         const machine = pageOf(question.machine, windows.machine);
-        return { question: definition, evidence: evidenceRead(question.evidence, windows), human: humanReadiness(question.evidence, human_ids),
+        return { task_id: question.evidence.task_id, question: definition, evidence: evidenceRead(question.evidence, windows), human: humanReadiness(question.evidence, human_ids),
           machine: { ...machine, items: machine.items.map((entry) => ({ ...entry, attempts: pageOf(entry.attempts, windows.attempts) })) },
           answers: pageOf(of.filter((answer) => answer.is_current), windows.answers), superseded_answers: pageOf(of.filter((answer) => !answer.is_current), windows.superseded_answers) };
       }) } };
   });
 }
 
-export interface ItemAnswersQuery { readonly page: PageRequest; readonly reviewer_id: string | null; readonly question: QuestionKey | null }
+export interface ItemSubjectFilter { readonly task_id?: LogicalItemId | null; readonly question?: QuestionKey | null }
+export function matchesSubject(subject: SubjectQuestion, filter: ItemSubjectFilter): boolean {
+  return (filter.task_id === undefined || subject.task_id === filter.task_id)
+    && (!filter.question || (subject.question_id === filter.question.question_id && subject.question_version === filter.question.question_version));
+}
+export interface ItemAnswersQuery extends ItemSubjectFilter { readonly page: PageRequest; readonly reviewer_id: string | null; readonly question: QuestionKey | null }
 export function readItemAnswers(db: Database, tenant: TenantScope, occurrence_id: string, query: ItemAnswersQuery): Promise<Paged<AnswerRead> | null> {
   return withTenantSnapshot(db, tenant, async (trx) => {
     const known = await trx.selectFrom("observation.item_occurrence").select("occurrence_id").where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
@@ -232,7 +238,7 @@ export function readItemAnswers(db: Database, tenant: TenantScope, occurrence_id
     const evaluators = await trx.selectFrom("observation.evaluator_definition").select(["evaluator_definition_id", "kind", "backend_kind", "provider", "model"]).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).execute();
     const byId = new Map(evaluators.map((row) => [row.evaluator_definition_id, { ...row, evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId, kind: row.kind as CompositeEvaluator["kind"] }]));
     const reads = answerReads((await readAnswerRows(trx, tenant, { occurrence_id })).map((answer): AnswerDetail => ({ ...answer, grader: graderOf(answer, byId) })));
-    return pageOf(reads.filter((answer) => (query.reviewer_id === null || answer.reviewer_id === query.reviewer_id)
+    return pageOf(reads.filter((answer) => (query.task_id === undefined || answer.task_id === query.task_id) && (query.reviewer_id === null || answer.reviewer_id === query.reviewer_id)
       && (query.question === null || (answer.question.question_id === query.question.question_id && answer.question.question_version === query.question.question_version))), query.page);
   });
 }

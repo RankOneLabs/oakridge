@@ -86,6 +86,7 @@ type ServedEvidence = Omit<EvidenceRead, "readiness" | "pinned_evaluator_definit
 /** The served shape with its nested pages read out, the windows wide enough to hold them all. */
 const evidenceOf = async (h: Harness, service: Service, item: Item): Promise<readonly EvidenceRead[]> =>
   ((await h.get(service, `/v1/items/${encodeURIComponent(item.occurrence_id)}/evidence?limit=200&references_limit=200&pinned_evaluators_limit=200`)) as { items: ServedEvidence[] }).items
+    .filter((set) => set.task_id === null || set.task_id.endsWith(":T7"))
     .map((set) => ({ ...set, pinned_evaluator_definition_ids: set.pinned_evaluator_definition_ids.items,
       readiness: set.readiness.state === "ready" ? { ...set.readiness, references: set.references.items } : set.readiness }));
 const question = (sets: readonly EvidenceRead[], id: string): EvidenceRead => {
@@ -192,6 +193,7 @@ integration("not-ready capture, config swap and restart, readiness arrival and a
   await h.send(first, launchOutcome(launch));
   await h.send(first, revisionOutcome({ revision_id: "analysis-1", artifact_kind: "analysis", body: await fixtureBody("analysis") }));
   await h.send(first, revisionOutcome({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") }));
+  await h.send(first, revisionOutcome({ revision_id: "tasks-context", artifact_kind: "tasks", body: { tasks: ["T7", "T8"].map((id) => ({ id, description: id, requirement_ids: ["unavailable"] })) } }));
   await h.send(first, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", subject_id: "build-1",
     body: await fixtureBody("assessment") }));
   const cited = await itemAt(h, first, "assessment-1", "/findings/0", "assessment_finding");
@@ -258,6 +260,7 @@ integration("a restart retries questions an earlier process left waiting", async
   const configuration = await configured();
   const first = await h.start(configuration);
   await h.send(first, launchOutcome(launch));
+  await h.send(first, revisionOutcome({ revision_id: "tasks-context", artifact_kind: "tasks", body: { tasks: ["T7", "T8"].map((id) => ({ id, description: id, requirement_ids: ["unavailable"] })) } }));
   await h.send(first, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", body: await fixtureBody("assessment") }));
   const cited = await itemAt(h, first, "assessment-1", "/findings/0", "assessment_finding");
   expect((await settled(h, first, cited, collected)).every((set) => set.readiness.reason?.code === "repository_unavailable")).toBe(true);
@@ -300,27 +303,28 @@ integration("an enabled run grades with the evaluators pinned at capture across 
   const requests: string[] = [];
   const first = await h.start(before, recordingRunners(requests));
   await h.send(first, launchOutcome(launch, "run-1", runConfig(true)));
+  await h.send(first, revisionOutcome({ revision_id: "tasks-context", artifact_kind: "tasks", body: { tasks: ["T7", "T8"].map((id) => ({ id, description: id, requirement_ids: ["unavailable"] })) } }));
   await h.send(first, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", subject_id: "build-1",
     body: await fixtureBody("assessment") }));
   // Ready questions are graded right away; the cited finding and every Correctness wait.
-  const early = await until(() => executionsBy(db), (rows) => rows.length === 3 && rows.every((row) => row.status === "completed"));
+  const early = await until(() => executionsBy(db), (rows) => rows.length === 1 && rows.every((row) => row.status === "completed"));
   expect(early.every((row) => row.question_id === EVIDENCE_SUPPORT_ID)).toBe(true);
   await first.stop();
 
   const second = await h.start(after, recordingRunners(requests));
   reader.accessible = true;
   await h.send(second, revisionOutcome({ revision_id: "build-1", artifact_kind: "build_result", body: await fixtureBody("build-result") }));
-  const ready = await until(() => executionsBy(db), (rows) => rows.length === 8 && rows.every((row) => row.status === "completed"));
+  const ready = await until(() => executionsBy(db), (rows) => rows.length === 6 && rows.every((row) => row.status === "completed"));
   // The older occurrence's first answers use its original evaluators, not the swapped ones.
   for (const row of ready) expect(pinsOf(before, row.question_id)).toContain(row.evaluator_definition_id as never);
   const cited = await itemAt(h, second, "assessment-1", "/findings/0", "assessment_finding");
   const measured = await h.get(second, `/v1/items/${encodeURIComponent(cited.occurrence_id)}/status`) as {
     questions: { items: { machine: { items: { measurement: { state: string } }[] } }[] } };
-  expect(measured.questions.items.flatMap((entry) => entry.machine.items.map((machine) => machine.measurement.state))).toEqual(["answered", "answered"]);
+  expect(measured.questions.items.flatMap((entry) => entry.machine.items.map((machine) => machine.measurement.state))).toEqual(["answered", "answered", "answered", "answered"]);
 
   await h.send(second, revisionOutcome({ revision_id: "assessment-2", artifact_kind: "assessment", subject_id: "build-1",
     body: await fixtureBody("assessment") }));
-  const later = await until(() => executionsBy(db), (rows) => rows.length === 16 && rows.every((row) => row.status === "completed"));
+  const later = await until(() => executionsBy(db), (rows) => rows.length === 12 && rows.every((row) => row.status === "completed"));
   for (const row of later.filter((entry) => entry.revision_id === "assessment-2"))
     expect(pinsOf(after, row.question_id)).toContain(row.evaluator_definition_id as never);
   await second.stop();
@@ -331,6 +335,6 @@ integration("an enabled run grades with the evaluators pinned at capture across 
     body: await fixtureBody("assessment") }, tenant, "event:assessment-1-replayed"));
   await Bun.sleep(300);
   await third.stop();
-  expect([(await executionsBy(db)).length, requests.length, sent]).toEqual([16, sent, 16]);
-  expect(await counts(db)).toMatchObject({ executions: 16, attempts: 16, answers: 16 });
+  expect([(await executionsBy(db)).length, requests.length, sent]).toEqual([12, sent, 12]);
+  expect(await counts(db)).toMatchObject({ executions: 12, attempts: 12, answers: 12 });
 }));

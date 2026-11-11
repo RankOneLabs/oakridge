@@ -27,7 +27,7 @@ const credentials: Credentials = {
 };
 const MACHINE = "machine";
 const human = (() => { const definition = humanEvaluator(); if (!definition.ok) throw new Error(definition.error.detail); return definition.value; })();
-const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question,
+const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const, ...question,
   evaluator_definition_ids: [evaluatorId(MACHINE), human.evaluator_definition_id as EvaluatorDefinitionId] })) };
 
 async function setup(db: Database, grading_enabled = false) {
@@ -161,3 +161,91 @@ test("a grade credential names its bound reviewer; other capabilities cannot ask
   expect(await (await read("grade-b")).json()).toEqual({ reviewer_id: "second-reviewer" });
   expect((await read("read")).status).toBe(403);
 });
+
+integration("T3 and T7 have isolated subjects, evidence, executions, answers, corrections and task reads", async () => scratchDatabase(async (db) => {
+  const { scopeOf } = await import("./grading-fixture");
+  const { pinSubjectInTransaction, collectPinnedQuestion } = await import("../src/storage/captured-evidence-store");
+  const { CaptureArtifactSource } = await import("../src/storage/capture-artifact-source");
+  const { oakridgeEvidence } = await import("../src/producers/oakridge/evidence");
+  const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question, ...scopeOf(question.question_id),
+    evaluator_definition_ids: [human.evaluator_definition_id as EvaluatorDefinitionId] })) };
+  for (const question of OAKRIDGE_QUESTIONS) await registerQuestion(db, tenant, question);
+  await registerEvaluator(db, tenant, human);
+  const feed = createFeed(db, tenant, configuration);
+  await feed.launch({ spec: "the spec" });
+  await feed.revision({ revision_id: "scoped", artifact_kind: "assessment", unit_id: "run-1/implementation/one",
+    body: { findings: [{ task_ids: ["T3", "T7", "T7", "T99"], evidence: [], status: "met" }] } });
+  const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").selectAll()
+    .where("item_kind", "=", "assessment_finding").executeTakeFirstOrThrow());
+  const occurrence_id = row.occurrence_id as ItemOccurrenceId;
+  expect(await readOccurrenceEvidence(db, tenant, occurrence_id)).toEqual([]);
+  const task = (id: string) => `oakridge:grading-test:run-1:task:${id}` as import("../src/domain/identity").LogicalItemId;
+  const taskBody = (ids: readonly string[]) => ({ tasks: ids.map((id) => ({ id, description: `Definition for ${id}`, requirement_ids: [] })) });
+  await feed.revision({ revision_id: "tasks", artifact_kind: "tasks", recorded_at: "2026-10-31T00:00:00Z", body: taskBody(["T3", "T7", "T9"]) });
+  const sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
+  expect(sets.map((set) => [set.question_id, set.task_id])).toEqual([
+    [CORRECTNESS_ID, task("T3")], [CORRECTNESS_ID, task("T7")], [EVIDENCE_SUPPORT_ID, task("T3")], [EVIDENCE_SUPPORT_ID, task("T7")] ]);
+  const pin = configuration.pins.find((pin) => pin.question_id === EVIDENCE_SUPPORT_ID)!;
+  const refused = await withTenant(db, tenant, (trx) => pinSubjectInTransaction(trx, tenant,
+    { subject: { subject_occurrence_id: occurrence_id, task_id: task("T9") }, pin }));
+  expect(refused).toMatchObject({ ok: false, error: { operation: "evidence_store", entity_id: occurrence_id } });
+  expect(await readOccurrenceEvidence(db, tenant, occurrence_id)).toEqual(sets);
+  const source = new CaptureArtifactSource({ db, tenant, run_id: "run-1", collector: oakridgeEvidence,
+    repository: { hasCommit: async () => false, readFile: async () => ({ state: "absent" }) } });
+  for (const set of sets) {
+    const collected = await collectPinnedQuestion(db, tenant, source, set);
+    expect(collected).toMatchObject({ ok: true, value: { task_id: set.task_id, readiness: { state: "ready" } } });
+    if (!collected.ok || collected.value.readiness.state !== "ready") throw new Error("collection failed");
+    const context = collected.value.readiness.references.filter((reference) => reference.ref.startsWith("task_context:"));
+    expect(context).toEqual([{ source: "revision", ref: "task_context:0", revision_id: "tasks" as ArtifactRevisionId,
+      item_path: set.task_id === task("T3") ? "/tasks/0" : "/tasks/1",
+      content: { id: set.task_id === task("T3") ? "T3" : "T7", description: set.task_id === task("T3") ? "Definition for T3" : "Definition for T7", requirement_ids: [] } }]);
+  }
+  const app = createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: configuration });
+  const send = (body: unknown) => app.request(`/v1/items/${encodeURIComponent(occurrence_id)}/answers`,
+    { method: "POST", headers: { authorization: "Bearer grade", "content-type": "application/json" }, body: JSON.stringify(body) });
+  const read = async (surface: string, query = "") => app.request(`/v1/items/${encodeURIComponent(occurrence_id)}/${surface}?${query}`, { headers: { authorization: "Bearer read" } });
+  expect(await (await send(answer("missing", "supports"))).json()).toMatchObject({ error: { code: "task_required" } });
+  expect(await (await send(answer("foreign", "supports", { task_id: task("T9") }))).json()).toMatchObject({ error: { code: "question_not_pinned" } });
+  const first = await (await send(answer("t3", "supports", { task_id: task("T3") }))).json() as { observation_id: string; evidence_set_id: string; execution_id: string };
+  const second = await (await send(answer("t7", "does_not_support", { task_id: task("T7") }))).json() as typeof first;
+  expect(first.evidence_set_id).not.toBe(second.evidence_set_id);
+  expect(first.execution_id).not.toBe(second.execution_id);
+  expect((await send(answer("cross", "supports", { task_id: task("T3"), corrects_observation_id: second.observation_id }))).status).toBe(409);
+  expect((await send(answer("correction", "unclear", { task_id: task("T3"), corrects_observation_id: first.observation_id }))).status).toBe(201);
+  const filter = `question_id=${EVIDENCE_SUPPORT_ID}&question_version=${questionVersion(EVIDENCE_SUPPORT_ID)}`;
+  for (const surface of ["answers", "evidence"]) expect((await read(surface, filter)).status).toBe(400);
+  const t7answers = await (await read("answers", `${filter}&task_id=${task("T7")}`)).json() as { items: { observation_id: string; task_id: string }[] };
+  expect(t7answers.items.map((answer) => [answer.observation_id, answer.task_id])).toEqual([[second.observation_id, task("T7")]]);
+  for (const surface of ["status", "evidence", "grades", "lineage"]) {
+    const response = await read(surface, `task_id=${task("T3")}`);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { items?: { task_id: string }[]; questions?: { items: { task_id: string }[] }; task_id?: string };
+    if (surface === "lineage") expect(body.task_id).toBe(task("T3"));
+    else expect((body.items ?? body.questions?.items ?? []).every((entry) => entry.task_id === task("T3"))).toBe(true);
+  }
+  // Resolving the last reference creates only its two subjects and never changes existing pins.
+  const next_version = "late-version";
+  for (const question of OAKRIDGE_QUESTIONS.filter((question) => question.item_kind === "assessment_finding"))
+    await registerQuestion(db, tenant, { ...question, question_version: next_version });
+  const later_configuration: CaptureConfiguration = { pins: configuration.pins.map((pin) =>
+    pin.scope === "per_task" ? { ...pin, question_version: next_version } : pin) };
+  await feed.revision({ revision_id: "tasks-later", artifact_kind: "tasks", body: taskBody(["T3", "T7", "T9", "T99"]) }, later_configuration);
+  const later_sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
+  expect(later_sets.filter((set) => set.task_id === task("T99")).map((set) => set.question_version)).toEqual([next_version, next_version]);
+  expect(later_sets.filter((set) => set.task_id === task("T3")).every((set) => set.question_version !== next_version)).toBe(true);
+  await feed.revision({ revision_id: "tasks-later", artifact_kind: "tasks", body: taskBody(["T3", "T7", "T9", "T99"]) }, later_configuration);
+  expect(await readOccurrenceEvidence(db, tenant, occurrence_id)).toHaveLength(6);
+  const per_item = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select("occurrence_id")
+    .where("item_kind", "=", "task").executeTakeFirstOrThrow());
+  const request = { question_id: "task.requirement_coverage", question_version: questionVersion("task.requirement_coverage"), submission_id: "bad-task", answer: "unclear", task_id: task("T3") };
+  const rejected = await app.request(`/v1/items/${encodeURIComponent(per_item.occurrence_id)}/answers`, { method: "POST",
+    headers: { authorization: "Bearer grade", "content-type": "application/json" }, body: JSON.stringify(request) });
+  expect(await rejected.json()).toMatchObject({ error: { code: "task_not_applicable" } });
+  for (const surface of ["answers", "evidence"]) {
+    const response = await app.request(`/v1/items/${encodeURIComponent(per_item.occurrence_id)}/${surface}?question_id=task.requirement_coverage&question_version=${request.question_version}&task_id=${task("T3")}`,
+      { headers: { authorization: "Bearer read" } });
+    expect(response.status).toBe(400);
+  }
+  expect(provider_calls).toBe(0);
+}));

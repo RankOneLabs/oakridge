@@ -60,7 +60,7 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
               <p className="m-0 min-w-0 flex-1 text-sm text-[var(--text-secondary)]">{selectItemText(entry.item.selected_value)}</p>
               {entry.kind === "unresolved" && <Chip tone="warning">Unresolved</Chip>}
               {!entry.item.is_current && <Chip tone="muted">Older revision</Chip>}
-              <GradeItemButton selection={{ source_revision_id: entry.item.revision_id, item_path: entry.item.item_path }} onOpenItem={onOpenItem} />
+              <GradeItemButton selection={{ source_revision_id: entry.item.revision_id, item_path: entry.item.item_path, task_id: composite.data?.logical_item_id }} onOpenItem={onOpenItem} />
             </li>];
           })}
         </ul>

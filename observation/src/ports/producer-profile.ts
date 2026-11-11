@@ -1,4 +1,5 @@
-import type { QuestionDefinition, QuestionKey } from "../grading/question";
+import type { QuestionDefinition } from "../grading/question";
+import type { SubjectQuestion } from "../grading/evidence";
 import type { JsonValue, Result } from "../domain/primitives";
 import type { ExtractorDefinition, RelationType } from "../projection/extractor";
 import type { RelationDeclaration } from "../projection/relations";
@@ -22,7 +23,7 @@ export interface ExtractionProfile {
 }
 
 export interface EvidenceCollector {
-  collect(artifact: SourceArtifact, question: QuestionKey, sources: CapturedSources): Promise<EvidenceCollection>;
+  collect(artifact: SourceArtifact, question: SubjectQuestion, sources: CapturedSources): Promise<EvidenceCollection>;
 }
 
 /** One stage a composite keeps apart from the others. Publication alone makes a final stage's results final. */

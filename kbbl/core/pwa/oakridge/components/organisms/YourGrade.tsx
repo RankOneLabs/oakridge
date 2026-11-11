@@ -29,16 +29,16 @@ interface Props {
 export function YourGrade({ occurrenceId, question, onAcknowledged }: Props) {
   const reviewer = useReviewer();
   const key = { question_id: question.question.question_id, question_version: question.question.question_version };
-  const own = useOwnAnswers(occurrenceId, key, reviewer.data?.reviewer_id ?? null);
+  const own = useOwnAnswers(occurrenceId, key, reviewer.data?.reviewer_id ?? null, question.task_id);
   const current = selectOwnCurrentAnswer(own.data ?? []);
   const earlier = selectEarlierOwnAnswers(own.data ?? [], current);
   const form = selectHumanForm(question.human, question.question.allowed_values);
   const [draft, setDraft] = useState<GradeDraft>(EMPTY_GRADE_DRAFT);
   const submissionId = useRef(randomUuid());
-  const submit = useSubmitAnswer(occurrenceId, onAcknowledged);
+  const submit = useSubmitAnswer(occurrenceId, onAcknowledged, question.task_id);
   const notice = selectSubmissionNotice({ is_pending: submit.isPending, result: submit.data as SubmissionResult | undefined });
   const editor = selectGradeEditor(current, draft);
-  useEffect(() => { submit.reset(); setDraft(EMPTY_GRADE_DRAFT); submissionId.current = randomUuid(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [key.question_id, key.question_version]);
+  useEffect(() => { submit.reset(); setDraft(EMPTY_GRADE_DRAFT); submissionId.current = randomUuid(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [key.question_id, key.question_version, question.task_id]);
   const edit = (change: Partial<GradeDraft>) => { setDraft((previous) => ({ ...previous, ...change })); submit.reset(); submissionId.current = randomUuid(); };
   return (
     <section className="flex flex-col gap-2" data-testid="or-your-grade">

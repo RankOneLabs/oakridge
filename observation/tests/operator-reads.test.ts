@@ -17,7 +17,7 @@ const credentials: Credentials = { ingest: [{ ...tenant, token: "ingest" }], rea
   grade: [{ ...tenant, token: "grade", reviewer_id: "operator" }] };
 const MACHINE = "machine";
 const human = (() => { const definition = humanEvaluator(); if (!definition.ok) throw new Error(definition.error.detail); return definition.value; })();
-const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question,
+const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const, ...question,
   evaluator_definition_ids: [evaluatorId(MACHINE), human.evaluator_definition_id as EvaluatorDefinitionId] })) };
 const analysis = (findings: readonly JsonValue[]): JsonValue => ({ summary: "s", source_spec_refs: [], findings, requirements: [], risks: [], proposed_spec_updates: [] });
 const assessment = (findings: readonly JsonValue[]): JsonValue => ({ head_sha: "abc", verdict: "pass", findings, recommended_next_actions: [] });
@@ -183,21 +183,20 @@ integration("every list pages to its end, nested lists included, with its own wi
   expect(tasksPage.items[0]?.stages).toMatchObject({ limit: 1, offset: 1, total: 3 });
   const t1 = (await get<{ stages: Paged<{ stage: string; publication: { unit_ids?: Paged<string> }; answers: Paged<{ count: number; drilldown: object }>; items: object }> }>(h, "/v1/runs/run-1/logical-items/T1?answers_limit=1")).body;
   const implementation = t1.stages.items.find((stage) => stage.stage === "implementation")!;
-  expect(implementation.answers).toMatchObject({ limit: 1, total: 1 });
-  expect(implementation.answers.items[0]?.count).toBe(1);
+  expect(implementation.answers).toMatchObject({ limit: 1, total: 0 });
   expect(implementation.publication.unit_ids).toMatchObject({ total: 1 });
 
   const drill = (key: object, query = "") => get<Paged<{ item: { source_revision_id: string; item_path: string }; links: Paged<unknown>; questions: Paged<{ evidence: { references: Paged<{ ref: string }> }; answers: Paged<{ answer: { value: string } }>; superseded_answers: Paged<{ answer: { value: string } }> }> }>>(h,
     `/v1/runs/run-1/composite-drilldown?key=${encodeURIComponent(JSON.stringify(key))}${query}`);
-  const rows = (await drill(implementation.answers.items[0]!.drilldown, "&links_limit=1&references_limit=1&superseded_answers_limit=1")).body;
-  expect(rows.total).toBe(1);
+  const rows = (await drill(implementation.items, "&links_limit=1&references_limit=1&superseded_answers_limit=1")).body;
+  expect(rows.total).toBe(2);
   const row = rows.items[0]!;
   expect(row.item).toMatchObject({ source_revision_id: "assessment-1", item_path: "/findings/0" });
   expect(row.links).toMatchObject({ limit: 1, total: 3 });
   expect(row.links.items).toHaveLength(1);
   expect(row.questions.items[0]?.evidence.references).toMatchObject({ limit: 1, total: 2 });
-  expect(row.questions.items[0]?.answers.items[0]?.answer.value).toBe("does_not_support");
-  expect(row.questions.items[0]?.superseded_answers.items[0]?.answer.value).toBe("supports");
+  expect(row.questions.items[1]?.answers.items[0]?.answer.value).toBe("does_not_support");
+  expect(row.questions.items[1]?.superseded_answers.items[0]?.answer.value).toBe("supports");
   const itemsDrill = (await drill(implementation.items, "&limit=1&offset=1")).body;
   expect(itemsDrill).toMatchObject({ limit: 1, offset: 1, total: 2 });
   expect((await get(h, `/v1/runs/run-1/composite-drilldown?key=nonsense`)).status).toBe(400);

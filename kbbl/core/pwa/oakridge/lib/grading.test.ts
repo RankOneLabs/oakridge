@@ -12,7 +12,7 @@ import { compositeId } from "../adapters/core";
 import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemHeader, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, stagePublicationLabel, taskLinkLabel } from "./grading";
 
 const empty = <Item,>(): ObservationPaged<Item> => ({ items: [], total: 0, limit: 50, offset: 0 });
-const answer = (observation_id: string, supersedes_observation_id: string | null = null): ObservationAnswerRead => ({ observation_id: id(observation_id), execution_id: id(observation_id), occurrence_id: id("o"), evidence_set_id: id("e"),
+const answer = (observation_id: string, supersedes_observation_id: string | null = null): ObservationAnswerRead => ({ task_id: null, observation_id: id(observation_id), execution_id: id(observation_id), occurrence_id: id("o"), evidence_set_id: id("e"),
   question: { question_id: id("q"), question_version: "1" }, evaluator_definition_id: id("human"), reviewer_id: id<ObservationReviewerId>("r"), answer: { state: "answered", kind: "choice", value: "supports" },
   supersedes_observation_id: supersedes_observation_id === null ? null : id<ObservationGradeObservationId>(supersedes_observation_id), confidence: null, rationale: null, comments: null, recorded_at: "2026-11-01", grader: { kind: "human", evaluator_definition_id: id("human"), reviewer_id: id("r") }, is_current: true });
 
