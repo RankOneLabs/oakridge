@@ -120,9 +120,7 @@ impl<'a> From<&'a Stage> for StageFingerprint<'a> {
         let mut reviews = reviews.clone();
         for review in reviews.values_mut() {
             for decision in review.decisions.values_mut() {
-                if decision.on.as_ref() == Some(&review.of) {
-                    decision.on = None;
-                }
+                decision.on = normalized_decision_target(decision.on.as_ref(), &review.of);
             }
         }
         Self {
