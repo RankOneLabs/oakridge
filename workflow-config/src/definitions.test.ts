@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
@@ -527,6 +527,30 @@ for (const incompatible of incompatible_definitions) {
     expect(runGenerator(root).exitCode).toBe(0);
     expect(storeSnapshot(root)).toEqual(snapshot);
     expect(runGenerator(root, true).exitCode).toBe(0);
+  });
+}
+
+for (const is_check of [false, true]) {
+  test(`${is_check ? "--check" : "generation"} reports an unreadable retained definition without deleting or writing objects`, () => {
+    const root = generatorFixture();
+    expect(runGenerator(root).exitCode).toBe(0);
+    const store = resolve(root, "workflow-config/definitions");
+    const definition_id = unwrap(readLaunchableCatalog(store))["review-loop"];
+    const path = resolve(store, "workflows", `${definition_id}.json`);
+    const snapshot = storeSnapshot(root);
+    // Make the unreadable object historical, so it would not be regenerated.
+    const source = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+    writeFileSync(source, readFileSync(source, "utf8").replace("workflow: review_loop", "workflow: review_loop_updated"));
+    chmodSync(path, 0o000);
+    try {
+      const generated = runGenerator(root, is_check);
+      expect({ code: generated.exitCode, named: generated.stderr.toString().includes(path),
+        read_error: generated.stderr.toString().includes("EACCES"), kept: existsSync(path) })
+        .toEqual({ code: 1, named: true, read_error: true, kept: true });
+    } finally {
+      if (existsSync(path)) chmodSync(path, 0o644);
+    }
+    expect(storeSnapshot(root)).toEqual(snapshot);
   });
 }
 

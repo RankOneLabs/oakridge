@@ -45,8 +45,10 @@ function selectIncompatibleDefinitions(): string[] {
   const directory = resolve(storeRoot, "workflows");
   if (!existsSync(directory)) return [];
   return filesUnder(directory).filter((path) => {
+    // Read failures must abort generation before any retained object is removed.
+    const contents = readFileSync(path, "utf8");
     try {
-      return !isCommittedDefinition(JSON.parse(readFileSync(path, "utf8")));
+      return !isCommittedDefinition(JSON.parse(contents));
     } catch {
       return true;
     }

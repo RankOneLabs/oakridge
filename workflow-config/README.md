@@ -100,7 +100,8 @@ schema are retained byte-for-byte, alongside historical prompts and operation
 registries. Every retained workflow object is checked with `isCommittedDefinition`,
 which uses the generated `decodeWorkflowSource` matcher. Objects that fail this
 check are removed during generation; pinned objects are never rewritten to migrate
-them. `--check` reports differing or missing current output files and names every
+them. Read failures stop generation before any stored objects are changed.
+`--check` reports differing or missing current output files and names every
 non-decodable retained workflow object without writing or deleting anything.
 The existing pretty-printed Rust bundle fixtures remain unchanged, and the source-less
 `r5-cohort.json` fixture has no committed definition. Run `bun test
