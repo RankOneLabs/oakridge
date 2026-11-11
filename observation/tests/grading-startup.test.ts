@@ -169,6 +169,21 @@ integration("startup refuses an unknown runner or a missing key, clearly and bef
   expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
 }));
 
+integration("startup refuses a question with no evidence collector before registering anything", async () => withHarness(async (db) => {
+  const configuration = await configured();
+  const env = { ...credentialEnv(configuration), OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0",
+    OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest) };
+  const directory = await mkdtemp(join(tmpdir(), "observation-unsupported-question-"));
+  try {
+    const grading_definitions_file = join(directory, "grading-definitions.json");
+    const renamed = configuration.map((entry, index) => index === 0 ? { ...entry, id: "finding.relevnce" } : entry);
+    await Bun.write(grading_definitions_file, JSON.stringify(renamed));
+    await expect(startObservation(env, { grading_definitions_file }))
+      .rejects.toThrow("observation cannot start: unknown_question: finding.relevnce: id: no evidence collector is registered for this question");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+  expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
+}));
+
 integration("not-ready capture, config swap and restart, readiness arrival and a later capture keep each occurrence's own pins",
   async () => withHarness(async (db, h, reader) => {
   const before = await configured();

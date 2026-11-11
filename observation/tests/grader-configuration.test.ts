@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { canonicalDigest } from "canonical-json";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import type { QuestionId } from "../src/domain/identity";
 import { machineGraders, parseGradingDefinitions, planRegistration, selectedRunners,
   type GradingDefinition, type GradingDefinitions } from "../src/grading/configuration";
 import { runnerRegistry } from "../src/grading/runner";
@@ -48,6 +49,8 @@ const refusals: readonly Refusal[] = [
   { name: "unknown target field", kind: "invalid_definitions", edit: (d) => ({ ...d, target: { ...d.target, typo: true } }) },
   { name: "unknown question field", kind: "invalid_definitions", edit: (d) => ({ ...d, question: { ...d.question, typo: true } }) },
   { name: "unknown evaluator field", kind: "invalid_definitions", edit: (d) => ({ ...d, evaluators: [{ ...d.evaluators[0], typo: true }] }) },
+  { name: "unknown question id", kind: "unknown_question", entity_id: "finding.relevnce", field: "id", edit: (d) => ({ ...d, id: "finding.relevnce" }) },
+  { name: "unknown human-only question id", kind: "unknown_question", entity_id: "finding.relevnce", field: "id", edit: (d) => ({ ...d, id: "finding.relevnce", evaluators: [] }) },
   { name: "unknown runner", kind: "unknown_runner", entity_id: "finding.relevance:imaginary", edit: (d) => ({ ...d, evaluators: machineGraders(d).map((g) => ({ ...g, runner: "imaginary" })) }) },
   { name: "invalid runner instructions", kind: "invalid_instructions", entity_id: "finding.relevance:jev_direct", edit: (d) => ({ ...d, evaluators: machineGraders(d).map((g) => ({ ...g, instructions: { rubric: 1 } })) }) },
   { name: "duplicate grader", kind: "duplicate_grader", entity_id: "finding.relevance:jev_direct", edit: (d) => ({ ...d, evaluators: [...d.evaluators, ...d.evaluators] }) },
@@ -68,6 +71,23 @@ for (const refusal of refusals) test(`the loader refuses ${refusal.name} with de
 test("duplicate definition ids are refused", async () => {
   const definitions = await committedDefinitions();
   expect(parse([...definitions, definitions[0]])).toMatchObject({ ok: false, error: { kind: "duplicate_definition", entity_id: definitions[0]!.id } });
+});
+
+test("registration refuses an unknown question id even without parsing first", async () => {
+  const [definition] = await committedDefinitions();
+  expect(planRegistration([{ ...definition!, id: "finding.relevnce" }], oakridgeGradingRegistry))
+    .toMatchObject({ ok: false, error: { operation: "grader_configuration", kind: "unknown_question",
+      entity_id: "finding.relevnce", detail: expect.stringContaining("evidence collector") } });
+});
+
+test("supported question ids come from the injected producer registry", async () => {
+  const [definition] = await committedDefinitions();
+  const question_id = "another_producer.relevance" as QuestionId;
+  const registry = { ...oakridgeGradingRegistry, evidence_question_ids: [question_id] };
+  const result = parseGradingDefinitions([{ ...definition!, id: question_id }], registry);
+  expect(result.ok).toBe(true);
+  expect(parseGradingDefinitions([definition], registry))
+    .toMatchObject({ ok: false, error: { kind: "unknown_question", entity_id: definition!.id } });
 });
 
 test("malformed definitions and missing evaluator fields are refused", async () => {

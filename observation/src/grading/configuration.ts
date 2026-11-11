@@ -26,6 +26,8 @@ export interface RegisteredSelector {
 export interface GradingRegistry {
   readonly selectors: readonly RegisteredSelector[];
   readonly evidence_sources: readonly string[];
+  /** Question ids served by the producer's evidence collector. */
+  readonly evidence_question_ids: readonly QuestionId[];
 }
 
 const targetFields = { artifact: z.string().min(1), selector: z.string().startsWith("/") };
@@ -63,7 +65,7 @@ export const machineGraders = (definition: GradingDefinition): readonly GraderEn
 export interface EvaluatorCostMetadata { readonly estimated_cost_per_call: number }
 
 export type GraderConfigurationErrorKind = "invalid_definitions" | "duplicate_definition" | "unknown_evidence" | "unknown_selector"
-  | "invalid_task_ids" | "duplicate_grader" | "unknown_runner" | "invalid_instructions" | "invalid_definition";
+  | "unknown_question" | "invalid_task_ids" | "duplicate_grader" | "unknown_runner" | "invalid_instructions" | "invalid_definition";
 export interface GraderConfigurationError {
   readonly operation: "grader_configuration";
   readonly kind: GraderConfigurationErrorKind;
@@ -195,6 +197,8 @@ export function planRegistration(configuration: GradingDefinitions, registry: Gr
   for (const definition of configuration) {
     if (ids.has(definition.id)) return failure("duplicate_definition", definition.id, "a definition is configured twice");
     ids.add(definition.id);
+    if (!registry.evidence_question_ids.some((question_id) => question_id === definition.id))
+      return failure("unknown_question", definition.id, "id: no evidence collector is registered for this question");
     const selector = registry.selectors.find((entry) => entry.artifact_kind === definition.target.artifact
       && entry.item_selector === definition.target.selector);
     if (!selector) return failure("unknown_selector", definition.id, `target.selector: ${definition.target.artifact} ${definition.target.selector} is not registered`);
