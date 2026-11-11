@@ -5,6 +5,7 @@ import { sql } from "kysely";
 import { openDatabase } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { readdir } from "node:fs/promises";
+import { jsonText } from "../src/storage/database";
 import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
@@ -130,5 +131,49 @@ integration("PostgreSQL versions below 15 are refused before DDL", async () => s
     await expect(migrateEmptyDatabase(olderServer)).rejects.toThrow("PostgreSQL 15+ is required for the observation baseline");
     const schema = await sql<{ name: string | null }>`SELECT to_regnamespace('observation')::text AS name`.execute(db);
     expect(schema.rows).toEqual([{ name: null }]);
+  } finally { await db.destroy(); }
+}));
+
+/** Exercise the edited baseline through real capture, then probe its subject constraints. */
+async function baselineSubject(db: import("../src/storage/database").Database) {
+  const { createFeed, fixtureBody, evaluator, evaluatorId, OAKRIDGE_QUESTIONS, tenant } = await import("./grading-fixture");
+  const { registerQuestion, registerEvaluator } = await import("../src/storage/grading-store");
+  const question = OAKRIDGE_QUESTIONS[0]!;
+  await registerQuestion(db, tenant, question);
+  await registerEvaluator(db, tenant, evaluator("human"));
+  await createFeed(db, tenant, { pins: [{ ...question, evaluator_definition_ids: [evaluatorId("human")] }] })
+    .revision({ revision_id: "analysis", artifact_kind: "analysis", body: await fixtureBody("analysis") });
+  return (await db.selectFrom("observation.evidence_set").selectAll().executeTakeFirstOrThrow());
+}
+
+integration("the baseline refuses a duplicate null-task subject", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    const row = await baselineSubject(db);
+    await expect(db.insertInto("observation.evidence_set").values({ ...row, evidence_refs: jsonText(row.evidence_refs),
+      evidence_set_id: `canonical-json/v1:${"f".repeat(64)}` }).execute()).rejects.toThrow("duplicate key");
+  } finally { await db.destroy(); }
+}));
+
+integration("execution tasks must match their evidence including null against non-null", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    const row = await baselineSubject(db);
+    for (const task of ["oakridge:grading-test:run-1:task:T3", "oakridge:grading-test:run-1:task:T7"]) await db.insertInto("observation.logical_item").values({
+      producer: row.producer, namespace: row.namespace, logical_item_id: task, run_id: "run-1", scope: "task", producer_local_id: task.split(":").at(-1)!,
+    }).execute();
+    await db.insertInto("observation.evidence_set").values({ ...row, evidence_refs: jsonText(row.evidence_refs), task_id: "oakridge:grading-test:run-1:task:T3",
+      evidence_set_id: `canonical-json/v1:${"e".repeat(64)}`, readiness: "ready", not_ready_code: null,
+      not_ready_detail: null, ready_at: new Date() }).execute();
+    for (const task of [null, "oakridge:grading-test:run-1:task:T7"]) {
+      await expect(sql`INSERT INTO observation.evaluation_execution
+        (producer, namespace, execution_id, run_id, subject_occurrence_id, task_id, evidence_set_id,
+         question_id, question_version, evaluator_definition_id, attempt_label, idempotency_digest, status)
+        VALUES (${row.producer}, ${row.namespace}, 'mismatch', 'run-1', ${row.subject_occurrence_id}, ${task},
+         ${`canonical-json/v1:${"e".repeat(64)}`}, ${row.question_id}, ${row.question_version}, 'human', 'test',
+         ${`canonical-json/v1:${"d".repeat(64)}`}, 'queued')`.execute(db)).rejects.toThrow("execution requires");
+    }
   } finally { await db.destroy(); }
 }));

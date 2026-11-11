@@ -402,7 +402,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
     const observation_id = crypto.randomUUID();
     const payload = choice(input.value);
     await withTenant(db, tenant, async (trx) => {
-      await trx.insertInto("observation.evaluation_execution").values({ ...tenant, ...identity, execution_id, run_id, idempotency_digest: digest.value, status: "completed", lease_owner: null,
+      await trx.insertInto("observation.evaluation_execution").values({ task_id: null, ...tenant, ...identity, execution_id, run_id, idempotency_digest: digest.value, status: "completed", lease_owner: null,
         lease_expires_at: null, terminal_cause: null, started_at: null, ended_at: new Date(), error: null, model_usage: null, cost: null, external_execution_id: null, provider_link: null, reproducibility_metadata: null }).execute();
       await trx.insertInto("observation.grade_observation").values({ ...tenant, observation_id, execution_id, answer_kind: payload.kind, answer_state: payload.state, answer_payload: jsonText(payload as JsonValue),
         probabilities: null, confidence: null, reviewer_id: input.reviewer ?? null, reviewer_details: null, comments: null, rationale: null, supersedes_observation_id: input.supersedes ?? null }).execute();

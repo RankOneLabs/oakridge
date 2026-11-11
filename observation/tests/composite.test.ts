@@ -62,7 +62,7 @@ async function measure(h: Harness, input: Measure): Promise<string> {
   const execution_id = randomUUID();
   const status = input.status ?? "completed";
   const ended = status === "completed" || status === "failed";
-  await withTenant(h.db, h.scope, (trx) => trx.insertInto("observation.evaluation_execution").values({ ...h.scope, ...identity, execution_id, run_id: input.run_id ?? "run-1",
+  await withTenant(h.db, h.scope, (trx) => trx.insertInto("observation.evaluation_execution").values({ task_id: null, ...h.scope, ...identity, execution_id, run_id: input.run_id ?? "run-1",
     idempotency_digest: digest.value, status, lease_owner: null, lease_expires_at: null, terminal_cause: status === "failed" ? "retry_exhausted" : null, started_at: null,
     ended_at: ended ? new Date() : null, error: status === "failed" ? "transport: refused" : null, model_usage: null, cost: null, external_execution_id: null, provider_link: null,
     reproducibility_metadata: null }).execute());

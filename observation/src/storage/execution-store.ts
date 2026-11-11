@@ -86,7 +86,7 @@ export async function admitRun(db: Database, tenant: TenantScope, run_id: string
         const identity = automaticIdentity(candidate);
         const digest = evaluationDigest(identity);
         if (!digest.ok) throw new Error(digest.error.detail);
-        const inserted = await trx.insertInto("observation.evaluation_execution").values({ producer: tenant.producer, namespace: tenant.namespace,
+        const inserted = await trx.insertInto("observation.evaluation_execution").values({ task_id: null, producer: tenant.producer, namespace: tenant.namespace,
           execution_id: digest.value, run_id: candidate.run_id, ...identity, idempotency_digest: digest.value, status: "queued",
           retry_limit: controls.retry_limit, estimated_cost })
           .onConflict((conflict) => conflict.columns(["producer", "namespace", "idempotency_digest"]).doNothing())

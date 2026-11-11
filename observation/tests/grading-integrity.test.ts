@@ -43,7 +43,7 @@ async function insertExecution(db: Database, measured: Measured, input: Executio
   if (!digest.ok) throw new Error(digest.error.detail);
   const status = input.status ?? "completed";
   const execution_id = randomUUID();
-  await withTenant(db, scope, (trx) => trx.insertInto("observation.evaluation_execution").values({ ...scope, ...identity, execution_id, run_id: "run-1",
+  await withTenant(db, scope, (trx) => trx.insertInto("observation.evaluation_execution").values({ task_id: null, ...scope, ...identity, execution_id, run_id: "run-1",
     idempotency_digest: input.idempotency_digest ?? digest.value, status, lease_owner: null, lease_expires_at: null, terminal_cause: null, started_at: null,
     ended_at: status === "completed" ? new Date() : null, error: null, model_usage: null, cost: null, external_execution_id: null,
     provider_link: null, reproducibility_metadata: null }).execute());

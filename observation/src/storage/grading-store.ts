@@ -238,7 +238,7 @@ export async function submitHumanAnswer(db: Database, tenant: TenantScope, revie
         return refuse({ kind: "stale_correction", corrects_observation_id: input.corrects_observation_id, current_observation_id: current });
     }
     const observation_id = observationIdOf(execution_id as unknown as ExecutionId);
-    await trx.insertInto("observation.evaluation_execution").values({ ...scope(tenant), execution_id, run_id: item.run_id, subject_occurrence_id: input.occurrence_id,
+    await trx.insertInto("observation.evaluation_execution").values({ task_id: null, ...scope(tenant), execution_id, run_id: item.run_id, subject_occurrence_id: input.occurrence_id,
       evidence_set_id: evidence.evidence_set_id, question_id: input.question_id, question_version: input.question_version, evaluator_definition_id: human.evaluator_definition_id,
       attempt_label: submissionAttemptLabel(submission), idempotency_digest: execution_id, status: "completed", lease_owner: null, lease_expires_at: null,
       terminal_cause: null, started_at: sql<Date>`clock_timestamp()`, ended_at: sql<Date>`clock_timestamp()`, error: null, model_usage: null, cost: null,

@@ -15,7 +15,7 @@ export async function pinOccurrenceInTransaction(trx: DatabaseTransaction, tenan
   for (const pin of configuration.pins.filter((candidate) => candidate.item_kind === item_kind)) {
     const id = evidenceSetId(occurrence_id, pin);
     if (!id.ok) throw new Error(id.error.detail);
-    await trx.insertInto("observation.evidence_set").values({ producer: tenant.producer, namespace: tenant.namespace,
+    await trx.insertInto("observation.evidence_set").values({ task_id: null, producer: tenant.producer, namespace: tenant.namespace,
       evidence_set_id: id.value, subject_occurrence_id: occurrence_id, question_id: pin.question_id,
       question_version: pin.question_version, pinned_evaluator_definition_ids: [...pin.evaluator_definition_ids],
       readiness: "not_ready", not_ready_code: COLLECTION_PENDING.code, not_ready_detail: COLLECTION_PENDING.detail,
