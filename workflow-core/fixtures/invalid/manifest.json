@@ -7,7 +7,7 @@
     { "name": "4 group outcome reads private field", "base": "review-loop", "pointer": "/run/outcome/draft", "value": "document.outcome.secret", "reason": "check 4" },
     { "name": "5 static dependency cycle", "base": "fan-out", "pointer": "/run/units/prepare/after", "value": ["work"], "reason": "check 5" },
     { "name": "6 stage input mismatch", "base": "review-loop", "pointer": "/run/units/document/input/topic", "value": "true", "reason": "check 6" },
-    { "name": "7 worker creates nothing", "base": "review-loop", "pointer": "/stages/document/workers/writer/creates", "value": [], "reason": "check 7" },
+    { "name": "7 worker produces nothing", "base": "review-loop", "pointer": "/stages/document/workers/writer/produces", "value": [], "reason": "check 7" },
     { "name": "7 operator review without prompt", "base": "review-loop", "pointer": "/stages/document/reviews/editor/prompt", "value": null, "reason": "check 7" },
     { "name": "7 agent reviewer without prompt", "base": "review-loop", "pointer": "/stages/document/workers/critic/prompts", "value": {}, "reason": "check 7" },
     { "name": "8 review of undeclared artifact", "base": "review-loop", "pointer": "/stages/document/reviews/editor/of", "value": "missing", "reason": "check 8" },

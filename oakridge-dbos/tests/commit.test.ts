@@ -345,8 +345,8 @@ const BEFORE_BRANCHES: Workflow = {
   workflow: "before_branches", input: { repository_path: "repo_path", expected_head: "optional(text)" },
   run: { units: { watch: { stage: "watch", input: { repository_path: "input.repository_path", expected_head: "input.expected_head" } } }, outcome: {} },
   stages: { watch: { input: { repository_path: "repo_path", expected_head: "optional(text)" },
-    artifacts: { workspace: { schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident", base_branch: "text" } } },
-    workers: { prepare: { kind: "code", operation: "repository.prepare", creates: ["workspace"],
+    artifacts: { workspace: { kind: "record", schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident", base_branch: "text" } } },
+    workers: { prepare: { kind: "code", operation: "repository.prepare", produces: ["workspace"],
       inputs: { repository_path: "input.repository_path", expected_head: "input.expected_head" } } },
     done_when: "published(workspace)", outcome: {} } },
 };
@@ -389,8 +389,8 @@ const PERIODIC: Workflow = {
   run: { units: { watch: { stage: "watch", input: { repository_path: "input.repository_path", expected_head: "input.expected_head",
     base_branch: "input.base_branch", integration_branch: "input.integration_branch" } } }, outcome: {} },
   stages: { watch: { input: { repository_path: "repo_path", expected_head: "optional(text)", base_branch: "text", integration_branch: "text" },
-    artifacts: { workspace: { schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident", base_branch: "text" } } },
-    workers: { prepare: { kind: "code", operation: "repository.prepare", every: "1s", creates: ["workspace"],
+    artifacts: { workspace: { kind: "record", schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident", base_branch: "text" } } },
+    workers: { prepare: { kind: "code", operation: "repository.prepare", every: "1s", produces: ["workspace"],
       inputs: { repository_path: "input.repository_path", expected_head: "input.expected_head",
         base_branch: "input.base_branch", integration_branch: "input.integration_branch" } } },
     done_when: "false", outcome: {} } },
@@ -497,8 +497,8 @@ async function failLatest(run_id: RunId, worker: string): Promise<void> {
 
 test("a unit that starts after its dependency persists the input it resolved, and its validation reads it", async () => {
   const stage = (input: Record<string, string>, inputs: Record<string, string>, validate: { check: string; message: string }[]) => ({
-    input, artifacts: { draft: { schema: "text", validate } },
-    workers: { writer: { kind: "agent", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" }, inputs, creates: ["draft"] } },
+    input, artifacts: { draft: { kind: "document", schema: "text", validate } },
+    workers: { writer: { kind: "agent", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" }, inputs, produces: ["draft"] } },
     done_when: "published(draft)", outcome: { draft: "latest(draft)" } });
   const workflow = { workflow: "chain", input: { topic: "text" },
     run: { units: { first: { stage: "first", input: { topic: "input.topic" } },

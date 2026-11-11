@@ -10,20 +10,21 @@ stages:
     let: { topic_value: input.topic }
     artifacts:
       draft:
+        kind: document
         schema: { title: text, body: text }
         validate: [{ check: "len(draft.body) > 0", message: "body is empty" }]
-      critique: { schema: { notes: list(text) } }
+      critique: { kind: assessment, schema: { notes: list(text) } }
     workers:
       writer:
         kind: agent
         prompts: { initial: review-loop/write.md, revise: review-loop/revise.md }
         inputs: { topic: topic_value, critique: latest(critique) }
-        creates: [draft]
+        produces: [draft]
       critic:
         kind: agent
         prompts: { review: review-loop/critique.md }
-        reviews: draft
-        creates: [critique]
+        evaluates: draft
+        produces: [critique]
         inputs: {}
     reviews:
       editor:

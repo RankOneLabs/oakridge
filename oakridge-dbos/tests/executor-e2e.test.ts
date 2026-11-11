@@ -341,13 +341,13 @@ test("K3: sample A with every key renamed runs end to end, so a new workflow nee
     stages: { essay_stage: {
       input: { topic: "text" },
       artifacts: {
-        paper: { schema: { title: "text", body: "text" }, validate: [{ check: "len(paper.body) > 0", message: "body is empty" }] },
-        remarks: { schema: { notes: "list(text)" } },
+        paper: { kind: "document", schema: { title: "text", body: "text" }, validate: [{ check: "len(paper.body) > 0", message: "body is empty" }] },
+        remarks: { kind: "assessment", schema: { notes: "list(text)" } },
       },
       workers: {
         author: { kind: "agent", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" },
-          inputs: { topic: "input.topic", critique: "latest(remarks)" }, creates: ["paper"] },
-        reader: { kind: "agent", prompts: { review: "review-loop/critique.md" }, reviews: "paper", creates: ["remarks"], inputs: {} },
+          inputs: { topic: "input.topic", critique: "latest(remarks)" }, produces: ["paper"] },
+        reader: { kind: "agent", prompts: { review: "review-loop/critique.md" }, evaluates: "paper", produces: ["remarks"], inputs: {} },
       },
       reviews: { chief: { of: "paper", by: "operator", prompt: "review-loop/editor.md",
         inputs: { topic: "input.topic", draft: "latest(paper)", critique: "latest(remarks)" },
@@ -382,8 +382,8 @@ test("a periodic code worker repeats under one intent across carrier generations
       run: { units: { watch: { stage: "watch", input: { repository_path: "input.repository_path", expected_head: "input.expected_head",
         base_branch: "input.base_branch", integration_branch: "input.integration_branch" } } }, outcome: {} },
       stages: { watch: { input: { repository_path: "repo_path", expected_head: "optional(text)", base_branch: "text", integration_branch: "text" },
-        artifacts: { workspace: { schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident", base_branch: "text" } } },
-        workers: { prepare: { kind: "code", operation: "repository.prepare", every: "1s", creates: ["workspace"],
+        artifacts: { workspace: { kind: "record", schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident", base_branch: "text" } } },
+        workers: { prepare: { kind: "code", operation: "repository.prepare", every: "1s", produces: ["workspace"],
           inputs: { repository_path: "input.repository_path", expected_head: "input.expected_head",
             base_branch: "input.base_branch", integration_branch: "input.integration_branch" } } },
         done_when: "false", outcome: {} } },
@@ -418,10 +418,10 @@ test("a watch whose input changes is carried by a new intent on the new input, a
   const watch_pr: Workflow = {
     workflow: "watch_pr", input: {},
     run: { units: { watch: { stage: "watch", input: {} } }, outcome: {} },
-    stages: { watch: { input: {}, artifacts: { pr: { schema: "text" }, observation: { schema: "text" } },
+    stages: { watch: { input: {}, artifacts: { pr: { kind: "external_reference", schema: "text" }, observation: { kind: "status_record", schema: "text" } },
       workers: {
-        builder: { kind: "agent", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" }, inputs: { topic: "\"pr\"" }, creates: ["pr"] },
-        observer: { kind: "code", operation: "value.publish", when: "published(pr)", inputs: { value: "latest(pr)" }, every: "1s", creates: ["observation"] },
+        builder: { kind: "agent", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" }, inputs: { topic: "\"pr\"" }, produces: ["pr"] },
+        observer: { kind: "code", operation: "value.publish", when: "published(pr)", inputs: { value: "latest(pr)" }, every: "1s", produces: ["observation"] },
       },
       reviews: { editor: { of: "pr", by: "operator", prompt: "review-loop/editor.md", inputs: { topic: "\"pr\"", draft: "latest(pr)", critique: "latest(pr)" },
         decisions: { request_changes: { effect: "request_changes", label: "Replace the PR", fields: { feedback: "Why?" } } } } },

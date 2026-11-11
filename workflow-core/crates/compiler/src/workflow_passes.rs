@@ -444,7 +444,11 @@ pub(super) fn lower(
 ) -> Result<(CheckedWorkflow, Workflow), Vec<CompileError>> {
     let mut encoded = Vec::new();
     let mut serializer = serde_json::Serializer::new(&mut encoded);
-    serde_path_to_error::serialize(&parts.original, &mut serializer).map_err(|error| {
+    serde_path_to_error::serialize(
+        &digest::WorkflowFingerprint::from(&parts.original),
+        &mut serializer,
+    )
+    .map_err(|error| {
         let location = error.path().to_string();
         let path = if location == "." {
             "workflow"

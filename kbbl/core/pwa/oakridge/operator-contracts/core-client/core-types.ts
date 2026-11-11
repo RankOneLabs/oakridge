@@ -29,7 +29,7 @@ export type OperatorReview = { readonly "by": OperatorReviewBy; readonly "decisi
 
 export type OperatorAuthoredStage = { readonly "artifacts": { readonly [key: string]: OperatorArtifact }; readonly "done_when"?: string | null; readonly "input": OperatorTypeExpression; readonly "let"?: { readonly [key: string]: string }; readonly "outcome": { readonly [key: string]: string }; readonly "reviews"?: { readonly [key: string]: OperatorAuthoredReview }; readonly "workers": { readonly [key: string]: OperatorAuthoredWorker } };
 
-export type OperatorWorker = { readonly "creates": (string)[]; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "agent"; readonly "prompts": OperatorPrompts; readonly "reviews"?: string | null; readonly "runtime"?: OperatorWorkerRuntime | null; readonly "session"?: OperatorSessionMode | null; readonly "when"?: string | null; readonly "workspace"?: string | null } | { readonly "creates": (string)[]; readonly "every"?: string | null; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "code"; readonly "operation": string; readonly "when"?: string | null };
+export type OperatorWorker = { readonly "evaluates"?: string | null; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "agent"; readonly "produces": (string)[]; readonly "prompts": OperatorPrompts; readonly "runtime"?: OperatorWorkerRuntime | null; readonly "session"?: OperatorSessionMode | null; readonly "when"?: string | null; readonly "workspace"?: string | null } | { readonly "every"?: string | null; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "code"; readonly "operation": string; readonly "produces": (string)[]; readonly "when"?: string | null };
 
 export type OperatorDeclaredDecisionEffect = "approve" | "request_changes";
 
@@ -37,7 +37,7 @@ export type OperatorAttemptStatus = { readonly "kind": "pending" } | { readonly 
 
 export type OperatorUnit = { readonly "after"?: OperatorUnitDependencies; readonly "for_each"?: string | null; readonly "group"?: OperatorGroup | null; readonly "input"?: { readonly [key: string]: string }; readonly "key"?: string | null; readonly "pool"?: string | null; readonly "stage"?: string | null };
 
-export type OperatorArtifact = { readonly "edit_policy"?: OperatorEditPolicy; readonly "schema": OperatorTypeExpression; readonly "validate"?: (OperatorValidationCheck)[] };
+export type OperatorArtifact = { readonly "edit_policy"?: OperatorEditPolicy; readonly "kind": OperatorArtifactKind; readonly "schema": OperatorTypeExpression; readonly "validate"?: (OperatorValidationCheck)[] };
 
 export type OperatorReviewBy = "operator" | "engine";
 
@@ -55,6 +55,8 @@ export type OperatorUnitDependencies = null | (string)[] | string;
 
 export type OperatorEditPolicy = { readonly "kind": "always" } | { readonly "kind": "frozen_when_accepted" };
 
+export type OperatorArtifactKind = "document" | "record" | "external_reference" | "assessment" | "status_record";
+
 export type OperatorValidationCheck = { readonly "check": string; readonly "message": string };
 
 export type OperatorAuthoredReviewDefinition = { readonly "by": OperatorReviewBy; readonly "decisions": OperatorAuthoredDecisions; readonly "inputs"?: { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null; readonly "when"?: string | null };
@@ -67,7 +69,7 @@ export type OperatorAuthoredDecisions = { readonly [key: string]: OperatorReview
 
 export type OperatorReviewOverrides = { readonly "decisions"?: { readonly [key: string]: OperatorDecisionOverrides } | null; readonly "inputs"?: { readonly [key: string]: string } | null; readonly "of"?: string | null; readonly "prompt"?: string | null; readonly "when"?: string | null };
 
-export type OperatorWorkerOverrides = { readonly "creates"?: (string)[] | null; readonly "every"?: string | null; readonly "inputs"?: { readonly [key: string]: string } | null; readonly "operation"?: string | null; readonly "prompts"?: OperatorPrompts | null; readonly "reviews"?: string | null; readonly "runtime"?: OperatorWorkerRuntime | null; readonly "session"?: OperatorSessionMode | null; readonly "when"?: string | null; readonly "workspace"?: string | null };
+export type OperatorWorkerOverrides = { readonly "evaluates"?: string | null; readonly "every"?: string | null; readonly "inputs"?: { readonly [key: string]: string } | null; readonly "operation"?: string | null; readonly "produces"?: (string)[] | null; readonly "prompts"?: OperatorPrompts | null; readonly "runtime"?: OperatorWorkerRuntime | null; readonly "session"?: OperatorSessionMode | null; readonly "when"?: string | null; readonly "workspace"?: string | null };
 
 export type OperatorDecisionSetUse = { readonly "overrides"?: { readonly [key: string]: OperatorDecisionOverrides }; readonly "rename"?: { readonly [key: string]: string }; readonly "set": string };
 

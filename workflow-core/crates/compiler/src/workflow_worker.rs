@@ -53,24 +53,24 @@ impl StageCheck<'_> {
 
     pub fn worker(&mut self, key: &str, worker: &Worker) -> Option<CheckedWorker> {
         let path = format!("{}.workers.{key}", self.path);
-        let (creates, guard) = match worker {
-            Worker::Agent { creates, when, .. } | Worker::Code { creates, when, .. } => {
-                (creates, when.as_deref())
+        let (produces, guard) = match worker {
+            Worker::Agent { produces, when, .. } | Worker::Code { produces, when, .. } => {
+                (produces, when.as_deref())
             }
         };
         let before = self.errors.len();
-        if creates.is_empty() {
+        if produces.is_empty() {
             self.error(
                 CheckKind::Worker,
-                &format!("{path}.creates"),
-                format!("worker {key} creates nothing"),
+                &format!("{path}.produces"),
+                format!("worker {key} produces nothing"),
             );
         }
-        for artifact in creates {
+        for artifact in produces {
             if !self.stage.artifacts.contains_key(&artifact.0) {
                 self.error(
                     CheckKind::Name,
-                    &format!("{path}.creates"),
+                    &format!("{path}.produces"),
                     format!("artifact {artifact} absent"),
                 );
             }
@@ -81,7 +81,7 @@ impl StageCheck<'_> {
             {
                 self.error(
                     CheckKind::Worker,
-                    &format!("{path}.creates"),
+                    &format!("{path}.produces"),
                     format!("artifact {artifact} has multiple creators"),
                 );
             }
@@ -106,7 +106,7 @@ impl StageCheck<'_> {
             Worker::Agent {
                 prompts: modes,
                 inputs,
-                reviews,
+                evaluates,
                 workspace,
                 session,
                 ..
@@ -117,30 +117,30 @@ impl StageCheck<'_> {
                     &scope,
                     &format!("{path}.workspace"),
                 ));
-                if reviews.is_some() && !modes.contains_key("review") {
+                if evaluates.is_some() && !modes.contains_key("review") {
                     self.error(
                         CheckKind::Worker,
                         &format!("{path}.prompts"),
                         format!("reviewer {key} lacks review prompt"),
                     );
                 }
-                if reviews.is_none() && !modes.contains_key("initial") {
+                if evaluates.is_none() && !modes.contains_key("initial") {
                     self.error(
                         CheckKind::Worker,
                         &format!("{path}.prompts"),
                         format!("agent {key} lacks initial prompt"),
                     );
                 }
-                if let Some(of) = reviews {
+                if let Some(of) = evaluates {
                     if !self.stage.artifacts.contains_key(&of.0) {
                         self.error(
                             CheckKind::Review,
-                            &format!("{path}.reviews"),
+                            &format!("{path}.evaluates"),
                             format!("reviewed artifact {of} absent"),
                         );
                     }
                 }
-                let needs_revise = creates.iter().any(|artifact| {
+                let needs_revise = produces.iter().any(|artifact| {
                     self.stage
                         .artifacts
                         .get(&artifact.0)
@@ -188,8 +188,8 @@ impl StageCheck<'_> {
                 Some(CheckedWorker::Agent {
                     key: WorkerKey::from(key),
                     inputs: input_fields.expect("valid worker inputs"),
-                    creates: creates.clone(),
-                    reviews: reviews.clone(),
+                    creates: produces.clone(),
+                    reviews: evaluates.clone(),
                     workspace: workspace.expect("valid workspace"),
                     when: when.map(|(expression, _)| expression),
                 })
@@ -220,11 +220,11 @@ impl StageCheck<'_> {
                         );
                     }
                 }
-                if creates.len() != 1 {
+                if produces.len() != 1 {
                     self.error(
                         CheckKind::Operation,
-                        &format!("{path}.creates"),
-                        format!("code worker {key} must create one artifact"),
+                        &format!("{path}.produces"),
+                        format!("code worker {key} must produce one artifact"),
                     );
                 }
                 let input_fields = self.fields(inputs, &scope, &format!("{path}.inputs"));
@@ -242,8 +242,8 @@ impl StageCheck<'_> {
                             format!("operation {operation} input mismatch"),
                         );
                     }
-                    if creates.len() == 1 {
-                        if let Some(artifact) = self.stage.artifacts.get(&creates[0].0) {
+                    if produces.len() == 1 {
+                        if let Some(artifact) = self.stage.artifacts.get(&produces[0].0) {
                             if !unify(
                                 &contract.output_schema,
                                 &artifact.schema,
@@ -265,7 +265,7 @@ impl StageCheck<'_> {
                 Some(CheckedWorker::Code {
                     key: WorkerKey::from(key),
                     inputs: input_fields.expect("valid worker inputs"),
-                    creates: creates.clone(),
+                    creates: produces.clone(),
                     every: every.clone(),
                     when: when.map(|(expression, _)| expression),
                 })

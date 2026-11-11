@@ -497,12 +497,12 @@ fn a_type_variable_inside_a_constructor_binds_to_its_item_type() {
         fixture(&[
             (
                 "/stages/cohort/artifacts/dependencies",
-                json!({ "schema": schema }),
+                json!({ "kind": "document", "schema": schema }),
             ),
             (
                 "/stages/cohort/workers/list_dependencies",
                 json!({ "kind": "code", "operation": "items.publish",
-                        "inputs": { "items": "input.brief.depends_on" }, "creates": ["dependencies"] }),
+                        "inputs": { "items": "input.brief.depends_on" }, "produces": ["dependencies"] }),
             ),
         ])
     };

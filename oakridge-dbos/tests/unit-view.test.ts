@@ -7,7 +7,7 @@ import type { RunSummaryRead, UnitSummaryRecord } from "../src/storage/read-stor
 /** A cohort stage whose assessment review may instead request changes `on` the build. */
 const stage = {
   input: { kind: "record", fields: {} }, outcome: {}, workers: {}, artifacts: {
-    assessment: { schema: { kind: "text" } }, build_result: { schema: { kind: "text" } } },
+    assessment: { kind: "assessment", schema: { kind: "text" } }, build_result: { kind: "document", schema: { kind: "text" } } },
   reviews: { assessment_review: { of: "assessment", by: "operator", decisions: {
     accept: { effect: "approve", label: "Accept" },
     request_build_changes: { effect: "request_changes", on: "build_result", label: "Request build changes" } } } },

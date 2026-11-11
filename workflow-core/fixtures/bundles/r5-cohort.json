@@ -19,6 +19,7 @@
       "input": { "repositories": { "key": "ident" } },
       "artifacts": {
         "plan": {
+          "kind": "document",
           "schema": "plan_body",
           "validate": [
             { "check": "len(plan.cohorts) > 0", "message": "the plan names no cohort" },
@@ -28,7 +29,7 @@
         }
       },
       "workers": {
-        "planner": { "kind": "agent", "prompts": { "initial": "plan.md", "revise": "plan.md" }, "inputs": {}, "creates": ["plan"] }
+        "planner": { "kind": "agent", "prompts": { "initial": "plan.md", "revise": "plan.md" }, "inputs": {}, "produces": ["plan"] }
       },
       "reviews": {
         "plan_review": {
@@ -42,23 +43,23 @@
     "cohort": {
       "input": { "brief": "brief_body", "admission": "boolean" },
       "artifacts": {
-        "brief": { "schema": "brief_body" },
-        "build": { "schema": { "summary": "text" } },
-        "pr": { "schema": "pr_body" },
-        "assessment": { "schema": { "verdict": "enum(pass, fail)" } },
-        "pr_state": { "schema": "pr_status" }
+        "brief": { "kind": "document", "schema": "brief_body" },
+        "build": { "kind": "document", "schema": { "summary": "text" } },
+        "pr": { "kind": "external_reference", "schema": "pr_body" },
+        "assessment": { "kind": "assessment", "schema": { "verdict": "enum(pass, fail)" } },
+        "pr_state": { "kind": "status_record", "schema": "pr_status" }
       },
       "workers": {
-        "admit": { "kind": "code", "operation": "value.publish", "inputs": { "value": "input.brief" }, "creates": ["brief"] },
+        "admit": { "kind": "code", "operation": "value.publish", "inputs": { "value": "input.brief" }, "produces": ["brief"] },
         "builder": {
           "kind": "agent", "prompts": { "initial": "build.md", "revise": "build.md" },
           "when": "approved(brief) or not input.admission",
-          "inputs": { "brief": "input.brief" }, "creates": ["build", "pr"]
+          "inputs": { "brief": "input.brief" }, "produces": ["build", "pr"]
         },
-        "assessor": { "kind": "agent", "prompts": { "review": "assess.md" }, "inputs": {}, "reviews": "build", "creates": ["assessment"] },
+        "assessor": { "kind": "agent", "prompts": { "review": "assess.md" }, "inputs": {}, "evaluates": "build", "produces": ["assessment"] },
         "pr_watch": {
           "kind": "code", "operation": "pull.observe", "every": "1m",
-          "when": "published(pr)", "inputs": { "url": "latest(pr).pr_url" }, "creates": ["pr_state"]
+          "when": "published(pr)", "inputs": { "url": "latest(pr).pr_url" }, "produces": ["pr_state"]
         }
       },
       "reviews": {
