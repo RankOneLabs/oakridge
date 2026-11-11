@@ -95,13 +95,14 @@ other filesystem errors return `store_io`. It does not normalize or repair data
 and never falls back to today's registry or prompt authoring files.
 
 Run `bun workflow-config/src/generate.ts` to generate the store and update the
-launchable catalog. Historical definitions, prompts, and operation registries are
-retained so existing runs can resolve their pinned inputs after regeneration.
-`--check` reports differing or missing current output files without writing and
-allows historical objects alongside them. A retained definition declaring a
-removed worker field (`DISCARDED_WORKER_FIELDS`, currently `gated_review`) is the
-exception: `--check` fails naming it, and generation deletes it. The existing
-pretty-printed Rust bundle fixtures remain unchanged, and the source-less
+launchable catalog. Historical definitions that decode under the current source
+schema are retained byte-for-byte, alongside historical prompts and operation
+registries. Every retained workflow object is checked with `isCommittedDefinition`,
+which uses the generated `decodeWorkflowSource` matcher. Objects that fail this
+check are removed during generation; pinned objects are never rewritten to migrate
+them. `--check` reports differing or missing current output files and names every
+non-decodable retained workflow object without writing or deleting anything.
+The existing pretty-printed Rust bundle fixtures remain unchanged, and the source-less
 `r5-cohort.json` fixture has no committed definition. Run `bun test
 workflow-config/src` for the identity and store boundary tests; `bun run typecheck`
 includes this package.
