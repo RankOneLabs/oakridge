@@ -1,13 +1,13 @@
 import { describe, expect, test } from "vitest";
 import type { ObservationJsonValue } from "../grading-contracts/domain/primitives";
 import type { ObservationGradeObservationId, ObservationLogicalItemId, ObservationReviewerId } from "../grading-contracts/domain/identity";
-import type { ObservationAnswerCount, ObservationLineageEntry, ObservationPaged } from "../grading-contracts/grading/composite";
+import type { ObservationAnswerCount, ObservationPaged } from "../grading-contracts/grading/composite";
 import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
 import type { ObservationMeasurementState } from "../grading-contracts/grading/execution";
 import type { ObservationAnswerRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
 import type { ObservationHumanSubmissionAcknowledgment } from "../grading-contracts/http/grades";
 import type { ObservationQuestionStatusResponse } from "../grading-contracts/storage/grading-record-store";
-import { id, IMPLEMENTATION, item, itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
+import { id, IMPLEMENTATION, itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
 import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemHeader, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, selectTaskContributionSelection, stagePublicationLabel, taskLinkLabel } from "./grading";
 
@@ -33,15 +33,21 @@ describe("item selection", () => {
 
 describe("task contribution grading addresses", () => {
   const task_id = id<ObservationLogicalItemId>("l1");
-  const contribution: Extract<ObservationLineageEntry, { kind: "contribution" }> = { kind: "contribution", item: item(IMPLEMENTATION), relation_id: id("rel-1"), evidence_ref: "/findings/1/task_ids/0", asserted_by: "producer_explicit" };
-  test.each(["finding", "task", "acceptance_entry"])("a per-item %s opens without a task filter", (item_kind) => {
-    expect(selectTaskContributionSelection({ ...contribution, item: { ...contribution.item, item_kind } }, task_id)).toEqual(IMPLEMENTATION);
+  const selection = { ...IMPLEMENTATION, task_id };
+  test("a pinned subject for the enclosing task supplies the task filter", () => {
+    expect(selectTaskContributionSelection(selection, [supportQuestion({ task_id })])).toEqual(selection);
   });
-  test("an assessment linked to an unresolved task opens without a task filter", () => {
-    expect(selectTaskContributionSelection({ kind: "unresolved", item: contribution.item, relation_id: contribution.relation_id, evidence_ref: contribution.evidence_ref, unresolved_target_ref: "logical_item:task:T1" }, task_id)).toEqual(IMPLEMENTATION);
+  test("a null-task subject opens without a task filter", () => {
+    expect(selectTaskContributionSelection(selection, [supportQuestion({ task_id: null })])).toEqual(IMPLEMENTATION);
   });
-  test("an assessment with no captured task identity opens without a task filter", () => {
-    expect(selectTaskContributionSelection(contribution, null)).toEqual(IMPLEMENTATION);
+  test("another task's subject cannot supply the task filter", () => {
+    expect(selectTaskContributionSelection(selection, [supportQuestion({ task_id: id<ObservationLogicalItemId>("other-task") })])).toEqual(IMPLEMENTATION);
+  });
+  test("an unavailable subject read opens without a task filter", () => {
+    expect(selectTaskContributionSelection(selection, undefined)).toEqual(IMPLEMENTATION);
+  });
+  test("no captured enclosing task identity opens without a task filter", () => {
+    expect(selectTaskContributionSelection(IMPLEMENTATION, [supportQuestion({ task_id })])).toEqual(IMPLEMENTATION);
   });
 });
 

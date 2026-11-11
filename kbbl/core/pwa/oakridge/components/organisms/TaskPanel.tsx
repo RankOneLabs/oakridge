@@ -3,10 +3,12 @@ import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GradingReadError } from "../../client-grading";
+import type { ObservationItemOccurrenceId } from "../../grading-contracts/domain/identity";
 import type { ObservationCompositeDrilldownKey, ObservationPageRequest } from "../../grading-contracts/grading/composite";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { useTask } from "../../hooks/useTask";
 import { useTaskLineage } from "../../hooks/useTaskLineage";
+import { useItemStatus } from "../../hooks/useItemStatus";
 import { selectItemText, selectTaskContributionSelection } from "../../lib/grading";
 import { useGradingVisibility } from "../../state/gradingVisibility";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
@@ -17,11 +19,25 @@ import { TaskStageComposites } from "./TaskStageComposites";
 import { ItemGradeAction } from "./ItemGradeAction";
 
 const FIRST: ObservationPageRequest = { limit: 50, offset: 0 };
+const QUESTIONS: ObservationPageRequest = { limit: 200, offset: 0 };
 
 interface Props {
   runId: string;
   taskId: string;
   onOpenItem: (selection: ObservationItemAddress) => void;
+}
+
+interface ContributionGradeProps {
+  occurrenceId: ObservationItemOccurrenceId;
+  selection: ObservationItemAddress;
+  onOpenItem: (selection: ObservationItemAddress) => void;
+}
+
+/** Read subjects without a task filter so per-item questions remain available to the selector. */
+function ContributionGradeButton({ occurrenceId, selection, onOpenItem }: ContributionGradeProps) {
+  const status = useItemStatus({ occurrence_id: occurrenceId, top: QUESTIONS, nested: {} });
+  const address = status.isPending ? null : selectTaskContributionSelection(selection, status.data?.questions.items);
+  return <GradeItemButton selection={address} onOpenItem={onOpenItem} />;
 }
 
 /** One run-scoped task: its stages side by side and the items linked to it. A task is read, never answered. */
@@ -60,7 +76,7 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
               <p className="m-0 min-w-0 flex-1 text-sm text-[var(--text-secondary)]">{selectItemText(entry.item.selected_value)}</p>
               {entry.kind === "unresolved" && <Chip tone="warning">Unresolved</Chip>}
               {!entry.item.is_current && <Chip tone="muted">Older revision</Chip>}
-              <GradeItemButton selection={selectTaskContributionSelection(entry, composite.data?.logical_item_id ?? null)} onOpenItem={onOpenItem} />
+              <ContributionGradeButton occurrenceId={entry.item.occurrence_id} selection={{ source_revision_id: entry.item.revision_id, item_path: entry.item.item_path, task_id: composite.data?.logical_item_id ?? null }} onOpenItem={onOpenItem} />
             </li>];
           })}
         </ul>

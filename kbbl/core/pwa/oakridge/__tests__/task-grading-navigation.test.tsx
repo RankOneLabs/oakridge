@@ -64,12 +64,27 @@ it.each<EntryPoint>(["task panel", "composite drilldown"])("an analysis finding 
   expect(statusPaths.every((path) => !new URL(path, "http://kbbl.test").searchParams.has("task_id"))).toBe(true);
 });
 
-it.each<EntryPoint>(["task panel", "composite drilldown"])("an assessment finding opened from the %s keeps its task subject", async (source) => {
+it.each<{ source: EntryPoint; item_kind: string }>([
+  { source: "task panel", item_kind: "assessment_finding" },
+  { source: "task panel", item_kind: "future_item_kind" },
+  { source: "composite drilldown", item_kind: "assessment_finding" },
+  { source: "composite drilldown", item_kind: "future_item_kind" },
+])("a $item_kind opened from the $source keeps its pinned task subject", async ({ source, item_kind }) => {
   const question = supportQuestion({ task_id });
-  world.status = itemStatus([{ ...question, evidence: { ...question.evidence, task_id } }]);
+  world.status = itemStatus([{ ...question, question: { ...question.question, item_kind }, evidence: { ...question.evidence, task_id } }], { item: item(IMPLEMENTATION, { item_kind }) });
   navigationReads();
   const open = vi.fn();
   wrap(entryPoint(source, open));
   fireEvent.click(await screen.findByTestId("or-grade-item"));
   expect(open).toHaveBeenCalledWith({ ...IMPLEMENTATION, task_id });
+});
+
+it("an assessment finding with no pinned subject for the enclosing task opens without a task filter", async () => {
+  const question = supportQuestion({ task_id: id<ObservationLogicalItemId>("other-task") });
+  world.status = itemStatus([question]);
+  navigationReads();
+  const open = vi.fn();
+  wrap(entryPoint("task panel", open));
+  fireEvent.click(await screen.findByTestId("or-grade-item"));
+  expect(open).toHaveBeenCalledWith(IMPLEMENTATION);
 });
