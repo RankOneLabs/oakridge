@@ -6,7 +6,7 @@ import type { WindowQuery } from "../../client-grading";
 import type { ObservationCompositeDrilldownKey, ObservationPageRequest } from "../../grading-contracts/grading/composite";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { useCompositeDrilldown } from "../../hooks/useCompositeDrilldown";
-import { drilldownIdentity, questionLabel, selectItemText, statusKeyLabel } from "../../lib/grading";
+import { drilldownIdentity, questionLabel, selectDrilldownItemSelection, selectItemText, statusKeyLabel } from "../../lib/grading";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
 import { FrozenEvidenceList } from "../molecules/FrozenEvidenceList";
 import { GradeItemButton } from "../molecules/GradeItemButton";
@@ -48,7 +48,7 @@ function DrilldownPages({ runId, drilldownKey, label, onClose, onOpenItem }: Pro
           <li key={row.item.occurrence_id} className="flex flex-col gap-2 py-2" data-testid="or-task-drilldown-row" data-item-path={row.item.item_path} data-revision={row.item.source_revision_id}>
             <div className="flex items-start gap-2">
               <p className="m-0 min-w-0 flex-1 text-sm text-[var(--text-secondary)]">{selectItemText(row.item.selected_value)}</p>
-              <GradeItemButton selection={{ source_revision_id: row.item.source_revision_id, item_path: row.item.item_path, task_id: drilldownKey.logical_item_id }} onOpenItem={onOpenItem} />
+              <GradeItemButton selection={selectDrilldownItemSelection(row)} onOpenItem={onOpenItem} />
             </div>
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-muted)]">
               <code className="or-code">{row.item.source_revision_id} {row.item.item_path}</code>

@@ -1,15 +1,15 @@
 // Pure derivations for the item panel and the grading section. Hidden mode is decided here, so a
 // component holding answers or composite counts never has them to render while they are hidden.
 import type { ChipTone } from "../../components/atoms/Chip";
-import type { ObservationAnswerCount, ObservationAnswerKey, ObservationCompositeDrilldownKey, ObservationDisagreementCount, ObservationGraderKey, ObservationItemStatusKey, ObservationStatusCount } from "../grading-contracts/grading/composite";
+import type { ObservationAnswerCount, ObservationAnswerKey, ObservationCompositeDrilldownKey, ObservationDisagreementCount, ObservationGraderKey, ObservationItemStatusKey, ObservationLineageEntry, ObservationStatusCount } from "../grading-contracts/grading/composite";
 import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
 import type { ObservationMeasurementState } from "../grading-contracts/grading/execution";
-import type { ObservationAddressedItem, ObservationAnswerRead, ObservationCompositeRead, ObservationHumanReadiness, ObservationItemAddress, ObservationLogicalLinkRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
+import type { ObservationAddressedItem, ObservationAnswerRead, ObservationCompositeRead, ObservationDrilldownRowRead, ObservationHumanReadiness, ObservationItemAddress, ObservationLogicalLinkRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
 import type { ObservationGradeAnswer } from "../grading-contracts/grading/observation";
 import type { ObservationQuestionKey } from "../grading-contracts/grading/question";
 import type { ObservationAttemptRead } from "../grading-contracts/storage/execution-store";
 import type { ObservationItemStatusResponse } from "../grading-contracts/storage/grading-record-store";
-import type { ObservationReviewerId } from "../grading-contracts/domain/identity";
+import type { ObservationLogicalItemId, ObservationReviewerId } from "../grading-contracts/domain/identity";
 import type { ObservationJsonValue } from "../grading-contracts/domain/primitives";
 import type { SubmissionResult } from "../grading-types";
 import type { ArtifactSource } from "../artifact-types";
@@ -31,6 +31,20 @@ export const selectFindingSelections = (source: Pick<ArtifactSource, "revision_i
   item_paths.flatMap((item_path) => { const selection = selectItemSelection(source, item_path); return selection ? [selection] : []; });
 export const itemSelectionKey = ({ source_revision_id, item_path, task_id }: ObservationItemAddress): string => JSON.stringify(task_id ? [source_revision_id, item_path, task_id] : [source_revision_id, item_path]);
 export const areSelectionsEqual = (left: ObservationItemAddress, right: ObservationItemAddress): boolean => itemSelectionKey(left) === itemSelectionKey(right);
+
+/** Only a resolved assessment contribution has grading subjects belonging to the enclosing task. */
+export function selectTaskContributionSelection(entry: Extract<ObservationLineageEntry, { kind: "contribution" | "unresolved" }>, task_id: ObservationLogicalItemId | null): ObservationItemAddress {
+  const selection = { source_revision_id: entry.item.revision_id, item_path: entry.item.item_path };
+  return entry.kind === "contribution" && entry.item.item_kind === "assessment_finding" && task_id !== null
+    ? { ...selection, task_id } : selection;
+}
+
+/** Linked context keeps its null-task questions; use a task filter only when the row has that subject. */
+export function selectDrilldownItemSelection(row: ObservationDrilldownRowRead): ObservationItemAddress {
+  const selection = { source_revision_id: row.item.source_revision_id, item_path: row.item.item_path };
+  const task_id = row.questions.items.find((question) => question.task_id !== null)?.task_id ?? null;
+  return task_id === null ? selection : { ...selection, task_id };
+}
 
 const QUESTION_LABELS: Readonly<Record<string, string>> = {
   "finding.relevance": "Relevance",

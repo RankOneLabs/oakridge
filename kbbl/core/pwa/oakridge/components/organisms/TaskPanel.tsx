@@ -7,7 +7,7 @@ import type { ObservationCompositeDrilldownKey, ObservationPageRequest } from ".
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { useTask } from "../../hooks/useTask";
 import { useTaskLineage } from "../../hooks/useTaskLineage";
-import { selectItemText } from "../../lib/grading";
+import { selectItemText, selectTaskContributionSelection } from "../../lib/grading";
 import { useGradingVisibility } from "../../state/gradingVisibility";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
 import { GradeItemButton } from "../molecules/GradeItemButton";
@@ -60,7 +60,7 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
               <p className="m-0 min-w-0 flex-1 text-sm text-[var(--text-secondary)]">{selectItemText(entry.item.selected_value)}</p>
               {entry.kind === "unresolved" && <Chip tone="warning">Unresolved</Chip>}
               {!entry.item.is_current && <Chip tone="muted">Older revision</Chip>}
-              <GradeItemButton selection={{ source_revision_id: entry.item.revision_id, item_path: entry.item.item_path, task_id: composite.data?.logical_item_id }} onOpenItem={onOpenItem} />
+              <GradeItemButton selection={selectTaskContributionSelection(entry, composite.data?.logical_item_id ?? null)} onOpenItem={onOpenItem} />
             </li>];
           })}
         </ul>

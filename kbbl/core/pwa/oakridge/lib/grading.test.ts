@@ -1,15 +1,15 @@
 import { describe, expect, test } from "vitest";
 import type { ObservationJsonValue } from "../grading-contracts/domain/primitives";
-import type { ObservationGradeObservationId, ObservationReviewerId } from "../grading-contracts/domain/identity";
-import type { ObservationAnswerCount, ObservationPaged } from "../grading-contracts/grading/composite";
+import type { ObservationGradeObservationId, ObservationLogicalItemId, ObservationReviewerId } from "../grading-contracts/domain/identity";
+import type { ObservationAnswerCount, ObservationLineageEntry, ObservationPaged } from "../grading-contracts/grading/composite";
 import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
 import type { ObservationMeasurementState } from "../grading-contracts/grading/execution";
 import type { ObservationAnswerRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
 import type { ObservationHumanSubmissionAcknowledgment } from "../grading-contracts/http/grades";
 import type { ObservationQuestionStatusResponse } from "../grading-contracts/storage/grading-record-store";
-import { id, itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
+import { id, IMPLEMENTATION, item, itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
-import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemHeader, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, stagePublicationLabel, taskLinkLabel } from "./grading";
+import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemHeader, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, selectTaskContributionSelection, stagePublicationLabel, taskLinkLabel } from "./grading";
 
 const empty = <Item,>(): ObservationPaged<Item> => ({ items: [], total: 0, limit: 50, offset: 0 });
 const answer = (observation_id: string, supersedes_observation_id: string | null = null): ObservationAnswerRead => ({ task_id: null, observation_id: id(observation_id), execution_id: id(observation_id), occurrence_id: id("o"), evidence_set_id: id("e"),
@@ -28,6 +28,20 @@ describe("item selection", () => {
   test("two paths of one revision are different items", () => {
     const at = (item_path: string) => itemSelectionKey({ source_revision_id: id("r"), item_path });
     expect(at("/findings/1")).not.toBe(at("/findings/10"));
+  });
+});
+
+describe("task contribution grading addresses", () => {
+  const task_id = id<ObservationLogicalItemId>("l1");
+  const contribution: Extract<ObservationLineageEntry, { kind: "contribution" }> = { kind: "contribution", item: item(IMPLEMENTATION), relation_id: id("rel-1"), evidence_ref: "/findings/1/task_ids/0", asserted_by: "producer_explicit" };
+  test.each(["finding", "task", "acceptance_entry"])("a per-item %s opens without a task filter", (item_kind) => {
+    expect(selectTaskContributionSelection({ ...contribution, item: { ...contribution.item, item_kind } }, task_id)).toEqual(IMPLEMENTATION);
+  });
+  test("an assessment linked to an unresolved task opens without a task filter", () => {
+    expect(selectTaskContributionSelection({ kind: "unresolved", item: contribution.item, relation_id: contribution.relation_id, evidence_ref: contribution.evidence_ref, unresolved_target_ref: "logical_item:task:T1" }, task_id)).toEqual(IMPLEMENTATION);
+  });
+  test("an assessment with no captured task identity opens without a task filter", () => {
+    expect(selectTaskContributionSelection(contribution, null)).toEqual(IMPLEMENTATION);
   });
 });
 
