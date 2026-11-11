@@ -144,7 +144,7 @@ pub(super) fn compile_stage(
                     decision_key.clone(),
                     CheckedDecision {
                         effect: decision.effect.clone(),
-                        on: decision.on.clone(),
+                        on: normalized_decision_target(decision.on.as_ref(), &review.of),
                         payload,
                     },
                 );
@@ -194,7 +194,7 @@ pub(super) fn compile_stage(
                     decision: CheckedEngineDecision {
                         key: SymbolKey::from(decision_key.as_str()),
                         effect: decision.effect.clone(),
-                        on: decision.on.clone(),
+                        on: normalized_decision_target(decision.on.as_ref(), &review.of),
                         feedback: decision
                             .feedback
                             .clone()

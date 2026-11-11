@@ -138,7 +138,7 @@ workers:
     inputs:
       query: "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
     every: 2m
-    creates: [pr_state]
+    produces: [pr_state]
 
 reviews:
   pr_closed:
@@ -207,7 +207,7 @@ stages:
   prepare:
     input: { repository: repository }
     artifacts:
-      workspace: { schema: workspace }
+      workspace: { kind: record, schema: workspace }
     workers:
       git:
         kind: code
@@ -217,30 +217,30 @@ stages:
           expected_head: input.repository.preparation.expected_head
           base_branch: input.repository.forge.build_base
           integration_branch: input.repository.forge.final_base
-        creates: [workspace]
+        produces: [workspace]
     done_when: published(workspace)
     outcome: { key: input.repository.key, workspace: latest(workspace) }
 
   analysis:
     input: { spec: text, workspace: workspace }
     artifacts:
-      analysis: { schema: analysis_body }
-      spec: { schema: text }
-      tasks: { schema: tasks_body }
+      analysis: { kind: document, schema: analysis_body }
+      spec: { kind: document, schema: text }
+      tasks: { kind: record, schema: tasks_body }
     workers:
       author:
         kind: agent
         prompts: { initial: development/analysis.md, revise: development/analysis-revise.md }
         inputs: { spec: input.spec }
         workspace: repository(input.workspace)
-        creates: [analysis]
+        produces: [analysis]
       spec_editor:
         kind: agent
         when: approved(analysis)
         prompts: { initial: development/analysis-to-spec.md, revise: development/analysis-to-spec-revise.md }
         inputs: { original_spec: input.spec, approved_analysis: latest(analysis) }
         workspace: repository(input.workspace)
-        creates: [spec, tasks]
+        produces: [spec, tasks]
     reviews:
       analysis_review:
         of: analysis
@@ -267,6 +267,7 @@ stages:
     input: { spec: text, tasks: tasks_body, repositories: list(repository), repository_key: ident, workspace: workspace }
     artifacts:
       plan:
+        kind: document
         schema: plan_body
         validate:
           - check: len(plan.cohorts) > 0
@@ -287,7 +288,7 @@ stages:
         prompts: { initial: development/plan.md, revise: development/plan-revise.md }
         inputs: { spec: input.spec, tasks: input.tasks, repository_key: input.repository_key }
         workspace: repository(input.workspace)
-        creates: [plan]
+        produces: [plan]
     reviews:
       plan_review:
         of: plan
@@ -302,6 +303,7 @@ stages:
     input: { cohort: plan_cohort, spec: text, workspace: workspace }
     artifacts:
       brief:
+        kind: document
         schema: brief_body
         validate:
           - check: brief.cohort_id == input.cohort.id
@@ -319,7 +321,7 @@ stages:
         prompts: { initial: development/brief.md, revise: development/brief-revise.md }
         inputs: { cohort: input.cohort, spec: input.spec }
         workspace: repository(input.workspace)
-        creates: [brief]
+        produces: [brief]
     reviews:
       brief_review:
         of: brief
@@ -341,25 +343,25 @@ stages:
       closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
       merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
-      build_result: { schema: build_body }
-      pr: { schema: pr_body }
-      assessment: { schema: assessment_body, edit_policy: { kind: frozen_when_accepted } }
-      pr_state: { schema: pr_status }
-      observed_state: { schema: pr_status }
+      build_result: { kind: document, schema: build_body }
+      pr: { kind: external_reference, schema: pr_body }
+      assessment: { kind: assessment, schema: assessment_body, edit_policy: { kind: frozen_when_accepted } }
+      pr_state: { kind: status_record, schema: pr_status }
+      observed_state: { kind: status_record, schema: pr_status }
     workers:
       builder:
         kind: agent
         prompts: { initial: development/build.md, revise: development/build-revise.md }
         inputs: { brief: brief_value, repository: input.repository, build_base: input.repository.forge.build_base }
         workspace: repository(input.workspace)
-        creates: [build_result, pr]
+        produces: [build_result, pr]
       assessor:
         kind: agent
         prompts: { review: development/assess.md, revise: development/assess-revise.md }
         inputs: { brief: brief_value, pr: latest(pr) }
         workspace: repository(input.workspace)
-        reviews: build_result
-        creates: [assessment]
+        evaluates: build_result
+        produces: [assessment]
       pr_watch: { template: pr_watch }
       # Keep the optional PR observation separate from the manual completion
       # path, so an unavailable watcher cannot veto confirm_merged.
@@ -369,7 +371,7 @@ stages:
         when: pr_state_current
         inputs: { value: latest(pr_state) }
         every: 2m
-        creates: [observed_state]
+        produces: [observed_state]
     reviews:
       assessment_review:
         of: assessment
@@ -411,18 +413,18 @@ stages:
       closed_pr: input.final_merge_policy == "require_merge" and pr_state_current and latest(pr_state).state == "closed_unmerged"
       final_state: pr_state_current and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
     artifacts:
-      assessment: { schema: assessment_body, edit_policy: { kind: frozen_when_accepted } }
-      pr: { schema: pr_body }
-      pr_state: { schema: pr_status }
-      manual_merge_target: { schema: pr_body }
-      observed_state: { schema: pr_status }
+      assessment: { kind: assessment, schema: assessment_body, edit_policy: { kind: frozen_when_accepted } }
+      pr: { kind: external_reference, schema: pr_body }
+      pr_state: { kind: status_record, schema: pr_status }
+      manual_merge_target: { kind: external_reference, schema: pr_body }
+      observed_state: { kind: status_record, schema: pr_status }
     workers:
       integrator:
         kind: agent
         prompts: { initial: development/integrate.md, revise: development/integrate-revise.md }
         inputs: { repository: input.repository, cohorts: input.cohorts, briefs: input.briefs }
         workspace: repository(input.workspace)
-        creates: [pr, assessment]
+        produces: [pr, assessment]
       pr_watch: { template: pr_watch }
       # Independent evidence paths allow manual merge confirmation when no PR
       # reader is configured. Periodic copies follow revised inputs.
@@ -432,14 +434,14 @@ stages:
         when: pr_published
         inputs: { value: latest(pr) }
         every: 2m
-        creates: [manual_merge_target]
+        produces: [manual_merge_target]
       prepare_observed_state:
         kind: code
         operation: value.publish
         when: pr_state_current
         inputs: { value: latest(pr_state) }
         every: 2m
-        creates: [observed_state]
+        produces: [observed_state]
     reviews:
       integration_review:
         of: pr

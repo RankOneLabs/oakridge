@@ -147,7 +147,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     const handoff = handoff_path == null ? null : pin(handoff_path);
     if (handoff && !handoff.ok) return handoff;
     const creates: CreatedArtifact[] = [];
-    for (const key of declared.creates) {
+    for (const key of declared.produces) {
       const artifact = stage.artifacts[key];
       if (!artifact) return failure(resolved.action_id, `artifact ${key} is not declared on stage ${source.stage}`);
       creates.push({ key, schema: selectResolvedSchema(artifact.schema, source.workflow.schemas ?? {}) });
@@ -159,9 +159,9 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
         { stage: source.stage, worker: action.worker }, declared.runtime ?? null), creates,
       schemas: selectReferencedSchemas(creates.map((artifact) => artifact.schema), source.workflow.schemas ?? {}) };
   } else {
-    const artifact = declared.creates[0];
-    if (declared.creates.length !== 1 || artifact === undefined)
-      return failure(resolved.action_id, `code worker ${action.worker} must create exactly one artifact`);
+    const artifact = declared.produces[0];
+    if (declared.produces.length !== 1 || artifact === undefined)
+      return failure(resolved.action_id, `code worker ${action.worker} must produce exactly one artifact`);
     // Only a watch repeats: a retry of a periodic worker is one attempt, after which step opens a new watch.
     const every = action.cause.kind === "periodic" ? declared.every ?? null : null;
     worker = { kind: "code", operation: declared.operation, every, artifact };

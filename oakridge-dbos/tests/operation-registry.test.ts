@@ -28,8 +28,8 @@ test("a code worker of each registered operation compiles against its declared c
       const inputs = Object.fromEntries(Object.keys(operation.input_schema).map((field) => [field, `input.${field}`]));
       return compileWorkflow(core, { prompts: {}, workflow: { workflow: "operation_contract", input: bound(operation.input_schema),
         run: { units: { only: { stage: "only", input: inputs } }, outcome: {} },
-        stages: { only: { input: bound(operation.input_schema), artifacts: { output: { schema: bound(operation.output_schema) } },
-          workers: { call: { kind: "code", operation: operation.key, inputs, creates: ["output"] } }, done_when: "published(output)", outcome: {} } } } });
+        stages: { only: { input: bound(operation.input_schema), artifacts: { output: { kind: "document", schema: bound(operation.output_schema) } },
+          workers: { call: { kind: "code", operation: operation.key, inputs, produces: ["output"] } }, done_when: "published(output)", outcome: {} } } } });
     }));
     expect(compiled.map((result) => result.ok ? "compiled" : result.error.detail)).toEqual(["compiled", "compiled", "compiled"]);
   } finally { core.close(); }

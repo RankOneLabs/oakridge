@@ -146,7 +146,7 @@ export const isReviewable = (stage: ParsedStage, artifact: string): boolean =>
   Object.values(stage.reviews ?? {}).some((review) => review.of === artifact && review.by === "operator");
 /** The core refuses an operator's edit of an artifact a code worker creates. */
 export const isEditable = (stage: ParsedStage, artifact: string): boolean =>
-  Object.values(stage.workers).some((worker) => worker.kind === "agent" && worker.creates.includes(artifact));
+  Object.values(stage.workers).some((worker) => worker.kind === "agent" && worker.produces.includes(artifact));
 
 function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly ArtifactView[] {
   const stage = unit.stage === null ? undefined : read.definition.parsed_workflow.stages[unit.stage];

@@ -1792,13 +1792,16 @@
         "analysis": {
           "artifacts": {
             "analysis": {
-              "schema": "analysis_body"
+              "schema": "analysis_body",
+              "kind": "document"
             },
             "spec": {
-              "schema": "text"
+              "schema": "text",
+              "kind": "document"
             },
             "tasks": {
-              "schema": "tasks_body"
+              "schema": "tasks_body",
+              "kind": "record"
             }
           },
           "done_when": "approved(analysis) and approved(spec) and approved(tasks)",
@@ -1865,9 +1868,6 @@
           },
           "workers": {
             "author": {
-              "creates": [
-                "analysis"
-              ],
               "inputs": {
                 "spec": "input.spec"
               },
@@ -1876,13 +1876,12 @@
                 "initial": "development/analysis.md",
                 "revise": "development/analysis-revise.md"
               },
-              "workspace": "repository(input.workspace)"
+              "workspace": "repository(input.workspace)",
+              "produces": [
+                "analysis"
+              ]
             },
             "spec_editor": {
-              "creates": [
-                "spec",
-                "tasks"
-              ],
               "inputs": {
                 "approved_analysis": "latest(analysis)",
                 "original_spec": "input.spec"
@@ -1893,7 +1892,11 @@
                 "revise": "development/analysis-to-spec-revise.md"
               },
               "when": "approved(analysis)",
-              "workspace": "repository(input.workspace)"
+              "workspace": "repository(input.workspace)",
+              "produces": [
+                "spec",
+                "tasks"
+              ]
             }
           }
         },
@@ -1914,7 +1917,8 @@
                   "check": "brief.depends_on == input.cohort.depends_on",
                   "message": "The brief's depends_on must be its plan cohort's, in the same order."
                 }
-              ]
+              ],
+              "kind": "document"
             }
           },
           "done_when": "approved(brief)",
@@ -1950,9 +1954,6 @@
           },
           "workers": {
             "writer": {
-              "creates": [
-                "brief"
-              ],
               "inputs": {
                 "cohort": "input.cohort",
                 "spec": "input.spec"
@@ -1963,7 +1964,10 @@
                 "revise": "development/brief-revise.md"
               },
               "session": "shared",
-              "workspace": "repository(input.workspace)"
+              "workspace": "repository(input.workspace)",
+              "produces": [
+                "brief"
+              ]
             }
           }
         },
@@ -1973,19 +1977,24 @@
               "edit_policy": {
                 "kind": "frozen_when_accepted"
               },
-              "schema": "assessment_body"
+              "schema": "assessment_body",
+              "kind": "assessment"
             },
             "build_result": {
-              "schema": "build_body"
+              "schema": "build_body",
+              "kind": "document"
             },
             "observed_state": {
-              "schema": "pr_status"
+              "schema": "pr_status",
+              "kind": "status_record"
             },
             "pr": {
-              "schema": "pr_body"
+              "schema": "pr_body",
+              "kind": "external_reference"
             },
             "pr_state": {
-              "schema": "pr_status"
+              "schema": "pr_status",
+              "kind": "status_record"
             }
           },
           "done_when": "approved(assessment) and published(build_result) and pr_published and (merged_pr or approved(pr))",
@@ -2066,9 +2075,6 @@
           },
           "workers": {
             "assessor": {
-              "creates": [
-                "assessment"
-              ],
               "inputs": {
                 "brief": "brief_value",
                 "pr": "latest(pr)"
@@ -2078,14 +2084,13 @@
                 "review": "development/assess.md",
                 "revise": "development/assess-revise.md"
               },
-              "reviews": "build_result",
-              "workspace": "repository(input.workspace)"
+              "workspace": "repository(input.workspace)",
+              "produces": [
+                "assessment"
+              ],
+              "evaluates": "build_result"
             },
             "builder": {
-              "creates": [
-                "build_result",
-                "pr"
-              ],
               "inputs": {
                 "brief": "brief_value",
                 "build_base": "input.repository.forge.build_base",
@@ -2096,22 +2101,26 @@
                 "initial": "development/build.md",
                 "revise": "development/build-revise.md"
               },
-              "workspace": "repository(input.workspace)"
+              "workspace": "repository(input.workspace)",
+              "produces": [
+                "build_result",
+                "pr"
+              ]
             },
             "pr_watch": {
               "template": "pr_watch"
             },
             "prepare_observed_state": {
-              "creates": [
-                "observed_state"
-              ],
               "every": "2m",
               "inputs": {
                 "value": "latest(pr_state)"
               },
               "kind": "code",
               "operation": "value.publish",
-              "when": "pr_state_current"
+              "when": "pr_state_current",
+              "produces": [
+                "observed_state"
+              ]
             }
           }
         },
@@ -2121,19 +2130,24 @@
               "edit_policy": {
                 "kind": "frozen_when_accepted"
               },
-              "schema": "assessment_body"
+              "schema": "assessment_body",
+              "kind": "assessment"
             },
             "manual_merge_target": {
-              "schema": "pr_body"
+              "schema": "pr_body",
+              "kind": "external_reference"
             },
             "observed_state": {
-              "schema": "pr_status"
+              "schema": "pr_status",
+              "kind": "status_record"
             },
             "pr": {
-              "schema": "pr_body"
+              "schema": "pr_body",
+              "kind": "external_reference"
             },
             "pr_state": {
-              "schema": "pr_status"
+              "schema": "pr_status",
+              "kind": "status_record"
             }
           },
           "done_when": "published(assessment) and approved(pr) and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
@@ -2204,10 +2218,6 @@
           },
           "workers": {
             "integrator": {
-              "creates": [
-                "pr",
-                "assessment"
-              ],
               "inputs": {
                 "cohorts": "input.cohorts",
                 "repository": "input.repository"
@@ -2217,34 +2227,38 @@
                 "initial": "development/integrate.md",
                 "revise": "development/integrate-revise.md"
               },
-              "workspace": "repository(input.workspace)"
+              "workspace": "repository(input.workspace)",
+              "produces": [
+                "pr",
+                "assessment"
+              ]
             },
             "pr_watch": {
               "template": "pr_watch"
             },
             "prepare_manual_merge": {
-              "creates": [
-                "manual_merge_target"
-              ],
               "every": "2m",
               "inputs": {
                 "value": "latest(pr)"
               },
               "kind": "code",
               "operation": "value.publish",
-              "when": "pr_published"
+              "when": "pr_published",
+              "produces": [
+                "manual_merge_target"
+              ]
             },
             "prepare_observed_state": {
-              "creates": [
-                "observed_state"
-              ],
               "every": "2m",
               "inputs": {
                 "value": "latest(pr_state)"
               },
               "kind": "code",
               "operation": "value.publish",
-              "when": "pr_state_current"
+              "when": "pr_state_current",
+              "produces": [
+                "observed_state"
+              ]
             }
           }
         },
@@ -2265,7 +2279,8 @@
                   "check": "valid_graph(plan.cohorts, id, depends_on)",
                   "message": "Cohort ids must be unique idents, and each depends_on must name other cohorts without repeats or a cycle."
                 }
-              ]
+              ],
+              "kind": "document"
             }
           },
           "done_when": "approved(plan)",
@@ -2302,9 +2317,6 @@
           },
           "workers": {
             "planner": {
-              "creates": [
-                "plan"
-              ],
               "inputs": {
                 "repository_key": "input.repository_key",
                 "spec": "input.spec",
@@ -2315,14 +2327,18 @@
                 "initial": "development/plan.md",
                 "revise": "development/plan-revise.md"
               },
-              "workspace": "repository(input.workspace)"
+              "workspace": "repository(input.workspace)",
+              "produces": [
+                "plan"
+              ]
             }
           }
         },
         "prepare": {
           "artifacts": {
             "workspace": {
-              "schema": "workspace"
+              "schema": "workspace",
+              "kind": "record"
             }
           },
           "done_when": "published(workspace)",
@@ -2335,9 +2351,6 @@
           },
           "workers": {
             "git": {
-              "creates": [
-                "workspace"
-              ],
               "inputs": {
                 "base_branch": "input.repository.forge.build_base",
                 "expected_head": "input.repository.preparation.expected_head",
@@ -2345,23 +2358,26 @@
                 "repository_path": "input.repository.preparation.repository_path"
               },
               "kind": "code",
-              "operation": "repository.prepare"
+              "operation": "repository.prepare",
+              "produces": [
+                "workspace"
+              ]
             }
           }
         }
       },
       "workers": {
         "pr_watch": {
-          "creates": [
-            "pr_state"
-          ],
           "every": "2m",
           "inputs": {
             "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
           },
           "kind": "code",
           "operation": "pull_request.observe",
-          "when": "pr_published"
+          "when": "pr_published",
+          "produces": [
+            "pr_state"
+          ]
         }
       },
       "workflow": "development"

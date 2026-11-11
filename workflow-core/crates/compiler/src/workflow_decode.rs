@@ -182,7 +182,7 @@ pub fn decode_workflow_value_detailed(
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("");
                     let forbidden: &[&str] = match kind {
-                        "code" => &["prompts", "runtime", "workspace", "session", "reviews"],
+                        "code" => &["prompts", "runtime", "workspace", "session", "evaluates"],
                         "agent" => &["operation", "every"],
                         _ => &[],
                     };

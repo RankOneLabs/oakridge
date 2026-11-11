@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Result } from "canonical-json";
 import YAML from "yaml";
-import { DEFINITION_STORE_ROOT, resolveLaunchableDefinition, selectDiscardedFields } from "./definition-store";
+import { DEFINITION_STORE_ROOT, resolveLaunchableDefinition, isCommittedDefinition } from "./definition-store";
 
 const root = resolve(import.meta.dir, "../..");
 const promptDirectory = resolve(root, "workflow-config/prompts/development");
@@ -122,8 +122,8 @@ test("the launchable development definition pins the rewritten prompts", () => {
   expect(scoped.filter((name) => prompts[`development/${name}.md`] !== readPrompt(name))).toEqual([]);
 });
 
-test("no retained definition carries a discarded worker field", () => {
+test("every retained definition decodes under the source contract", () => {
   const directory = resolve(DEFINITION_STORE_ROOT, "workflows");
-  const carrying = readdirSync(directory).filter((file) => selectDiscardedFields(JSON.parse(readFileSync(resolve(directory, file), "utf8"))).length > 0);
+  const carrying = readdirSync(directory).filter((file) => !isCommittedDefinition(JSON.parse(readFileSync(resolve(directory, file), "utf8"))));
   expect(carrying).toEqual([]);
 });

@@ -75,8 +75,8 @@ function holdOperations(): { readonly entered: Promise<void>; release(): void } 
 const CODE_JOB: Workflow = {
   workflow: "code_job", input: { topic: "text" },
   run: { units: { job: { stage: "job", input: { topic: "input.topic" } } }, outcome: {} },
-  stages: { job: { input: { topic: "text" }, artifacts: { note: { schema: "text" } },
-    workers: { noter: { kind: "code", operation: "value.publish", inputs: { value: "input.topic" }, creates: ["note"] } },
+  stages: { job: { input: { topic: "text" }, artifacts: { note: { kind: "document", schema: "text" } },
+    workers: { noter: { kind: "code", operation: "value.publish", inputs: { value: "input.topic" }, produces: ["note"] } },
     done_when: "false", outcome: {} } },
 };
 

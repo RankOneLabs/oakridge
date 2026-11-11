@@ -6,7 +6,7 @@ use workflow_model::*;
 fn program() -> CheckedWorkflow {
     let source: Workflow = serde_json::from_value(serde_json::json!({
             "workflow":"simple", "input":{}, "run":{"units":{"document":{"stage":"document","input":{}}},"outcome":{"draft":"document.outcome.draft"}},
-            "stages":{"document":{"input":{},"artifacts":{"draft":{"schema":"text"}},"workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},"inputs":{},"creates":["draft"]}},"done_when":"approved(draft)","outcome":{"draft":"latest(draft)"}}}
+            "stages":{"document":{"input":{},"artifacts":{"draft":{"kind": "document", "schema":"text"}},"workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},"inputs":{},"produces":["draft"]}},"done_when":"approved(draft)","outcome":{"draft":"latest(draft)"}}}
         })).unwrap();
     // Compiled rather than hand-assembled: the engine reads the
     // checked stages, so a stub with empty stages is not a program.
@@ -26,9 +26,9 @@ fn a_serialized_null_launch_input_remains_resolved_after_a_child_completes() {
         },
         "stages": {"document": {
             "input": {},
-            "artifacts": {"draft": {"schema": "text"}},
+            "artifacts": {"draft": {"kind": "document", "schema": "text"}},
             "workers": {"writer": {"kind": "agent", "prompts": {"initial": "write.md"},
-                                   "inputs": {}, "creates": ["draft"]}},
+                                   "inputs": {}, "produces": ["draft"]}},
             "done_when": "published(draft)",
             "outcome": {"draft": "latest(draft)"}
         }}
@@ -145,14 +145,15 @@ fn plain_uuid_type_round_trips_and_validates_values() {
 
 #[test]
 fn an_artifact_without_an_edit_policy_defaults_to_always() {
-    let artifact: Artifact = serde_json::from_value(serde_json::json!({"schema":"text"})).unwrap();
+    let artifact: Artifact =
+        serde_json::from_value(serde_json::json!({"kind": "document", "schema":"text"})).unwrap();
     assert!(matches!(artifact.edit_policy, EditPolicy::Always));
     assert_eq!(
         serde_json::to_value(&artifact).unwrap(),
-        serde_json::json!({"schema":{"kind":"text"},"validate":[]})
+        serde_json::json!({"kind": "document", "schema":{"kind":"text"},"validate":[]})
     );
     let explicit: Artifact = serde_json::from_value(
-        serde_json::json!({"schema":"text","edit_policy":{"kind":"always"}}),
+        serde_json::json!({"kind": "document", "schema":"text","edit_policy":{"kind":"always"}}),
     )
     .unwrap();
     assert_eq!(
@@ -166,8 +167,8 @@ fn an_accepted_artifact_with_a_freeze_policy_rejects_operator_edits() {
     let source: Workflow = serde_json::from_value(serde_json::json!({
         "workflow":"freeze", "input":{},
         "run":{"units":{"document":{"stage":"document","input":{}}},"outcome":{}},
-        "stages":{"document":{"input":{},"artifacts":{"draft":{"schema":"text","edit_policy":{"kind":"frozen_when_accepted"}}},
-            "workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},"inputs":{},"creates":["draft"]}},
+        "stages":{"document":{"input":{},"artifacts":{"draft":{"kind": "document", "schema":"text","edit_policy":{"kind":"frozen_when_accepted"}}},
+            "workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},"inputs":{},"produces":["draft"]}},
             "reviews":{"editor":{"of":"draft","by":"operator","prompt":"review.md","decisions":{"accept":{"effect":"approve","label":"Accept"}}}},
             "done_when":"false","outcome":{}}}
     })).unwrap();
@@ -500,9 +501,9 @@ fn checked_artifact_and_decision_schemas_contain_resolved_types() {
         "schemas":{"title":"text","titles":"list(title)"},
         "run":{"units":{"write":{"stage":"write","input":{}}},"outcome":{}},
         "stages":{"write":{
-            "input":{}, "artifacts":{"draft":{"schema":"titles"}},
+            "input":{}, "artifacts":{"draft":{"kind": "document", "schema":"titles"}},
             "workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},
-                "inputs":{},"creates":["draft"]}},
+                "inputs":{},"produces":["draft"]}},
             "reviews":{"editor":{"of":"draft","by":"operator","prompt":"review.md",
                 "decisions":{"approve":{"effect":"approve","label":"Approve",
                     "payload":"optional(titles)"}}}},
@@ -542,9 +543,9 @@ fn wrapped_record_aliases_preserve_field_names_in_checked_schemas() {
         "schemas":{"row":{"a,b":"text"}},
         "run":{"units":{"write":{"stage":"write","input":{}}},"outcome":{}},
         "stages":{"write":{
-            "input":{}, "artifacts":{"draft":{"schema":"list(row)"}},
+            "input":{}, "artifacts":{"draft":{"kind": "document", "schema":"list(row)"}},
             "workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},
-                "inputs":{},"creates":["draft"]}},
+                "inputs":{},"produces":["draft"]}},
             "reviews":{"editor":{"of":"draft","by":"operator","prompt":"review.md",
                 "decisions":{"approve":{"effect":"approve","label":"Approve",
                     "payload":"optional(row)"}}}},
@@ -1019,8 +1020,8 @@ fn a_reassessment_reads_the_previous_assessment_and_the_request_that_replaced_it
 fn a_retried_reassessment_still_reads_the_assessment_of_the_previous_build() {
     let mut source = critique_check_source();
     source["stages"]["document"]["artifacts"]["summary"] =
-        serde_json::json!({"schema": {"notes": "list(text)"}});
-    source["stages"]["document"]["workers"]["critic"]["creates"] =
+        serde_json::json!({"kind": "document", "schema": {"notes": "list(text)"}});
+    source["stages"]["document"]["workers"]["critic"]["produces"] =
         serde_json::json!(["critique", "summary"]);
     let program = compile_critique_check(source);
     let retried = step_specs(
@@ -1531,8 +1532,8 @@ fn revise_receives_the_requested_revision_and_decision_payload() {
 fn plan_and_build_program() -> CheckedWorkflow {
     let source: Workflow = serde_json::from_value(serde_json::json!({
             "workflow":"plan_and_build", "input":{}, "run":{"units":{"work":{"stage":"work","input":{}}},"outcome":{}},
-            "stages":{"work":{"input":{},"artifacts":{"plan":{"schema":"text"},"build":{"schema":"text"}},
-                "workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md","revise":"revise.md"},"inputs":{},"creates":["plan","build"]}},
+            "stages":{"work":{"input":{},"artifacts":{"plan":{"kind": "document", "schema":"text"},"build":{"kind": "document", "schema":"text"}},
+                "workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md","revise":"revise.md"},"inputs":{},"produces":["plan","build"]}},
                 "reviews":{"check":{"of":"plan","by":"operator","prompt":"check.md","decisions":{
                     "accept":{"effect":"approve","label":"Accept"},
                     "fix_plan":{"effect":"request_changes","label":"Fix plan","fields":{"feedback":"What?"}},
@@ -2042,7 +2043,7 @@ fn a_retry_request_without_an_ingress_id_is_rejected() {
 fn periodic_worker_uses_one_action_id_and_three_distinct_attempt_sequences() {
     let source: Workflow = serde_json::from_value(serde_json::json!({
             "workflow":"periodic", "input":{}, "run":{"units":{"watch":{"stage":"watch","input":{}}},"outcome":{}},
-            "stages":{"watch":{"input":{},"artifacts":{"observation":{"schema":"text"}},"workers":{"observer":{"kind":"code","operation":"observe","inputs":{},"creates":["observation"],"every":"1s"}},"done_when":"false","outcome":{}}}
+            "stages":{"watch":{"input":{},"artifacts":{"observation":{"kind": "document", "schema":"text"}},"workers":{"observer":{"kind":"code","operation":"observe","inputs":{},"produces":["observation"],"every":"1s"}},"done_when":"false","outcome":{}}}
         })).unwrap();
     let observe = vec![CodeOperation {
         key: SymbolKey::from("observe"),
@@ -2106,9 +2107,9 @@ fn periodic_worker_uses_one_action_id_and_three_distinct_attempt_sequences() {
 fn watch_program() -> CheckedWorkflow {
     let source: Workflow = serde_json::from_value(serde_json::json!({
             "workflow":"watch", "input":{}, "run":{"units":{"watch":{"stage":"watch","input":{}}},"outcome":{}},
-            "stages":{"watch":{"input":{},"artifacts":{"pr":{"schema":"text"},"observation":{"schema":"text"}},
-              "workers":{"builder":{"kind":"agent","prompts":{"initial":"build.md"},"inputs":{},"creates":["pr"]},
-                "observer":{"kind":"code","operation":"observe","when":"published(pr)","inputs":{"branch":"latest(pr)"},"creates":["observation"],"every":"1s"}},
+            "stages":{"watch":{"input":{},"artifacts":{"pr":{"kind": "document", "schema":"text"},"observation":{"kind": "document", "schema":"text"}},
+              "workers":{"builder":{"kind":"agent","prompts":{"initial":"build.md"},"inputs":{},"produces":["pr"]},
+                "observer":{"kind":"code","operation":"observe","when":"published(pr)","inputs":{"branch":"latest(pr)"},"produces":["observation"],"every":"1s"}},
               "done_when":"false","outcome":{}}}
         })).unwrap();
     let observe = vec![CodeOperation {
@@ -2902,9 +2903,9 @@ fn list_check_program(check: &str) -> CheckedWorkflow {
                 "outcome": {}},
         "stages": {"document": {
             "input": {"groups": "list(list(text))"},
-            "artifacts": {"draft": {"schema": "text", "validate": [{"check": check, "message": "failed"}]}},
+            "artifacts": {"draft": {"kind": "document", "schema": "text", "validate": [{"check": check, "message": "failed"}]}},
             "workers": {"writer": {"kind": "agent", "prompts": {"initial": "write.md", "revise": "write.md"},
-                                   "inputs": {}, "creates": ["draft"]}},
+                                   "inputs": {}, "produces": ["draft"]}},
             "done_when": "published(draft)", "outcome": {}
         }}
     }))
