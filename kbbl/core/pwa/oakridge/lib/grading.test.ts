@@ -9,7 +9,7 @@ import type { ObservationHumanSubmissionAcknowledgment } from "../grading-contra
 import type { ObservationQuestionStatusResponse } from "../grading-contracts/storage/grading-record-store";
 import { id, IMPLEMENTATION, itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
-import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemHeader, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, selectTaskContributionSelection, stagePublicationLabel, taskLinkLabel } from "./grading";
+import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemHeader, selectItemText, selectOwnCurrentAnswer, selectQuestionTaskLabel, selectStageView, selectSubmissionNotice, selectTaskContributionSelection, stagePublicationLabel, taskLinkLabel } from "./grading";
 
 const empty = <Item,>(): ObservationPaged<Item> => ({ items: [], total: 0, limit: 50, offset: 0 });
 const answer = (observation_id: string, supersedes_observation_id: string | null = null): ObservationAnswerRead => ({ task_id: null, observation_id: id(observation_id), execution_id: id(observation_id), occurrence_id: id("o"), evidence_set_id: id("e"),
@@ -48,6 +48,19 @@ describe("task contribution grading addresses", () => {
   });
   test("no captured enclosing task identity opens without a task filter", () => {
     expect(selectTaskContributionSelection(IMPLEMENTATION, [supportQuestion({ task_id })])).toEqual(IMPLEMENTATION);
+  });
+});
+
+describe("question task labels", () => {
+  const links = itemStatus([]).links.items;
+  test("a per-item question has no task label", () => {
+    expect(selectQuestionTaskLabel(null, links)).toBeNull();
+  });
+  test("a task subject uses its resolved producer-local task name", () => {
+    expect(selectQuestionTaskLabel(id<ObservationLogicalItemId>("l1"), links)).toBe("Task T1");
+  });
+  test("a task outside the links page remains identifiable by its logical ID", () => {
+    expect(selectQuestionTaskLabel(id<ObservationLogicalItemId>("logical-task-7"), links)).toBe("Task logical-task-7");
   });
 });
 

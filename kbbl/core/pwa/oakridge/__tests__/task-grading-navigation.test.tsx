@@ -1,7 +1,7 @@
 import { json, world, wrap } from "./item-panel-harness";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
-import { acknowledged, ANALYSIS, id, IMPLEMENTATION, item, itemStatus, paged, supportQuestion } from "../__fixtures__/grading";
+import { acknowledged, ANALYSIS, correctnessQuestion, id, IMPLEMENTATION, item, itemStatus, paged, supportQuestion } from "../__fixtures__/grading";
 import { CompositeDrilldown } from "../components/organisms/CompositeDrilldown";
 import { ItemPanel } from "../components/organisms/ItemPanel";
 import { TaskPanel } from "../components/organisms/TaskPanel";
@@ -39,6 +39,30 @@ function navigationReads() {
 const entryPoint = (source: EntryPoint, open: (selection: ObservationItemAddress) => void) => source === "task panel"
   ? <TaskPanel runId="run-1" taskId="T1" onOpenItem={open} />
   : <CompositeDrilldown runId="run-1" drilldownKey={{ logical_item_id: task_id, stage: "analysis", selector: { kind: "items" } }} label="Linked items" onClose={vi.fn()} onOpenItem={open} />;
+
+it("an unfiltered finding labels each task's questions and the task being graded", async () => {
+  const subjects = ["T3", "T7"].flatMap((name) => {
+    const task_id = id<ObservationLogicalItemId>(`logical-${name}`);
+    return [correctnessQuestion({ human: { state: "ready" } }), supportQuestion()].map((question): ObservationQuestionStatusResponse => ({
+      ...question, task_id, evidence: { ...question.evidence, task_id, evidence_set_id: id(`${name}-${question.question.question_id}`) },
+    }));
+  });
+  world.status = itemStatus(subjects, { links: paged(["T3", "T7"].map((name) => ({
+    state: "resolved", producer_local_id: name, logical_item_id: id(`logical-${name}`), relation_id: id(`relation-${name}`), evidence_ref: "/findings/1/task_ids/0",
+  }))) });
+  wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={vi.fn()} />);
+  const tabs = await screen.findAllByRole("tab");
+  expect(tabs.map((tab) => tab.textContent)).toEqual([
+    "Correctness · Task T3", "Evidence support · Task T3", "Correctness · Task T7", "Evidence support · Task T7",
+  ]);
+  expect(screen.getByTestId("or-item-question-task").textContent).toBe("Task T3");
+  fireEvent.click(screen.getByRole("tab", { name: "Evidence support · Task T7" }));
+  expect(screen.getByTestId("or-item-question-task").textContent).toBe("Task T7");
+  fireEvent.click(screen.getByRole("radio", { name: "supports" }));
+  fireEvent.click(screen.getByTestId("or-your-grade-submit"));
+  await screen.findByTestId("or-your-grade-saved");
+  expect(world.sent).toMatchObject([{ task_id: "logical-T7", question_id: "assessment_finding.evidence_support", answer: "supports" }]);
+});
 
 it.each<EntryPoint>(["task panel", "composite drilldown"])("an analysis finding opened from the %s shows and accepts relevance", async (source) => {
   const support = supportQuestion();
