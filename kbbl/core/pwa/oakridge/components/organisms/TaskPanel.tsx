@@ -33,9 +33,9 @@ interface ContributionGradeProps {
   onOpenItem: (selection: ObservationItemAddress) => void;
 }
 
-/** Read subjects without a task filter so per-item questions remain available to the selector. */
+/** Read subjects once without a task filter so per-item questions remain available to the selector. */
 function ContributionGradeButton({ occurrenceId, selection, onOpenItem }: ContributionGradeProps) {
-  const status = useItemStatus({ occurrence_id: occurrenceId, top: QUESTIONS, nested: {} });
+  const status = useItemStatus({ occurrence_id: occurrenceId, top: QUESTIONS, nested: {} }, { refetchInterval: false });
   const address = status.isPending ? null : selectTaskContributionSelection(selection, status.data?.questions.items);
   return <GradeItemButton selection={address} onOpenItem={onOpenItem} />;
 }

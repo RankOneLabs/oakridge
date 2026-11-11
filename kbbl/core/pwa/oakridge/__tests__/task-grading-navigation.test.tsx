@@ -1,6 +1,6 @@
 import { json, world, wrap } from "./item-panel-harness";
-import { expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { acknowledged, ANALYSIS, id, IMPLEMENTATION, item, itemStatus, paged, supportQuestion } from "../__fixtures__/grading";
 import { CompositeDrilldown } from "../components/organisms/CompositeDrilldown";
 import { ItemPanel } from "../components/organisms/ItemPanel";
@@ -12,6 +12,7 @@ import type { ObservationQuestionStatusResponse } from "../grading-contracts/sto
 
 const task_id = id<ObservationLogicalItemId>("l1");
 type EntryPoint = "task panel" | "composite drilldown";
+afterEach(() => vi.useRealTimers());
 
 function navigationReads() {
   const boundary = vi.mocked(globalThis.fetch).getMockImplementation();
@@ -87,4 +88,30 @@ it("an assessment finding with no pinned subject for the enclosing task opens wi
   wrap(entryPoint("task panel", open));
   fireEvent.click(await screen.findByTestId("or-grade-item"));
   expect(open).toHaveBeenCalledWith(IMPLEMENTATION);
+});
+
+it("a 50-row task lineage reads each contribution's status once while lineage keeps refreshing", async () => {
+  vi.useFakeTimers();
+  const boundary = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!boundary) throw new Error("item-panel IO boundary is missing");
+  const contributions: ObservationLineageEntry[] = Array.from({ length: 50 }, (_, index) => ({
+    kind: "contribution", relation_id: id(`relation-${index}`), evidence_ref: `/findings/${index}/task_ids/0`, asserted_by: "producer_explicit",
+    item: { ...world.status.item, occurrence_id: id(`occurrence-${index}`), item_path: `/findings/${index}` },
+  }));
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const url = new URL(String(input), "http://kbbl.test");
+    if (url.pathname.endsWith("/tasks/T1/lineage")) {
+      world.paths.push(url.pathname + url.search);
+      return json({ ...paged(contributions), run_id: id("run-1"), producer_local_id: "T1", is_captured: true });
+    }
+    return boundary(input, init);
+  });
+  wrap(<TaskPanel runId="run-1" taskId="T1" onOpenItem={vi.fn()} />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(screen.getAllByTestId("or-grade-item")).toHaveLength(50);
+  const statusReads = () => world.paths.filter((path) => new URL(path, "http://kbbl.test").pathname.endsWith("/status"));
+  expect(statusReads()).toHaveLength(50);
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_001); });
+  expect(world.paths.filter((path) => path.includes("/tasks/T1/lineage")).length).toBeGreaterThan(1);
+  expect(statusReads()).toHaveLength(50);
 });
