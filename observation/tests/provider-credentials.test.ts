@@ -3,8 +3,16 @@ import { allProviderCredentialNames, configuredRunnerNames, credentialsForRunner
   selectProviderEnvironment } from "../src/grading/provider-credentials";
 import { runnerRegistry } from "../src/grading/runner";
 
-const graders = (...runners: string[]) => ({ questions: [{ question_id: "q", graders: runners.map((runner) =>
-  ({ runner, model: "m", instructions: {}, estimated_cost_per_call: 0 })) }] });
+import { machineGraders } from "../src/grading/configuration";
+import { committedDefinitions, oakridgeGradingRegistry } from "./grading-fixture";
+
+const graders = async (...runners: string[]) => {
+  const [definition] = await committedDefinitions();
+  const grader = machineGraders(definition!)[0]!;
+  return [{ ...definition!, evaluators: runners.map((runner, index) =>
+    runner === "human" ? { runner: "human" as const } : { ...grader, runner, model: `model-${index}` }) }];
+};
+const configured = (raw: unknown) => configuredRunnerNames(raw, oakridgeGradingRegistry);
 
 test("every retained runner declares what it reads", () => {
   expect(allProviderCredentialNames().toSorted()).toEqual(["FASTINO_API_KEY", "FASTINO_BASE_URL", "OBSERVATION_LLM_JUDGE_API_KEY",
@@ -12,17 +20,30 @@ test("every retained runner declares what it reads", () => {
   expect(Object.keys(runnerRegistry).toSorted()).toEqual(["fastino_glide", "jev_direct", "llm_judge"]);
 });
 
-test("the configured runners are read from the grader selection, once each", () => {
-  expect(configuredRunnerNames(graders("jev_direct", "llm_judge", "jev_direct"))).toEqual({ ok: true, value: ["jev_direct", "llm_judge"] });
+test("the configured runners are read from definitions once each, excluding human", async () => {
+  expect(configured(await graders("jev_direct", "fastino_glide", "jev_direct", "human"))).toEqual({ ok: true, value: ["jev_direct", "fastino_glide"] });
 });
 
-test("a selection without runners is invalid rather than empty", () => {
-  expect(configuredRunnerNames({ questions: [{ question_id: "q", graders: [] }] })).toMatchObject({ ok: false, error: { kind: "invalid_graders" } });
+test("human-only definitions select no provider settings", async () => {
+  expect(configured(await graders("human"))).toEqual({ ok: true, value: [] });
+  expect(configured(await graders())).toEqual({ ok: true, value: [] });
 });
 
-test("a grader without its model, instructions or cost is refused before any setting is selected", () => {
-  expect(configuredRunnerNames({ questions: [{ question_id: "q", graders: [{ runner: "jev_direct" }] }] }))
-    .toMatchObject({ ok: false, error: { kind: "invalid_graders" } });
+test("a grader without its model, instructions or cost is refused before selecting settings", async () => {
+  const [definition] = await committedDefinitions();
+  expect(configured([{ ...definition, evaluators: [{ runner: "jev_direct" }] }]))
+    .toMatchObject({ ok: false, error: { kind: "invalid_definitions" } });
+});
+
+test("invalid definitions fail before selecting provider settings", () => {
+  expect(configured({ questions: [] })).toMatchObject({ ok: false, error: { kind: "invalid_definitions" } });
+});
+
+test("an unsupported question fails before selecting provider settings", async () => {
+  const [definition] = await committedDefinitions();
+  expect(configured([{ ...definition!, id: "finding.relevnce" }]))
+    .toMatchObject({ ok: false, error: { operation: "provider_credentials", kind: "invalid_definitions",
+      entity_id: "finding.relevnce", detail: expect.stringContaining("evidence collector") } });
 });
 
 test("an unknown runner fails instead of selecting nothing for it", () => {

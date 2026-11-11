@@ -1,16 +1,17 @@
+import { parseGradingDefinitions, planRegistration, type GradingDefinitions } from "../src/grading/configuration";
 import { test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { canonicalDigest } from "canonical-json";
 import { Client } from "pg";
 import { sql } from "kysely";
 import { configuredRunnerNames, credentialsForRunners } from "../src/grading/provider-credentials";
-import { GRADERS_FILE } from "../src/main";
+import { GRADING_DEFINITIONS_FILE } from "../src/main";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest, type EvaluatorDefinition } from "../src/grading/evaluator";
 import type { ReadyEvidence } from "../src/grading/evidence";
 import type { QuestionDefinition } from "../src/grading/question";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { oakridgeProfile as createOakridgeProfile, oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../src/grading/evidence";
 import { deliverSourceEvent } from "../src/storage/capture-store";
 import { openDatabase, type Database, type TenantScope } from "../src/storage/database";
@@ -124,11 +125,26 @@ export function createFeed(db: Database, scope: TenantScope = tenant, configurat
 export const occurrenceIdOf = (value: string): ItemOccurrenceId => value as ItemOccurrenceId;
 
 /** The committed selection, read from the file the service reads. Tests take graders from here. */
-export const committedGraders = async (): Promise<unknown> => Bun.file(GRADERS_FILE).json();
+export const committedDefinitions = async (): Promise<GradingDefinitions> => {
+  const parsed = parseGradingDefinitions(await Bun.file(GRADING_DEFINITIONS_FILE).json(), oakridgeGradingRegistry);
+  if (!parsed.ok) throw new Error(JSON.stringify(parsed.error));
+  return parsed.value;
+};
+const committedRegistration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+if (!committedRegistration.ok) throw new Error(JSON.stringify(committedRegistration.error));
+export const OAKRIDGE_QUESTIONS = committedRegistration.value.questions;
+export function questionVersion(question_id: string): string {
+  const question = OAKRIDGE_QUESTIONS.find((question) => question.question_id === question_id);
+  if (!question) throw new Error(`no committed question ${question_id}`);
+  return question.question_version;
+}
+export const oakridgeProfile = createOakridgeProfile(OAKRIDGE_QUESTIONS);
+export { oakridgeGradingRegistry };
+export const COVERAGE_VALUES = OAKRIDGE_QUESTIONS.find((question) => question.question_id === "task.requirement_coverage")!.allowed_values!;
 
 /** A placeholder for each setting the selection requires. The offline suite never reaches a provider. */
 export function credentialEnv(graders: unknown): Record<string, string> {
-  const runners = configuredRunnerNames(graders);
+  const runners = configuredRunnerNames(graders, oakridgeGradingRegistry);
   if (!runners.ok) throw new Error(runners.error.detail);
   const required = credentialsForRunners(runners.value);
   if (!required.ok) throw new Error(required.error.detail);

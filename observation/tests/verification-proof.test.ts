@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { KbblHealth, ObservationHealth } from "../../kbbl/core/server/handlers/observation-health";
 import { err, ok } from "../src/domain/primitives";
-import { parseGraderConfiguration, planRegistration } from "../src/grading/configuration";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { machineGraders, parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
+import { oakridgeGradingRegistry } from "./grading-fixture";
 import { ASSESSMENT_FINDING_KIND, FINDING_KIND } from "../src/producers/oakridge/catalogue";
 import { runProof } from "../verification/proof";
 import { editedGraders, registrationScenario, type RegistrationSource } from "../verification/registration";
@@ -218,7 +218,7 @@ describe("a run's capture", () => {
 });
 
 test("a relations run that gave the proof none of its steps cannot read as a pass", async () => {
-  const graders = await Bun.file(resolve(import.meta.dir, "../graders.json")).text();
+  const graders = await Bun.file(resolve(import.meta.dir, "../grading-definitions.json")).text();
   const run = { run_id: "run-1", definition_id: "definition-1" };
   const report = await relationsScenario(fakeIo({ readGraders: async () => graders }), { shared_input: {} as SourceRunInput,
     run: async () => ({ report: { id: "source-run", status: "passed", checks: [], evidence: NO_EVIDENCE }, run }),
@@ -555,11 +555,11 @@ describe("the stack's startup wait", () => {
 });
 
 describe("the registration scenario", () => {
-  const committedText = readFileSync(resolve(repository, "observation/graders.json"), "utf8");
+  const committedText = readFileSync(resolve(repository, "observation/grading-definitions.json"), "utf8");
   const plan = (text: string) => {
-    const parsed = parseGraderConfiguration(JSON.parse(text));
+    const parsed = parseGradingDefinitions(JSON.parse(text), oakridgeGradingRegistry);
     if (!parsed.ok) throw new Error(parsed.error.detail);
-    const registration = planRegistration(parsed.value, oakridgeProfile.questions);
+    const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
     if (!registration.ok) throw new Error(registration.error.detail);
     return registration.value;
   };
@@ -571,7 +571,7 @@ describe("the registration scenario", () => {
     readonly never_arrives?: boolean; readonly unstable_evidence?: boolean; readonly drops_correctness?: boolean;
     readonly wrong_commit?: boolean; readonly forgets_evidence?: boolean }
 
-  /** A shadow whose observation registers whatever graders.json held when it last started, pins
+  /** A shadow whose observation registers whatever grading-definitions.json held when it last started, pins
    * each captured item with the selection running at its capture, and reads a cited file only
    * while the launch repository is in place. */
   function shadow(options: ShadowOptions = {}) {
@@ -738,12 +738,12 @@ describe("the registration scenario", () => {
     expect(stack.withheld()).toBe(false);
   });
 
-  test("the edit changes only graders.json and keeps every runner and model", () => {
-    const committed = parseGraderConfiguration(JSON.parse(committedText));
+  test("the edit changes only grading-definitions.json and keeps every runner and model", () => {
+    const committed = parseGradingDefinitions(JSON.parse(committedText), oakridgeGradingRegistry);
     if (!committed.ok) throw new Error(committed.error.detail);
     const edited = editedGraders(committed.value);
-    expect(edited.questions.flatMap((entry) => entry.graders.map((grader) => [grader.runner, grader.model])))
-      .toEqual(committed.value.questions.flatMap((entry) => entry.graders.map((grader) => [grader.runner, grader.model])));
-    expect(planRegistration(edited, oakridgeProfile.questions).ok).toBe(true);
+    expect(edited.flatMap((entry) => machineGraders(entry).map((grader) => [grader.runner, grader.model])))
+      .toEqual(committed.value.flatMap((entry) => machineGraders(entry).map((grader) => [grader.runner, grader.model])));
+    expect(planRegistration(edited, oakridgeGradingRegistry).ok).toBe(true);
   });
 });

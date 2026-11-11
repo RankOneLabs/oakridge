@@ -1,10 +1,10 @@
 /**
  * Startup registration, capture pins and per-question evidence on the real shadow, across a
- * graders.json edit and restart, with a required lookup forced to wait on a real capture:
+ * grading-definitions.json edit and restart, with a required lookup forced to wait on a real capture:
  *
  *   start on the committed selection -> launch a real run and stop observation while it runs to
  *   its assessment -> withhold the launch repository holding the assessed commit and restart, so
- *   observation captures the run and its file-citing questions wait -> edit graders.json and
+ *   observation captures the run and its file-citing questions wait -> edit grading-definitions.json and
  *   restart: the edit registers new definitions, the first run keeps its pins and still waits ->
  *   supply the repository and restart: the same questions become ready on their original pins,
  *   reading each cited file at the assessed commit -> capture a second real run with observation
@@ -12,14 +12,14 @@
  *   every later revision and link -> nothing executed, called a provider or answered throughout.
  *
  * Both runs are real development runs launched through source-run on the same stack. The
- * committed graders.json and the withheld repository are restored whatever happens. This
+ * committed grading-definitions.json and the withheld repository are restored whatever happens. This
  * scenario sends no provider request; automatic-execution-lifecycle continues it with real
  * executions.
  */
 import { err, ok, type Result } from "../src/domain/primitives";
-import { parseGraderConfiguration, planRegistration, type GraderConfiguration, type GradingRegistration } from "../src/grading/configuration";
+import { parseGradingDefinitions, planRegistration, type GradingDefinitions, type GradingRegistration } from "../src/grading/configuration";
 import { citationsOf, parseFileCitation } from "../src/producers/oakridge/evidence";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { NO_EVIDENCE, scenarioStatus, type FrozenEvidenceReadback, type PinReadback, type ProofCheck, type ProofFailure, type ReferenceReadback,
   type RegistrationReadback, type RunReference, type ScenarioReport } from "./proof-contract";
 import { awaitRunCapture, runCaptureChecks } from "./run-capture";
@@ -57,37 +57,38 @@ export interface RegistrationSource {
 }
 
 /** The edit an operator makes to swap graders: new instructions for every configured grader.
- * Only graders.json changes; the runner and model stay real so a later cohort can execute them. */
-export function editedGraders(configuration: GraderConfiguration): GraderConfiguration {
-  return { questions: configuration.questions.map((entry) => ({ ...entry, graders: entry.graders.map((grader) => {
+ * Only grading-definitions.json changes; the runner and model stay real so a later cohort can execute them. */
+export function editedGraders(configuration: GradingDefinitions): GradingDefinitions {
+  return configuration.map((entry) => ({ ...entry, evaluators: entry.evaluators.map((grader) => {
+    if (!("model" in grader)) return grader;
     const recipe = grader.instructions as { readonly system_one?: { readonly instructions?: unknown } } | null;
     const text = recipe?.system_one?.instructions;
     return typeof text === "string" && recipe?.system_one
       ? { ...grader, instructions: { ...recipe, system_one: { ...recipe.system_one, instructions: `${text} Use only the evidence given.` } } }
       : { ...grader, estimated_cost_per_call: grader.estimated_cost_per_call + 0.001 };
-  }) })) };
+  }) }));
 }
 
-/** The committed graders.json, its edit, and the registration each plans. */
+/** The committed grading-definitions.json, its edit, and the registration each plans. */
 export interface GraderPlans {
-  readonly committed: GraderConfiguration;
-  readonly edited: GraderConfiguration;
+  readonly committed: GradingDefinitions;
+  readonly edited: GradingDefinitions;
   readonly committed_plan: GradingRegistration;
   readonly edited_plan: GradingRegistration;
 }
 const planFailure = (entity_id: string, detail: string): ProofFailure => ({ operation: "plan_registration", entity_id, detail });
 
-function planned(configuration: GraderConfiguration, entity_id: string): Result<GradingRegistration, ProofFailure> {
-  const registration = planRegistration(configuration, oakridgeProfile.questions);
+function planned(configuration: GradingDefinitions, entity_id: string): Result<GradingRegistration, ProofFailure> {
+  const registration = planRegistration(configuration, oakridgeGradingRegistry);
   return registration.ok ? registration : err(planFailure(entity_id, `${registration.error.kind}: ${registration.error.detail}`));
 }
-function parsed(text: string): Result<GraderConfiguration, ProofFailure> {
+function parsed(text: string): Result<GradingDefinitions, ProofFailure> {
   let json: unknown;
-  try { json = JSON.parse(text); } catch (cause) { return err(planFailure("graders.json", cause instanceof Error ? cause.message : String(cause))); }
-  const configuration = parseGraderConfiguration(json);
-  return configuration.ok ? configuration : err(planFailure("graders.json", configuration.error.detail));
+  try { json = JSON.parse(text); } catch (cause) { return err(planFailure("grading-definitions.json", cause instanceof Error ? cause.message : String(cause))); }
+  const configuration = parseGradingDefinitions(json, oakridgeGradingRegistry);
+  return configuration.ok ? configuration : err(planFailure("grading-definitions.json", configuration.error.detail));
 }
-/** Parses the committed graders.json, derives the edit and plans both registrations. */
+/** Parses the committed grading-definitions.json, derives the edit and plans both registrations. */
 export function graderPlans(text: string): Result<GraderPlans, ProofFailure> {
   const committed = parsed(text);
   if (!committed.ok) return committed;
@@ -383,11 +384,11 @@ export function laterRevisionChecks(snapshots: readonly RunReadback[], final: Ru
 
 export async function registrationScenario(io: ProofIo, source: RegistrationSource): Promise<ScenarioReport> {
   if (await io.stackAnswers()) return { id: "registration", status: "failed", evidence: NO_EVIDENCE,
-    checks: [check("this proof owns the stack", false, "a shadow is already running; this proof restarts it with an edited graders.json")] };
+    checks: [check("this proof owns the stack", false, "a shadow is already running; this proof restarts it with an edited grading-definitions.json")] };
   const original = await io.readGraders();
   const plans = graderPlans(original);
   if (!plans.ok) return { id: "registration", status: "failed", evidence: NO_EVIDENCE,
-    checks: [check("graders.json and its edit plan a registration", false, `${plans.error.entity_id}: ${plans.error.detail}`)] };
+    checks: [check("grading-definitions.json and its edit plan a registration", false, `${plans.error.entity_id}: ${plans.error.detail}`)] };
   const { edited, committed_plan, edited_plan } = plans.value;
   const checks: ProofCheck[] = [];
   const registrations: RegistrationReadback[] = [];

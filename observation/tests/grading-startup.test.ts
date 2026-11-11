@@ -4,19 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "kysely";
 import type { JsonValue } from "../src/domain/primitives";
-import { parseGraderConfiguration, planRegistration, type GraderConfiguration } from "../src/grading/configuration";
+import { parseGradingDefinitions, planRegistration, type GradingDefinitions } from "../src/grading/configuration";
 import type { EvidenceSet } from "../src/grading/evidence";
 import type { SourceEventCursor, SourceEventOutcome } from "../src/ingest/cursor";
 import type { RepositoryFile, RepositoryReader } from "../src/ports/artifact-source";
 import { TASK_SCOPE } from "../src/producers/oakridge/catalogue";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/questions";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
+import { oakridgeProfile, oakridgeGradingRegistry } from "./grading-fixture";
 import { startObservation } from "../src/main";
 import type { RunnerResolver } from "../src/grading/worker";
 import type { GradeRunner } from "../src/ports/grade-runner";
 import { withTenant, type Database } from "../src/storage/database";
 import { declareRelationInTransaction } from "../src/storage/projection-store";
-import { committedGraders, credentialEnv, databaseUrl, fixtureBody, integration, launchOutcome, revisionOutcome, runConfig, scratchDatabase,
+import { committedDefinitions, credentialEnv, databaseUrl, fixtureBody, integration, launchOutcome, revisionOutcome, runConfig, scratchDatabase,
   tenant } from "./grading-fixture";
 
 const HEAD = "1111111111111111111111111111111111111111";
@@ -39,7 +39,7 @@ function repository(): RepositoryReader & { accessible: boolean; reads: string[]
 
 interface Service { readonly port: number; stop(): Promise<void> }
 interface Harness {
-  start(graders: GraderConfiguration | unknown, runners?: RunnerResolver): Promise<Service>;
+  start(graders: GradingDefinitions | unknown, runners?: RunnerResolver): Promise<Service>;
   send(service: Service, outcome: SourceEventOutcome): Promise<void>;
   get(service: Service, path: string): Promise<unknown>;
 }
@@ -49,11 +49,11 @@ async function harness(db: Database, reader: RepositoryReader, directory: string
   const url = await databaseUrl(db);
   return {
     async start(graders, runners) {
-      const graders_file = join(directory, `graders-${++sequence}.json`);
-      await Bun.write(graders_file, JSON.stringify(graders));
+      const grading_definitions_file = join(directory, `graders-${++sequence}.json`);
+      await Bun.write(grading_definitions_file, JSON.stringify(graders));
       return startObservation({ ...credentialEnv(graders), OBSERVATION_DATABASE_URL: url, OBSERVATION_PORT: "0",
         OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest), OBSERVATION_READ_CREDENTIALS: JSON.stringify(credentials.read),
-        OBSERVATION_GRADE_CREDENTIALS: JSON.stringify(credentials.grade) }, { graders_file, repository: reader, runners, worker_idle_ms: 20 });
+        OBSERVATION_GRADE_CREDENTIALS: JSON.stringify(credentials.grade) }, { grading_definitions_file, repository: reader, runners, worker_idle_ms: 20 });
     },
     async send(service, outcome) {
       const next = { commit_txid: String(Number(cursor.commit_txid) + 1), id: outcome.event_id };
@@ -112,16 +112,16 @@ async function counts(db: Database): Promise<Record<string, number>> {
     (SELECT count(*)::integer FROM observation.grading_provider_attempt) AS attempts,
     (SELECT count(*)::integer FROM observation.grade_observation) AS answers`.execute(trx)).rows[0]!);
 }
-async function configured(): Promise<GraderConfiguration> {
-  const parsed = parseGraderConfiguration(await committedGraders());
+async function configured(): Promise<GradingDefinitions> {
+  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   return parsed.value;
 }
-/** The swap an operator makes: the same runners with another model. Only graders.json changes. */
-const swapped = (configuration: GraderConfiguration): GraderConfiguration => ({ questions: configuration.questions.map((entry) =>
-  ({ ...entry, graders: entry.graders.map((grader) => ({ ...grader, model: `${grader.model}-swapped` })) })) });
-const pinsOf = (configuration: GraderConfiguration, question_id: string) => {
-  const planned = planRegistration(configuration, oakridgeProfile.questions);
+/** The swap an operator makes: the same runners with another model. Only grading-definitions.json changes. */
+const swapped = (configuration: GradingDefinitions): GradingDefinitions => configuration.map((entry) =>
+  ({ ...entry, evaluators: entry.evaluators.map((grader) => "model" in grader ? { ...grader, model: `${grader.model}-swapped` } : grader) }));
+const pinsOf = (configuration: GradingDefinitions, question_id: string) => {
+  const planned = planRegistration(configuration, oakridgeGradingRegistry);
   if (!planned.ok) throw new Error(planned.error.detail);
   return planned.value.capture.pins.find((pin) => pin.question_id === question_id)!.evaluator_definition_ids;
 };
@@ -135,7 +135,7 @@ async function withHarness(work: (db: Database, h: Harness, reader: ReturnType<t
 
 integration("startup registers the configured definitions and reports them, and a restart registers nothing new", async () => withHarness(async (db, h) => {
   const configuration = await configured();
-  const planned = planRegistration(configuration, oakridgeProfile.questions);
+  const planned = planRegistration(configuration, oakridgeGradingRegistry);
   if (!planned.ok) throw new Error(planned.error.detail);
   const first = await h.start(configuration);
   const health = await (await fetch(`http://127.0.0.1:${first.port}/health`)).json() as { graders: unknown };
@@ -156,14 +156,31 @@ integration("startup refuses an unknown runner or a missing key, clearly and bef
     OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest) };
   const directory = await mkdtemp(join(tmpdir(), "observation-unknown-"));
   try {
-    const graders_file = join(directory, "graders.json");
-    await Bun.write(graders_file, JSON.stringify({ questions: configuration.questions.map((entry) =>
-      ({ ...entry, graders: entry.graders.map((grader) => ({ ...grader, runner: "stub_model" })) })) }));
-    await expect(startObservation(env, { graders_file })).rejects.toThrow("observation cannot start: unknown_runner: stub_model");
-    await expect(startObservation(env, { graders_file: join(directory, "absent.json") })).rejects.toThrow("observation cannot start: invalid_graders");
+    const grading_definitions_file = join(directory, "grading-definitions.json");
+    await Bun.write(grading_definitions_file, JSON.stringify(configuration.map((entry) =>
+      ({ ...entry, evaluators: entry.evaluators.map((grader) => ({ ...grader, runner: "stub_model" })) }))));
+    await expect(startObservation(env, { grading_definitions_file })).rejects.toThrow("observation cannot start: unknown_runner: finding.relevance:stub_model");
+    await Bun.write(grading_definitions_file, "{invalid JSON");
+    await expect(startObservation(env, { grading_definitions_file })).rejects.toThrow("observation cannot start: invalid_definitions:");
+    await expect(startObservation(env, { grading_definitions_file: join(directory, "absent.json") })).rejects.toThrow("observation cannot start: invalid_definitions");
   } finally { await rm(directory, { recursive: true, force: true }); }
   const { [Object.keys(credentialEnv(configuration))[0]!]: _missing, ...keyless } = env;
   await expect(startObservation(keyless)).rejects.toThrow(/observation cannot start: missing_credential: /);
+  expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
+}));
+
+integration("startup refuses a question with no evidence collector before registering anything", async () => withHarness(async (db) => {
+  const configuration = await configured();
+  const env = { ...credentialEnv(configuration), OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0",
+    OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest) };
+  const directory = await mkdtemp(join(tmpdir(), "observation-unsupported-question-"));
+  try {
+    const grading_definitions_file = join(directory, "grading-definitions.json");
+    const renamed = configuration.map((entry, index) => index === 0 ? { ...entry, id: "finding.relevnce" } : entry);
+    await Bun.write(grading_definitions_file, JSON.stringify(renamed));
+    await expect(startObservation(env, { grading_definitions_file }))
+      .rejects.toThrow("observation cannot start: unknown_question: finding.relevnce: id: no evidence collector is registered for this question");
+  } finally { await rm(directory, { recursive: true, force: true }); }
   expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
 }));
 
@@ -195,7 +212,7 @@ integration("not-ready capture, config swap and restart, readiness arrival and a
   for (const set of [...citedBefore, ...uncitedBefore]) expect(set.pinned_evaluator_definition_ids).toEqual(pinsOf(before, set.question_id));
   await first.stop();
 
-  // The swap is a graders.json edit and a restart. Nothing already captured is repinned or regraded.
+  // The swap is a grading-definitions.json edit and a restart. Nothing already captured is repinned or regraded.
   const second = await h.start(after);
   expect((await evidenceOf(h, second, cited)).map((set) => set.pinned_evaluator_definition_ids)).toEqual(citedBefore.map((set) => set.pinned_evaluator_definition_ids));
   expect(question(await evidenceOf(h, second, uncited), EVIDENCE_SUPPORT_ID)).toEqual(question(uncitedBefore, EVIDENCE_SUPPORT_ID));

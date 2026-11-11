@@ -1,8 +1,9 @@
 import type { CompositePath, ExtractionProfile, ProducerProfile, RevisionHeader, RevisionLink, StagedRevision } from "../../ports/producer-profile";
-import { ASSESSMENT_FINDING_KIND, FINDING_KIND, oakridgeCatalogue, TASK_SCOPE } from "./catalogue";
+import { ASSESSMENT_FINDING_KIND, FINDING_KIND, oakridgeCatalogue, OAKRIDGE_SELECTORS, TASK_SCOPE } from "./catalogue";
 import { declaredAnalysisLinks } from "./declarations";
-import { oakridgeEvidence } from "./evidence";
-import { OAKRIDGE_QUESTIONS } from "./questions";
+import { oakridgeEvidence, OAKRIDGE_EVIDENCE_QUESTION_IDS, OAKRIDGE_EVIDENCE_SOURCES } from "./evidence";
+import type { QuestionDefinition } from "../../grading/question";
+import type { GradingRegistry } from "../../grading/configuration";
 
 const extraction: ExtractionProfile = {
   definitions: oakridgeCatalogue,
@@ -28,5 +29,8 @@ const composite: CompositePath = { logical_scope: TASK_SCOPE, relation_type: "as
   stages: [{ stage: "analysis", is_final_on_publication: false }, { stage: "implementation", is_final_on_publication: false },
     { stage: "integration", is_final_on_publication: true }] };
 
-export const oakridgeProfile: ProducerProfile = { producer: "oakridge", extraction, questions: OAKRIDGE_QUESTIONS,
-  evidence: oakridgeEvidence, composite };
+export const oakridgeGradingRegistry: GradingRegistry = { selectors: OAKRIDGE_SELECTORS, evidence_sources: OAKRIDGE_EVIDENCE_SOURCES,
+  evidence_question_ids: OAKRIDGE_EVIDENCE_QUESTION_IDS };
+
+export const oakridgeProfile = (questions: readonly QuestionDefinition[]): ProducerProfile =>
+  ({ producer: "oakridge", extraction, questions, evidence: oakridgeEvidence, composite });

@@ -2,10 +2,9 @@ import { expect, test } from "bun:test";
 import { createJevDirectRunner, createSystemOneRunner } from "../src/runners/jev-direct";
 import type { GradingContext } from "../src/grading/runner";
 import { evaluatorIdentity, instructionDigest } from "../src/grading/evaluator";
-import { OAKRIDGE_QUESTIONS } from "../src/producers/oakridge/questions";
+import { OAKRIDGE_QUESTIONS, evidence, evaluator, integration, question, scratchDatabase, tenant } from "./grading-fixture";
 import { withTenant } from "../src/storage/database";
 import { registerEvaluator } from "../src/storage/grading-store";
-import { evidence, evaluator, integration, question, scratchDatabase, tenant } from "./grading-fixture";
 
 const recipe = { system_one: { type: "choice", instructions: "Classify evidence", criteria: {
   faithful: "Meaning preserved", changed: "Meaning changed", insufficient_evidence: "Not enough evidence" } } };

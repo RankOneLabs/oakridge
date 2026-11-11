@@ -65,7 +65,7 @@ export async function replayIntoObservation(input: ReplayInput): Promise<ReplayR
   await withTenant(input.observation, tenant, (trx) => sql`INSERT INTO observation.source_event_cursor
     (producer, namespace, commit_txid, event_id) VALUES (${tenant.producer}, ${tenant.namespace}, ${input.start.commit_txid}::bigint, ${input.start.id})
     ON CONFLICT (producer, namespace) DO UPDATE SET commit_txid = EXCLUDED.commit_txid, event_id = EXCLUDED.event_id`.execute(trx));
-  const app = createApp({ db: input.observation, credentials: { ingest: [{ ...tenant, token: TOKEN }], read: [] }, profile: oakridgeProfile });
+  const app = createApp({ db: input.observation, credentials: { ingest: [{ ...tenant, token: TOKEN }], read: [] }, profile: oakridgeProfile([]) });
   // What the last refused delivery carried, and the exception behind a 500, for the report.
   const failure: { exception: string | null; sent: DeliveryShape | null; response: string | null } =
     { exception: null, sent: null, response: null };

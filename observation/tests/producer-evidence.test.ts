@@ -4,12 +4,12 @@ import type { JsonValue } from "../src/domain/primitives";
 import type { EvidenceReference } from "../src/grading/evidence";
 import type { CapturedRevision, CapturedSources, LinkedItem, RepositoryFile, SourceArtifact } from "../src/ports/artifact-source";
 import { citationsOf, oakridgeEvidence, parseFileCitation } from "../src/producers/oakridge/evidence";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, OAKRIDGE_QUESTIONS, RELEVANCE_ID, TASK_COVERAGE_ID, CONTRIBUTION_COVERAGE_ID, COVERAGE_VALUES } from "../src/producers/oakridge/questions";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID, TASK_COVERAGE_ID, CONTRIBUTION_COVERAGE_ID } from "../src/producers/oakridge/evidence";
+import { OAKRIDGE_QUESTIONS, COVERAGE_VALUES, createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant } from "./grading-fixture";
 import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
 import { readOccurrenceEvidence, collectPinnedQuestion } from "../src/storage/captured-evidence-store";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems } from "../src/storage/projection-store";
-import { createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant } from "./grading-fixture";
 
 const HEAD = "1111111111111111111111111111111111111111";
 const launch = { spec: "The whole spec", repositories: [

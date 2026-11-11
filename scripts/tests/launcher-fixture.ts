@@ -9,6 +9,9 @@ import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openS
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { parseGradingDefinitions, machineGraders } from "../../observation/src/grading/configuration";
+import { oakridgeGradingRegistry } from "../../observation/src/producers/oakridge/profile";
+
 const REPOSITORY = resolve(import.meta.dir, "../..");
 export const LIVE_ENV_FILE = [
   "OBSERVATION_DATABASE_URL=postgres://live:live@127.0.0.1:54329/observation",
@@ -144,8 +147,12 @@ export class LauncherFixture {
   }
 
   writeGraders(...runners: string[]): void {
-    writeFileSync(join(this.checkout, "observation/graders.json"), JSON.stringify({ questions: [{ question_id: "relevance",
-      graders: runners.map((runner) => ({ runner, model: "model", instructions: "grade", estimated_cost_per_call: 1 })) }] }));
+    const parsed = parseGradingDefinitions(JSON.parse(readFileSync(join(REPOSITORY, "observation/grading-definitions.json"), "utf8")), oakridgeGradingRegistry);
+    if (!parsed.ok) throw new Error(parsed.error.detail);
+    const definition = parsed.value[0]!;
+    const grader = machineGraders(definition)[0]!;
+    writeFileSync(join(this.checkout, "observation/grading-definitions.json"), JSON.stringify([{ ...definition,
+      evaluators: runners.map((runner) => ({ ...grader, runner })) }]));
   }
   behave(name: ChildName, behaviour: ObservationBehaviour): void { writeFileSync(join(this.records, `${name}.behaviour`), behaviour); }
   dockerFlag(flag: "refuse-provisioning" | "wrong-binding" | "hang-postgres"): void { writeFileSync(join(this.docker_state, flag), ""); }

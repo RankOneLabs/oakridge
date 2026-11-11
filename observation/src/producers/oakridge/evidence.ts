@@ -1,9 +1,19 @@
+import type { QuestionId } from "../../domain/identity";
 import type { JsonValue } from "../../domain/primitives";
 import type { EvidenceReference, LineRange, NotReadyReason, RepositoryEvidence } from "../../grading/evidence";
 import type { QuestionKey } from "../../grading/question";
 import type { CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, SourceArtifact } from "../../ports/artifact-source";
 import type { EvidenceCollector } from "../../ports/producer-profile";
-import { CONTRIBUTION_COVERAGE_ID, CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID, TASK_COVERAGE_ID } from "./questions";
+export const RELEVANCE_ID = "finding.relevance" as QuestionId;
+export const CORRECTNESS_ID = "assessment_finding.correctness" as QuestionId;
+export const EVIDENCE_SUPPORT_ID = "assessment_finding.evidence_support" as QuestionId;
+export const TASK_COVERAGE_ID = "task.requirement_coverage" as QuestionId;
+export const CONTRIBUTION_COVERAGE_ID = "acceptance_entry.task_coverage" as QuestionId;
+
+/** Reference prefixes emitted by these collectors (numbered refs share their source name). */
+export const OAKRIDGE_EVIDENCE_SOURCES = ["subject", "spec", "build_result", "citation", "test_evidence",
+  "task_context", "spec_task", "requirement", "plan", "contribution_context"] as const;
+
 
 type JsonObject = { readonly [key: string]: JsonValue };
 const objectOf = (value: JsonValue | undefined): JsonObject | null =>
@@ -199,13 +209,22 @@ async function coverage(artifact: SourceArtifact, sources: CapturedSources): Pro
   return ready(references);
 }
 
+type QuestionEvidenceRule = (artifact: SourceArtifact, sources: CapturedSources) => Promise<EvidenceCollection>;
+/** The same registry drives collection and startup validation of supported question ids. */
+const questionCollectors: ReadonlyMap<QuestionId, QuestionEvidenceRule> = new Map([
+  [RELEVANCE_ID, relevance],
+  [CORRECTNESS_ID, correctness],
+  [EVIDENCE_SUPPORT_ID, evidenceSupport],
+  [TASK_COVERAGE_ID, coverage],
+  [CONTRIBUTION_COVERAGE_ID, coverage],
+]);
+export const OAKRIDGE_EVIDENCE_QUESTION_IDS: readonly QuestionId[] = [...questionCollectors.keys()];
+
 /** Each question is collected on its own, so one waiting lookup never delays another question. */
 export const oakridgeEvidence: EvidenceCollector = {
   collect(artifact: SourceArtifact, question: QuestionKey, sources: CapturedSources): Promise<EvidenceCollection> {
-    if (question.question_id === RELEVANCE_ID) return relevance(artifact, sources);
-    if (question.question_id === CORRECTNESS_ID) return correctness(artifact, sources);
-    if (question.question_id === EVIDENCE_SUPPORT_ID) return evidenceSupport(artifact, sources);
-    if (question.question_id === TASK_COVERAGE_ID || question.question_id === CONTRIBUTION_COVERAGE_ID) return coverage(artifact, sources);
-    return Promise.resolve(notReady("unsupported_question", `question ${question.question_id} has no evidence rule`));
+    const collect = questionCollectors.get(question.question_id);
+    return collect ? collect(artifact, sources)
+      : Promise.resolve(notReady("unsupported_question", `question ${question.question_id} has no evidence rule`));
   },
 };

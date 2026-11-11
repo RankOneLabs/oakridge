@@ -4,12 +4,11 @@ import { humanEvaluator } from "../src/grading/configuration";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { createApp } from "../src/http/app";
 import type { Credentials } from "../src/http/ingest-auth";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, OAKRIDGE_QUESTIONS, RELEVANCE_ID } from "../src/producers/oakridge/questions";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
+import { OAKRIDGE_QUESTIONS, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
-import { createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
 
 /** Every request leaving this process counts as a provider call; a submission must make none. */
 const realFetch = globalThis.fetch;
@@ -55,7 +54,7 @@ type Harness = Awaited<ReturnType<typeof setup>>;
 const post = (h: Harness, body: unknown, token: string | null = "grade", occurrence_id: string = h.occurrence_id) => h.app.request(`/v1/items/${encodeURIComponent(occurrence_id)}/answers`,
   { method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
 const answer = (submission_id: string, value: string, extra: Record<string, unknown> = {}) =>
-  ({ question_id: EVIDENCE_SUPPORT_ID, question_version: "1", submission_id, answer: value, ...extra });
+  ({ question_id: EVIDENCE_SUPPORT_ID, question_version: questionVersion(EVIDENCE_SUPPORT_ID), submission_id, answer: value, ...extra });
 const counts = (db: Database) => withTenant(db, tenant, async (trx) => ({
   executions: (await trx.selectFrom("observation.evaluation_execution").select("execution_id").execute()).length,
   observations: (await trx.selectFrom("observation.grade_observation").select("observation_id").execute()).length,
@@ -105,12 +104,12 @@ integration("the answer must be one of the pinned question's choices", async () 
 
 integration("only the selected question's readiness refuses; a ready question on the same item stays answerable with grading off", async () => scratchDatabase(async (db) => {
   const h = await setup(db, false);
-  const waiting = await post(h, { question_id: CORRECTNESS_ID, question_version: "1", submission_id: "c1", answer: "supported" });
+  const waiting = await post(h, { question_id: CORRECTNESS_ID, question_version: questionVersion(CORRECTNESS_ID), submission_id: "c1", answer: "supported" });
   expect(waiting.status).toBe(409);
   expect(await waiting.json()).toMatchObject({ error: { code: "not_ready", refusal: { kind: "not_ready", code: "collection_pending" } } });
   expect((await post(h, answer("s1", "supports"))).status).toBe(201);
   await h.ready(h.correctness.evidence_set_id);
-  expect((await post(h, { question_id: CORRECTNESS_ID, question_version: "1", submission_id: "c1", answer: "contradicted" })).status).toBe(201);
+  expect((await post(h, { question_id: CORRECTNESS_ID, question_version: questionVersion(CORRECTNESS_ID), submission_id: "c1", answer: "contradicted" })).status).toBe(201);
 }));
 
 integration("a human answer shares the frozen evidence machine answers use", async () => scratchDatabase(async (db) => {
@@ -122,7 +121,7 @@ integration("a human answer shares the frozen evidence machine answers use", asy
 
 integration("a question not pinned to the item, an unknown item and another tenant's item are refused", async () => scratchDatabase(async (db) => {
   const h = await setup(db);
-  expect((await post(h, { question_id: RELEVANCE_ID, question_version: "1", submission_id: "r1", answer: "relevant" })).status).toBe(404);
+  expect((await post(h, { question_id: RELEVANCE_ID, question_version: questionVersion(RELEVANCE_ID), submission_id: "r1", answer: "relevant" })).status).toBe(404);
   expect((await post(h, answer("s1", "supports"), "grade", "canonical-json/v1:missing")).status).toBe(404);
   const crossed = await post(h, answer("s1", "supports"), "other-grade");
   expect(crossed.status).toBe(404);

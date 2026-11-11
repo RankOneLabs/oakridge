@@ -28,7 +28,7 @@ import type { GradingRegistration } from "../src/grading/configuration";
 import { AUTOMATIC_ATTEMPT_LABEL, evaluationDigest, submissionAttemptLabel, submissionDigest } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
 import type { SourceEventCursor, SourceEventOutcome } from "../src/ingest/cursor";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { oakridgeProfile as createOakridgeProfile } from "../src/producers/oakridge/profile";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { deliverSourceEvent, readRelationDeclarations } from "../src/storage/capture-store";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
@@ -43,6 +43,7 @@ import { observationSettled, settleObservation } from "./scenarios";
 import type { ProofIo } from "./shadow-session";
 import type { ReviewCheckpoint, SourceRunInput } from "./source-run";
 
+const oakridgeProfile = createOakridgeProfile([]);
 const path = oakridgeProfile.composite;
 const POLL_MS = 1_000;
 const DELIVERY_ATTEMPTS = 180;
@@ -477,7 +478,7 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
   const finish = (): ScenarioReport => ({ id: "relations", status: scenarioStatus(checks), checks, evidence: evidence() });
   const original = await io.readGraders();
   const plans = graderPlans(original);
-  if (!plans.ok) { checks.push(check("graders.json plans a registration", false, plans.error.detail)); return finish(); }
+  if (!plans.ok) { checks.push(check("grading-definitions.json plans a registration", false, plans.error.detail)); return finish(); }
   const started = await io.startStack();
   checks.push(check("the stack starts on the committed selection", started.ok, started.ok ? "answered" : started.error.detail));
   if (!started.ok) return finish();

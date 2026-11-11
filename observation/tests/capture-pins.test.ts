@@ -2,14 +2,13 @@ import { expect } from "bun:test";
 import { sql } from "kysely";
 import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../src/domain/identity";
 import { COLLECTION_PENDING } from "../src/grading/evidence";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, OAKRIDGE_QUESTIONS, RELEVANCE_ID } from "../src/producers/oakridge/questions";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
+import { OAKRIDGE_QUESTIONS, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 import { collectPinnedQuestion, readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { withTenant, type Database } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems, projectRevisionInTransaction } from "../src/storage/projection-store";
-import { createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 
 const pinsFor = (...evaluators: readonly string[]): CaptureConfiguration => ({ pins: OAKRIDGE_QUESTIONS.map((question) => ({
   question_id: question.question_id, question_version: question.question_version, item_kind: question.item_kind,
@@ -35,7 +34,7 @@ integration("capture pins each applicable question and full evaluator set, not r
   const [assessment] = await occurrences(db, "assessment_finding");
   const pinned = await readOccurrenceEvidence(db, tenant, assessment!);
   expect(pinned.map((set) => set.question_id)).toEqual([CORRECTNESS_ID, EVIDENCE_SUPPORT_ID]);
-  for (const set of pinned) expect(set).toMatchObject({ question_version: "1", pinned_evaluator_definition_ids: ["grader-a", "operator"],
+  for (const set of pinned) expect(set).toMatchObject({ question_version: questionVersion(set.question_id), pinned_evaluator_definition_ids: ["grader-a", "operator"],
     readiness: { state: "not_ready", reason: COLLECTION_PENDING } });
   const [finding] = await occurrences(db, "finding");
   expect((await readOccurrenceEvidence(db, tenant, finding!)).map((set) => set.question_id)).toEqual([RELEVANCE_ID]);

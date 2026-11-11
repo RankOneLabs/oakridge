@@ -8,14 +8,13 @@ import type { CaptureConfiguration } from "../src/grading/evidence";
 import { evaluationDigest, submissionAttemptLabel, submissionDigest } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
 import type { SourceEventOutcome } from "../src/ingest/cursor";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, OAKRIDGE_QUESTIONS, RELEVANCE_ID } from "../src/producers/oakridge/questions";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
+import { OAKRIDGE_QUESTIONS, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { listRunComposites, listRunUnlinkedItems, listRunUnresolvedReferences, readCompositeDrilldown, readLogicalItemComposite, readLogicalItemLineage } from "../src/storage/grading-record-store";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems } from "../src/storage/projection-store";
-import { createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 
 const path = oakridgeProfile.composite;
 const all = { limit: 200, offset: 0 };

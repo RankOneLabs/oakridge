@@ -1,19 +1,18 @@
 import { expect, test } from "bun:test";
 import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../src/domain/identity";
 import { ok, type JsonValue } from "../src/domain/primitives";
-import { parseGraderConfiguration, planRegistration } from "../src/grading/configuration";
+import { parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
 import { gradeNext } from "../src/grading/worker";
 import type { CapturedRevision, CapturedSources, SourceArtifact } from "../src/ports/artifact-source";
 import { oakridgeEvidence } from "../src/producers/oakridge/evidence";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
-import { CONTRIBUTION_COVERAGE_ID, TASK_COVERAGE_ID } from "../src/producers/oakridge/questions";
+import { oakridgeGradingRegistry, committedDefinitions, createFeed, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
+import { CONTRIBUTION_COVERAGE_ID, TASK_COVERAGE_ID } from "../src/producers/oakridge/evidence";
 import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
 import { collectPinnedQuestion, pinOccurrenceInTransaction, readOccurrenceEvidence } from "../src/storage/captured-evidence-store";
 import { withTenant } from "../src/storage/database";
 import { createEvidenceReconciler } from "../src/storage/evidence-pipeline";
 import { readItemMeasurements } from "../src/storage/execution-store";
 import { registerDefinitions } from "../src/storage/grading-store";
-import { committedGraders, createFeed, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
 
 const TASK = { id: "T1", description: "Add organization reads", requirement_ids: ["R1"] };
 const requirement = { id: "R1", description: "Organizations expose their opportunities", status: "implementable" };
@@ -76,9 +75,9 @@ test("an unassigned contribution never guesses a spec task from similar wording"
 });
 
 integration("tasks, plan contributions and briefs freeze their original context and execute through the ordinary worker", async () => scratchDatabase(async (db) => {
-  const parsed = parseGraderConfiguration(await committedGraders());
+  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
-  const registration = planRegistration(parsed.value, oakridgeProfile.questions);
+  const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   const registered = await registerDefinitions(db, tenant, registration.value);
   if (!registered.ok) throw new Error(registered.error.detail);
@@ -122,9 +121,9 @@ integration("tasks, plan contributions and briefs freeze their original context 
 }));
 
 integration("an explicit coverage upgrade adds only the new question and leaves prior capture pins unchanged", async () => scratchDatabase(async (db) => {
-  const parsed = parseGraderConfiguration(await committedGraders());
+  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
-  const registration = planRegistration(parsed.value, oakridgeProfile.questions);
+  const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   await registerDefinitions(db, tenant, registration.value);
   const old = { pins: registration.value.capture.pins.filter((pin) => pin.question_id !== TASK_COVERAGE_ID) };

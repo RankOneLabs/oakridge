@@ -5,7 +5,7 @@
  *   start on the committed selection -> an enabled run's analysis is answered by the configured
  *   provider before the run has any task -> a run with grading off gets human-ready evidence and
  *   sends nothing -> an enabled run captured while its launch repository is withheld answers its
- *   ready questions while file-citing ones wait -> edit graders.json (new instructions, and an
+ *   ready questions while file-citing ones wait -> edit grading-definitions.json (new instructions, and an
  *   estimate per call that lets one request fit the run allowance) and restart: the waits keep their
  *   pins and are not admitted -> supply the repository and restart: they are answered with the
  *   evaluators pinned at capture -> an enabled run captured under the edit is measured with the new
@@ -22,16 +22,17 @@
  * At every checkpoint the proof keeps each run's captured launch config beside the authority's, every
  * question and evaluator pin, and the frozen evidence references; a missing readback fails the proof.
  * Every run is a real development run on the same stack. Grades and provider failures write nothing
- * to Oakridge: each run's authority events are counted before and after its grading. graders.json,
+ * to Oakridge: each run's authority events are counted before and after its grading. grading-definitions.json,
  * the withheld repository and the provider settings are restored whatever happens.
  */
+import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canonicalDigest } from "canonical-json";
 import type { JsonValue, Result } from "../src/domain/primitives";
 import { fitsRunAllowance } from "../src/grading/budget";
-import type { GraderConfiguration, GradingRegistration } from "../src/grading/configuration";
+import type { GradingDefinitions, GradingRegistration } from "../src/grading/configuration";
 import type { ClaimResult, ExecutionClaim, SettlementResult } from "../src/grading/execution";
 import { configuredRunnerNames, credentialsForRunners, parseEnvFile } from "../src/grading/provider-credentials";
 import { settleClaim, type RunnerResolver } from "../src/grading/worker";
@@ -94,16 +95,16 @@ export interface GradingSource {
 }
 
 /** The committed instructions with an estimate that lets exactly two requests of a run fit. */
-export function concurrencyEdit(configuration: GraderConfiguration): GraderConfiguration {
-  return { questions: configuration.questions.map((entry) => ({ ...entry,
-    graders: entry.graders.map((grader) => ({ ...grader, estimated_cost_per_call: CONCURRENT_ESTIMATE_PER_CALL })) })) };
+export function concurrencyEdit(configuration: GradingDefinitions): GradingDefinitions {
+  return configuration.map((entry) => ({ ...entry,
+    evaluators: entry.evaluators.map((grader) => "model" in grader ? { ...grader, estimated_cost_per_call: CONCURRENT_ESTIMATE_PER_CALL } : grader) }));
 }
 
 /** The edit swapped in mid-scenario: new instructions, and an estimate that lets one request per run fit. */
-export function gradingEdit(configuration: GraderConfiguration): GraderConfiguration {
+export function gradingEdit(configuration: GradingDefinitions): GradingDefinitions {
   const edited = editedGraders(configuration);
-  return { questions: edited.questions.map((entry) => ({ ...entry,
-    graders: entry.graders.map((grader) => ({ ...grader, estimated_cost_per_call: EDITED_ESTIMATE_PER_CALL })) })) };
+  return edited.map((entry) => ({ ...entry,
+    evaluators: entry.evaluators.map((grader) => "model" in grader ? { ...grader, estimated_cost_per_call: EDITED_ESTIMATE_PER_CALL } : grader) }));
 }
 
 interface ServedItem { readonly occurrence_id: string; readonly revision_id: string; readonly json_pointer: string; readonly item_kind: string }
@@ -436,9 +437,9 @@ export function secondWorkerChecks(read: SecondWorkerReadback): readonly ProofCh
   ];
 }
 
-/** The shadow's real provider settings, only those the runners graders.json selects can read. */
+/** The shadow's real provider settings, only those the runners grading-definitions.json selects can read. */
 export async function providerSettings(io: ProofIo): Promise<Readonly<Record<string, string>>> {
-  const runners = configuredRunnerNames(JSON.parse(await io.readGraders()));
+  const runners = configuredRunnerNames(JSON.parse(await io.readGraders()), oakridgeGradingRegistry);
   if (!runners.ok) throw new Error(runners.error.detail);
   const credentials = credentialsForRunners(runners.value);
   if (!credentials.ok) throw new Error(credentials.error.detail);
@@ -447,10 +448,10 @@ export async function providerSettings(io: ProofIo): Promise<Readonly<Record<str
     .flatMap((setting) => { const value = real.get(setting); return value ? [[setting, value]] : []; }));
 }
 
-/** Settings for every runner graders.json selects, from the shadow's real provider file: the key replaced, or the endpoint moved. */
+/** Settings for every runner grading-definitions.json selects, from the shadow's real provider file: the key replaced, or the endpoint moved. */
 async function providerVariant(io: ProofIo, directory: string, name: string, change: (setting: string, value: string) => string | null)
   : Promise<string> {
-  const runners = configuredRunnerNames(JSON.parse(await io.readGraders()));
+  const runners = configuredRunnerNames(JSON.parse(await io.readGraders()), oakridgeGradingRegistry);
   if (!runners.ok) throw new Error(runners.error.detail);
   const credentials = credentialsForRunners(runners.value);
   if (!credentials.ok) throw new Error(credentials.error.detail);
@@ -485,7 +486,7 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
   const original = await io.readGraders();
   const plans = graderPlans(original);
   if (!plans.ok) return { id: "grading", status: "failed", evidence: NO_EVIDENCE,
-    checks: [check("graders.json and its edit plan a registration", false, `${plans.error.entity_id}: ${plans.error.detail}`)] };
+    checks: [check("grading-definitions.json and its edit plan a registration", false, `${plans.error.entity_id}: ${plans.error.detail}`)] };
   const edit = gradingEdit(plans.value.committed);
   const edited_plan = graderPlans(JSON.stringify(edit));
   if (!edited_plan.ok) return { id: "grading", status: "failed", evidence: NO_EVIDENCE,
