@@ -478,7 +478,7 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
   const finish = (): ScenarioReport => ({ id: "relations", status: scenarioStatus(checks), checks, evidence: evidence() });
   const original = await io.readGraders();
   const plans = graderPlans(original);
-  if (!plans.ok) { checks.push(check("graders.json plans a registration", false, plans.error.detail)); return finish(); }
+  if (!plans.ok) { checks.push(check("grading-definitions.json plans a registration", false, plans.error.detail)); return finish(); }
   const started = await io.startStack();
   checks.push(check("the stack starts on the committed selection", started.ok, started.ok ? "answered" : started.error.detail));
   if (!started.ok) return finish();
