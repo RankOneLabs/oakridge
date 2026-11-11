@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import type { ObservationJsonValue } from "../grading-contracts/domain/primitives";
 import type { ObservationGradeObservationId, ObservationReviewerId } from "../grading-contracts/domain/identity";
 import type { ObservationAnswerCount, ObservationPaged } from "../grading-contracts/grading/composite";
 import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
@@ -8,7 +9,7 @@ import type { ObservationHumanSubmissionAcknowledgment } from "../grading-contra
 import type { ObservationQuestionStatusResponse } from "../grading-contracts/storage/grading-record-store";
 import { id, itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
-import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, stagePublicationLabel, taskLinkLabel } from "./grading";
+import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemHeader, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, stagePublicationLabel, taskLinkLabel } from "./grading";
 
 const empty = <Item,>(): ObservationPaged<Item> => ({ items: [], total: 0, limit: 50, offset: 0 });
 const answer = (observation_id: string, supersedes_observation_id: string | null = null): ObservationAnswerRead => ({ observation_id: id(observation_id), execution_id: id(observation_id), occurrence_id: id("o"), evidence_set_id: id("e"),
@@ -186,5 +187,18 @@ describe("artifact glances", () => {
         answer: { state: "answered", kind: "choice", value } }))) })]);
     expect(selectAutomaticGlances(status).map(({ glyph, tone }) => [glyph, tone])).toEqual([
       ["affirmative", "success"], ["partial", "warning"], ["negative", "warning"], ["unclear", "neutral"]]);
+  });
+});
+
+describe("item header fields", () => {
+  test.each(["Plain text", { description: "Description", text: "Other" }, { description: " ", text: "Text" }])("prefers captured prose", (value) => {
+    expect(selectItemHeader(value)).toEqual({ kind: "text", text: typeof value === "string" ? value : value.description?.trim() ? value.description : value.text });
+  });
+  test("assessment finding without prose shows status and task ids", () => {
+    expect(selectItemHeader({ status: "met", task_ids: ["T1"], evidence: [], description: null })).toEqual({ kind: "assessment_finding", status: "met", task_ids: ["T1"] });
+  });
+  const fieldValues: ObservationJsonValue[] = [{ commitSha: "abc123", files: ["a.ts"] }, { status: "met" }, null, [1, false]];
+  test.each(fieldValues)("other captured values keep their fields", (value) => {
+    expect(selectItemHeader(value)).toEqual({ kind: "fields", value });
   });
 });

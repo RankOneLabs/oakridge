@@ -66,6 +66,6 @@ test("only whole artifacts collapse to one-line summaries", () => {
     revision("plan", plan), revision("build_result", build), revision("contribution_context", brief),
     revision("spec", "\n  First line\nSecond line"), revision("contribution_context", plan.cohorts[0]!, "/cohorts/0"), revision("subject", task),
   ].map((reference) => selectEvidenceSummary(decodeEvidenceContent(reference)))).toEqual([
-    "Prepare the operator view. (1 cohorts)", "Render evidence fields", "Operator view (pwa)", "First line", null, null,
+    "Prepare the operator view. (1 cohort)", "Render evidence fields", "Operator view (pwa)", "First line", null, null,
   ]);
 });

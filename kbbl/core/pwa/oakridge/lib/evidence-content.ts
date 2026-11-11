@@ -112,7 +112,7 @@ export function decodeEvidenceContent(reference: ObservationEvidenceReference): 
 export function selectEvidenceSummary(content: EvidenceContent): string | null {
   const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
   switch (content.kind) {
-    case "plan": return `${oneLine(content.value.summary)} (${content.value.cohorts.length} cohorts)`;
+    case "plan": return `${oneLine(content.value.summary)} (${content.value.cohorts.length} ${content.value.cohorts.length === 1 ? "cohort" : "cohorts"})`;
     case "build_result": return oneLine(content.value.summary);
     case "brief": return `${oneLine(content.value.title)} (${content.value.cohort_id})`;
     case "spec_text": return content.value.split(/\r?\n/).find((line) => line.trim() !== "")?.trim() ?? "Spec";
