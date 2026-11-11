@@ -72,7 +72,7 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
         </div>
         {header.kind === "text"
           ? <p className="m-0 whitespace-pre-wrap text-sm text-[var(--text-primary)]">{header.text}</p>
-          : <StructuredValue value={header.kind === "assessment_finding" ? { status: header.status, task_ids: header.task_ids } : header.value} />}
+          : <StructuredValue value={header.value} />}
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-muted)]" data-testid="or-item-task-links">
           <span>{specTaskId === null ? "Linked spec tasks" : "Spec task"}</span>
           {specTaskId !== null && <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(specTaskId)} data-testid="or-item-spec-task">{specTaskId}</Button>}

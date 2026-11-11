@@ -205,7 +205,7 @@ describe("item header fields", () => {
     expect(selectItemHeader(value)).toEqual({ kind: "text", text: typeof value === "string" ? value : value.description?.trim() ? value.description : value.text });
   });
   test("assessment finding without prose shows status and task ids", () => {
-    expect(selectItemHeader({ status: "met", task_ids: ["T1"], evidence: [], description: null })).toEqual({ kind: "assessment_finding", status: "met", task_ids: ["T1"] });
+    expect(selectItemHeader({ status: "met", task_ids: ["T1"], evidence: [], description: null })).toEqual({ kind: "assessment_finding", value: { status: "met", task_ids: ["T1"] } });
   });
   const fieldValues: ObservationJsonValue[] = [{ commitSha: "abc123", files: ["a.ts"] }, { status: "met" }, null, [1, false]];
   test.each(fieldValues)("other captured values keep their fields", (value) => {
