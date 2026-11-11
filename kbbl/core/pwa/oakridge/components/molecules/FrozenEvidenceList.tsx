@@ -1,15 +1,39 @@
+import { useState } from "react";
+import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ObservationPageRequest } from "../../grading-contracts/grading/composite";
+import type { ObservationEvidenceReference } from "../../grading-contracts/grading/evidence";
+import { decodeEvidenceContent, selectEvidenceSummary } from "../../lib/evidence-content";
 import type { ObservationEvidenceRead } from "../../grading-contracts/grading/item-reads";
 import { referenceDisplay } from "../../lib/grading";
 import { artifactLabelClass } from "./ArtifactSection";
-import { ExpandableText } from "./ExpandableText";
+import { EvidenceContentView } from "./EvidenceContentView";
 import { ListPager } from "./ListPager";
 
-const contentText = (content: unknown): string => typeof content === "string" ? content : JSON.stringify(content, null, 2);
+interface FrozenReferenceContentProps { reference: ObservationEvidenceReference }
+interface FrozenEvidenceListProps {
+  evidence: ObservationEvidenceRead;
+  onWindow: (window: ObservationPageRequest) => void;
+}
+
+function FrozenReferenceContent({ reference }: FrozenReferenceContentProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const content = decodeEvidenceContent(reference);
+  const summary = selectEvidenceSummary(content);
+  if (summary === null) return <EvidenceContentView content={content} />;
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="m-0 line-clamp-1 text-xs text-[var(--text-secondary)]">{summary}</p>
+      <Button variant="link" size="xsmall" className="self-start text-xs!" aria-expanded={isExpanded} onClick={() => setIsExpanded(!isExpanded)}>
+        {isExpanded ? "Hide fields" : "Show fields"}
+      </Button>
+      {isExpanded && <EvidenceContentView content={content} />}
+    </div>
+  );
+}
 
 /** The exact frozen references every answer to this question shares. */
-export function FrozenEvidenceList({ evidence, onWindow }: { evidence: ObservationEvidenceRead; onWindow: (window: ObservationPageRequest) => void }) {
+export function FrozenEvidenceList({ evidence, onWindow }: FrozenEvidenceListProps) {
   if (evidence.readiness.state === "not_ready") {
     return <p className="text-sm text-[var(--text-muted)]" data-testid="or-item-evidence-not-ready">Evidence is not ready: {evidence.readiness.reason.detail} ({evidence.readiness.reason.code})</p>;
   }
@@ -29,7 +53,7 @@ export function FrozenEvidenceList({ evidence, onWindow }: { evidence: Observati
                 <span className="break-all font-mono text-xs text-[var(--text-muted)]">{display.location}</span>
                 {display.is_absent && <Chip tone="neutral">Absent at this commit</Chip>}
               </div>
-              {!display.is_absent && reference.content !== null && <ExpandableText text={contentText(reference.content)} className="whitespace-pre-wrap text-xs text-[var(--text-secondary)]" />}
+              {!display.is_absent && reference.content !== null && <FrozenReferenceContent key={`${reference.ref}:${display.location}`} reference={reference} />}
             </li>
           );
         })}

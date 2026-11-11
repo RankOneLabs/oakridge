@@ -8,12 +8,13 @@ import type { ObservationItemAddress } from "../../grading-contracts/grading/ite
 import { useItemAt } from "../../hooks/useItemAt";
 import { useItemLineage } from "../../hooks/useItemLineage";
 import { useItemStatus } from "../../hooks/useItemStatus";
-import { itemSelectionKey, questionLabel, sameQuestion, selectItemText, selectSpecTaskId, stageLabel, taskLinkLabel } from "../../lib/grading";
+import { itemSelectionKey, questionLabel, sameQuestion, selectItemHeader, selectSpecTaskId, stageLabel, taskLinkLabel } from "../../lib/grading";
 import { useGradingVisibility } from "../../state/gradingVisibility";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
 import { FrozenEvidenceList } from "../molecules/FrozenEvidenceList";
 import { ItemAnswers } from "../molecules/ItemAnswers";
 import { ListPager } from "../molecules/ListPager";
+import { StructuredValue } from "../molecules/StructuredValue";
 import { YourGrade } from "./YourGrade";
 
 const QUESTIONS: ObservationPageRequest = { limit: 200, offset: 0 };
@@ -57,6 +58,7 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
 
   const { item, links, questions, is_grading_enabled: isGradingEnabled } = status.data;
   const specTaskId = selectSpecTaskId(item);
+  const header = selectItemHeader(item.selected_value);
   const question = questions.items[Math.min(selectedIndex, Math.max(0, questions.items.length - 1))] ?? null;
   return (
     <article className="flex flex-col gap-4 p-3" data-testid="or-item-panel" data-occurrence={item.occurrence_id} data-item-path={item.item_path} data-revision={item.source_revision_id}>
@@ -68,7 +70,9 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
           {!item.is_current && <Chip tone="muted">Older revision</Chip>}
           {!isGradingEnabled && <Chip tone="muted" testId="or-item-grading-off">Automatic grading off</Chip>}
         </div>
-        <p className="m-0 whitespace-pre-wrap text-sm text-[var(--text-primary)]">{selectItemText(item.selected_value)}</p>
+        {header.kind === "text"
+          ? <p className="m-0 whitespace-pre-wrap text-sm text-[var(--text-primary)]">{header.text}</p>
+          : <StructuredValue value={header.value} />}
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-muted)]" data-testid="or-item-task-links">
           <span>{specTaskId === null ? "Linked spec tasks" : "Spec task"}</span>
           {specTaskId !== null && <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(specTaskId)} data-testid="or-item-spec-task">{specTaskId}</Button>}
