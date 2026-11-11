@@ -10,7 +10,13 @@ import { artifactLabelClass } from "./ArtifactSection";
 import { EvidenceContentView } from "./EvidenceContentView";
 import { ListPager } from "./ListPager";
 
-function FrozenReferenceContent({ reference }: { reference: ObservationEvidenceReference }) {
+interface FrozenReferenceContentProps { reference: ObservationEvidenceReference }
+interface FrozenEvidenceListProps {
+  evidence: ObservationEvidenceRead;
+  onWindow: (window: ObservationPageRequest) => void;
+}
+
+function FrozenReferenceContent({ reference }: FrozenReferenceContentProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const content = decodeEvidenceContent(reference);
   const summary = selectEvidenceSummary(content);
@@ -27,7 +33,7 @@ function FrozenReferenceContent({ reference }: { reference: ObservationEvidenceR
 }
 
 /** The exact frozen references every answer to this question shares. */
-export function FrozenEvidenceList({ evidence, onWindow }: { evidence: ObservationEvidenceRead; onWindow: (window: ObservationPageRequest) => void }) {
+export function FrozenEvidenceList({ evidence, onWindow }: FrozenEvidenceListProps) {
   if (evidence.readiness.state === "not_ready") {
     return <p className="text-sm text-[var(--text-muted)]" data-testid="or-item-evidence-not-ready">Evidence is not ready: {evidence.readiness.reason.detail} ({evidence.readiness.reason.code})</p>;
   }

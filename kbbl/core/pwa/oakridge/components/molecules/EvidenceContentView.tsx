@@ -3,14 +3,17 @@ import { ExpandableText } from "./ExpandableText";
 import { StructuredValue } from "./StructuredValue";
 import { TestEvidenceBlock } from "./TestEvidenceBlock";
 
-function Field({ label, value }: { label: string; value: unknown }) {
+interface FieldProps { label: string; value: unknown }
+interface EvidenceContentViewProps { content: EvidenceContent }
+
+function Field({ label, value }: FieldProps) {
   return <div className="min-w-0"><dt className="text-xs font-medium text-[var(--text-muted)]">{label}</dt><dd className="m-0 text-xs text-[var(--text-secondary)]">
     {typeof value === "string" ? <ExpandableText text={value} className="whitespace-pre-wrap break-words" /> : <StructuredValue value={value} />}
   </dd></div>;
 }
 
 /** Compact read-only fields from the same validated models as the artifact viewers. */
-export function EvidenceContentView({ content }: { content: EvidenceContent }) {
+export function EvidenceContentView({ content }: EvidenceContentViewProps) {
   const { value } = content;
   switch (content.kind) {
     case "unknown": return <StructuredValue value={value} />;
