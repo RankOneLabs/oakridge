@@ -91,6 +91,7 @@ export interface ObservationCompositeRelation {
 export interface ObservationAnswerDetail extends ObservationCompositeAnswer { readonly grader: ObservationGraderKey }
 
 export interface ObservationMeasurementRead {
+  readonly task_id: ObservationLogicalItemId | null;
   readonly question: ObservationQuestionKey;
   readonly evidence: ObservationEvidenceSet;
   /** Null for a question's own not-ready status, which every evaluator of it shares. */
@@ -141,6 +142,7 @@ export interface ObservationStatusCount { readonly question: ObservationQuestion
 export interface ObservationDisagreementCount { readonly question: ObservationQuestionKey; readonly item_count: number; readonly drilldown: ObservationCompositeDrilldownKey }
 
 export interface ObservationCompositeAnswer {
+  readonly task_id: ObservationLogicalItemId | null;
   readonly observation_id: ObservationGradeObservationId;
   readonly execution_id: ObservationExecutionId;
   readonly occurrence_id: ObservationItemOccurrenceId;

@@ -14,9 +14,9 @@ const GLANCE_WINDOWS = { machine: QUESTIONS, answers: QUESTIONS, attempts: ONE, 
  * arriving after the artifact opened replaces its pending badge without a browser refresh.
  */
 export function useItemGlance(run_id: string, selection: ObservationItemAddress) {
-  return useQuery({ queryKey: ["oakridge", "grading", "item-glance", run_id, selection.source_revision_id, selection.item_path], retry: false, refetchInterval: 10_000,
+  return useQuery({ queryKey: ["oakridge", "grading", "item-glance", run_id, selection.source_revision_id, selection.item_path, selection.task_id], retry: false, refetchInterval: 10_000,
     queryFn: async () => {
       const item = await readItemAt(run_id, selection);
-      return readItemStatus({ occurrence_id: item.occurrence_id, top: QUESTIONS, nested: GLANCE_WINDOWS });
+      return readItemStatus({ occurrence_id: item.occurrence_id, task_id: selection.task_id, top: QUESTIONS, nested: GLANCE_WINDOWS });
     } });
 }

@@ -101,7 +101,7 @@
       "subject",
       "citation",
       "test_evidence"
-    ],
+    , "task_context"],
     "question": {
       "text": "Does this assessment finding's cited evidence support it?",
       "response": "choice",

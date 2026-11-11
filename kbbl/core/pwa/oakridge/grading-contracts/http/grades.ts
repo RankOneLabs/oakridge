@@ -1,13 +1,14 @@
 // Generated from observation/src/http/grading-api.ts. Run bun kbbl/scripts/generate-grading-contracts.ts.
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
-import type { ObservationGradeObservationId, ObservationQuestionId, ObservationReviewerId } from "../domain/identity";
+import type { ObservationGradeObservationId, ObservationLogicalItemId, ObservationQuestionId, ObservationReviewerId } from "../domain/identity";
 import type { ObservationErrorBody } from "./errors";
 import type { ObservationRecordedSubmission, ObservationSubmissionRefusal } from "../storage/grading-store";
 
 export interface ObservationReviewerRead { readonly reviewer_id: ObservationReviewerId }
 
 export interface ObservationHumanSubmissionRequest {
+  readonly task_id?: ObservationLogicalItemId | null;
   readonly question_id: ObservationQuestionId;
   readonly question_version: string;
   readonly submission_id: string;

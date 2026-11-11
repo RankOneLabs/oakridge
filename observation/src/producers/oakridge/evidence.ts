@@ -1,7 +1,7 @@
-import type { QuestionId } from "../../domain/identity";
+import type { LogicalItemId, QuestionId } from "../../domain/identity";
 import type { JsonValue } from "../../domain/primitives";
 import type { EvidenceReference, LineRange, NotReadyReason, RepositoryEvidence } from "../../grading/evidence";
-import type { QuestionKey } from "../../grading/question";
+import type { SubjectQuestion } from "../../grading/evidence";
 import type { CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, SourceArtifact } from "../../ports/artifact-source";
 import type { EvidenceCollector } from "../../ports/producer-profile";
 export const RELEVANCE_ID = "finding.relevance" as QuestionId;
@@ -131,14 +131,16 @@ async function citedEvidence(artifact: SourceArtifact, sources: CapturedSources)
   return { revision, evidence: "waiting" in evidence ? evidence : { references: [...evidence.references, ...testEvidence(revision)] } };
 }
 
-async function evidenceSupport(artifact: SourceArtifact, sources: CapturedSources): Promise<EvidenceCollection> {
+async function evidenceSupport(artifact: SourceArtifact, sources: CapturedSources, task_id: LogicalItemId | null): Promise<EvidenceCollection> {
   const cited = await citedEvidence(artifact, sources);
   if ("state" in cited) return cited;
   if ("waiting" in cited.evidence) return cited.evidence.waiting;
-  return ready([subjectReference(artifact), ...cited.evidence.references]);
+  const task = task_id === null ? null : await sources.readLogicalItemAt({ logical_item_id: task_id, subject_revision_id: artifact.revision_id, artifact_kind: "tasks", item_kind: "task" });
+  if (!task) return notReady("task_unavailable", `task ${task_id} has no captured spec-task definition at ${artifact.revision_id}`);
+  return ready([subjectReference(artifact), ...cited.evidence.references, contextReference(task, 0)]);
 }
 
-async function correctness(artifact: SourceArtifact, sources: CapturedSources): Promise<EvidenceCollection> {
+async function correctness(artifact: SourceArtifact, sources: CapturedSources, task_id: LogicalItemId | null): Promise<EvidenceCollection> {
   const cited = await citedEvidence(artifact, sources);
   if ("state" in cited) return cited;
   if ("waiting" in cited.evidence) return cited.evidence.waiting;
@@ -146,10 +148,11 @@ async function correctness(artifact: SourceArtifact, sources: CapturedSources): 
   // An integration assessment names no build, and that absence alone is not a wait.
   const build = subject_id ? await sources.readRevision(subject_id) : null;
   if (subject_id && !build) return notReady("build_result_unavailable", `build result ${subject_id} is not captured`);
-  const context = await sources.readLinkedItems(artifact.occurrence_id);
+  const task = task_id === null ? null : await sources.readLogicalItemAt({ logical_item_id: task_id, subject_revision_id: artifact.revision_id, artifact_kind: "tasks", item_kind: "task" });
+  if (!task) return notReady("task_unavailable", `task ${task_id} has no captured spec-task definition at ${artifact.revision_id}`);
   return ready([subjectReference(artifact),
     ...(build ? [{ source: "revision", ref: "build_result", revision_id: build.revision_id, item_path: null, content: build.body } as const] : []),
-    ...cited.evidence.references, ...context.map(contextReference)]);
+    ...cited.evidence.references, contextReference(task, 0)]);
 }
 
 /** A task or requirement addressed in its source artifact, preserving its original array position. */
@@ -209,7 +212,7 @@ async function coverage(artifact: SourceArtifact, sources: CapturedSources): Pro
   return ready(references);
 }
 
-type QuestionEvidenceRule = (artifact: SourceArtifact, sources: CapturedSources) => Promise<EvidenceCollection>;
+type QuestionEvidenceRule = (artifact: SourceArtifact, sources: CapturedSources, task_id: LogicalItemId | null) => Promise<EvidenceCollection>;
 /** The same registry drives collection and startup validation of supported question ids. */
 const questionCollectors: ReadonlyMap<QuestionId, QuestionEvidenceRule> = new Map([
   [RELEVANCE_ID, relevance],
@@ -222,9 +225,9 @@ export const OAKRIDGE_EVIDENCE_QUESTION_IDS: readonly QuestionId[] = [...questio
 
 /** Each question is collected on its own, so one waiting lookup never delays another question. */
 export const oakridgeEvidence: EvidenceCollector = {
-  collect(artifact: SourceArtifact, question: QuestionKey, sources: CapturedSources): Promise<EvidenceCollection> {
+  collect(artifact: SourceArtifact, question: SubjectQuestion, sources: CapturedSources): Promise<EvidenceCollection> {
     const collect = questionCollectors.get(question.question_id);
-    return collect ? collect(artifact, sources)
+    return collect ? collect(artifact, sources, question.task_id)
       : Promise.resolve(notReady("unsupported_question", `question ${question.question_id} has no evidence rule`));
   },
 };

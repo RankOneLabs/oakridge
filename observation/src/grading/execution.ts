@@ -1,5 +1,5 @@
 import { canonicalDigest } from "canonical-json";
-import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
+import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, QuestionId } from "../domain/identity";
 import type { CanonicalizationError } from "../domain/errors";
 import type { JsonValue, Result } from "../domain/primitives";
 import type { EvidenceReadiness } from "./evidence";
@@ -9,6 +9,7 @@ import type { QuestionDefinition } from "./question";
 /** What one measurement measures. Grades read this through their execution. */
 export interface EvaluationIdentity {
   readonly subject_occurrence_id: ItemOccurrenceId;
+  readonly task_id: LogicalItemId | null;
   readonly evidence_set_id: EvidenceSetId;
   readonly question_id: QuestionId;
   readonly question_version: string;
@@ -58,7 +59,7 @@ export interface ProviderAttempt {
 }
 
 export function evaluationDigest(identity: EvaluationIdentity): Result<string, CanonicalizationError> {
-  return canonicalDigest([identity.subject_occurrence_id, identity.evidence_set_id, identity.question_id,
+  return canonicalDigest([identity.subject_occurrence_id, identity.task_id, identity.evidence_set_id, identity.question_id,
     identity.question_version, identity.evaluator_definition_id, identity.attempt_label]);
 }
 
@@ -90,6 +91,7 @@ export const AUTOMATIC_ATTEMPT_LABEL = "automatic";
 export interface AdmissionCandidate {
   readonly run_id: string;
   readonly subject_occurrence_id: ItemOccurrenceId;
+  readonly task_id: LogicalItemId | null;
   readonly evidence_set_id: EvidenceSetId;
   readonly question_id: QuestionId;
   readonly question_version: string;
@@ -103,7 +105,7 @@ export type RunAdmission =
   | { readonly kind: "admitted"; readonly run_id: string; readonly admitted: readonly ExecutionId[]; readonly already_admitted: number };
 
 export function automaticIdentity(candidate: AdmissionCandidate): EvaluationIdentity {
-  return { subject_occurrence_id: candidate.subject_occurrence_id, evidence_set_id: candidate.evidence_set_id,
+  return { task_id: candidate.task_id, subject_occurrence_id: candidate.subject_occurrence_id, evidence_set_id: candidate.evidence_set_id,
     question_id: candidate.question_id, question_version: candidate.question_version,
     evaluator_definition_id: candidate.evaluator_definition_id, attempt_label: AUTOMATIC_ATTEMPT_LABEL };
 }

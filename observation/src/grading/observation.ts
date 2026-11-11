@@ -48,6 +48,7 @@ export interface GradeObservationListing extends Omit<GradeObservation, "answer"
   readonly recorded_at: string;
 }
 export interface GradeListingItem {
+  readonly task_id: import("../domain/identity").LogicalItemId | null;
   readonly observation: GradeObservationListing;
   readonly answer: GradeAnswer;
   readonly evaluator: EvaluatorDefinition & {

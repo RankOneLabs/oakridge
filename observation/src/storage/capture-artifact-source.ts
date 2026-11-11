@@ -1,7 +1,7 @@
 import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
-import type { QuestionKey } from "../grading/question";
-import type { ArtifactSource, CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, RepositoryReader,
+import type { SubjectQuestion } from "../grading/evidence";
+import type { ArtifactSource, CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, LogicalItemContextRequest, RepositoryReader,
   SourceArtifact } from "../ports/artifact-source";
 import type { EvidenceCollector } from "../ports/producer-profile";
 import { withTenant, type Database, type TenantScope } from "./database";
@@ -33,7 +33,7 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
     });
   }
 
-  collect(artifact: SourceArtifact, question: QuestionKey): Promise<EvidenceCollection> {
+  collect(artifact: SourceArtifact, question: SubjectQuestion): Promise<EvidenceCollection> {
     return this.dependencies.collector.collect(artifact, question, this);
   }
 
@@ -65,6 +65,18 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
       .orderBy("context.recorded_at", "desc").orderBy("context.captured_at", "desc").orderBy("context.revision_id", "desc")
       .executeTakeFirst());
     return row ? { ...row, revision_id: row.revision_id as ArtifactRevisionId } : null;
+  }
+
+  /** One logical item at the source position and selection requested by the producer. */
+  async readLogicalItemAt(request: LogicalItemContextRequest): Promise<LinkedItem | null> {
+    const revision = await this.readRevisionAt(request.artifact_kind, request.subject_revision_id);
+    if (!revision) return null;
+    const { db, tenant, run_id } = this.dependencies;
+    const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").selectAll()
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("run_id", "=", run_id)
+      .where("revision_id", "=", revision.revision_id).where("logical_item_id", "=", request.logical_item_id).where("item_kind", "=", request.item_kind).executeTakeFirst());
+    return row ? { revision_id: revision.revision_id, item_path: row.json_pointer, item_kind: row.item_kind,
+      selected_value: row.selected_value } : null;
   }
 
   /** Follows only resolved producer edges to a logical item, then that item's occurrences. */

@@ -1,12 +1,13 @@
 // Generated from observation/src/http/grading-api.ts. Run bun kbbl/scripts/generate-grading-contracts.ts.
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
-import type { ObservationEvaluatorDefinitionId, ObservationEvidenceSetId, ObservationExecutionId, ObservationGradeObservationId, ObservationItemOccurrenceId, ObservationReviewerId, ObservationRunId } from "../domain/identity";
+import type { ObservationEvaluatorDefinitionId, ObservationEvidenceSetId, ObservationExecutionId, ObservationGradeObservationId, ObservationItemOccurrenceId, ObservationLogicalItemId, ObservationReviewerId, ObservationRunId } from "../domain/identity";
 import type { ObservationJsonValue } from "../domain/primitives";
 import type { ObservationGradeAnswer } from "../grading/observation";
 import type { ObservationQuestionKey } from "../grading/question";
 
 export interface ObservationRecordedSubmission {
+  readonly task_id: ObservationLogicalItemId | null;
   readonly submission_id: string;
   readonly reviewer_id: ObservationReviewerId;
   readonly observation_id: ObservationGradeObservationId;
@@ -24,6 +25,8 @@ export interface ObservationRecordedSubmission {
 
 export type ObservationSubmissionRefusal =
   | { readonly kind: "item_not_found"; readonly occurrence_id: ObservationItemOccurrenceId }
+  | { readonly kind: "task_required"; readonly question: ObservationQuestionKey }
+  | { readonly kind: "task_not_applicable"; readonly question: ObservationQuestionKey }
   | { readonly kind: "question_not_pinned"; readonly question: ObservationQuestionKey }
   | { readonly kind: "not_ready"; readonly question: ObservationQuestionKey; readonly code: string; readonly detail: string }
   | { readonly kind: "invalid_answer"; readonly question: ObservationQuestionKey; readonly detail: string; readonly allowed_values: readonly ObservationJsonValue[] }

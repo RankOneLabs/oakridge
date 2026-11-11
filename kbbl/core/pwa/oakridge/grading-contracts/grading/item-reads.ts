@@ -9,7 +9,7 @@ import type { ObservationQuestionDefinition, ObservationQuestionKey } from "./qu
 
 export interface ObservationAddressedItem extends ObservationContributionItem, ObservationItemAddress {}
 
-export interface ObservationItemAddress { readonly source_revision_id: ObservationArtifactRevisionId; readonly item_path: string }
+export interface ObservationItemAddress { readonly source_revision_id: ObservationArtifactRevisionId; readonly item_path: string; readonly task_id?: ObservationLogicalItemId | null }
 
 export interface ObservationGradeableItemRow { readonly item: ObservationAddressedItem; readonly links: ObservationPaged<ObservationLogicalLinkRead> }
 
@@ -32,6 +32,8 @@ export interface ObservationDrilldownRowRead {
 }
 
 export interface ObservationDrilldownQuestionRead {
+  readonly task_id: ObservationLogicalItemId | null;
+  readonly is_linked_context: boolean;
   readonly question: ObservationQuestionKey;
   readonly evidence: ObservationEvidenceRead;
   readonly statuses: ObservationPaged<ObservationMeasurementStatusRead>;
@@ -54,6 +56,7 @@ export type ObservationStagePublicationRead =
 export interface ObservationEvidenceRead extends ObservationQuestionKey {
   readonly evidence_set_id: ObservationEvidenceSetId;
   readonly subject_occurrence_id: ObservationItemOccurrenceId;
+  readonly task_id: ObservationLogicalItemId | null;
   readonly pinned_evaluator_definition_ids: ObservationPaged<ObservationEvaluatorDefinitionId>;
   readonly readiness: ObservationEvidenceReadinessRead;
   readonly references: ObservationPaged<ObservationEvidenceReference>;
@@ -69,6 +72,7 @@ export interface ObservationItemStatusRead<Measurement = ObservationJsonValue, A
 }
 
 export interface ObservationQuestionStatusRead<Measurement = ObservationJsonValue, Attempt = ObservationJsonValue> {
+  readonly task_id: ObservationLogicalItemId | null;
   readonly question: ObservationQuestionDefinition;
   readonly evidence: ObservationEvidenceRead;
   readonly human: ObservationHumanReadiness;

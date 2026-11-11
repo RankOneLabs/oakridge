@@ -1,7 +1,7 @@
-import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../domain/identity";
+import type { ArtifactRevisionId, ItemOccurrenceId, LogicalItemId, RunId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import type { EvidenceReference, NotReadyReason } from "../grading/evidence";
-import type { QuestionKey } from "../grading/question";
+import type { SubjectQuestion } from "../grading/evidence";
 
 /** One selected item, addressed by the exact revision and path it was captured from. */
 export interface SourceArtifact {
@@ -21,7 +21,7 @@ export type EvidenceCollection =
 
 export interface ArtifactSource {
   read(occurrence_id: ItemOccurrenceId): Promise<SourceArtifact | null>;
-  collect(artifact: SourceArtifact, question: QuestionKey): Promise<EvidenceCollection>;
+  collect(artifact: SourceArtifact, question: SubjectQuestion): Promise<EvidenceCollection>;
 }
 
 export interface CapturedRevision {
@@ -55,11 +55,18 @@ export interface RepositoryReader {
 }
 
 /** The captured material an evidence collector may read, bounded to one tenant and run. */
+export interface LogicalItemContextRequest {
+  readonly logical_item_id: LogicalItemId;
+  readonly subject_revision_id: ArtifactRevisionId;
+  readonly artifact_kind: string;
+  readonly item_kind: string;
+}
 export interface CapturedSources {
   readRunInput(): Promise<JsonValue | null>;
   readRevision(revision_id: string): Promise<CapturedRevision | null>;
   /** Latest captured artifact in this run at the subject revision's recorded position. Later revisions are excluded. */
   readRevisionAt(artifact_kind: string, subject_revision_id: ArtifactRevisionId): Promise<CapturedRevision | null>;
+  readLogicalItemAt(request: LogicalItemContextRequest): Promise<LinkedItem | null>;
   readLinkedItems(occurrence_id: ItemOccurrenceId): Promise<readonly LinkedItem[]>;
   readonly repository: RepositoryReader;
 }

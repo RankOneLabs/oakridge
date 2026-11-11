@@ -193,6 +193,7 @@ CREATE TABLE observation.evidence_set (
   namespace text NOT NULL,
   evidence_set_id text NOT NULL,
   subject_occurrence_id text NOT NULL,
+  task_id text,
   question_id text NOT NULL,
   question_version text NOT NULL,
   pinned_evaluator_definition_ids text[] NOT NULL,
@@ -205,10 +206,13 @@ CREATE TABLE observation.evidence_set (
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   ready_at timestamptz,
   PRIMARY KEY (producer, namespace, evidence_set_id),
-  UNIQUE (producer, namespace, subject_occurrence_id, question_id, question_version),
+  UNIQUE NULLS NOT DISTINCT (producer, namespace, subject_occurrence_id, task_id, question_id, question_version),
   UNIQUE (producer, namespace, evidence_set_id, subject_occurrence_id, question_id, question_version),
+  UNIQUE (producer, namespace, evidence_set_id, subject_occurrence_id, task_id, question_id, question_version),
   FOREIGN KEY (producer, namespace, subject_occurrence_id)
     REFERENCES observation.item_occurrence(producer, namespace, occurrence_id),
+  FOREIGN KEY (producer, namespace, task_id)
+    REFERENCES observation.logical_item(producer, namespace, logical_item_id),
   FOREIGN KEY (producer, namespace, question_id, question_version)
     REFERENCES observation.question_definition(producer, namespace, question_id, question_version),
   CHECK (evidence_set_id ~ '^canonical-json/v1:[0-9a-f]{64}$'),
@@ -233,6 +237,7 @@ CREATE TABLE observation.evaluation_execution (
   execution_id text NOT NULL,
   run_id text NOT NULL,
   subject_occurrence_id text NOT NULL,
+  task_id text,
   evidence_set_id text NOT NULL,
   question_id text NOT NULL,
   question_version text NOT NULL,
@@ -262,8 +267,12 @@ CREATE TABLE observation.evaluation_execution (
   UNIQUE (producer, namespace, execution_id, run_id),
   FOREIGN KEY (producer, namespace, subject_occurrence_id, run_id)
     REFERENCES observation.item_occurrence(producer, namespace, occurrence_id, run_id),
+  FOREIGN KEY (producer, namespace, evidence_set_id, subject_occurrence_id, task_id, question_id, question_version)
+    REFERENCES observation.evidence_set(producer, namespace, evidence_set_id, subject_occurrence_id, task_id, question_id, question_version),
   FOREIGN KEY (producer, namespace, evidence_set_id, subject_occurrence_id, question_id, question_version)
     REFERENCES observation.evidence_set(producer, namespace, evidence_set_id, subject_occurrence_id, question_id, question_version),
+  FOREIGN KEY (producer, namespace, task_id)
+    REFERENCES observation.logical_item(producer, namespace, logical_item_id),
   FOREIGN KEY (producer, namespace, question_id, question_version)
     REFERENCES observation.question_definition(producer, namespace, question_id, question_version),
   FOREIGN KEY (producer, namespace, evaluator_definition_id)
@@ -278,7 +287,7 @@ CREATE TABLE observation.evaluation_execution (
 );
 CREATE INDEX evaluation_execution_claim ON observation.evaluation_execution(status, lease_expires_at, created_at)
   WHERE status IN ('queued', 'claimed', 'reclaimable');
-CREATE INDEX evaluation_execution_subject ON observation.evaluation_execution(producer, namespace, subject_occurrence_id, question_id, question_version, created_at);
+CREATE INDEX evaluation_execution_subject ON observation.evaluation_execution(producer, namespace, subject_occurrence_id, task_id, question_id, question_version, created_at);
 CREATE INDEX evaluation_execution_run ON observation.evaluation_execution(producer, namespace, run_id, status);
 
 -- One real provider request. Request metadata stays separate from the measurement identity.
@@ -422,9 +431,9 @@ CREATE FUNCTION observation.guard_evidence_set() RETURNS trigger LANGUAGE plpgsq
 BEGIN
   IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'evidence_set is never removed'; END IF;
   IF OLD.readiness = 'ready' THEN RAISE EXCEPTION 'ready evidence_set is frozen'; END IF;
-  IF (NEW.producer, NEW.namespace, NEW.evidence_set_id, NEW.subject_occurrence_id, NEW.question_id,
+  IF (NEW.producer, NEW.namespace, NEW.evidence_set_id, NEW.subject_occurrence_id, NEW.task_id, NEW.question_id,
       NEW.question_version, NEW.pinned_evaluator_definition_ids, NEW.created_at)
-    IS DISTINCT FROM (OLD.producer, OLD.namespace, OLD.evidence_set_id, OLD.subject_occurrence_id, OLD.question_id,
+    IS DISTINCT FROM (OLD.producer, OLD.namespace, OLD.evidence_set_id, OLD.subject_occurrence_id, OLD.task_id, OLD.question_id,
       OLD.question_version, OLD.pinned_evaluator_definition_ids, OLD.created_at) THEN
     RAISE EXCEPTION 'evidence_set pin is immutable';
   END IF;
@@ -438,6 +447,7 @@ CREATE FUNCTION observation.require_pinned_execution() RETURNS trigger LANGUAGE 
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM observation.evidence_set e
     WHERE e.producer = NEW.producer AND e.namespace = NEW.namespace AND e.evidence_set_id = NEW.evidence_set_id
+      AND NEW.task_id IS NOT DISTINCT FROM e.task_id
       AND e.readiness = 'ready' AND NEW.evaluator_definition_id = ANY (e.pinned_evaluator_definition_ids)) THEN
     RAISE EXCEPTION 'execution requires ready evidence and a pinned evaluator';
   END IF;
@@ -451,9 +461,9 @@ CREATE FUNCTION observation.guard_evaluation_execution() RETURNS trigger LANGUAG
 BEGIN
   IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'evaluation_execution is never removed'; END IF;
   IF OLD.status IN ('completed', 'failed') THEN RAISE EXCEPTION 'ended evaluation_execution is immutable'; END IF;
-  IF (NEW.producer, NEW.namespace, NEW.execution_id, NEW.run_id, NEW.subject_occurrence_id, NEW.evidence_set_id,
+  IF (NEW.producer, NEW.namespace, NEW.execution_id, NEW.run_id, NEW.subject_occurrence_id, NEW.task_id, NEW.evidence_set_id,
       NEW.question_id, NEW.question_version, NEW.evaluator_definition_id, NEW.attempt_label, NEW.idempotency_digest)
-    IS DISTINCT FROM (OLD.producer, OLD.namespace, OLD.execution_id, OLD.run_id, OLD.subject_occurrence_id, OLD.evidence_set_id,
+    IS DISTINCT FROM (OLD.producer, OLD.namespace, OLD.execution_id, OLD.run_id, OLD.subject_occurrence_id, OLD.task_id, OLD.evidence_set_id,
       OLD.question_id, OLD.question_version, OLD.evaluator_definition_id, OLD.attempt_label, OLD.idempotency_digest) THEN
     RAISE EXCEPTION 'evaluation_execution identity is immutable';
   END IF;

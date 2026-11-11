@@ -1,6 +1,6 @@
 // Observation reads and the one submission, through kbbl's forwarding routes. The browser holds no
 // observation token: kbbl authenticates the operator and supplies the matching capability.
-import type { ObservationItemOccurrenceId, ObservationReviewerId } from "./grading-contracts/domain/identity";
+import type { ObservationItemOccurrenceId, ObservationLogicalItemId, ObservationReviewerId } from "./grading-contracts/domain/identity";
 import type { ObservationCompositeDrilldownKey, ObservationLogicalItemLineage, ObservationPageRequest, ObservationPaged } from "./grading-contracts/grading/composite";
 import type { ObservationAddressedItem, ObservationAnswerRead, ObservationCompositeRead, ObservationDrilldownRowRead, ObservationGradeableItemRow, ObservationItemAddress, ObservationUnresolvedReferenceRead } from "./grading-contracts/grading/item-reads";
 import type { ObservationQuestionKey } from "./grading-contracts/grading/question";
@@ -42,18 +42,22 @@ async function read<Value>(path: string, params: URLSearchParams = new URLSearch
   return body as Value;
 }
 const id = encodeURIComponent;
+const taskParams = (params: URLSearchParams, task_id?: ObservationLogicalItemId | null): URLSearchParams => {
+  if (task_id) params.set("task_id", task_id);
+  return params;
+};
 
 export const readItemAt = (run_id: string, selection: ObservationItemAddress): Promise<ObservationAddressedItem> =>
   read(`/runs/${id(run_id)}/items/at`, new URLSearchParams({ source_revision_id: selection.source_revision_id, item_path: selection.item_path }));
 /** One item's status: its questions' own window and every nested list's. */
-export interface ItemStatusRequest { readonly occurrence_id: ObservationItemOccurrenceId; readonly top: ObservationPageRequest; readonly nested: WindowQuery }
-export const readItemStatus = ({ occurrence_id, top, nested }: ItemStatusRequest): Promise<ObservationItemStatusResponse> =>
-  read(`/items/${id(occurrence_id)}/status`, windowParams(top, nested));
-export const readItemLineage = (occurrence_id: ObservationItemOccurrenceId, top: ObservationPageRequest): Promise<ObservationLineagePage> =>
-  read(`/items/${id(occurrence_id)}/lineage`, windowParams(top));
+export interface ItemStatusRequest { readonly occurrence_id: ObservationItemOccurrenceId; readonly task_id?: ObservationLogicalItemId | null; readonly top: ObservationPageRequest; readonly nested: WindowQuery }
+export const readItemStatus = ({ occurrence_id, task_id, top, nested }: ItemStatusRequest): Promise<ObservationItemStatusResponse> =>
+  read(`/items/${id(occurrence_id)}/status`, taskParams(windowParams(top, nested), task_id));
+export const readItemLineage = (occurrence_id: ObservationItemOccurrenceId, top: ObservationPageRequest, task_id?: ObservationLogicalItemId | null): Promise<ObservationLineagePage> =>
+  read(`/items/${id(occurrence_id)}/lineage`, taskParams(windowParams(top), task_id));
 export const readReviewer = (): Promise<ObservationReviewerRead> => read("/reviewer");
-export function readAnswersPage(occurrence_id: ObservationItemOccurrenceId, filter: { readonly question: ObservationQuestionKey; readonly reviewer_id: ObservationReviewerId }, page: ObservationPageRequest): Promise<ObservationPaged<ObservationAnswerRead>> {
-  const params = windowParams(page);
+export function readAnswersPage(occurrence_id: ObservationItemOccurrenceId, filter: { readonly question: ObservationQuestionKey; readonly task_id?: ObservationLogicalItemId | null; readonly reviewer_id: ObservationReviewerId }, page: ObservationPageRequest): Promise<ObservationPaged<ObservationAnswerRead>> {
+  const params = taskParams(windowParams(page), filter.task_id);
   params.set("question_id", filter.question.question_id);
   params.set("question_version", filter.question.question_version);
   params.set("reviewer_id", filter.reviewer_id);

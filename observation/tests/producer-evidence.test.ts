@@ -5,7 +5,7 @@ import type { EvidenceReference } from "../src/grading/evidence";
 import type { CapturedRevision, CapturedSources, LinkedItem, RepositoryFile, SourceArtifact } from "../src/ports/artifact-source";
 import { citationsOf, oakridgeEvidence, parseFileCitation } from "../src/producers/oakridge/evidence";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID, TASK_COVERAGE_ID, CONTRIBUTION_COVERAGE_ID } from "../src/producers/oakridge/evidence";
-import { OAKRIDGE_QUESTIONS, COVERAGE_VALUES, createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant } from "./grading-fixture";
+import { scopeOf, OAKRIDGE_QUESTIONS, COVERAGE_VALUES, createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant } from "./grading-fixture";
 import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
 import { readOccurrenceEvidence, collectPinnedQuestion } from "../src/storage/captured-evidence-store";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
@@ -33,12 +33,12 @@ function sources(options: SourceOptions = {}): CapturedSources & { readonly path
     readRevision: async (revision_id) => revision_id === "assessment-1"
       ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: options.subject_id ?? null, body: options.assessment ?? { head_sha: HEAD } }
       : revision_id === "build-1" ? options.build === undefined ? build : options.build : null,
-    readRevisionAt: async () => null, readLinkedItems: async () => options.linked ?? [],
+    readRevisionAt: async () => null, readLogicalItemAt: async () => ({ revision_id: "tasks-1" as ArtifactRevisionId, item_path: "/tasks/0", item_kind: "task", selected_value: { id: "T7" } }), readLinkedItems: async () => options.linked ?? [],
     repository: { hasCommit: async (path) => path === (options.commit_in === undefined ? "/repos/oakridge" : options.commit_in),
       readFile: async (request) => { paths.push(`${request.repository_path}@${request.commit_sha}:${request.path}`);
         return options.file ?? { state: "present", content: "one\ntwo\nthree\nfour" }; } } };
 }
-const key = (question_id: QuestionId) => ({ question_id, question_version: "1" });
+const key = (question_id: QuestionId) => ({ task_id: (question_id === RELEVANCE_ID ? null : "task-7") as import("../src/domain/identity").LogicalItemId | null, question_id, question_version: "1" });
 
 test("the supported questions grade findings, spec tasks and cohort contributions", () => {
   expect(OAKRIDGE_QUESTIONS.map(({ question_id, item_kind, allowed_values }) => [question_id, item_kind, allowed_values])).toEqual([
@@ -77,15 +77,15 @@ test("correctness waiting on its subject does not hold evidence support back", a
 test("an integration finding with no subject is ready for correctness", async () => {
   const result = await oakridgeEvidence.collect(finding([]), key(CORRECTNESS_ID), sources());
   expect(result).toMatchObject({ state: "ready" });
-  expect(result.state === "ready" && result.references.map((reference) => reference.ref)).toEqual(["subject"]);
+  expect(result.state === "ready" && result.references.map((reference) => reference.ref)).toEqual(["subject", "task_context:0"]);
 });
 
-test("correctness names the exact build and optional linked context", async () => {
+test("correctness names the exact build and canonical task context", async () => {
   const linked: readonly LinkedItem[] = [{ revision_id: "plan-1" as ArtifactRevisionId, item_path: "/cohorts/0/acceptance_criteria/0", item_kind: "acceptance_entry", selected_value: { id: "T7" } }];
   const result = await oakridgeEvidence.collect(finding([]), key(CORRECTNESS_ID), sources({ subject_id: "build-1", linked }));
   expect(result).toMatchObject({ state: "ready", references: [{ ref: "subject" },
     { source: "revision", ref: "build_result", revision_id: "build-1", item_path: null, content: { head_sha: HEAD } },
-    { source: "revision", ref: "task_context:0", revision_id: "plan-1", item_path: "/cohorts/0/acceptance_criteria/0" }] });
+    { source: "revision", ref: "task_context:0", revision_id: "tasks-1", item_path: "/tasks/0" }] });
 });
 
 test("a file is read at head_sha from the repository holding it, keeping its range", async () => {
@@ -93,13 +93,13 @@ test("a file is read at head_sha from the repository holding it, keeping its ran
   const result = await oakridgeEvidence.collect(finding([{ kind: "file", ref: "src/alpha.ts:2-3" }]), key(EVIDENCE_SUPPORT_ID), source);
   expect(source.paths).toEqual([`/repos/oakridge@${HEAD}:src/alpha.ts`]);
   expect(result).toMatchObject({ state: "ready", references: [{ ref: "subject" }, { source: "repository", ref: "citation:0", repository_key: "oakridge",
-    commit_sha: HEAD, path: "src/alpha.ts", line_range: { start: 2, end: 3 }, is_absent: false, content: "two\nthree" }] });
+    commit_sha: HEAD, path: "src/alpha.ts", line_range: { start: 2, end: 3 }, is_absent: false, content: "two\nthree" }, { ref: "task_context:0" }] });
 });
 
 test("a file missing at an accessible commit is evidence; an unreadable repository waits", async () => {
   const cited = finding([{ kind: "file", ref: "src/gone.ts" }]);
   expect(await oakridgeEvidence.collect(cited, key(EVIDENCE_SUPPORT_ID), sources({ file: { state: "absent" } })))
-    .toMatchObject({ state: "ready", references: [{ ref: "subject" }, { source: "repository", path: "src/gone.ts", is_absent: true, content: null }] });
+    .toMatchObject({ state: "ready", references: [{ ref: "subject" }, { source: "repository", path: "src/gone.ts", is_absent: true, content: null }, { ref: "task_context:0" }] });
   expect(await oakridgeEvidence.collect(cited, key(EVIDENCE_SUPPORT_ID), sources({ commit_in: null })))
     .toMatchObject({ state: "not_ready", reason: { code: "repository_unavailable" } });
   expect(await oakridgeEvidence.collect(cited, key(EVIDENCE_SUPPORT_ID), sources({ file: { state: "unavailable", detail: "git failed" } })))
@@ -113,7 +113,7 @@ test("unparseable refs stay text, test and output stay agent-reported, and empty
   expect(await oakridgeEvidence.collect(cited, key(EVIDENCE_SUPPORT_ID), source)).toMatchObject({ state: "ready", references: [{ ref: "subject" },
     { source: "reported", reported_by: "agent", revision_id: "assessment-1", item_path: "/findings/0/evidence/0", content: { kind: "file", citation: "the design doc" } },
     { source: "reported", reported_by: "agent", revision_id: "assessment-1", item_path: "/findings/0/evidence/1", content: { kind: "test", citation: "alpha.test.ts", detail: "1 passed" } },
-    { source: "reported", reported_by: "agent", revision_id: "assessment-1", item_path: "/findings/0/evidence/2", content: { kind: "output", citation: "bun test" } }] });
+    { source: "reported", reported_by: "agent", revision_id: "assessment-1", item_path: "/findings/0/evidence/2", content: { kind: "output", citation: "bun test" } }, { ref: "task_context:0" }] });
   expect(await oakridgeEvidence.collect(finding([]), key(EVIDENCE_SUPPORT_ID), source)).toMatchObject({ state: "ready" });
 });
 
@@ -130,8 +130,8 @@ test("the assessment's test results, cargo output included, are shared agent-rep
   const support = await oakridgeEvidence.collect(cited, key(EVIDENCE_SUPPORT_ID), source);
   for (const result of [correctness, support]) {
     expect(result.state).toBe("ready");
-    expect(result.state === "ready" && result.references.map((reference) => reference.ref)).toEqual(["subject", "citation:0", "test_evidence"]);
-    expect(result.state === "ready" && result.references.at(-1)).toEqual(expected);
+    expect(result.state === "ready" && result.references.map((reference) => reference.ref)).toEqual(["subject", "citation:0", "test_evidence", "task_context:0"]);
+    expect(result.state === "ready" && result.references.find((reference) => reference.ref === "test_evidence")).toEqual(expected);
   }
 });
 
@@ -139,15 +139,15 @@ test("test results reported without a file citation are kept, and an assessment 
   const reportedOnly = await oakridgeEvidence.collect(finding([{ kind: "output", ref: "cargo test" }]), key(EVIDENCE_SUPPORT_ID),
     sources({ commit_in: null, assessment: { head_sha: HEAD, test_evidence: reportedTests } }));
   expect(reportedOnly).toMatchObject({ state: "ready", references: [{ ref: "subject" },
-    { source: "reported", ref: "citation:0", item_path: "/findings/0/evidence/0" }, { source: "reported", ref: "test_evidence", content: reportedTests }] });
+    { source: "reported", ref: "citation:0", item_path: "/findings/0/evidence/0" }, { source: "reported", ref: "test_evidence", content: reportedTests }, { ref: "task_context:0" }] });
   const none = await oakridgeEvidence.collect(finding([]), key(CORRECTNESS_ID), sources({ assessment: { head_sha: HEAD, test_evidence: null } }));
-  expect(none.state === "ready" && none.references.map((reference) => reference.ref)).toEqual(["subject"]);
+  expect(none.state === "ready" && none.references.map((reference) => reference.ref)).toEqual(["subject", "task_context:0"]);
 });
 
 test("a citation keeps its own position in the finding when an earlier entry is malformed", async () => {
   const result = await oakridgeEvidence.collect(finding([{ kind: "screenshot", ref: "x" }, { kind: "test", ref: "alpha.test.ts" }]),
     key(EVIDENCE_SUPPORT_ID), sources());
-  expect(result).toMatchObject({ state: "ready", references: [{ ref: "subject" }, { ref: "citation:0", item_path: "/findings/0/evidence/1" }] });
+  expect(result).toMatchObject({ state: "ready", references: [{ ref: "subject" }, { ref: "citation:0", item_path: "/findings/0/evidence/1" }, { ref: "task_context:0" }] });
 });
 
 test("a question outside the profile is reported rather than collected", async () => {
@@ -158,7 +158,7 @@ test("a question outside the profile is reported rather than collected", async (
 integration("captured sources feed the collector within one run, and collection freezes per question", async () => scratchDatabase(async (db) => {
   for (const question of OAKRIDGE_QUESTIONS) await registerQuestion(db, tenant, question);
   await registerEvaluator(db, tenant, evaluator("human"));
-  const configuration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question, evaluator_definition_ids: [evaluatorId("human")] })) };
+  const configuration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question, evaluator_definition_ids: [evaluatorId("human")] })) };
   const feed = createFeed(db, tenant, configuration);
   await feed.launch(launch);
   await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
@@ -171,7 +171,7 @@ integration("captured sources feed the collector within one run, and collection 
   const waiting = await collectPinnedQuestion(db, tenant, source, correctness!);
   expect(waiting.ok && waiting.value.readiness).toMatchObject({ state: "not_ready", reason: { code: "build_result_unavailable" } });
   const ready = await collectPinnedQuestion(db, tenant, source, support!);
-  expect(ready.ok && ready.value.readiness).toMatchObject({ state: "ready", references: [{ source: "revision", ref: "subject", revision_id: "assessment-1", item_path: "/findings/1" }] });
+  expect(ready.ok && ready.value.readiness).toMatchObject({ state: "ready", references: [{ source: "revision", ref: "subject", revision_id: "assessment-1", item_path: "/findings/1" }, { ref: "task_context:0" }] });
   await feed.revision({ revision_id: "build-1", artifact_kind: "build_result", body: await fixtureBody("build-result") });
   const retried = await collectPinnedQuestion(db, tenant, source, correctness!);
   expect(retried.ok && retried.value.readiness).toMatchObject({ state: "ready", references: [{ ref: "subject" }, { ref: "build_result", revision_id: "build-1" },
@@ -180,3 +180,11 @@ integration("captured sources feed the collector within one run, and collection 
   expect(await elsewhere.read(occurrenceIdOf(subject.occurrence_id))).toBeNull();
   expect(await elsewhere.readRevision("assessment-1")).toBeNull();
 }));
+
+test("a task subject without a captured spec task definition stays not ready", async () => {
+  const missing = { ...sources(), readLogicalItemAt: async () => null };
+  for (const question_id of [CORRECTNESS_ID, EVIDENCE_SUPPORT_ID]) {
+    expect(await oakridgeEvidence.collect(finding([]), key(question_id), missing))
+      .toMatchObject({ state: "not_ready", reason: { code: "task_unavailable" } });
+  }
+});

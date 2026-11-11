@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { submitAnswer } from "../client-grading";
-import type { ObservationItemOccurrenceId } from "../grading-contracts/domain/identity";
+import type { ObservationItemOccurrenceId, ObservationLogicalItemId } from "../grading-contracts/domain/identity";
 import type { ObservationHumanSubmissionRequest } from "../grading-contracts/http/grades";
 import type { SubmissionResult } from "../grading-types";
 import { isStaleAnswerRefusal } from "../lib/grading";
@@ -10,11 +10,11 @@ import { isStaleAnswerRefusal } from "../lib/grading";
  * A refusal saying this form's own answers are out of date refreshes them, and the submission stays
  * pending until they arrive, so the next one corrects the answer that now stands.
  */
-export function useSubmitAnswer(occurrence_id: ObservationItemOccurrenceId, onAcknowledged: () => void) {
+export function useSubmitAnswer(occurrence_id: ObservationItemOccurrenceId, onAcknowledged: () => void, task_id: ObservationLogicalItemId | null = null) {
   const client = useQueryClient();
-  return useMutation<SubmissionResult, never, ObservationHumanSubmissionRequest>({ mutationFn: (submission) => submitAnswer(occurrence_id, submission),
+  return useMutation<SubmissionResult, never, ObservationHumanSubmissionRequest>({ mutationFn: (submission) => submitAnswer(occurrence_id, { ...submission, task_id }),
     onSuccess: async (result) => {
-      if (isStaleAnswerRefusal(result)) return client.refetchQueries({ queryKey: ["oakridge", "grading", "own-answers", occurrence_id] });
+      if (isStaleAnswerRefusal(result)) return client.refetchQueries({ queryKey: ["oakridge", "grading", "own-answers", occurrence_id, task_id] });
       if (result.kind !== "acknowledged") return;
       onAcknowledged();
       void client.invalidateQueries({ queryKey: ["oakridge", "grading"] });

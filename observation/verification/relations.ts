@@ -393,7 +393,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
   const answer = async (input: { readonly occurrence_id: ItemOccurrenceId; readonly question_id: string; readonly value: string; readonly reviewer?: string; readonly supersedes?: string }): Promise<string> => {
     const set = (await readOccurrenceEvidence(db, tenant, input.occurrence_id)).find((candidate) => candidate.question_id === input.question_id)!;
     const submission = { reviewer_id: input.reviewer ?? "", submission_id: crypto.randomUUID() };
-    const identity = { subject_occurrence_id: input.occurrence_id, evidence_set_id: set.evidence_set_id, question_id: set.question_id, question_version: set.question_version,
+    const identity = { task_id: set.task_id, subject_occurrence_id: input.occurrence_id, evidence_set_id: set.evidence_set_id, question_id: set.question_id, question_version: set.question_version,
       evaluator_definition_id: (input.reviewer ? human.evaluator_definition_id : set.pinned_evaluator_definition_ids.find((id) => id !== human.evaluator_definition_id)) as EvaluatorDefinitionId,
       attempt_label: input.reviewer ? submissionAttemptLabel(submission) : AUTOMATIC_ATTEMPT_LABEL };
     const digest = input.reviewer ? submissionDigest(submission) : evaluationDigest(identity);

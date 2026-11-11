@@ -38,11 +38,11 @@ export interface ItemRelationRead {
   readonly algorithm_version: string | null;
   readonly recorded_at: Date;
 }
-export interface LineagePage { readonly occurrence_id: ItemOccurrenceId; readonly relations: readonly ItemRelationRead[];
+export interface LineagePage { readonly task_id: LogicalItemId | null; readonly occurrence_id: ItemOccurrenceId; readonly relations: readonly ItemRelationRead[];
   readonly edges: readonly ItemRelationRead[];
   readonly unresolved: readonly ItemRelationRead[]; readonly total: number;
   readonly limit: number; readonly offset: number; readonly republication: Republication | null }
-interface StoredSelection { readonly occurrence_id: string; readonly item: SelectedItem; readonly definition: ExtractorDefinition }
+interface StoredSelection { readonly occurrence_id: string; readonly item: SelectedItem; readonly definition: ExtractorDefinition; readonly is_new: boolean }
 /** What a capture needs from composition: how to select items, and what to pin to new ones. */
 export interface ProjectionContext {
   readonly extraction: ExtractionProfile;
@@ -72,7 +72,7 @@ async function saveOccurrence(trx: DatabaseTransaction, tenant: TenantScope, rev
   if (!identity.ok) throw new Error(identity.error.detail);
   const occurrence_id = identity.value;
   const logical_item_id = item.item_scope && item.producer_local_id ? await saveLogicalItem(trx, tenant, revision.run_id,
-    item.item_scope, item.producer_local_id) : null;
+    item.item_scope, item.producer_local_id, configuration) : null;
   const row = { ...scope(tenant), occurrence_id, revision_id: revision.revision_id, run_id: revision.run_id,
     artifact_kind: revision.artifact_kind, schema_version: revision.artifact_schema_version,
     extractor_id: definition.extractor_id, extractor_version: definition.extractor_version,
@@ -93,23 +93,27 @@ async function saveOccurrence(trx: DatabaseTransaction, tenant: TenantScope, rev
     return null;
   }
   // Pins belong to the first capture only: a replay under a later configuration must not repin.
-  if (inserted) await pinOccurrenceInTransaction(trx, tenant, occurrence_id as ItemOccurrenceId, item.item_kind, configuration);
-  return { occurrence_id, item, definition };
+  return { occurrence_id, item, definition, is_new: inserted !== undefined };
 }
 
 /** Saving a logical item settles any reference that reached this run before the item did. */
 async function saveLogicalItem(trx: DatabaseTransaction, tenant: TenantScope, run_id: string, item_scope: string,
-  producer_local_id: string): Promise<string> {
+  producer_local_id: string, configuration: CaptureConfiguration): Promise<string> {
   const logical_item_id = logicalItemId({ ...tenant, run_id, scope: item_scope, producer_local_id });
   await trx.insertInto("observation.logical_item").values({ ...scope(tenant), logical_item_id, run_id, scope: item_scope, producer_local_id })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "logical_item_id"]).doNothing()).execute();
-  await sql`UPDATE observation.item_relation relation
+  const resolved = await sql<{ source_occurrence_id: string; item_kind: string }>`UPDATE observation.item_relation relation
     SET target_logical_item_id = ${logical_item_id}, unresolved_target_ref = NULL
     FROM observation.item_occurrence source
     WHERE relation.producer = ${tenant.producer} AND relation.namespace = ${tenant.namespace}
       AND relation.unresolved_target_ref = ${logicalReference(item_scope, producer_local_id)}
       AND source.producer = relation.producer AND source.namespace = relation.namespace
-      AND source.occurrence_id = relation.source_occurrence_id AND source.run_id = ${run_id}`.execute(trx);
+      AND source.occurrence_id = relation.source_occurrence_id AND source.run_id = ${run_id}
+    RETURNING source.occurrence_id AS source_occurrence_id, source.item_kind`.execute(trx);
+  // Newly resolved subjects use the configuration in force now. Existing pins never change.
+  for (const source of resolved.rows) await pinOccurrenceInTransaction(trx, tenant,
+    source.source_occurrence_id as ItemOccurrenceId, source.item_kind,
+    { pins: configuration.pins.filter((pin) => pin.scope === "per_task") }, logical_item_id as LogicalItemId);
   return logical_item_id;
 }
 
@@ -253,6 +257,8 @@ export async function projectRevisionInTransaction(trx: DatabaseTransaction, ten
   let relationCount = 0;
   for (const selection of selections) for (const link of selection.item.links)
     if (await saveLink(trx, tenant, revision, selection.occurrence_id, link)) relationCount++;
+  for (const selection of selections.filter((selection) => selection.is_new))
+    await pinOccurrenceInTransaction(trx, tenant, selection.occurrence_id as ItemOccurrenceId, selection.item.item_kind, context.configuration);
   if (await saveSubjectRelation(trx, tenant, revision, context.extraction)) relationCount++;
   return { occurrences: selections.length, issues: pass.issues.length + collisionCount, relations: relationCount };
 }
@@ -294,7 +300,7 @@ export function listRelatedOccurrences(db: Database, tenant: TenantScope, logica
     .orderBy("source.revision_id").orderBy("source.occurrence_id").limit(page.limit).offset(page.offset).execute());
 }
 
-export function readLineage(db: Database, tenant: TenantScope, occurrence_id: string, page: Page): Promise<LineagePage | null> {
+export function readLineage(db: Database, tenant: TenantScope, occurrence_id: string, page: Page, task_id?: LogicalItemId): Promise<LineagePage | null> {
   return withTenant(db, tenant, async (trx) => {
     const item = await trx.selectFrom("observation.item_occurrence").selectAll()
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
@@ -350,9 +356,10 @@ export function readLineage(db: Database, tenant: TenantScope, occurrence_id: st
         for (const logical of [relation.source_logical_item_id, relation.target_logical_item_id]) if (logical) reachedLogical.add(logical);
       }
     }
-    const ordered = relations.filter((relation) => connected.has(relation.relation_id));
+    const ordered = relations.filter((relation) => connected.has(relation.relation_id)
+      && (task_id === undefined || relation.type !== "assesses" || relation.target_logical_item_id === task_id));
     const slice = ordered.slice(page.offset, page.offset + page.limit);
-    return { occurrence_id: occurrence_id as ItemOccurrenceId, relations: slice, edges: slice.filter((relation) => relation.unresolved_target_ref === null),
+    return { task_id: task_id ?? null, occurrence_id: occurrence_id as ItemOccurrenceId, relations: slice, edges: slice.filter((relation) => relation.unresolved_target_ref === null),
       unresolved: slice.filter((relation) => relation.unresolved_target_ref !== null),
       total: ordered.length, ...page, republication };
   });

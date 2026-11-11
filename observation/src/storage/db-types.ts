@@ -134,6 +134,7 @@ export interface ObservationEvidenceSet {
   namespace: string;
   evidence_set_id: string;
   subject_occurrence_id: string;
+  task_id: string | null;
   question_id: string;
   question_version: string;
   pinned_evaluator_definition_ids: string[];
@@ -153,6 +154,7 @@ export interface ObservationEvaluationExecution {
   execution_id: string;
   run_id: string;
   subject_occurrence_id: string;
+  task_id: string | null;
   evidence_set_id: string;
   question_id: string;
   question_version: string;

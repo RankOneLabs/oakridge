@@ -10,7 +10,7 @@ import { withTenant, type Database } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems, projectRevisionInTransaction } from "../src/storage/projection-store";
 
-const pinsFor = (...evaluators: readonly string[]): CaptureConfiguration => ({ pins: OAKRIDGE_QUESTIONS.map((question) => ({
+const pinsFor = (...evaluators: readonly string[]): CaptureConfiguration => ({ pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const,
   question_id: question.question_id, question_version: question.question_version, item_kind: question.item_kind,
   evaluator_definition_ids: evaluators.map(evaluatorId) })) });
 
@@ -50,7 +50,7 @@ integration("a pin needs a registered question and evaluator, and rejects anothe
     .rejects.toThrow("evaluator definition that does not exist");
   await expect(createFeed(db, tenant, pinsFor("grader-a", "grader-a")).revision({ revision_id: "analysis-1", artifact_kind: "analysis", body }))
     .rejects.toThrow("pins an evaluator twice");
-  const mismatched: CaptureConfiguration = { pins: [{ ...OAKRIDGE_QUESTIONS[1]!, item_kind: "finding", evaluator_definition_ids: [evaluatorId("grader-a")] }] };
+  const mismatched: CaptureConfiguration = { pins: [{ scope: "per_item", ...OAKRIDGE_QUESTIONS[1]!, item_kind: "finding", evaluator_definition_ids: [evaluatorId("grader-a")] }] };
   await expect(createFeed(db, tenant, mismatched).revision({ revision_id: "analysis-1", artifact_kind: "analysis", body }))
     .rejects.toThrow("does not apply to its subject item kind");
   // The refused deliveries rolled back with their capture transaction.

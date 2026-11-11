@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import type { GradeObservationId, ItemOccurrenceId, QuestionId, ReviewerId } from "../domain/identity";
+import type { GradeObservationId, ItemOccurrenceId, LogicalItemId, QuestionId, ReviewerId } from "../domain/identity";
 import { z } from "zod";
 import { listGrades, submitHumanAnswer, type RecordedSubmission, type SubmissionRefusal } from "../storage/grading-store";
 import type { SourceDependencies } from "./sources";
@@ -13,6 +13,7 @@ import { pagination } from "./items";
  * a client tries to choose, so identity can only come from the credential and evidence from the pin.
  */
 export interface HumanSubmissionRequest {
+  readonly task_id?: LogicalItemId | null;
   readonly question_id: QuestionId;
   readonly question_version: string;
   readonly submission_id: string;
@@ -23,6 +24,7 @@ export interface HumanSubmissionRequest {
 }
 /** Parsing is the boundary where request text becomes the identities it names. */
 export const humanSubmissionRequestSchema = z.strictObject({
+  task_id: z.string().min(1).transform((value) => value as LogicalItemId).nullable().optional(),
   question_id: z.string().min(1).transform((value) => value as QuestionId),
   question_version: z.string().min(1),
   submission_id: z.string().min(1).max(200),
@@ -48,9 +50,11 @@ const acknowledgment = (status: HumanSubmissionAcknowledgment["status"], submiss
   ({ status, ...submission, recorded_at: submission.recorded_at.toISOString() });
 
 const REFUSAL_STATUS: Record<SubmissionRefusal["kind"], ErrorStatus> = { item_not_found: 404, question_not_pinned: 404, not_ready: 409,
-  invalid_answer: 422, no_human_evaluator: 409, not_correctable: 409, stale_correction: 409, correction_required: 409 };
+  task_required: 422, task_not_applicable: 422, invalid_answer: 422, no_human_evaluator: 409, not_correctable: 409, stale_correction: 409, correction_required: 409 };
 const refusalMessage = (refusal: SubmissionRefusal): string => {
   switch (refusal.kind) {
+    case "task_required": return "task_id is required for a per_task question";
+    case "task_not_applicable": return "task_id is not applicable to a per_item question";
     case "item_not_found": return "item not found";
     case "question_not_pinned": return "this question is not pinned to this item";
     case "not_ready": return refusal.detail;
@@ -68,7 +72,7 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
     if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
     const page = pagination(c.req.url);
     if (!page) return errorResponse(c, 400, "invalid_pagination", "limit must be 1..200 and offset nonnegative");
-    const grades = await listGrades(deps.db, credential, c.req.param("id"), page);
+    const grades = await listGrades(deps.db, credential, c.req.param("id"), page, c.req.query("task_id") as LogicalItemId | undefined);
     return grades ? c.json(grades) : errorResponse(c, 404, "not_found", "item not found");
   });
   /** The reviewer a grade credential answers as, so a client can tell its own answers apart. */
@@ -87,7 +91,7 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
     if (!parsed.success) return errorResponse(c, 400, "invalid_submission", parsed.error.issues.map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`).join("; "));
     const { rationale, corrects_observation_id, question_id, ...request } = parsed.data;
     const result = await submitHumanAnswer(deps.db, credential, boundReviewer(credential), { ...request, question_id, occurrence_id: c.req.param("id") as ItemOccurrenceId,
-      rationale: rationale?.trim() ? rationale : null, corrects_observation_id: corrects_observation_id ?? null });
+      rationale: rationale?.trim() ? rationale : null, corrects_observation_id: corrects_observation_id ?? null }, deps.capture_configuration);
     if (!result.ok) {
       const refused: SubmissionRefusalBody = { error: { code: result.error.kind, message: refusalMessage(result.error), refusal: result.error } };
       return c.json(refused, REFUSAL_STATUS[result.error.kind] as 404 | 409 | 422);

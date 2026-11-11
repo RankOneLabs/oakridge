@@ -168,9 +168,10 @@ interface QuestionSelection {
   readonly question: QuestionDefinition;
   readonly graders: readonly GraderEntry[];
   readonly human: EvaluatorDefinition;
+  readonly target: GradingTarget;
 }
 
-function pinQuestion({ question, graders, human }: QuestionSelection): Result<PinnedQuestion, GraderConfigurationError> {
+function pinQuestion({ question, graders, human, target }: QuestionSelection): Result<PinnedQuestion, GraderConfigurationError> {
   const evaluators: EvaluatorDefinition[] = [];
   for (const grader of graders) {
     const evaluator = configuredEvaluator(question, grader);
@@ -181,7 +182,7 @@ function pinQuestion({ question, graders, human }: QuestionSelection): Result<Pi
   }
   const key: QuestionKey = { question_id: question.question_id, question_version: question.question_version };
   const pinned = [...evaluators, human].map((evaluator) => evaluator.evaluator_definition_id as EvaluatorDefinitionId);
-  return ok({ evaluators, pin: { ...key, item_kind: question.item_kind, evaluator_definition_ids: pinned },
+  return ok({ evaluators, pin: { ...key, ...(target.scope === "per_task" ? { scope: target.scope, task_ids: target.task_ids } : { scope: target.scope }), item_kind: question.item_kind, evaluator_definition_ids: pinned },
     graders: evaluators.map((evaluator) => ({ runner: evaluator.backend_kind, question: key,
       evaluator_definition_id: evaluator.evaluator_definition_id as EvaluatorDefinitionId })) });
 }
@@ -208,7 +209,7 @@ export function planRegistration(configuration: GradingDefinitions, registry: Gr
       return failure("duplicate_grader", `${definition.id}:human`, "the same grader is configured twice");
     const question = questionDefinition(definition, selector.item_kind);
     if (!question.ok) return question;
-    const result = pinQuestion({ question: question.value, graders: machineGraders(definition), human: human.value });
+    const result = pinQuestion({ question: question.value, graders: machineGraders(definition), human: human.value, target: definition.target });
     if (!result.ok) return result;
     questions.push(question.value);
     pinned.push(result.value);

@@ -31,7 +31,7 @@ const sources: CapturedSources = {
   readRevision: async (revision_id): Promise<CapturedRevision | null> => revision_id === "assessment-1"
     ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: "build-1", body: { head_sha: HEAD, test_evidence: reportedTests } }
     : revision_id === "build-1" ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } } : null,
-  readRevisionAt: async () => null, readLinkedItems: async () => [],
+  readRevisionAt: async () => null, readLogicalItemAt: async () => ({ revision_id: "tasks-1" as ArtifactRevisionId, item_path: "/tasks/0", item_kind: "task", selected_value: { id: "T7" } }), readLinkedItems: async () => [],
   repository: { hasCommit: async (path) => path === "/repos/other",
     readFile: async ({ path }) => path === "core/gone.ts" ? { state: "absent" } : { state: "present", content: "one\ntwo\nthree\nfour" } },
 };
@@ -39,7 +39,7 @@ const sources: CapturedSources = {
 const questionOf = (question_id: string): QuestionDefinition => OAKRIDGE_QUESTIONS.find((question) => question.question_id === question_id)!;
 
 async function frozen(question: QuestionDefinition): Promise<readonly EvidenceReference[]> {
-  const collected = await oakridgeEvidence.collect(artifact, question, sources);
+  const collected = await oakridgeEvidence.collect(artifact, { ...question, task_id: "task-7" as import("../src/domain/identity").LogicalItemId }, sources);
   if (collected.state !== "ready") throw new Error(JSON.stringify(collected));
   return collected.references;
 }
@@ -70,6 +70,7 @@ async function sentEvidence(runner: (transport: (url: string, init: RequestInit)
 }
 
 const expectedEvidence = {
+  "task_context:0": { source: "revision", revision_id: "tasks-1", item_path: "/tasks/0", content: { id: "T7" } },
   subject: { source: "revision", revision_id: "assessment-1", item_path: "/findings/2", content: artifact.selected_value },
   "citation:0": { source: "repository", repository_key: "other", commit_sha: HEAD, path: "core/decision-record.ts",
     line_range: { start: 2, end: 3 }, is_absent: false, content: "two\nthree" },

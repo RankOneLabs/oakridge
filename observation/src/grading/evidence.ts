@@ -1,5 +1,5 @@
 import { canonicalDigest } from "canonical-json";
-import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, RunId } from "../domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, LogicalItemId, RunId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { QuestionKey } from "./question";
 
@@ -61,7 +61,8 @@ export function providerEvidence(reference: EvidenceReference): JsonObject {
 }
 
 /** One question and the full evaluator set an occurrence of its item kind is pinned to when captured. */
-export interface CapturePin extends QuestionKey {
+export type QuestionScope = { readonly scope: "per_item" } | { readonly scope: "per_task"; readonly task_ids: string };
+export type CapturePin = QuestionKey & QuestionScope & {
   readonly item_kind: string;
   readonly evaluator_definition_ids: readonly EvaluatorDefinitionId[];
 }
@@ -84,6 +85,7 @@ export type EvidenceReadiness =
 export interface EvidenceSet extends QuestionKey {
   readonly evidence_set_id: EvidenceSetId;
   readonly subject_occurrence_id: ItemOccurrenceId;
+  readonly task_id: LogicalItemId | null;
   readonly pinned_evaluator_definition_ids: readonly EvaluatorDefinitionId[];
   readonly readiness: EvidenceReadiness;
   readonly is_incomplete: boolean;
@@ -98,9 +100,37 @@ export interface ReadyEvidence {
 }
 
 export interface EvidenceIdError { readonly operation: "evidence_set_id"; readonly entity_id: string; readonly detail: string }
-/** One evidence set exists per occurrence and question version, whatever its content becomes. */
-export function evidenceSetId(subject_occurrence_id: ItemOccurrenceId, question: QuestionKey): Result<EvidenceSetId, EvidenceIdError> {
-  const digest = canonicalDigest([subject_occurrence_id, question.question_id, question.question_version]);
+/** A collector addresses the task as well as the pinned question. */
+export interface SubjectQuestion extends QuestionKey { readonly task_id: LogicalItemId | null }
+/** Resolved relation rows supply task identity; the configured pointer bounds their authority. */
+export interface SubjectRelation {
+  readonly type: string;
+  readonly target_logical_item_id: string | null;
+  readonly unresolved_target_ref: string | null;
+  readonly evidence_ref: string;
+}
+export interface SubjectOccurrence { readonly occurrence_id: ItemOccurrenceId; readonly json_pointer: string }
+export interface SubjectGeneration {
+  readonly occurrence: SubjectOccurrence;
+  readonly scope: QuestionScope;
+  readonly relations: readonly SubjectRelation[];
+}
+export interface GradingSubject { readonly subject_occurrence_id: ItemOccurrenceId; readonly task_id: LogicalItemId | null }
+/** Only resolved assesses edges under the declared task_ids pointer create task subjects. */
+export function gradingSubjects({ occurrence, scope, relations }: SubjectGeneration): readonly GradingSubject[] {
+  const subject_occurrence_id = occurrence.occurrence_id;
+  if (scope.scope === "per_item") return [{ subject_occurrence_id, task_id: null }];
+  const prefix = `${occurrence.json_pointer}${scope.task_ids}/`;
+  const tasks = relations.filter((relation) => relation.type === "assesses" && relation.unresolved_target_ref === null
+    && relation.target_logical_item_id !== null && relation.evidence_ref.startsWith(prefix));
+  return [...new Set(tasks.map((relation) => relation.target_logical_item_id as LogicalItemId))]
+    .sort().map((task_id) => ({ subject_occurrence_id, task_id }));
+}
+/** The subject and question fields of the evidence_set identity key. */
+export interface EvidenceSetIdInput extends GradingSubject { readonly question: QuestionKey }
+/** One evidence set per occurrence, task and question version, whatever its content becomes. */
+export function evidenceSetId({ subject_occurrence_id, question, task_id }: EvidenceSetIdInput): Result<EvidenceSetId, EvidenceIdError> {
+  const digest = canonicalDigest([subject_occurrence_id, task_id, question.question_id, question.question_version]);
   return digest.ok ? ok(digest.value as unknown as EvidenceSetId)
     : err({ operation: "evidence_set_id", entity_id: subject_occurrence_id, detail: digest.error.detail });
 }
