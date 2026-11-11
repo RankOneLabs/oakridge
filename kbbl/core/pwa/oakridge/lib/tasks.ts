@@ -32,7 +32,7 @@ function isIdent(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && [...value].length <= 100 && !/[\p{Cc}/\\]/u.test(value);
 }
 
-function parseTask(value: unknown, field: string): Parsed<Task> {
+export function parseTask(value: unknown, field: string): Parsed<Task> {
   if (!isRecord(value)) return fail(field, "expected an object");
   if (!isIdent(value.id)) return fail(`${field}.id`, "expected an ident");
   if (typeof value.description !== "string") return fail(`${field}.description`, "expected a string");

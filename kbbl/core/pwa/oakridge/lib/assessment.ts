@@ -79,7 +79,7 @@ function parseTaskIds(value: unknown, field: string): Parsed<PlanTraceId[]> {
   return { ok: true, value: value as PlanTraceId[] };
 }
 
-function parseFinding(value: unknown, field: string, item_path: string): Parsed<AssessmentFinding> {
+export function parseAssessmentFinding(value: unknown, field: string, item_path: string): Parsed<AssessmentFinding> {
   if (!isRecord(value)) return fail(field, "expected an object");
   const taskIds = parseTaskIds(value.task_ids, `${field}.task_ids`);
   if (!taskIds.ok) return taskIds;
@@ -102,7 +102,7 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
   if (!Array.isArray(body.findings)) return fail("findings", "expected an array");
   const findings: AssessmentFinding[] = [];
   for (const [index, entry] of body.findings.entries()) {
-    const finding = parseFinding(entry, `findings[${index}]`, `/findings/${index}`);
+    const finding = parseAssessmentFinding(entry, `findings[${index}]`, `/findings/${index}`);
     if (!finding.ok) return finding;
     findings.push(finding.value);
   }

@@ -83,14 +83,14 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
-function isSpecFinding(value: unknown): value is SpecFinding {
+export function isSpecFinding(value: unknown): value is SpecFinding {
   return isRecord(value)
     && typeof value.id === "string"
     && typeof value.description === "string"
     && FINDING_SEVERITIES.some((severity) => severity === value.severity);
 }
 
-function isSpecRequirement(value: unknown): value is SpecRequirement {
+export function isSpecRequirement(value: unknown): value is SpecRequirement {
   return isRecord(value)
     && typeof value.id === "string"
     && typeof value.description === "string"
