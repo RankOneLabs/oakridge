@@ -7,10 +7,11 @@ use workflow_model::CodeOperation;
 #[test]
 fn development_checked_program_is_byte_identical_to_base_1c7d8017() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let config = root.join("workflow-config");
     let parsed = Command::new("bun")
-        .current_dir(&root)
+        .current_dir(&config)
         .env_remove("BUN_INSPECT")
-        .args(["-e", "import YAML from 'yaml'; process.stdout.write(JSON.stringify(YAML.parse(await Bun.file('workflow-config/development.yaml').text())));"])
+        .args(["-e", "import YAML from 'yaml'; process.stdout.write(JSON.stringify(YAML.parse(await Bun.file('development.yaml').text())));"])
         .output()
         .expect("bun parses the authored development YAML");
     assert!(
@@ -19,7 +20,6 @@ fn development_checked_program_is_byte_identical_to_base_1c7d8017() {
         String::from_utf8_lossy(&parsed.stderr)
     );
     let source = decode_workflow(&parsed.stdout).unwrap();
-    let config = root.join("workflow-config");
     let operations: Vec<CodeOperation> =
         serde_json::from_slice(&std::fs::read(config.join("operation-registry.json")).unwrap())
             .unwrap();
