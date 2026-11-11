@@ -12,7 +12,7 @@ import { launcherStateSchema, observationStatusSchema, type LauncherState, type 
 
 const REPOSITORY_ROOT = resolve(import.meta.dir, "../..");
 const LAUNCHER = resolve(REPOSITORY_ROOT, "scripts/oakridge-shadow");
-const GRADERS = resolve(REPOSITORY_ROOT, "observation/graders.json");
+const GRADERS = resolve(REPOSITORY_ROOT, "observation/grading-definitions.json");
 const REQUEST_TIMEOUT_MS = 5_000;
 const QUERY_TIMEOUT_MS = 30_000;
 const PUBLISHER_FAILURE_LINES = 5;
@@ -53,7 +53,7 @@ export interface ProofIo {
   observationGet(path: string, capability: keyof Capabilities): Promise<Result<unknown, ProofFailure>>;
   /** The publisher's latest refusals, from a stack this proof started; an attached stack logs elsewhere. */
   publisherFailures(): Promise<readonly string[]>;
-  /** observation/graders.json, the selection the next observation start registers. */
+  /** observation/grading-definitions.json, the selection the next observation start registers. */
   readGraders(): Promise<string>;
   writeGraders(text: string): Promise<void>;
   now(): number;

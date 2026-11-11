@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Client } from "pg";
 import { createApp } from "../src/http/app";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { oakridgeProfile } from "./grading-fixture";
 import { decodeSourceEventDelivery } from "../src/ingest/cursor";
 import { openDatabase, withTenant } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";

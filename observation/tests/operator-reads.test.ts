@@ -5,13 +5,12 @@ import { humanEvaluator } from "../src/grading/configuration";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { createApp } from "../src/http/app";
 import type { Credentials } from "../src/http/ingest-auth";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, OAKRIDGE_QUESTIONS } from "../src/producers/oakridge/questions";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID } from "../src/producers/oakridge/evidence";
+import { OAKRIDGE_QUESTIONS, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import type { Database, TenantScope } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { admitRun, claimNext, completeExecution, failExecution } from "../src/storage/execution-store";
-import { createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 
 const other: TenantScope = { producer: "oakridge", namespace: "other-tenant" };
 const credentials: Credentials = { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }, { ...other, token: "other-read" }],
@@ -55,7 +54,7 @@ const ready = async (h: Harness, occurrence_id: ItemOccurrenceId, question_id?: 
 };
 const submit = (h: Harness, occurrence_id: string, question_id: string, submission_id: string, answer: string, extra: object = {}) =>
   h.app.request(`/v1/items/${encodeURIComponent(occurrence_id)}/answers`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer grade" },
-    body: JSON.stringify({ question_id, question_version: "1", submission_id, answer, ...extra }) });
+    body: JSON.stringify({ question_id, question_version: questionVersion(question_id), submission_id, answer, ...extra }) });
 
 interface Paged<Row> { items: Row[]; total: number; limit: number; offset: number }
 interface Status {
@@ -209,7 +208,7 @@ integration("every list pages to its end, nested lists included, with its own wi
   expect(lineage).toMatchObject({ limit: 1, is_captured: true });
   expect(lineage.total).toBeGreaterThan(1);
   expect((await get<Paged<unknown>>(h, `/v1/items/${encodeURIComponent(item.occurrence_id)}/evidence?limit=1`)).body).toMatchObject({ limit: 1, total: 2 });
-  const answersPage = (await get<Paged<{ is_current: boolean; reviewer_id: string }>>(h, `/v1/items/${encodeURIComponent(item.occurrence_id)}/answers?limit=1&reviewer_id=operator&question_id=${EVIDENCE_SUPPORT_ID}&question_version=1`)).body;
+  const answersPage = (await get<Paged<{ is_current: boolean; reviewer_id: string }>>(h, `/v1/items/${encodeURIComponent(item.occurrence_id)}/answers?limit=1&reviewer_id=operator&question_id=${EVIDENCE_SUPPORT_ID}&question_version=${encodeURIComponent(questionVersion(EVIDENCE_SUPPORT_ID))}`)).body;
   expect(answersPage).toMatchObject({ total: 2, limit: 1 });
   expect((await get<Paged<unknown>>(h, `/v1/items/${encodeURIComponent(item.occurrence_id)}/answers?reviewer_id=nobody`)).body.total).toBe(0);
   const itemsPage = (await get<{ items: unknown[]; issues: Paged<unknown> }>(h, "/v1/runs/run-1/items?limit=1&issues_limit=1")).body;

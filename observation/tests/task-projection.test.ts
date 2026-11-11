@@ -9,9 +9,7 @@ import type { CaptureConfiguration } from "../src/grading/evidence";
 import { withTenant, type Database } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { declareRelationInTransaction, listRelatedOccurrences, listRunItems, lockSourceCursor } from "../src/storage/projection-store";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
-import { OAKRIDGE_QUESTIONS } from "../src/producers/oakridge/questions";
-import { createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant, type Feed } from "./grading-fixture";
+import { oakridgeProfile, OAKRIDGE_QUESTIONS, createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 
 const taskId = (task_id: string, run_id = "run-1"): string => logicalItemId({ ...tenant, run_id, scope: TASK_SCOPE, producer_local_id: task_id });
 const everything = { limit: 200, offset: 0 };

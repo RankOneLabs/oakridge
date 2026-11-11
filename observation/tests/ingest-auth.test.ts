@@ -5,9 +5,8 @@ import { createApp } from "../src/http/app";
 import { credentialsFromEnv } from "../src/http/ingest-auth";
 import { openDatabase } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { oakridgeProfile, revisionOutcome } from "./grading-fixture";
 import { dropScratchDatabase } from "./database-fixture";
-import { revisionOutcome } from "./grading-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;

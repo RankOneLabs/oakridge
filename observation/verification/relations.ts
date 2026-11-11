@@ -28,7 +28,7 @@ import type { GradingRegistration } from "../src/grading/configuration";
 import { AUTOMATIC_ATTEMPT_LABEL, evaluationDigest, submissionAttemptLabel, submissionDigest } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
 import type { SourceEventCursor, SourceEventOutcome } from "../src/ingest/cursor";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { oakridgeProfile as createOakridgeProfile } from "../src/producers/oakridge/profile";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { deliverSourceEvent, readRelationDeclarations } from "../src/storage/capture-store";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
@@ -43,6 +43,7 @@ import { observationSettled, settleObservation } from "./scenarios";
 import type { ProofIo } from "./shadow-session";
 import type { ReviewCheckpoint, SourceRunInput } from "./source-run";
 
+const oakridgeProfile = createOakridgeProfile([]);
 const path = oakridgeProfile.composite;
 const POLL_MS = 1_000;
 const DELIVERY_ATTEMPTS = 180;

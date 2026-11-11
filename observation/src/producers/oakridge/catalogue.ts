@@ -1,3 +1,4 @@
+import type { RegisteredSelector } from "../../grading/configuration";
 import { err, ok, type JsonValue, type Result } from "../../domain/primitives";
 import { idList, listAt, objectAt, requiredId, type ExtractionFailure, type ExtractorDefinition,
   type LinkReference, type LogicalItemLink, type OccurrenceLink, type SelectedItem } from "../../projection/extractor";
@@ -165,3 +166,7 @@ function allDefinitions(schemaVersion: string): readonly ExtractorDefinition[] {
 export function oakridgeCatalogue(artifact_kind: string, schema_version: string): readonly ExtractorDefinition[] {
   return allDefinitions(schema_version).filter((entry) => entry.artifact_kind === artifact_kind);
 }
+
+/** Registered extractor addresses; question bindings belong to grading-definitions.json. */
+export const OAKRIDGE_SELECTORS: readonly RegisteredSelector[] = allDefinitions(VERSION).map(({ artifact_kind, item_selector, item_kind }) =>
+  ({ artifact_kind, item_selector, item_kind }));

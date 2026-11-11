@@ -295,7 +295,7 @@ describe("delivery through the ordered feed", () => {
     drop = scratch.drop;
     observation = openObservationDatabase(scratch.url);
     await migrateObservation(observation);
-    service = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] }, profile: oakridgeProfile });
+    service = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] }, profile: oakridgeProfile([]) });
   });
   afterAll(async () => { await observation.destroy(); await drop(); });
 

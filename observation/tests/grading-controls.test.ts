@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { DEFAULT_RUN_SPEND, estimatedCostPerCall, fitsRunAllowance, gradingControls } from "../src/grading/budget";
 import { answerProblem, failureDisposition, measurementState } from "../src/grading/execution";
-import { OAKRIDGE_QUESTIONS } from "../src/producers/oakridge/questions";
+import { OAKRIDGE_QUESTIONS } from "./grading-fixture";
 import type { GradeObservationId } from "../src/domain/identity";
 
 const relevance = OAKRIDGE_QUESTIONS[0]!;

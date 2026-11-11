@@ -23,7 +23,7 @@ test("adapter, Oakridge and observation outages replay committed events from the
   const tenant = { producer: "oakridge", namespace: "drills" };
   try {
     await migrateObservation(observation);
-    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] }, profile: oakridgeProfile });
+    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] }, profile: oakridgeProfile([]) });
     const fetcher: NonNullable<ObservationOptions["fetcher"]> = async (input, init) => app.request(new Request(input, init));
     const options: ObservationOptions = { url: "http://observation.test", namespace: tenant.namespace, token: "ingest", fetcher,
       poll_ms: 20, log: () => undefined };
@@ -146,7 +146,7 @@ test("accept and request-changes pass through the mapper and ordered ingest as i
   const tenant = { producer: "oakridge", namespace: "approvals" };
   try {
     await migrateObservation(observation);
-    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [] }, profile: oakridgeProfile });
+    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [] }, profile: oakridgeProfile([]) });
     const provider_calls: string[] = [];
     const options: ObservationOptions = { url: "http://observation.test", namespace: tenant.namespace, token: "ingest",
       fetcher: async (input, init) => { provider_calls.push(String(input)); return app.request(new Request(input, init)); } };
@@ -188,7 +188,7 @@ test("each launch delivers its committed grading choice beside its input, and a 
       launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "none" } })]);
     const delivered = async (observation: (typeof services)[number]) => {
       await migrateObservation(observation);
-      const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [] }, profile: oakridgeProfile });
+      const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [] }, profile: oakridgeProfile([]) });
       const options: ObservationOptions = { url: "http://observation.test", namespace: tenant.namespace, token: "ingest",
         fetcher: async (input, init) => app.request(new Request(input, init)) };
       while (await publishObservationOnce(authority.db, options)) { /* drain the ordered tail */ }

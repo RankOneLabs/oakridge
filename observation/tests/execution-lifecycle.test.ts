@@ -2,20 +2,20 @@ import { afterEach, beforeEach, expect } from "bun:test";
 import { sql } from "kysely";
 import { Client } from "pg";
 import { err, ok } from "../src/domain/primitives";
-import { parseGraderConfiguration, planRegistration, type GradingRegistration } from "../src/grading/configuration";
+import { parseGradingDefinitions, planRegistration, type GradingRegistration } from "../src/grading/configuration";
 import type { ExecutionClaim } from "../src/grading/execution";
 import type { GradingContext, RunnerResult } from "../src/grading/runner";
 import { gradeNext, type GradingWorkerDependencies } from "../src/grading/worker";
 import { createApp } from "../src/http/app";
 import type { RepositoryReader } from "../src/ports/artifact-source";
 import type { GradeRunner } from "../src/ports/grade-runner";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/questions";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
+import { oakridgeProfile, oakridgeGradingRegistry } from "./grading-fixture";
 import { withTenant, type Database } from "../src/storage/database";
 import { createEvidenceReconciler, type EvidenceReconciler } from "../src/storage/evidence-pipeline";
 import { claimNext, completeExecution, failExecution, markRequestSent, readItemMeasurements, readRunSpend } from "../src/storage/execution-store";
 import { registerDefinitions } from "../src/storage/grading-store";
-import { committedGraders, createFeed, databaseUrl, DEFINITION_ID, fixtureBody, integration, runConfig, SCHEMA_VERSION, scratchDatabase, tenant,
+import { committedDefinitions, createFeed, databaseUrl, DEFINITION_ID, fixtureBody, integration, runConfig, SCHEMA_VERSION, scratchDatabase, tenant,
   type Feed } from "./grading-fixture";
 
 const HEAD = "1111111111111111111111111111111111111111";
@@ -61,9 +61,9 @@ interface Lifecycle {
 }
 
 async function lifecycle(db: Database, retry_limit = 3): Promise<Lifecycle> {
-  const parsed = parseGraderConfiguration(await committedGraders());
+  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
-  const planned = planRegistration(parsed.value, oakridgeProfile.questions);
+  const planned = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!planned.ok) throw new Error(planned.error.detail);
   const registered = await registerDefinitions(db, tenant, planned.value);
   if (!registered.ok) throw new Error(registered.error.detail);

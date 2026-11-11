@@ -257,7 +257,7 @@ describe("supervision", () => {
   test("an unknown configured runner leaves the stack serving and names the runner", async () => {
     const stack = await startedStack((created) => created.writeGraders("imaginary"));
     await stackSurvived(stack);
-    expect(stack.status()).toMatchObject({ state: "preflight_failed", detail: "unknown_runner:imaginary" });
+    expect(stack.status()).toMatchObject({ state: "preflight_failed", detail: "unknown_runner:findingrelevance:imaginary" });
   }, TIMEOUT_MS);
 
   test("a database that cannot be provisioned leaves the stack serving", async () => {

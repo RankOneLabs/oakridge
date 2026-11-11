@@ -5,13 +5,12 @@ import type { ArtifactRevisionId, EvidenceSetId, ItemOccurrenceId } from "../src
 import type { JsonValue } from "../src/domain/primitives";
 import { evaluationDigest, submissionAttemptLabel, submissionDigest, type EvaluationIdentity } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
-import { OAKRIDGE_QUESTIONS } from "../src/producers/oakridge/questions";
+import { OAKRIDGE_QUESTIONS, createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { listGrades, registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems } from "../src/storage/projection-store";
-import { createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 
 const relevance = OAKRIDGE_QUESTIONS[0]!;
 const other_tenant: TenantScope = { producer: "oakridge", namespace: "other" };

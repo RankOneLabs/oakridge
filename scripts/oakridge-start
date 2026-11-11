@@ -324,7 +324,7 @@ prepare_isolated_observation() {
     || { observation_preflight_failed "$(preflight_failure database_provisioning_failed database_provisioning_timed_out)"; return 1; }
   selection_failure="$(mktemp)"
   if ! provider_settings="$(within_preflight bun --no-env-file "$OBSERVATION_ROOT/scripts/provider-env.ts" select \
-    --env-file "$OAKRIDGE_OBSERVATION_PROVIDER_ENV_FILE" --graders "$OBSERVATION_ROOT/graders.json" 2>"$selection_failure")"; then
+    --env-file "$OAKRIDGE_OBSERVATION_PROVIDER_ENV_FILE" --graders "$OBSERVATION_ROOT/grading-definitions.json" 2>"$selection_failure")"; then
     local detail
     detail="$(head -n 1 "$selection_failure" | tr -cd 'A-Za-z0-9_:,-')"
     rm -f "$selection_failure"
