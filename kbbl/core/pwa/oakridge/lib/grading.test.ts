@@ -191,6 +191,16 @@ describe("artifact glances", () => {
 });
 
 describe("item header fields", () => {
+  test.each([
+    { value: "", text: "" },
+    { value: "  ", text: "  " },
+    { value: { description: " Description ", text: "Other" }, text: " Description " },
+    { value: { description: " \n", text: " Text " }, text: " Text " },
+    { value: { description: false, text: "Text" }, text: "Text" },
+  ])("header and row preserve the same captured prose: $value", ({ value, text }) => {
+    expect(selectItemHeader(value)).toEqual({ kind: "text", text });
+    expect(selectItemText(value)).toBe(text);
+  });
   test.each(["Plain text", { description: "Description", text: "Other" }, { description: " ", text: "Text" }])("prefers captured prose", (value) => {
     expect(selectItemHeader(value)).toEqual({ kind: "text", text: typeof value === "string" ? value : value.description?.trim() ? value.description : value.text });
   });
