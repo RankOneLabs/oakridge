@@ -1,6 +1,8 @@
 //! Stable execution fingerprint serialization. Field order and execution names
 //! mirror the compiler's source serialization at 1c7d8017; presentation kinds
 //! never participate. This is a write-only view, not a source decoder.
+//! Exhaustive source destructuring requires an explicit fingerprint decision
+//! whenever fields are added to the source model.
 use super::*;
 use serde::Serialize;
 
@@ -89,57 +91,74 @@ impl<'a> From<&'a Worker> for WorkerFingerprint<'a> {
         }
     }
 }
+impl<'a> From<&'a Artifact> for ArtifactFingerprint<'a> {
+    fn from(artifact: &'a Artifact) -> Self {
+        let Artifact {
+            kind: _, // Presentation metadata is deliberately absent from the fingerprint.
+            schema,
+            edit_policy,
+            validate,
+        } = artifact;
+        Self {
+            schema,
+            edit_policy,
+            validate,
+        }
+    }
+}
+impl<'a> From<&'a Stage> for StageFingerprint<'a> {
+    fn from(stage: &'a Stage) -> Self {
+        let Stage {
+            input,
+            let_bindings,
+            artifacts,
+            workers,
+            reviews,
+            done_when,
+            outcome,
+        } = stage;
+        let mut reviews = reviews.clone();
+        for review in reviews.values_mut() {
+            for decision in review.decisions.values_mut() {
+                if decision.on.as_ref() == Some(&review.of) {
+                    decision.on = None;
+                }
+            }
+        }
+        Self {
+            input,
+            let_bindings,
+            artifacts: artifacts
+                .iter()
+                .map(|(name, artifact)| (name.as_str(), ArtifactFingerprint::from(artifact)))
+                .collect(),
+            workers: workers
+                .iter()
+                .map(|(name, worker)| (name.as_str(), WorkerFingerprint::from(worker)))
+                .collect(),
+            reviews,
+            done_when,
+            outcome,
+        }
+    }
+}
 impl<'a> From<&'a Workflow> for WorkflowFingerprint<'a> {
     fn from(source: &'a Workflow) -> Self {
+        let Workflow {
+            workflow,
+            input,
+            schemas,
+            run,
+            stages,
+        } = source;
         Self {
-            workflow: &source.workflow,
-            input: &source.input,
-            schemas: &source.schemas,
-            run: &source.run,
-            stages: source
-                .stages
+            workflow,
+            input,
+            schemas,
+            run,
+            stages: stages
                 .iter()
-                .map(|(key, stage)| {
-                    let mut reviews = stage.reviews.clone();
-                    for review in reviews.values_mut() {
-                        for decision in review.decisions.values_mut() {
-                            if decision.on.as_ref() == Some(&review.of) {
-                                decision.on = None;
-                            }
-                        }
-                    }
-                    (
-                        key.as_str(),
-                        StageFingerprint {
-                            input: &stage.input,
-                            let_bindings: &stage.let_bindings,
-                            artifacts: stage
-                                .artifacts
-                                .iter()
-                                .map(|(name, artifact)| {
-                                    (
-                                        name.as_str(),
-                                        ArtifactFingerprint {
-                                            schema: &artifact.schema,
-                                            edit_policy: &artifact.edit_policy,
-                                            validate: &artifact.validate,
-                                        },
-                                    )
-                                })
-                                .collect(),
-                            workers: stage
-                                .workers
-                                .iter()
-                                .map(|(name, worker)| {
-                                    (name.as_str(), WorkerFingerprint::from(worker))
-                                })
-                                .collect(),
-                            reviews,
-                            done_when: &stage.done_when,
-                            outcome: &stage.outcome,
-                        },
-                    )
-                })
+                .map(|(key, stage)| (key.as_str(), StageFingerprint::from(stage)))
                 .collect(),
         }
     }
