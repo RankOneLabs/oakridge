@@ -14,6 +14,8 @@ import type { ObservationJsonValue } from "../grading-contracts/domain/primitive
 import type { SubmissionResult } from "../grading-types";
 import type { ArtifactSource } from "../artifact-types";
 import { parseCompositeId } from "../adapters/core";
+import type { AssessmentFinding } from "./assessment";
+import { decodeSubjectContent } from "./evidence-content";
 import { artifactRevisionIdOf } from "./grading-ids";
 
 /** The address of a finding on screen, from the exact revision the viewer shows. No revision identity, no address. */
@@ -208,12 +210,31 @@ export function referenceDisplay(reference: ObservationEvidenceReference): Refer
   }
 }
 
-/** A finding, task or contribution's text, read from its own captured value. */
-export function selectItemText(value: unknown): string {
+export type ItemHeader =
+  | { kind: "text"; text: string }
+  | { kind: "assessment_finding"; status: AssessmentFinding["status"]; task_ids: AssessmentFinding["task_ids"] }
+  | { kind: "fields"; value: ObservationJsonValue };
+
+function selectCapturedItemText(value: unknown): string | null {
   if (typeof value === "string") return value;
   const fields = value as { readonly description?: unknown; readonly text?: unknown } | null;
-  const content = [fields?.description, fields?.text].find((entry) => typeof entry === "string" && entry.trim() !== "");
-  return typeof content === "string" ? content : "No description recorded.";
+  const text = [fields?.description, fields?.text].find((entry) => typeof entry === "string" && entry.trim() !== "");
+  return typeof text === "string" ? text : null;
+}
+
+/** Text takes precedence; otherwise expose the captured fields, including findings without prose. */
+export function selectItemHeader(value: ObservationJsonValue): ItemHeader {
+  const text = selectCapturedItemText(value);
+  if (text !== null) return { kind: "text", text };
+  const content = decodeSubjectContent(value, "");
+  return content.kind === "assessment_finding"
+    ? { kind: "assessment_finding", status: content.value.status, task_ids: content.value.task_ids }
+    : { kind: "fields", value };
+}
+
+/** A finding, task or contribution's text, read from its own captured value. */
+export function selectItemText(value: unknown): string {
+  return selectCapturedItemText(value) ?? "No description recorded.";
 }
 
 /** Tasks and contributions declare their spec task directly; a finding's own id is never a task link. */

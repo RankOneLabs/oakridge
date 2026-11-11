@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { json, panel, world, wrap } from "./item-panel-harness";
+import plan from "../lib/__fixtures__/id-linked-plan.json";
+import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 
-import { acknowledged, correctnessQuestion, findingRow, id, IMPLEMENTATION, INTEGRATION, ANALYSIS, item, itemStatus, machine, OCCURRENCE, paged, reviewerAnswer, supportQuestion, taskComposite } from "../__fixtures__/grading";
+import { acknowledged, id, IMPLEMENTATION, INTEGRATION, ANALYSIS, item, itemStatus, machine, OCCURRENCE, paged, reviewerAnswer, supportQuestion, taskComposite } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
 import { AssessmentViewer } from "../components/molecules/AssessmentViewer";
 import { SpecAnalysisViewer } from "../components/molecules/SpecAnalysisViewer";
@@ -11,52 +11,13 @@ import { FinalIntegrationPanel } from "../components/organisms/FinalIntegrationP
 import { ItemPanel } from "../components/organisms/ItemPanel";
 import { RunGradingSection } from "../components/organisms/RunGradingSection";
 import { TaskPanel } from "../components/organisms/TaskPanel";
+import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
 import type { ObservationGradeObservationId } from "../grading-contracts/domain/identity";
 import type { ObservationCompositeRead } from "../grading-contracts/grading/item-reads";
-import type { ObservationItemStatusResponse } from "../grading-contracts/storage/grading-record-store";
 import { parseAssessment } from "../lib/assessment";
 import { useGradingVisibility } from "../state/gradingVisibility";
 import type { EpicWorkflowProfile } from "../run-types";
 
-const json = (body: unknown, status = 200): Response => Response.json(body, { status });
-interface Harness { status: ObservationItemStatusResponse; own: readonly ReturnType<typeof reviewerAnswer>[]; submit: () => Response | Promise<Response>; sent: unknown[]; paths: string[] }
-let world: Harness;
-const reads = (path: string): Response | null => {
-  if (path === "/oakridge/observation/reviewer") return json({ reviewer_id: id("oakridge-operator") });
-  if (path.endsWith("/items/at")) return json(world.status.item);
-  if (path.endsWith("/status")) return json(world.status);
-  if (path.endsWith("/lineage") && path.includes("/items/")) return json({ occurrence_id: OCCURRENCE, relations: [], total: 0, limit: 20, offset: 0, republication: null });
-  if (path.endsWith("/answers")) return json(paged(world.own));
-  if (path.endsWith("/grading")) return json({ run_id: id("run-1"), is_grading_enabled: false, committed: 0.13, requests_sent: 13, attempts: 13, executions: { completed: 3 } });
-  if (path.endsWith("/tasks")) return json(paged([taskComposite()]));
-  if (path.endsWith("/tasks/T1")) return json(taskComposite());
-  if (path.endsWith("/tasks/T404")) return json({ error: { code: "not_found", message: "no such task" } }, 404);
-  if (/\/tasks\/[^/]+\/lineage$/.test(path)) return json({ ...paged([{ kind: "contribution", relation_id: id("rel-1"), evidence_ref: "e", asserted_by: "producer_explicit", item: item(IMPLEMENTATION) }]), run_id: id("run-1"), producer_local_id: "T1", is_captured: true });
-  if (path.endsWith("/unresolved-task-references")) return json(paged([{ item: item(IMPLEMENTATION), relation_id: id("rel-2"), unresolved_target_ref: "logical_item:task:T404", evidence_ref: "e" }]));
-  if (path.endsWith("/drilldown")) return json(paged([{ item: item(IMPLEMENTATION), links: paged([]), questions: paged([{ question: { question_id: id("assessment_finding.evidence_support"), question_version: "1" }, evidence: supportQuestion().evidence, statuses: paged([]),
-    answers: paged([reviewerAnswer("raw-answer", "does_not_support", "second-reviewer")]), superseded_answers: paged([]) }]) }]));
-  return null;
-};
-beforeEach(() => {
-  world = { status: itemStatus([supportQuestion(), correctnessQuestion()]), own: [], submit: () => json(acknowledged("supports"), 201), sent: [], paths: [] };
-  useGradingVisibility.setState({ revealed_item_keys: new Set(), revealed_composite_run_ids: new Set() });
-  vi.spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input), "http://kbbl.test");
-    world.paths.push(url.pathname + url.search);
-    if (init?.method === "POST") { world.sent.push(JSON.parse(String(init.body))); return world.submit(); }
-    if (url.pathname.endsWith("/findings")) {
-      const stage = url.searchParams.get("stage");
-      if (stage === "analysis") return json(paged([findingRow(ANALYSIS, { stage: "analysis", selected_value: { description: "analysis finding" } })]));
-      if (stage === "implementation") return json(paged([findingRow(IMPLEMENTATION, {}, paged([{ state: "unresolved", producer_local_id: "T404", unresolved_target_ref: "logical_item:task:T404", relation_id: id("r"), evidence_ref: "e" }]))]));
-      return json(paged([findingRow(INTEGRATION, { stage: "integration", selected_value: { description: "unlinked integration finding" } })]));
-    }
-    return reads(url.pathname) ?? json({ error: { code: "unexpected", message: url.pathname } }, 404);
-  }) as typeof fetch);
-});
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-
-const wrap = (node: ReactNode) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } })}>{node}</QueryClientProvider>);
-const panel = (onOpenTask = vi.fn()) => wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={onOpenTask} />);
 it.each(["task", "acceptance_entry"])("shows a %s's captured text and explicit spec-task identity", async (item_kind) => {
   const open = vi.fn();
   world.status = itemStatus([supportQuestion()], { item: item(IMPLEMENTATION, { item_kind,
@@ -68,6 +29,39 @@ it.each(["task", "acceptance_entry"])("shows a %s's captured text and explicit s
   expect(screen.queryByText("None linked")).toBeNull();
   fireEvent.click(task);
   expect(open).toHaveBeenCalledWith("T7");
+});
+// The fixture supplies each reference row; ItemPanel always renders its header once loaded.
+it("renders structured evidence and an assessment header as labelled fields", async () => {
+  const question = supportQuestion();
+  world.status = itemStatus([{ ...question, evidence: { ...question.evidence, references: paged<ObservationEvidenceReference>([
+    { source: "revision", ref: "requirement:0", revision_id: id("analysis:1"), item_path: "/requirements/0", content: { id: "R1", description: "Render fields", status: "implementable" } },
+    { source: "revision", ref: "task_context:0", revision_id: id("brief:1"), item_path: null, content: { commitSha: "abc123", task_ids: ["T7"] } },
+  ]) } }], { item: item(IMPLEMENTATION, { selected_value: { status: "met", task_ids: ["T1"], evidence: [] } }) });
+  panel();
+  const references = await screen.findAllByTestId("or-item-evidence-reference");
+  for (const label of ["Id", "Description", "Status"]) expect(within(references[0]!).getByText(label)).toBeTruthy();
+  expect(within(references[1]!).getByText("Commit sha")).toBeTruthy();
+  for (const reference of references) expect(reference.textContent).not.toMatch(/\{"|":/);
+  const header = screen.getByTestId("or-item-panel").querySelector("header")!;
+  expect(["Status", "Task ids", "met", "T1"].every((text) => within(header).queryAllByText(text).length > 0)).toBe(true);
+  expect(header.textContent).not.toContain("No description recorded.");
+});
+it("expands whole-artifact fields independently and leaves cohort context inline", async () => {
+  const question = supportQuestion();
+  world.status = itemStatus([{ ...question, evidence: { ...question.evidence, references: paged<ObservationEvidenceReference>([
+    { source: "revision", ref: "plan", revision_id: id("plan:1"), item_path: null, content: plan },
+    { source: "revision", ref: "spec", revision_id: id("spec:1"), item_path: null, content: "First line\nMore specification" },
+    { source: "revision", ref: "contribution_context", revision_id: id("plan:1"), item_path: "/cohorts/0", content: plan.cohorts[0]! },
+  ]) } }]);
+  panel();
+  const [whole, spec, cohort] = await screen.findAllByTestId("or-item-evidence-reference");
+  expect(within(whole!).queryByText("Dependency order")).toBeNull();
+  expect(within(cohort!).getByText("Files in scope")).toBeTruthy();
+  fireEvent.click(within(whole!).getByRole("button", { name: "Show fields" }));
+  expect(within(whole!).getByText("Dependency order")).toBeTruthy();
+  expect(within(spec!).getByRole("button", { name: "Show fields" }).getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(within(whole!).getByRole("button", { name: "Hide fields" }));
+  expect(within(whole!).queryByText("Dependency order")).toBeNull();
 });
 const documentText = () => document.body.textContent ?? "";
 const ariaText = () => Array.from(document.querySelectorAll("[aria-label]")).map((element) => element.getAttribute("aria-label")).join(" ");

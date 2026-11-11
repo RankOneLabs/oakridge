@@ -120,7 +120,7 @@ function parseEach<T>(value: unknown, field: string, parseEntry: (entry: unknown
   return ok(parsed);
 }
 
-function parseCohort(value: unknown, field: string): Parsed<PlanCohort> {
+export function parseCohort(value: unknown, field: string): Parsed<PlanCohort> {
   if (!isRecord(value)) return fail(field, "expected an object");
   const id = parseString(value.id, `${field}.id`);
   if (!id.ok) return id;
