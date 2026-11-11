@@ -48,7 +48,7 @@ export async function pinSubjectInTransaction(trx: DatabaseTransaction, tenant: 
     scope: pin, relations }).some((candidate) => candidate.task_id === subject.task_id);
   if (!permitted) return err({ operation: "evidence_store", entity_id: subject.subject_occurrence_id,
     detail: "task is not a resolved assesses target under the question's task_ids pointer" });
-  const id = evidenceSetId(subject.subject_occurrence_id, pin, subject.task_id);
+  const id = evidenceSetId({ ...subject, question: pin });
   if (!id.ok) return err({ operation: "evidence_store", entity_id: subject.subject_occurrence_id, detail: id.error.detail });
   await trx.insertInto("observation.evidence_set").values({ producer: tenant.producer, namespace: tenant.namespace,
     evidence_set_id: id.value, ...subject, question_id: pin.question_id,

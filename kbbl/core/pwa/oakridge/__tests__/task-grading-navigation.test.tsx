@@ -80,7 +80,7 @@ it.each<EntryPoint>(["task panel", "composite drilldown"])("an analysis finding 
   cleanup();
   wrap(<ItemPanel runId="run-1" selection={selection} onOpenTask={vi.fn()} />);
   expect((await screen.findByTestId("or-item-question")).textContent).toBe("Relevance");
-  fireEvent.click((await screen.findAllByTestId("or-your-grade-choice"))[0]!);
+  fireEvent.click(await screen.findByRole("radio", { name: "relevant" }));
   fireEvent.click(screen.getByTestId("or-your-grade-submit"));
   expect((await screen.findByTestId("or-your-grade-saved")).textContent).toContain("relevant");
   expect(world.sent).toMatchObject([{ task_id: null, question_id: "finding.relevance", answer: "relevant" }]);

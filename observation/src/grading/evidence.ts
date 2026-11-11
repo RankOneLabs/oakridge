@@ -126,8 +126,10 @@ export function gradingSubjects({ occurrence, scope, relations }: SubjectGenerat
   return [...new Set(tasks.map((relation) => relation.target_logical_item_id as LogicalItemId))]
     .sort().map((task_id) => ({ subject_occurrence_id, task_id }));
 }
+/** The subject and question fields of the evidence_set identity key. */
+export interface EvidenceSetIdInput extends GradingSubject { readonly question: QuestionKey }
 /** One evidence set per occurrence, task and question version, whatever its content becomes. */
-export function evidenceSetId(subject_occurrence_id: ItemOccurrenceId, question: QuestionKey, task_id: LogicalItemId | null = null): Result<EvidenceSetId, EvidenceIdError> {
+export function evidenceSetId({ subject_occurrence_id, question, task_id }: EvidenceSetIdInput): Result<EvidenceSetId, EvidenceIdError> {
   const digest = canonicalDigest([subject_occurrence_id, task_id, question.question_id, question.question_version]);
   return digest.ok ? ok(digest.value as unknown as EvidenceSetId)
     : err({ operation: "evidence_set_id", entity_id: subject_occurrence_id, detail: digest.error.detail });

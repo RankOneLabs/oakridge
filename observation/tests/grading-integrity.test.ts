@@ -216,7 +216,8 @@ test("task identity independently changes evidence and execution digests", async
   const { evidenceSetId } = await import("../src/grading/evidence");
   const occurrence_id = "finding" as ItemOccurrenceId;
   const task = (value: string) => value as import("../src/domain/identity").LogicalItemId;
-  expect(evidenceSetId(occurrence_id, relevance, task("T3"))).not.toEqual(evidenceSetId(occurrence_id, relevance, task("T7")));
+  const input = { subject_occurrence_id: occurrence_id, question: relevance };
+  expect(evidenceSetId({ ...input, task_id: task("T3") })).not.toEqual(evidenceSetId({ ...input, task_id: task("T7") }));
   const base: EvaluationIdentity = { subject_occurrence_id: occurrence_id, task_id: task("T3"),
     evidence_set_id: "same-evidence" as EvidenceSetId, question_id: relevance.question_id, question_version: relevance.question_version,
     evaluator_definition_id: evaluatorId("human"), attempt_label: "automatic" };
