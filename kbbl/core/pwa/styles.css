@@ -218,9 +218,9 @@ body {
   min-width: 1.25rem;
   padding: 0.1rem 0.35rem;
   border-radius: 999px;
-  background: var(--tone-warning-bg);
-  color: var(--tone-warning-fg);
-  border: 1px solid var(--tone-warning-border);
+  background: var(--badge-warning-bg);
+  color: var(--badge-warning-fg);
+  border: 1px solid var(--badge-warning-border);
   font-size: 0.7rem;
   font-weight: 700;
   text-align: center;
@@ -1674,8 +1674,8 @@ body {
 .skill-rail__group-count {
   padding: 0 0.3rem;
   border-radius: 999px;
-  background: var(--tone-muted-bg);
-  color: var(--tone-muted-fg);
+  background: var(--badge-muted-bg);
+  color: var(--badge-muted-fg);
   font-size: 0.65rem;
   line-height: 1.4;
 }
@@ -1760,9 +1760,9 @@ body {
 
 .skill-btn__badge {
   font-size: 0.7rem;
-  color: var(--tone-muted-fg);
-  background: var(--tone-muted-bg);
-  border: 1px solid var(--tone-muted-border);
+  color: var(--badge-muted-fg);
+  background: var(--badge-muted-bg);
+  border: 1px solid var(--badge-muted-border);
   border-radius: 4px;
   padding: 0 0.25rem;
   line-height: 1.4;
@@ -2928,8 +2928,8 @@ a:focus-visible {
 .or-run-row { cursor: pointer; transition: background 0.1s; }
 .or-run-row:hover { background: var(--bg-elevated); }
 .or-run-row--failed  td { opacity: 0.8; }
-.or-run-row--stuck td:first-child { border-left: 2px solid #fbbf24; }
-.or-run-row--parked td:first-child { border-left: 2px solid #f59e0b; }
+.or-run-row--stuck td:first-child { border-left: 2px solid var(--tone-warning-border); }
+.or-run-row--parked td:first-child { border-left: 2px solid var(--tone-warning-border); }
 .or-run-row--complete td { opacity: 0.9; }
 .or-run-row__name    { font-weight: 500; }
 .or-run-row__updated { color: var(--text-muted); font-size: 0.8125rem; white-space: nowrap; }
@@ -3080,24 +3080,24 @@ a:focus-visible {
 
 /* Tool-call status chip inside a card summary. */
 .card-tool-status-completed {
-  color: var(--tone-success-fg);
-  background: var(--tone-success-bg);
-  border: 1px solid var(--tone-success-border);
+  color: var(--badge-success-fg);
+  background: var(--badge-success-bg);
+  border: 1px solid var(--badge-success-border);
 }
 .card-tool-status-failed {
-  color: var(--tone-danger-fg);
-  background: var(--tone-danger-bg);
-  border: 1px solid var(--tone-danger-border);
+  color: var(--badge-danger-fg);
+  background: var(--badge-danger-bg);
+  border: 1px solid var(--badge-danger-border);
 }
 .card-tool-status-in_progress {
-  color: var(--tone-info-fg);
-  background: var(--tone-info-bg);
-  border: 1px solid var(--tone-info-border);
+  color: var(--badge-info-fg);
+  background: var(--badge-info-bg);
+  border: 1px solid var(--badge-info-border);
 }
 .card-tool-status-pending {
-  color: var(--tone-muted-fg);
-  background: var(--tone-muted-bg);
-  border: 1px solid var(--tone-muted-border);
+  color: var(--badge-muted-fg);
+  background: var(--badge-muted-bg);
+  border: 1px solid var(--badge-muted-border);
 }
 .card-tool-locations {
   display: flex;

@@ -149,7 +149,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact, onOpenItem }:
             {deleteMutation.isPending ? "…" : "Delete"}
           </Button>
           {deleteMutation.isError && (
-            <span className="text-sm text-red-500" role="alert">
+            <span className="text-sm text-[var(--tone-danger-fg)]" role="alert">
               {deleteMutation.error instanceof Error ? deleteMutation.error.message : "Delete failed"}
             </span>
           )}

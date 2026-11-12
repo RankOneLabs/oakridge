@@ -31,7 +31,7 @@ interface Props {
 
 const VERDICT_LABEL: Record<AssessmentVerdict, string> = { pass: "Pass", pass_with_notes: "Pass with notes", fail: "Fail" };
 const VERDICT_BANNER_CLASS: Record<AssessmentVerdict, string> = {
-  pass: "border-emerald-500 bg-[var(--bg-surface)]",
+  pass: "border-[var(--badge-success-border)] bg-[var(--bg-surface)]",
   pass_with_notes: "border-[var(--amber-border)] bg-[var(--amber-bg)]",
   fail: "border-[var(--danger-card-border)] bg-[var(--danger-card-bg)]",
 };

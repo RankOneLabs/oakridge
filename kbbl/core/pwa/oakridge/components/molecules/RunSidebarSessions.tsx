@@ -195,7 +195,7 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
         </Button>
       )}
       {error && (
-        <div className="basis-full px-2 pb-2 text-xs text-red-500" role="alert">
+        <div className="basis-full px-2 pb-2 text-xs text-[var(--tone-danger-fg)]" role="alert">
           <span>{error}</span>
         </div>
       )}

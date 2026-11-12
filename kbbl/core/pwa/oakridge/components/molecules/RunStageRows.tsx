@@ -35,7 +35,7 @@ export function RunStageRow({ stage, onSelectArtifact, retry }: RunStageRowProps
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={stage.status} />
         {retry && <Button size="xsmall" variant="danger" onClick={retry.onRetry} disabled={retry.isRetrying} data-testid="or-retry-unit-btn">{retry.isRetrying ? "Retrying…" : "Retry"}</Button>}
-        {retry?.error && <span role="alert" className="text-xs text-red-500">{retry.error}</span>}
+        {retry?.error && <span role="alert" className="text-xs text-[var(--tone-danger-fg)]">{retry.error}</span>}
       </div></td>
       <ArtifactCell artifacts={stage.artifacts} onSelectArtifact={onSelectArtifact} />
       <SessionCell sid={stage.delegated_kbbl_sid} />
@@ -78,7 +78,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
         <StatusBadge status={unit.status} />
         {unit.gate && <Chip tone="warning">{unit.gate}</Chip>}
         {canRetry && <Button size="xsmall" variant="danger" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</Button>}
-        {retryError && <span role="alert" className="text-xs text-red-500">{retryError}</span>}
+        {retryError && <span role="alert" className="text-xs text-[var(--tone-danger-fg)]">{retryError}</span>}
         {confirmMerge && (
           <Button
             size="xsmall"
@@ -90,7 +90,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
             {confirmMerge.isConfirming ? "Confirming…" : "It’s merged — continue"}
           </Button>
         )}
-        {confirmMerge?.error && <span role="alert" className="text-xs text-red-500">{confirmMerge.error}</span>}
+        {confirmMerge?.error && <span role="alert" className="text-xs text-[var(--tone-danger-fg)]">{confirmMerge.error}</span>}
       </div></td>
       <ArtifactCell artifacts={unitArtifacts} onSelectArtifact={onSelectArtifact} />
       <SessionCell sid={unit.sid} />
