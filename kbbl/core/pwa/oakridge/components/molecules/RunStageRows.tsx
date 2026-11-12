@@ -5,7 +5,7 @@ import { Chip } from "../../../components/atoms/Chip";
 import { Fragment } from "react";
 import { selectCohortBrief } from "../../lib/stage-unit-params";
 
-const tableCellClass = "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
+const tableCellClass = "border-b border-[var(--border-decorative)] px-3 py-2.5 align-middle";
 const codeClass = "rounded bg-[var(--bg-code)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-secondary)]";
 const mutedClass = "text-sm text-[var(--text-muted)]";
 
@@ -35,7 +35,7 @@ export function RunStageRow({ stage, onSelectArtifact, retry }: RunStageRowProps
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={stage.status} />
         {retry && <Button size="xsmall" variant="danger" onClick={retry.onRetry} disabled={retry.isRetrying} data-testid="or-retry-unit-btn">{retry.isRetrying ? "Retrying…" : "Retry"}</Button>}
-        {retry?.error && <span role="alert" className="text-xs text-red-500">{retry.error}</span>}
+        {retry?.error && <span role="alert" className="text-xs text-[var(--tone-danger-fg)]">{retry.error}</span>}
       </div></td>
       <ArtifactCell artifacts={stage.artifacts} onSelectArtifact={onSelectArtifact} />
       <SessionCell sid={stage.delegated_kbbl_sid} />
@@ -78,7 +78,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
         <StatusBadge status={unit.status} />
         {unit.gate && <Chip tone="warning">{unit.gate}</Chip>}
         {canRetry && <Button size="xsmall" variant="danger" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</Button>}
-        {retryError && <span role="alert" className="text-xs text-red-500">{retryError}</span>}
+        {retryError && <span role="alert" className="text-xs text-[var(--tone-danger-fg)]">{retryError}</span>}
         {confirmMerge && (
           <Button
             size="xsmall"
@@ -90,7 +90,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
             {confirmMerge.isConfirming ? "Confirming…" : "It’s merged — continue"}
           </Button>
         )}
-        {confirmMerge?.error && <span role="alert" className="text-xs text-red-500">{confirmMerge.error}</span>}
+        {confirmMerge?.error && <span role="alert" className="text-xs text-[var(--tone-danger-fg)]">{confirmMerge.error}</span>}
       </div></td>
       <ArtifactCell artifacts={unitArtifacts} onSelectArtifact={onSelectArtifact} />
       <SessionCell sid={unit.sid} />
@@ -123,7 +123,7 @@ function ArtifactCell({ artifacts, onSelectArtifact }: ArtifactCellProps) {
 }
 
 function SessionCell({ sid }: { sid?: string | null }) {
-  return <td className={tableCellClass} data-testid="or-stage-session">{sid ? <a href={`#sid=${encodeURIComponent(sid)}`} className="text-[var(--accent-blue)] underline" data-testid="or-delegated-session-link">{sid.slice(0, 8)}</a> : <span className={mutedClass}>-</span>}</td>;
+  return <td className={tableCellClass} data-testid="or-stage-session">{sid ? <a href={`#sid=${encodeURIComponent(sid)}`} className="text-[var(--accent-primary)] underline" data-testid="or-delegated-session-link">{sid.slice(0, 8)}</a> : <span className={mutedClass}>-</span>}</td>;
 }
 
 function WorktreeCell({ worktree }: { worktree?: StageDetail["worktree"] }) {

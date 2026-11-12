@@ -14,7 +14,7 @@ function StructuredNodeView({ node }: StructuredNodeViewProps) {
       <dl className="m-0 space-y-1">{node.fields.map(({ label, node: child }, index) => (
         <div key={index}>
           <dt className="font-medium text-[var(--text-muted)]">{label}</dt>
-          <dd className="m-0 border-l border-[var(--border-subtle)] pl-3"><StructuredNodeView node={child} /></dd>
+          <dd className="m-0 border-l border-[var(--border-decorative)] pl-3"><StructuredNodeView node={child} /></dd>
         </div>
       ))}</dl>
     );

@@ -3,7 +3,7 @@ import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import type { ViewerProps } from "../../artifactRegistry";
 
-const fieldClass = "w-full rounded-md border border-[var(--accent-blue)] bg-[var(--bg-surface)] px-2.5 py-2 text-sm! text-[var(--text-primary)]";
+const fieldClass = "w-full rounded-md border border-[var(--accent-primary)] bg-[var(--bg-surface)] px-2.5 py-2 text-sm! text-[var(--text-primary)]";
 
 interface Props {
   anchor: string;

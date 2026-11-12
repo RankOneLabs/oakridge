@@ -66,7 +66,7 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
       {isRevealed && drill && <CompositeDrilldown runId={runId} drilldownKey={drill.key} label={drill.label} onClose={() => setDrill(null)} onOpenItem={onOpenItem} />}
       <section className="flex flex-col gap-1" data-testid="or-task-lineage">
         <div className={artifactLabelClass}>Spec task and cohort contributions</div>
-        <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+        <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
           {lineage.data?.items.flatMap((entry, index) => {
             if (entry.kind === "edge") return [];
             if (entry.kind === "occurrence") return [<li key={`${index}-${entry.occurrence_id}`} className="flex flex-wrap items-center justify-between gap-2 py-1.5 text-xs text-[var(--text-muted)]" data-testid="or-task-definition">

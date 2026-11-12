@@ -19,7 +19,7 @@ import { FinalIntegrationPanel } from "./FinalIntegrationPanel";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 
 const tableHeaderClass =
-  "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
+  "border-b border-[var(--border-decorative)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
 
 function isFannedOut(stage: StageDetail): boolean {
   return (
@@ -149,7 +149,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact, onOpenItem }:
             {deleteMutation.isPending ? "…" : "Delete"}
           </Button>
           {deleteMutation.isError && (
-            <span className="text-sm text-red-500" role="alert">
+            <span className="text-sm text-[var(--tone-danger-fg)]" role="alert">
               {deleteMutation.error instanceof Error ? deleteMutation.error.message : "Delete failed"}
             </span>
           )}

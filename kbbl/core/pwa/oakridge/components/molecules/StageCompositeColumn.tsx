@@ -26,7 +26,7 @@ function CountButton({ label, count, drill, testId }: { label: string; count: nu
 export function StageCompositeColumn({ stage, isRevealed, onDrill, onWindow }: Props) {
   const view = selectStageView(stage, isRevealed);
   return (
-    <section className="flex min-w-0 flex-col gap-2 rounded-md border border-[var(--border-subtle)] p-2" data-testid="or-task-stage" data-stage={view.stage}>
+    <section className="flex min-w-0 flex-col gap-2 rounded-md border border-[var(--border-decorative)] p-2" data-testid="or-task-stage" data-stage={view.stage}>
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="m-0 text-sm font-semibold text-[var(--text-primary)]">{stageLabel(view.stage)}</h4>
         <Chip tone={view.publication === "Final results" ? "accent" : "muted"}>{view.publication}</Chip>

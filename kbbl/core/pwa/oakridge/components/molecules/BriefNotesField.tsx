@@ -68,7 +68,7 @@ export function BriefNotesField({ notes, setNotes, source, setSource, onFileChan
         <div className="flex flex-col gap-2">
           <input
             type="file"
-            className={`${formControlClass} file:mr-3 file:rounded file:border-0 file:bg-[var(--bg-raised)] file:px-2 file:py-1 file:text-xs file:text-[var(--text-primary)]`}
+            className={`${formControlClass} file:mr-3 file:rounded file:border-0 file:bg-[var(--bg-elevated)] file:px-2 file:py-1 file:text-xs file:text-[var(--text-primary)]`}
             accept={TEXT_DOCUMENT_FILE_ACCEPT}
             onChange={onFileChange}
             disabled={disabled}

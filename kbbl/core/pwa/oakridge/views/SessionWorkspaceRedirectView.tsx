@@ -78,7 +78,7 @@ export function SessionWorkspaceRedirectView({ sessionId, onBack }: SessionWorks
       >
         <p className="m-0">This session does not belong to any workflow run.</p>
         <p className="mb-0 mt-2">
-          <a className="text-[var(--accent-blue)] underline" href={`#sid=${encodeURIComponent(sessionId)}`}>
+          <a className="text-[var(--accent-primary)] underline" href={`#sid=${encodeURIComponent(sessionId)}`}>
             Open it in kbbl
           </a>
         </p>

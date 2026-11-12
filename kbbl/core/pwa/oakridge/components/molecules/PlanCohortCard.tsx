@@ -58,7 +58,7 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort, onOp
   return (
     <li
       ref={cardRef}
-      className={`flex flex-col gap-1.5 rounded-md border bg-[var(--bg-surface)] px-3 py-2 ${isSelected ? "border-[var(--accent-blue)] ring-1 ring-[var(--accent-blue)]" : "border-[var(--border-subtle)]"}`}
+      className={`flex flex-col gap-1.5 rounded-md border bg-[var(--bg-surface)] px-3 py-2 ${isSelected ? "border-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]" : "border-[var(--border-subtle)]"}`}
       data-testid="or-plan-cohort"
       data-cohort-id={cohort.id}
     >
@@ -83,7 +83,7 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort, onOp
         {isOpen ? "Hide details" : `Details · ${cohort.files_in_scope.length} files · ${cohort.decisions.length} decisions · ${cohort.acceptance_criteria.length} ${cohort.acceptance_criteria.length === 1 ? "task" : "tasks"}`}
       </Button>
       {isOpen && (
-        <div className="flex flex-col gap-3 border-t border-[var(--border-subtle)] pt-2" data-testid="or-plan-cohort-details">
+        <div className="flex flex-col gap-3 border-t border-[var(--border-decorative)] pt-2" data-testid="or-plan-cohort-details">
           {cohort.scope && (
             <div>
               <div className={artifactLabelClass}>Scope</div>

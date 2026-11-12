@@ -4,7 +4,7 @@ import type { RuntimeDescriptors } from "../../../hooks/useServerConfig";
 import { roleDefaultModel, runtimeForSelection, type ModelRole } from "../../lib/runtime-selection";
 
 const fieldLabelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
-const inputClass = "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
+const inputClass = "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none";
 
 type SetSelection = (value: RuntimeModelSelection | ((current: RuntimeModelSelection) => RuntimeModelSelection)) => void;
 
@@ -23,7 +23,7 @@ export function RoleModelPicker({ role, label, selection, setSelection, setRunti
   const roleLabel = label ?? (role === "planner" ? "Planner" : "Worker");
   const runtime = runtimeForSelection(runtimeDescriptors, defaultRuntimeId, selection.runtime);
   return (
-    <section className="flex flex-col gap-2 rounded-md border border-[var(--border-subtle)] p-3">
+    <section className="flex flex-col gap-2 rounded-md border border-[var(--border-decorative)] p-3">
       <div className="text-xs font-semibold uppercase text-[var(--text-muted)]">{roleLabel}</div>
       <label className="flex flex-col gap-1"><span className={fieldLabelClass}>Runtime</span>
         <select className={inputClass} value={selection.runtime} onChange={(event) => {

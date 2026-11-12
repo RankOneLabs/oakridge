@@ -79,7 +79,7 @@ export function CohortBrief({ unit }: CohortBriefProps) {
   if (!brief) return null;
 
   return (
-    <article className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4" data-testid="or-cohort-brief">
+    <article className="rounded-md border border-[var(--border-decorative)] bg-[var(--bg-elevated)] p-4" data-testid="or-cohort-brief">
       <div className="mb-3 flex flex-wrap items-baseline gap-2">
         <h4 className="m-0 text-sm font-semibold text-[var(--text-primary)]">{brief.title}</h4>
         <span className="rounded border border-[var(--border-muted)] px-1.5 py-0.5 text-xs text-[var(--text-secondary)]">

@@ -1,3 +1,5 @@
+import { Chip } from "../../../components/atoms/Chip";
+import { selectStatusTone } from "../../lib/status-tone";
 import { Button } from "../../../components/atoms/Button";
 import type { RunDetail } from "../../run-types";
 import type { RunAccentClass } from "../../lib/run-accent";
@@ -62,20 +64,14 @@ export function RunIdentityHeader({
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={run.status} testId="or-run-identity-status" />
         {run.is_stuck && (
-          <span
-            className="inline-flex h-5 items-center rounded-full border border-red-500 px-2 text-[11px] font-semibold text-red-500"
-            data-testid="or-run-identity-stuck"
-          >
+          <Chip tone={selectStatusTone("stuck")} testId="or-run-identity-stuck">
             stuck
-          </span>
+          </Chip>
         )}
         {run.parked_count > 0 && (
-          <span
-            className="inline-flex h-5 items-center rounded-full bg-amber-500 px-2 text-[11px] font-semibold text-black"
-            data-testid="or-run-identity-parked"
-          >
+          <Chip tone={selectStatusTone("parked")} testId="or-run-identity-parked">
             {run.parked_count} parked
-          </span>
+          </Chip>
         )}
       </div>
     </header>
