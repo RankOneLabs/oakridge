@@ -2704,7 +2704,7 @@ a:focus-visible {
 .or-final-repository__header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
 .or-final-repository__title { margin: 0; color: var(--text-primary); font-size: 0.875rem; font-weight: 600; }
 .or-final-repository__branches { margin: 0.25rem 0 0; color: var(--text-muted); font-size: 0.75rem; }
-.or-final-repository__state { padding: 0.25rem 0.5rem; border: 1px solid var(--border-muted); border-radius: 999px; color: var(--text-secondary); font-size: 0.75rem; }
+.or-final-repository__state { padding: 0.25rem 0.5rem; border-radius: 999px; font-size: 0.75rem; }
 .or-final-repository__pr, .or-final-repository__empty { margin: 0.75rem 0 0; font-size: 0.875rem; }
 .or-final-repository__empty, .or-final-repository__pr-branches { color: var(--text-muted); }
 .or-final-repository__pr-branches { margin-left: 0.5rem; }
