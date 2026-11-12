@@ -30,6 +30,21 @@
   --accent-secondary: #5eead4;
   --accent-contrast-fg: #17132c;
   /* Shared inset highlight and single drop-shadow level for every badge. */
+  --badge-success-bg: #173E34;
+  --badge-success-fg: #9AE3B4;
+  --badge-success-border: #398366;
+  --badge-warning-bg: #4A371E;
+  --badge-warning-fg: #F3CE8E;
+  --badge-warning-border: #A57B42;
+  --badge-danger-bg: #472930;
+  --badge-danger-fg: #F2AFB9;
+  --badge-danger-border: #A86476;
+  --badge-info-bg: #213C4A;
+  --badge-info-fg: #A8DCEB;
+  --badge-info-border: #568BA3;
+  --badge-muted-bg: #343E42;
+  --badge-muted-fg: #DCE3E5;
+  --badge-muted-border: #7C9299;
   --badge-elevation: inset 0 1px 0 rgb(255 255 255 / 10%), 0 1px 2px rgb(0 0 0 / 22%);
   --tone-info-fg: #93c5fd;
   --tone-info-bg: #1e3450;
@@ -98,8 +113,6 @@
   --accent-muted: #e2eaff;
   --accent-secondary: #0f766e;
   --accent-contrast-fg: #ffffff;
-  /* Shared inset highlight and single drop-shadow level for every badge. */
-  --badge-elevation: inset 0 1px 0 rgb(255 255 255 / 80%), 0 1px 2px rgb(15 23 42 / 10%);
   --tone-info-fg: #1e40af;
   --tone-info-bg: #e5edff;
   --tone-info-border: #4269be;

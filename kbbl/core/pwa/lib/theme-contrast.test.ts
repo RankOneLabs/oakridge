@@ -17,7 +17,7 @@ const TEXT_TIERS = ["text-primary", "text-secondary", "text-tertiary", "text-mut
 const TONES = ["info", "success", "warning", "danger", "muted"];
 const LEGACY_FAMILIES = ["status-connecting", "status-connected", "status-disconnected", "status-stale", "amber", "permission", "danger"];
 
-function readTokens(theme: ThemeName): ThemeTokens {
+function readBlock(theme: ThemeName): ThemeTokens {
   const pattern = theme === "dark" ? /:root\s*\{([^}]+)\}/g : /\[data-theme="light"\]\s*\{([^}]+)\}/g;
   const blocks = [...stylesheet.matchAll(pattern)];
   expect(blocks, `${theme} has exactly one token block`).toHaveLength(1);
@@ -25,6 +25,11 @@ function readTokens(theme: ThemeName): ThemeTokens {
   const tokens = new Map(declarations.map((declaration) => [declaration[1] ?? "", declaration[2]?.trim() ?? ""]));
   expect(tokens.size, `${theme} has no duplicate tokens`).toBe(declarations.length);
   return tokens;
+}
+
+function readTokens(theme: ThemeName): ThemeTokens {
+  const root = readBlock("dark");
+  return theme === "dark" ? root : new Map([...root, ...readBlock("light")]);
 }
 
 function resolveColor(tokens: ThemeTokens, name: string): string {
