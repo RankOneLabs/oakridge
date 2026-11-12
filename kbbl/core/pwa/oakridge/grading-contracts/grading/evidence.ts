@@ -1,7 +1,7 @@
 // Generated from observation/src/http/grading-api.ts. Run bun kbbl/scripts/generate-grading-contracts.ts.
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
-import type { ObservationArtifactRevisionId, ObservationEvaluatorDefinitionId, ObservationEvidenceSetId, ObservationItemOccurrenceId, ObservationRunId } from "../domain/identity";
+import type { ObservationArtifactRevisionId, ObservationEvaluatorDefinitionId, ObservationEvidenceSetId, ObservationItemOccurrenceId, ObservationLogicalItemId, ObservationRunId } from "../domain/identity";
 import type { ObservationJsonValue } from "../domain/primitives";
 import type { ObservationQuestionKey } from "./question";
 
@@ -10,6 +10,7 @@ export type ObservationEvidenceReference = ObservationRevisionEvidence | Observa
 export interface ObservationEvidenceSet extends ObservationQuestionKey {
   readonly evidence_set_id: ObservationEvidenceSetId;
   readonly subject_occurrence_id: ObservationItemOccurrenceId;
+  readonly task_id: ObservationLogicalItemId | null;
   readonly pinned_evaluator_definition_ids: readonly ObservationEvaluatorDefinitionId[];
   readonly readiness: ObservationEvidenceReadiness;
   readonly is_incomplete: boolean;

@@ -3,21 +3,22 @@
  * collector's frozen evidence keeps an absent file explicitly absent, and every exact commit,
  * path, line range, source revision and item path survives serialization. No real provider call.
  */
+import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { expect, test } from "bun:test";
 import type { ArtifactRevisionId, EvidenceSetId, ItemOccurrenceId, RunId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
-import { configuredEvaluator, parseGraderConfiguration, type GraderEntry } from "../src/grading/configuration";
+import { machineGraders, configuredEvaluator, parseGradingDefinitions, type GraderEntry } from "../src/grading/configuration";
 import type { EvidenceReference } from "../src/grading/evidence";
 import type { QuestionDefinition } from "../src/grading/question";
 import type { GradingContext } from "../src/grading/runner";
 import type { CapturedRevision, CapturedSources, SourceArtifact } from "../src/ports/artifact-source";
 import type { GradeRunner } from "../src/ports/grade-runner";
 import { oakridgeEvidence } from "../src/producers/oakridge/evidence";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, OAKRIDGE_QUESTIONS } from "../src/producers/oakridge/questions";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID } from "../src/producers/oakridge/evidence";
+import { OAKRIDGE_QUESTIONS, committedDefinitions } from "./grading-fixture";
 import { createFastinoGlideRunner } from "../src/runners/fastino-glide";
 import { createJevDirectRunner } from "../src/runners/jev-direct";
 import { createLlmJudgeRunner } from "../src/runners/llm-judge";
-import { committedGraders } from "./grading-fixture";
 
 const HEAD = "2222222222222222222222222222222222222222";
 const reportedTests = { passed: 3, failed: 1, output: null, summary: null, cargo_test_output: "test result: FAILED. 3 passed; 1 failed" };
@@ -30,7 +31,7 @@ const sources: CapturedSources = {
   readRevision: async (revision_id): Promise<CapturedRevision | null> => revision_id === "assessment-1"
     ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: "build-1", body: { head_sha: HEAD, test_evidence: reportedTests } }
     : revision_id === "build-1" ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } } : null,
-  readRevisionAt: async () => null, readLinkedItems: async () => [],
+  readRevisionAt: async () => null, readLogicalItemAt: async () => ({ revision_id: "tasks-1" as ArtifactRevisionId, item_path: "/tasks/0", item_kind: "task", selected_value: { id: "T7" } }), readLinkedItems: async () => [],
   repository: { hasCommit: async (path) => path === "/repos/other",
     readFile: async ({ path }) => path === "core/gone.ts" ? { state: "absent" } : { state: "present", content: "one\ntwo\nthree\nfour" } },
 };
@@ -38,15 +39,15 @@ const sources: CapturedSources = {
 const questionOf = (question_id: string): QuestionDefinition => OAKRIDGE_QUESTIONS.find((question) => question.question_id === question_id)!;
 
 async function frozen(question: QuestionDefinition): Promise<readonly EvidenceReference[]> {
-  const collected = await oakridgeEvidence.collect(artifact, question, sources);
+  const collected = await oakridgeEvidence.collect(artifact, { ...question, task_id: "task-7" as import("../src/domain/identity").LogicalItemId }, sources);
   if (collected.state !== "ready") throw new Error(JSON.stringify(collected));
   return collected.references;
 }
-/** The committed graders.json grader for the question, optionally moved to another retained runner. */
+/** The committed grading-definitions.json grader for the question, optionally moved to another retained runner. */
 async function configured(question: QuestionDefinition, change: (grader: GraderEntry) => GraderEntry = (grader) => grader) {
-  const parsed = parseGraderConfiguration(await committedGraders());
+  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
-  const grader = parsed.value.questions.find((entry) => entry.question_id === question.question_id)!.graders[0]!;
+  const grader = machineGraders(parsed.value.find((entry) => entry.id === question.question_id)!)[0]!;
   const evaluator = configuredEvaluator(question, change(grader));
   if (!evaluator.ok) throw new Error(evaluator.error.detail);
   return evaluator.value;
@@ -69,6 +70,7 @@ async function sentEvidence(runner: (transport: (url: string, init: RequestInit)
 }
 
 const expectedEvidence = {
+  "task_context:0": { source: "revision", revision_id: "tasks-1", item_path: "/tasks/0", content: { id: "T7" } },
   subject: { source: "revision", revision_id: "assessment-1", item_path: "/findings/2", content: artifact.selected_value },
   "citation:0": { source: "repository", repository_key: "other", commit_sha: HEAD, path: "core/decision-record.ts",
     line_range: { start: 2, end: 3 }, is_absent: false, content: "two\nthree" },
@@ -87,7 +89,7 @@ const transports = {
   llm_judge: (transport: (url: string, init: RequestInit) => Promise<Response>) =>
     createLlmJudgeRunner({ api_key: "key", base_url: "https://judge.invalid/v1", transport }),
 } as const;
-/** Each runner gets instructions in its own shape; the System One runners use graders.json's as committed. */
+/** Each runner gets instructions in its own shape; the System One runners use grading-definitions.json's as committed. */
 const asRunner = (runner: keyof typeof transports) => (grader: GraderEntry): GraderEntry => runner === "llm_judge"
   ? { ...grader, runner, instructions: { rubric: "Does the cited evidence support the finding?", max_evidence_chars: 32_000 } }
   : { ...grader, runner };
@@ -104,14 +106,14 @@ test("Correctness also sends the exact build it assessed, as a revision", async 
   expect(sent).toEqual({ ...expectedEvidence, build_result: { source: "revision", revision_id: "build-1", item_path: null, content: { head_sha: HEAD } } });
 });
 
-test("graders.json instructions describe the request the System One runners send", async () => {
-  const parsed = parseGraderConfiguration(await committedGraders());
+test("grading-definitions.json instructions describe the request the System One runners send", async () => {
+  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
-  for (const entry of parsed.value.questions) for (const grader of entry.graders) {
+  for (const entry of parsed.value) for (const grader of machineGraders(entry)) {
     const text = (grader.instructions as { system_one: { instructions: string } }).system_one.instructions;
-    const labels = entry.question_id === "finding.relevance" ? ["state.subject", "state.spec"]
-      : entry.question_id === "task.requirement_coverage" ? ["state.subject", "state.spec_task", "state.spec", "state.requirement:N"]
-      : entry.question_id === "acceptance_entry.task_coverage" ? ["state.subject", "state.spec_task", "state.plan", "state.contribution_context"]
+    const labels = entry.id === "finding.relevance" ? ["state.subject", "state.spec"]
+      : entry.id === "task.requirement_coverage" ? ["state.subject", "state.spec_task", "state.spec", "state.requirement:N"]
+      : entry.id === "acceptance_entry.task_coverage" ? ["state.subject", "state.spec_task", "state.plan", "state.contribution_context"]
       : ["state.subject", "citation:N", "test_evidence", "is_absent", "commit_sha", "line_range", "reported"];
     for (const label of ["source", "content", ...labels]) expect(text).toContain(label);
   }

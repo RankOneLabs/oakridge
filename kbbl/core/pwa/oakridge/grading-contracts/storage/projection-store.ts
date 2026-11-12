@@ -3,7 +3,7 @@
 
 import type { ObservationItemOccurrenceId, ObservationLogicalItemId, ObservationRelationId } from "../domain/identity";
 
-export interface ObservationLineagePage { readonly occurrence_id: ObservationItemOccurrenceId; readonly relations: readonly ObservationItemRelationRead[];
+export interface ObservationLineagePage { readonly task_id: ObservationLogicalItemId | null; readonly occurrence_id: ObservationItemOccurrenceId; readonly relations: readonly ObservationItemRelationRead[];
   readonly edges: readonly ObservationItemRelationRead[];
   readonly unresolved: readonly ObservationItemRelationRead[]; readonly total: number;
   readonly limit: number; readonly offset: number; readonly republication: ObservationRepublication | null }

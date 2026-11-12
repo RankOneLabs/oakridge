@@ -5,10 +5,9 @@ import { sql } from "kysely";
 import { createApp } from "../src/http/app";
 import { credentialsFromEnv } from "../src/http/ingest-auth";
 import { decodeSourceEventDelivery } from "../src/ingest/cursor";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { oakridgeProfile, createFeed, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 import { withTenant, type Database } from "../src/storage/database";
 import { readSourceCursor } from "../src/storage/capture-store";
-import { createFeed, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 
 /** Every request leaving this process counts as a provider call. */
 const realFetch = globalThis.fetch;

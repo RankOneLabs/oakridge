@@ -5,6 +5,14 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 
+/// One representation of the default target, shared by lowering and hashing.
+fn normalized_decision_target(
+    target: Option<&SymbolKey>,
+    reviewed: &SymbolKey,
+) -> Option<SymbolKey> {
+    target.filter(|target| *target != reviewed).cloned()
+}
+
 pub(crate) fn source_span(text: &str) -> SourceSpan {
     SourceSpan {
         start: 0,
@@ -375,6 +383,8 @@ mod stage;
 mod worker;
 use group::compile_group;
 use stage::compile_stage;
+#[path = "workflow_digest.rs"]
+mod digest;
 #[path = "workflow_passes.rs"]
 mod passes;
 pub use passes::{CheckKind, CompileError};

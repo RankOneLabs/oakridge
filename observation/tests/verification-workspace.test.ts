@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GradingCounts, HumanSubmissionReadback } from "../verification/proof-contract";
+import { readLaunchableCatalog, DEFINITION_STORE_ROOT } from "../../workflow-config/src/definition-store";
 import { humanAnswerChecks, scanDefinitions } from "../verification/workspace";
 
 const submission = (label: string, overrides: Partial<HumanSubmissionReadback> = {}): HumanSubmissionReadback => ({ label, status: 201, code: null, submission_id: "s", reviewer_id: "oakridge-operator",
@@ -38,12 +39,14 @@ test("the definition scan names any retained definition carrying a discarded fie
   const root = mkdtempSync(join(tmpdir(), "definition-scan-"));
   mkdirSync(join(root, "workflows"));
   mkdirSync(join(root, "operations"));
-  writeFileSync(join(root, "workflows", "clean.json"), JSON.stringify({ source: { stages: { a: { workers: { w: { kind: "agent" } } } } } }));
+  const catalog = readLaunchableCatalog();
+  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
+  writeFileSync(join(root, "workflows", "clean.json"), readFileSync(join(DEFINITION_STORE_ROOT, "workflows", `${catalog.value.development}.json`)));
   writeFileSync(join(root, "operations", "registry.json"), JSON.stringify({ operations: [] }));
   writeFileSync(join(root, "launchable.json"), JSON.stringify([]));
   expect(scanDefinitions(root)).toEqual({ scanned: 1, with_discarded_field: [], files_scanned: 3, files_naming_gated_review: [] });
   writeFileSync(join(root, "workflows", "dirty.json"), JSON.stringify({ source: { stages: { a: { workers: { w: { gated_review: { kind: "unscoped" } } } } } } }));
-  expect(scanDefinitions(root).with_discarded_field).toEqual(["dirty.json:/source/stages/a/workers/w/gated_review"]);
+  expect(scanDefinitions(root).with_discarded_field).toEqual(["dirty.json"]);
 });
 
 test("the definition scan reads operation registries and the launchable list whole for any gated_review key", () => {

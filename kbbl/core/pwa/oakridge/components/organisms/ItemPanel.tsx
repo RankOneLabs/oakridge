@@ -8,7 +8,7 @@ import type { ObservationItemAddress } from "../../grading-contracts/grading/ite
 import { useItemAt } from "../../hooks/useItemAt";
 import { useItemLineage } from "../../hooks/useItemLineage";
 import { useItemStatus } from "../../hooks/useItemStatus";
-import { itemSelectionKey, questionLabel, sameQuestion, selectItemHeader, selectSpecTaskId, stageLabel, taskLinkLabel } from "../../lib/grading";
+import { itemSelectionKey, questionLabel, selectItemHeader, selectQuestionTaskLabel, selectSpecTaskId, stageLabel, taskLinkLabel } from "../../lib/grading";
 import { useGradingVisibility } from "../../state/gradingVisibility";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
 import { FrozenEvidenceList } from "../molecules/FrozenEvidenceList";
@@ -17,7 +17,7 @@ import { ListPager } from "../molecules/ListPager";
 import { StructuredValue } from "../molecules/StructuredValue";
 import { YourGrade } from "./YourGrade";
 
-const QUESTIONS: ObservationPageRequest = { limit: 200, offset: 0 };
+const FIRST_QUESTIONS: ObservationPageRequest = { limit: 200, offset: 0 };
 const FIRST_LINEAGE: ObservationPageRequest = { limit: 20, offset: 0 };
 
 interface Props {
@@ -47,10 +47,12 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
   const occurrenceId = address.data?.occurrence_id ?? null;
   const [windows, setWindows] = useState<WindowQuery>({});
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [questionsPage, setQuestionsPage] = useState(FIRST_QUESTIONS);
   const [lineagePage, setLineagePage] = useState(FIRST_LINEAGE);
-  const status = useItemStatus(occurrenceId === null ? null : { occurrence_id: occurrenceId, top: QUESTIONS, nested: windows });
-  const lineage = useItemLineage(occurrenceId, lineagePage);
+  const status = useItemStatus(occurrenceId === null ? null : { occurrence_id: occurrenceId, task_id: selection.task_id, top: questionsPage, nested: windows });
+  const lineage = useItemLineage(occurrenceId, lineagePage, selection.task_id);
   const setWindow = (name: string, window: ObservationPageRequest) => setWindows((current) => ({ ...current, [name]: window }));
+  const showQuestions = (window: ObservationPageRequest) => { setQuestionsPage(window); setSelectedIndex(0); setWindows({}); };
 
   if (address.isError) return <Unavailable error={address.error} />;
   if (status.isError) return <Unavailable error={status.error} />;
@@ -60,6 +62,7 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
   const specTaskId = selectSpecTaskId(item);
   const header = selectItemHeader(item.selected_value);
   const question = questions.items[Math.min(selectedIndex, Math.max(0, questions.items.length - 1))] ?? null;
+  const taskLabel = question === null ? null : selectQuestionTaskLabel(question.task_id, links.items);
   return (
     <article className="flex flex-col gap-4 p-3" data-testid="or-item-panel" data-occurrence={item.occurrence_id} data-item-path={item.item_path} data-revision={item.source_revision_id}>
       <header className="flex flex-col gap-1.5">
@@ -85,24 +88,28 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
       </header>
 
       {questions.total === 0 ? <p className="m-0 text-sm text-[var(--text-muted)]" data-testid="or-item-no-questions">No question was pinned to this item.</p> : (
+        <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Questions">
           {questions.items.map((candidate, index) => (
-            <Button key={`${candidate.question.question_id}@${candidate.question.question_version}`} variant={question && sameQuestion(candidate.question, question.question) ? "primary" : "secondary"} size="xsmall" className="text-xs!"
-              role="tab" aria-selected={question !== null && sameQuestion(candidate.question, question.question)} data-testid="or-item-question" data-question={candidate.question.question_id} data-readiness={candidate.human.state}
+            <Button key={candidate.evidence.evidence_set_id} variant={question?.evidence.evidence_set_id === candidate.evidence.evidence_set_id ? "primary" : "secondary"} size="xsmall" className="text-xs!"
+              role="tab" aria-selected={question?.evidence.evidence_set_id === candidate.evidence.evidence_set_id} data-testid="or-item-question" data-question={candidate.question.question_id} data-readiness={candidate.human.state}
               onClick={() => { setSelectedIndex(index); setWindows({}); }}>
-              {questionLabel(candidate.question)}{candidate.human.state === "not_ready" ? " (not ready)" : ""}
+              {questionLabel(candidate.question)}{candidate.task_id !== null && ` · ${selectQuestionTaskLabel(candidate.task_id, links.items)}`}{candidate.human.state === "not_ready" ? " (not ready)" : ""}
             </Button>
           ))}
+        </div>
+        <ListPager name="questions" page={questions} onWindow={showQuestions} />
         </div>
       )}
 
       {question && (
         <>
           <section className="flex flex-col gap-1" data-testid="or-item-question-text">
+            {taskLabel !== null && <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-item-question-task">{taskLabel}</p>}
             <p className="m-0 text-sm font-medium text-[var(--text-primary)]">{question.question.question_text ?? questionLabel(question.question)}</p>
             <p className="m-0 text-xs text-[var(--text-muted)]">{question.question.interpretation_caveats}</p>
           </section>
-          <YourGrade occurrenceId={item.occurrence_id} question={question} onAcknowledged={() => reveal(key)} />
+          <YourGrade key={question.evidence.evidence_set_id} occurrenceId={item.occurrence_id} question={question} onAcknowledged={() => reveal(key)} />
           <div className="flex flex-wrap items-center gap-2">
             {isRevealed
               ? <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => hide(key)} data-testid="or-item-hide">Hide other answers</Button>

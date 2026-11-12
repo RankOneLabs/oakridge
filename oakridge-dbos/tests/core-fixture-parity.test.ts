@@ -1,12 +1,12 @@
 import { expect, spyOn, test } from "bun:test";
-import { CoreClient, MAX_SNAPSHOT_BYTES } from "../src/core-client/client";
+import { CoreClient, compileWorkflow, MAX_SNAPSHOT_BYTES } from "../src/core-client/client";
 import type { StepSnapshot, Workflow } from "../src/core-client/core-types";
 
 const workflow = {
   workflow: "simple", input: {},
   run: { units: { document: { stage: "document", input: {} } }, outcome: { draft: "document.outcome.draft" } },
-  stages: { document: { input: {}, artifacts: { draft: { schema: "text" } },
-    workers: { writer: { kind: "agent", prompts: { initial: "write.md" }, inputs: {}, creates: ["draft"] } },
+  stages: { document: { input: {}, artifacts: { draft: { kind: "document", schema: "text" } },
+    workers: { writer: { kind: "agent", prompts: { initial: "write.md" }, inputs: {}, produces: ["draft"] } },
     done_when: "approved(draft)", outcome: { draft: "latest(draft)" } } },
 } as Workflow;
 
@@ -110,4 +110,33 @@ test("cached programs recompile after the WASM instance is replaced", async () =
       incoming: { event: { kind: "launched", input: {} }, writer: { kind: "engine" } } });
     expect(result.ok && result.value.kind).toBe("stepped");
   } finally { client.close(); }
+});
+
+
+test("artifact schema version is unchanged when only authored presentation kind changes", async () => {
+  const { readLaunchableCatalog, resolveLaunchableDefinition } = await import("../src/runtime/definition-store");
+  const { artifactSchemaVersion } = await import("../src/adapters/observation-schema-version");
+  const catalog = readLaunchableCatalog();
+  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
+  const resolved = resolveLaunchableDefinition(catalog.value.development);
+  if (!resolved.ok) throw new Error(JSON.stringify(resolved.error));
+  const started = CoreClient.start();
+  if (!started.ok) throw new Error(started.error.detail.detail);
+  try {
+    const original = resolved.value;
+    const stage = original.source.stages.analysis;
+    const artifact = stage?.artifacts.analysis;
+    if (!stage || !artifact) throw new Error("missing analysis fixture");
+    const source = { ...original.source, stages: { ...original.source.stages, analysis: {
+      ...stage,
+      artifacts: { ...stage.artifacts,
+        analysis: { ...artifact, kind: "record" as const } },
+    } } };
+    const first = await compileWorkflow(started.value, { workflow: original.source, prompts: original.prompts, operations: original.operations });
+    const second = await compileWorkflow(started.value, { workflow: source, prompts: original.prompts, operations: original.operations });
+    if (!first.ok || !second.ok) throw new Error(JSON.stringify([first, second]));
+    const before = artifactSchemaVersion({ ...original, checked_program: first.value }, "analysis", "analysis");
+    expect(before).not.toBeNull();
+    expect(artifactSchemaVersion({ ...original, source, checked_program: second.value }, "analysis", "analysis")).toBe(before);
+  } finally { started.value.close(); }
 });

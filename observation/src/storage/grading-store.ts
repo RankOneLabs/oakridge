@@ -2,7 +2,8 @@ import { sql, type Selectable } from "kysely";
 import { canonicalJson } from "canonical-json";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
-import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId, ReviewerId, RunId } from "../domain/identity";
+import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, QuestionId, ReviewerId, RunId } from "../domain/identity";
+import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../grading/evidence";
 import type { QuestionDefinition, QuestionKey } from "../grading/question";
 import { evaluatorIdentity, instructionDigest, type EvaluatorDefinition } from "../grading/evaluator";
 import { humanChoiceAnswer, submissionAttemptLabel, submissionDigest } from "../grading/execution";
@@ -87,17 +88,18 @@ export function readExecution(db: Database, tenant: TenantScope, execution_id: s
 }
 
 /** An occurrence's answers are found through its executions, which own the measurement identity. */
-export function listGrades(db: Database, tenant: TenantScope, occurrence_id: string, page: Page): Promise<GradePage | null> {
+export function listGrades(db: Database, tenant: TenantScope, occurrence_id: string, page: Page, task_id?: LogicalItemId): Promise<GradePage | null> {
   return withTenant(db, tenant, async (trx) => {
     const item = await trx.selectFrom("observation.item_occurrence").select("occurrence_id")
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("occurrence_id", "=", occurrence_id).executeTakeFirst();
     if (!item) return null;
-    const graded = trx.selectFrom("observation.grade_observation as g")
+    let graded = trx.selectFrom("observation.grade_observation as g")
       .innerJoin("observation.evaluation_execution as x", (join) => join.onRef("x.producer", "=", "g.producer")
         .onRef("x.namespace", "=", "g.namespace").onRef("x.execution_id", "=", "g.execution_id"))
       .where("g.producer", "=", tenant.producer).where("g.namespace", "=", tenant.namespace)
       .where("x.subject_occurrence_id", "=", occurrence_id);
+    if (task_id !== undefined) graded = graded.where("x.task_id", "=", task_id);
     const count = await graded.select((eb) => eb.fn.countAll<number>().as("count")).executeTakeFirstOrThrow();
     const rows = await graded
       .innerJoin("observation.evaluator_definition as d", (join) => join.onRef("d.producer", "=", "x.producer")
@@ -109,7 +111,7 @@ export function listGrades(db: Database, tenant: TenantScope, occurrence_id: str
       ])
       .orderBy("g.recorded_at", "asc").orderBy("g.observation_id", "asc").limit(page.limit).offset(page.offset).execute();
     const items: GradeListingItem[] = rows.map(({ observation, execution, evaluator }) => ({
-      observation, answer: observation.answer_payload, evaluator, execution,
+      task_id: execution.task_id, observation, answer: observation.answer_payload, evaluator, execution,
     }));
     return { items, total: Number(count.count), ...page };
   });
@@ -135,6 +137,7 @@ export async function registerDefinitions(db: Database, tenant: TenantScope, def
 
 /** What a reviewer submits. The reviewer comes from the credential; evidence and evaluator from the pin. */
 export interface HumanSubmission extends QuestionKey {
+  readonly task_id?: LogicalItemId | null;
   readonly occurrence_id: ItemOccurrenceId;
   readonly submission_id: string;
   readonly answer: string;
@@ -143,6 +146,7 @@ export interface HumanSubmission extends QuestionKey {
 }
 /** The durable result of a submission; a repeat of its id returns this same result. */
 export interface RecordedSubmission {
+  readonly task_id: LogicalItemId | null;
   readonly submission_id: string;
   readonly reviewer_id: ReviewerId;
   readonly observation_id: GradeObservationId;
@@ -161,6 +165,8 @@ export type SubmissionOutcome = { readonly status: "recorded" | "duplicate"; rea
 /** Why a submission recorded nothing. Only the selected question's own readiness can make it `not_ready`. */
 export type SubmissionRefusal =
   | { readonly kind: "item_not_found"; readonly occurrence_id: ItemOccurrenceId }
+  | { readonly kind: "task_required"; readonly question: QuestionKey }
+  | { readonly kind: "task_not_applicable"; readonly question: QuestionKey }
   | { readonly kind: "question_not_pinned"; readonly question: QuestionKey }
   | { readonly kind: "not_ready"; readonly question: QuestionKey; readonly code: string; readonly detail: string }
   | { readonly kind: "invalid_answer"; readonly question: QuestionKey; readonly detail: string; readonly allowed_values: readonly JsonValue[] }
@@ -177,9 +183,9 @@ async function readRecordedSubmission(trx: DatabaseTransaction, tenant: TenantSc
     .innerJoin("observation.evaluation_execution as x", (join) => join.onRef("x.producer", "=", "g.producer")
       .onRef("x.namespace", "=", "g.namespace").onRef("x.execution_id", "=", "g.execution_id"))
     .select(["g.observation_id", "g.execution_id", "g.reviewer_id", "g.answer_payload", "g.rationale", "g.supersedes_observation_id", "g.recorded_at",
-      "x.evidence_set_id", "x.evaluator_definition_id", "x.subject_occurrence_id", "x.run_id", "x.question_id", "x.question_version"])
+      "x.task_id", "x.evidence_set_id", "x.evaluator_definition_id", "x.subject_occurrence_id", "x.run_id", "x.question_id", "x.question_version"])
     .where("g.producer", "=", tenant.producer).where("g.namespace", "=", tenant.namespace).where("g.execution_id", "=", execution_id).executeTakeFirst();
-  return row ? { submission_id, reviewer_id: row.reviewer_id as ReviewerId, observation_id: row.observation_id as GradeObservationId, execution_id: row.execution_id as ExecutionId,
+  return row ? { task_id: row.task_id as LogicalItemId | null, submission_id, reviewer_id: row.reviewer_id as ReviewerId, observation_id: row.observation_id as GradeObservationId, execution_id: row.execution_id as ExecutionId,
     evidence_set_id: row.evidence_set_id as EvidenceSetId, evaluator_definition_id: row.evaluator_definition_id as EvaluatorDefinitionId,
     occurrence_id: row.subject_occurrence_id as ItemOccurrenceId, run_id: row.run_id as RunId,
     question: { question_id: row.question_id as QuestionId, question_version: row.question_version }, answer: row.answer_payload as unknown as GradeAnswer,
@@ -202,7 +208,7 @@ function readOwnAnswers(trx: DatabaseTransaction, tenant: TenantScope, evidence_
  * tab cannot both become the reviewer's current answer. It writes only execution and observation
  * rows: no provider request, no admission and no write outside this service.
  */
-export async function submitHumanAnswer(db: Database, tenant: TenantScope, reviewer_id: string, input: HumanSubmission): Promise<Result<SubmissionOutcome, SubmissionRefusal>> {
+export async function submitHumanAnswer(db: Database, tenant: TenantScope, reviewer_id: string, input: HumanSubmission, configuration: CaptureConfiguration = NO_CAPTURE_PINS): Promise<Result<SubmissionOutcome, SubmissionRefusal>> {
   const submission = { reviewer_id, submission_id: input.submission_id };
   const digest = submissionDigest(submission);
   if (!digest.ok) throw new Error(digest.error.detail);
@@ -215,8 +221,18 @@ export async function submitHumanAnswer(db: Database, tenant: TenantScope, revie
     const item = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "run_id"]).where("producer", "=", tenant.producer)
       .where("namespace", "=", tenant.namespace).where("occurrence_id", "=", input.occurrence_id).executeTakeFirst();
     if (!item) return refuse({ kind: "item_not_found", occurrence_id: input.occurrence_id });
+    const subjects = await trx.selectFrom("observation.evidence_set").select(["task_id"])
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("subject_occurrence_id", "=", input.occurrence_id).where("question_id", "=", input.question_id)
+      .where("question_version", "=", input.question_version).execute();
+    const declared = configuration.pins.find((pin) => pin.question_id === input.question_id && pin.question_version === input.question_version);
+    const is_per_task = subjects.length > 0 ? subjects.some((set) => set.task_id !== null) : declared?.scope === "per_task";
+    const task_id = input.task_id ?? null;
+    if (is_per_task && task_id === null) return refuse({ kind: "task_required", question });
+    if (!is_per_task && task_id !== null && (subjects.length > 0 || declared)) return refuse({ kind: "task_not_applicable", question });
     const evidence = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("subject_occurrence_id", "=", input.occurrence_id).where("question_id", "=", input.question_id).where("question_version", "=", input.question_version).executeTakeFirst();
+      .where("subject_occurrence_id", "=", input.occurrence_id).where("task_id", task_id === null ? "is" : "=", task_id)
+      .where("question_id", "=", input.question_id).where("question_version", "=", input.question_version).executeTakeFirst();
     if (!evidence) return refuse({ kind: "question_not_pinned", question });
     if (evidence.readiness !== "ready") return refuse({ kind: "not_ready", question, code: evidence.not_ready_code ?? "", detail: evidence.not_ready_detail ?? "" });
     const definition = questionFromRow(await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", tenant.producer)
@@ -238,7 +254,7 @@ export async function submitHumanAnswer(db: Database, tenant: TenantScope, revie
         return refuse({ kind: "stale_correction", corrects_observation_id: input.corrects_observation_id, current_observation_id: current });
     }
     const observation_id = observationIdOf(execution_id as unknown as ExecutionId);
-    await trx.insertInto("observation.evaluation_execution").values({ ...scope(tenant), execution_id, run_id: item.run_id, subject_occurrence_id: input.occurrence_id,
+    await trx.insertInto("observation.evaluation_execution").values({ task_id, ...scope(tenant), execution_id, run_id: item.run_id, subject_occurrence_id: input.occurrence_id,
       evidence_set_id: evidence.evidence_set_id, question_id: input.question_id, question_version: input.question_version, evaluator_definition_id: human.evaluator_definition_id,
       attempt_label: submissionAttemptLabel(submission), idempotency_digest: execution_id, status: "completed", lease_owner: null, lease_expires_at: null,
       terminal_cause: null, started_at: sql<Date>`clock_timestamp()`, ended_at: sql<Date>`clock_timestamp()`, error: null, model_usage: null, cost: null,

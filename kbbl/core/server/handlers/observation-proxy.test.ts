@@ -87,6 +87,15 @@ describe("capabilities stay on the server", () => {
     expect(await response.json()).toEqual({ status: "recorded" });
     expect(calls[0]).toMatchObject({ method: "POST", authorization: "Bearer grade-secret", url: `http://observation.test/v1/items/${ITEM}/answers` });
   });
+  test.each(["task-3", "task-7", null])("submissions and corrections preserve the task subject %s", async (task_id) => {
+    const calls = upstream(() => Response.json({ status: "recorded", task_id }, { status: 201 }));
+    const answer = { ...submission, task_id, question_id: task_id === null ? "finding.relevance" : submission.question_id,
+      answer: task_id === null ? "relevant" : submission.answer };
+    const correction = { ...answer, submission_id: "s2", corrects_observation_id: "o1" };
+    const app = mounted();
+    for (const body of [answer, correction]) expect((await post(app, body)).status).toBe(201);
+    expect(calls.map((call) => call.body)).toEqual([answer, correction]);
+  });
   test("a browser's reviewer, evaluator and evidence fields are not forwarded", async () => {
     const calls = upstream();
     await post(mounted(), { ...submission, rationale: "because", corrects_observation_id: "o1", reviewer_id: "someone-else", evaluator_definition_id: "machine", evidence_set_id: "chosen", token: "x" });

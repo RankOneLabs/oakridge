@@ -9,6 +9,7 @@
  * `select` prints NAME=VALUE lines for the configured runners only. Failure
  * prints `<kind>:<entity>` on stderr, which names settings but never a value.
  */
+import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { parseArgs } from "node:util";
 import { allProviderCredentialNames, configuredRunnerNames, credentialsForRunners, parseEnvFile,
   selectProviderEnvironment, type ProviderCredentialError } from "../src/grading/provider-credentials";
@@ -21,12 +22,12 @@ async function readEntries(path: string): Promise<ReadonlyMap<string, string>> {
   return parseEnvFile(await file.exists() ? await file.text() : "");
 }
 
-/** No graders.json means no grader is configured, not that one failed. */
+/** No grading-definitions.json means no grader is configured, not that one failed. */
 async function readRunners(path: string): Promise<Result<readonly string[], ProviderCredentialError>> {
   const file = Bun.file(path);
   if (!await file.exists()) return ok([]);
-  try { return configuredRunnerNames(await file.json()); }
-  catch { return err({ operation: "provider_credentials", kind: "invalid_graders", entity_id: "graders.json", detail: "not JSON" }); }
+  try { return configuredRunnerNames(await file.json(), oakridgeGradingRegistry); }
+  catch { return err({ operation: "provider_credentials", kind: "invalid_definitions", entity_id: "grading-definitions.json", detail: "not JSON" }); }
 }
 
 async function selectLines(env_file: string, graders: string): Promise<Result<readonly string[], ProviderCredentialError>> {

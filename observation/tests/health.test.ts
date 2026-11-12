@@ -2,9 +2,8 @@ import { expect, test } from "bun:test";
 import { Hono } from "hono";
 import { registerHealthRoute, type GraderCapability, type HealthDependencies, type ObservationHealth } from "../src/http/health";
 import { createApp } from "../src/http/app";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { oakridgeProfile, integration, scratchDatabase } from "./grading-fixture";
 import type { Database } from "../src/storage/database";
-import { integration, scratchDatabase } from "./grading-fixture";
 
 /** A database that never answers: the pool of a server that stopped responding. It counts the probes it was handed. */
 function hungDatabase(): { readonly db: Database; readonly started: () => number } {

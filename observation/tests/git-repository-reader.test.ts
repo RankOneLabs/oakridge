@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../src/domain/identity";
 import type { CapturedSources, SourceArtifact } from "../src/ports/artifact-source";
 import { oakridgeEvidence } from "../src/producers/oakridge/evidence";
-import { EVIDENCE_SUPPORT_ID } from "../src/producers/oakridge/questions";
+import { EVIDENCE_SUPPORT_ID } from "../src/producers/oakridge/evidence";
 import { createGitRepositoryReader } from "../src/storage/git-repository-reader";
 
 let root = "";
@@ -91,13 +91,13 @@ test("the collector reads a citation range from the non-primary launch repositor
   const artifact: SourceArtifact = { occurrence_id: "occurrence" as ItemOccurrenceId, run_id: "run-1" as RunId, revision_id: "assessment-1" as ArtifactRevisionId,
     item_path: "/findings/0", item_kind: "assessment_finding",
     selected_value: { task_ids: [], evidence: [{ kind: "file", ref: "core/decision-record.ts:18-31" }, { kind: "file", ref: "core/gone.ts" }] } };
-  const sources: CapturedSources = { repository: createGitRepositoryReader(), readRevisionAt: async () => null, readLinkedItems: async () => [],
+  const sources: CapturedSources = { repository: createGitRepositoryReader(), readRevisionAt: async () => null, readLogicalItemAt: async () => ({ revision_id: "tasks-1" as ArtifactRevisionId, item_path: "/tasks/0", item_kind: "task", selected_value: { id: "T7" } }), readLinkedItems: async () => [],
     readRunInput: async () => ({ spec: "s", primary_repository_key: "primary", repositories: [
       { key: "primary", preparation: { repository_path: primary } }, { key: "other", preparation: { repository_path: other } }] }),
     readRevision: async (revision_id) => ({ revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: null, body: { head_sha: cited_commit } }) };
-  const collected = await oakridgeEvidence.collect(artifact, { question_id: EVIDENCE_SUPPORT_ID, question_version: "1" }, sources);
+  const collected = await oakridgeEvidence.collect(artifact, { task_id: "task-7" as import("../src/domain/identity").LogicalItemId, question_id: EVIDENCE_SUPPORT_ID, question_version: "1" }, sources);
   expect(collected).toMatchObject({ state: "ready", references: [{ ref: "subject" },
     { source: "repository", repository_key: "other", commit_sha: cited_commit, path: "core/decision-record.ts", line_range: { start: 18, end: 31 },
       is_absent: false, content: Array.from({ length: 14 }, (_, index) => `line ${index + 18}`).join("\n") },
-    { source: "repository", repository_key: "other", commit_sha: cited_commit, path: "core/gone.ts", is_absent: true, content: null }] });
+    { source: "repository", repository_key: "other", commit_sha: cited_commit, path: "core/gone.ts", is_absent: true, content: null }, { ref: "task_context:0" }] });
 });

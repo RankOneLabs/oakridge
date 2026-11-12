@@ -1,20 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { parseGraderConfiguration, planRegistration } from "../src/grading/configuration";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { machineGraders, parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
+import { oakridgeGradingRegistry, committedDefinitions } from "./grading-fixture";
 import { CONCURRENT_ESTIMATE_PER_CALL, concurrencyEdit, EDITED_ESTIMATE_PER_CALL, editedRunChecks, failureChecks, gradingEdit, launchConfigCheck,
   offRunChecks, pinnedArrivalChecks, pinReadbackChecks, secondWorkerChecks, settledRun, unlinkedAnalysisChecks,
   waitingCaptureChecks } from "../verification/grading";
 import type { FrozenEvidenceReadback, MeasurementReadback, PinReadback, SecondWorkerReadback, SpendReadback,
   StaleSettlementReadback } from "../verification/proof-contract";
-import { committedGraders } from "./grading-fixture";
 
 const configured = async () => {
-  const parsed = parseGraderConfiguration(await committedGraders());
+  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   return parsed.value;
 };
 const plan = (configuration: Parameters<typeof planRegistration>[0]) => {
-  const planned = planRegistration(configuration, oakridgeProfile.questions);
+  const planned = planRegistration(configuration, oakridgeGradingRegistry);
   if (!planned.ok) throw new Error(planned.error.detail);
   return planned.value;
 };
@@ -33,7 +32,7 @@ const failed = (checks: readonly { readonly name: string; readonly passed: boole
 test("the edit swaps instructions and sets an estimate that fits one request in the default allowance", async () => {
   const committed = await configured();
   const edit = gradingEdit(committed);
-  expect(edit.questions.flatMap((entry) => entry.graders.map((grader) => grader.estimated_cost_per_call)).every((cost) => cost === EDITED_ESTIMATE_PER_CALL)).toBe(true);
+  expect(edit.flatMap((entry) => machineGraders(entry).map((grader) => grader.estimated_cost_per_call)).every((cost) => cost === EDITED_ESTIMATE_PER_CALL)).toBe(true);
   expect(EDITED_ESTIMATE_PER_CALL <= 5 && EDITED_ESTIMATE_PER_CALL * 2 > 5).toBe(true);
   const before = new Set(plan(committed).graders.map((grader) => grader.evaluator_definition_id));
   expect(plan(edit).graders.some((grader) => before.has(grader.evaluator_definition_id))).toBe(false);
@@ -94,7 +93,7 @@ test("the failure phase needs a recovered claim, recorded refusals and exhaustio
 test("the concurrency edit keeps the instructions and lets exactly two requests of a run fit the default allowance", async () => {
   const committed = await configured();
   const edit = concurrencyEdit(committed);
-  expect(edit.questions.flatMap((entry) => entry.graders.map((grader) => grader.estimated_cost_per_call))
+  expect(edit.flatMap((entry) => machineGraders(entry).map((grader) => grader.estimated_cost_per_call))
     .every((cost) => cost === CONCURRENT_ESTIMATE_PER_CALL)).toBe(true);
   expect(CONCURRENT_ESTIMATE_PER_CALL * 2 <= 5 && CONCURRENT_ESTIMATE_PER_CALL * 3 > 5).toBe(true);
   const before = new Set(plan(committed).graders.map((grader) => grader.evaluator_definition_id));

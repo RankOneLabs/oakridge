@@ -18,7 +18,7 @@ const capabilityToken = (config: ObservationServerConfig, capability: Capability
   capability === "read" ? config.readToken : config.gradeToken;
 
 /** The whole of what a browser may submit. Anything else, a reviewer or evaluator included, is not forwarded. */
-const SUBMISSION_FIELDS = ["question_id", "question_version", "submission_id", "answer", "rationale", "corrects_observation_id"] as const;
+const SUBMISSION_FIELDS = ["question_id", "question_version", "task_id", "submission_id", "answer", "rationale", "corrects_observation_id"] as const;
 function submissionBody(input: unknown): string | null {
   if (input === null || typeof input !== "object" || Array.isArray(input)) return null;
   const fields = input as Readonly<Record<string, unknown>>;

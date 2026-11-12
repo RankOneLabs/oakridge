@@ -21,13 +21,13 @@ database.
 | Type | Table | What it is |
 | --- | --- | --- |
 | `SourceRevision` | `source_revision` | An immutable copy of one producer artifact revision. |
-| `ItemOccurrence` | `item_occurrence` | One selected item, addressed by revision and path. The thing graded. |
+| `ItemOccurrence` | `item_occurrence` | One selected item, addressed by revision and path. A per_task grading subject also names its task. |
 | `LogicalItem` | `logical_item` | One thing tracked across revisions, scoped to a run. Optional. |
 | `ItemRelation` | `item_relation` | A directed edge the producer stated. An unresolved target stays visible. |
 | `ExtractionIssue` | `extraction_issue` | A failed selection. |
 | `QuestionDefinition` | `question_definition` | Versioned wording, its `item_kind` and its answers. |
 | `EvaluatorDefinition` | `evaluator_definition` | One grader: human, or a runner with a model and instructions. |
-| `EvidenceSet` | `evidence_set` | One occurrence and question: the capture pin, readiness and frozen evidence. |
+| `EvidenceSet` | `evidence_set` | One occurrence, nullable task and question: the capture pin, readiness and frozen evidence. |
 | `EvaluationExecution` | `evaluation_execution` | One measurement, and the only queue, lease and retry record. |
 | `ProviderAttempt` | `grading_provider_attempt` | One real provider request for an execution. |
 | `GradeObservation` | `grade_observation` | One append-only answer, read through its execution. |
@@ -76,27 +76,32 @@ Every question is pinned with its configured graders and the human evaluator. A 
 
 ## Pins and readiness
 
-`evidence_set` has one row per occurrence and question version, written in the capture transaction.
+`evidence_set` has one row per grading subject and question version. For a `per_item` question,
+the subject is the occurrence and `task_id` is null. For a `per_task` question, the subject is
+(occurrence, task): `task_id` is the task's logical_item_id, and the grade belongs to exactly one task.
+Resolved `assesses` relations under the declared `task_ids` pointer create one subject per distinct task.
+Missing or unresolved links create no task subject; resolving a link later creates its subjects then,
+using the capture configuration in force at resolution. Existing pins never change.
 The row *is* the pin: it names the question version and, in `pinned_evaluator_definition_ids`, the
-full evaluator set applicable when the occurrence was captured. Pins exist whether or not evidence is
+full evaluator set applicable when that subject was first pinned. Pins exist whether or not evidence is
 available and whether or not automatic grading is on, and they create no execution.
 
 A capture pins only a newly stored occurrence, so a replay under a later configuration does not
-repin it. Later configuration reaches later captures. Question and evaluator definitions are
+repin it. Later configuration reaches later captures and newly resolved task subjects. Question and evaluator definitions are
 append-only, so a pinned definition stays readable across restarts; a change is a new definition,
 never an edit.
 
 `readiness` starts as `not_ready` with the reason `collection_pending`. Each question moves on its
 own: collection records either a retryable `not_ready_code` and `not_ready_detail`, or `ready` with
-its references. Ready evidence is frozen by trigger and shared by every evaluator. A later link never
+its references. Ready evidence is frozen by trigger and shared by every evaluator of that subject. A later link never
 changes it.
 
-`ArtifactSource.collect` takes the occurrence and question and returns ready references or a
+`ArtifactSource.collect` takes the occurrence, task and question and returns ready references or a
 not-ready reason. A failed required lookup delays only the question that needs it.
 
 The pins a capture writes come from the registration made at startup, so a `graders.json` edit takes
-effect at the next restart and reaches only occurrences captured after it. An occurrence captured
-earlier, ready or not, keeps the question version and evaluator set it was captured with; when its
+effect at the next restart and reaches later captures and newly resolved task subjects. A subject pinned
+earlier, ready or not, keeps the question version and evaluator set it was pinned with; when its
 evidence arrives later it becomes ready under those pins. No restart, edit or late input creates an
 execution, calls a provider or regrades an item. There is no eligibility, assignment, visibility or
 job record: the `evidence_set` row is the pin.
@@ -136,7 +141,8 @@ Repository files are read with `git cat-file` at the exact commit, never from a 
 
 `evaluation_execution` owns subject, evidence, question and evaluator identity. A database trigger
 requires ready evidence and a pinned evaluator, and foreign keys keep the evidence on the same
-occurrence and question and the occurrence in the same run. Lifecycle fields move through `queued`,
+occurrence, task and question and the occurrence in the same run. Evidence-set and execution digests
+include the nullable task, so subjects of different tasks cannot deduplicate. Lifecycle fields move through `queued`,
 `claimed`, `reclaimable` and `budget_deferred` until the execution ends as `completed` or `failed`.
 An ended execution, and any execution's identity, is immutable.
 
@@ -154,7 +160,7 @@ whose `attempt_label` carries the submission id and whose `idempotency_digest` i
 reviewer and submission id alone, so a resubmission lands on the same row.
 
 A correction is a new submission whose observation sets `supersedes_observation_id`. A trigger
-requires it to measure the same occurrence, question, evidence and evaluator for the same reviewer,
+requires it to measure the same occurrence, task, question, evidence and evaluator for the same reviewer,
 through both executions. The one-successor key keeps each history linear, and the earlier answer and
 its evidence stay unchanged. Machine answers are not corrected.
 
@@ -200,7 +206,7 @@ exists, and no read depends on having answered.
 - **Late links:** an explicit analysis-link declaration (below) adds an edge to an original finding
   addressed by source revision and path, without touching the item, its pins, evidence or answers.
 - **Composites:** the profile's path follows a task's incoming `assesses` edges to occurrences and on to
-  their answers. A composite is a read and creates no record.
+  their task-specific answers; per_item grades appear only as linked context. A composite is a read and creates no record.
 
 | Item kind | Question | Evidence | Answers |
 | --- | --- | --- | --- |
@@ -314,7 +320,12 @@ that no revision in the stream names as its predecessor. This is decided per str
 read, so every cohort keeps its own current revision, and a newer revision with no links replaces an older
 linked one instead of resurrecting it. Superseded revisions stay readable in history.
 
-**Answers.** A superseded answer is dropped from the counts by its own correction chain, never by
+**Answers.** A task composite counts only grades whose `task_id` is that task's logical_item_id.
+One finding naming T3 and T7 has independent subjects: a T3 answer never appears in or counts toward
+T7. Missing evaluations stay missing and never imply a pass. Per-item grades of linked items remain
+visible in the items drilldown as `is_linked_context: true`, excluded from task-level answer and status counts.
+
+A superseded answer is dropped from the counts by its own correction chain, never by
 recency across graders, and stays in history. Counts are per question version, per machine evaluator or
 human reviewer, per answer. Allowed values come from the registered question, so generic code holds no
 producer vocabulary.
@@ -337,7 +348,7 @@ the whole task; it is never a pass or a zero.
 A negative answer or a chosen `unclear` is an answer, and a human with no answer yet owes nothing, so has
 no status.
 
-**Disagreement** is differing current answers on one occurrence and question. Different items answering
+**Disagreement** is differing current answers on one occurrence, task and question. Different items answering
 differently is not disagreement, and neither is a corrected answer differing from its correction.
 
 | Read | Returns |

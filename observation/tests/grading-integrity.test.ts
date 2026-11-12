@@ -5,18 +5,17 @@ import type { ArtifactRevisionId, EvidenceSetId, ItemOccurrenceId } from "../src
 import type { JsonValue } from "../src/domain/primitives";
 import { evaluationDigest, submissionAttemptLabel, submissionDigest, type EvaluationIdentity } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
-import { OAKRIDGE_QUESTIONS } from "../src/producers/oakridge/questions";
+import { OAKRIDGE_QUESTIONS, createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { listGrades, registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems } from "../src/storage/projection-store";
-import { createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 
 const relevance = OAKRIDGE_QUESTIONS[0]!;
 const other_tenant: TenantScope = { producer: "oakridge", namespace: "other" };
 const answer = (value: string): GradeAnswer => ({ state: "answered", kind: "choice", value });
-const configuration: CaptureConfiguration = { pins: [{ ...relevance, evaluator_definition_ids: [evaluatorId("model"), evaluatorId("human")] }] };
+const configuration: CaptureConfiguration = { pins: [{ scope: "per_item", ...relevance, evaluator_definition_ids: [evaluatorId("model"), evaluatorId("human")] }] };
 
 interface Measured { readonly occurrence_id: ItemOccurrenceId; readonly evidence_set_id: EvidenceSetId }
 /** A captured finding pinned to two evaluators, with ready evidence. */
@@ -37,7 +36,7 @@ async function readyFinding(db: Database, scope: TenantScope = tenant): Promise<
 interface ExecutionInput { readonly attempt_label?: string; readonly status?: string; readonly evaluator_definition_id?: string; readonly scope?: TenantScope; readonly idempotency_digest?: string }
 async function insertExecution(db: Database, measured: Measured, input: ExecutionInput = {}): Promise<string> {
   const scope = input.scope ?? tenant;
-  const identity: EvaluationIdentity = { subject_occurrence_id: measured.occurrence_id, evidence_set_id: measured.evidence_set_id,
+  const identity: EvaluationIdentity = { task_id: null, subject_occurrence_id: measured.occurrence_id, evidence_set_id: measured.evidence_set_id,
     question_id: relevance.question_id, question_version: relevance.question_version,
     evaluator_definition_id: evaluatorId(input.evaluator_definition_id ?? "human"), attempt_label: input.attempt_label ?? "first" };
   const digest = evaluationDigest(identity);
@@ -198,3 +197,29 @@ integration("a lease exists exactly while an execution is claimed, and the diges
   await update({ status: "claimed", lease_owner: "worker", lease_expires_at: new Date(Date.now() + 1000) });
   await expect(insertExecution(db, measured, { status: "queued", evaluator_definition_id: "model" })).rejects.toThrow("duplicate key");
 }));
+
+test("subject generation uses the declared pointer, deduplicates resolved tasks, and never invents a task", async () => {
+  const { gradingSubjects } = await import("../src/grading/evidence");
+  const occurrence = { occurrence_id: "finding" as ItemOccurrenceId, json_pointer: "/findings/2" };
+  const relation = (target: string | null, evidence_ref = "/findings/2/task_ids/0", unresolved_target_ref: string | null = null) =>
+    ({ type: "assesses", target_logical_item_id: target, evidence_ref, unresolved_target_ref });
+  const relations = [relation("T3"), relation("T7"), relation("T7"), relation(null, "/findings/2/task_ids/3", "T99"),
+    relation("T9", "/elsewhere/task_ids/0"), { ...relation("T8"), type: "mentions" }];
+  expect(gradingSubjects({ occurrence, scope: { scope: "per_task", task_ids: "/task_ids" }, relations }))
+    .toEqual([{ subject_occurrence_id: occurrence.occurrence_id, task_id: "T3" as import("../src/domain/identity").LogicalItemId }, { subject_occurrence_id: occurrence.occurrence_id, task_id: "T7" as import("../src/domain/identity").LogicalItemId }]);
+  expect(gradingSubjects({ occurrence, scope: { scope: "per_task", task_ids: "/other" }, relations })).toEqual([]);
+  expect(gradingSubjects({ occurrence, scope: { scope: "per_item" }, relations: [] }))
+    .toEqual([{ subject_occurrence_id: occurrence.occurrence_id, task_id: null }]);
+});
+
+test("task identity independently changes evidence and execution digests", async () => {
+  const { evidenceSetId } = await import("../src/grading/evidence");
+  const occurrence_id = "finding" as ItemOccurrenceId;
+  const task = (value: string) => value as import("../src/domain/identity").LogicalItemId;
+  const input = { subject_occurrence_id: occurrence_id, question: relevance };
+  expect(evidenceSetId({ ...input, task_id: task("T3") })).not.toEqual(evidenceSetId({ ...input, task_id: task("T7") }));
+  const base: EvaluationIdentity = { subject_occurrence_id: occurrence_id, task_id: task("T3"),
+    evidence_set_id: "same-evidence" as EvidenceSetId, question_id: relevance.question_id, question_version: relevance.question_version,
+    evaluator_definition_id: evaluatorId("human"), attempt_label: "automatic" };
+  expect(evaluationDigest(base)).not.toEqual(evaluationDigest({ ...base, task_id: task("T7") }));
+});

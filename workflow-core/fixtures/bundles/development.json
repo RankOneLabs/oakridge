@@ -211,7 +211,7 @@
         "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
       },
       "every": "2m",
-      "creates": [
+      "produces": [
         "pr_state"
       ]
     }
@@ -316,6 +316,7 @@
       },
       "artifacts": {
         "workspace": {
+          "kind": "record",
           "schema": "workspace"
         }
       },
@@ -329,7 +330,7 @@
             "base_branch": "input.repository.forge.build_base",
             "integration_branch": "input.repository.forge.final_base"
           },
-          "creates": [
+          "produces": [
             "workspace"
           ]
         }
@@ -347,12 +348,15 @@
       },
       "artifacts": {
         "analysis": {
+          "kind": "document",
           "schema": "analysis_body"
         },
         "spec": {
+          "kind": "document",
           "schema": "text"
         },
         "tasks": {
+          "kind": "record",
           "schema": "tasks_body"
         }
       },
@@ -367,7 +371,7 @@
             "spec": "input.spec"
           },
           "workspace": "repository(input.workspace)",
-          "creates": [
+          "produces": [
             "analysis"
           ]
         },
@@ -383,7 +387,7 @@
             "approved_analysis": "latest(analysis)"
           },
           "workspace": "repository(input.workspace)",
-          "creates": [
+          "produces": [
             "spec",
             "tasks"
           ]
@@ -458,6 +462,7 @@
       },
       "artifacts": {
         "plan": {
+          "kind": "document",
           "schema": "plan_body",
           "validate": [
             {
@@ -500,7 +505,7 @@
             "repository_key": "input.repository_key"
           },
           "workspace": "repository(input.workspace)",
-          "creates": [
+          "produces": [
             "plan"
           ]
         }
@@ -540,6 +545,7 @@
       },
       "artifacts": {
         "brief": {
+          "kind": "document",
           "schema": "brief_body",
           "validate": [
             {
@@ -574,7 +580,7 @@
             "spec": "input.spec"
           },
           "workspace": "repository(input.workspace)",
-          "creates": [
+          "produces": [
             "brief"
           ]
         }
@@ -623,21 +629,26 @@
       },
       "artifacts": {
         "build_result": {
+          "kind": "document",
           "schema": "build_body"
         },
         "pr": {
+          "kind": "external_reference",
           "schema": "pr_body"
         },
         "assessment": {
+          "kind": "assessment",
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
           }
         },
         "pr_state": {
+          "kind": "status_record",
           "schema": "pr_status"
         },
         "observed_state": {
+          "kind": "status_record",
           "schema": "pr_status"
         }
       },
@@ -654,7 +665,7 @@
             "build_base": "input.repository.forge.build_base"
           },
           "workspace": "repository(input.workspace)",
-          "creates": [
+          "produces": [
             "build_result",
             "pr"
           ]
@@ -670,8 +681,8 @@
             "pr": "latest(pr)"
           },
           "workspace": "repository(input.workspace)",
-          "reviews": "build_result",
-          "creates": [
+          "evaluates": "build_result",
+          "produces": [
             "assessment"
           ]
         },
@@ -686,7 +697,7 @@
             "value": "latest(pr_state)"
           },
           "every": "2m",
-          "creates": [
+          "produces": [
             "observed_state"
           ]
         }
@@ -772,21 +783,26 @@
       },
       "artifacts": {
         "assessment": {
+          "kind": "assessment",
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
           }
         },
         "pr": {
+          "kind": "external_reference",
           "schema": "pr_body"
         },
         "pr_state": {
+          "kind": "status_record",
           "schema": "pr_status"
         },
         "manual_merge_target": {
+          "kind": "external_reference",
           "schema": "pr_body"
         },
         "observed_state": {
+          "kind": "status_record",
           "schema": "pr_status"
         }
       },
@@ -803,7 +819,7 @@
             "briefs": "input.briefs"
           },
           "workspace": "repository(input.workspace)",
-          "creates": [
+          "produces": [
             "pr",
             "assessment"
           ]
@@ -819,7 +835,7 @@
             "value": "latest(pr)"
           },
           "every": "2m",
-          "creates": [
+          "produces": [
             "manual_merge_target"
           ]
         },
@@ -831,7 +847,7 @@
             "value": "latest(pr_state)"
           },
           "every": "2m",
-          "creates": [
+          "produces": [
             "observed_state"
           ]
         }

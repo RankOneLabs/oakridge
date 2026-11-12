@@ -372,9 +372,9 @@ pub struct WorkerOverrides {
     pub every: Option<String>,
     pub workspace: Option<String>,
     pub operation: Option<SymbolKey>,
-    pub creates: Option<Vec<SymbolKey>>,
+    pub produces: Option<Vec<SymbolKey>>,
     pub prompts: Option<Prompts>,
-    pub reviews: Option<SymbolKey>,
+    pub evaluates: Option<SymbolKey>,
     pub runtime: Option<WorkerRuntime>,
     pub session: Option<SessionMode>,
 }
@@ -775,11 +775,22 @@ pub struct Stage {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
+    pub kind: ArtifactKind,
     pub schema: TypeExpression,
     #[serde(default, skip_serializing_if = "EditPolicy::is_always")]
     pub edit_policy: EditPolicy,
     #[serde(default)]
     pub validate: Vec<ValidationCheck>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactKind {
+    Document,
+    Record,
+    ExternalReference,
+    Assessment,
+    StatusRecord,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -809,8 +820,8 @@ pub enum Worker {
     Agent {
         prompts: Prompts,
         inputs: BTreeMap<String, String>,
-        creates: Vec<SymbolKey>,
-        reviews: Option<SymbolKey>,
+        produces: Vec<SymbolKey>,
+        evaluates: Option<SymbolKey>,
         runtime: Option<WorkerRuntime>,
         workspace: Option<String>,
         session: Option<SessionMode>,
@@ -821,7 +832,7 @@ pub enum Worker {
     Code {
         operation: SymbolKey,
         inputs: BTreeMap<String, String>,
-        creates: Vec<SymbolKey>,
+        produces: Vec<SymbolKey>,
         every: Option<String>,
         when: Option<String>,
     },

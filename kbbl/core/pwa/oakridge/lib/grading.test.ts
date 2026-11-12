@@ -1,18 +1,18 @@
 import { describe, expect, test } from "vitest";
 import type { ObservationJsonValue } from "../grading-contracts/domain/primitives";
-import type { ObservationGradeObservationId, ObservationReviewerId } from "../grading-contracts/domain/identity";
+import type { ObservationGradeObservationId, ObservationLogicalItemId, ObservationReviewerId } from "../grading-contracts/domain/identity";
 import type { ObservationAnswerCount, ObservationPaged } from "../grading-contracts/grading/composite";
 import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
 import type { ObservationMeasurementState } from "../grading-contracts/grading/execution";
 import type { ObservationAnswerRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
 import type { ObservationHumanSubmissionAcknowledgment } from "../grading-contracts/http/grades";
 import type { ObservationQuestionStatusResponse } from "../grading-contracts/storage/grading-record-store";
-import { id, itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
+import { id, IMPLEMENTATION, itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
 import { compositeId } from "../adapters/core";
-import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemHeader, selectItemText, selectOwnCurrentAnswer, selectStageView, selectSubmissionNotice, stagePublicationLabel, taskLinkLabel } from "./grading";
+import { answerTone, EMPTY_GRADE_DRAFT, gradeActionLabel, isStaleAnswerRefusal, selectEarlierOwnAnswers, selectGradeEditor, itemSelectionKey, selectAutomaticGlances, selectFindingSelections, selectOwnGradeProgress, measurementDisplay, referenceDisplay, selectHumanForm, selectItemSelection, selectItemHeader, selectItemText, selectOwnCurrentAnswer, selectQuestionTaskLabel, selectStageView, selectSubmissionNotice, selectTaskContributionSelection, stagePublicationLabel, taskLinkLabel } from "./grading";
 
 const empty = <Item,>(): ObservationPaged<Item> => ({ items: [], total: 0, limit: 50, offset: 0 });
-const answer = (observation_id: string, supersedes_observation_id: string | null = null): ObservationAnswerRead => ({ observation_id: id(observation_id), execution_id: id(observation_id), occurrence_id: id("o"), evidence_set_id: id("e"),
+const answer = (observation_id: string, supersedes_observation_id: string | null = null): ObservationAnswerRead => ({ task_id: null, observation_id: id(observation_id), execution_id: id(observation_id), occurrence_id: id("o"), evidence_set_id: id("e"),
   question: { question_id: id("q"), question_version: "1" }, evaluator_definition_id: id("human"), reviewer_id: id<ObservationReviewerId>("r"), answer: { state: "answered", kind: "choice", value: "supports" },
   supersedes_observation_id: supersedes_observation_id === null ? null : id<ObservationGradeObservationId>(supersedes_observation_id), confidence: null, rationale: null, comments: null, recorded_at: "2026-11-01", grader: { kind: "human", evaluator_definition_id: id("human"), reviewer_id: id("r") }, is_current: true });
 
@@ -28,6 +28,39 @@ describe("item selection", () => {
   test("two paths of one revision are different items", () => {
     const at = (item_path: string) => itemSelectionKey({ source_revision_id: id("r"), item_path });
     expect(at("/findings/1")).not.toBe(at("/findings/10"));
+  });
+});
+
+describe("task contribution grading addresses", () => {
+  const task_id = id<ObservationLogicalItemId>("l1");
+  const selection = { ...IMPLEMENTATION, task_id };
+  test("a pinned subject for the enclosing task supplies the task filter", () => {
+    expect(selectTaskContributionSelection(selection, [supportQuestion({ task_id })])).toEqual(selection);
+  });
+  test("a null-task subject opens without a task filter", () => {
+    expect(selectTaskContributionSelection(selection, [supportQuestion({ task_id: null })])).toEqual(IMPLEMENTATION);
+  });
+  test("another task's subject cannot supply the task filter", () => {
+    expect(selectTaskContributionSelection(selection, [supportQuestion({ task_id: id<ObservationLogicalItemId>("other-task") })])).toEqual(IMPLEMENTATION);
+  });
+  test("an unavailable subject read opens without a task filter", () => {
+    expect(selectTaskContributionSelection(selection, undefined)).toEqual(IMPLEMENTATION);
+  });
+  test("no captured enclosing task identity opens without a task filter", () => {
+    expect(selectTaskContributionSelection(IMPLEMENTATION, [supportQuestion({ task_id })])).toEqual(IMPLEMENTATION);
+  });
+});
+
+describe("question task labels", () => {
+  const links = itemStatus([]).links.items;
+  test("a per-item question has no task label", () => {
+    expect(selectQuestionTaskLabel(null, links)).toBeNull();
+  });
+  test("a task subject uses its resolved producer-local task name", () => {
+    expect(selectQuestionTaskLabel(id<ObservationLogicalItemId>("l1"), links)).toBe("Task T1");
+  });
+  test("a task outside the links page remains identifiable by its logical ID", () => {
+    expect(selectQuestionTaskLabel(id<ObservationLogicalItemId>("logical-task-7"), links)).toBe("Task logical-task-7");
   });
 });
 

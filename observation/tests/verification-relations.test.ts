@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
-import { parseGraderConfiguration, planRegistration } from "../src/grading/configuration";
+import { parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
 import type { LogicalItemComposite, LogicalItemLineage } from "../src/grading/composite";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { oakridgeGradingRegistry, committedDefinitions, integration, scratchDatabase } from "./grading-fixture";
 import type { MeasurementReadback, RelationCheckpoint } from "../verification/proof-contract";
 import { compositeOriginalAnswerChecks, lineageChecks, sharedRunChecks, sharedTaskMatrix, totalRequests, unchangedChecks, UNRESOLVED_TASK, withoutLinks, type SharedRunReads } from "../verification/relations";
-import { committedGraders, integration, scratchDatabase } from "./grading-fixture";
 
 const facts = (occurrence_id: string, grades: unknown = { items: ["g1"] }) => ({ occurrence_id, occurrence: { occurrence_id }, evidence: { items: ["e1"] }, grades, measurements: { questions: [] } });
 const checkpoint = (name: string, overrides: Partial<RelationCheckpoint> = {}): RelationCheckpoint => ({ checkpoint: name, run_id: "run-1", linked: facts("linked"), control: facts("control"),
@@ -70,9 +69,9 @@ test("a real shared run must reach both cohorts, real revisions and pending inte
 });
 
 integration("the shared-task matrix passes through real delivery, and sends no request", async () => scratchDatabase(async (db) => {
-  const parsed = parseGraderConfiguration(await committedGraders());
+  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
-  const registration = planRegistration(parsed.value, oakridgeProfile.questions);
+  const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   const realFetch = globalThis.fetch;
   let outbound = 0;

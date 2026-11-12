@@ -30,10 +30,10 @@ afterAll(async () => { await authority.close(); });
 const WATCH: Workflow = {
   workflow: "watch", input: {},
   run: { units: { watch: { stage: "watch", input: {} } }, outcome: {} },
-  stages: { watch: { input: {}, artifacts: { pr: { schema: "text" }, observation: { schema: "text" } },
+  stages: { watch: { input: {}, artifacts: { pr: { kind: "external_reference", schema: "text" }, observation: { kind: "status_record", schema: "text" } },
     workers: {
-      builder: { kind: "agent", prompts: { initial: "review-loop/write.md" }, inputs: { topic: "\"pr\"" }, creates: ["pr"] },
-      observer: { kind: "code", operation: "value.publish", when: "published(pr)", inputs: { value: "latest(pr)" }, every: "1s", creates: ["observation"] },
+      builder: { kind: "agent", prompts: { initial: "review-loop/write.md" }, inputs: { topic: "\"pr\"" }, produces: ["pr"] },
+      observer: { kind: "code", operation: "value.publish", when: "published(pr)", inputs: { value: "latest(pr)" }, every: "1s", produces: ["observation"] },
     },
     done_when: "false", outcome: {} } },
 };
@@ -46,8 +46,8 @@ const PR_WATCH: Workflow = {
   workflow: "pr_watch", input: { query: QUERY_SCHEMA },
   run: { units: { watch: { stage: "watch", input: { query: "input.query" } } }, outcome: {} },
   stages: { watch: { input: { query: QUERY_SCHEMA },
-    artifacts: { pr_state: { schema: PR_STATUS } },
-    workers: { pr_watch: { kind: "code", operation: "pull_request.observe", inputs: { query: "input.query" }, every: "1s", creates: ["pr_state"] } },
+    artifacts: { pr_state: { kind: "status_record", schema: PR_STATUS } },
+    workers: { pr_watch: { kind: "code", operation: "pull_request.observe", inputs: { query: "input.query" }, every: "1s", produces: ["pr_state"] } },
     done_when: "false", outcome: {} } },
 };
 

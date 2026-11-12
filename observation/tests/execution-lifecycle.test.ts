@@ -2,20 +2,20 @@ import { afterEach, beforeEach, expect } from "bun:test";
 import { sql } from "kysely";
 import { Client } from "pg";
 import { err, ok } from "../src/domain/primitives";
-import { parseGraderConfiguration, planRegistration, type GradingRegistration } from "../src/grading/configuration";
+import { parseGradingDefinitions, planRegistration, type GradingRegistration } from "../src/grading/configuration";
 import type { ExecutionClaim } from "../src/grading/execution";
 import type { GradingContext, RunnerResult } from "../src/grading/runner";
 import { gradeNext, type GradingWorkerDependencies } from "../src/grading/worker";
 import { createApp } from "../src/http/app";
 import type { RepositoryReader } from "../src/ports/artifact-source";
 import type { GradeRunner } from "../src/ports/grade-runner";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/questions";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
+import { oakridgeProfile, oakridgeGradingRegistry } from "./grading-fixture";
 import { withTenant, type Database } from "../src/storage/database";
 import { createEvidenceReconciler, type EvidenceReconciler } from "../src/storage/evidence-pipeline";
 import { claimNext, completeExecution, failExecution, markRequestSent, readItemMeasurements, readRunSpend } from "../src/storage/execution-store";
 import { registerDefinitions } from "../src/storage/grading-store";
-import { committedGraders, createFeed, databaseUrl, DEFINITION_ID, fixtureBody, integration, runConfig, SCHEMA_VERSION, scratchDatabase, tenant,
+import { committedDefinitions, createFeed, databaseUrl, DEFINITION_ID, fixtureBody, integration, runConfig, SCHEMA_VERSION, scratchDatabase, tenant,
   type Feed } from "./grading-fixture";
 
 const HEAD = "1111111111111111111111111111111111111111";
@@ -61,9 +61,9 @@ interface Lifecycle {
 }
 
 async function lifecycle(db: Database, retry_limit = 3): Promise<Lifecycle> {
-  const parsed = parseGraderConfiguration(await committedGraders());
+  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
-  const planned = planRegistration(parsed.value, oakridgeProfile.questions);
+  const planned = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!planned.ok) throw new Error(planned.error.detail);
   const registered = await registerDefinitions(db, tenant, planned.value);
   if (!registered.ok) throw new Error(registered.error.detail);
@@ -97,6 +97,10 @@ async function captureAnalysis(life: Lifecycle, grading_enabled: boolean, run_id
 }
 async function captureAssessment(life: Lifecycle, input: { readonly run_id?: string; readonly subject_id?: string } = {}): Promise<void> {
   const run_id = input.run_id ?? "run-1";
+  const has_tasks = await withTenant(life.db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select("occurrence_id")
+    .where("run_id", "=", run_id).where("item_kind", "=", "task").executeTakeFirst());
+  if (!has_tasks) await life.feed.revision({ revision_id: `${run_id}-context-tasks`, artifact_kind: "tasks", run_id,
+    body: await fixtureBody("tasks") }, { pins: life.registration.capture.pins.filter((pin) => pin.scope === "per_task") });
   await life.feed.revision({ revision_id: `${run_id}-assessment`, artifact_kind: "assessment", run_id, subject_id: input.subject_id,
     body: await fixtureBody("assessment") });
   await life.reconciler.reconcileRun(tenant, run_id);
@@ -139,7 +143,7 @@ integration("with grading off, every supported question still gets frozen human-
   const measured = await readItemMeasurements(db, tenant, await occurrenceAt(db, "run-1-assessment", "/findings/1"));
   expect(measured?.questions.map((entry) => [entry.evidence.question_id, entry.is_human_ready, entry.machine.map((machine) => machine.measurement.state)]))
     .toEqual([[CORRECTNESS_ID, true, ["grading_off"]], [EVIDENCE_SUPPORT_ID, true, ["grading_off"]]]);
-  expect(await life.counts()).toMatchObject({ ready: 9, executions: 0, attempts: 0, answers: 0 });
+  expect(await life.counts()).toMatchObject({ ready: 7, executions: 0, attempts: 0, answers: 0 });
   expect(life.requests.sent).toEqual([]);
 }));
 
@@ -147,7 +151,7 @@ integration("a launch that carried no config has grading off", async () => scrat
   const life = await lifecycle(db);
   await life.feed.launch(LAUNCH, "run-1", null);
   await captureAssessment(life);
-  expect(await life.counts()).toMatchObject({ ready: 8, executions: 0 });
+  expect(await life.counts()).toMatchObject({ ready: 6, executions: 0 });
   expect(await readRunSpend(db, tenant, "run-1")).toMatchObject({ is_grading_enabled: false, captured_config: null });
 }));
 
@@ -158,8 +162,8 @@ integration("spec tasks are admitted alongside findings; risks, decisions and wh
   await captureAssessment(life);
   const kinds = [...new Set((await executionsOf(db)).map((row) => row.item_kind))].sort();
   expect(kinds).toEqual(["assessment_finding", "finding", "task"]);
-  // 1 Relevance + 4 assessment findings x 2 questions + 2 spec task coverage questions.
-  expect((await executionsOf(db)).length).toBe(11);
+  // 1 Relevance + 3 resolved task subjects x 2 questions + 2 spec task coverage questions.
+  expect((await executionsOf(db)).length).toBe(9);
 }));
 
 integration("Correctness waits for its subject build while Evidence support of the same finding is admitted", async () => scratchDatabase(async (db) => {
@@ -178,14 +182,14 @@ integration("Correctness waits for its subject build while Evidence support of t
   expect(after?.questions.map((entry) => entry.machine[0]?.measurement.state)).toEqual(["pending", "pending"]);
 }));
 
-integration("an integration assessment with no subject, empty citations and unresolved tasks is admitted", async () => scratchDatabase(async (db) => {
+integration("an integration assessment creates no subjects for missing or unresolved task links", async () => scratchDatabase(async (db) => {
   const life = await lifecycle(db);
   await life.feed.launch(LAUNCH, "run-1", runConfig(true));
   await captureAssessment(life);
   const rows = await executionsOf(db);
   // /findings/2 has no task and no citation; /findings/3 names a task the run never captured.
   for (const path of ["/findings/2", "/findings/3"])
-    expect(rows.filter((row) => row.json_pointer === path).map((row) => row.question_id).sort()).toEqual([CORRECTNESS_ID, EVIDENCE_SUPPORT_ID].sort());
+    expect(rows.filter((row) => row.json_pointer === path).map((row) => row.question_id).sort()).toEqual([]);
 }));
 
 integration("repeated reconciliation, source replay and restart add no execution and resend nothing completed", async () => scratchDatabase(async (db) => {
@@ -251,7 +255,7 @@ integration("negative and unclear answers are valid completed answers", async ()
   await life.drain(life.worker((context) => answer(negative[context.question.question_id] ?? "unclear")));
   const answers = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grade_observation").select("answer_payload").execute());
   expect(new Set(answers.map((row) => (row.answer_payload as { value: string }).value))).toEqual(new Set(["contradicted", "unclear"]));
-  expect(await life.counts()).toMatchObject({ executions: 8, completed: 8, answers: 8 });
+  expect(await life.counts()).toMatchObject({ executions: 6, completed: 6, answers: 6 });
 }));
 
 integration("an answer outside the pinned choices is retried and exhaustion ends failed with no grade", async () => scratchDatabase(async (db) => {
@@ -401,7 +405,7 @@ integration("a reservation released while another worker is deciding never leave
   const allowance = { run_spend: 0.01, lease_ms: 60_000 };
   const held = await claimNext(db, tenant, { ...allowance, lease_owner: "a" });
   if (held.kind !== "claimed") throw new Error(held.kind);
-  for (let index = 0; index < 7; index++) expect((await claimNext(db, tenant, { ...allowance, lease_owner: "d" })).kind).toBe("budget_deferred");
+  for (let index = 0; index < 5; index++) expect((await claimNext(db, tenant, { ...allowance, lease_owner: "d" })).kind).toBe("budget_deferred");
   const deferred = (await executionsOf(db)).find((row) => row.status === "budget_deferred")!;
   const holder = new Client({ connectionString: await databaseUrl(db) });
   await holder.connect();
@@ -434,7 +438,7 @@ integration("deferral sends nothing and writes no answer; a released reservation
   const deps = life.worker(firstAllowed, { controls: { run_spend: 0.01, retry_limit: 3, provider_deadline_ms: 30_000, lease_ms: 60_000 } });
   await life.drain(deps);
   const spend = await readRunSpend(db, tenant, "run-1");
-  expect([spend.executions.completed, spend.executions.budget_deferred, spend.requests_sent, life.requests.sent.length]).toEqual([1, 8, 1, 1]);
+  expect([spend.executions.completed, spend.executions.budget_deferred, spend.requests_sent, life.requests.sent.length]).toEqual([1, 6, 1, 1]);
   const deferred = (await executionsOf(db)).find((row) => row.status === "budget_deferred")!;
   const measured = await readItemMeasurements(db, tenant, await occurrenceAt(db, deferred.revision_id, deferred.json_pointer));
   expect(measured?.questions.flatMap((entry) => entry.machine.map((machine) => machine.measurement.state))).toContain("budget_deferred");
@@ -444,7 +448,7 @@ integration("deferral sends nothing and writes no answer; a released reservation
   await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution").set({ status: "queued" })
     .where("status", "=", "budget_deferred").execute());
   await life.drain(restarted);
-  expect((await readRunSpend(db, tenant, "run-1")).executions).toMatchObject({ completed: 3, budget_deferred: 6 });
+  expect((await readRunSpend(db, tenant, "run-1")).executions).toMatchObject({ completed: 3, budget_deferred: 4 });
   // A claim that ends without a request releases its reservation and re-queues the run's deferred work.
   await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution").set({ status: "queued" })
     .where("status", "=", "budget_deferred").execute());

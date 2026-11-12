@@ -21,7 +21,7 @@ export const INTEGRATION: ObservationItemAddress = { source_revision_id: id("run
 export const item = (selection: ObservationItemAddress, overrides: Partial<ObservationAddressedItem> = {}): ObservationAddressedItem => ({ ...selection, occurrence_id: OCCURRENCE, revision_id: selection.source_revision_id,
   artifact_kind: "assessment", item_kind: "assessment_finding", selected_value: { description: "the narrow finding", status: "met" }, stage: "implementation", unit_id: id("run-1/implementation/one"), is_current: true, ...overrides });
 
-export const machineAnswer = (value: string): ObservationAnswerRead => ({ observation_id: id(`machine-${value}`), execution_id: id(`execution-${value}`), occurrence_id: OCCURRENCE, evidence_set_id: id("evidence-support"),
+export const machineAnswer = (value: string): ObservationAnswerRead => ({ task_id: null, observation_id: id(`machine-${value}`), execution_id: id(`execution-${value}`), occurrence_id: OCCURRENCE, evidence_set_id: id("evidence-support"),
   question: { question_id: id("assessment_finding.evidence_support"), question_version: "1" }, evaluator_definition_id: id("jev"), reviewer_id: null, answer: { state: "answered", kind: "choice", value },
   supersedes_observation_id: null, confidence: null, rationale: "machine rationale leak-marker", comments: null, recorded_at: "2026-11-01T00:00:00Z",
   grader: { kind: "machine", evaluator_definition_id: id("jev"), backend_kind: "jev_direct", model: "jev-1.14.0" }, is_current: true });
@@ -32,10 +32,10 @@ const attempt: ObservationAttemptRead = { attempt: 1, request_sent: true, outcom
 export const machine = (measurement: ObservationMeasurementState, overrides: Partial<ObservationMachineStatusResponse> = {}): ObservationMachineStatusResponse => ({ evaluator_definition_id: id(`jev-${measurement.state}`), backend_kind: "jev_direct", model: "jev-1.14.0",
   execution_id: id<ObservationExecutionId>("execution-1"), measurement, attempts: paged([attempt]), ...overrides });
 
-export const supportQuestion = (overrides: Partial<ObservationQuestionStatusResponse> = {}): ObservationQuestionStatusResponse => ({
+export const supportQuestion = (overrides: Partial<ObservationQuestionStatusResponse> = {}): ObservationQuestionStatusResponse => ({ task_id: null,
   question: { question_id: id("assessment_finding.evidence_support"), question_version: "1", item_kind: "assessment_finding", question_text: "Does the cited evidence support it?", response_kind: "choice",
     allowed_values: ["supports", "does_not_support", "unclear"], missing_evidence_policy: "abstain", abstain_semantics: "", interpretation_caveats: "Judge only the citations.", unclear_semantics: "" },
-  evidence: { question_id: id("assessment_finding.evidence_support"), question_version: "1", evidence_set_id: id("evidence-support"), subject_occurrence_id: OCCURRENCE, pinned_evaluator_definition_ids: paged([id("jev"), id("human")]),
+  evidence: { task_id: null, question_id: id("assessment_finding.evidence_support"), question_version: "1", evidence_set_id: id("evidence-support"), subject_occurrence_id: OCCURRENCE, pinned_evaluator_definition_ids: paged([id("jev"), id("human")]),
     readiness: { state: "ready", ready_at: "2026-11-01T00:00:00Z" }, is_incomplete: false, incompleteness_reason: null,
     references: paged([{ source: "repository", ref: "citation:0", repository_key: "oakridge", commit_sha: "abc123", path: "src/a.ts", line_range: { start: 2, end: 3 }, is_absent: false, content: "cited code" },
       { source: "reported", reported_by: "agent", ref: "citation:1", revision_id: id("r"), item_path: "/findings/1/evidence/1", content: "reported output" }]) },
@@ -57,7 +57,7 @@ export const itemStatus = (questions: readonly ObservationQuestionStatusResponse
     { state: "unresolved", producer_local_id: "T404", unresolved_target_ref: "logical_item:task:T404", relation_id: id("rel-2"), evidence_ref: "/findings/1/task_ids/1" }]),
   questions: paged(questions), ...overrides });
 
-export const acknowledged = (value: string, overrides: Partial<ObservationHumanSubmissionAcknowledgment> = {}): ObservationHumanSubmissionAcknowledgment => ({ status: "recorded", submission_id: "s", reviewer_id: id("oakridge-operator"), observation_id: id("new-observation"),
+export const acknowledged = (value: string, overrides: Partial<ObservationHumanSubmissionAcknowledgment> = {}): ObservationHumanSubmissionAcknowledgment => ({ task_id: null, status: "recorded", submission_id: "s", reviewer_id: id("oakridge-operator"), observation_id: id("new-observation"),
   execution_id: id("new-execution"), evidence_set_id: id("evidence-support"), evaluator_definition_id: id("human"), run_id: id("run-1"), occurrence_id: OCCURRENCE, question: { question_id: id("assessment_finding.evidence_support"), question_version: "1" }, answer: { state: "answered", kind: "choice", value },
   rationale: null, corrects_observation_id: null, recorded_at: "2026-11-01T00:00:00Z", ...overrides });
 

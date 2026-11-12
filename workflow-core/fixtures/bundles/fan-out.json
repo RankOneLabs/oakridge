@@ -61,6 +61,7 @@
       },
       "artifacts": {
         "workspace": {
+          "kind": "record",
           "schema": {
             "repository_path": "repo_path",
             "push_remote_owner": "ident",
@@ -79,7 +80,7 @@
             "base_branch": "input.repository.base_branch",
             "integration_branch": "input.repository.integration_branch"
           },
-          "creates": [
+          "produces": [
             "workspace"
           ]
         }
@@ -101,6 +102,7 @@
       },
       "artifacts": {
         "result": {
+          "kind": "document",
           "schema": "text"
         }
       },
@@ -114,7 +116,7 @@
             "text": "input.text"
           },
           "workspace": "repository(input.workspace)",
-          "creates": [
+          "produces": [
             "result"
           ]
         }

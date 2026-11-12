@@ -15,7 +15,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { mountObservationProxyRoutes } from "../../kbbl/core/server/handlers/observation-proxy";
 import { readNotReadyPanel, readWorkspace, type ReadbackResult } from "../../kbbl/tests/browser/grading-readback";
-import { selectDiscardedFields } from "../../workflow-config/src/definition-store";
+import { isCommittedDefinition } from "../../workflow-config/src/definition-store";
 import { NO_EVIDENCE, scenarioStatus, type GradingCounts, type HumanSubmissionReadback, type MeasurementReadback, type ProofCheck, type RunReference, type ScenarioReport, type DefinitionScan } from "./proof-contract";
 import { readRunMeasurements, readSpend, readUntil, settledRun, type GradingSource } from "./grading";
 import { authorityEvents } from "./relations";
@@ -78,12 +78,12 @@ const storedDefinitionFiles = (root: string): readonly string[] => [
 const namesGatedReview = (value: unknown): boolean => Array.isArray(value) ? value.some(namesGatedReview)
   : typeof value === "object" && value !== null ? Object.entries(value).some(([key, member]) => key === "gated_review" || namesGatedReview(member)) : false;
 
-/** Scans every retained definition for a field the catalogue discards, and every stored definition file for any gated_review key. */
+/** Scans every retained definition for schema compatibility, and every stored definition file for any gated_review key. */
 export function scanDefinitions(root: string = DEFINITIONS): DefinitionScan {
   const workflows = readdirSync(join(root, "workflows")).filter((name) => name.endsWith(".json"));
   const stored = storedDefinitionFiles(root);
   return { scanned: workflows.length,
-    with_discarded_field: workflows.flatMap((name) => selectDiscardedFields(JSON.parse(readFileSync(join(root, "workflows", name), "utf8"))).map((field) => `${name}:${field}`)),
+    with_discarded_field: workflows.filter((name) => !isCommittedDefinition(JSON.parse(readFileSync(join(root, "workflows", name), "utf8")))),
     files_scanned: stored.length, files_naming_gated_review: stored.filter((file) => namesGatedReview(JSON.parse(readFileSync(join(root, file), "utf8")))) };
 }
 

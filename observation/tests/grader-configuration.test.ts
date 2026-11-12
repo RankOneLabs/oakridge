@@ -1,171 +1,198 @@
 import { expect, test } from "bun:test";
+import { canonicalDigest } from "canonical-json";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { parseGraderConfiguration, planRegistration, type GraderConfiguration, type GraderEntry } from "../src/grading/configuration";
+import type { QuestionId } from "../src/domain/identity";
+import { machineGraders, parseGradingDefinitions, planRegistration, questionDefinition, selectedRunners,
+  type GradingDefinition, type GradingDefinitions } from "../src/grading/configuration";
 import { runnerRegistry } from "../src/grading/runner";
 import { prepareGrading } from "../src/main";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
-import { committedGraders, credentialEnv } from "./grading-fixture";
+import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
+import { committedDefinitions, credentialEnv } from "./grading-fixture";
 
-async function committed(): Promise<GraderConfiguration> {
-  const parsed = parseGraderConfiguration(await committedGraders());
-  if (!parsed.ok) throw new Error(parsed.error.detail);
-  return parsed.value;
-}
-function plan(configuration: GraderConfiguration) {
-  const planned = planRegistration(configuration, oakridgeProfile.questions);
-  if (!planned.ok) throw new Error(`${planned.error.kind}: ${planned.error.detail}`);
-  return planned.value;
-}
-/** The committed configuration with one question's graders replaced. */
-function withGraders(configuration: GraderConfiguration, question_id: string, graders: (current: readonly GraderEntry[]) => readonly GraderEntry[]): GraderConfiguration {
-  return { questions: configuration.questions.map((entry) => entry.question_id === question_id ? { ...entry, graders: graders(entry.graders) } : entry) };
-}
-const firstQuestion = async () => (await committed()).questions[0]!;
+const parse = (raw: unknown) => parseGradingDefinitions(raw, oakridgeGradingRegistry);
+const plan = (definitions: GradingDefinitions) => {
+  const result = planRegistration(definitions, oakridgeGradingRegistry);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+};
+const editFirst = (definitions: GradingDefinitions, edit: (definition: GradingDefinition) => unknown): unknown =>
+  definitions.map((definition, index) => index === 0 ? edit(definition) : definition);
 
-test("graders.json configures every question the producer asks, each with at least one grader", async () => {
-  const configuration = await committed();
-  expect(configuration.questions.map((entry) => entry.question_id).toSorted())
-    .toEqual(oakridgeProfile.questions.map((question) => question.question_id).toSorted());
-  for (const entry of configuration.questions) expect(entry.graders.length).toBeGreaterThan(0);
+test("the committed definitions load with the five target scopes, evidence declarations and original pins", async () => {
+  const definitions = await committedDefinitions();
+  expect(parse(definitions).ok).toBe(true);
+  expect(definitions.map(({ id, target, evidence }) => ({ id, target, evidence }))).toEqual([
+    { id: "finding.relevance", target: { artifact: "analysis", selector: "/findings/*", scope: "per_item" }, evidence: ["subject", "spec"] },
+    { id: "assessment_finding.correctness", target: { artifact: "assessment", selector: "/findings/*", scope: "per_task", task_ids: "/task_ids" }, evidence: ["subject", "build_result", "citation", "test_evidence", "task_context"] },
+    { id: "assessment_finding.evidence_support", target: { artifact: "assessment", selector: "/findings/*", scope: "per_task", task_ids: "/task_ids" }, evidence: ["subject", "citation", "test_evidence", "task_context"] },
+    { id: "task.requirement_coverage", target: { artifact: "tasks", selector: "/tasks/*", scope: "per_item" }, evidence: ["subject", "spec", "spec_task", "requirement"] },
+    { id: "acceptance_entry.task_coverage", target: { artifact: "plan", selector: "/cohorts/*/acceptance_criteria/*", scope: "per_item" }, evidence: ["subject", "spec", "spec_task", "requirement", "plan", "contribution_context"] },
+  ]);
+  expect(plan(definitions).capture.pins.map(({ question_id, item_kind }) => [question_id, item_kind])).toEqual([
+    ["finding.relevance", "finding"], ["assessment_finding.correctness", "assessment_finding"],
+    ["assessment_finding.evidence_support", "assessment_finding"], ["task.requirement_coverage", "task"],
+    ["acceptance_entry.task_coverage", "acceptance_entry"],
+  ]);
 });
 
-test("each configured grader names a retained runner, a model, instructions and an estimated cost per call", async () => {
-  for (const grader of (await committed()).questions.flatMap((entry) => entry.graders)) {
-    expect(Object.keys(runnerRegistry)).toContain(grader.runner);
-    expect(grader.model.length).toBeGreaterThan(0);
-    expect(grader.estimated_cost_per_call).toBeGreaterThanOrEqual(0);
-  }
+test("derived questions preserve the previous wording, values and semantics verbatim", async () => {
+  const previous: unknown = LEGACY_QUESTIONS;
+  const derived: unknown = plan(await committedDefinitions()).questions.map(({ question_version, ...question }) => question);
+  expect(derived).toEqual(previous);
 });
 
-test("registration selects exactly the configured graders, plus one human evaluator pinned everywhere", async () => {
-  const configuration = await committed();
-  const registration = plan(configuration);
-  for (const pin of registration.capture.pins) {
-    const configured = configuration.questions.find((entry) => entry.question_id === pin.question_id)?.graders ?? [];
-    const pinned = registration.evaluators.filter((evaluator) => pin.evaluator_definition_ids.includes(evaluator.evaluator_definition_id as never));
-    expect(pinned.filter((evaluator) => evaluator.kind !== "human").map((evaluator) => [evaluator.backend_kind, evaluator.model]))
-      .toEqual(configured.map((grader) => [grader.runner, grader.model]));
-    expect(pinned.filter((evaluator) => evaluator.kind === "human")).toHaveLength(1);
-  }
-  const humans = registration.evaluators.filter((evaluator) => evaluator.kind === "human");
-  expect(humans).toHaveLength(1);
-  expect(humans[0]).toMatchObject({ model: null, cost_metadata: null });
+interface Refusal { readonly name: string; readonly kind: string; readonly entity_id?: string; readonly field?: string;
+  readonly edit: (definition: GradingDefinition) => unknown }
+const refusals: readonly Refusal[] = [
+  { name: "unknown definition field", kind: "invalid_definitions", edit: (d) => ({ ...d, typo: true }) },
+  { name: "unknown target field", kind: "invalid_definitions", edit: (d) => ({ ...d, target: { ...d.target, typo: true } }) },
+  { name: "unknown question field", kind: "invalid_definitions", edit: (d) => ({ ...d, question: { ...d.question, typo: true } }) },
+  { name: "unknown evaluator field", kind: "invalid_definitions", edit: (d) => ({ ...d, evaluators: [{ ...d.evaluators[0], typo: true }] }) },
+  { name: "unknown question id", kind: "unknown_question", entity_id: "finding.relevnce", field: "id", edit: (d) => ({ ...d, id: "finding.relevnce" }) },
+  { name: "unknown human-only question id", kind: "unknown_question", entity_id: "finding.relevnce", field: "id", edit: (d) => ({ ...d, id: "finding.relevnce", evaluators: [] }) },
+  { name: "unknown runner", kind: "unknown_runner", entity_id: "finding.relevance:imaginary", edit: (d) => ({ ...d, evaluators: machineGraders(d).map((g) => ({ ...g, runner: "imaginary" })) }) },
+  { name: "invalid runner instructions", kind: "invalid_instructions", entity_id: "finding.relevance:jev_direct", edit: (d) => ({ ...d, evaluators: machineGraders(d).map((g) => ({ ...g, instructions: { rubric: 1 } })) }) },
+  { name: "duplicate grader", kind: "duplicate_grader", entity_id: "finding.relevance:jev_direct", edit: (d) => ({ ...d, evaluators: [...d.evaluators, ...d.evaluators] }) },
+  { name: "duplicate explicit human", kind: "duplicate_grader", entity_id: "finding.relevance:human", edit: (d) => ({ ...d, evaluators: [{ runner: "human" }, { runner: "human" }] }) },
+  { name: "unknown evidence source", kind: "unknown_evidence", field: "evidence", edit: (d) => ({ ...d, evidence: ["invented"] }) },
+  { name: "unknown selector", kind: "unknown_selector", field: "target.selector", edit: (d) => ({ ...d, target: { ...d.target, selector: "/absent/*" } }) },
+  { name: "selector registered for a different artifact", kind: "unknown_selector", edit: (d) => ({ ...d, target: { ...d.target, artifact: "brief" } }) },
+  { name: "a registered selector its collector does not read", kind: "unsupported_target", field: "target", edit: (d) => ({ ...d, target: { ...d.target, artifact: "analysis", selector: "/risks/*" } }) },
+  { name: "a scope its collector does not serve", kind: "unsupported_target", field: "target", edit: (d) => ({ ...d, target: { ...d.target, scope: "per_task", task_ids: "/task_ids" } }) },
+  { name: "evidence its collector does not gather", kind: "unsupported_evidence", field: "evidence", edit: (d) => ({ ...d, evidence: [...d.evidence, "plan"] }) },
+  { name: "evidence its collector would still gather", kind: "unsupported_evidence", field: "evidence", edit: (d) => ({ ...d, evidence: ["subject"] }) },
+  { name: "task_ids on per_item", kind: "invalid_task_ids", field: "target.task_ids", edit: (d) => ({ ...d, target: { ...d.target, task_ids: "/task_ids" } }) },
+  { name: "missing per_task task_ids", kind: "invalid_task_ids", field: "target.task_ids", edit: (d) => ({ ...d, target: { ...d.target, scope: "per_task" } }) },
+  { name: "non-pointer task_ids", kind: "invalid_task_ids", field: "target.task_ids", edit: (d) => ({ ...d, target: { ...d.target, scope: "per_task", task_ids: "task_ids" } }) },
+];
+for (const refusal of refusals) test(`the loader refuses ${refusal.name} with definition context`, async () => {
+  const result = parse(editFirst(await committedDefinitions(), refusal.edit));
+  expect(result).toMatchObject({ ok: false, error: { operation: "grader_configuration", kind: refusal.kind,
+    entity_id: refusal.entity_id ?? "finding.relevance", detail: refusal.field ? expect.stringContaining(refusal.field) : expect.any(String) } });
 });
 
-test("each pin carries its question's version and item kind", async () => {
-  const registration = plan(await committed());
-  expect(registration.capture.pins.map(({ question_id, question_version, item_kind }) => ({ question_id, question_version, item_kind })))
-    .toEqual(oakridgeProfile.questions.map(({ question_id, question_version, item_kind }) => ({ question_id, question_version, item_kind })));
+test("duplicate definition ids are refused", async () => {
+  const definitions = await committedDefinitions();
+  expect(parse([...definitions, definitions[0]])).toMatchObject({ ok: false, error: { kind: "duplicate_definition", entity_id: definitions[0]!.id } });
 });
 
-test("a definition carries its runner's provider, the configured instructions and the estimated cost", async () => {
-  const configuration = await committed();
-  const grader = configuration.questions[0]!.graders[0]!;
-  const evaluator = plan(configuration).evaluators.find((candidate) => candidate.backend_kind === grader.runner)!;
-  expect(evaluator).toMatchObject({ kind: "model", provider: runnerRegistry[grader.runner as keyof typeof runnerRegistry].provider,
-    model: grader.model, cost_metadata: { estimated_cost_per_call: grader.estimated_cost_per_call } });
-  expect(JSON.parse(evaluator.instruction_text)).toEqual(grader.instructions);
+test("registration refuses an unknown question id even without parsing first", async () => {
+  const [definition] = await committedDefinitions();
+  expect(planRegistration([{ ...definition!, id: "finding.relevnce" }], oakridgeGradingRegistry))
+    .toMatchObject({ ok: false, error: { operation: "grader_configuration", kind: "unknown_question",
+      entity_id: "finding.relevnce", detail: expect.stringContaining("evidence collector") } });
 });
 
-test("several graders may be configured for one question, and all are pinned", async () => {
-  const question = await firstQuestion();
-  const [grader] = question.graders;
-  const configuration = withGraders(await committed(), question.question_id, (current) => [...current, { ...grader!, model: `${grader!.model}-second` }]);
-  const pin = plan(configuration).capture.pins.find((candidate) => candidate.question_id === question.question_id)!;
-  expect(pin.evaluator_definition_ids).toHaveLength(question.graders.length + 2);
+test("supported question ids come from the injected producer registry", async () => {
+  const [definition] = await committedDefinitions();
+  const question_id = "another_producer.relevance" as QuestionId;
+  const registry = { ...oakridgeGradingRegistry, questions: oakridgeGradingRegistry.questions
+    .filter((question) => question.question_id === definition!.id).map((question) => ({ ...question, question_id })) };
+  const result = parseGradingDefinitions([{ ...definition!, id: question_id }], registry);
+  expect(result.ok).toBe(true);
+  expect(parseGradingDefinitions([definition], registry))
+    .toMatchObject({ ok: false, error: { kind: "unknown_question", entity_id: definition!.id } });
 });
 
-test("the same configuration always yields the same definitions; any edit yields new ones", async () => {
-  const configuration = await committed();
-  const ids = (value: GraderConfiguration) => plan(value).evaluators.map((evaluator) => evaluator.evaluator_definition_id).toSorted();
-  expect(ids(configuration)).toEqual(ids(await committed()));
-  const question = await firstQuestion();
-  const edits: readonly ((grader: GraderEntry) => GraderEntry)[] = [
-    (grader) => ({ ...grader, model: `${grader.model}-next` }),
-    (grader) => ({ ...grader, estimated_cost_per_call: grader.estimated_cost_per_call + 0.5 }),
-    (grader) => ({ ...grader, instructions: JSON.parse(JSON.stringify(grader.instructions).replace("Judge", "Assess")) }),
-  ];
-  for (const edit of edits) {
-    const edited = plan(withGraders(configuration, question.question_id, (current) => current.map(edit)));
-    const before = plan(configuration).capture.pins.find((pin) => pin.question_id === question.question_id)!;
-    const after = edited.capture.pins.find((pin) => pin.question_id === question.question_id)!;
-    expect(after.evaluator_definition_ids).not.toEqual(before.evaluator_definition_ids);
-    // The human evaluator and the other questions' graders are untouched by the edit.
-    expect(after.evaluator_definition_ids.at(-1)).toBe(before.evaluator_definition_ids.at(-1)!);
-  }
-});
-
-test("a question graders.json omits is pinned to the human evaluator alone", async () => {
-  const question = await firstQuestion();
-  const configuration = { questions: (await committed()).questions.filter((entry) => entry.question_id !== question.question_id) };
-  const registration = plan(configuration);
-  const pin = registration.capture.pins.find((candidate) => candidate.question_id === question.question_id)!;
-  expect(pin.evaluator_definition_ids).toHaveLength(1);
-  expect(registration.evaluators.find((evaluator) => evaluator.evaluator_definition_id === pin.evaluator_definition_ids[0])?.kind).toBe("human");
-});
-
-test("an unknown runner, question, unusable instructions or a repeated grader is refused", async () => {
-  const configuration = await committed();
-  const question = await firstQuestion();
-  const refused = (value: GraderConfiguration) => planRegistration(value, oakridgeProfile.questions);
-  expect(refused(withGraders(configuration, question.question_id, (current) => current.map((grader) => ({ ...grader, runner: "stub_model" })))))
-    .toMatchObject({ ok: false, error: { kind: "unknown_runner", entity_id: "stub_model" } });
-  expect(refused({ questions: [...configuration.questions, { ...question, question_id: "risk.severity" }] }))
-    .toMatchObject({ ok: false, error: { kind: "unknown_question", entity_id: "risk.severity" } });
-  expect(refused({ questions: [...configuration.questions, question] })).toMatchObject({ ok: false, error: { kind: "duplicate_question" } });
-  expect(refused(withGraders(configuration, question.question_id, (current) => [...current, ...current])))
-    .toMatchObject({ ok: false, error: { kind: "duplicate_grader" } });
-  expect(refused(withGraders(configuration, question.question_id, (current) => current.map((grader) => ({ ...grader, instructions: { rubric: 1 } })))))
-    .toMatchObject({ ok: false, error: { kind: "invalid_instructions" } });
+test("malformed definitions and missing evaluator fields are refused", async () => {
+  const definitions = await committedDefinitions();
+  for (const raw of [{ questions: [] }, [], editFirst(definitions, (d) => ({ ...d, evaluators: [{ runner: "jev_direct" }] }))])
+    expect(parse(raw)).toMatchObject({ ok: false, error: { kind: "invalid_definitions" } });
 });
 
 test("System One criteria must name exactly the question's answers", async () => {
-  const question = await firstQuestion();
-  const configuration = withGraders(await committed(), question.question_id, (current) => current.map((grader) => {
-    const recipe = grader.instructions as { system_one: { criteria: Record<string, string> } };
-    const { unclear: _dropped, ...criteria } = recipe.system_one.criteria;
-    return { ...grader, instructions: { system_one: { ...recipe.system_one, criteria } } };
-  }));
-  expect(planRegistration(configuration, oakridgeProfile.questions)).toMatchObject({ ok: false, error: { kind: "invalid_instructions",
-    detail: expect.stringContaining("criteria must name exactly") } });
+  const definitions = await committedDefinitions();
+  expect(parse(editFirst(definitions, (d) => ({ ...d, question: { ...d.question, values: ["different"] } }))))
+    .toMatchObject({ ok: false, error: { kind: "invalid_instructions", detail: expect.stringContaining("criteria must name exactly") } });
 });
 
-test("misspelt or missing fields are refused rather than ignored", async () => {
-  const question = await firstQuestion();
-  const grader = question.graders[0]!;
-  expect(parseGraderConfiguration({ questions: [{ ...question, graders: [{ ...grader, modle: "x" }] }] }))
-    .toMatchObject({ ok: false, error: { kind: "invalid_graders" } });
-  const { estimated_cost_per_call: _cost, ...uncosted } = grader;
-  expect(parseGraderConfiguration({ questions: [{ ...question, graders: [uncosted] }] })).toMatchObject({ ok: false, error: { kind: "invalid_graders" } });
-  expect(parseGraderConfiguration({ questions: [] })).toMatchObject({ ok: false, error: { kind: "invalid_graders" } });
+test("an acceptance-entry question retargeted to the brief is refused, not graded on both", async () => {
+  const definitions = await committedDefinitions();
+  const edited = definitions.map((d) => d.id === "acceptance_entry.task_coverage" ? { ...d, target: { ...d.target, artifact: "brief", selector: "/acceptance_criteria/*" } } : d);
+  expect(parse(edited)).toMatchObject({ ok: false, error: { kind: "unsupported_target", entity_id: "acceptance_entry.task_coverage" } });
 });
 
-test("startup preparation fails on a missing required setting, naming the setting and no value", async () => {
-  const graders = await committedGraders();
-  const env = credentialEnv(graders);
-  expect(prepareGrading(graders, oakridgeProfile, env).ok).toBe(true);
+test("assessment questions cannot be scoped per item, where their task context never exists", async () => {
+  const definitions = await committedDefinitions();
+  for (const id of ["assessment_finding.correctness", "assessment_finding.evidence_support"]) {
+    const edited = definitions.map((d) => d.id === id ? { ...d, target: { artifact: d.target.artifact, selector: d.target.selector, scope: "per_item" as const } } : d);
+    expect(parse(edited)).toMatchObject({ ok: false, error: { kind: "unsupported_target", entity_id: id } });
+  }
+});
+
+test("question versions digest only the question block and complete target", async () => {
+  const definitions = await committedDefinitions();
+  const first = definitions[0]!;
+  const version = (definition: GradingDefinition) => {
+    const question = questionDefinition(definition, "finding");
+    if (!question.ok) throw new Error(JSON.stringify(question.error));
+    return question.value.question_version;
+  };
+  const original = version(first);
+  const digest = canonicalDigest({ question: first.question, target: first.target });
+  if (!digest.ok) throw new Error(digest.error.detail);
+  expect(original).toBe(digest.value);
+  for (const edited of [
+    { ...first, question: { ...first.question, text: "Changed wording" } },
+    { ...first, target: { ...first.target, artifact: "assessment" } },
+    { ...first, target: { ...first.target, selector: "/risks/*" } },
+    { ...first, target: { ...first.target, scope: "per_task" as const, task_ids: "/task_ids" } },
+  ]) expect(version(edited)).not.toBe(original);
+  const perTask: GradingDefinition = { ...first, target: { ...first.target, scope: "per_task", task_ids: "/task_ids" } };
+  expect(version({ ...perTask, target: { ...perTask.target, scope: "per_task", task_ids: "/other_ids" } })).not.toBe(version(perTask));
+  expect(version({ ...first, evidence: ["subject"] })).toBe(original);
+  const edited = definitions.map((d) => ({ ...d, evaluators: machineGraders(d).map((g) => ({ ...g, model: `${g.model}-next` })) }));
+  expect(plan(edited).questions).toEqual(plan(definitions).questions);
+  expect(plan(edited).evaluators).not.toEqual(plan(definitions).evaluators);
+});
+
+test("registration pins exactly the configured graders plus the single implicit human", async () => {
+  const definitions = await committedDefinitions();
+  const registration = plan(definitions);
+  expect(registration.evaluators.filter((e) => e.kind === "human")).toHaveLength(1);
+  for (const [index, pin] of registration.capture.pins.entries()) {
+    const graders = machineGraders(definitions[index]!);
+    expect(pin.evaluator_definition_ids).toHaveLength(graders.length + 1);
+    for (const grader of graders) expect(registration.evaluators).toContainEqual(expect.objectContaining({ backend_kind: grader.runner, model: grader.model,
+      cost_metadata: { estimated_cost_per_call: grader.estimated_cost_per_call }, instruction_text: expect.any(String) }));
+  }
+  expect(plan(definitions)).toEqual(plan(await committedDefinitions()));
+  const explicitHuman = definitions.map((d) => ({ ...d, evaluators: [...d.evaluators, { runner: "human" as const }] }));
+  expect(plan(explicitHuman)).toEqual(registration);
+  expect(selectedRunners(explicitHuman)).toEqual(selectedRunners(definitions));
+  const humanOnly = definitions.map((d) => ({ ...d, evaluators: [] }));
+  expect(plan(humanOnly).capture.pins.every((p) => p.evaluator_definition_ids.length === 1)).toBe(true);
+  expect(selectedRunners(humanOnly)).toEqual([]);
+});
+
+test("several different graders may be configured for a question and all are pinned", async () => {
+  const definitions = await committedDefinitions();
+  const first = definitions[0]!;
+  const grader = machineGraders(first)[0]!;
+  const registration = plan([{ ...first, evaluators: [...first.evaluators, { ...grader, model: `${grader.model}-second` }] }]);
+  expect(registration.capture.pins[0]!.evaluator_definition_ids).toHaveLength(first.evaluators.length + 2);
+});
+
+test("startup refuses missing credentials without disclosing unrelated values", async () => {
+  const definitions = await committedDefinitions();
+  const env = credentialEnv(definitions);
+  expect(prepareGrading(definitions, oakridgeGradingRegistry, env).ok).toBe(true);
   for (const name of Object.keys(env)) {
     const { [name]: _missing, ...rest } = env;
-    const prepared = prepareGrading(graders, oakridgeProfile, { ...rest, UNRELATED: "secret-value" });
-    expect(prepared).toMatchObject({ ok: false, error: { kind: "missing_credential", entity_id: name } });
-    expect(JSON.stringify(prepared)).not.toContain("secret-value");
+    const result = prepareGrading(definitions, oakridgeGradingRegistry, { ...rest, UNRELATED: "secret-value" });
+    expect(result).toMatchObject({ ok: false, error: { kind: "missing_credential", entity_id: name } });
+    expect(JSON.stringify(result)).not.toContain("secret-value");
   }
 });
 
 const SOURCE_ROOT = resolve(import.meta.dir, "../src");
-/** The registry and the implementations it registers name themselves; neither selects a grader. */
 const RUNNER_SOURCES = [resolve(SOURCE_ROOT, "grading/runner.ts"), resolve(SOURCE_ROOT, "runners")];
 function files(directory: string): readonly string[] {
-  return readdirSync(directory).flatMap((name) => {
-    const path = resolve(directory, name);
-    return statSync(path).isDirectory() ? files(path) : [path];
-  });
+  return readdirSync(directory).flatMap((name) => { const path = resolve(directory, name); return statSync(path).isDirectory() ? files(path) : [path]; });
 }
-
-test("no code, fixture or prompt selects a grader: runner names live only in the registry, models only in graders.json", async () => {
-  const configuration = await committed();
-  const models = [...new Set(configuration.questions.flatMap((entry) => entry.graders.map((grader) => grader.model)))];
+test("runner and model selection lives only in grading-definitions.json", async () => {
+  const models = [...new Set((await committedDefinitions()).flatMap((d) => machineGraders(d).map((g) => g.model)))];
   const runnerLiteral = new RegExp(`["'\`](${Object.keys(runnerRegistry).join("|")})["'\`]`);
   const roots = [SOURCE_ROOT, resolve(import.meta.dir, "../fixtures"), resolve(import.meta.dir, "../../workflow-config/prompts")];
   const offending = roots.flatMap(files).filter((path) => !RUNNER_SOURCES.some((source) => path === source || path.startsWith(`${source}/`))).flatMap((path) => {
@@ -175,3 +202,84 @@ test("no code, fixture or prompt selects a grader: runner names live only in the
   });
   expect(offending).toEqual([]);
 });
+
+// Compatibility baseline from the removed question table, excluding its hand-bumped version.
+const LEGACY_QUESTIONS = [
+  {
+    "question_id": "finding.relevance",
+    "item_kind": "finding",
+    "question_text": "Is this finding relevant to the spec the run was launched with?",
+    "response_kind": "choice",
+    "allowed_values": [
+      "relevant",
+      "irrelevant",
+      "unclear"
+    ],
+    "missing_evidence_policy": "abstain",
+    "abstain_semantics": "Abstain only when the evidence set is marked incomplete; low confidence alone is not abstention.",
+    "unclear_semantics": "Choose unclear when the finding and the full spec do not settle its relevance.",
+    "interpretation_caveats": "Judge this one finding against the full captured spec, not the whole analysis."
+  },
+  {
+    "question_id": "assessment_finding.correctness",
+    "item_kind": "assessment_finding",
+    "question_text": "Is this assessment finding correct, given its cited evidence and the build it assesses?",
+    "response_kind": "choice",
+    "allowed_values": [
+      "supported",
+      "contradicted",
+      "unclear"
+    ],
+    "missing_evidence_policy": "abstain",
+    "abstain_semantics": "Abstain only when the evidence set is marked incomplete; low confidence alone is not abstention.",
+    "unclear_semantics": "Choose unclear when the available evidence cannot establish whether the finding is correct.",
+    "interpretation_caveats": "Judge this one finding. Test and output citations are agent-reported; a file recorded as absent is evidence of absence. Linked task context is optional background."
+  },
+  {
+    "question_id": "assessment_finding.evidence_support",
+    "item_kind": "assessment_finding",
+    "question_text": "Does this assessment finding's cited evidence support it?",
+    "response_kind": "choice",
+    "allowed_values": [
+      "supports",
+      "does_not_support",
+      "unclear"
+    ],
+    "missing_evidence_policy": "abstain",
+    "abstain_semantics": "Abstain only when the evidence set is marked incomplete; low confidence alone is not abstention.",
+    "unclear_semantics": "Choose unclear when the citations cannot be judged either way, including when there are none.",
+    "interpretation_caveats": "Judge only the finding and its citations. Test and output citations are agent-reported."
+  },
+  {
+    "question_id": "task.requirement_coverage",
+    "item_kind": "task",
+    "question_text": "How well does this spec task account for the specification requirements it explicitly references?",
+    "response_kind": "choice",
+    "allowed_values": [
+      "fully_covers",
+      "partially_covers",
+      "does_not_cover",
+      "unclear"
+    ],
+    "missing_evidence_policy": "abstain",
+    "abstain_semantics": "Abstain only when the evidence set is marked incomplete.",
+    "unclear_semantics": "Choose unclear when no requirements are explicitly linked or the evidence cannot establish coverage.",
+    "interpretation_caveats": "Judge the task definition, not implementation success. Only requirement_ids declares its scope; do not infer links from prose."
+  },
+  {
+    "question_id": "acceptance_entry.task_coverage",
+    "item_kind": "acceptance_entry",
+    "question_text": "How well does this cohort contribution cover its assigned spec task?",
+    "response_kind": "choice",
+    "allowed_values": [
+      "fully_covers",
+      "partially_covers",
+      "does_not_cover",
+      "unclear"
+    ],
+    "missing_evidence_policy": "abstain",
+    "abstain_semantics": "Abstain only when the evidence set is marked incomplete.",
+    "unclear_semantics": "Choose unclear when the contribution's intended scope or coverage cannot be established.",
+    "interpretation_caveats": "Judge the proposed work, not completed code. A spec task can span cohorts: evaluate the declared share in the whole plan. A brief must preserve that share and make it implementable."
+  }
+];

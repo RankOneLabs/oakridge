@@ -10,7 +10,7 @@ import { referencedPromptPaths as selectPromptPaths, resolveDefinition, readLaun
 test("committed prompt discovery includes shared declarations and template overrides", () => {
   const source: AuthoredWorkflow = {
     workflow: "template_prompts", input: {}, run: { units: {}, outcome: {} },
-    workers: { writer: { kind: "agent", prompts: { initial: "unused.md" }, inputs: {}, creates: [] } },
+    workers: { writer: { kind: "agent", prompts: { initial: "unused.md" }, inputs: {}, produces: [] } },
     reviews: { approval: { of: "draft", by: "operator", prompt: "unused-review.md", decisions: {} } },
     stages: { draft: { input: {}, artifacts: {}, outcome: {}, workers: {
       writer: { template: "writer", overrides: { prompts: { initial: "used.md" } } } },
@@ -29,7 +29,7 @@ const workflow: ParsedWorkflow = {
   stages: {
     planning: {
       input: { kind: "record", fields: {} }, outcome: {}, workers: {},
-      artifacts: { plan: { schema: { kind: "named", schema: "plan" } }, notes: { schema: { kind: "record", fields: {
+      artifacts: { plan: { kind: "document", schema: { kind: "named", schema: "plan" } }, notes: { kind: "document", schema: { kind: "record", fields: {
         count: { kind: "integer" }, done: { kind: "boolean" } } } } },
       reviews: { chief: { of: "plan", by: "operator", inputs: {}, decisions: {
         approve: { effect: "approve", label: "Approve" },

@@ -17,7 +17,7 @@ test("an oakridge-dbos process restart resumes from the service-held cursor", as
   let server: ReturnType<typeof Bun.serve> | null = null;
   try {
     await migrateObservation(observation);
-    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] }, profile: oakridgeProfile });
+    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] }, profile: oakridgeProfile([]) });
     server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => app.fetch(request) });
     const { definition_id } = await sampleDefinition();
     const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "restart" } });
@@ -77,7 +77,7 @@ for (const interruption of ["before it is applied", "after it is applied, before
     let server: ReturnType<typeof Bun.serve> | null = null;
     try {
       await migrateObservation(observation);
-      const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] }, profile: oakridgeProfile });
+      const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] }, profile: oakridgeProfile([]) });
       /** The one declaration delivery this test interrupts, once. */
       let interrupted = false;
       let saw_interruption!: () => void;

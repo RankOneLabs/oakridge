@@ -2,9 +2,10 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PropsWithChildren } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { id, IMPLEMENTATION, item, OCCURRENCE, paged, reviewerAnswer, supportQuestion, taskComposite } from "../__fixtures__/grading";
+import { id, IMPLEMENTATION, item, itemStatus, OCCURRENCE, paged, reviewerAnswer, supportQuestion, taskComposite } from "../__fixtures__/grading";
 import { useCompositeDrilldown } from "./useCompositeDrilldown";
 import { useItemLineage } from "./useItemLineage";
+import { useItemStatus } from "./useItemStatus";
 
 const clients: QueryClient[] = [];
 const wrapper = () => {
@@ -59,4 +60,18 @@ test("lineage polling stays idle until an occurrence is captured", async () => {
   renderHook(() => useItemLineage(null, { limit: 20, offset: 0 }), { wrapper: wrapper() });
   await advance(30_000);
   expect(fetch).not.toHaveBeenCalled();
+});
+
+test("an open item's status still polls for newly ready subjects by default", async () => {
+  vi.useFakeTimers();
+  let isReady = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json(itemStatus([supportQuestion({ human: isReady
+    ? { state: "ready" } : { state: "not_ready", code: "task_unavailable", detail: "task not captured" } })])));
+  const request = { occurrence_id: OCCURRENCE, top: { limit: 200, offset: 0 }, nested: {} };
+  const hook = renderHook(() => useItemStatus(request), { wrapper: wrapper() });
+  await advance(1);
+  expect(hook.result.current.data?.questions.items[0]?.human.state).toBe("not_ready");
+  isReady = true;
+  await advance(10_001);
+  expect(hook.result.current.data?.questions.items[0]?.human.state).toBe("ready");
 });

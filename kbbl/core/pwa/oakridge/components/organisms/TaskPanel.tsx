@@ -3,11 +3,13 @@ import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GradingReadError } from "../../client-grading";
+import type { ObservationItemOccurrenceId } from "../../grading-contracts/domain/identity";
 import type { ObservationCompositeDrilldownKey, ObservationPageRequest } from "../../grading-contracts/grading/composite";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { useTask } from "../../hooks/useTask";
 import { useTaskLineage } from "../../hooks/useTaskLineage";
-import { selectItemText } from "../../lib/grading";
+import { useItemStatus } from "../../hooks/useItemStatus";
+import { selectItemText, selectTaskContributionSelection } from "../../lib/grading";
 import { useGradingVisibility } from "../../state/gradingVisibility";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
 import { GradeItemButton } from "../molecules/GradeItemButton";
@@ -17,11 +19,26 @@ import { TaskStageComposites } from "./TaskStageComposites";
 import { ItemGradeAction } from "./ItemGradeAction";
 
 const FIRST: ObservationPageRequest = { limit: 50, offset: 0 };
+/** One subject answers whether the task has any: the read is filtered to the task server-side. */
+const TASK_SUBJECT: ObservationPageRequest = { limit: 1, offset: 0 };
 
 interface Props {
   runId: string;
   taskId: string;
   onOpenItem: (selection: ObservationItemAddress) => void;
+}
+
+interface ContributionGradeProps {
+  occurrenceId: ObservationItemOccurrenceId;
+  selection: ObservationItemAddress;
+  onOpenItem: (selection: ObservationItemAddress) => void;
+}
+
+/** Ask observation for this task's own subjects, so a subject is never treated as absent just because it fell outside a page. */
+function ContributionGradeButton({ occurrenceId, selection, onOpenItem }: ContributionGradeProps) {
+  const status = useItemStatus({ occurrence_id: occurrenceId, task_id: selection.task_id, top: TASK_SUBJECT, nested: {} }, { refetchInterval: false });
+  const address = status.isPending ? null : selectTaskContributionSelection(selection, status.data?.questions.items);
+  return <GradeItemButton selection={address} onOpenItem={onOpenItem} />;
 }
 
 /** One run-scoped task: its stages side by side and the items linked to it. A task is read, never answered. */
@@ -60,7 +77,7 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
               <p className="m-0 min-w-0 flex-1 text-sm text-[var(--text-secondary)]">{selectItemText(entry.item.selected_value)}</p>
               {entry.kind === "unresolved" && <Chip tone="warning">Unresolved</Chip>}
               {!entry.item.is_current && <Chip tone="muted">Older revision</Chip>}
-              <GradeItemButton selection={{ source_revision_id: entry.item.revision_id, item_path: entry.item.item_path }} onOpenItem={onOpenItem} />
+              <ContributionGradeButton occurrenceId={entry.item.occurrence_id} selection={{ source_revision_id: entry.item.revision_id, item_path: entry.item.item_path, task_id: composite.data?.logical_item_id ?? null }} onOpenItem={onOpenItem} />
             </li>];
           })}
         </ul>

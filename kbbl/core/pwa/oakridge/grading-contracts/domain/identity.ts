@@ -7,13 +7,13 @@ export type ObservationRunId = ObservationBrand<string, "ObservationRunId">;
 
 export type ObservationArtifactRevisionId = ObservationBrand<string, "ObservationArtifactRevisionId">;
 
+export type ObservationLogicalItemId = ObservationBrand<string, "ObservationLogicalItemId">;
+
 export type ObservationItemOccurrenceId = ObservationBrand<string, "ObservationItemOccurrenceId">;
 
 export type ObservationUnitId = ObservationBrand<string, "ObservationUnitId">;
 
 export type ObservationRelationId = ObservationBrand<string, "ObservationRelationId">;
-
-export type ObservationLogicalItemId = ObservationBrand<string, "ObservationLogicalItemId">;
 
 export type ObservationEvaluatorDefinitionId = ObservationBrand<string, "ObservationEvaluatorDefinitionId">;
 

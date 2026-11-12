@@ -27,9 +27,9 @@ fn program() -> CheckedWorkflow {
         },
         "stages": {"item": {
             "input": {"text": "text"},
-            "artifacts": {"result": {"schema": "text"}},
+            "artifacts": {"result": {"kind": "document", "schema": "text"}},
             "workers": {"worker": {"kind": "agent", "prompts": {"initial": "item.md"},
-                                   "inputs": {"text": "input.text"}, "creates": ["result"]}},
+                                   "inputs": {"text": "input.text"}, "produces": ["result"]}},
             "done_when": "published(result)",
             "outcome": {"result": "latest(result)"}
         }}
@@ -81,9 +81,9 @@ fn deferred_program(run: Value, input: Value) -> CheckedWorkflow {
         "stages": {
             "producer": {
                 "input": {},
-                "artifacts": {"items": {"schema": "list({key: ident, text: text})"}},
+                "artifacts": {"items": {"kind": "document", "schema": "list({key: ident, text: text})"}},
                 "workers": {"writer": {"kind": "agent", "prompts": {"initial": "item.md"},
-                    "inputs": {}, "creates": ["items"]}},
+                    "inputs": {}, "produces": ["items"]}},
                 "done_when": "published(items)",
                 "outcome": {"items": "latest(items)"}
             },
@@ -219,9 +219,9 @@ fn sibling_collections_with_the_same_member_keys_have_distinct_unit_ids() {
         }, "outcome": {"first": "map(first, first.outcome.result)",
                        "second": "map(second, second.outcome.result)"}},
         "stages": {"item": {"input": {"text": "text"},
-            "artifacts": {"result": {"schema": "text"}},
+            "artifacts": {"result": {"kind": "document", "schema": "text"}},
             "workers": {"worker": {"kind": "agent", "prompts": {"initial": "item.md"},
-                "inputs": {"text": "input.text"}, "creates": ["result"]}},
+                "inputs": {"text": "input.text"}, "produces": ["result"]}},
             "done_when": "published(result)", "outcome": {"result": "latest(result)"}}}
     }))
     .unwrap();

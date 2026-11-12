@@ -1,9 +1,20 @@
+import type { LogicalItemId, QuestionId } from "../../domain/identity";
 import type { JsonValue } from "../../domain/primitives";
 import type { EvidenceReference, LineRange, NotReadyReason, RepositoryEvidence } from "../../grading/evidence";
-import type { QuestionKey } from "../../grading/question";
+import type { SubjectQuestion } from "../../grading/evidence";
 import type { CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, SourceArtifact } from "../../ports/artifact-source";
 import type { EvidenceCollector } from "../../ports/producer-profile";
-import { CONTRIBUTION_COVERAGE_ID, CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID, TASK_COVERAGE_ID } from "./questions";
+import type { SupportedQuestion } from "../../grading/configuration";
+export const RELEVANCE_ID = "finding.relevance" as QuestionId;
+export const CORRECTNESS_ID = "assessment_finding.correctness" as QuestionId;
+export const EVIDENCE_SUPPORT_ID = "assessment_finding.evidence_support" as QuestionId;
+export const TASK_COVERAGE_ID = "task.requirement_coverage" as QuestionId;
+export const CONTRIBUTION_COVERAGE_ID = "acceptance_entry.task_coverage" as QuestionId;
+
+/** Reference prefixes emitted by these collectors (numbered refs share their source name). */
+export const OAKRIDGE_EVIDENCE_SOURCES = ["subject", "spec", "build_result", "citation", "test_evidence",
+  "task_context", "spec_task", "requirement", "plan", "contribution_context"] as const;
+
 
 type JsonObject = { readonly [key: string]: JsonValue };
 const objectOf = (value: JsonValue | undefined): JsonObject | null =>
@@ -121,14 +132,16 @@ async function citedEvidence(artifact: SourceArtifact, sources: CapturedSources)
   return { revision, evidence: "waiting" in evidence ? evidence : { references: [...evidence.references, ...testEvidence(revision)] } };
 }
 
-async function evidenceSupport(artifact: SourceArtifact, sources: CapturedSources): Promise<EvidenceCollection> {
+async function evidenceSupport(artifact: SourceArtifact, sources: CapturedSources, task_id: LogicalItemId | null): Promise<EvidenceCollection> {
   const cited = await citedEvidence(artifact, sources);
   if ("state" in cited) return cited;
   if ("waiting" in cited.evidence) return cited.evidence.waiting;
-  return ready([subjectReference(artifact), ...cited.evidence.references]);
+  const task = task_id === null ? null : await sources.readLogicalItemAt({ logical_item_id: task_id, subject_revision_id: artifact.revision_id, artifact_kind: "tasks", item_kind: "task" });
+  if (!task) return notReady("task_unavailable", `task ${task_id} has no captured spec-task definition at ${artifact.revision_id}`);
+  return ready([subjectReference(artifact), ...cited.evidence.references, contextReference(task, 0)]);
 }
 
-async function correctness(artifact: SourceArtifact, sources: CapturedSources): Promise<EvidenceCollection> {
+async function correctness(artifact: SourceArtifact, sources: CapturedSources, task_id: LogicalItemId | null): Promise<EvidenceCollection> {
   const cited = await citedEvidence(artifact, sources);
   if ("state" in cited) return cited;
   if ("waiting" in cited.evidence) return cited.evidence.waiting;
@@ -136,10 +149,11 @@ async function correctness(artifact: SourceArtifact, sources: CapturedSources): 
   // An integration assessment names no build, and that absence alone is not a wait.
   const build = subject_id ? await sources.readRevision(subject_id) : null;
   if (subject_id && !build) return notReady("build_result_unavailable", `build result ${subject_id} is not captured`);
-  const context = await sources.readLinkedItems(artifact.occurrence_id);
+  const task = task_id === null ? null : await sources.readLogicalItemAt({ logical_item_id: task_id, subject_revision_id: artifact.revision_id, artifact_kind: "tasks", item_kind: "task" });
+  if (!task) return notReady("task_unavailable", `task ${task_id} has no captured spec-task definition at ${artifact.revision_id}`);
   return ready([subjectReference(artifact),
     ...(build ? [{ source: "revision", ref: "build_result", revision_id: build.revision_id, item_path: null, content: build.body } as const] : []),
-    ...cited.evidence.references, ...context.map(contextReference)]);
+    ...cited.evidence.references, contextReference(task, 0)]);
 }
 
 /** A task or requirement addressed in its source artifact, preserving its original array position. */
@@ -199,13 +213,31 @@ async function coverage(artifact: SourceArtifact, sources: CapturedSources): Pro
   return ready(references);
 }
 
+type QuestionEvidenceRule = (artifact: SourceArtifact, sources: CapturedSources, task_id: LogicalItemId | null) => Promise<EvidenceCollection>;
+interface QuestionCollector extends SupportedQuestion { readonly collect: QuestionEvidenceRule }
+/** The same registry drives collection and startup validation: each rule reads exactly this target and
+ * gathers exactly this evidence, so a definition asking for anything else is refused at load. */
+const QUESTION_COLLECTORS: readonly QuestionCollector[] = [
+  { question_id: RELEVANCE_ID, artifact: "analysis", selector: "/findings/*", scope: "per_item",
+    evidence: ["subject", "spec"], collect: relevance },
+  { question_id: CORRECTNESS_ID, artifact: "assessment", selector: "/findings/*", scope: "per_task",
+    evidence: ["subject", "build_result", "citation", "test_evidence", "task_context"], collect: correctness },
+  { question_id: EVIDENCE_SUPPORT_ID, artifact: "assessment", selector: "/findings/*", scope: "per_task",
+    evidence: ["subject", "citation", "test_evidence", "task_context"], collect: evidenceSupport },
+  { question_id: TASK_COVERAGE_ID, artifact: "tasks", selector: "/tasks/*", scope: "per_item",
+    evidence: ["subject", "spec", "spec_task", "requirement"], collect: coverage },
+  { question_id: CONTRIBUTION_COVERAGE_ID, artifact: "plan", selector: "/cohorts/*/acceptance_criteria/*", scope: "per_item",
+    evidence: ["subject", "spec", "spec_task", "requirement", "plan", "contribution_context"], collect: coverage },
+];
+const questionCollectors: ReadonlyMap<QuestionId, QuestionEvidenceRule> = new Map(QUESTION_COLLECTORS.map((entry) => [entry.question_id, entry.collect]));
+export const OAKRIDGE_SUPPORTED_QUESTIONS: readonly SupportedQuestion[] =
+  QUESTION_COLLECTORS.map(({ question_id, artifact, selector, scope, evidence }) => ({ question_id, artifact, selector, scope, evidence }));
+
 /** Each question is collected on its own, so one waiting lookup never delays another question. */
 export const oakridgeEvidence: EvidenceCollector = {
-  collect(artifact: SourceArtifact, question: QuestionKey, sources: CapturedSources): Promise<EvidenceCollection> {
-    if (question.question_id === RELEVANCE_ID) return relevance(artifact, sources);
-    if (question.question_id === CORRECTNESS_ID) return correctness(artifact, sources);
-    if (question.question_id === EVIDENCE_SUPPORT_ID) return evidenceSupport(artifact, sources);
-    if (question.question_id === TASK_COVERAGE_ID || question.question_id === CONTRIBUTION_COVERAGE_ID) return coverage(artifact, sources);
-    return Promise.resolve(notReady("unsupported_question", `question ${question.question_id} has no evidence rule`));
+  collect(artifact: SourceArtifact, question: SubjectQuestion, sources: CapturedSources): Promise<EvidenceCollection> {
+    const collect = questionCollectors.get(question.question_id);
+    return collect ? collect(artifact, sources, question.task_id)
+      : Promise.resolve(notReady("unsupported_question", `question ${question.question_id} has no evidence rule`));
   },
 };

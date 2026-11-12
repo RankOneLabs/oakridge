@@ -1,8 +1,7 @@
 import { expect } from "bun:test";
 import { createApp } from "../src/http/app";
-import { oakridgeProfile } from "../src/producers/oakridge/profile";
+import { oakridgeProfile, createFeed, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 import { readLineage } from "../src/storage/projection-store";
-import { createFeed, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 
 const credentials = { ingest: [], read: [{ ...tenant, token: "read" }], grade: [{ ...tenant, token: "grade", reviewer_id: "operator" }] };
 const read = { authorization: "Bearer read" };

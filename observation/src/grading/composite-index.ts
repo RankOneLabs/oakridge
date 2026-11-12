@@ -7,13 +7,13 @@ import type { EvidenceSet } from "./evidence";
 /** Read-local lookups derived from one captured snapshot; never cached across database reads. */
 export interface CompositeIndexes {
   readonly relations: ReadonlyMap<ItemOccurrenceId, readonly CompositeRelation[]>;
-  readonly evidence: ReadonlyMap<ItemOccurrenceId, readonly EvidenceSet[]>;
+  readonly evidence: ReadonlyMap<string, readonly EvidenceSet[]>;
   readonly evaluators: ReadonlyMap<EvaluatorDefinitionId, CompositeEvaluator>;
   readonly machines: ReadonlySet<EvaluatorDefinitionId>;
   readonly executions: ReadonlyMap<EvidenceSetId, ReadonlyMap<EvaluatorDefinitionId, CompositeExecution>>;
   readonly answers_by_execution: ReadonlyMap<ExecutionId, CompositeAnswer>;
-  readonly current_answers: ReadonlyMap<ItemOccurrenceId, readonly CompositeAnswer[]>;
-  readonly superseded_answers: ReadonlyMap<ItemOccurrenceId, readonly CompositeAnswer[]>;
+  readonly current_answers: ReadonlyMap<string, readonly CompositeAnswer[]>;
+  readonly superseded_answers: ReadonlyMap<string, readonly CompositeAnswer[]>;
   readonly questions: ReadonlyMap<string, QuestionDefinition>;
 }
 
@@ -27,6 +27,7 @@ export function groupRows<Row, Key>(rows: readonly Row[], keyOf: (row: Row) => K
   }
   return groups;
 }
+export const subjectIndexKey = (occurrence_id: ItemOccurrenceId, task_id: string | null): string => JSON.stringify([occurrence_id, task_id]);
 export const questionIndexKey = (question: QuestionKey): string => JSON.stringify([question.question_id, question.question_version]);
 
 export function indexCompositeInputs(inputs: CompositeInputs): CompositeIndexes {
@@ -47,11 +48,11 @@ export function indexCompositeInputs(inputs: CompositeInputs): CompositeIndexes 
   for (const question of inputs.questions) if (!questions.has(questionIndexKey(question))) questions.set(questionIndexKey(question), question);
   return {
     relations: groupRows(inputs.relations, (relation) => relation.source_occurrence_id),
-    evidence: groupRows(inputs.evidence_sets, (evidence) => evidence.subject_occurrence_id),
+    evidence: groupRows(inputs.evidence_sets, (evidence) => subjectIndexKey(evidence.subject_occurrence_id, evidence.task_id)),
     evaluators: new Map(inputs.evaluators.map((evaluator) => [evaluator.evaluator_definition_id, evaluator])),
     machines: new Set(inputs.evaluators.filter((evaluator) => evaluator.kind !== "human").map((evaluator) => evaluator.evaluator_definition_id)),
     executions, answers_by_execution: answers,
-    current_answers: groupRows(current, (answer) => answer.occurrence_id),
-    superseded_answers: groupRows(superseded, (answer) => answer.occurrence_id), questions,
+    current_answers: groupRows(current, (answer) => subjectIndexKey(answer.occurrence_id, answer.task_id)),
+    superseded_answers: groupRows(superseded, (answer) => subjectIndexKey(answer.occurrence_id, answer.task_id)), questions,
   };
 }

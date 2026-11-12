@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import YAML from "yaml";
@@ -7,7 +7,7 @@ import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry"
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type DefinitionOrder, type LaunchableCatalog, type PromptReferences } from "./definition-objects";
-import { isPromptPath, selectDiscardedFields } from "./definition-store";
+import { isCommittedDefinition, isPromptPath } from "./definition-store";
 
 const root = resolve(import.meta.dir, "../..");
 const isCheck = process.argv.includes("--check");
@@ -16,7 +16,6 @@ const promptRoot = resolve(root, "workflow-config/prompts");
 
 interface GeneratedFile { readonly path: string; readonly bytes: Buffer }
 interface AuthoredPrompt { readonly path: string; readonly id: PromptId; readonly bytes: Buffer }
-interface DiscardedDefinition { readonly path: string; readonly fields: readonly string[] }
 function required<Value, Failure>(result: Result<Value, Failure>): Value {
   if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.value;
@@ -41,17 +40,18 @@ function readPrompt(path: string): AuthoredPrompt {
   return { path: relative(promptRoot, path).split(sep).join("/"), id: bytesIdentity(bytes), bytes };
 }
 
-/** Scans every retained workflow object, not only the ones this run generates. */
-function selectDiscardedDefinitions(): DiscardedDefinition[] {
-  return filesUnder(resolve(storeRoot, "workflows")).flatMap((path) => {
-    let definition: unknown;
+/** Decodability, rather than a list of retired fields, governs retention. */
+function selectIncompatibleDefinitions(): string[] {
+  const directory = resolve(storeRoot, "workflows");
+  if (!existsSync(directory)) return [];
+  return filesUnder(directory).filter((path) => {
+    // Read failures must abort generation before any retained object is removed.
+    const contents = readFileSync(path, "utf8");
     try {
-      definition = JSON.parse(readFileSync(path, "utf8"));
-    } catch (error) {
-      throw new Error(`${path} cannot be scanned for discarded fields: ${error}`);
+      return !isCommittedDefinition(JSON.parse(contents));
+    } catch {
+      return true;
     }
-    const fields = selectDiscardedFields(definition);
-    return fields.length > 0 ? [{ path, fields }] : [];
   });
 }
 
@@ -102,6 +102,12 @@ const launchable: LaunchableCatalog = Object.fromEntries(launchableEntries);
 generated.push({ path: resolve(storeRoot, "launchable.json"), bytes: canonicalBytes(launchable) });
 
 // Build and validate the complete output plan before writing anything.
+const incompatible = selectIncompatibleDefinitions();
+if (isCheck && incompatible.length > 0) {
+  throw new Error(incompatible.map((path) => `${path} is not a decodable committed definition; run bun workflow-config/src/generate.ts`).join("\n"));
+}
+// Remove incompatible retained bytes before creating any new objects.
+if (!isCheck) for (const path of incompatible) rmSync(path);
 const outputs = new Map(generated.map((file) => [file.path, file]));
 for (const file of outputs.values()) {
   if (isCheck) {
@@ -114,15 +120,6 @@ for (const file of outputs.values()) {
     if (!actual.equals(file.bytes)) throw new Error(`${file.path} differs from its authoring source; run bun workflow-config/src/generate.ts`);
   } else {
     mkdirSync(dirname(file.path), { recursive: true });
-    await Bun.write(file.path, file.bytes);
+    if (!existsSync(file.path) || !readFileSync(file.path).equals(file.bytes)) await Bun.write(file.path, file.bytes);
   }
 }
-// Object identities outlive the launchable catalog: existing runs still resolve
-// their pinned definitions, prompts and operations after authoring changes. The
-// exception is a definition carrying a discarded field: hash-valid bytes under
-// their own filename do not earn retention, so it is not kept for old runs.
-const discarded = selectDiscardedDefinitions();
-if (isCheck && discarded.length > 0) {
-  throw new Error(discarded.map(({ path, fields }) => `${path} retains discarded ${fields.join(", ")}; run bun workflow-config/src/generate.ts`).join("\n"));
-}
-for (const { path } of discarded) rmSync(path);

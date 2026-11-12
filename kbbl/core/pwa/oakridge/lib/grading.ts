@@ -4,12 +4,12 @@ import type { ChipTone } from "../../components/atoms/Chip";
 import type { ObservationAnswerCount, ObservationAnswerKey, ObservationCompositeDrilldownKey, ObservationDisagreementCount, ObservationGraderKey, ObservationItemStatusKey, ObservationStatusCount } from "../grading-contracts/grading/composite";
 import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
 import type { ObservationMeasurementState } from "../grading-contracts/grading/execution";
-import type { ObservationAddressedItem, ObservationAnswerRead, ObservationCompositeRead, ObservationHumanReadiness, ObservationItemAddress, ObservationLogicalLinkRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
+import type { ObservationAddressedItem, ObservationAnswerRead, ObservationCompositeRead, ObservationDrilldownRowRead, ObservationHumanReadiness, ObservationItemAddress, ObservationLogicalLinkRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
 import type { ObservationGradeAnswer } from "../grading-contracts/grading/observation";
 import type { ObservationQuestionKey } from "../grading-contracts/grading/question";
 import type { ObservationAttemptRead } from "../grading-contracts/storage/execution-store";
 import type { ObservationItemStatusResponse } from "../grading-contracts/storage/grading-record-store";
-import type { ObservationReviewerId } from "../grading-contracts/domain/identity";
+import type { ObservationLogicalItemId, ObservationReviewerId } from "../grading-contracts/domain/identity";
 import type { ObservationJsonValue } from "../grading-contracts/domain/primitives";
 import type { SubmissionResult } from "../grading-types";
 import type { ArtifactSource } from "../artifact-types";
@@ -29,8 +29,22 @@ export function selectItemSelection(source: Pick<ArtifactSource, "revision_id"> 
 /** Every finding an artifact revision shows, addressed the same way each row addresses its own. */
 export const selectFindingSelections = (source: Pick<ArtifactSource, "revision_id"> | undefined, item_paths: readonly string[]): readonly ObservationItemAddress[] =>
   item_paths.flatMap((item_path) => { const selection = selectItemSelection(source, item_path); return selection ? [selection] : []; });
-export const itemSelectionKey = ({ source_revision_id, item_path }: ObservationItemAddress): string => JSON.stringify([source_revision_id, item_path]);
+export const itemSelectionKey = ({ source_revision_id, item_path, task_id }: ObservationItemAddress): string => JSON.stringify(task_id ? [source_revision_id, item_path, task_id] : [source_revision_id, item_path]);
 export const areSelectionsEqual = (left: ObservationItemAddress, right: ObservationItemAddress): boolean => itemSelectionKey(left) === itemSelectionKey(right);
+
+/** A task filter comes from the item's pinned subjects, regardless of its item kind. */
+export function selectTaskContributionSelection(selection: ObservationItemAddress, questions: ObservationItemStatusResponse["questions"]["items"] | undefined): ObservationItemAddress {
+  const address = { source_revision_id: selection.source_revision_id, item_path: selection.item_path };
+  const task_id = questions?.find((question) => question.task_id === selection.task_id)?.task_id ?? null;
+  return task_id === null ? address : { ...address, task_id };
+}
+
+/** Linked context keeps its null-task questions; use a task filter only when the row has that subject. */
+export function selectDrilldownItemSelection(row: ObservationDrilldownRowRead): ObservationItemAddress {
+  const selection = { source_revision_id: row.item.source_revision_id, item_path: row.item.item_path };
+  const task_id = row.questions.items.find((question) => question.task_id !== null)?.task_id ?? null;
+  return task_id === null ? selection : { ...selection, task_id };
+}
 
 const QUESTION_LABELS: Readonly<Record<string, string>> = {
   "finding.relevance": "Relevance",
@@ -40,6 +54,12 @@ const QUESTION_LABELS: Readonly<Record<string, string>> = {
   "acceptance_entry.task_coverage": "Spec task coverage",
 };
 export const questionLabel = ({ question_id }: Pick<ObservationQuestionKey, "question_id">): string => QUESTION_LABELS[question_id] ?? question_id;
+/** Name the evaluated task even when its link is outside the current links page. */
+export function selectQuestionTaskLabel(task_id: ObservationLogicalItemId | null, links: readonly ObservationLogicalLinkRead[]): string | null {
+  if (task_id === null) return null;
+  const link = links.find((link) => link.state === "resolved" && link.logical_item_id === task_id);
+  return `Task ${link?.producer_local_id ?? task_id}`;
+}
 export const sameQuestion = (left: ObservationQuestionKey, right: ObservationQuestionKey): boolean =>
   left.question_id === right.question_id && left.question_version === right.question_version;
 

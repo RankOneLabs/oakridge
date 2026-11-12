@@ -26,6 +26,7 @@
       },
       "artifacts": {
         "draft": {
+          "kind": "document",
           "schema": {
             "title": "text",
             "body": "text"
@@ -38,6 +39,7 @@
           ]
         },
         "critique": {
+          "kind": "assessment",
           "schema": {
             "notes": "list(text)"
           }
@@ -54,7 +56,7 @@
             "topic": "topic_value",
             "critique": "latest(critique)"
           },
-          "creates": [
+          "produces": [
             "draft"
           ]
         },
@@ -63,8 +65,8 @@
           "prompts": {
             "review": "review-loop/critique.md"
           },
-          "reviews": "draft",
-          "creates": [
+          "evaluates": "draft",
+          "produces": [
             "critique"
           ],
           "inputs": {}

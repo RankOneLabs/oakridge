@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../domain/primitives";
-import { parseGraderConfiguration, selectedRunners } from "./configuration";
+import { parseGradingDefinitions, selectedRunners, type GradingRegistry } from "./configuration";
 import { runnerEntry, runnerRegistry, type RunnerCredentials } from "./runner";
 
 /**
@@ -9,7 +9,7 @@ import { runnerEntry, runnerRegistry, type RunnerCredentials } from "./runner";
  */
 export interface ProviderCredentialError {
   readonly operation: "provider_credentials";
-  readonly kind: "invalid_graders" | "unknown_runner" | "missing_credential";
+  readonly kind: "invalid_definitions" | "unknown_runner" | "missing_credential";
   readonly entity_id: string;
   readonly detail: string;
 }
@@ -25,10 +25,11 @@ export function allProviderCredentialNames(): readonly string[] {
     .flatMap(({ credentials }) => [...credentials.required, ...credentials.optional]);
 }
 
-/** The runners graders.json selects, read through the same contract startup registers from. */
-export function configuredRunnerNames(graders: unknown): Result<readonly string[], ProviderCredentialError> {
-  const parsed = parseGraderConfiguration(graders);
-  return parsed.ok ? ok(selectedRunners(parsed.value)) : failure("invalid_graders", "graders.json", parsed.error.detail);
+/** The runners grading-definitions.json selects, read through the same contract startup registers from. */
+export function configuredRunnerNames(definitions: unknown, registry: GradingRegistry): Result<readonly string[], ProviderCredentialError> {
+  const parsed = parseGradingDefinitions(definitions, registry);
+  return parsed.ok ? ok(selectedRunners(parsed.value))
+    : failure(parsed.error.kind === "unknown_runner" ? "unknown_runner" : "invalid_definitions", parsed.error.entity_id, parsed.error.detail);
 }
 
 /** Runner requirements combined; an unknown runner fails instead of selecting nothing for it. */

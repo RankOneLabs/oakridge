@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
@@ -8,7 +8,7 @@ import YAML from "yaml";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type DefinitionOrder, type OperationRegistry } from "./definition-objects";
-import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, selectDiscardedFields, type DefinitionStoreFailure } from "./definition-store";
+import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, isCommittedDefinition, type DefinitionStoreFailure } from "./definition-store";
 import { WORKFLOW_SOURCES } from "./workflow-sources";
 
 function unwrap<Value, Failure>(result: Result<Value, Failure>): Value {
@@ -25,8 +25,8 @@ stages:
     input: {}
     artifacts: {}
     workers:
-      writer: { kind: agent, prompts: { initial: write.md }, inputs: {}, creates: [] }
-      editor: { kind: agent, prompts: { review: write.md }, inputs: {}, creates: [] }
+      writer: { kind: agent, prompts: { initial: write.md }, inputs: {}, produces: [] }
+      editor: { kind: agent, prompts: { review: write.md }, inputs: {}, produces: [] }
     outcome: {}
   second: { input: {}, artifacts: {}, workers: {}, outcome: {} }
 `;
@@ -250,7 +250,7 @@ for (const invalid_json of ["{", `${"[".repeat(300)}null${"]".repeat(300)}`]) {
 test("prompt references include shared workers/reviews and both kinds of template override", () => {
   const source = authoredSource(`${authored}
 workers:
-  shared: { kind: agent, prompts: { initial: shared.md, revise: revise.md, review: review.md, handoff: handoff.md }, inputs: {}, creates: [] }
+  shared: { kind: agent, prompts: { initial: shared.md, revise: revise.md, review: review.md, handoff: handoff.md }, inputs: {}, produces: [] }
 reviews:
   shared: { of: draft, by: operator, prompt: shared-review.md, decisions: {} }
 `);
@@ -464,33 +464,35 @@ function retainedDefinitions(store: string): { readonly id: DefinitionId; readon
   return readdirSync(resolve(store, "workflows")).map((name) => ({ id: name.replace(/\.json$/, "") as DefinitionId,
     object: JSON.parse(readFileSync(resolve(store, "workflows", name), "utf8")) }));
 }
-/** A hash-valid stored object carrying the removed grant, as an old store or a merge would hold it. */
-function plantDiscardedDefinition(store: string): string {
+interface IncompatibleDefinitionCase {
+  readonly name: string;
+  readonly change: (definition: CommittedDefinition) => unknown;
+}
+const incompatible_definitions: readonly IncompatibleDefinitionCase[] = [
+  ...["creates", "reviews", "gated_review"].map((field) => ({
+    name: `worker ${field}`,
+    change: (definition: CommittedDefinition) => ({ ...definition, source: { ...definition.source, stages: {
+      ...definition.source.stages, document: { ...definition.source.stages.document,
+        workers: { writer: { ...definition.source.stages.document?.workers.writer, [field]: [] } },
+      },
+    } } }),
+  })),
+  { name: "missing artifact kind", change: (definition) => ({ ...definition, source: { ...definition.source, stages: {
+    ...definition.source.stages, document: { ...definition.source.stages.document,
+      artifacts: { draft: { schema: "text" } },
+    },
+  } } }) },
+];
+/** An incompatible object under its own hash, as an old store or merge would hold it. */
+function plantDiscardedDefinition(store: string, change = incompatible_definitions[0].change): string {
   const launchable = unwrap(readLaunchableCatalog(store))["review-loop"];
-  const definition = structuredClone(retainedDefinitions(store).find(({ id }) => id === launchable)!.object) as
-    { source: { stages: { document: { workers: { writer: Record<string, unknown> } } } } };
-  definition.source.stages.document.workers.writer.gated_review = { kind: "unscoped" };
-  const id = unwrap(jsonIdentity<DefinitionId>(definition));
+  const definition = JSON.parse(readFileSync(resolve(store, "workflows", `${launchable}.json`), "utf8")) as CommittedDefinition;
+  const object = change(definition);
+  const id = unwrap(jsonIdentity<DefinitionId>(object));
   const path = resolve(store, "workflows", `${id}.json`);
-  writeFileSync(path, unwrap(canonicalJson(definition)));
+  writeFileSync(path, unwrap(canonicalJson(object)));
   return path;
 }
-
-test("the discarded-field scan finds a grant at every worker position", () => {
-  const grant = { kind: "unscoped" };
-  const definition = { source: { workers: { template: { gated_review: grant } },
-    stages: { a: { workers: { direct: { gated_review: grant }, used: { template: "template", overrides: { gated_review: grant } } } } } } };
-  expect(selectDiscardedFields(definition)).toEqual(["/source/workers/template/gated_review",
-    "/source/stages/a/workers/direct/gated_review", "/source/stages/a/workers/used/overrides/gated_review"]);
-});
-
-test("the discarded-field scan keeps authored names that match the removed field", () => {
-  const worker = { kind: "agent", inputs: { gated_review: "input.gated_review" }, gated_review_note: "kept" };
-  const definition = { source: { input: { gated_review: "text" }, schemas: { gated_review: { gated_review: "text" } },
-    workers: { gated_review: worker }, stages: { gated_review: { input: { gated_review: "text" }, artifacts: { gated_review: { schema: "text" } },
-      workers: { gated_review: worker } } } } };
-  expect(selectDiscardedFields(definition)).toEqual([]);
-});
 
 test("generation keeps a launchable definition with an input named like the removed field", () => {
   const root = generatorFixture();
@@ -503,7 +505,7 @@ test("generation keeps a launchable definition with an input named like the remo
 
 test("the committed store's complete inventory resolves and carries no discarded field", () => {
   const retained = retainedDefinitions(DEFINITION_STORE_ROOT);
-  expect(retained.flatMap(({ object }) => selectDiscardedFields(object))).toEqual([]);
+  expect(retained.every(({ object }) => isCommittedDefinition(object))).toBe(true);
   expect(retained.map(({ id }) => unwrap(resolveDefinition(id)).definition_id)).toEqual(retained.map(({ id }) => id));
   expect(retained.map(({ id }) => id)).toEqual(expect.arrayContaining(Object.values(unwrap(readLaunchableCatalog()))));
 });
@@ -513,22 +515,47 @@ test("the source contract refuses the removed grant", () => {
   expect(decodeWorkflowSource(YAML.parse(yaml))).toBeNull();
 });
 
-test("--check names a retained definition carrying a discarded field and does not delete it", () => {
-  const root = generatorFixture();
-  expect(runGenerator(root).exitCode).toBe(0);
-  const path = plantDiscardedDefinition(resolve(root, "workflow-config/definitions"));
-  const check = runGenerator(root, true);
-  expect({ code: check.exitCode, named: check.stderr.toString().includes(path), kept: existsSync(path) }).toEqual({ code: 1, named: true, kept: true });
-});
+for (const incompatible of incompatible_definitions) {
+  test(`--check names retained ${incompatible.name} and generation removes it without rewriting decodable objects`, () => {
+    const root = generatorFixture();
+    expect(runGenerator(root).exitCode).toBe(0);
+    const snapshot = storeSnapshot(root);
+    const path = plantDiscardedDefinition(resolve(root, "workflow-config/definitions"), incompatible.change);
+    const check = runGenerator(root, true);
+    expect({ code: check.exitCode, named: check.stderr.toString().includes(path), kept: existsSync(path) })
+      .toEqual({ code: 1, named: true, kept: true });
+    expect(runGenerator(root).exitCode).toBe(0);
+    expect(storeSnapshot(root)).toEqual(snapshot);
+    expect(runGenerator(root, true).exitCode).toBe(0);
+  });
+}
 
-test("generation discards an incompatible object and keeps the rest of the store", () => {
-  const root = generatorFixture();
-  expect(runGenerator(root).exitCode).toBe(0);
-  const snapshot = storeSnapshot(root);
-  plantDiscardedDefinition(resolve(root, "workflow-config/definitions"));
-  expect(runGenerator(root).exitCode).toBe(0);
-  expect(storeSnapshot(root)).toEqual(snapshot);
-  expect(runGenerator(root, true).exitCode).toBe(0);
+for (const is_check of [false, true]) {
+  test(`${is_check ? "--check" : "generation"} reports an unreadable retained definition without deleting or writing objects`, () => {
+    const root = generatorFixture();
+    expect(runGenerator(root).exitCode).toBe(0);
+    const store = resolve(root, "workflow-config/definitions");
+    const definition_id = unwrap(readLaunchableCatalog(store))["review-loop"];
+    const path = resolve(store, "workflows", `${definition_id}.json`);
+    const snapshot = storeSnapshot(root);
+    // Make the unreadable object historical, so it would not be regenerated.
+    const source = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+    writeFileSync(source, readFileSync(source, "utf8").replace("workflow: review_loop", "workflow: review_loop_updated"));
+    chmodSync(path, 0o000);
+    try {
+      const generated = runGenerator(root, is_check);
+      expect({ code: generated.exitCode, named: generated.stderr.toString().includes(path),
+        read_error: generated.stderr.toString().includes("EACCES"), kept: existsSync(path) })
+        .toEqual({ code: 1, named: true, read_error: true, kept: true });
+    } finally {
+      if (existsSync(path)) chmodSync(path, 0o644);
+    }
+    expect(storeSnapshot(root)).toEqual(snapshot);
+  });
+}
+
+test("development is re-pinned from its base-commit 1c7d8017 definition identity", () => {
+  expect(unwrap(readLaunchableCatalog()).development).not.toBe("e9e5d79d30eb6b6077d7c430b479b548b691afe06f2f56955a539aececfa08d9");
 });
 
 test("generation after a later authored change stays clean and cannot revive a discarded object", () => {
@@ -540,8 +567,8 @@ test("generation after a later authored change stays clean and cannot revive a d
   writeFileSync(source, readFileSync(source, "utf8").replace("workflow: review_loop", "workflow: review_loop_updated"));
   expect(runGenerator(root).exitCode).toBe(0);
   expect(runGenerator(root).exitCode).toBe(0);
-  expect({ revived: existsSync(path), fields: retainedDefinitions(store).flatMap(({ object }) => selectDiscardedFields(object)),
-    check: runGenerator(root, true).exitCode }).toEqual({ revived: false, fields: [], check: 0 });
+  expect({ revived: existsSync(path), decodable: retainedDefinitions(store).every(({ object }) => isCommittedDefinition(object)),
+    check: runGenerator(root, true).exitCode }).toEqual({ revived: false, decodable: true, check: 0 });
 });
 
 test("generation refuses an authored source that declares the removed grant", () => {

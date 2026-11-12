@@ -11,7 +11,7 @@ const definition = (schema: unknown, digest = "bundle-a"): PinnedDefinitionRead 
   definition_id: digest as PinnedDefinitionRead["definition_id"], operation_registry_id: "0" as PinnedDefinitionRead["operation_registry_id"], prompts: {}, operations: [], schema_names: [], stage_names: [], source: {} as PinnedDefinitionRead["source"],
   checked_program: { digest, stages: ["writing"], workflow: { workflow: "test", input: { kind: "text" },
     run: {} as PinnedDefinitionRead["checked_program"]["workflow"]["run"], schemas: {},
-    stages: { writing: { input: { kind: "text" }, artifacts: { draft: { schema: schema as { kind: "text" } } },
+    stages: { writing: { input: { kind: "text" }, artifacts: { draft: { kind: "document", schema: schema as { kind: "text" } } },
       workers: {}, outcome: {} } } } },
 });
 const row = (payload: CoreEvent): CommittedEventRow<CoreEvent> => ({ id: "event-1", run_id: "run-1", unit_id: "run-1/writing",
