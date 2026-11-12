@@ -9,12 +9,16 @@ export interface PromptReferences { readonly [authored_path: string]: PromptId }
 export interface PromptTexts { readonly [authored_path: string]: string }
 export interface LaunchableCatalog { readonly [authoring_name: string]: DefinitionId }
 
+/** Authored artifact declaration order for every stage, retained through canonical JSON. */
+export interface StageArtifactNames { readonly [stage: string]: readonly string[] }
+
 export interface CommittedDefinition {
   readonly source: AuthoredWorkflow;
   readonly operation_registry_id: OperationRegistryId;
   readonly prompts: PromptReferences;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
+  readonly artifact_names: StageArtifactNames;
 }
 
 export interface ResolvedDefinition {
@@ -25,10 +29,11 @@ export interface ResolvedDefinition {
   readonly operations: OperationRegistry;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
+  readonly artifact_names: StageArtifactNames;
 }
 
 export type DefinitionInputs = Pick<CommittedDefinition, "source" | "operation_registry_id" | "prompts">;
-export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names">;
+export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names" | "artifact_names">;
 
 /** Order must come from YAML mapping nodes, before toJS() reorders integer-like keys. */
 export function commitDefinition(inputs: DefinitionInputs, order: DefinitionOrder): CommittedDefinition {

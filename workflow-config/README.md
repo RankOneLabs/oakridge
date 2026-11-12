@@ -61,7 +61,8 @@ The generator also writes the committed definition store under `definitions/`:
 
 - `workflows/<definition_id>.json` carries the authored source, one
   `operation_registry_id`, a prompt-path-to-PromptId map, and ordered
-  `schema_names` and `stage_names` arrays.
+  `schema_names` and `stage_names` arrays plus an `artifact_names` map whose arrays
+  retain each stage’s authored artifact declaration order.
 - `prompts/<prompt_id>.md` copies exact authoring bytes, including line endings.
 - `operations/<operation_registry_id>.json` carries the operation registry.
 - `launchable.json` maps the authoring labels `review-loop`, `fan-out`, and
@@ -79,11 +80,14 @@ workers, reviews, and template overrides.
 Authored order is captured from YAML mapping nodes before conversion to JavaScript
 objects, whose enumeration would sort integer-like names such as `"2"` and `"1"`.
 This order is retained through canonicalization: reordering
-`schemas:` or `stages:` changes the corresponding ordered array and therefore the
-definition ID. This preserves the author's schema and stage list order for later
-consumers. Other mappings, including a stage's `workers:` and an `input:` record's
+`schemas:`, `stages:`, or a stage’s `artifacts:` changes the corresponding ordered
+array and therefore the definition ID. This preserves the author's schema, stage
+and artifact declaration order for later consumers. Other mappings, including a stage's `workers:` and an `input:` record's
 fields, have no order array: reordering their keys preserves identity. Changing
 any pinned prompt bytes or operation registry content changes the definition ID.
+The artifact order map is required and must list every stage and each declared
+artifact exactly once. Definitions without it are incompatible; regeneration
+writes new definition IDs and removes incompatible stored objects.
 
 `src/definition-store.ts` resolves a definition ID, or an authoring label through
 the launchable catalog, into `ResolvedDefinition`. At the file boundary it checks

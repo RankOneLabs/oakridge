@@ -57,9 +57,7 @@ test("adapter, Oakridge and observation outages replay committed events from the
       .toEqual({ prompt: true, type: false });
     const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "capture" } });
     expect(await runUntil(1)).toBe(1);
-    expect(await readRunWorkflowStages(observation, tenant, run_id)).toEqual(originalDefinition!.stage_names.map((stage, position) => ({
-      position, stage, artifact_kinds: Object.keys(originalDefinition!.checked_program.workflow.stages[stage]!.artifacts),
-    })));
+    expect(await readRunWorkflowStages(observation, tenant, run_id)).toEqual([{ position: 0, stage: "document", artifact_kinds: ["draft", "critique"] }]);
     // A new adapter instance starts from the cursor persisted in observation.
     const unit = unitOf(run_id, "document");
     const action = await actionOf(authority, run_id, "writer");

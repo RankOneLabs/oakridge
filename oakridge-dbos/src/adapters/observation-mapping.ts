@@ -46,7 +46,7 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
       if (committed.state === "malformed") return unmapped("committed run config is malformed");
       return { ...provenance, kind: "run_input", event_kind: event.kind, ...identity, input: event.input,
         stages: definition.stage_names.map((stage) => ({ stage,
-          artifact_kinds: Object.keys(definition.checked_program.workflow.stages[stage]!.artifacts) })),
+          artifact_kinds: definition.artifact_names[stage]! })),
         input_schema_version: declarationDigest(definition.checked_program.workflow.input as JsonValue),
         config: committed.state === "committed" ? committed.config : null };
     }

@@ -53,7 +53,8 @@ export async function commitTestDefinition(request: CommittedFixtureRequest): Pr
   }));
   const operation_registry_id = put("operations", jsonBytes(operations), "json");
   const definition_id = put("workflows", jsonBytes({ source, prompts, operation_registry_id,
-    schema_names: Object.keys(source.schemas ?? {}), stage_names: Object.keys(source.stages) }), "json") as DefinitionId;
+    schema_names: Object.keys(source.schemas ?? {}), stage_names: Object.keys(source.stages),
+    artifact_names: Object.fromEntries(Object.entries(source.stages).map(([stage, declaration]) => [stage, Object.keys(declaration.artifacts)])) }), "json") as DefinitionId;
   const catalog = JSON.parse(readFileSync(resolve(root, "launchable.json"), "utf8"));
   writeFileSync(resolve(root, "launchable.json"), jsonBytes({ ...catalog, [definition_id]: definition_id }));
   return { definition_id };

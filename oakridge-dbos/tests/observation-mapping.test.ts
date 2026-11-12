@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { CoreClient, compileDefinition } from "../src/core-client/client";
+import { sampleDefinition } from "./committed-fixture";
 import { CORE_PROTOCOL_SCHEMA, type Event } from "../src/core-client/core-types";
 import { ANALYSIS_LINKS_DECLARED } from "../src/domain/analysis-link-declaration";
 import type { CoreEvent } from "../src/storage/json-column-types";
@@ -8,7 +10,7 @@ import { runOps } from "../src/ops";
 import type { CommittedEventRow, CommittedRunConfig, PinnedDefinitionRead } from "../src/storage/read-store";
 
 const definition = (schema: unknown, digest = "bundle-a"): PinnedDefinitionRead => ({
-  definition_id: digest as PinnedDefinitionRead["definition_id"], operation_registry_id: "0" as PinnedDefinitionRead["operation_registry_id"], prompts: {}, operations: [], schema_names: [], stage_names: ["writing"], source: {} as PinnedDefinitionRead["source"],
+  definition_id: digest as PinnedDefinitionRead["definition_id"], operation_registry_id: "0" as PinnedDefinitionRead["operation_registry_id"], prompts: {}, operations: [], schema_names: [], stage_names: ["writing"], artifact_names: { writing: ["draft"] }, source: {} as PinnedDefinitionRead["source"],
   checked_program: { digest, stages: ["writing"], workflow: { workflow: "test", input: { kind: "text" },
     run: {} as PinnedDefinitionRead["checked_program"]["workflow"]["run"], schemas: {},
     stages: { writing: { input: { kind: "text" }, artifacts: { draft: { kind: "document", schema: schema as { kind: "text" } } },
@@ -78,16 +80,16 @@ test("a launch that committed no config carries none, and a malformed one is unm
     .toEqual([null, "committed run config is malformed"]);
 });
 
-test("launch captures authored stage order and declared artifact order, including empty stages", () => {
+test("launch captures authored stage order, including empty stages", () => {
   const pinned = definition({ kind: "text" });
   const writing = pinned.checked_program.workflow.stages.writing!;
-  const ordered: PinnedDefinitionRead = { ...pinned, stage_names: ["10", "2", "empty"],
+  const ordered: PinnedDefinitionRead = { ...pinned, stage_names: ["10", "2", "empty"], artifact_names: { "10": ["draft"], "2": ["draft"], empty: [] },
     checked_program: { ...pinned.checked_program, workflow: { ...pinned.checked_program.workflow,
-      stages: { "2": writing, "10": { ...writing, artifacts: { second: { kind: "document", schema: { kind: "text" } }, first: { kind: "document", schema: { kind: "text" } } } },
+      stages: { "2": writing, "10": writing,
         empty: { ...writing, artifacts: {} } } } } };
   expect(mapObservationEvent({ row: row({ kind: "launched", input: "start" }), definition: ordered,
     namespace: "test", stage: null, revision_sequence: null, run_config: null })).toMatchObject({ format: "observation.source-event/v2",
-      kind: "run_input", stages: [{ stage: "10", artifact_kinds: ["second", "first"] },
+      kind: "run_input", stages: [{ stage: "10", artifact_kinds: ["draft"] },
         { stage: "2", artifact_kinds: ["draft"] }, { stage: "empty", artifact_kinds: [] }] });
 });
 
@@ -102,4 +104,21 @@ test("a revision with no resolved stage remains unmapped", () => {
   expect(mapObservationEvent({ row: row({ kind: "revision_published", unit: "run-1/writing", artifact: "draft", body: "text" }),
     definition: definition({ kind: "text" }), namespace: "test", stage: null, revision_sequence: 1, run_config: null }))
     .toMatchObject({ kind: "unmapped", reason: "unit run-1/writing has no stage" });
+});
+
+for (const sample of [
+  { name: "review-loop", stage: "document", artifact_kinds: ["draft", "critique"] },
+  { name: "development", stage: "cohort", artifact_kinds: ["build_result", "pr", "assessment", "pr_state", "observed_state"] },
+] as const) test(`${sample.name} launch keeps the artifact order authored in YAML after canonical storage and compilation`, async () => {
+  const { definition_id } = await sampleDefinition(sample.name);
+  const core = CoreClient.start();
+  if (!core.ok) throw new Error(JSON.stringify(core.error));
+  try {
+    const pinned = await compileDefinition(core.value, definition_id);
+    if (!pinned.ok) throw new Error(JSON.stringify(pinned.error));
+    const outcome = mapObservationEvent({ row: row({ kind: "launched", input: {} }), definition: pinned.value,
+      namespace: "test", stage: null, revision_sequence: null, run_config: null });
+    if (outcome.kind !== "run_input") throw new Error(`expected launch, got ${outcome.kind}`);
+    expect(outcome.stages.find(({ stage }) => stage === sample.stage)?.artifact_kinds).toEqual(sample.artifact_kinds);
+  } finally { core.value.close(); }
 });

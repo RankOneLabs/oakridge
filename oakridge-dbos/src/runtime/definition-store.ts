@@ -32,12 +32,16 @@ export interface PromptReferences { readonly [authored_path: string]: PromptId }
 export interface PromptTexts { readonly [authored_path: string]: string }
 export interface LaunchableCatalog { readonly [authoring_name: string]: DefinitionId }
 
+/** Authored artifact declaration order for every stage, retained through canonical JSON. */
+export interface StageArtifactNames { readonly [stage: string]: readonly string[] }
+
 export interface CommittedDefinition {
   readonly source: AuthoredWorkflow;
   readonly operation_registry_id: OperationRegistryId;
   readonly prompts: PromptReferences;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
+  readonly artifact_names: StageArtifactNames;
 }
 
 export interface ResolvedDefinition {
@@ -48,10 +52,11 @@ export interface ResolvedDefinition {
   readonly operations: OperationRegistry;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
+  readonly artifact_names: StageArtifactNames;
 }
 
 export type DefinitionInputs = Pick<CommittedDefinition, "source" | "operation_registry_id" | "prompts">;
-export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names">;
+export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names" | "artifact_names">;
 
 /** Order must come from YAML mapping nodes, before toJS() reorders integer-like keys. */
 export function commitDefinition(inputs: DefinitionInputs, order: DefinitionOrder): CommittedDefinition {
@@ -116,15 +121,20 @@ function matchesNames(value: unknown, names: readonly string[]): value is readon
   return Array.isArray(value) && value.length === names.length && new Set(value).size === names.length
     && value.every((name) => typeof name === "string" && names.includes(name));
 }
+function matchesArtifactNames(value: unknown, source: AuthoredWorkflow): value is StageArtifactNames {
+  return isObject(value) && matchesNames(Object.keys(value), Object.keys(source.stages))
+    && Object.entries(source.stages).every(([stage, declaration]) => matchesNames(value[stage], Object.keys(declaration.artifacts)));
+}
 function isCommittedDefinition(value: unknown): value is CommittedDefinition {
-  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "schema_names", "stage_names"])) return false;
+  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "schema_names", "stage_names", "artifact_names"])) return false;
   const source = decodeWorkflowSource(value.source);
   if (source === null || !isIdentity(value.operation_registry_id) || !isObject(value.prompts)) return false;
   if (!Object.entries(value.prompts).every(([path, id]) => isPromptPath(path) && isIdentity(id))) return false;
   const paths = referencedPromptPaths(source);
   return matchesNames(Object.keys(value.prompts), paths)
     && matchesNames(value.schema_names, Object.keys(source.schemas ?? {}))
-    && matchesNames(value.stage_names, Object.keys(source.stages));
+    && matchesNames(value.stage_names, Object.keys(source.stages))
+    && matchesArtifactNames(value.artifact_names, source);
 }
 /** Mirrors workflow-model::Type (the input_schema/output_schema contract). */
 function isTypeExpression(value: unknown, depth = 0): value is TypeExpression {
@@ -214,6 +224,7 @@ export function resolveDefinition(definition_id: DefinitionId, store_root = proc
     operations: operations.value,
     schema_names: committed.schema_names,
     stage_names: committed.stage_names,
+    artifact_names: committed.artifact_names,
   } };
 }
 

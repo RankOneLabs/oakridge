@@ -1,3 +1,4 @@
+import { resolveDefinition as resolveRuntimeDefinition } from "../../oakridge-dbos/src/runtime/definition-store";
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -47,6 +48,12 @@ function authoredOrder(yaml = authored): DefinitionOrder {
   return {
     schema_names: schemas?.items.map(({ key }) => String(key)) ?? [],
     stage_names: stages.items.map(({ key }) => String(key)),
+    artifact_names: Object.fromEntries(stages.items.map(({ key, value }) => {
+      if (!YAML.isMap(value)) throw new Error(`invalid stage ${String(key)}`);
+      const artifacts = value.get("artifacts");
+      if (!YAML.isMap(artifacts)) throw new Error(`invalid artifacts for stage ${String(key)}`);
+      return [String(key), artifacts.items.map(({ key }) => String(key))];
+    })),
   };
 }
 function definitionId(inputs: IdentityInputs = {}): DefinitionId {
@@ -163,6 +170,34 @@ test("a malformed committed object returns MalformedObject without repair", () =
   expect(readFailure(resolveDefinition(id, fixture.root))).toMatchObject({ kind: "malformed_object", operation: "read_definition", identifier: id });
 });
 
+const malformedArtifactOrders: readonly unknown[] = [undefined, null, [], {},
+  { first: ["draft", "critique"], second: [], unknown: [] }, { first: ["draft", "critique"] }, { first: ["not_declared"], second: [] },
+  { first: ["draft", "draft"], second: [] }, { first: ["draft"], second: [] },
+  { first: ["draft", 1], second: [] }, { first: ["draft", "unknown"], second: [] }];
+for (const artifact_names of malformedArtifactOrders) {
+  test(`both definition readers reject malformed artifact order ${JSON.stringify(artifact_names)}`, () => {
+    const fixture = storeFixture();
+    const source = authoredSource(authored.replace("artifacts: {}", "artifacts: { draft: { kind: document, schema: text }, critique: { kind: assessment, schema: text } }"));
+    const { artifact_names: previous_order, ...definition } = fixture.definition;
+    const object = { ...definition, source, ...(artifact_names === undefined ? {} : { artifact_names }) };
+    const id = writeDefinition(fixture.root, object);
+    for (const resolve of [resolveDefinition, resolveRuntimeDefinition]) {
+      const result = resolve(id, fixture.root);
+      expect(result).toMatchObject({ ok: false, error: { kind: "malformed_object" } });
+    }
+  });
+}
+
+test("both definition readers preserve valid non-alphabetical artifact order, including empty stages", () => {
+  const fixture = storeFixture();
+  const source = authoredSource(authored.replace("artifacts: {}", "artifacts: { draft: { kind: document, schema: text }, critique: { kind: assessment, schema: text } }"));
+  const artifact_names = { first: ["draft", "critique"], second: [] };
+  const id = writeDefinition(fixture.root, { ...fixture.definition, source, artifact_names });
+  for (const resolve of [resolveDefinition, resolveRuntimeDefinition]) {
+    expect(unwrap(resolve(id, fixture.root)).artifact_names).toEqual(artifact_names);
+  }
+});
+
 test("invalid UTF-8 prompt bytes return InvalidUtf8", () => {
   const fixture = storeFixture(Buffer.from([0xc3, 0x28]));
   expect(readFailure(resolveDefinition(fixture.definition_id, fixture.root))).toMatchObject({
@@ -273,7 +308,7 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
     const document = YAML.parseDocument(readFileSync(resolve(repository_root, path), "utf8"), { uniqueKeys: true });
     const source = decodeWorkflowSource(document.toJS());
     if (source === null) throw new Error("invalid authored source");
-    expect({ source: definition.source, schema_names: definition.schema_names, stage_names: definition.stage_names }).toEqual({
+    expect({ source: definition.source, schema_names: definition.schema_names, stage_names: definition.stage_names, artifact_names: definition.artifact_names }).toEqual({
       source, ...authoredOrder(readFileSync(resolve(repository_root, path), "utf8")),
     });
   });
@@ -388,6 +423,29 @@ for (const mapping of ["schemas", "stages"] as const) {
   });
 }
 
+test("numeric-looking artifact names keep YAML order through generation, canonical storage and runtime resolution", () => {
+  const root = generatorFixture();
+  const path = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+  const yaml = authored.replace("artifacts: {}", 'artifacts: { "2": { kind: document, schema: text }, "1": { kind: assessment, schema: text } }')
+    .replaceAll("write.md", "review-loop/write.md");
+  writeFileSync(path, yaml);
+  expect(runGenerator(root).exitCode).toBe(0);
+  const store = resolve(root, "workflow-config/definitions");
+  const previous = unwrap(resolveLaunchableDefinition("review-loop", store));
+  expect(previous.artifact_names).toEqual({ first: ["2", "1"], second: [] });
+  expect(unwrap(resolveRuntimeDefinition(previous.definition_id, store)).artifact_names).toEqual(previous.artifact_names);
+  const document = YAML.parseDocument(yaml, { uniqueKeys: true });
+  const artifacts = document.getIn(["stages", "first", "artifacts"]);
+  if (!YAML.isMap(artifacts)) throw new Error("missing artifacts");
+  artifacts.items.reverse();
+  writeFileSync(path, document.toString());
+  expect(runGenerator(root).exitCode).toBe(0);
+  const next = unwrap(resolveLaunchableDefinition("review-loop", store));
+  expect(next.artifact_names.first).toEqual(["1", "2"]);
+  expect(next.definition_id).not.toBe(previous.definition_id);
+  expect(runGenerator(root, true).exitCode).toBe(0);
+});
+
 for (const directory of ["workflows", "prompts", "operations", "catalog"] as const) {
   test(`--check names a differing ${directory} file and does not write`, () => {
     const root = generatorFixture();
@@ -469,6 +527,7 @@ interface IncompatibleDefinitionCase {
   readonly change: (definition: CommittedDefinition) => unknown;
 }
 const incompatible_definitions: readonly IncompatibleDefinitionCase[] = [
+  { name: "missing artifact order", change: ({ artifact_names, ...definition }) => definition },
   ...["creates", "reviews", "gated_review"].map((field) => ({
     name: `worker ${field}`,
     change: (definition: CommittedDefinition) => ({ ...definition, source: { ...definition.source, stages: {
