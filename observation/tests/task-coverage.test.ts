@@ -74,7 +74,7 @@ test("an unassigned contribution never guesses a spec task from similar wording"
     .toMatchObject({ state: "not_ready", reason: { code: "task_unavailable" } });
 });
 
-integration("tasks, plan contributions and briefs freeze their original context and execute through the ordinary worker", async () => scratchDatabase(async (db) => {
+integration("tasks and plan contributions freeze their original context and execute through the ordinary worker; briefs are not pinned", async () => scratchDatabase(async (db) => {
   const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
@@ -92,7 +92,10 @@ integration("tasks, plan contributions and briefs freeze their original context 
   const source = new CaptureArtifactSource({ db, tenant, run_id: "run-1", collector: oakridgeEvidence, repository });
   const items = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "artifact_kind"])
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("item_kind", "in", ["task", "acceptance_entry"]).execute());
-  for (const item of items) {
+  // Task coverage targets plan acceptance entries only; a brief entry shares the item kind, not the target.
+  const [briefs, graded] = [items.filter((item) => item.artifact_kind === "brief"), items.filter((item) => item.artifact_kind !== "brief")];
+  expect(await Promise.all(briefs.map((item) => readOccurrenceEvidence(db, tenant, item.occurrence_id as ItemOccurrenceId)))).toEqual([[]]);
+  for (const item of graded) {
     const occurrence = item.occurrence_id as ItemOccurrenceId;
     const pinned = await readOccurrenceEvidence(db, tenant, occurrence);
     expect(pinned).toHaveLength(1);
@@ -115,8 +118,8 @@ integration("tasks, plan contributions and briefs freeze their original context 
         probabilities: null, external_execution_id: null });
     } }) };
   while ((await gradeNext(worker, tenant)).kind !== "idle") { /* drain ordinary leased executions */ }
-  expect(requests).toBe(3);
-  for (const item of items) expect((await readItemMeasurements(db, tenant, item.occurrence_id))?.questions[0]?.machine[0]?.measurement)
+  expect(requests).toBe(2);
+  for (const item of graded) expect((await readItemMeasurements(db, tenant, item.occurrence_id))?.questions[0]?.machine[0]?.measurement)
     .toMatchObject({ state: "answered", answer: { value: "partially_covers" } });
 }));
 
@@ -136,7 +139,7 @@ integration("an explicit coverage upgrade adds only the new question and leaves 
     .where("item_kind", "=", "task").executeTakeFirstOrThrow());
   const coverage = { pins: registration.value.capture.pins.filter((pin) => pin.question_id === TASK_COVERAGE_ID) };
   for (let replay = 0; replay < 2; replay++) await withTenant(db, tenant, (trx) =>
-    pinOccurrenceInTransaction(trx, tenant, item.occurrence_id as ItemOccurrenceId, "task", coverage));
+    pinOccurrenceInTransaction(trx, tenant, item.occurrence_id as ItemOccurrenceId, coverage));
   expect(await readOccurrenceEvidence(db, tenant, item.occurrence_id as ItemOccurrenceId)).toHaveLength(1);
   const original = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set").selectAll()
     .where("question_id", "!=", TASK_COVERAGE_ID).execute());

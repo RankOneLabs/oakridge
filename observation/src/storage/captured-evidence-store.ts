@@ -1,24 +1,27 @@
 import type { Selectable } from "kysely";
 import type { EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, LogicalItemId, QuestionId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
-import { COLLECTION_PENDING, evidenceSetId, gradingSubjects, type CapturePin, type GradingSubject, type CaptureConfiguration, type EvidenceReadiness, type EvidenceReference, type EvidenceSet } from "../grading/evidence";
+import { COLLECTION_PENDING, evidenceSetId, gradingSubjects, isPinTarget, type CapturePin, type GradingSubject, type CaptureConfiguration, type EvidenceReadiness, type EvidenceReference, type EvidenceSet } from "../grading/evidence";
 import type { ArtifactSource, EvidenceCollection } from "../ports/artifact-source";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationEvidenceSet } from "./db-types";
 
 export interface EvidenceStoreError { readonly operation: "evidence_store"; readonly entity_id: string; readonly detail: string }
 
-/** Pin every applicable question in the capture transaction, whether or not its evidence exists,
- * whether or not automatic grading is on, and without any execution. */
+const TARGET_COLUMNS = ["occurrence_id", "json_pointer", "artifact_kind", "item_selector", "item_kind"] as const;
+
+/** Pin every question whose declared target is this occurrence's artifact, selector and item kind, in the
+ * capture transaction, whether or not its evidence exists, whether or not automatic grading is on, and
+ * without any execution. */
 export async function pinOccurrenceInTransaction(trx: DatabaseTransaction, tenant: TenantScope, occurrence_id: ItemOccurrenceId,
-  item_kind: string, configuration: CaptureConfiguration, resolved_task_id?: LogicalItemId): Promise<void> {
-  const occurrence = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "json_pointer"])
+  configuration: CaptureConfiguration, resolved_task_id?: LogicalItemId): Promise<void> {
+  const occurrence = await trx.selectFrom("observation.item_occurrence").select(TARGET_COLUMNS)
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("occurrence_id", "=", occurrence_id).executeTakeFirstOrThrow();
   const relations = await trx.selectFrom("observation.item_relation").selectAll()
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("source_occurrence_id", "=", occurrence_id).execute();
-  for (const pin of configuration.pins.filter((candidate) => candidate.item_kind === item_kind)) {
+  for (const pin of configuration.pins.filter((candidate) => isPinTarget(candidate, occurrence))) {
     const subjects = gradingSubjects({ occurrence: { ...occurrence, occurrence_id }, scope: pin, relations });
     for (const subject of subjects.filter((subject) => resolved_task_id === undefined || subject.task_id === resolved_task_id)) {
       if (resolved_task_id !== undefined) {
@@ -35,12 +38,15 @@ export async function pinOccurrenceInTransaction(trx: DatabaseTransaction, tenan
 }
 
 export interface SubjectPin { readonly subject: GradingSubject; readonly pin: CapturePin }
-/** A caller cannot pin a task that this occurrence does not explicitly assess. Refusals write nothing. */
+/** A caller cannot pin a question to an occurrence outside its declared target, nor a task that this
+ * occurrence does not explicitly assess. Refusals write nothing. */
 export async function pinSubjectInTransaction(trx: DatabaseTransaction, tenant: TenantScope, { subject, pin }: SubjectPin)
   : Promise<Result<void, EvidenceStoreError>> {
-  const occurrence = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "json_pointer"])
+  const occurrence = await trx.selectFrom("observation.item_occurrence").select(TARGET_COLUMNS)
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("occurrence_id", "=", subject.subject_occurrence_id).executeTakeFirst();
+  if (occurrence && !isPinTarget(pin, occurrence)) return err({ operation: "evidence_store", entity_id: subject.subject_occurrence_id,
+    detail: `question ${pin.question_id} targets ${pin.artifact_kind} ${pin.item_selector}, not ${occurrence.artifact_kind} ${occurrence.item_selector}` });
   const relations = await trx.selectFrom("observation.item_relation").selectAll()
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("source_occurrence_id", "=", subject.subject_occurrence_id).execute();

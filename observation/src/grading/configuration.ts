@@ -24,8 +24,8 @@ export interface RegisteredSelector {
   readonly item_kind: string;
 }
 /** One question the producer's evidence collector serves, with the only target and evidence it honours.
- * Capture matches by item kind and collection is fixed per question, so any other setting would load
- * and then be silently ignored; the loader refuses it instead. */
+ * Collection is fixed per question, so any other setting would load and then be silently ignored;
+ * the loader refuses it instead. */
 export interface SupportedQuestion {
   readonly question_id: QuestionId;
   readonly artifact: string;
@@ -192,7 +192,8 @@ function pinQuestion({ question, graders, human, target }: QuestionSelection): R
   }
   const key: QuestionKey = { question_id: question.question_id, question_version: question.question_version };
   const pinned = [...evaluators, human].map((evaluator) => evaluator.evaluator_definition_id as EvaluatorDefinitionId);
-  return ok({ evaluators, pin: { ...key, ...(target.scope === "per_task" ? { scope: target.scope, task_ids: target.task_ids } : { scope: target.scope }), item_kind: question.item_kind, evaluator_definition_ids: pinned },
+  return ok({ evaluators, pin: { ...key, ...(target.scope === "per_task" ? { scope: target.scope, task_ids: target.task_ids } : { scope: target.scope }),
+    artifact_kind: target.artifact, item_selector: target.selector, item_kind: question.item_kind, evaluator_definition_ids: pinned },
     graders: evaluators.map((evaluator) => ({ runner: evaluator.backend_kind, question: key,
       evaluator_definition_id: evaluator.evaluator_definition_id as EvaluatorDefinitionId })) });
 }
@@ -211,7 +212,8 @@ function unsupportedSetting(definition: GradingDefinition, supported: SupportedQ
   return null;
 }
 
-/** Derive the questions and their pins. Target and evidence must be exactly what the collector honours, because capture pins by item kind. */
+/** Derive the questions and their pins. Target and evidence must be exactly what the collector honours;
+ * capture pins only occurrences of the declared artifact, selector and item kind. */
 export function planRegistration(configuration: GradingDefinitions, registry: GradingRegistry)
   : Result<GradingRegistration, GraderConfigurationError> {
   const human = humanEvaluator();

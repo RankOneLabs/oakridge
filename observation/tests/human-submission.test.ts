@@ -5,7 +5,7 @@ import type { CaptureConfiguration } from "../src/grading/evidence";
 import { createApp } from "../src/http/app";
 import type { Credentials } from "../src/http/ingest-auth";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
-import { OAKRIDGE_QUESTIONS, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
+import { OAKRIDGE_QUESTIONS, targetOf, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
@@ -27,7 +27,7 @@ const credentials: Credentials = {
 };
 const MACHINE = "machine";
 const human = (() => { const definition = humanEvaluator(); if (!definition.ok) throw new Error(definition.error.detail); return definition.value; })();
-const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const, ...question,
+const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const, ...question, ...targetOf(question.question_id),
   evaluator_definition_ids: [evaluatorId(MACHINE), human.evaluator_definition_id as EvaluatorDefinitionId] })) };
 
 async function setup(db: Database, grading_enabled = false) {
@@ -167,7 +167,7 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
   const { pinSubjectInTransaction, collectPinnedQuestion } = await import("../src/storage/captured-evidence-store");
   const { CaptureArtifactSource } = await import("../src/storage/capture-artifact-source");
   const { oakridgeEvidence } = await import("../src/producers/oakridge/evidence");
-  const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question, ...scopeOf(question.question_id),
+  const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question, ...scopeOf(question.question_id), ...targetOf(question.question_id),
     evaluator_definition_ids: [human.evaluator_definition_id as EvaluatorDefinitionId] })) };
   for (const question of OAKRIDGE_QUESTIONS) await registerQuestion(db, tenant, question);
   await registerEvaluator(db, tenant, human);

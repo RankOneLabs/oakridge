@@ -5,7 +5,7 @@ import type { ArtifactRevisionId, EvidenceSetId, ItemOccurrenceId } from "../src
 import type { JsonValue } from "../src/domain/primitives";
 import { evaluationDigest, submissionAttemptLabel, submissionDigest, type EvaluationIdentity } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
-import { OAKRIDGE_QUESTIONS, createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
+import { OAKRIDGE_QUESTIONS, targetOf, createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
@@ -15,7 +15,7 @@ import { listRunItems } from "../src/storage/projection-store";
 const relevance = OAKRIDGE_QUESTIONS[0]!;
 const other_tenant: TenantScope = { producer: "oakridge", namespace: "other" };
 const answer = (value: string): GradeAnswer => ({ state: "answered", kind: "choice", value });
-const configuration: CaptureConfiguration = { pins: [{ scope: "per_item", ...relevance, evaluator_definition_ids: [evaluatorId("model"), evaluatorId("human")] }] };
+const configuration: CaptureConfiguration = { pins: [{ scope: "per_item", ...relevance, ...targetOf(relevance.question_id), evaluator_definition_ids: [evaluatorId("model"), evaluatorId("human")] }] };
 
 interface Measured { readonly occurrence_id: ItemOccurrenceId; readonly evidence_set_id: EvidenceSetId }
 /** A captured finding pinned to two evaluators, with ready evidence. */

@@ -9,7 +9,7 @@ import type { CaptureConfiguration } from "../src/grading/evidence";
 import { withTenant, type Database } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { declareRelationInTransaction, listRelatedOccurrences, listRunItems, lockSourceCursor } from "../src/storage/projection-store";
-import { oakridgeProfile, OAKRIDGE_QUESTIONS, createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant, type Feed } from "./grading-fixture";
+import { oakridgeProfile, OAKRIDGE_QUESTIONS, targetOf, createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 
 const taskId = (task_id: string, run_id = "run-1"): string => logicalItemId({ ...tenant, run_id, scope: TASK_SCOPE, producer_local_id: task_id });
 const everything = { limit: 200, offset: 0 };
@@ -146,7 +146,7 @@ integration("a finding is captured and pinned before any task exists, and a late
   const [relevance] = OAKRIDGE_QUESTIONS;
   await registerQuestion(db, tenant, relevance!);
   await registerEvaluator(db, tenant, evaluator("human"));
-  const configuration: CaptureConfiguration = { pins: [{ scope: "per_item", ...relevance!, evaluator_definition_ids: [evaluatorId("human")] }] };
+  const configuration: CaptureConfiguration = { pins: [{ scope: "per_item", ...relevance!, ...targetOf(relevance!.question_id), evaluator_definition_ids: [evaluatorId("human")] }] };
   const feed = createFeed(db, tenant, configuration);
   await feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body: await fixtureBody("analysis") });
   const [finding] = (await items(db)).filter((item) => item.item_kind === "finding");

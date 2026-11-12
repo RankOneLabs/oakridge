@@ -165,3 +165,10 @@ export function scopeOf(question_id: string): import("../src/grading/evidence").
   if (!pin) throw new Error(`no scope for ${question_id}`);
   return pin.scope === "per_task" ? { scope: pin.scope, task_ids: pin.task_ids } : { scope: pin.scope };
 }
+/** The artifact, selector and item kind the committed definition targets for a question. */
+export function targetOf(question_id: string): import("../src/grading/evidence").CaptureTarget {
+  if (!committedRegistration.ok) throw new Error(committedRegistration.error.detail);
+  const pin = committedRegistration.value.capture.pins.find((pin) => pin.question_id === question_id);
+  if (!pin) throw new Error(`no target for ${question_id}`);
+  return { artifact_kind: pin.artifact_kind, item_selector: pin.item_selector, item_kind: pin.item_kind };
+}
