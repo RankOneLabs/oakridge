@@ -81,7 +81,7 @@ export function revisionOutcome(input: FixtureRevision, scope: TenantScope = ten
   const run_id = input.run_id ?? "run-1";
   return { ...provenance, kind: "artifact_revision", event_kind: "revision_published", run_id, event_id,
     revision: { format: "observation.artifact-revision/v3", source: { ...scope, revision_id: `${prefix}${input.revision_id}`, run_id,
-      unit_id: input.unit_id ?? input.artifact_kind, stage: input.stage ?? "implementation", artifact_kind: input.artifact_kind, artifact_schema_version: SCHEMA_VERSION,
+      unit_id: input.unit_id ?? input.artifact_kind, stage: input.stage ?? (input.artifact_kind === "assessment" ? (input.unit_id?.split("/")[1] === "integration" ? "integration" : "implementation") : input.artifact_kind), artifact_kind: input.artifact_kind, artifact_schema_version: SCHEMA_VERSION,
       definition_id: DEFINITION_ID, predecessor_id: input.predecessor_id ? `${prefix}${input.predecessor_id}` : null,
       subject_id: input.subject_id ? `${prefix}${input.subject_id}` : null },
     recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z", body: input.body,

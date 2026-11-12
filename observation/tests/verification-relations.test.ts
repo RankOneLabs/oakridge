@@ -20,7 +20,7 @@ test("a link that moved nothing passes, and each kind of movement is caught by n
 });
 
 const composite = (coverage: "linked" | "gap", answers: readonly unknown[]): LogicalItemComposite => ({ run_id: "run-1", logical_item_id: "t", scope: "task", producer_local_id: "T1", coverage,
-  stages: [{ stage: "analysis", publication: { state: "published", is_final: false, unit_ids: ["run-1/analysis"] }, coverage, answers, statuses: [], disagreements: [], questions: [],
+  stages: [{ stage: "analysis", publication: { state: "published", is_final: false, unit_ids: ["run-1/analysis"] }, state: coverage, results: answers.map((answer) => ({ status: { state: "answered", answer } })), answers, statuses: [], disagreements: [], questions: [],
     totals: {} as never, items: {} as never, history: {} as never }] } as never as LogicalItemComposite);
 const answered = (observation_id: string) => ({ observation_id }) as MeasurementReadback;
 
@@ -34,7 +34,7 @@ test("the composite must open the very observations the item had before the link
 test("lineage must reach its definitions and both contributing stages", () => {
   const lineage = (entries: readonly unknown[]) => ({ items: entries }) as unknown as LogicalItemLineage;
   const definitions = ["tasks", "plan", "brief"].map((artifact_kind) => ({ kind: "occurrence", artifact_kind }));
-  const contributions = ["analysis", "implementation"].map((stage) => ({ kind: "contribution", item: { stage } }));
+  const contributions = ["analysis", "cohort"].map((stage) => ({ kind: "contribution", item: { stage } }));
   expect(failed(lineageChecks(lineage([...definitions, ...contributions])))).toEqual([]);
   expect(failed(lineageChecks(lineage(contributions)))).toHaveLength(1);
   expect(failed(lineageChecks(lineage(definitions)))).toHaveLength(1);
@@ -48,7 +48,7 @@ test("the request total adds each run's latest count, whichever run checked last
 const sharedReads = (overrides: Partial<SharedRunReads> = {}): SharedRunReads => {
   const stages = [
     { stage: "analysis", totals: { contributing_items: 2 }, publication: { state: "published", is_final: false, unit_ids: ["run/analysis"] } },
-    { stage: "implementation", totals: { contributing_items: 2 }, publication: { state: "published", is_final: false, unit_ids: ["run/implementation/alpha", "run/implementation/beta"] } },
+    { stage: "cohort", totals: { contributing_items: 2 }, publication: { state: "published", is_final: false, unit_ids: ["run/implementation/alpha", "run/implementation/beta"] } },
     { stage: "integration", totals: { contributing_items: 0 }, publication: { state: "pending" } }];
   const row = (unit_id: string, answers = 1) => ({ item: { unit_id }, questions: { items: [{ answers: { total: answers } }] } });
   const occurrence = (artifact_kind: string, unit_id: string, is_current: boolean) => ({ kind: "occurrence", artifact_kind, unit_id, is_current });

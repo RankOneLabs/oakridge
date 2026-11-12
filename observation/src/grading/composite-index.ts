@@ -13,6 +13,7 @@ export interface CompositeIndexes {
   readonly executions: ReadonlyMap<EvidenceSetId, ReadonlyMap<EvaluatorDefinitionId, CompositeExecution>>;
   readonly answers_by_execution: ReadonlyMap<ExecutionId, CompositeAnswer>;
   readonly current_answers: ReadonlyMap<string, readonly CompositeAnswer[]>;
+  readonly current_answers_by_evidence: ReadonlyMap<EvidenceSetId, readonly CompositeAnswer[]>;
   readonly superseded_answers: ReadonlyMap<string, readonly CompositeAnswer[]>;
   readonly questions: ReadonlyMap<string, QuestionDefinition>;
 }
@@ -52,6 +53,7 @@ export function indexCompositeInputs(inputs: CompositeInputs): CompositeIndexes 
     evaluators: new Map(inputs.evaluators.map((evaluator) => [evaluator.evaluator_definition_id, evaluator])),
     machines: new Set(inputs.evaluators.filter((evaluator) => evaluator.kind !== "human").map((evaluator) => evaluator.evaluator_definition_id)),
     executions, answers_by_execution: answers,
+    current_answers_by_evidence: groupRows(current, (answer) => answer.evidence_set_id),
     current_answers: groupRows(current, (answer) => subjectIndexKey(answer.occurrence_id, answer.task_id)),
     superseded_answers: groupRows(superseded, (answer) => subjectIndexKey(answer.occurrence_id, answer.task_id)), questions,
   };

@@ -31,3 +31,6 @@ export type { LineagePage } from "../storage/projection-store";
 export type { ReviewerRead, HumanSubmissionRequest, HumanSubmissionAcknowledgment, SubmissionRefusalBody } from "./grades";
 // Any other refusal
 export type { ErrorBody } from "./errors";
+
+// GET /v1/runs/:run_id/grading-stages
+export type { RunStageRead } from "../grading/task-stages";

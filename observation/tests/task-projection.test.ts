@@ -91,9 +91,9 @@ integration("one task stays one logical item through plan and brief revisions, c
     ["plan", "plan-1", "/cohorts/0/acceptance_criteria/0"], ["plan", "plan-1", "/cohorts/1/acceptance_criteria/0"],
     ["plan", "plan-2", "/cohorts/0/acceptance_criteria/0"], ["plan", "plan-2", "/cohorts/1/acceptance_criteria/0"],
     ["tasks", "tasks-1", "/tasks/0"]]);
-  const { logical_scope, relation_type } = oakridgeProfile.composite;
+  const { logical_scope } = oakridgeProfile.composite;
   expect(logical_scope).toBe(TASK_SCOPE);
-  const assessed = await listRelatedOccurrences(db, tenant, taskId("T7"), relation_type, everything);
+  const assessed = await listRelatedOccurrences(db, tenant, taskId("T7"), "assesses", everything);
   expect(assessed.map((item) => [item.revision_id, item.json_pointer]).sort()).toEqual([["assessment-alpha", "/findings/0"], ["assessment-alpha", "/findings/1"],
     ["assessment-beta", "/findings/0"], ["integration-1", "/findings/0"]]);
   expect(assessed.every((item) => item.logical_item_id === null)).toBe(true);

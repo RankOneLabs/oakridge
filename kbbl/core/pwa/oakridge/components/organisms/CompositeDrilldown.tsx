@@ -1,3 +1,4 @@
+import { selectPinnedResults } from "../../lib/pinned-results";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
@@ -56,16 +57,18 @@ function DrilldownPages({ runId, drilldownKey, label, onClose, onOpenItem }: Pro
             </div>
             {row.questions.items.map((question) => (
               <div key={question.evidence.evidence_set_id} className="flex flex-col gap-1">
-                <div className={artifactLabelClass}>{questionLabel(question.question)}</div>
+                <div className={artifactLabelClass}>{questionLabel(question.question)} <Chip tone="muted">{question.scope.kind === "per_item" ? "Item grade" : "Task grade"}</Chip></div>
                 <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
                   {question.answers.items.map((answer) => <AnswerRow key={answer.observation_id} answer={answer} />)}
                   {question.superseded_answers.items.map((answer) => <AnswerRow key={answer.observation_id} answer={answer} isCorrected />)}
                 </ul>
                 <ul className="m-0 flex list-none flex-wrap gap-1 p-0">
+                  {selectPinnedResults(question.results.items).map((result, index) => <li key={`pinned-${index}`}><Chip tone="muted">Pinned · No answer{result.evaluator ? ` · ${result.evaluator.backend_kind}` : ""}</Chip></li>)}
                   {question.statuses.items.map((status, index) => <li key={`${status.evaluator_definition_id}-${index}`}><Chip tone="muted">{statusKeyLabel(status.status)}</Chip></li>)}
                 </ul>
                 <ListPager name="answers" page={question.answers} onWindow={setWindow("answers")} />
                 <ListPager name="superseded_answers" page={question.superseded_answers} onWindow={setWindow("superseded_answers")} />
+                <ListPager name="results" page={question.results} onWindow={setWindow("results")} />
                 <ListPager name="statuses" page={question.statuses} onWindow={setWindow("statuses")} />
                 <FrozenEvidenceList evidence={question.evidence} onWindow={setWindow("references")} />
               </div>

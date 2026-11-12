@@ -1,3 +1,7 @@
+import { validateStage, type UnknownStage } from "../grading/task-stages";
+import type { Result } from "../domain/primitives";
+import { selectStages } from "../grading/composite";
+import type { RollupContext } from "../grading/task-stages";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, QuestionId, RelationId, ReviewerId, RunId, UnitId } from "../domain/identity";
 import { contributionItem, graderOf, orderedItems, pageOf, selectComposite, selectCompositePage, selectContributions, selectDrilldown, selectLineage, selectRevisionStandings, selectUnlinkedItems, selectUnresolvedReferences, type AnswerDetail, type CompositeAnswer, type CompositeDrilldownKey,
   type CompositeEvaluator, type CompositeInputs, type CompositeLogicalItem, type CompositeRelation, type CompositeRevision, type ContributionItem, type DrilldownPages, type DrilldownRow, type LogicalItemComposite,
@@ -52,7 +56,7 @@ async function readAnswerRows(trx: DatabaseTransaction, tenant: TenantScope, wit
 }
 
 // Stored rows carry plain text; these name each id as the identity it is, at the one place rows are read.
-interface RevisionRow { readonly revision_id: string; readonly unit_id: string; readonly artifact_kind: string; readonly predecessor_id: string | null; readonly recorded_at: Date; readonly captured_at: Date }
+interface RevisionRow { readonly stage: string; readonly revision_id: string; readonly unit_id: string; readonly artifact_kind: string; readonly predecessor_id: string | null; readonly recorded_at: Date; readonly captured_at: Date }
 const revisionFromRow = (row: RevisionRow): CompositeRevision => ({ ...row, revision_id: row.revision_id as ArtifactRevisionId, unit_id: row.unit_id as UnitId,
   predecessor_id: row.predecessor_id as ArtifactRevisionId | null });
 interface LogicalItemRow { readonly logical_item_id: string; readonly scope: string; readonly producer_local_id: string }
@@ -63,11 +67,11 @@ const relationFromRow = (source_occurrence_id: ItemOccurrenceId, row: RelationRo
   target_occurrence_id: row.target_occurrence_id as ItemOccurrenceId | null, target_logical_item_id: row.target_logical_item_id as LogicalItemId | null, type: row.type as CompositeRelation["type"] });
 
 /** Every row of one run a composite reads, from one snapshot, so a count and its drilldown never mix commits. */
-async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope, path: CompositePath, run_id: string): Promise<CompositeInputs> {
+async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope, path: CompositePath, run_id: string, context?: RollupContext): Promise<CompositeInputs> {
   const { producer, namespace } = tenant;
   const logical_items = await trx.selectFrom("observation.logical_item").select(["logical_item_id", "scope", "producer_local_id"]).where("producer", "=", producer)
     .where("namespace", "=", namespace).where("run_id", "=", run_id).where("scope", "=", path.logical_scope).orderBy("producer_local_id").execute();
-  const revisions = await trx.selectFrom("observation.source_revision").select(["revision_id", "unit_id", "artifact_kind", "predecessor_id", "recorded_at", "captured_at"])
+  const revisions = await trx.selectFrom("observation.source_revision").select(["revision_id", "unit_id", "artifact_kind", "stage", "predecessor_id", "recorded_at", "captured_at"])
     .where("producer", "=", producer).where("namespace", "=", namespace).where("run_id", "=", run_id).execute();
   const occurrences = await trx.selectFrom("observation.item_occurrence")
     .select(["occurrence_id", "revision_id", "artifact_kind", "item_kind", "json_pointer", "logical_item_id", "selected_value"])
@@ -85,7 +89,7 @@ async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope
     .where("producer", "=", producer).where("namespace", "=", namespace).where("run_id", "=", run_id).execute();
   const answers = await readAnswerRows(trx, tenant, { run_id });
   const questions = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", producer).where("namespace", "=", namespace).execute();
-  return { run_id: run_id as RunId, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id), logical_items: logical_items.map(logicalItemFromRow),
+  return { stages: context?.stages ?? [], pins: context?.pins ?? [], run_id: run_id as RunId, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id), logical_items: logical_items.map(logicalItemFromRow),
     revisions: revisions.map(revisionFromRow),
     occurrences: occurrences.map(({ json_pointer, occurrence_id, revision_id, logical_item_id, ...row }) => ({ ...row, occurrence_id: occurrence_id as ItemOccurrenceId,
       revision_id: revision_id as ArtifactRevisionId, logical_item_id: logical_item_id as LogicalItemId | null, item_path: json_pointer })),
@@ -99,26 +103,26 @@ async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope
     answers,
     questions: questions.map(questionFromRow) };
 }
-const readRun = <Value>(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, read: (inputs: CompositeInputs) => Value): Promise<Value> =>
-  withTenantSnapshot(db, tenant, async (trx) => read(await readCompositeInputs(trx, tenant, path, run_id)));
+const readRun = <Value>(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, read: (inputs: CompositeInputs) => Value, context?: RollupContext): Promise<Value> =>
+  withTenantSnapshot(db, tenant, async (trx) => read(await readCompositeInputs(trx, tenant, path, run_id, context)));
 
 /** One tracked logical item's composite, by its producer id within a run; null when the run has none. */
-export function readLogicalItemComposite(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, producer_local_id: string): Promise<LogicalItemComposite | null> {
+export function readLogicalItemComposite(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, producer_local_id: string, context?: RollupContext): Promise<LogicalItemComposite | null> {
   return readRun(db, tenant, path, run_id, (inputs) => {
     const item = inputs.logical_items.find((candidate) => candidate.producer_local_id === producer_local_id);
     return item ? selectComposite(inputs, path, item) : null;
-  });
+  }, context);
 }
 /** Every tracked logical item of a run, in id order. An item with no current link is listed, as a gap. */
-export function listRunComposites(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, page: PageRequest): Promise<Paged<LogicalItemComposite>> {
-  return readRun(db, tenant, path, run_id, (inputs) => selectCompositePage({ inputs, path, page }));
+export function listRunComposites(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, page: PageRequest, context?: RollupContext): Promise<Paged<LogicalItemComposite>> {
+  return readRun(db, tenant, path, run_id, (inputs) => selectCompositePage({ inputs, path, page }), context);
 }
 /** The exact items, raw answers and frozen evidence behind one count. Needs only the read credential. */
-export function readCompositeDrilldown(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, key: CompositeDrilldownKey, pages: DrilldownPages): Promise<Paged<DrilldownRow>> {
-  return readRun(db, tenant, path, run_id, (inputs) => selectDrilldown(inputs, path, key, pages));
+export function readCompositeDrilldown(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, key: CompositeDrilldownKey, pages: DrilldownPages, context?: RollupContext): Promise<Paged<DrilldownRow>> {
+  return readRun(db, tenant, path, run_id, (inputs) => selectDrilldown(inputs, path, key, pages), context);
 }
-export function readLogicalItemLineage(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, producer_local_id: string, page: PageRequest): Promise<LogicalItemLineage> {
-  return readRun(db, tenant, path, run_id, (inputs) => selectLineage(inputs, path, producer_local_id, page));
+export function readLogicalItemLineage(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, producer_local_id: string, page: PageRequest, context?: RollupContext): Promise<LogicalItemLineage> {
+  return readRun(db, tenant, path, run_id, (inputs) => selectLineage(inputs, path, producer_local_id, page), context);
 }
 /** Items linked to nothing, which stay as gradeable and inspectable as any other. */
 export function listRunUnlinkedItems(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, page: PageRequest): Promise<Paged<ContributionItem>> {
@@ -135,15 +139,8 @@ export async function listRunUnresolvedAddressed(db: Database, tenant: TenantSco
 }
 export interface GradeableItemsQuery { readonly stage: string | null; readonly is_current_only: boolean; readonly page: PageRequest; readonly links: PageRequest }
 /** Gradeable items by stage with their explicit links, unlinked ones included. Older revisions stay reachable with `is_current_only` false. */
-export function listRunGradeableItems(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, query: GradeableItemsQuery): Promise<Paged<GradeableItemRow>> {
-  return readRun(db, tenant, path, run_id, (inputs) => {
-    const stageOrder = new Map(path.stages.map((stage, index) => [stage.stage, index]));
-    const chosen = selectContributions(inputs, path).filter((contribution) => (query.stage === null || contribution.stage === query.stage) && (!query.is_current_only || contribution.is_current));
-    const ordered = [...orderedItems(chosen)].sort((left, right) => (stageOrder.get(left.stage) ?? 0) - (stageOrder.get(right.stage) ?? 0));
-    const page = pageOf(ordered, query.page);
-    return { ...page, items: page.items.map((contribution): GradeableItemRow => ({ item: addressedItem(contributionItem(contribution)),
-      links: pageOf(logicalLinks(contribution.links, inputs.logical_items), query.links) })) };
-  });
+export function listRunGradeableItems(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, query: GradeableItemsQuery, context?: RollupContext): Promise<Paged<GradeableItemRow>> {
+  return readRun(db, tenant, path, run_id, (inputs) => selectGradeableItems(inputs, path, query), context);
 }
 export function listRunUnresolvedReferences(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, page: PageRequest): Promise<Paged<UnresolvedReference>> {
   return readRun(db, tenant, path, run_id, (inputs) => selectUnresolvedReferences(inputs, path, page));
@@ -157,20 +154,20 @@ async function readItemContext(trx: DatabaseTransaction, tenant: TenantScope, pa
   const occurrence = await trx.selectFrom("observation.item_occurrence").selectAll().where("producer", "=", producer).where("namespace", "=", namespace)
     .where("occurrence_id", "=", occurrence_id).executeTakeFirst();
   if (!occurrence) return null;
-  const revision = await trx.selectFrom("observation.source_revision").select(["revision_id", "unit_id", "artifact_kind", "predecessor_id", "recorded_at", "captured_at"])
+  const revision = await trx.selectFrom("observation.source_revision").select(["revision_id", "unit_id", "artifact_kind", "stage", "predecessor_id", "recorded_at", "captured_at"])
     .where("producer", "=", producer).where("namespace", "=", namespace).where("revision_id", "=", occurrence.revision_id).executeTakeFirstOrThrow();
-  const stream = await trx.selectFrom("observation.source_revision").select(["revision_id", "unit_id", "artifact_kind", "predecessor_id", "recorded_at", "captured_at"])
+  const stream = await trx.selectFrom("observation.source_revision").select(["revision_id", "unit_id", "artifact_kind", "stage", "predecessor_id", "recorded_at", "captured_at"])
     .where("producer", "=", producer).where("namespace", "=", namespace).where("run_id", "=", occurrence.run_id).where("unit_id", "=", revision.unit_id)
     .where("artifact_kind", "=", revision.artifact_kind).execute();
   const standing = selectRevisionStandings(stream.map(revisionFromRow), path).get(revision.revision_id as ArtifactRevisionId);
   const relations = await trx.selectFrom("observation.item_relation").select(["relation_id", "source_occurrence_id", "target_occurrence_id", "target_logical_item_id", "unresolved_target_ref", "type", "asserted_by", "evidence_ref"])
-    .where("producer", "=", producer).where("namespace", "=", namespace).where("source_occurrence_id", "=", occurrence_id).where("type", "=", path.relation_type).orderBy("relation_id").execute();
+    .where("producer", "=", producer).where("namespace", "=", namespace).where("source_occurrence_id", "=", occurrence_id).orderBy("relation_id").execute();
   const targets = relations.flatMap((relation) => relation.target_logical_item_id ? [relation.target_logical_item_id] : []);
   const logical = targets.length === 0 ? [] : await trx.selectFrom("observation.logical_item").select(["logical_item_id", "scope", "producer_local_id"]).where("producer", "=", producer)
     .where("namespace", "=", namespace).where("logical_item_id", "in", targets).execute();
   const links = logicalLinks(relations.map((row) => relationFromRow(occurrence_id as ItemOccurrenceId, row)), logical.map(logicalItemFromRow));
   return { standing_stage: standing?.stage ?? null, links, item: { occurrence_id: occurrence_id as ItemOccurrenceId, revision_id: occurrence.revision_id as ArtifactRevisionId, item_path: occurrence.json_pointer,
-    artifact_kind: occurrence.artifact_kind, item_kind: occurrence.item_kind, selected_value: occurrence.selected_value, stage: standing?.stage ?? "", unit_id: revision.unit_id as UnitId, is_current: standing?.is_current ?? false } };
+    artifact_kind: occurrence.artifact_kind, item_kind: occurrence.item_kind, selected_value: occurrence.selected_value, stage: standing?.stage ?? "", unit_id: revision.unit_id as UnitId, is_current: standing?.is_current ?? false, provenance: null } };
 }
 
 export interface ItemAddressInRun { readonly run_id: string; readonly source_revision_id: string; readonly item_path: string }
@@ -241,4 +238,42 @@ export function readItemAnswers(db: Database, tenant: TenantScope, occurrence_id
     return pageOf(reads.filter((answer) => (query.task_id === undefined || answer.task_id === query.task_id) && (query.reviewer_id === null || answer.reviewer_id === query.reviewer_id)
       && (query.question === null || (answer.question.question_id === query.question.question_id && answer.question.question_version === query.question.question_version))), query.page);
   });
+}
+
+/** A run belongs to this reader only after its tenant captured an event or revision. */
+export function hasCapturedRun(db: Database, tenant: TenantScope, run_id: string): Promise<boolean> {
+  return withTenant(db, tenant, async (trx) => {
+    const event = await trx.selectFrom("observation.source_event_outcome").select("run_id")
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", run_id).executeTakeFirst();
+    if (event) return true;
+    const revision = await trx.selectFrom("observation.source_revision").select("run_id")
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", run_id).executeTakeFirst();
+    return revision !== undefined;
+  });
+}
+
+/** HTTP stage selectors are validated in the very snapshot used for their rows. */
+export interface ValidatedRunRead { readonly run_id: string; readonly context: RollupContext; readonly stage: string | null }
+export function readValidatedRun<Value>(db: Database, tenant: TenantScope, path: CompositePath, request: ValidatedRunRead,
+  select: (inputs: CompositeInputs) => Value): Promise<Result<Value, UnknownStage>> {
+  return readRun(db, tenant, path, request.run_id, (inputs) => {
+    if (request.stage !== null) {
+      const stage = validateStage(selectStages(inputs), request.stage);
+      if (!stage.ok) return stage;
+    }
+    return { ok: true, value: select(inputs) };
+  }, request.context);
+}
+/** Gradeable occurrences include task definitions and item grades in every captured stage. */
+export function selectGradeableItems(inputs: CompositeInputs, path: CompositePath, query: GradeableItemsQuery): Paged<GradeableItemRow> {
+  const stageOrder = new Map(selectStages(inputs).map((stage, index) => [stage.stage, index]));
+  const pinned = new Set(inputs.evidence_sets.map((set) => set.subject_occurrence_id));
+  const chosen = selectContributions(inputs, path).filter((entry) => pinned.has(entry.occurrence.occurrence_id)
+    && (query.stage === null || entry.stage === query.stage) && (!query.is_current_only || entry.is_current));
+  const ordered = [...orderedItems(chosen)].sort((left, right) => (stageOrder.get(left.stage) ?? 0) - (stageOrder.get(right.stage) ?? 0));
+  const page = pageOf(ordered, query.page);
+  return { ...page, items: page.items.map((entry) => ({ item: addressedItem(contributionItem(entry)),
+    links: pageOf(logicalLinks(entry.links, inputs.logical_items), query.links) })) };
 }

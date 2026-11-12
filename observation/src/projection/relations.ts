@@ -1,6 +1,16 @@
 import { canonicalDigest } from "canonical-json";
 import type { LinkReference, LogicalItemLink, OccurrenceLink, RelationType } from "./extractor";
 
+/** Identity semantics belong to the generic vocabulary, independently of any producer. */
+export const RELATION_SEMANTICS: Record<RelationType, { readonly establishes_task_association: boolean; readonly propagates_task_association: boolean }> = {
+  derived_from: { establishes_task_association: false, propagates_task_association: false },
+  addresses: { establishes_task_association: false, propagates_task_association: false },
+  assesses: { establishes_task_association: true, propagates_task_association: false },
+  supersedes: { establishes_task_association: true, propagates_task_association: true },
+  split_from: { establishes_task_association: true, propagates_task_association: true },
+  merged_from: { establishes_task_association: true, propagates_task_association: true },
+};
+
 export type Assertion = "producer_explicit" | "human" | "inferred";
 export type RelationEndpoint = { readonly kind: "occurrence" | "logical_item"; readonly id: string };
 export type RelationTarget = RelationEndpoint | { readonly kind: "unresolved"; readonly ref: string };

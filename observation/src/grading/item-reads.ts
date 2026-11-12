@@ -1,3 +1,5 @@
+import type { AssociationProvenance } from "./task-association";
+import type { SubjectScope } from "./composite";
 /**
  * The named read contracts a client consumes: one item addressed by revision and path, its questions'
  * state, task composites and their drilldowns. Every function is pure over rows a store read. Each
@@ -62,19 +64,20 @@ export const evidenceRead = (set: EvidenceSet, windows: EvidenceWindows): Eviden
 export type StagePublicationRead =
   | { readonly state: "pending" }
   | { readonly state: "published"; readonly is_final: boolean; readonly unit_ids: Paged<string> };
-export interface StageCompositeRead extends Omit<StageComposite, "publication" | "questions" | "answers" | "statuses" | "disagreements"> {
+export interface StageCompositeRead extends Omit<StageComposite, "publication" | "questions" | "answers" | "statuses" | "disagreements" | "results"> {
   readonly publication: StagePublicationRead;
+  readonly results: Paged<StageComposite["results"][number]>;
   readonly questions: Paged<StageComposite["questions"][number]>;
   readonly answers: Paged<StageComposite["answers"][number]>;
   readonly statuses: Paged<StageComposite["statuses"][number]>;
   readonly disagreements: Paged<StageComposite["disagreements"][number]>;
 }
 export interface CompositeRead extends Omit<LogicalItemComposite, "stages"> { readonly stages: Paged<StageCompositeRead> }
-export const COMPOSITE_WINDOWS = ["stages", "unit_ids", "questions", "answers", "statuses", "disagreements"] as const;
+export const COMPOSITE_WINDOWS = ["stages", "unit_ids", "questions", "answers", "statuses", "disagreements", "results"] as const;
 export type CompositeWindows = Record<(typeof COMPOSITE_WINDOWS)[number], PageRequest>;
 const stageRead = (stage: StageComposite, windows: CompositeWindows): StageCompositeRead => ({ ...stage,
   publication: stage.publication.state === "published" ? { ...stage.publication, unit_ids: pageOf(stage.publication.unit_ids, windows.unit_ids) } : stage.publication,
-  questions: pageOf(stage.questions, windows.questions), answers: pageOf(stage.answers, windows.answers),
+  results: pageOf(stage.results, windows.results), questions: pageOf(stage.questions, windows.questions), answers: pageOf(stage.answers, windows.answers),
   statuses: pageOf(stage.statuses, windows.statuses), disagreements: pageOf(stage.disagreements, windows.disagreements) });
 export const compositeRead = (composite: LogicalItemComposite, windows: CompositeWindows): CompositeRead =>
   ({ ...composite, stages: pageOf(composite.stages.map((stage) => stageRead(stage, windows)), windows.stages) });
@@ -84,9 +87,12 @@ export const compositeRead = (composite: LogicalItemComposite, windows: Composit
 export type MeasurementStatusRead = Omit<MeasurementRead, "evidence">;
 export interface DrilldownQuestionRead {
   readonly task_id: LogicalItemId | null;
+  readonly scope: SubjectScope;
+  readonly provenance: AssociationProvenance | null;
   readonly is_linked_context: boolean;
-  readonly question: QuestionKey;
+  readonly question: import("./composite").QuestionSummary;
   readonly evidence: EvidenceRead;
+  readonly results: Paged<import("./composite").ScopedResult>;
   readonly statuses: Paged<MeasurementStatusRead>;
   readonly answers: Paged<AnswerDetail>;
   readonly superseded_answers: Paged<AnswerDetail>;
@@ -97,7 +103,7 @@ export interface DrilldownRowRead {
   readonly questions: Paged<DrilldownQuestionRead>;
 }
 export const drilldownRowRead = (row: DrilldownRow, windows: EvidenceWindows): DrilldownRowRead => ({ item: addressedItem(row.item), links: row.links,
-  questions: { ...row.questions, items: row.questions.items.map((question) => ({ task_id: question.task_id, is_linked_context: question.is_linked_context, question: question.question, evidence: evidenceRead(question.evidence, windows),
+  questions: { ...row.questions, items: row.questions.items.map((question) => ({ results: question.results, task_id: question.task_id, scope: question.scope, provenance: question.provenance, is_linked_context: question.is_linked_context, question: question.question, evidence: evidenceRead(question.evidence, windows),
     statuses: { ...question.statuses, items: question.statuses.items.map(({ evidence: _evidence, ...status }) => status) },
     answers: question.answers, superseded_answers: question.superseded_answers })) } });
 

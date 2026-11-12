@@ -3,9 +3,10 @@
 
 import type { ObservationArtifactRevisionId, ObservationEvaluatorDefinitionId, ObservationEvidenceSetId, ObservationExecutionId, ObservationItemOccurrenceId, ObservationLogicalItemId, ObservationRelationId } from "../domain/identity";
 import type { ObservationJsonValue } from "../domain/primitives";
-import type { ObservationAnswerDetail, ObservationCompositeRelation, ObservationContributionItem, ObservationLogicalItemComposite, ObservationMeasurementRead, ObservationPaged, ObservationStageComposite, ObservationUnresolvedReference } from "./composite";
+import type { ObservationAnswerDetail, ObservationCompositeRelation, ObservationContributionItem, ObservationLogicalItemComposite, ObservationMeasurementRead, ObservationPaged, ObservationQuestionSummary, ObservationScopedResult, ObservationStageComposite, ObservationSubjectScope, ObservationUnresolvedReference } from "./composite";
 import type { ObservationEvidenceReference } from "./evidence";
 import type { ObservationQuestionDefinition, ObservationQuestionKey } from "./question";
+import type { ObservationAssociationProvenance } from "./task-association";
 
 export interface ObservationAddressedItem extends ObservationContributionItem, ObservationItemAddress {}
 
@@ -17,8 +18,9 @@ export interface ObservationUnresolvedReferenceRead extends Omit<ObservationUnre
 
 export interface ObservationCompositeRead extends Omit<ObservationLogicalItemComposite, "stages"> { readonly stages: ObservationPaged<ObservationStageCompositeRead> }
 
-export interface ObservationStageCompositeRead extends Omit<ObservationStageComposite, "publication" | "questions" | "answers" | "statuses" | "disagreements"> {
+export interface ObservationStageCompositeRead extends Omit<ObservationStageComposite, "publication" | "questions" | "answers" | "statuses" | "disagreements" | "results"> {
   readonly publication: ObservationStagePublicationRead;
+  readonly results: ObservationPaged<ObservationStageComposite["results"][number]>;
   readonly questions: ObservationPaged<ObservationStageComposite["questions"][number]>;
   readonly answers: ObservationPaged<ObservationStageComposite["answers"][number]>;
   readonly statuses: ObservationPaged<ObservationStageComposite["statuses"][number]>;
@@ -33,9 +35,12 @@ export interface ObservationDrilldownRowRead {
 
 export interface ObservationDrilldownQuestionRead {
   readonly task_id: ObservationLogicalItemId | null;
+  readonly scope: ObservationSubjectScope;
+  readonly provenance: ObservationAssociationProvenance | null;
   readonly is_linked_context: boolean;
-  readonly question: ObservationQuestionKey;
+  readonly question: ObservationQuestionSummary;
   readonly evidence: ObservationEvidenceRead;
+  readonly results: ObservationPaged<ObservationScopedResult>;
   readonly statuses: ObservationPaged<ObservationMeasurementStatusRead>;
   readonly answers: ObservationPaged<ObservationAnswerDetail>;
   readonly superseded_answers: ObservationPaged<ObservationAnswerDetail>;

@@ -73,7 +73,7 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
               <span>{entry.artifact_kind === "tasks" ? "Spec task" : "Cohort contribution"} · {entry.artifact_kind}{entry.is_current ? "" : " (older revision)"}</span>
               <ItemGradeAction runId={runId} selection={{ source_revision_id: entry.revision_id, item_path: entry.item_path }} onOpenItem={onOpenItem} />
             </li>];
-            return [<li key={`${index}-${entry.relation_id}`} className="flex items-start gap-2 py-1.5" data-testid="or-task-linked-item" data-link-state={entry.kind}>
+            return [<li key={`${index}-${entry.item.occurrence_id}`} className="flex items-start gap-2 py-1.5" data-testid="or-task-linked-item" data-link-state={entry.kind}>
               <p className="m-0 min-w-0 flex-1 text-sm text-[var(--text-secondary)]">{selectItemText(entry.item.selected_value)}</p>
               {entry.kind === "unresolved" && <Chip tone="warning">Unresolved</Chip>}
               {!entry.item.is_current && <Chip tone="muted">Older revision</Chip>}

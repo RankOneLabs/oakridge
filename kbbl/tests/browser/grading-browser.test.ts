@@ -5,10 +5,18 @@ import { join, resolve } from "node:path";
 import { chromium, type Browser, type Page } from "@playwright/test";
 import capturedRun from "../../core/pwa/oakridge/__fixtures__/v2-adapter-sample.json";
 import { acknowledged, correctnessQuestion, findingRow, IMPLEMENTATION, INTEGRATION, ANALYSIS, item, itemStatus, paged, reviewerAnswer, supportQuestion, taskComposite } from "../../core/pwa/oakridge/__fixtures__/grading";
+import type { ObservationDrilldownRowRead } from "../../core/pwa/oakridge/grading-contracts/grading/item-reads";
+import type { ObservationRunStageRead } from "../../core/pwa/oakridge/grading-contracts/grading/task-stages";
 
 /** Reviewable screenshots of the changed views land here when a directory is named, and are skipped otherwise. */
 const SCREENSHOTS = process.env.OAKRIDGE_GRADING_SCREENSHOTS ? resolve(process.env.OAKRIDGE_GRADING_SCREENSHOTS) : null;
 const runId = capturedRun.run.run_id;
+const taskLogicalId = taskComposite().logical_item_id;
+const stages: readonly ObservationRunStageRead[] = [
+  { stage: "analysis", artifact_kinds: ["analysis"], state: "linked" },
+  { stage: "implementation", artifact_kinds: ["assessment"], state: "linked" },
+  { stage: "integration", artifact_kinds: ["assessment"], state: "linked" },
+];
 const json = (body: unknown, status = 200): Response => Response.json(body, { status });
 const pageHtml = '<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>';
 
@@ -36,6 +44,7 @@ function observationRead(url: URL, world: World): Response | null {
   if (path.includes("/items/") && path.endsWith("/lineage")) return json({ occurrence_id: "o", relations: [], total: 0, limit: 20, offset: 0, republication: null });
   if (path.endsWith("/answers")) return json(paged(world.own));
   if (path.endsWith("/grading")) return json({ run_id: runId, is_grading_enabled: true, committed: 0.03, requests_sent: 3, attempts: 3, executions: { completed: 3 } });
+  if (path.endsWith("/stages")) return json(stages);
   if (path.endsWith("/findings")) {
     const stage = url.searchParams.get("stage");
     if (stage === "analysis") return json(paged([findingRow(ANALYSIS, { stage: "analysis", selected_value: { description: "An analysis finding with no task" } })]));
@@ -46,8 +55,10 @@ function observationRead(url: URL, world: World): Response | null {
   if (path.endsWith("/tasks")) return json(paged([taskComposite()]));
   if (path.endsWith("/tasks/T1")) return json(taskComposite());
   if (path.endsWith("/tasks/T1/lineage")) return json({ ...paged([{ kind: "contribution", relation_id: "r", evidence_ref: "e", asserted_by: "producer_explicit", item: item(IMPLEMENTATION) }]), run_id: runId, producer_local_id: "T1", is_captured: true });
-  if (path.endsWith("/drilldown")) return json(paged([{ item: item(IMPLEMENTATION), links: paged([]), questions: paged([{ question: { question_id: "assessment_finding.evidence_support", question_version: "1" }, evidence: supportQuestion().evidence, statuses: paged([]),
-    answers: paged([reviewerAnswer("raw", "does_not_support", "second-reviewer")]), superseded_answers: paged([]) }]) }]));
+  if (path.endsWith("/drilldown")) return json(paged<ObservationDrilldownRowRead>([{ item: item(IMPLEMENTATION), links: paged([]), questions: paged([{
+    task_id: taskLogicalId, scope: { kind: "per_task", task_id: taskLogicalId }, provenance: null, is_linked_context: false,
+    question: { ...supportQuestion().question }, evidence: { ...supportQuestion().evidence, task_id: taskLogicalId }, results: paged([]), statuses: paged([]),
+    answers: paged([reviewerAnswer("raw", "does_not_support", "second-reviewer", { task_id: taskLogicalId })]), superseded_answers: paged([]) }]) }]));
   return null;
 }
 function serve(world: World) {
@@ -89,6 +100,7 @@ test("the grading section opens one item panel: hidden first, explicit reveal, a
     await page.getByTestId("or-grading-section").waitFor();
     await page.getByTestId("or-grading-task").waitFor();
     await page.getByTestId("or-stage-finding").nth(2).waitFor();
+    expect(await page.getByTestId("or-stage-findings").evaluateAll((sections) => sections.map((section) => section.getAttribute("data-stage")))).toEqual(stages.map(({ stage }) => stage));
     // Hidden: tasks and findings are listed, nothing answer-derived is on the page.
     expect(await page.getByTestId("or-task-answer-count").count()).toBe(0);
     for (const marker of ["does not support", "Budget deferred", "Disagreement", "provider requests"]) expect(await bodyText(page)).not.toContain(marker);

@@ -1,3 +1,4 @@
+import { useRunStages } from "../../hooks/useRunStages";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
@@ -7,7 +8,7 @@ import type { ObservationItemAddress } from "../../grading-contracts/grading/ite
 import { useRunGrading } from "../../hooks/useRunGrading";
 import { useRunTasks } from "../../hooks/useRunTasks";
 import { useRunUnresolvedReferences } from "../../hooks/useRunUnresolvedReferences";
-import { GRADING_STAGES, selectItemText } from "../../lib/grading";
+import { selectItemText } from "../../lib/grading";
 import { useGradingVisibility } from "../../state/gradingVisibility";
 import { GradeItemButton } from "../molecules/GradeItemButton";
 import { ListPager } from "../molecules/ListPager";
@@ -29,6 +30,7 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
   const reveal = useGradingVisibility((state) => state.revealComposites);
   const hide = useGradingVisibility((state) => state.hideComposites);
   const grading = useRunGrading(runId);
+  const stages = useRunStages(runId);
   const [taskPage, setTaskPage] = useState(FIRST);
   const [drill, setDrill] = useState<{ readonly key: ObservationCompositeDrilldownKey; readonly label: string } | null>(null);
   const tasks = useRunTasks({ run_id: runId, page: taskPage, nested: {} });
@@ -62,7 +64,8 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
         {isRevealed && drill && <CompositeDrilldown runId={runId} drilldownKey={drill.key} label={drill.label} onClose={() => setDrill(null)} onOpenItem={onOpenItem} />}
       </section>
 
-      {GRADING_STAGES.map((stage) => <StageFindings key={stage} runId={runId} stage={stage} onOpenItem={onOpenItem} onOpenTask={onOpenTask} />)}
+      {stages.isError && <FeedbackMessage testId="or-grading-stages-unavailable">Stages are unavailable: {stages.error instanceof Error ? stages.error.message : "observation did not answer"}</FeedbackMessage>}
+      {stages.data?.map(({ stage, state }) => <StageFindings key={stage} runId={runId} stage={stage} state={state} onOpenItem={onOpenItem} onOpenTask={onOpenTask} />)}
 
       {(unresolved.data?.total ?? 0) > 0 && (
         <section className="flex flex-col gap-1" data-testid="or-grading-unresolved">
