@@ -187,7 +187,7 @@ export const oakridgeCapabilities: EvidenceCapabilities = {
   task_context: capability({ params: z.strictObject({ artifact: z.string().min(1), item_kind: z.string().min(1) }), subject: { fields: [], task_subject: true }, resolve: async ({ artifact, question, sources }, params) => {
       if (question.task_id === null) return ready([]);
       const task = await sources.readLogicalItemAt({ logical_item_id: question.task_id, subject_revision_id: artifact.revision_id,
-        artifact_kind: params.artifact, item_kind: params.item_kind });
+        artifact_kind: params.artifact, item_kind: params.item_kind, allow_late_reference: true });
       return task ? ready([contextReference(task, 0)])
         : notReady("task_unavailable", `task ${question.task_id} has no captured spec-task definition at ${artifact.revision_id}`);
     } }),

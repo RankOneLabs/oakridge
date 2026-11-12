@@ -496,3 +496,31 @@ integration("accept and request-changes delivered over HTTP start no pass and ad
   await life.reconciler.reconcileRun(tenant, "run-1");
   expect((await life.counts()).executions).toBe(1);
 }));
+
+integration("a task first published after its finding makes both assessment questions gradeable with frozen provenance", async () => scratchDatabase(async (db) => {
+  const life = await lifecycle(db);
+  await life.feed.launch(LAUNCH, "run-1", runConfig(true));
+  await life.feed.revision({ revision_id: "finding-before-task", artifact_kind: "assessment", recorded_at: "2026-11-01T00:00:00Z",
+    body: { findings: [{ task_ids: ["LATE"], evidence: [], criterion: "Late task", status: "met" }] } });
+  const occurrence_id = await occurrenceAt(db, "finding-before-task", "/findings/0");
+  expect((await readItemMeasurements(db, tenant, occurrence_id))?.questions).toEqual([]);
+  const task = { id: "LATE", description: "The first captured definition", requirement_ids: [] };
+  await life.feed.revision({ revision_id: "first-late-task", artifact_kind: "tasks", recorded_at: "2026-11-01T00:00:01Z", body: { tasks: [task] } });
+  // A newer task definition is already available when evidence is first collected.
+  await life.feed.revision({ revision_id: "edited-late-task", artifact_kind: "tasks", recorded_at: "2026-11-01T00:00:02Z",
+    body: { tasks: [{ ...task, description: "A later edit must not replace the resolving definition" }] } });
+  await life.reconciler.reconcileRun(tenant, "run-1");
+  const ready = (await readItemMeasurements(db, tenant, occurrence_id))!;
+  expect(ready.questions).toHaveLength(2);
+  for (const question of ready.questions) {
+    expect(question.evidence.readiness).toMatchObject({ state: "ready", references: [{ ref: "subject" },
+      { ref: "task_context:0", source: "revision", revision_id: "first-late-task", item_path: "/tasks/0", content: task }] });
+    expect(String(question.evidence.task_id)).toBe("oakridge:grading-test:run-1:task:LATE");
+  }
+  await life.drain(life.worker(firstAllowed));
+  const measured = (await readItemMeasurements(db, tenant, occurrence_id))!;
+  expect(measured.questions.map((question) => [question.evidence.question_id, question.machine[0]!.measurement.state]))
+    .toEqual([[CORRECTNESS_ID, "answered"], [EVIDENCE_SUPPORT_ID, "answered"]]);
+  await life.reconciler.reconcileRun(tenant, "run-1");
+  expect((await readItemMeasurements(db, tenant, occurrence_id))!.questions.map((question) => question.evidence)).toEqual(measured.questions.map((question) => question.evidence));
+}));

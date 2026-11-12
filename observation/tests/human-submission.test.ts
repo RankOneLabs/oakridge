@@ -182,7 +182,7 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
   expect(await readOccurrenceEvidence(db, tenant, occurrence_id)).toEqual([]);
   const task = (id: string) => `oakridge:grading-test:run-1:task:${id}` as import("../src/domain/identity").LogicalItemId;
   const taskBody = (ids: readonly string[]) => ({ tasks: ids.map((id) => ({ id, description: `Definition for ${id}`, requirement_ids: [] })) });
-  await feed.revision({ revision_id: "tasks", artifact_kind: "tasks", recorded_at: "2026-10-31T00:00:00Z", body: taskBody(["T3", "T7", "T9"]) });
+  await feed.revision({ revision_id: "tasks", artifact_kind: "tasks", recorded_at: "2026-11-01T00:00:01Z", body: taskBody(["T3", "T7", "T9"]) });
   const sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
   expect(sets.map((set) => [set.question_id, set.task_id])).toEqual([
     [CORRECTNESS_ID, task("T3")], [CORRECTNESS_ID, task("T7")], [EVIDENCE_SUPPORT_ID, task("T3")], [EVIDENCE_SUPPORT_ID, task("T7")] ]);
