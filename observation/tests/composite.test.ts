@@ -1,3 +1,4 @@
+import { targetOf } from "./grading-fixture";
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, ItemOccurrenceId, UnitId } from "../src/domain/identity";
@@ -8,8 +9,8 @@ import type { CaptureConfiguration } from "../src/grading/evidence";
 import { evaluationDigest, submissionAttemptLabel, submissionDigest } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
 import type { SourceEventOutcome } from "../src/ingest/cursor";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
-import { scopeOf, targetOf, OAKRIDGE_QUESTIONS, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "./grading-fixture";
+import { scopeOf, OAKRIDGE_QUESTIONS, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { listRunComposites, listRunUnlinkedItems, listRunUnresolvedReferences, readCompositeDrilldown, readLogicalItemComposite, readLogicalItemLineage } from "../src/storage/grading-record-store";

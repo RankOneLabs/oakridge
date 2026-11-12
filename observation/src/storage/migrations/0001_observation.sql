@@ -199,6 +199,7 @@ CREATE TABLE observation.evidence_set (
   question_id text NOT NULL,
   question_version text NOT NULL,
   pinned_evaluator_definition_ids text[] NOT NULL,
+  collection_plan jsonb,
   readiness text NOT NULL CHECK (readiness IN ('not_ready', 'ready')),
   not_ready_code text,
   not_ready_detail text,
@@ -219,6 +220,9 @@ CREATE TABLE observation.evidence_set (
     REFERENCES observation.question_definition(producer, namespace, question_id, question_version),
   CHECK (evidence_set_id ~ '^canonical-json/v1:[0-9a-f]{64}$'),
   CHECK (cardinality(pinned_evaluator_definition_ids) > 0),
+  CHECK (collection_plan IS NULL OR (jsonb_typeof(collection_plan) = 'object'
+    AND collection_plan->>'question_id' = question_id AND collection_plan->>'question_version' = question_version
+    AND jsonb_typeof(collection_plan->'evidence') = 'array') IS TRUE),
   CHECK (jsonb_typeof(evidence_refs) = 'array'),
   CHECK ((readiness = 'ready') = (ready_at IS NOT NULL)),
   CHECK ((readiness = 'not_ready') = (not_ready_code IS NOT NULL AND not_ready_detail IS NOT NULL)),
@@ -434,9 +438,9 @@ BEGIN
   IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'evidence_set is never removed'; END IF;
   IF OLD.readiness = 'ready' THEN RAISE EXCEPTION 'ready evidence_set is frozen'; END IF;
   IF (NEW.producer, NEW.namespace, NEW.evidence_set_id, NEW.subject_occurrence_id, NEW.task_id, NEW.question_id,
-      NEW.question_version, NEW.pinned_evaluator_definition_ids, NEW.created_at)
+      NEW.question_version, NEW.pinned_evaluator_definition_ids, NEW.collection_plan, NEW.created_at)
     IS DISTINCT FROM (OLD.producer, OLD.namespace, OLD.evidence_set_id, OLD.subject_occurrence_id, OLD.task_id, OLD.question_id,
-      OLD.question_version, OLD.pinned_evaluator_definition_ids, OLD.created_at) THEN
+      OLD.question_version, OLD.pinned_evaluator_definition_ids, OLD.collection_plan, OLD.created_at) THEN
     RAISE EXCEPTION 'evidence_set pin is immutable';
   END IF;
   RETURN NEW;

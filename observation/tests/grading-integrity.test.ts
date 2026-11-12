@@ -200,7 +200,7 @@ integration("a lease exists exactly while an execution is claimed, and the diges
 
 test("subject generation uses the declared pointer, deduplicates resolved tasks, and never invents a task", async () => {
   const { gradingSubjects } = await import("../src/grading/evidence");
-  const occurrence = { occurrence_id: "finding" as ItemOccurrenceId, json_pointer: "/findings/2" };
+  const occurrence = { occurrence_id: "finding" as ItemOccurrenceId, json_pointer: "/findings/2", selected_value: { task_ids: ["T3", "T7", "T7", "T99"] } };
   const relation = (target: string | null, evidence_ref = "/findings/2/task_ids/0", unresolved_target_ref: string | null = null) =>
     ({ type: "assesses", target_logical_item_id: target, evidence_ref, unresolved_target_ref });
   const relations = [relation("T3"), relation("T7"), relation("T7"), relation(null, "/findings/2/task_ids/3", "T99"),

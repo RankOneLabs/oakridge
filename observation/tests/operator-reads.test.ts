@@ -1,3 +1,4 @@
+import { targetOf } from "./grading-fixture";
 import { expect } from "bun:test";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
@@ -5,8 +6,8 @@ import { humanEvaluator } from "../src/grading/configuration";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { createApp } from "../src/http/app";
 import type { Credentials } from "../src/http/ingest-auth";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID } from "../src/producers/oakridge/evidence";
-import { OAKRIDGE_QUESTIONS, targetOf, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID } from "./grading-fixture";
+import { OAKRIDGE_QUESTIONS, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import type { Database, TenantScope } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";

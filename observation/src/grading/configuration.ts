@@ -3,7 +3,8 @@ import { canonicalDigest, canonicalJson } from "canonical-json";
 import type { EvaluatorDefinitionId, QuestionId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { evaluatorIdentity, instructionDigest, type EvaluatorDefinition } from "./evaluator";
-import type { CaptureConfiguration, CapturePin } from "./evidence";
+import { capabilityReferenceSchema, createCapabilityCollector, type CaptureConfiguration, type CapturePin, type QuestionScope } from "./evidence";
+import type { EvidenceCapabilities, EvidenceCapabilityReference, EvidenceCollector } from "../ports/producer-profile";
 import type { QuestionDefinition, QuestionKey } from "./question";
 import { runnerEntry } from "./runner";
 
@@ -22,30 +23,17 @@ export interface RegisteredSelector {
   readonly artifact_kind: string;
   readonly item_selector: string;
   readonly item_kind: string;
-}
-/** One question the producer's evidence collector serves, with the only target and evidence it honours.
- * Collection is fixed per question, so any other setting would load and then be silently ignored;
- * the loader refuses it instead. */
-export interface SupportedQuestion {
-  readonly question_id: QuestionId;
-  readonly artifact: string;
-  readonly selector: string;
-  readonly scope: "per_item" | "per_task";
-  readonly evidence: readonly string[];
+  readonly item_fields: readonly string[];
 }
 export interface GradingRegistry {
   readonly selectors: readonly RegisteredSelector[];
-  readonly evidence_sources: readonly string[];
-  /** Questions served by the producer's evidence collector. */
-  readonly questions: readonly SupportedQuestion[];
+  readonly capabilities: EvidenceCapabilities;
 }
 
-const targetFields = { artifact: z.string().min(1), selector: z.string().startsWith("/") };
-const targetSchema = z.discriminatedUnion("scope", [
-  z.strictObject({ ...targetFields, scope: z.literal("per_item") }),
-  z.strictObject({ ...targetFields, scope: z.literal("per_task"), task_ids: z.string().startsWith("/") }),
-]);
+const pointerSchema = z.string().regex(/^\/(?:[^~]|~[01])*$/);
+const targetSchema = z.strictObject({ artifact: z.string().min(1), selector: pointerSchema });
 export type GradingTarget = z.infer<typeof targetSchema>;
+const evidenceSchema = capabilityReferenceSchema;
 const questionSchema = z.strictObject({
   text: z.string().nullable(), response: z.enum(["boolean", "choice", "ordinal", "numeric", "text", "structured"]),
   values: z.array(z.json()).nullable(), missing_evidence_policy: z.enum(["fail", "abstain"]),
@@ -54,15 +42,20 @@ const questionSchema = z.strictObject({
 export type GradingQuestion = z.infer<typeof questionSchema>;
 const graderEntrySchema = z.strictObject({ runner: z.string().min(1).refine((runner) => runner !== "human"),
   model: z.string().min(1), instructions: z.json(), estimated_cost_per_call: z.number().finite().nonnegative() });
-const definitionSchema = z.strictObject({ id: z.string().min(1), target: targetSchema, evidence: z.array(z.string().min(1)),
-  question: questionSchema, evaluators: z.array(z.union([z.strictObject({ runner: z.literal("human") }), graderEntrySchema])) });
-export interface GradingDefinition {
+const definitionFields = { id: z.string().min(1), targets: z.array(targetSchema).min(1), evidence: z.array(evidenceSchema),
+  question: questionSchema, evaluators: z.array(z.union([z.strictObject({ runner: z.literal("human") }), graderEntrySchema])) };
+const definitionSchema = z.discriminatedUnion("scope", [
+  z.strictObject({ ...definitionFields, scope: z.literal("per_item") }),
+  z.strictObject({ ...definitionFields, scope: z.literal("per_task"), task_ids: pointerSchema }),
+]);
+interface GradingDefinitionFields {
   readonly id: string;
-  readonly target: GradingTarget;
-  readonly evidence: readonly string[];
+  readonly targets: readonly GradingTarget[];
+  readonly evidence: readonly EvidenceCapabilityReference[];
   readonly question: GradingQuestion;
   readonly evaluators: readonly EvaluatorEntry[];
 }
+export type GradingDefinition = GradingDefinitionFields & QuestionScope;
 /** observation/grading-definitions.json is the only question and evaluator selection. */
 export type GradingDefinitions = readonly GradingDefinition[];
 const configurationSchema = z.array(definitionSchema).min(1);
@@ -74,8 +67,8 @@ export const machineGraders = (definition: GradingDefinition): readonly GraderEn
 /** Carried on every configured evaluator definition for the later budget consumer. */
 export interface EvaluatorCostMetadata { readonly estimated_cost_per_call: number }
 
-export type GraderConfigurationErrorKind = "invalid_definitions" | "duplicate_definition" | "unknown_evidence" | "unknown_selector"
-  | "unknown_question" | "unsupported_target" | "unsupported_evidence" | "invalid_task_ids" | "duplicate_grader" | "unknown_runner" | "invalid_instructions" | "invalid_definition";
+export type GraderConfigurationErrorKind = "invalid_definitions" | "duplicate_definition" | "unknown_capability" | "invalid_capability_params" | "unsupported_subject" | "unknown_selector"
+  | "mixed_item_kinds" | "duplicate_target" | "invalid_task_ids" | "duplicate_grader" | "unknown_runner" | "invalid_instructions" | "invalid_definition";
 export interface GraderConfigurationError {
   readonly operation: "grader_configuration";
   readonly kind: GraderConfigurationErrorKind;
@@ -85,19 +78,19 @@ export interface GraderConfigurationError {
 const failure = (kind: GraderConfigurationErrorKind, entity_id: string, detail: string): Result<never, GraderConfigurationError> =>
   err({ operation: "grader_configuration", kind, entity_id, detail });
 
-/** Preserve the definition id and task_ids field when strict union parsing refuses a target. */
+/** Preserve the definition id and task_ids field when strict union parsing refuses a scope. */
 function shapeFailure(raw: unknown, issue: z.core.$ZodIssue | undefined): Result<never, GraderConfigurationError> {
   const index = issue?.path[0];
   const entry: unknown = Array.isArray(raw) && typeof index === "number" ? raw[index] : null;
   const identity = z.object({ id: z.string() }).safeParse(entry);
   const entity_id = identity.success ? identity.data.id : "grading-definitions.json";
-  const target = z.object({ target: z.object({ scope: z.string(), task_ids: z.unknown().optional() }) }).safeParse(entry);
+  const scope = z.object({ scope: z.string(), task_ids: z.unknown().optional() }).safeParse(entry);
   const detail = issue ? `${issue.path.join(".") || "/"}: ${issue.message}` : "invalid definitions";
-  if (target.success && issue?.path[1] === "target") {
-    const { scope, task_ids } = target.data.target;
-    if ((scope === "per_item" && Object.hasOwn(target.data.target, "task_ids"))
-      || (scope === "per_task" && (typeof task_ids !== "string" || !task_ids.startsWith("/"))))
-      return failure("invalid_task_ids", entity_id, `target.task_ids: ${scope === "per_item" ? "forbidden on per_item" : "must be a JSON pointer beginning with /"}`);
+  if (scope.success) {
+    const value = scope.data;
+    if ((value.scope === "per_item" && Object.hasOwn(value, "task_ids"))
+      || (value.scope === "per_task" && !pointerSchema.safeParse(value.task_ids).success))
+      return failure("invalid_task_ids", entity_id, "task_ids: required JSON pointer for per_task; forbidden on per_item");
   }
   return failure("invalid_definitions", entity_id, detail);
 }
@@ -110,13 +103,19 @@ export function parseGradingDefinitions(raw: unknown, registry: GradingRegistry)
   return registration.ok ? ok(parsed.data) : registration;
 }
 
+
+/** Capture needs only the scope fields of the configured definition. */
+export function definitionScope(definition: GradingDefinition): QuestionScope {
+  return definition.scope === "per_task" ? { scope: definition.scope, task_ids: definition.task_ids } : { scope: definition.scope };
+}
+
 /** Every machine runner the definitions select, once each; human needs no provider credentials. */
 export const selectedRunners = (configuration: GradingDefinitions): readonly string[] =>
   [...new Set(configuration.flatMap((definition) => machineGraders(definition).map((grader) => grader.runner)))];
 
 /** Evidence and evaluators do not change the meaning of the question. */
 export function questionDefinition(definition: GradingDefinition, item_kind: string): Result<QuestionDefinition, GraderConfigurationError> {
-  const version = canonicalDigest({ question: definition.question, target: definition.target });
+  const version = canonicalDigest({ question: definition.question, ...definitionScope(definition), targets: definition.targets });
   if (!version.ok) return failure("invalid_definition", definition.id, version.error.detail);
   const { text, response, values, ...semantics } = definition.question;
   return ok({ question_id: definition.id as QuestionId, question_version: version.value, item_kind,
@@ -169,19 +168,22 @@ export interface GradingRegistration {
   readonly evaluators: readonly EvaluatorDefinition[];
   readonly graders: readonly RegisteredGrader[];
   readonly capture: CaptureConfiguration;
+  readonly collector: EvidenceCollector;
 }
 
-interface PinnedQuestion { readonly pin: CapturePin; readonly evaluators: readonly EvaluatorDefinition[]; readonly graders: readonly RegisteredGrader[] }
+interface PinnedQuestion { readonly pins: readonly CapturePin[]; readonly evaluators: readonly EvaluatorDefinition[]; readonly graders: readonly RegisteredGrader[] }
 
 /** One question with the evaluators the definitions configure for it and the human evaluator every question keeps. */
 interface QuestionSelection {
   readonly question: QuestionDefinition;
   readonly graders: readonly GraderEntry[];
   readonly human: EvaluatorDefinition;
-  readonly target: GradingTarget;
+  readonly scope: QuestionScope;
+  readonly targets: readonly GradingTarget[];
+  readonly evidence: readonly EvidenceCapabilityReference[];
 }
 
-function pinQuestion({ question, graders, human, target }: QuestionSelection): Result<PinnedQuestion, GraderConfigurationError> {
+function pinQuestion({ question, graders, human, scope, targets, evidence }: QuestionSelection): Result<PinnedQuestion, GraderConfigurationError> {
   const evaluators: EvaluatorDefinition[] = [];
   for (const grader of graders) {
     const evaluator = configuredEvaluator(question, grader);
@@ -192,28 +194,38 @@ function pinQuestion({ question, graders, human, target }: QuestionSelection): R
   }
   const key: QuestionKey = { question_id: question.question_id, question_version: question.question_version };
   const pinned = [...evaluators, human].map((evaluator) => evaluator.evaluator_definition_id as EvaluatorDefinitionId);
-  return ok({ evaluators, pin: { ...key, ...(target.scope === "per_task" ? { scope: target.scope, task_ids: target.task_ids } : { scope: target.scope }),
-    artifact_kind: target.artifact, item_selector: target.selector, item_kind: question.item_kind, evaluator_definition_ids: pinned },
+  return ok({ evaluators, pins: targets.map((target) => ({ ...key, ...scope, artifact_kind: target.artifact, item_selector: target.selector, item_kind: question.item_kind, evaluator_definition_ids: pinned, collection_plan: { ...key, evidence } })),
     graders: evaluators.map((evaluator) => ({ runner: evaluator.backend_kind, question: key,
       evaluator_definition_id: evaluator.evaluator_definition_id as EvaluatorDefinitionId })) });
 }
 
-const isSameEvidence = (left: readonly string[], right: readonly string[]): boolean =>
-  left.length === right.length && [...left].sort().join("\n") === [...right].sort().join("\n");
-
-/** A registered target or evidence list that this question's collector would not honour. */
-function unsupportedSetting(definition: GradingDefinition, supported: SupportedQuestion): Result<never, GraderConfigurationError> | null {
-  const { artifact, selector, scope } = definition.target;
-  if (artifact !== supported.artifact || selector !== supported.selector || scope !== supported.scope)
-    return failure("unsupported_target", definition.id,
-      `target: the collector for this question reads only ${supported.artifact} ${supported.selector} ${supported.scope}`);
-  if (!isSameEvidence(definition.evidence, supported.evidence))
-    return failure("unsupported_evidence", definition.id, `evidence: the collector for this question gathers exactly ${supported.evidence.join(", ")}`);
-  return null;
+/** Validate the capability contract for every target before any capture or provider call. */
+interface EvidenceValidation {
+  readonly definition: GradingDefinition;
+  readonly registry: GradingRegistry;
+  readonly selectors: readonly RegisteredSelector[];
+}
+function validateEvidence({ definition, registry, selectors }: EvidenceValidation)
+  : Result<void, GraderConfigurationError> {
+  for (const entry of definition.evidence) {
+    const name = typeof entry === "string" ? entry : entry.capability;
+    const capability = Object.hasOwn(registry.capabilities, name) ? registry.capabilities[name] : undefined;
+    if (!capability) return failure("unknown_capability", definition.id, `evidence: ${name} is not registered`);
+    const params = capability.params.safeParse(typeof entry === "string" ? {} : entry.params ?? {});
+    if (!params.success) return failure("invalid_capability_params", definition.id, `evidence.${name}: ${params.error.message}`);
+    for (const selector of selectors) {
+      const missing = capability.subject.fields.find((field) => !selector.item_fields.includes(field));
+      if (missing || (capability.subject.task_subject && definition.scope !== "per_task"))
+        return failure("unsupported_subject", definition.id, `evidence.${name}: ${selector.artifact_kind} ${selector.item_selector} lacks ${missing ?? "per_task scope"}`);
+    }
+  }
+  const scope = definitionScope(definition);
+  if (scope.scope === "per_task" && selectors.some((selector) => !selector.item_fields.includes(scope.task_ids)))
+    return failure("unsupported_subject", definition.id, "scope.task_ids: target does not declare this field");
+  return ok(undefined);
 }
 
-/** Derive the questions and their pins. Target and evidence must be exactly what the collector honours;
- * capture pins only occurrences of the declared artifact, selector and item kind. */
+/** Derive the questions and their pins. Every target shares one question key and evaluator set; evidence is resolved by capability. */
 export function planRegistration(configuration: GradingDefinitions, registry: GradingRegistry)
   : Result<GradingRegistration, GraderConfigurationError> {
   const human = humanEvaluator();
@@ -224,20 +236,26 @@ export function planRegistration(configuration: GradingDefinitions, registry: Gr
   for (const definition of configuration) {
     if (ids.has(definition.id)) return failure("duplicate_definition", definition.id, "a definition is configured twice");
     ids.add(definition.id);
-    const supported = registry.questions.find((question) => question.question_id === definition.id);
-    if (!supported) return failure("unknown_question", definition.id, "id: no evidence collector is registered for this question");
-    const selector = registry.selectors.find((entry) => entry.artifact_kind === definition.target.artifact
-      && entry.item_selector === definition.target.selector);
-    if (!selector) return failure("unknown_selector", definition.id, `target.selector: ${definition.target.artifact} ${definition.target.selector} is not registered`);
-    const unknownEvidence = definition.evidence.find((name) => !registry.evidence_sources.includes(name));
-    if (unknownEvidence) return failure("unknown_evidence", definition.id, `evidence: ${unknownEvidence} is not registered`);
-    const unsupported = unsupportedSetting(definition, supported);
-    if (unsupported) return unsupported;
+    const selectors: RegisteredSelector[] = [];
+    const targets = new Set<string>();
+    for (const target of definition.targets) {
+      const key = JSON.stringify([target.artifact, target.selector]);
+      if (targets.has(key)) return failure("duplicate_target", definition.id, `targets: ${target.artifact} ${target.selector} appears twice`);
+      targets.add(key);
+      const selector = registry.selectors.find((entry) => entry.artifact_kind === target.artifact && entry.item_selector === target.selector);
+      if (!selector) return failure("unknown_selector", definition.id, `targets.selector: ${target.artifact} ${target.selector} is not registered`);
+      if (selectors.some((entry) => entry.item_kind !== selector.item_kind))
+        return failure("mixed_item_kinds", definition.id, "targets must all select one item kind");
+      selectors.push(selector);
+    }
+    if (selectors.length === 0) return failure("invalid_definitions", definition.id, "targets must not be empty");
+    const evidence = validateEvidence({ definition, registry, selectors });
+    if (!evidence.ok) return evidence;
     if (definition.evaluators.filter((entry) => entry.runner === "human").length > 1)
       return failure("duplicate_grader", `${definition.id}:human`, "the same grader is configured twice");
-    const question = questionDefinition(definition, selector.item_kind);
+    const question = questionDefinition(definition, selectors[0]!.item_kind);
     if (!question.ok) return question;
-    const result = pinQuestion({ question: question.value, graders: machineGraders(definition), human: human.value, target: definition.target });
+    const result = pinQuestion({ question: question.value, graders: machineGraders(definition), human: human.value, scope: definitionScope(definition), targets: definition.targets, evidence: definition.evidence });
     if (!result.ok) return result;
     questions.push(question.value);
     pinned.push(result.value);
@@ -245,5 +263,6 @@ export function planRegistration(configuration: GradingDefinitions, registry: Gr
   const evaluators = [...new Map([...pinned.flatMap((entry) => entry.evaluators), human.value]
     .map((evaluator) => [evaluator.evaluator_definition_id, evaluator])).values()];
   return ok({ questions, evaluators, graders: pinned.flatMap((entry) => entry.graders),
-    capture: { pins: pinned.map((entry) => entry.pin) } });
+    capture: { pins: pinned.flatMap((entry) => entry.pins) },
+    collector: createCapabilityCollector(configuration.map((definition, index) => ({ ...questions[index]!, evidence: definition.evidence })), registry.capabilities) });
 }

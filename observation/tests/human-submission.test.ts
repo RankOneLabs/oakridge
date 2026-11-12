@@ -1,11 +1,12 @@
+import { targetOf } from "./grading-fixture";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
 import { humanEvaluator } from "../src/grading/configuration";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { createApp } from "../src/http/app";
 import type { Credentials } from "../src/http/ingest-auth";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
-import { OAKRIDGE_QUESTIONS, targetOf, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "./grading-fixture";
+import { OAKRIDGE_QUESTIONS, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
@@ -166,7 +167,7 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
   const { scopeOf } = await import("./grading-fixture");
   const { pinSubjectInTransaction, collectPinnedQuestion } = await import("../src/storage/captured-evidence-store");
   const { CaptureArtifactSource } = await import("../src/storage/capture-artifact-source");
-  const { oakridgeEvidence } = await import("../src/producers/oakridge/evidence");
+  const { oakridgeEvidence } = await import("./grading-fixture");
   const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question, ...scopeOf(question.question_id), ...targetOf(question.question_id),
     evaluator_definition_ids: [human.evaluator_definition_id as EvaluatorDefinitionId] })) };
   for (const question of OAKRIDGE_QUESTIONS) await registerQuestion(db, tenant, question);
@@ -181,7 +182,7 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
   expect(await readOccurrenceEvidence(db, tenant, occurrence_id)).toEqual([]);
   const task = (id: string) => `oakridge:grading-test:run-1:task:${id}` as import("../src/domain/identity").LogicalItemId;
   const taskBody = (ids: readonly string[]) => ({ tasks: ids.map((id) => ({ id, description: `Definition for ${id}`, requirement_ids: [] })) });
-  await feed.revision({ revision_id: "tasks", artifact_kind: "tasks", recorded_at: "2026-10-31T00:00:00Z", body: taskBody(["T3", "T7", "T9"]) });
+  await feed.revision({ revision_id: "tasks", artifact_kind: "tasks", recorded_at: "2026-11-01T00:00:01Z", body: taskBody(["T3", "T7", "T9"]) });
   const sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
   expect(sets.map((set) => [set.question_id, set.task_id])).toEqual([
     [CORRECTNESS_ID, task("T3")], [CORRECTNESS_ID, task("T7")], [EVIDENCE_SUPPORT_ID, task("T3")], [EVIDENCE_SUPPORT_ID, task("T7")] ]);
@@ -247,5 +248,53 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
       { headers: { authorization: "Bearer read" } });
     expect(response.status).toBe(400);
   }
+  expect(provider_calls).toBe(0);
+}));
+
+integration("empty task_ids pins one task-less subject; unresolved ids wait and later gain tasked subjects", async () => scratchDatabase(async (db) => {
+  const { committedDefinitions, oakridgeGradingRegistry, oakridgeEvidence } = await import("./grading-fixture");
+  const { planRegistration } = await import("../src/grading/configuration");
+  const { registerDefinitions } = await import("../src/storage/grading-store");
+  const { collectPinnedQuestion } = await import("../src/storage/captured-evidence-store");
+  const { CaptureArtifactSource } = await import("../src/storage/capture-artifact-source");
+  const registration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+  if (!registration.ok) throw new Error(registration.error.detail);
+  await registerDefinitions(db, tenant, registration.value);
+  const feed = createFeed(db, tenant, registration.value.capture);
+  await feed.launch({ spec: "the spec" });
+  await feed.revision({ revision_id: "assessment", artifact_kind: "assessment", body: { findings: [
+    { task_ids: [], evidence: [], description: "General finding" },
+    { task_ids: ["T404"], evidence: [], description: "Unresolved finding" }] } });
+  const items = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").selectAll()
+    .where("item_kind", "=", "assessment_finding").orderBy("json_pointer").execute());
+  const empty = items[0]!.occurrence_id as ItemOccurrenceId;
+  const unresolved = items[1]!.occurrence_id as ItemOccurrenceId;
+  const pinned = await readOccurrenceEvidence(db, tenant, empty);
+  expect(pinned.map((set) => [set.question_id, set.task_id])).toEqual([[CORRECTNESS_ID, null], [EVIDENCE_SUPPORT_ID, null]]);
+  expect(await readOccurrenceEvidence(db, tenant, unresolved)).toEqual([]);
+  expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_relation").select("unresolved_target_ref")
+    .where("source_occurrence_id", "=", unresolved).execute())).toMatchObject([{ unresolved_target_ref: expect.stringContaining("T404") }]);
+  const source = new CaptureArtifactSource({ db, tenant, run_id: "run-1", collector: oakridgeEvidence,
+    repository: { hasCommit: async () => false, readFile: async () => ({ state: "absent" }) } });
+  for (const set of pinned) {
+    const result = await collectPinnedQuestion(db, tenant, source, set);
+    expect(result).toMatchObject({ ok: true, value: { task_id: null, readiness: { state: "ready", references: [{ ref: "subject" }] } } });
+  }
+  const app = createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: registration.value.capture });
+  const send = (occurrence: string, body: unknown) => app.request(`/v1/items/${encodeURIComponent(occurrence)}/answers`,
+    { method: "POST", headers: { authorization: "Bearer grade", "content-type": "application/json" }, body: JSON.stringify(body) });
+  expect((await send(empty, answer("taskless", "supports", { task_id: null }))).status).toBe(201);
+  expect(await (await send(unresolved, answer("unresolved", "supports", { task_id: null }))).json()).toMatchObject({ error: { code: "task_required" } });
+  expect((await send(empty, answer("invalid-value", "invented"))).status).toBe(422);
+  const filter = `question_id=${EVIDENCE_SUPPORT_ID}&question_version=${questionVersion(EVIDENCE_SUPPORT_ID)}`;
+  for (const surface of ["answers", "evidence"]) {
+    const read = (query: string) => app.request(`/v1/items/${encodeURIComponent(empty)}/${surface}?${query}`, { headers: { authorization: "Bearer read" } });
+    expect((await read(filter)).status).toBe(200);
+    expect((await read(`${filter}&task_id=T404`)).status).toBe(400);
+  }
+  await feed.revision({ revision_id: "tasks", artifact_kind: "tasks", body: { tasks: [{ id: "T404", description: "Resolved", requirement_ids: [] }] } });
+  const resolved = await readOccurrenceEvidence(db, tenant, unresolved);
+  expect(resolved.map((set) => set.task_id)).toEqual([expect.stringContaining("T404"), expect.stringContaining("T404")]);
+  expect(await readOccurrenceEvidence(db, tenant, empty)).toHaveLength(2);
   expect(provider_calls).toBe(0);
 }));

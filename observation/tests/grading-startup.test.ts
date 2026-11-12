@@ -9,7 +9,7 @@ import type { EvidenceSet } from "../src/grading/evidence";
 import type { SourceEventCursor, SourceEventOutcome } from "../src/ingest/cursor";
 import type { RepositoryFile, RepositoryReader } from "../src/ports/artifact-source";
 import { TASK_SCOPE } from "../src/producers/oakridge/catalogue";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "./grading-fixture";
 import { oakridgeProfile, oakridgeGradingRegistry } from "./grading-fixture";
 import { startObservation } from "../src/main";
 import type { RunnerResolver } from "../src/grading/worker";
@@ -170,17 +170,17 @@ integration("startup refuses an unknown runner or a missing key, clearly and bef
   expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
 }));
 
-integration("startup refuses a question with no evidence collector before registering anything", async () => withHarness(async (db) => {
+integration("startup refuses an unknown capability before registering anything", async () => withHarness(async (db) => {
   const configuration = await configured();
   const env = { ...credentialEnv(configuration), OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0",
     OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest) };
   const directory = await mkdtemp(join(tmpdir(), "observation-unsupported-question-"));
   try {
     const grading_definitions_file = join(directory, "grading-definitions.json");
-    const renamed = configuration.map((entry, index) => index === 0 ? { ...entry, id: "finding.relevnce" } : entry);
+    const renamed = configuration.map((entry, index) => index === 0 ? { ...entry, evidence: ["absent_capability"] } : entry);
     await Bun.write(grading_definitions_file, JSON.stringify(renamed));
     await expect(startObservation(env, { grading_definitions_file }))
-      .rejects.toThrow("observation cannot start: unknown_question: finding.relevnce: id: no evidence collector is registered for this question");
+      .rejects.toThrow("observation cannot start: unknown_capability: finding.relevance: evidence: absent_capability is not registered");
   } finally { await rm(directory, { recursive: true, force: true }); }
   expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
 }));
@@ -207,7 +207,7 @@ integration("not-ready capture, config swap and restart, readiness arrival and a
   expect(relevance.readiness).toMatchObject({ state: "ready", references: [{ ref: "subject" }, { source: "run_input", ref: "spec", content: launch.spec }] });
   const citedBefore = await settled(h, first, cited, collected);
   expect(citedBefore.map((set) => [set.question_id, set.readiness.reason?.code])).toEqual([
-    [CORRECTNESS_ID, "repository_unavailable"], [EVIDENCE_SUPPORT_ID, "repository_unavailable"]]);
+    [CORRECTNESS_ID, "build_result_unavailable"], [EVIDENCE_SUPPORT_ID, "repository_unavailable"]]);
   const uncitedBefore = await settled(h, first, uncited, collected);
   expect(question(uncitedBefore, CORRECTNESS_ID).readiness).toMatchObject({ state: "not_ready", reason: { code: "build_result_unavailable" } });
   expect(question(uncitedBefore, EVIDENCE_SUPPORT_ID).readiness).toMatchObject({ state: "ready" });
@@ -307,14 +307,14 @@ integration("an enabled run grades with the evaluators pinned at capture across 
   await h.send(first, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", subject_id: "build-1",
     body: await fixtureBody("assessment") }));
   // Ready questions are graded right away; the cited finding and every Correctness wait.
-  const early = await until(() => executionsBy(db), (rows) => rows.length === 1 && rows.every((row) => row.status === "completed"));
+  const early = await until(() => executionsBy(db), (rows) => rows.length === 2 && rows.every((row) => row.status === "completed"));
   expect(early.every((row) => row.question_id === EVIDENCE_SUPPORT_ID)).toBe(true);
   await first.stop();
 
   const second = await h.start(after, recordingRunners(requests));
   reader.accessible = true;
   await h.send(second, revisionOutcome({ revision_id: "build-1", artifact_kind: "build_result", body: await fixtureBody("build-result") }));
-  const ready = await until(() => executionsBy(db), (rows) => rows.length === 6 && rows.every((row) => row.status === "completed"));
+  const ready = await until(() => executionsBy(db), (rows) => rows.length === 8 && rows.every((row) => row.status === "completed"));
   // The older occurrence's first answers use its original evaluators, not the swapped ones.
   for (const row of ready) expect(pinsOf(before, row.question_id)).toContain(row.evaluator_definition_id as never);
   const cited = await itemAt(h, second, "assessment-1", "/findings/0", "assessment_finding");
@@ -324,7 +324,7 @@ integration("an enabled run grades with the evaluators pinned at capture across 
 
   await h.send(second, revisionOutcome({ revision_id: "assessment-2", artifact_kind: "assessment", subject_id: "build-1",
     body: await fixtureBody("assessment") }));
-  const later = await until(() => executionsBy(db), (rows) => rows.length === 12 && rows.every((row) => row.status === "completed"));
+  const later = await until(() => executionsBy(db), (rows) => rows.length === 16 && rows.every((row) => row.status === "completed"));
   for (const row of later.filter((entry) => entry.revision_id === "assessment-2"))
     expect(pinsOf(after, row.question_id)).toContain(row.evaluator_definition_id as never);
   await second.stop();
@@ -335,6 +335,52 @@ integration("an enabled run grades with the evaluators pinned at capture across 
     body: await fixtureBody("assessment") }, tenant, "event:assessment-1-replayed"));
   await Bun.sleep(300);
   await third.stop();
-  expect([(await executionsBy(db)).length, requests.length, sent]).toEqual([12, sent, 12]);
-  expect(await counts(db)).toMatchObject({ executions: 12, attempts: 12, answers: 12 });
+  expect([(await executionsBy(db)).length, requests.length, sent]).toEqual([16, sent, 16]);
+  expect(await counts(db)).toMatchObject({ executions: 16, attempts: 16, answers: 16 });
+}));
+
+for (const edit of ["wording", "targets"] as const) integration(`waiting subjects retain their collection plan across a ${edit} edit and process restart`, async () => withHarness(async (db, h, reader) => {
+  const before = (await configured()).filter((entry) => entry.id === "acceptance_entry.task_coverage");
+  const original = before[0]!;
+  const after: GradingDefinitions = [{ ...original, evidence: ["subject"],
+    ...(edit === "wording" ? { question: { ...original.question, text: "Reworded coverage question" } }
+      : { targets: original.targets.filter((target) => target.artifact === "plan") }) }];
+  const requests: string[] = [];
+  let service: Service | null = null;
+  try {
+    service = await h.start(before, recordingRunners(requests));
+    await h.send(service, launchOutcome(launch, "run-1", runConfig(true)));
+    await h.send(service, revisionOutcome({ revision_id: "plan-original", artifact_kind: "plan", body: { cohorts: [], risks: [] }, recorded_at: "2026-11-01T00:00:00Z" }));
+    await h.send(service, revisionOutcome({ revision_id: "brief-original", artifact_kind: "brief", recorded_at: "2026-11-01T00:00:02Z",
+      body: { cohort_id: "api", decisions_made: [], approaches_rejected: [], acceptance_criteria: [{ id: "T1", text: "Ship reads", decision_ids: [] }] } }));
+    const item = await itemAt(h, service, "brief-original", "/acceptance_criteria/0", "acceptance_entry");
+    const [pinned] = await settled(h, service, item, collected);
+    expect(pinned!.readiness).toMatchObject({ state: "not_ready", reason: { code: "task_unavailable" } });
+    const original_plan = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set").select("collection_plan")
+      .where("evidence_set_id", "=", pinned!.evidence_set_id).executeTakeFirstOrThrow());
+    expect(original_plan.collection_plan).toMatchObject({ question_version: pinned!.question_version, evidence: original.evidence });
+    await expect(withTenant(db, tenant, (trx) => sql`UPDATE observation.evidence_set SET collection_plan = NULL
+      WHERE evidence_set_id = ${pinned!.evidence_set_id}`.execute(trx))).rejects.toThrow("pin is immutable");
+    await service.stop(); service = null;
+
+    // A fresh process knows only the edited configuration, including a different evidence list.
+    service = await h.start(after, recordingRunners(requests));
+    reader.accessible = true;
+    await h.send(service, revisionOutcome({ revision_id: "tasks-original", artifact_kind: "tasks", recorded_at: "2026-11-01T00:00:01Z",
+      body: { tasks: [{ id: "T1", description: "Ship reads", requirement_ids: [] }] } }));
+    const [ready] = await settled(h, service, item, (sets) => sets.length === 1 && sets.every((set) => set.readiness.state === "ready"));
+    expect(ready).toMatchObject({ evidence_set_id: pinned!.evidence_set_id, question_version: pinned!.question_version,
+      pinned_evaluator_definition_ids: pinned!.pinned_evaluator_definition_ids });
+    expect(ready!.readiness.references?.map((ref) => (ref as { ref: string }).ref))
+      .toEqual(["subject", "spec", "spec_task", "plan", "contribution_context"]);
+    const completed = await until(() => executionsBy(db), (rows) => rows.length === 1 && rows[0]!.status === "completed");
+    expect(completed[0]!.evaluator_definition_id).toBe(pinsOf(before, original.id)[0]!);
+    expect(requests).toHaveLength(1);
+    const response = await fetch(`http://127.0.0.1:${service.port}/v1/items/${encodeURIComponent(item.occurrence_id)}/answers`, {
+      method: "POST", headers: { authorization: "Bearer grade-secret", "content-type": "application/json" },
+      body: JSON.stringify({ question_id: original.id, question_version: pinned!.question_version,
+        submission_id: `old-plan-${edit}`, answer: "fully_covers", task_id: null }),
+    });
+    expect(response.status).toBe(201);
+  } finally { await service?.stop(); }
 }));

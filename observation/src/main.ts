@@ -97,7 +97,7 @@ export async function startObservation(env: NodeJS.ProcessEnv = process.env, opt
   const graders = await readDefinitions(options.grading_definitions_file ?? GRADING_DEFINITIONS_FILE);
   const registration = graders.ok ? prepareGrading(graders.value, oakridgeGradingRegistry, env) : graders;
   if (!registration.ok) throw new Error(`observation cannot start: ${registration.error.kind}: ${registration.error.entity_id}: ${registration.error.detail}`);
-  const profile = oakridgeProfile(registration.value.questions);
+  const profile = oakridgeProfile(registration.value.questions, registration.value.collector);
   const controls = gradingControls(env);
   if (!controls.ok) throw new Error(`observation cannot start: invalid_controls: ${controls.error.entity_id}: ${controls.error.detail}`);
   const db = openDatabase(env.OBSERVATION_DATABASE_URL);
