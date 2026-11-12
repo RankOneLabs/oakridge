@@ -101,10 +101,10 @@ async function replaceCheck(db: Database, row: CheckRow, definition: string): Pr
 
 const totalChecks = (checks: ChecksByTable): number => Object.values(checks).reduce((total, predicates) => total + predicates.length, 0);
 
-integration("the fresh baseline has exactly the fifteen target tables and every target column", async () => scratchDatabase(async (db) => {
+integration("the fresh baseline has exactly the sixteen target tables and every target column", async () => scratchDatabase(async (db) => {
   const actual = await columnsOf(db);
   expect(sorted(Object.keys(actual))).toEqual(sorted(Object.keys(TARGET_TABLES)));
-  expect(Object.keys(actual)).toHaveLength(15);
+  expect(Object.keys(actual)).toHaveLength(16);
   for (const [table, spec] of Object.entries(TARGET_TABLES)) expect({ table, columns: actual[table] }).toEqual({ table, columns: [...spec.columns] });
 }));
 

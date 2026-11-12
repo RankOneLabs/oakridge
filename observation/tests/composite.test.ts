@@ -85,7 +85,7 @@ const answersIn = (stage: StageComposite): readonly (readonly [string, string, J
     count.answer.state === "answered" ? count.answer.value : count.answer.state, count.count] as const);
 const declare = (input: { readonly source: string; readonly path: string; readonly tasks: readonly string[]; readonly tasks_revision?: string; readonly run_id?: string }): SourceEventOutcome => {
   const run_id = input.run_id ?? "run-1";
-  return { format: "observation.source-event/v1", definition_id: "definition-1", artifact_schema_version: null, kind: "relation_declaration", event_kind: "analysis_links_declared", run_id,
+  return { format: "observation.source-event/v2", definition_id: "definition-1", artifact_schema_version: null, kind: "relation_declaration", event_kind: "analysis_links_declared", run_id,
     event_id: `declaration:${randomUUID()}`, declaration: { run_id, tasks_revision_id: input.tasks_revision ?? "tasks-1",
       entries: [{ source_revision_id: input.source, item_path: input.path, task_ids: [...input.tasks] }] } };
 };

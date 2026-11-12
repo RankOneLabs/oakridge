@@ -7,7 +7,7 @@ const outputPath = resolve(import.meta.dir, "../src/storage/db-types.ts");
 /** The target model's tables, named here so a baseline edit cannot silently change the set. */
 const TARGET_TABLES = ["schema_baseline", "source_revision", "extractor_definition", "logical_item", "item_occurrence",
   "item_relation", "extraction_issue", "question_definition", "evaluator_definition", "evidence_set",
-  "evaluation_execution", "grading_provider_attempt", "grade_observation", "source_event_cursor", "source_event_outcome"];
+  "evaluation_execution", "grading_provider_attempt", "grade_observation", "run_workflow_stage", "source_event_cursor", "source_event_outcome"];
 const tables = [...readFileSync(baselinePath, "utf8").matchAll(/CREATE TABLE observation\.(\w+) \(\n([\s\S]*?)\n\);/g)];
 const declared = tables.map(([, tableName]) => tableName);
 if (declared.join() !== TARGET_TABLES.join()) throw new Error(`baseline tables differ from the target: ${declared.join(", ")}`);

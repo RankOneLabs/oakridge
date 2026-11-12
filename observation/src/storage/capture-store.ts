@@ -13,6 +13,7 @@ export interface SourceRevisionRead {
   readonly namespace: string;
   readonly run_id: string;
   readonly unit_id: string;
+  readonly stage: string;
   readonly revision_id: string;
   readonly artifact_kind: string;
   readonly artifact_schema_version: string;
@@ -33,7 +34,7 @@ export type CaptureOutcome =
 function sourceRead(row: Selectable<ObservationSourceRevision>): SourceRevisionRead {
   const id = `${row.producer}:${row.namespace}:${row.revision_id}`;
   const prefix = `${row.producer}:${row.namespace}:`;
-  return { id, producer: row.producer, namespace: row.namespace, run_id: row.run_id, unit_id: row.unit_id,
+  return { id, producer: row.producer, namespace: row.namespace, run_id: row.run_id, unit_id: row.unit_id, stage: row.stage,
     revision_id: id, artifact_kind: row.artifact_kind, artifact_schema_version: row.artifact_schema_version,
     definition_id: row.definition_id,
     body: row.body, body_digest: row.body_digest,
@@ -53,11 +54,11 @@ export async function captureInTransaction(trx: DatabaseTransaction, delivery: C
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${producer}:${namespace}:revision:${revision_id}`}, 0))`.execute(trx);
   const existing = await trx.selectFrom("observation.source_revision").selectAll()
     .where("producer", "=", producer).where("namespace", "=", namespace).where("revision_id", "=", revision_id).executeTakeFirst();
-  if (existing?.body_digest === body_digest && existing.predecessor_id === predecessor_id && existing.subject_id === subject_id)
+  if (existing?.body_digest === body_digest && existing.predecessor_id === predecessor_id && existing.subject_id === subject_id && existing.stage === source.stage)
     return { kind: "identical" };
   if (existing) return { kind: "revision_identity_conflict", stored_digest: existing.body_digest, incoming_digest: body_digest };
   await trx.insertInto("observation.source_revision").values({ producer, namespace, revision_id,
-    run_id: source.run_id, unit_id: source.unit_id, artifact_kind: source.artifact_kind,
+    run_id: source.run_id, unit_id: source.unit_id, stage: source.stage, artifact_kind: source.artifact_kind,
     artifact_schema_version: source.artifact_schema_version, definition_id: source.definition_id, body: jsonText(body),
     body_digest, predecessor_id, subject_id, recorded_at: new Date(recorded_at) }).execute();
   return { kind: "captured" };
@@ -134,6 +135,12 @@ export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: 
       event_id: outcome.event_id, run_id: outcome.run_id, commit_txid: sql<number>`${delivery.cursor.commit_txid}::bigint`,
       event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: jsonText(outcome as unknown as JsonValue) })
       .onConflict((target) => target.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
+    if (outcome.kind === "run_input" && outcome.stages.length > 0) {
+      await trx.insertInto("observation.run_workflow_stage").values(outcome.stages.map((entry, position) => ({
+        producer: tenant.producer, namespace: tenant.namespace, run_id: outcome.run_id, position,
+        stage: entry.stage, artifact_kinds: [...entry.artifact_kinds],
+      }))).execute();
+    }
     await sql`UPDATE observation.source_event_cursor SET commit_txid = ${delivery.cursor.commit_txid}::bigint, event_id = ${delivery.cursor.id}
       WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx);
     return { status: 200, body: { cursor: delivery.cursor } };

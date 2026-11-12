@@ -26,12 +26,12 @@ interface SourceOptions {
   readonly linked?: readonly LinkedItem[];
   readonly assessment?: JsonValue;
 }
-const build: CapturedRevision = { revision_id: "build-1" as ArtifactRevisionId, artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } };
+const build: CapturedRevision = { revision_id: "build-1" as ArtifactRevisionId, stage: "implementation", artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } };
 function sources(options: SourceOptions = {}): CapturedSources & { readonly paths: readonly string[] } {
   const paths: string[] = [];
   return { paths, readRunInput: async () => options.input === undefined ? launch : options.input,
     readRevision: async (revision_id) => revision_id === "assessment-1"
-      ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: options.subject_id ?? null, body: options.assessment ?? { head_sha: HEAD } }
+      ? { revision_id: revision_id as ArtifactRevisionId, stage: "implementation", artifact_kind: "assessment", subject_id: options.subject_id ?? null, body: options.assessment ?? { head_sha: HEAD } }
       : revision_id === "build-1" ? options.build === undefined ? build : options.build : null,
     readRevisionAt: async () => null, readLogicalItemAt: async () => ({ revision_id: "tasks-1" as ArtifactRevisionId, item_path: "/tasks/0", item_kind: "task", selected_value: { id: "T7" } }), readLinkedItems: async () => options.linked ?? [],
     repository: { hasCommit: async (path) => path === (options.commit_in === undefined ? "/repos/oakridge" : options.commit_in),
@@ -162,7 +162,7 @@ integration("captured sources feed the collector within one run, and collection 
   const feed = createFeed(db, tenant, configuration);
   await feed.launch(launch);
   await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
-  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", subject_id: "build-1", body: await fixtureBody("assessment") });
+  await feed.revision({ revision_id: "assessment-1", stage: "implementation", artifact_kind: "assessment", subject_id: "build-1", body: await fixtureBody("assessment") });
   const page = await listRunItems(db, tenant, "run-1", { limit: 200, offset: 0 });
   const subject = page.items.find((item) => item.json_pointer === "/findings/1" && item.item_kind === "assessment_finding")!;
   const repository = { hasCommit: async () => true, readFile: async () => ({ state: "absent" as const }) };

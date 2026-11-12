@@ -23,7 +23,7 @@ const cohort = { id: "api", scope: "Organization API", decisions: [], acceptance
 const plan = { cohorts: [cohort], risks: [] };
 const brief = { cohort_id: "api", goal: "Organization reads", files_in_scope: ["api.ts"], decisions_made: [], approaches_rejected: [], acceptance_criteria: [contribution] };
 const revision = (id: string, artifact_kind: string, body: JsonValue): CapturedRevision =>
-  ({ revision_id: id as ArtifactRevisionId, artifact_kind, body, subject_id: null });
+  ({ revision_id: id as ArtifactRevisionId, stage: "implementation", artifact_kind, body, subject_id: null });
 const revisions = [revision("analysis-1", "analysis", analysis), revision("spec-1", "spec", "Approved specification with explicit Spec tasks"),
   revision("tasks-1", "tasks", tasks), revision("plan-1", "plan", plan), revision("brief-1", "brief", brief)];
 const repository = { hasCommit: async () => false, readFile: async () => ({ state: "absent" as const }) };

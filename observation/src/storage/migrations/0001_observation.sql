@@ -1,4 +1,5 @@
 -- Observation baseline. Apply only to an empty PostgreSQL 15+ database.
+-- Stage metadata changes this baseline in place; rollout requires an observation dump and reset.
 CREATE SCHEMA observation;
 
 CREATE TABLE observation.schema_baseline (
@@ -14,6 +15,7 @@ CREATE TABLE observation.source_revision (
   revision_id text NOT NULL,
   run_id text NOT NULL,
   unit_id text NOT NULL,
+  stage text NOT NULL CHECK (stage <> ''),
   artifact_kind text NOT NULL,
   artifact_schema_version text NOT NULL,
   definition_id text NOT NULL,
@@ -350,6 +352,19 @@ CREATE TABLE observation.grade_observation (
   CHECK (supersedes_observation_id IS NULL OR supersedes_observation_id <> observation_id)
 );
 
+-- Captured launch metadata follows the pinned definition's authored order.
+CREATE TABLE observation.run_workflow_stage (
+  producer text NOT NULL,
+  namespace text NOT NULL,
+  run_id text NOT NULL,
+  position integer NOT NULL CHECK (position >= 0),
+  stage text NOT NULL CHECK (stage <> ''),
+  artifact_kinds text[] NOT NULL,
+  PRIMARY KEY (producer, namespace, run_id, position),
+  UNIQUE (producer, namespace, run_id, stage),
+  CHECK (producer <> '' AND namespace <> '' AND run_id <> '')
+);
+
 -- Ordered source events: the cursor and each event's outcome commit together.
 CREATE TABLE observation.source_event_cursor (
   producer text NOT NULL,
@@ -379,7 +394,7 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY['source_revision', 'extractor_definition', 'logical_item', 'item_occurrence',
     'item_relation', 'extraction_issue', 'question_definition', 'evaluator_definition', 'evidence_set',
-    'evaluation_execution', 'grading_provider_attempt', 'grade_observation', 'source_event_cursor', 'source_event_outcome'] LOOP
+    'evaluation_execution', 'grading_provider_attempt', 'grade_observation', 'run_workflow_stage', 'source_event_cursor', 'source_event_outcome'] LOOP
     EXECUTE format('ALTER TABLE observation.%I ENABLE ROW LEVEL SECURITY', table_name);
     EXECUTE format('ALTER TABLE observation.%I FORCE ROW LEVEL SECURITY', table_name);
     EXECUTE format('CREATE POLICY %I ON observation.%I USING (producer = current_setting(''observation.producer'', true) AND namespace = current_setting(''observation.namespace'', true)) WITH CHECK (producer = current_setting(''observation.producer'', true) AND namespace = current_setting(''observation.namespace'', true))', table_name || '_tenant', table_name);
@@ -391,6 +406,8 @@ CREATE FUNCTION observation.reject_mutation() RETURNS trigger LANGUAGE plpgsql A
 BEGIN
   RAISE EXCEPTION '% is append-only', TG_TABLE_NAME;
 END $$;
+CREATE TRIGGER run_workflow_stage_append_only BEFORE UPDATE OR DELETE ON observation.run_workflow_stage
+  FOR EACH ROW EXECUTE FUNCTION observation.reject_mutation();
 CREATE TRIGGER source_revision_append_only BEFORE UPDATE OR DELETE ON observation.source_revision
   FOR EACH ROW EXECUTE FUNCTION observation.reject_mutation();
 CREATE TRIGGER item_occurrence_append_only BEFORE UPDATE OR DELETE ON observation.item_occurrence

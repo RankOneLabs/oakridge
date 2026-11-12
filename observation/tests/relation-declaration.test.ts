@@ -9,7 +9,7 @@ import { withTenant, type Database, type TenantScope } from "../src/storage/data
 import { listRunItems } from "../src/storage/projection-store";
 import { createFeed, fixtureBody, integration, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 
-const provenance = { format: "observation.source-event/v1", definition_id: "definition-1", artifact_schema_version: null } as const;
+const provenance = { format: "observation.source-event/v2", definition_id: "definition-1", artifact_schema_version: null } as const;
 const everything = { limit: 200, offset: 0 };
 interface EntryFields { readonly source_revision_id: string; readonly item_path: string; readonly task_ids: readonly string[] }
 let sequence = 0;
