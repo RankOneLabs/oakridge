@@ -10,7 +10,7 @@ export function SpecViewer({ body, source }: ViewerProps) {
       <summary className="cursor-pointer text-sm font-medium">Changes from original spec</summary>
       <div className="mt-3 overflow-x-auto rounded bg-[var(--bg-surface)] font-mono text-xs" aria-label="Spec diff">
         {specDiff(original, body).map((line, index) => <div key={index}
-          className={`whitespace-pre-wrap break-words px-2 ${line.kind === "added" ? "bg-green-500/15" : line.kind === "removed" ? "bg-red-500/15" : ""}`}>
+          className={`whitespace-pre-wrap break-words px-2 ${line.kind === "added" ? "bg-[var(--tone-success-bg)]" : line.kind === "removed" ? "bg-[var(--tone-danger-bg)]" : ""}`}>
           <span className="mr-2 select-none" aria-hidden="true">{line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " "}</span>{line.text || " "}
         </div>)}
       </div>

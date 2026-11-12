@@ -3,12 +3,12 @@ import type { ReactNode } from "react";
 export type ChipTone = "neutral" | "muted" | "info" | "success" | "warning" | "danger" | "accent";
 
 const TONE_CLASS: Record<ChipTone, string> = {
-  neutral: "border-[var(--tone-muted-border)] bg-[var(--tone-muted-bg)] text-[var(--text-secondary)]",
-  muted: "border-[var(--tone-muted-border)] bg-[var(--tone-muted-bg)] text-[var(--tone-muted-fg)]",
-  info: "border-[var(--tone-info-border)] bg-[var(--tone-info-bg)] text-[var(--tone-info-fg)]",
-  success: "border-[var(--tone-success-border)] bg-[var(--tone-success-bg)] text-[var(--tone-success-fg)]",
-  warning: "border-[var(--tone-warning-border)] bg-[var(--tone-warning-bg)] text-[var(--tone-warning-fg)]",
-  danger: "border-[var(--tone-danger-border)] bg-[var(--tone-danger-bg)] text-[var(--tone-danger-fg)]",
+  neutral: "border-[var(--badge-muted-border)] bg-[var(--badge-muted-bg)] text-[var(--badge-muted-fg)]",
+  muted: "border-[var(--badge-muted-border)] bg-[var(--badge-muted-bg)] text-[var(--badge-muted-fg)]",
+  info: "border-[var(--badge-info-border)] bg-[var(--badge-info-bg)] text-[var(--badge-info-fg)]",
+  success: "border-[var(--badge-success-border)] bg-[var(--badge-success-bg)] text-[var(--badge-success-fg)]",
+  warning: "border-[var(--badge-warning-border)] bg-[var(--badge-warning-bg)] text-[var(--badge-warning-fg)]",
+  danger: "border-[var(--badge-danger-border)] bg-[var(--badge-danger-bg)] text-[var(--badge-danger-fg)]",
   accent: "border-[var(--accent-primary)] bg-[var(--accent-muted)] text-[var(--accent-primary)]",
 };
 

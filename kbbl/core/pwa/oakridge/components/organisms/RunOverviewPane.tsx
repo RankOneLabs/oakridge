@@ -32,7 +32,7 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
       <section className="flex flex-wrap items-center gap-2">
         <Button variant="secondary" size="xsmall" className="text-xs!" type="button" onClick={() => onOpenPane(GRADING_PANE)} data-testid="or-overview-open-grading">Grading</Button>
         <StatusBadge status={overview.status} testId="or-overview-status" />
-        {overview.is_stuck && <span className="text-xs text-red-500">stuck</span>}
+        {overview.is_stuck && <span className="text-xs text-[var(--tone-danger-fg)]">stuck</span>}
         <span className="text-xs text-[var(--text-muted)]" data-testid="or-overview-progress">
           {overview.stage_progress.complete} of {overview.stage_progress.total} stages complete
           {overview.stage_progress.parked > 0 && ` · ${overview.stage_progress.parked} parked`}
