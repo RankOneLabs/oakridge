@@ -1,11 +1,13 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import type { LogicalItemId, QuestionId } from "../domain/identity";
+import type { QuestionKey } from "../grading/question";
 import { EVIDENCE_WINDOWS, QUESTION_STATUS_WINDOWS } from "../grading/item-reads";
 import { readItemAnswers, readItemAt, readItemEvidence, readItemStatus } from "../storage/grading-record-store";
 import { listRunItems, readItem, readLineage, type Page } from "../storage/projection-store";
 import { readOccurrenceEvidence } from "../storage/captured-evidence-store";
 import type { ItemOccurrenceId } from "../domain/identity";
 import type { SourceDependencies } from "./sources";
+import type { TenantScope } from "../storage/database";
 import { errorResponse } from "./errors";
 import { credentialFor } from "./ingest-auth";
 
@@ -31,9 +33,22 @@ export function listWindows<Name extends string>(url: string, names: readonly Na
 }
 const INVALID = "limit must be 1..200 and offset nonnegative, for the list and for each nested list";
 
+/** The subject an answers or evidence read asks for: one occurrence, optionally narrowed to a question and a task. */
+interface SubjectRequest {
+  readonly occurrence_id: string;
+  readonly question_id: string | undefined;
+  readonly question_version: string | undefined;
+  readonly task_id: string | undefined;
+}
+const subjectRequestOf = (occurrence_id: string, c: Context): SubjectRequest => ({ occurrence_id,
+  question_id: c.req.query("question_id"), question_version: c.req.query("question_version"), task_id: c.req.query("task_id") });
+
+const questionKeyOf = ({ question_id, question_version }: SubjectRequest): QuestionKey | null =>
+  question_id && question_version ? { question_id: question_id as QuestionId, question_version } : null;
+
 /** With a question filter, callers must address exactly the declared task scope. */
-async function taskFilterProblem(deps: SourceDependencies, tenant: import("../storage/database").TenantScope,
-  occurrence_id: string, question_id: string | undefined, question_version: string | undefined, task_id: string | undefined): Promise<string | null> {
+async function taskFilterProblem(deps: SourceDependencies, tenant: TenantScope,
+  { occurrence_id, question_id, question_version, task_id }: SubjectRequest): Promise<string | null> {
   if ((question_id === undefined) !== (question_version === undefined)) return "question_id and question_version go together";
   if (!question_id || !question_version) return null;
   const subjects = (await readOccurrenceEvidence(deps.db, tenant, occurrence_id as ItemOccurrenceId))
@@ -89,11 +104,11 @@ export function registerItemRoutes(app: Hono, deps: SourceDependencies): void {
     if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
     const page = pagination(c.req.url);
     if (!page) return errorResponse(c, 400, "invalid_pagination", INVALID);
-    const question_id = c.req.query("question_id"), question_version = c.req.query("question_version");
-    const problem = await taskFilterProblem(deps, credential, c.req.param("id"), question_id, question_version, c.req.query("task_id"));
+    const subject = subjectRequestOf(c.req.param("id"), c);
+    const problem = await taskFilterProblem(deps, credential, subject);
     if (problem) return errorResponse(c, 400, "invalid_question", problem);
-    const answers = await readItemAnswers(deps.db, credential, c.req.param("id"), { page, task_id: c.req.query("task_id") as LogicalItemId | undefined, reviewer_id: c.req.query("reviewer_id") ?? null,
-      question: question_id && question_version ? { question_id: question_id as QuestionId, question_version } : null });
+    const answers = await readItemAnswers(deps.db, credential, subject.occurrence_id, { page, task_id: subject.task_id as LogicalItemId | undefined, reviewer_id: c.req.query("reviewer_id") ?? null,
+      question: questionKeyOf(subject) });
     return answers ? c.json(answers) : errorResponse(c, 404, "not_found", "item not found");
   });
   /** Each question pinned to an item at capture: its version, evaluator set and own readiness. */
@@ -103,12 +118,11 @@ export function registerItemRoutes(app: Hono, deps: SourceDependencies): void {
     const page = pagination(c.req.url);
     const windows = listWindows(c.req.url, EVIDENCE_WINDOWS);
     if (!page || !windows) return errorResponse(c, 400, "invalid_pagination", INVALID);
-    const question_id = c.req.query("question_id"), question_version = c.req.query("question_version");
-    const problem = await taskFilterProblem(deps, credential, c.req.param("id"), question_id, question_version, c.req.query("task_id"));
+    const subject = subjectRequestOf(c.req.param("id"), c);
+    const problem = await taskFilterProblem(deps, credential, subject);
     if (problem) return errorResponse(c, 400, "invalid_question", problem);
-    const evidence = await readItemEvidence(deps.db, credential, c.req.param("id"), page, windows,
-      { task_id: c.req.query("task_id") as LogicalItemId | undefined,
-        question: question_id && question_version ? { question_id: question_id as QuestionId, question_version } : null });
+    const evidence = await readItemEvidence(deps.db, credential, subject.occurrence_id, page, windows,
+      { task_id: subject.task_id as LogicalItemId | undefined, question: questionKeyOf(subject) });
     return evidence ? c.json(evidence) : errorResponse(c, 404, "not_found", "item not found");
   });
   app.get("/v1/items/:id", async (c) => {

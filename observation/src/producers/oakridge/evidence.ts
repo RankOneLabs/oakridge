@@ -4,6 +4,7 @@ import type { EvidenceReference, LineRange, NotReadyReason, RepositoryEvidence }
 import type { SubjectQuestion } from "../../grading/evidence";
 import type { CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, SourceArtifact } from "../../ports/artifact-source";
 import type { EvidenceCollector } from "../../ports/producer-profile";
+import type { SupportedQuestion } from "../../grading/configuration";
 export const RELEVANCE_ID = "finding.relevance" as QuestionId;
 export const CORRECTNESS_ID = "assessment_finding.correctness" as QuestionId;
 export const EVIDENCE_SUPPORT_ID = "assessment_finding.evidence_support" as QuestionId;
@@ -213,15 +214,24 @@ async function coverage(artifact: SourceArtifact, sources: CapturedSources): Pro
 }
 
 type QuestionEvidenceRule = (artifact: SourceArtifact, sources: CapturedSources, task_id: LogicalItemId | null) => Promise<EvidenceCollection>;
-/** The same registry drives collection and startup validation of supported question ids. */
-const questionCollectors: ReadonlyMap<QuestionId, QuestionEvidenceRule> = new Map([
-  [RELEVANCE_ID, relevance],
-  [CORRECTNESS_ID, correctness],
-  [EVIDENCE_SUPPORT_ID, evidenceSupport],
-  [TASK_COVERAGE_ID, coverage],
-  [CONTRIBUTION_COVERAGE_ID, coverage],
-]);
-export const OAKRIDGE_EVIDENCE_QUESTION_IDS: readonly QuestionId[] = [...questionCollectors.keys()];
+interface QuestionCollector extends SupportedQuestion { readonly collect: QuestionEvidenceRule }
+/** The same registry drives collection and startup validation: each rule reads exactly this target and
+ * gathers exactly this evidence, so a definition asking for anything else is refused at load. */
+const QUESTION_COLLECTORS: readonly QuestionCollector[] = [
+  { question_id: RELEVANCE_ID, artifact: "analysis", selector: "/findings/*", scope: "per_item",
+    evidence: ["subject", "spec"], collect: relevance },
+  { question_id: CORRECTNESS_ID, artifact: "assessment", selector: "/findings/*", scope: "per_task",
+    evidence: ["subject", "build_result", "citation", "test_evidence", "task_context"], collect: correctness },
+  { question_id: EVIDENCE_SUPPORT_ID, artifact: "assessment", selector: "/findings/*", scope: "per_task",
+    evidence: ["subject", "citation", "test_evidence", "task_context"], collect: evidenceSupport },
+  { question_id: TASK_COVERAGE_ID, artifact: "tasks", selector: "/tasks/*", scope: "per_item",
+    evidence: ["subject", "spec", "spec_task", "requirement"], collect: coverage },
+  { question_id: CONTRIBUTION_COVERAGE_ID, artifact: "plan", selector: "/cohorts/*/acceptance_criteria/*", scope: "per_item",
+    evidence: ["subject", "spec", "spec_task", "requirement", "plan", "contribution_context"], collect: coverage },
+];
+const questionCollectors: ReadonlyMap<QuestionId, QuestionEvidenceRule> = new Map(QUESTION_COLLECTORS.map((entry) => [entry.question_id, entry.collect]));
+export const OAKRIDGE_SUPPORTED_QUESTIONS: readonly SupportedQuestion[] =
+  QUESTION_COLLECTORS.map(({ question_id, artifact, selector, scope, evidence }) => ({ question_id, artifact, selector, scope, evidence }));
 
 /** Each question is collected on its own, so one waiting lookup never delays another question. */
 export const oakridgeEvidence: EvidenceCollector = {

@@ -23,11 +23,21 @@ export interface RegisteredSelector {
   readonly item_selector: string;
   readonly item_kind: string;
 }
+/** One question the producer's evidence collector serves, with the only target and evidence it honours.
+ * Capture matches by item kind and collection is fixed per question, so any other setting would load
+ * and then be silently ignored; the loader refuses it instead. */
+export interface SupportedQuestion {
+  readonly question_id: QuestionId;
+  readonly artifact: string;
+  readonly selector: string;
+  readonly scope: "per_item" | "per_task";
+  readonly evidence: readonly string[];
+}
 export interface GradingRegistry {
   readonly selectors: readonly RegisteredSelector[];
   readonly evidence_sources: readonly string[];
-  /** Question ids served by the producer's evidence collector. */
-  readonly evidence_question_ids: readonly QuestionId[];
+  /** Questions served by the producer's evidence collector. */
+  readonly questions: readonly SupportedQuestion[];
 }
 
 const targetFields = { artifact: z.string().min(1), selector: z.string().startsWith("/") };
@@ -65,7 +75,7 @@ export const machineGraders = (definition: GradingDefinition): readonly GraderEn
 export interface EvaluatorCostMetadata { readonly estimated_cost_per_call: number }
 
 export type GraderConfigurationErrorKind = "invalid_definitions" | "duplicate_definition" | "unknown_evidence" | "unknown_selector"
-  | "unknown_question" | "invalid_task_ids" | "duplicate_grader" | "unknown_runner" | "invalid_instructions" | "invalid_definition";
+  | "unknown_question" | "unsupported_target" | "unsupported_evidence" | "invalid_task_ids" | "duplicate_grader" | "unknown_runner" | "invalid_instructions" | "invalid_definition";
 export interface GraderConfigurationError {
   readonly operation: "grader_configuration";
   readonly kind: GraderConfigurationErrorKind;
@@ -187,7 +197,21 @@ function pinQuestion({ question, graders, human, target }: QuestionSelection): R
       evaluator_definition_id: evaluator.evaluator_definition_id as EvaluatorDefinitionId })) });
 }
 
-/** Derive the questions and their pins. Scope is declared and validated here; capture still pins by item kind. */
+const isSameEvidence = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && [...left].sort().join("\n") === [...right].sort().join("\n");
+
+/** A registered target or evidence list that this question's collector would not honour. */
+function unsupportedSetting(definition: GradingDefinition, supported: SupportedQuestion): Result<never, GraderConfigurationError> | null {
+  const { artifact, selector, scope } = definition.target;
+  if (artifact !== supported.artifact || selector !== supported.selector || scope !== supported.scope)
+    return failure("unsupported_target", definition.id,
+      `target: the collector for this question reads only ${supported.artifact} ${supported.selector} ${supported.scope}`);
+  if (!isSameEvidence(definition.evidence, supported.evidence))
+    return failure("unsupported_evidence", definition.id, `evidence: the collector for this question gathers exactly ${supported.evidence.join(", ")}`);
+  return null;
+}
+
+/** Derive the questions and their pins. Target and evidence must be exactly what the collector honours, because capture pins by item kind. */
 export function planRegistration(configuration: GradingDefinitions, registry: GradingRegistry)
   : Result<GradingRegistration, GraderConfigurationError> {
   const human = humanEvaluator();
@@ -198,13 +222,15 @@ export function planRegistration(configuration: GradingDefinitions, registry: Gr
   for (const definition of configuration) {
     if (ids.has(definition.id)) return failure("duplicate_definition", definition.id, "a definition is configured twice");
     ids.add(definition.id);
-    if (!registry.evidence_question_ids.some((question_id) => question_id === definition.id))
-      return failure("unknown_question", definition.id, "id: no evidence collector is registered for this question");
+    const supported = registry.questions.find((question) => question.question_id === definition.id);
+    if (!supported) return failure("unknown_question", definition.id, "id: no evidence collector is registered for this question");
     const selector = registry.selectors.find((entry) => entry.artifact_kind === definition.target.artifact
       && entry.item_selector === definition.target.selector);
     if (!selector) return failure("unknown_selector", definition.id, `target.selector: ${definition.target.artifact} ${definition.target.selector} is not registered`);
     const unknownEvidence = definition.evidence.find((name) => !registry.evidence_sources.includes(name));
     if (unknownEvidence) return failure("unknown_evidence", definition.id, `evidence: ${unknownEvidence} is not registered`);
+    const unsupported = unsupportedSetting(definition, supported);
+    if (unsupported) return unsupported;
     if (definition.evaluators.filter((entry) => entry.runner === "human").length > 1)
       return failure("duplicate_grader", `${definition.id}:human`, "the same grader is configured twice");
     const question = questionDefinition(definition, selector.item_kind);

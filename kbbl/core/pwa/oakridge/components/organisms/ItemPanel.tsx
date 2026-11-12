@@ -17,7 +17,7 @@ import { ListPager } from "../molecules/ListPager";
 import { StructuredValue } from "../molecules/StructuredValue";
 import { YourGrade } from "./YourGrade";
 
-const QUESTIONS: ObservationPageRequest = { limit: 200, offset: 0 };
+const FIRST_QUESTIONS: ObservationPageRequest = { limit: 200, offset: 0 };
 const FIRST_LINEAGE: ObservationPageRequest = { limit: 20, offset: 0 };
 
 interface Props {
@@ -47,10 +47,12 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
   const occurrenceId = address.data?.occurrence_id ?? null;
   const [windows, setWindows] = useState<WindowQuery>({});
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [questionsPage, setQuestionsPage] = useState(FIRST_QUESTIONS);
   const [lineagePage, setLineagePage] = useState(FIRST_LINEAGE);
-  const status = useItemStatus(occurrenceId === null ? null : { occurrence_id: occurrenceId, task_id: selection.task_id, top: QUESTIONS, nested: windows });
+  const status = useItemStatus(occurrenceId === null ? null : { occurrence_id: occurrenceId, task_id: selection.task_id, top: questionsPage, nested: windows });
   const lineage = useItemLineage(occurrenceId, lineagePage, selection.task_id);
   const setWindow = (name: string, window: ObservationPageRequest) => setWindows((current) => ({ ...current, [name]: window }));
+  const showQuestions = (window: ObservationPageRequest) => { setQuestionsPage(window); setSelectedIndex(0); setWindows({}); };
 
   if (address.isError) return <Unavailable error={address.error} />;
   if (status.isError) return <Unavailable error={status.error} />;
@@ -86,6 +88,7 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
       </header>
 
       {questions.total === 0 ? <p className="m-0 text-sm text-[var(--text-muted)]" data-testid="or-item-no-questions">No question was pinned to this item.</p> : (
+        <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Questions">
           {questions.items.map((candidate, index) => (
             <Button key={candidate.evidence.evidence_set_id} variant={question?.evidence.evidence_set_id === candidate.evidence.evidence_set_id ? "primary" : "secondary"} size="xsmall" className="text-xs!"
@@ -94,6 +97,8 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
               {questionLabel(candidate.question)}{candidate.task_id !== null && ` · ${selectQuestionTaskLabel(candidate.task_id, links.items)}`}{candidate.human.state === "not_ready" ? " (not ready)" : ""}
             </Button>
           ))}
+        </div>
+        <ListPager name="questions" page={questions} onWindow={showQuestions} />
         </div>
       )}
 

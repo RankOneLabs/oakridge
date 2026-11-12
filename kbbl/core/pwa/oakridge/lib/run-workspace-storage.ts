@@ -12,7 +12,7 @@
 // per-operator persistence surface to hang it on.
 
 import type { ArtifactId, Sid } from "../../lib/ids";
-import { artifactRevisionIdOf } from "./grading-ids";
+import { artifactRevisionIdOf, logicalItemIdOf } from "./grading-ids";
 import {
   DEFAULT_RUN_WORKSPACE_STATE,
   GRADING_PANE,
@@ -53,7 +53,12 @@ const parseStoredPane = (value: unknown): RunWorkspacePane | null => {
       if (!isRecord(value.selection)) return null;
       const source_revision_id = nonEmptyString(value.selection.source_revision_id);
       const item_path = nonEmptyString(value.selection.item_path);
-      return source_revision_id === null || item_path === null ? null : { kind: "item", selection: { source_revision_id: artifactRevisionIdOf(source_revision_id), item_path } };
+      if (source_revision_id === null || item_path === null) return null;
+      const selection = { source_revision_id: artifactRevisionIdOf(source_revision_id), item_path };
+      if (!("task_id" in value.selection)) return { kind: "item", selection };
+      if (value.selection.task_id === null) return { kind: "item", selection: { ...selection, task_id: null } };
+      const task_id = nonEmptyString(value.selection.task_id);
+      return task_id === null ? null : { kind: "item", selection: { ...selection, task_id: logicalItemIdOf(task_id) } };
     }
     case "task": {
       const taskId = nonEmptyString(value.task_id);

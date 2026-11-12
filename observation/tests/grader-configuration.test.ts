@@ -3,7 +3,7 @@ import { canonicalDigest } from "canonical-json";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { QuestionId } from "../src/domain/identity";
-import { machineGraders, parseGradingDefinitions, planRegistration, selectedRunners,
+import { machineGraders, parseGradingDefinitions, planRegistration, questionDefinition, selectedRunners,
   type GradingDefinition, type GradingDefinitions } from "../src/grading/configuration";
 import { runnerRegistry } from "../src/grading/runner";
 import { prepareGrading } from "../src/main";
@@ -58,6 +58,10 @@ const refusals: readonly Refusal[] = [
   { name: "unknown evidence source", kind: "unknown_evidence", field: "evidence", edit: (d) => ({ ...d, evidence: ["invented"] }) },
   { name: "unknown selector", kind: "unknown_selector", field: "target.selector", edit: (d) => ({ ...d, target: { ...d.target, selector: "/absent/*" } }) },
   { name: "selector registered for a different artifact", kind: "unknown_selector", edit: (d) => ({ ...d, target: { ...d.target, artifact: "brief" } }) },
+  { name: "a registered selector its collector does not read", kind: "unsupported_target", field: "target", edit: (d) => ({ ...d, target: { ...d.target, artifact: "analysis", selector: "/risks/*" } }) },
+  { name: "a scope its collector does not serve", kind: "unsupported_target", field: "target", edit: (d) => ({ ...d, target: { ...d.target, scope: "per_task", task_ids: "/task_ids" } }) },
+  { name: "evidence its collector does not gather", kind: "unsupported_evidence", field: "evidence", edit: (d) => ({ ...d, evidence: [...d.evidence, "plan"] }) },
+  { name: "evidence its collector would still gather", kind: "unsupported_evidence", field: "evidence", edit: (d) => ({ ...d, evidence: ["subject"] }) },
   { name: "task_ids on per_item", kind: "invalid_task_ids", field: "target.task_ids", edit: (d) => ({ ...d, target: { ...d.target, task_ids: "/task_ids" } }) },
   { name: "missing per_task task_ids", kind: "invalid_task_ids", field: "target.task_ids", edit: (d) => ({ ...d, target: { ...d.target, scope: "per_task" } }) },
   { name: "non-pointer task_ids", kind: "invalid_task_ids", field: "target.task_ids", edit: (d) => ({ ...d, target: { ...d.target, scope: "per_task", task_ids: "task_ids" } }) },
@@ -83,7 +87,8 @@ test("registration refuses an unknown question id even without parsing first", a
 test("supported question ids come from the injected producer registry", async () => {
   const [definition] = await committedDefinitions();
   const question_id = "another_producer.relevance" as QuestionId;
-  const registry = { ...oakridgeGradingRegistry, evidence_question_ids: [question_id] };
+  const registry = { ...oakridgeGradingRegistry, questions: oakridgeGradingRegistry.questions
+    .filter((question) => question.question_id === definition!.id).map((question) => ({ ...question, question_id })) };
   const result = parseGradingDefinitions([{ ...definition!, id: question_id }], registry);
   expect(result.ok).toBe(true);
   expect(parseGradingDefinitions([definition], registry))
@@ -102,10 +107,28 @@ test("System One criteria must name exactly the question's answers", async () =>
     .toMatchObject({ ok: false, error: { kind: "invalid_instructions", detail: expect.stringContaining("criteria must name exactly") } });
 });
 
+test("an acceptance-entry question retargeted to the brief is refused, not graded on both", async () => {
+  const definitions = await committedDefinitions();
+  const edited = definitions.map((d) => d.id === "acceptance_entry.task_coverage" ? { ...d, target: { ...d.target, artifact: "brief", selector: "/acceptance_criteria/*" } } : d);
+  expect(parse(edited)).toMatchObject({ ok: false, error: { kind: "unsupported_target", entity_id: "acceptance_entry.task_coverage" } });
+});
+
+test("assessment questions cannot be scoped per item, where their task context never exists", async () => {
+  const definitions = await committedDefinitions();
+  for (const id of ["assessment_finding.correctness", "assessment_finding.evidence_support"]) {
+    const edited = definitions.map((d) => d.id === id ? { ...d, target: { artifact: d.target.artifact, selector: d.target.selector, scope: "per_item" as const } } : d);
+    expect(parse(edited)).toMatchObject({ ok: false, error: { kind: "unsupported_target", entity_id: id } });
+  }
+});
+
 test("question versions digest only the question block and complete target", async () => {
   const definitions = await committedDefinitions();
   const first = definitions[0]!;
-  const version = (definition: GradingDefinition) => plan([{ ...definition, evaluators: [] }]).questions[0]!.question_version;
+  const version = (definition: GradingDefinition) => {
+    const question = questionDefinition(definition, "finding");
+    if (!question.ok) throw new Error(JSON.stringify(question.error));
+    return question.value.question_version;
+  };
   const original = version(first);
   const digest = canonicalDigest({ question: first.question, target: first.target });
   if (!digest.ok) throw new Error(digest.error.detail);
@@ -118,7 +141,8 @@ test("question versions digest only the question block and complete target", asy
   ]) expect(version(edited)).not.toBe(original);
   const perTask: GradingDefinition = { ...first, target: { ...first.target, scope: "per_task", task_ids: "/task_ids" } };
   expect(version({ ...perTask, target: { ...perTask.target, scope: "per_task", task_ids: "/other_ids" } })).not.toBe(version(perTask));
-  const edited = definitions.map((d) => ({ ...d, evidence: ["subject"], evaluators: machineGraders(d).map((g) => ({ ...g, model: `${g.model}-next` })) }));
+  expect(version({ ...first, evidence: ["subject"] })).toBe(original);
+  const edited = definitions.map((d) => ({ ...d, evaluators: machineGraders(d).map((g) => ({ ...g, model: `${g.model}-next` })) }));
   expect(plan(edited).questions).toEqual(plan(definitions).questions);
   expect(plan(edited).evaluators).not.toEqual(plan(definitions).evaluators);
 });

@@ -19,7 +19,8 @@ import { TaskStageComposites } from "./TaskStageComposites";
 import { ItemGradeAction } from "./ItemGradeAction";
 
 const FIRST: ObservationPageRequest = { limit: 50, offset: 0 };
-const QUESTIONS: ObservationPageRequest = { limit: 200, offset: 0 };
+/** One subject answers whether the task has any: the read is filtered to the task server-side. */
+const TASK_SUBJECT: ObservationPageRequest = { limit: 1, offset: 0 };
 
 interface Props {
   runId: string;
@@ -33,9 +34,9 @@ interface ContributionGradeProps {
   onOpenItem: (selection: ObservationItemAddress) => void;
 }
 
-/** Read subjects once without a task filter so per-item questions remain available to the selector. */
+/** Ask observation for this task's own subjects, so a subject is never treated as absent just because it fell outside a page. */
 function ContributionGradeButton({ occurrenceId, selection, onOpenItem }: ContributionGradeProps) {
-  const status = useItemStatus({ occurrence_id: occurrenceId, top: QUESTIONS, nested: {} }, { refetchInterval: false });
+  const status = useItemStatus({ occurrence_id: occurrenceId, task_id: selection.task_id, top: TASK_SUBJECT, nested: {} }, { refetchInterval: false });
   const address = status.isPending ? null : selectTaskContributionSelection(selection, status.data?.questions.items);
   return <GradeItemButton selection={address} onOpenItem={onOpenItem} />;
 }

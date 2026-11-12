@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { id } from "../__fixtures__/grading";
 
 import type { ArtifactId, Sid } from "../../lib/ids";
+import type { ObservationLogicalItemId } from "../grading-contracts/domain/identity";
 import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
 import { DEFAULT_RUN_WORKSPACE_STATE, LIST_PANE, OVERVIEW_PANE } from "./run-workspace";
 import {
@@ -180,12 +181,21 @@ describe("the grading panes", () => {
     writeStoredRunWorkspace("run-g", { primary: { kind: "grading" }, secondary: { kind: "item", selection } });
     expect(readStoredRunWorkspace("run-g")).toEqual({ primary: { kind: "grading" }, secondary: { kind: "item", selection } });
   });
+  it("restores an item's selected task with its revision and path", () => {
+    const task_selection: ObservationItemAddress = { ...selection, task_id: "T7" as ObservationLogicalItemId };
+    writeStoredRunWorkspace("run-g", { primary: { kind: "grading" }, secondary: { kind: "item", selection: task_selection } });
+    expect(readStoredRunWorkspace("run-g").secondary).toEqual({ kind: "item", selection: task_selection });
+  });
+  it("restores an item explicitly addressed without a task", () => {
+    writeStoredRunWorkspace("run-g", { primary: { kind: "item", selection: { ...selection, task_id: null } }, secondary: null });
+    expect(readStoredRunWorkspace("run-g").primary).toEqual({ kind: "item", selection: { ...selection, task_id: null } });
+  });
   it("restores a task pane by its id", () => {
     writeStoredRunWorkspace("run-g", { primary: { kind: "task", task_id: "T1" }, secondary: null });
     expect(readStoredRunWorkspace("run-g").primary).toEqual({ kind: "task", task_id: "T1" });
   });
   it("refuses a selection addressed any other way, including a stored criterion or cohort", () => {
-    for (const stored of [{ kind: "item", selection: { criterion_id: "c1" } }, { kind: "item", selection: { source_revision_id: id("r") } }, { kind: "item", selection: { item_path: "/findings/0", cohort: "a" } }, { kind: "item" }, { kind: "task" }]) {
+    for (const stored of [{ kind: "item", selection: { criterion_id: "c1" } }, { kind: "item", selection: { source_revision_id: id("r") } }, { kind: "item", selection: { item_path: "/findings/0", cohort: "a" } }, { kind: "item" }, { kind: "task" }, { kind: "item", selection: { ...selection, task_id: "" } }, { kind: "item", selection: { ...selection, task_id: 7 } }]) {
       store({ primary: stored, secondary: null });
       expect(readStoredRunWorkspace("run-g").primary).toEqual({ kind: "overview" });
     }

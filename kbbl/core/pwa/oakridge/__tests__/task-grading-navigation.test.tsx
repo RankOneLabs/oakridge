@@ -5,7 +5,7 @@ import { acknowledged, ANALYSIS, correctnessQuestion, id, IMPLEMENTATION, item, 
 import { CompositeDrilldown } from "../components/organisms/CompositeDrilldown";
 import { ItemPanel } from "../components/organisms/ItemPanel";
 import { TaskPanel } from "../components/organisms/TaskPanel";
-import type { ObservationLogicalItemId } from "../grading-contracts/domain/identity";
+import type { ObservationEvidenceSetId, ObservationLogicalItemId } from "../grading-contracts/domain/identity";
 import type { ObservationLineageEntry } from "../grading-contracts/grading/composite";
 import type { ObservationDrilldownRowRead, ObservationItemAddress } from "../grading-contracts/grading/item-reads";
 import type { ObservationQuestionStatusResponse } from "../grading-contracts/storage/grading-record-store";
@@ -26,11 +26,14 @@ function navigationReads() {
     const url = new URL(String(input), "http://kbbl.test");
     if (url.pathname.endsWith("/tasks/T1/lineage")) return json({ ...paged([contribution]), run_id: id("run-1"), producer_local_id: "T1", is_captured: true });
     if (url.pathname.endsWith("/drilldown")) return json(paged([row]));
-    // Match observation's exact subject filter so a task filter cannot accidentally expose relevance.
+    // Match observation's exact subject filter and question window, so a task filter cannot accidentally
+    // expose relevance and a subject outside the window is not read.
     if (url.pathname.endsWith("/status")) {
       world.paths.push(url.pathname + url.search);
-      return json({ ...world.status, questions: paged(world.status.questions.items.filter((question) =>
-        !url.searchParams.has("task_id") || question.task_id === url.searchParams.get("task_id"))) });
+      const subjects = world.status.questions.items.filter((question) =>
+        !url.searchParams.has("task_id") || question.task_id === url.searchParams.get("task_id"));
+      const limit = Number(url.searchParams.get("limit") ?? "50"), offset = Number(url.searchParams.get("offset") ?? "0");
+      return json({ ...world.status, questions: paged(subjects.slice(offset, offset + limit), subjects.length, limit, offset) });
     }
     return boundary(input, init);
   });
@@ -78,6 +81,7 @@ it.each<EntryPoint>(["task panel", "composite drilldown"])("an analysis finding 
   const selection = open.mock.calls[0]?.[0];
   if (!selection) throw new Error("the finding did not open");
   cleanup();
+  world.paths.length = 0;
   wrap(<ItemPanel runId="run-1" selection={selection} onOpenTask={vi.fn()} />);
   expect((await screen.findByTestId("or-item-question")).textContent).toBe("Relevance");
   fireEvent.click(await screen.findByRole("radio", { name: "relevant" }));
@@ -102,6 +106,36 @@ it.each<{ source: EntryPoint; item_kind: string }>([
   wrap(entryPoint(source, open));
   fireEvent.click(await screen.findByTestId("or-grade-item"));
   expect(open).toHaveBeenCalledWith({ ...IMPLEMENTATION, task_id });
+});
+
+it("the task panel keeps the enclosing task's subject when other tasks' subjects fill a whole question page", async () => {
+  const others = Array.from({ length: 250 }, (_, index) => {
+    const other = id<ObservationLogicalItemId>(`other-${index}`);
+    const question = supportQuestion({ task_id: other });
+    return { ...question, evidence: { ...question.evidence, task_id: other, evidence_set_id: id<ObservationEvidenceSetId>(`other-${index}-support`) } };
+  });
+  const own = supportQuestion({ task_id });
+  world.status = itemStatus([...others, { ...own, evidence: { ...own.evidence, task_id } }]);
+  navigationReads();
+  const open = vi.fn();
+  wrap(entryPoint("task panel", open));
+  fireEvent.click(await screen.findByTestId("or-grade-item"));
+  expect(open).toHaveBeenCalledWith({ ...IMPLEMENTATION, task_id });
+});
+
+it("an unfiltered item pages past its first 200 question subjects", async () => {
+  world.status = itemStatus(Array.from({ length: 201 }, (_, index) => {
+    const subject = id<ObservationLogicalItemId>(`task-${index}`);
+    const question = supportQuestion({ task_id: subject });
+    return { ...question, evidence: { ...question.evidence, task_id: subject, evidence_set_id: id<ObservationEvidenceSetId>(`task-${index}-support`) } };
+  }));
+  navigationReads();
+  wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={vi.fn()} />);
+  expect(await screen.findAllByRole("tab")).toHaveLength(200);
+  fireEvent.click(screen.getByTestId("or-pager-questions-next"));
+  await screen.findByText("201–201 of 201");
+  expect(screen.getAllByRole("tab")).toHaveLength(1);
+  expect(screen.getByRole("tab").getAttribute("aria-selected")).toBe("true");
 });
 
 it("an assessment finding with no pinned subject for the enclosing task opens without a task filter", async () => {
