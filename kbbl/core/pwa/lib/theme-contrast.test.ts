@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -17,7 +17,7 @@ const TEXT_TIERS = ["text-primary", "text-secondary", "text-tertiary", "text-mut
 const TONES = ["info", "success", "warning", "danger", "muted"];
 const LEGACY_FAMILIES = ["status-connecting", "status-connected", "status-disconnected", "status-stale", "amber", "permission", "danger"];
 
-function readTokens(theme: ThemeName): ThemeTokens {
+function readBlock(theme: ThemeName): ThemeTokens {
   const pattern = theme === "dark" ? /:root\s*\{([^}]+)\}/g : /\[data-theme="light"\]\s*\{([^}]+)\}/g;
   const blocks = [...stylesheet.matchAll(pattern)];
   expect(blocks, `${theme} has exactly one token block`).toHaveLength(1);
@@ -25,6 +25,11 @@ function readTokens(theme: ThemeName): ThemeTokens {
   const tokens = new Map(declarations.map((declaration) => [declaration[1] ?? "", declaration[2]?.trim() ?? ""]));
   expect(tokens.size, `${theme} has no duplicate tokens`).toBe(declarations.length);
   return tokens;
+}
+
+function readTokens(theme: ThemeName): ThemeTokens {
+  const root = readBlock("dark");
+  return theme === "dark" ? root : new Map([...root, ...readBlock("light")]);
 }
 
 function resolveColor(tokens: ThemeTokens, name: string): string {
@@ -66,9 +71,9 @@ function borderPair(foreground: string, background: string): ContrastPair {
 const PAIRS: readonly ContrastPair[] = [
   ...TEXT_TIERS.flatMap((foreground) => [...SURFACES, "accent-muted", ...TONES.map((tone) => `tone-${tone}-bg`)]
     .map((background) => textPair(foreground, background))),
-  ...["accent-blue", "accent-name", "accent-secondary", "success-fg"].flatMap((foreground) => SURFACES.map((background) => textPair(foreground, background))),
-  textPair("accent-blue", "accent-muted"),
-  textPair("accent-contrast-fg", "accent-blue"),
+  ...["accent-primary", "accent-name", "accent-secondary", "success-fg"].flatMap((foreground) => SURFACES.map((background) => textPair(foreground, background))),
+  textPair("accent-primary", "accent-muted"),
+  textPair("accent-contrast-fg", "accent-primary"),
   textPair("bubble-user-fg", "bubble-user-bg"),
   textPair("bubble-assistant-fg", "bubble-assistant-bg"),
   textPair("text-secondary", "tone-muted-bg"),
@@ -79,8 +84,12 @@ const PAIRS: readonly ContrastPair[] = [
     ...["bg-surface", "bg-elevated", `tone-${tone}-bg`].map((background) => borderPair(`tone-${tone}-border`, background)),
   ]),
   ...LEGACY_FAMILIES.flatMap((family) => [...SURFACES, `${family}-bg`].map((background) => textPair(`${family}-fg`, background))),
-  ...["border-subtle", "border-muted", "border-hover", "accent-blue", "amber-border", "permission-border", "danger-card-border"]
+  ...["border-subtle", "border-muted", "border-hover", "accent-primary", "amber-border", "permission-border", "danger-card-border"]
     .flatMap((foreground) => SURFACES.map((background) => borderPair(foreground, background))),
+  ...TONES.flatMap((tone) => [
+    textPair(`badge-${tone}-fg`, `badge-${tone}-bg`),
+    ...["bg-app", "bg-surface", "bg-elevated"].map((background) => borderPair(`badge-${tone}-border`, background)),
+  ]),
   borderPair("amber-border", "amber-bg"),
   borderPair("permission-border", "permission-bg"),
   borderPair("danger-card-border", "danger-card-bg"),
@@ -118,3 +127,67 @@ for (const theme of ["dark", "light"] as const) {
     }
   });
 }
+
+
+// Source declarations include component-local run accents and measured layout
+// properties assigned by hooks.
+function readPwaSources(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    if (["node_modules", "dist"].includes(entry.name)) return [];
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return readPwaSources(path);
+    return /\.tsx?$/.test(entry.name) && !/\.test\./.test(entry.name)
+      ? [readFileSync(path, "utf8")] : [];
+  });
+}
+
+describe("theme token contract", () => {
+  const dark = readTokens("dark");
+  const light = readTokens("light");
+
+  it("inherits the exact shared badge palette and elevation in both themes", () => {
+    const palette: readonly (readonly [string, string, string, string])[] = [
+      ["success", "#173E34", "#9AE3B4", "#398366"],
+      ["warning", "#4A371E", "#F3CE8E", "#A57B42"],
+      ["danger", "#472930", "#F2AFB9", "#A86476"],
+      ["info", "#213C4A", "#A8DCEB", "#568BA3"],
+      ["muted", "#343E42", "#DCE3E5", "#7C9299"],
+    ];
+    for (const [tone, bg, fg, border] of palette) {
+      for (const [role, value] of [["bg", bg], ["fg", fg], ["border", border]]) {
+        expect(dark.get(`--badge-${tone}-${role}`)).toBe(value);
+        expect(light.get(`--badge-${tone}-${role}`)).toBe(value);
+      }
+    }
+    expect(dark.get("--badge-elevation")).toBeTruthy();
+    expect(light.get("--badge-elevation")).toBe(dark.get("--badge-elevation"));
+    expect([...stylesheet.matchAll(/--badge-elevation\s*:/g)]).toHaveLength(1);
+  });
+
+  it("never overrides badge properties in a theme selector", () => {
+    for (const rule of stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (/\[data-theme[^\]]*\]/.test(rule[1] ?? "")) {
+        expect(rule[2]).not.toMatch(/--badge-[\w-]+\s*:/);
+      }
+    }
+  });
+
+  it("resolves every stylesheet and component variable reference to a declaration", () => {
+    const sources = readPwaSources(resolve(__dirname, ".."));
+    const declarations = [stylesheet, ...sources].join("\n");
+    const declared = new Set([
+      ...[...declarations.matchAll(/(--[\w-]+)\s*:/g)].map((match) => match[1]),
+      ...[...declarations.matchAll(/setProperty\("(--[\w-]+)"/g)].map((match) => match[1]),
+    ]);
+    for (const source of [stylesheet.replace(/\/\*[\s\S]*?\*\//g, ""), ...sources]) {
+      for (const match of source.matchAll(/var\((--[\w-]+)\s*([,)])/g)) {
+        expect(declared.has(match[1]), match[1]).toBe(true);
+      }
+    }
+    for (const name of ["accent-primary", "accent-secondary", "border-decorative",
+      ...TONES.flatMap((tone) => ["fg", "bg", "border"].flatMap((role) =>
+        [`tone-${tone}-${role}`, `badge-${tone}-${role}`]))]) {
+      expect(dark.has(`--${name}`) && light.has(`--${name}`), name).toBe(true);
+    }
+  });
+});

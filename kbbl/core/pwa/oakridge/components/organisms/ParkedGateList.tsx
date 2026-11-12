@@ -77,7 +77,7 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
             href={gate.pr_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-[var(--accent-blue)] underline"
+            className="text-sm text-[var(--accent-primary)] underline"
           >
             {gate.pr_url}
           </a>

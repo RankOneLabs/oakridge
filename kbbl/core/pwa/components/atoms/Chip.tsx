@@ -9,7 +9,7 @@ const TONE_CLASS: Record<ChipTone, string> = {
   success: "border-[var(--tone-success-border)] bg-[var(--tone-success-bg)] text-[var(--tone-success-fg)]",
   warning: "border-[var(--tone-warning-border)] bg-[var(--tone-warning-bg)] text-[var(--tone-warning-fg)]",
   danger: "border-[var(--tone-danger-border)] bg-[var(--tone-danger-bg)] text-[var(--tone-danger-fg)]",
-  accent: "border-[var(--accent-blue)] bg-[var(--accent-muted)] text-[var(--accent-blue)]",
+  accent: "border-[var(--accent-primary)] bg-[var(--accent-muted)] text-[var(--accent-primary)]",
 };
 
 interface ChipProps {

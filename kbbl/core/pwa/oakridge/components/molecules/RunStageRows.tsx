@@ -5,7 +5,7 @@ import { Chip } from "../../../components/atoms/Chip";
 import { Fragment } from "react";
 import { selectCohortBrief } from "../../lib/stage-unit-params";
 
-const tableCellClass = "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
+const tableCellClass = "border-b border-[var(--border-decorative)] px-3 py-2.5 align-middle";
 const codeClass = "rounded bg-[var(--bg-code)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-secondary)]";
 const mutedClass = "text-sm text-[var(--text-muted)]";
 
@@ -123,7 +123,7 @@ function ArtifactCell({ artifacts, onSelectArtifact }: ArtifactCellProps) {
 }
 
 function SessionCell({ sid }: { sid?: string | null }) {
-  return <td className={tableCellClass} data-testid="or-stage-session">{sid ? <a href={`#sid=${encodeURIComponent(sid)}`} className="text-[var(--accent-blue)] underline" data-testid="or-delegated-session-link">{sid.slice(0, 8)}</a> : <span className={mutedClass}>-</span>}</td>;
+  return <td className={tableCellClass} data-testid="or-stage-session">{sid ? <a href={`#sid=${encodeURIComponent(sid)}`} className="text-[var(--accent-primary)] underline" data-testid="or-delegated-session-link">{sid.slice(0, 8)}</a> : <span className={mutedClass}>-</span>}</td>;
 }
 
 function WorktreeCell({ worktree }: { worktree?: StageDetail["worktree"] }) {

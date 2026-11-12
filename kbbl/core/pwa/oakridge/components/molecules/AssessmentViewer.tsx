@@ -76,7 +76,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
 
       <ArtifactSection title={`Needs attention (${report.needs_attention.length})`} testId="or-assessment-attention">
         {report.needs_attention.length > 0 ? (
-          <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+          <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
             {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={showBriefComparison} renderGradeAction={renderGradeAction} />)}
           </ul>
         ) : <p className="text-sm text-[var(--success-fg)]">Every finding is met and every task assessed.</p>}
@@ -84,7 +84,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
 
       {handoff ?? (assessment.recommended_next_actions.length > 0 && (
         <ArtifactSection title={`Recommended next actions (${assessment.recommended_next_actions.length})`} testId="or-assessment-next-actions">
-          <ol className="m-0 flex list-decimal flex-col gap-1.5 rounded-md border-l-4 border-[var(--accent-blue)] bg-[var(--accent-muted)] py-2 pl-8 pr-3 text-sm text-[var(--text-primary)]">
+          <ol className="m-0 flex list-decimal flex-col gap-1.5 rounded-md border-l-4 border-[var(--accent-primary)] bg-[var(--accent-muted)] py-2 pl-8 pr-3 text-sm text-[var(--text-primary)]">
             {assessment.recommended_next_actions.map((action) => <li key={action.id}>{action.text}</li>)}
           </ol>
         </ArtifactSection>
@@ -107,7 +107,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
             {isMetOpen ? "▾ Hide met criteria" : "▸ Show met criteria"}
           </Button>
           {isMetOpen && (
-            <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+            <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
               {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={showBriefComparison} renderGradeAction={renderGradeAction} />)}
             </ul>
           )}

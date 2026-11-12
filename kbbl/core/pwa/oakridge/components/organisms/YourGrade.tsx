@@ -75,7 +75,7 @@ export function YourGrade({ occurrenceId, question, onAcknowledged }: Props) {
         </>
       )}
       {current && <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-your-grade-current">Your current answer: {gradeAnswerLabel(current.answer)}</p>}
-      {earlier.length > 0 && <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0" data-testid="or-your-grade-history">
+      {earlier.length > 0 && <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0" data-testid="or-your-grade-history">
         {earlier.map((answer) => <AnswerRow key={answer.observation_id} answer={answer} isCorrected />)}
       </ul>}
     </section>

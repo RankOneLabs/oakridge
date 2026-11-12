@@ -23,7 +23,7 @@ export function PlanGraph({ layout, selectedCohortId, onSelectCohort }: Props) {
         <defs>
           {(["idle", "active"] as const).map((state) => (
             <marker key={state} id={`${markerId}-${state}`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
-              <path d="M0,0 L8,4 L0,8 z" className={state === "active" ? "fill-[var(--accent-blue)]" : "fill-[var(--border-hover)]"} />
+              <path d="M0,0 L8,4 L0,8 z" className={state === "active" ? "fill-[var(--accent-primary)]" : "fill-[var(--border-hover)]"} />
             </marker>
           ))}
         </defs>
@@ -35,7 +35,7 @@ export function PlanGraph({ layout, selectedCohortId, onSelectCohort }: Props) {
               d={edge.path}
               fill="none"
               strokeWidth={state === "active" ? 2 : 1.25}
-              className={state === "active" ? "stroke-[var(--accent-blue)]" : "stroke-[var(--border-hover)]"}
+              className={state === "active" ? "stroke-[var(--accent-primary)]" : "stroke-[var(--border-hover)]"}
               markerEnd={`url(#${markerId}-${state})`}
             />
           );
@@ -48,7 +48,7 @@ export function PlanGraph({ layout, selectedCohortId, onSelectCohort }: Props) {
                 variant="secondary"
                 size="small"
                 // The secondary variant centres its content and sets the border colour; a graph node is a top-aligned card.
-                className={`h-full w-full flex-col items-start! justify-start! gap-1 overflow-hidden py-2! text-left ${isSelected ? "border-[var(--accent-blue)]! ring-1 ring-[var(--accent-blue)]" : ""}`}
+                className={`h-full w-full flex-col items-start! justify-start! gap-1 overflow-hidden py-2! text-left ${isSelected ? "border-[var(--accent-primary)]! ring-1 ring-[var(--accent-primary)]" : ""}`}
                 aria-pressed={isSelected}
                 title={cohort.title}
                 data-testid="or-plan-graph-node"

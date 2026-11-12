@@ -28,7 +28,7 @@ export function RunSidebarArtifacts({ rows, totalCount, filter, onFilterChange, 
       <h3 className="or-run-sidebar__heading">Artifacts</h3>
       <select aria-label="Filter artifacts" data-testid="or-sidebar-artifact-filter" value={filter}
         onChange={(event) => onFilterChange(RUN_ARTIFACT_FILTERS.find(({ key }) => key === event.target.value)?.key ?? "all")}
-        className="w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-2 py-1 text-xs text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none">
+        className="w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-2 py-1 text-xs text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none">
         {RUN_ARTIFACT_FILTERS.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
       </select>
       {totalCount === 0 && (
@@ -42,7 +42,7 @@ export function RunSidebarArtifacts({ rows, totalCount, filter, onFilterChange, 
           <li key={row.artifact_id} className="or-run-sidebar__row">
             <Button variant="sidebar-row"
               type="button"
-              className={openArtifactIds.has(row.artifact_id) ? "border-[var(--or-run-accent,var(--accent-blue))]! bg-[var(--bg-elevated)]!" : ""}
+              className={openArtifactIds.has(row.artifact_id) ? "border-[var(--or-run-accent,var(--accent-primary))]! bg-[var(--bg-elevated)]!" : ""}
               onClick={() => onOpen(row.artifact_id, "primary")}
               data-testid="or-sidebar-artifact"
               data-artifact-id={row.artifact_id}

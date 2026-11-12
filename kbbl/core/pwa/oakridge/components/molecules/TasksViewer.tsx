@@ -75,7 +75,7 @@ export function TasksViewer({ body, edit, source, onOpenItem, itemGrading }: Vie
       <ArtifactSection title={`Tasks (${parsed.value.tasks.length})`} testId="or-tasks-list">
         {parsed.value.tasks.length === 0
           ? <p className="text-sm text-[var(--text-muted)]">No tasks listed.</p>
-          : <ol className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+          : <ol className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
             {parsed.value.tasks.map((task, index) => <li key={`${index}-${task.id}`} className="flex flex-col gap-2 py-3">
               <div className="flex items-center justify-between gap-2">
                 <TaskText anchor={`/tasks/${index}/id`} value={task.id} editor={editor} />

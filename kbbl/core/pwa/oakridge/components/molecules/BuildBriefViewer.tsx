@@ -87,7 +87,7 @@ export function BuildBriefViewer({ body, edit, onOpenTask, source, onOpenItem, i
       </ArtifactSection>
 
       <ArtifactSection title="Next action" testId="or-brief-next-action">
-        <div className="rounded-md border-l-4 border-[var(--accent-blue)] bg-[var(--accent-muted)] px-3 py-2">
+        <div className="rounded-md border-l-4 border-[var(--accent-primary)] bg-[var(--accent-muted)] px-3 py-2">
           <BriefText anchor="/next_action" value={body.next_action} editor={editor} isProse className="text-sm text-[var(--text-primary)]" />
         </div>
       </ArtifactSection>
@@ -106,7 +106,7 @@ export function BuildBriefViewer({ body, edit, onOpenTask, source, onOpenItem, i
 
       <ArtifactSection title={`Decisions made (${body.decisions_made.length})`} testId="or-brief-decisions">
         {body.decisions_made.length > 0 ? (
-          <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+          <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
             {body.decisions_made.map((item, index) => (
               <ReasonedItem
                 key={`${index}-${item.decision}`}
@@ -123,7 +123,7 @@ export function BuildBriefViewer({ body, edit, onOpenTask, source, onOpenItem, i
 
       <ArtifactSection title={`Approaches rejected (${body.approaches_rejected.length})`} testId="or-brief-rejected">
         {body.approaches_rejected.length > 0 ? (
-          <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+          <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
             {body.approaches_rejected.map((item, index) => (
               <ReasonedItem
                 key={`${index}-${item.approach}`}
