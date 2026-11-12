@@ -55,5 +55,25 @@ export interface ProducerProfile {
   readonly extraction: ExtractionProfile;
   readonly questions: readonly QuestionDefinition[];
   readonly evidence: EvidenceCollector;
+  readonly capabilities: EvidenceCapabilities;
   readonly composite: CompositePath;
 }
+
+/** A definition references a capability and the parameters its schema accepts. */
+export type EvidenceCapabilityReference = string | {
+  readonly capability: string;
+  readonly params?: JsonValue;
+};
+/** All resolvers for a subject share captured reads and the same task identity. */
+export interface EvidenceResolutionContext {
+  readonly artifact: SourceArtifact;
+  readonly question: SubjectQuestion;
+  readonly sources: CapturedSources;
+}
+export interface EvidenceCapability {
+  readonly params: import("zod").z.ZodType;
+  readonly subject: { readonly fields: readonly string[]; readonly task_subject: boolean };
+  resolve(context: EvidenceResolutionContext, params: unknown): Promise<EvidenceCollection>;
+}
+/** Capability names describe evidence, never question identities. */
+export type EvidenceCapabilities = Readonly<{ [name: string]: EvidenceCapability }>;

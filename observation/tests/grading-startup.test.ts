@@ -9,7 +9,7 @@ import type { EvidenceSet } from "../src/grading/evidence";
 import type { SourceEventCursor, SourceEventOutcome } from "../src/ingest/cursor";
 import type { RepositoryFile, RepositoryReader } from "../src/ports/artifact-source";
 import { TASK_SCOPE } from "../src/producers/oakridge/catalogue";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "./grading-fixture";
 import { oakridgeProfile, oakridgeGradingRegistry } from "./grading-fixture";
 import { startObservation } from "../src/main";
 import type { RunnerResolver } from "../src/grading/worker";
@@ -170,17 +170,17 @@ integration("startup refuses an unknown runner or a missing key, clearly and bef
   expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
 }));
 
-integration("startup refuses a question with no evidence collector before registering anything", async () => withHarness(async (db) => {
+integration("startup refuses an unknown capability before registering anything", async () => withHarness(async (db) => {
   const configuration = await configured();
   const env = { ...credentialEnv(configuration), OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0",
     OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest) };
   const directory = await mkdtemp(join(tmpdir(), "observation-unsupported-question-"));
   try {
     const grading_definitions_file = join(directory, "grading-definitions.json");
-    const renamed = configuration.map((entry, index) => index === 0 ? { ...entry, id: "finding.relevnce" } : entry);
+    const renamed = configuration.map((entry, index) => index === 0 ? { ...entry, evidence: ["absent_capability"] } : entry);
     await Bun.write(grading_definitions_file, JSON.stringify(renamed));
     await expect(startObservation(env, { grading_definitions_file }))
-      .rejects.toThrow("observation cannot start: unknown_question: finding.relevnce: id: no evidence collector is registered for this question");
+      .rejects.toThrow("observation cannot start: unknown_capability: finding.relevance: evidence: absent_capability is not registered");
   } finally { await rm(directory, { recursive: true, force: true }); }
   expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
 }));
@@ -207,7 +207,7 @@ integration("not-ready capture, config swap and restart, readiness arrival and a
   expect(relevance.readiness).toMatchObject({ state: "ready", references: [{ ref: "subject" }, { source: "run_input", ref: "spec", content: launch.spec }] });
   const citedBefore = await settled(h, first, cited, collected);
   expect(citedBefore.map((set) => [set.question_id, set.readiness.reason?.code])).toEqual([
-    [CORRECTNESS_ID, "repository_unavailable"], [EVIDENCE_SUPPORT_ID, "repository_unavailable"]]);
+    [CORRECTNESS_ID, "build_result_unavailable"], [EVIDENCE_SUPPORT_ID, "repository_unavailable"]]);
   const uncitedBefore = await settled(h, first, uncited, collected);
   expect(question(uncitedBefore, CORRECTNESS_ID).readiness).toMatchObject({ state: "not_ready", reason: { code: "build_result_unavailable" } });
   expect(question(uncitedBefore, EVIDENCE_SUPPORT_ID).readiness).toMatchObject({ state: "ready" });
@@ -307,14 +307,14 @@ integration("an enabled run grades with the evaluators pinned at capture across 
   await h.send(first, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", subject_id: "build-1",
     body: await fixtureBody("assessment") }));
   // Ready questions are graded right away; the cited finding and every Correctness wait.
-  const early = await until(() => executionsBy(db), (rows) => rows.length === 1 && rows.every((row) => row.status === "completed"));
+  const early = await until(() => executionsBy(db), (rows) => rows.length === 2 && rows.every((row) => row.status === "completed"));
   expect(early.every((row) => row.question_id === EVIDENCE_SUPPORT_ID)).toBe(true);
   await first.stop();
 
   const second = await h.start(after, recordingRunners(requests));
   reader.accessible = true;
   await h.send(second, revisionOutcome({ revision_id: "build-1", artifact_kind: "build_result", body: await fixtureBody("build-result") }));
-  const ready = await until(() => executionsBy(db), (rows) => rows.length === 6 && rows.every((row) => row.status === "completed"));
+  const ready = await until(() => executionsBy(db), (rows) => rows.length === 8 && rows.every((row) => row.status === "completed"));
   // The older occurrence's first answers use its original evaluators, not the swapped ones.
   for (const row of ready) expect(pinsOf(before, row.question_id)).toContain(row.evaluator_definition_id as never);
   const cited = await itemAt(h, second, "assessment-1", "/findings/0", "assessment_finding");
@@ -324,7 +324,7 @@ integration("an enabled run grades with the evaluators pinned at capture across 
 
   await h.send(second, revisionOutcome({ revision_id: "assessment-2", artifact_kind: "assessment", subject_id: "build-1",
     body: await fixtureBody("assessment") }));
-  const later = await until(() => executionsBy(db), (rows) => rows.length === 12 && rows.every((row) => row.status === "completed"));
+  const later = await until(() => executionsBy(db), (rows) => rows.length === 16 && rows.every((row) => row.status === "completed"));
   for (const row of later.filter((entry) => entry.revision_id === "assessment-2"))
     expect(pinsOf(after, row.question_id)).toContain(row.evaluator_definition_id as never);
   await second.stop();
@@ -335,6 +335,6 @@ integration("an enabled run grades with the evaluators pinned at capture across 
     body: await fixtureBody("assessment") }, tenant, "event:assessment-1-replayed"));
   await Bun.sleep(300);
   await third.stop();
-  expect([(await executionsBy(db)).length, requests.length, sent]).toEqual([12, sent, 12]);
-  expect(await counts(db)).toMatchObject({ executions: 12, attempts: 12, answers: 12 });
+  expect([(await executionsBy(db)).length, requests.length, sent]).toEqual([16, sent, 16]);
+  expect(await counts(db)).toMatchObject({ executions: 16, attempts: 16, answers: 16 });
 }));

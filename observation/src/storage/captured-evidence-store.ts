@@ -8,7 +8,7 @@ import type { ObservationEvidenceSet } from "./db-types";
 
 export interface EvidenceStoreError { readonly operation: "evidence_store"; readonly entity_id: string; readonly detail: string }
 
-const TARGET_COLUMNS = ["occurrence_id", "json_pointer", "artifact_kind", "item_selector", "item_kind"] as const;
+const TARGET_COLUMNS = ["occurrence_id", "json_pointer", "artifact_kind", "item_selector", "item_kind", "selected_value"] as const;
 
 /** Pin every question whose declared target is this occurrence's artifact, selector and item kind, in the
  * capture transaction, whether or not its evidence exists, whether or not automatic grading is on, and

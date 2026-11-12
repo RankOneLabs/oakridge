@@ -1,7 +1,8 @@
+import { createCapabilityCollector } from "../../grading/evidence";
 import type { CompositePath, ExtractionProfile, ProducerProfile, RevisionHeader, RevisionLink, StagedRevision } from "../../ports/producer-profile";
 import { ASSESSMENT_FINDING_KIND, FINDING_KIND, oakridgeCatalogue, OAKRIDGE_SELECTORS, TASK_SCOPE } from "./catalogue";
 import { declaredAnalysisLinks } from "./declarations";
-import { oakridgeEvidence, OAKRIDGE_EVIDENCE_SOURCES, OAKRIDGE_SUPPORTED_QUESTIONS } from "./evidence";
+import { oakridgeCapabilities } from "./evidence";
 import type { QuestionDefinition } from "../../grading/question";
 import type { GradingRegistry } from "../../grading/configuration";
 
@@ -29,8 +30,7 @@ const composite: CompositePath = { logical_scope: TASK_SCOPE, relation_type: "as
   stages: [{ stage: "analysis", is_final_on_publication: false }, { stage: "implementation", is_final_on_publication: false },
     { stage: "integration", is_final_on_publication: true }] };
 
-export const oakridgeGradingRegistry: GradingRegistry = { selectors: OAKRIDGE_SELECTORS, evidence_sources: OAKRIDGE_EVIDENCE_SOURCES,
-  questions: OAKRIDGE_SUPPORTED_QUESTIONS };
+export const oakridgeGradingRegistry: GradingRegistry = { selectors: OAKRIDGE_SELECTORS, capabilities: oakridgeCapabilities };
 
-export const oakridgeProfile = (questions: readonly QuestionDefinition[]): ProducerProfile =>
-  ({ producer: "oakridge", extraction, questions, evidence: oakridgeEvidence, composite });
+export const oakridgeProfile = (questions: readonly QuestionDefinition[], evidence: import("../../ports/producer-profile").EvidenceCollector = createCapabilityCollector([], oakridgeCapabilities)): ProducerProfile =>
+  ({ producer: "oakridge", extraction, questions, evidence, capabilities: oakridgeCapabilities, composite });

@@ -1,11 +1,13 @@
 [
   {
     "id": "finding.relevance",
-    "target": {
-      "artifact": "analysis",
-      "selector": "/findings/*",
-      "scope": "per_item"
-    },
+    "scope": "per_item",
+    "targets": [
+      {
+        "artifact": "analysis",
+        "selector": "/findings/*"
+      }
+    ],
     "evidence": [
       "subject",
       "spec"
@@ -44,18 +46,26 @@
   },
   {
     "id": "assessment_finding.correctness",
-    "target": {
-      "artifact": "assessment",
-      "selector": "/findings/*",
-      "scope": "per_task",
-      "task_ids": "/task_ids"
-    },
+    "scope": "per_task",
+    "task_ids": "/task_ids",
+    "targets": [
+      {
+        "artifact": "assessment",
+        "selector": "/findings/*"
+      }
+    ],
     "evidence": [
       "subject",
       "build_result",
       "citation",
       "test_evidence",
-      "task_context"
+      {
+        "capability": "task_context",
+        "params": {
+          "artifact": "tasks",
+          "item_kind": "task"
+        }
+      }
     ],
     "question": {
       "text": "Is this assessment finding correct, given its cited evidence and the build it assesses?",
@@ -91,17 +101,26 @@
   },
   {
     "id": "assessment_finding.evidence_support",
-    "target": {
-      "artifact": "assessment",
-      "selector": "/findings/*",
-      "scope": "per_task",
-      "task_ids": "/task_ids"
-    },
+    "scope": "per_task",
+    "task_ids": "/task_ids",
+    "targets": [
+      {
+        "artifact": "assessment",
+        "selector": "/findings/*"
+      }
+    ],
     "evidence": [
       "subject",
       "citation",
-      "test_evidence"
-    , "task_context"],
+      "test_evidence",
+      {
+        "capability": "task_context",
+        "params": {
+          "artifact": "tasks",
+          "item_kind": "task"
+        }
+      }
+    ],
     "question": {
       "text": "Does this assessment finding's cited evidence support it?",
       "response": "choice",
@@ -136,16 +155,43 @@
   },
   {
     "id": "task.requirement_coverage",
-    "target": {
-      "artifact": "tasks",
-      "selector": "/tasks/*",
-      "scope": "per_item"
-    },
+    "scope": "per_item",
+    "targets": [
+      {
+        "artifact": "tasks",
+        "selector": "/tasks/*"
+      }
+    ],
     "evidence": [
       "subject",
-      "spec",
-      "spec_task",
-      "requirement"
+      {
+        "capability": "spec",
+        "params": {
+          "artifact": "spec",
+          "task_source": {
+            "artifact": "tasks",
+            "list": "/tasks"
+          }
+        }
+      },
+      {
+        "capability": "spec_task",
+        "params": {
+          "artifact": "tasks",
+          "list": "/tasks"
+        }
+      },
+      {
+        "capability": "requirement",
+        "params": {
+          "artifact": "analysis",
+          "list": "/requirements",
+          "task_source": {
+            "artifact": "tasks",
+            "list": "/tasks"
+          }
+        }
+      }
     ],
     "question": {
       "text": "How well does this spec task account for the specification requirements it explicitly references?",
@@ -183,17 +229,53 @@
   },
   {
     "id": "acceptance_entry.task_coverage",
-    "target": {
-      "artifact": "plan",
-      "selector": "/cohorts/*/acceptance_criteria/*",
-      "scope": "per_item"
-    },
+    "scope": "per_item",
+    "targets": [
+      {
+        "artifact": "plan",
+        "selector": "/cohorts/*/acceptance_criteria/*"
+      },
+      {
+        "artifact": "brief",
+        "selector": "/acceptance_criteria/*"
+      }
+    ],
     "evidence": [
       "subject",
-      "spec",
-      "spec_task",
-      "requirement",
-      "plan",
+      {
+        "capability": "spec",
+        "params": {
+          "artifact": "spec",
+          "task_source": {
+            "artifact": "tasks",
+            "list": "/tasks"
+          }
+        }
+      },
+      {
+        "capability": "spec_task",
+        "params": {
+          "artifact": "tasks",
+          "list": "/tasks"
+        }
+      },
+      {
+        "capability": "requirement",
+        "params": {
+          "artifact": "analysis",
+          "list": "/requirements",
+          "task_source": {
+            "artifact": "tasks",
+            "list": "/tasks"
+          }
+        }
+      },
+      {
+        "capability": "plan",
+        "params": {
+          "artifact": "plan"
+        }
+      },
       "contribution_context"
     ],
     "question": {
