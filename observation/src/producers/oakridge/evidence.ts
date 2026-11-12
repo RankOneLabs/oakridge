@@ -2,7 +2,7 @@ import type { JsonValue } from "../../domain/primitives";
 import type { EvidenceReference, LineRange, NotReadyReason, RepositoryEvidence } from "../../grading/evidence";
 import { valueAtPointer } from "../../grading/evidence";
 import { z } from "zod";
-import type { CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, SourceArtifact } from "../../ports/artifact-source";
+import type { CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, RepositoryFile, SourceArtifact } from "../../ports/artifact-source";
 import type { EvidenceCapabilities, EvidenceCapability, EvidenceResolutionContext } from "../../ports/producer-profile";
 type JsonObject = { readonly [key: string]: JsonValue };
 const objectOf = (value: JsonValue | undefined): JsonObject | null =>
@@ -54,6 +54,16 @@ function lines(content: string, range: LineRange | null): string {
   return range ? content.split("\n").slice(range.start - 1, range.end).join("\n") : content;
 }
 
+type LocatedFile = Omit<RepositoryEvidence, "content" | "is_absent" | "is_binary" | "byte_size">;
+/** A file read at its commit as evidence: cited lines of text, the size of a binary file, or its absence. */
+function repositoryReference(located: LocatedFile, file: Exclude<RepositoryFile, { readonly state: "unavailable" }>): RepositoryEvidence {
+  switch (file.state) {
+    case "present": return { ...located, is_absent: false, is_binary: false, byte_size: null, content: lines(file.content, located.line_range) };
+    case "binary": return { ...located, is_absent: false, is_binary: true, byte_size: file.byte_size, content: null };
+    case "absent": return { ...located, is_absent: true, is_binary: false, byte_size: null, content: null };
+  }
+}
+
 interface RepositoryChoice { readonly repository_key: string; readonly repository_path: string }
 /** The launch input's repositories, as the workflow declares them. */
 function launchRepositories(input: JsonValue | null): readonly RepositoryChoice[] {
@@ -92,10 +102,8 @@ async function citationEvidence(artifact: SourceArtifact, revision: CapturedRevi
     if (!address) { references.push(reported(ref, citation, artifact)); continue; }
     const file = await sources.repository.readFile({ repository_path: repository.repository_path, commit_sha: head_sha, path: address.path });
     if (file.state === "unavailable") return { waiting: notReady("repository_unavailable", file.detail) };
-    const located: Omit<RepositoryEvidence, "content" | "is_absent"> = { source: "repository", ref,
-      repository_key: repository.repository_key, commit_sha: head_sha, path: address.path, line_range: address.line_range };
-    references.push(file.state === "absent" ? { ...located, is_absent: true, content: null }
-      : { ...located, is_absent: false, content: lines(file.content, address.line_range) });
+    references.push(repositoryReference({ source: "repository", ref, repository_key: repository.repository_key,
+      commit_sha: head_sha, path: address.path, line_range: address.line_range }, file));
   }
   return { references };
 }

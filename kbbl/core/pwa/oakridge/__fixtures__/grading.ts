@@ -37,7 +37,7 @@ export const supportQuestion = (overrides: Partial<ObservationQuestionStatusResp
     allowed_values: ["supports", "does_not_support", "unclear"], missing_evidence_policy: "abstain", abstain_semantics: "", interpretation_caveats: "Judge only the citations.", unclear_semantics: "" },
   evidence: { task_id: null, question_id: id("assessment_finding.evidence_support"), question_version: "1", evidence_set_id: id("evidence-support"), subject_occurrence_id: OCCURRENCE, pinned_evaluator_definition_ids: paged([id("jev"), id("human")]),
     readiness: { state: "ready", ready_at: "2026-11-01T00:00:00Z" }, is_incomplete: false, incompleteness_reason: null,
-    references: paged([{ source: "repository", ref: "citation:0", repository_key: "oakridge", commit_sha: "abc123", path: "src/a.ts", line_range: { start: 2, end: 3 }, is_absent: false, content: "cited code" },
+    references: paged([{ source: "repository", ref: "citation:0", repository_key: "oakridge", commit_sha: "abc123", path: "src/a.ts", line_range: { start: 2, end: 3 }, is_absent: false, is_binary: false, byte_size: null, content: "cited code" },
       { source: "reported", reported_by: "agent", ref: "citation:1", revision_id: id("r"), item_path: "/findings/1/evidence/1", content: "reported output" }]) },
   human: { state: "ready" },
   machine: paged([machine({ state: "answered", observation_id: id("machine-does_not_support"), answer: { state: "answered", kind: "choice", value: "does_not_support" } })]),

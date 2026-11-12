@@ -1,6 +1,7 @@
 // Pure derivations for the item panel and the grading section. Hidden mode is decided here, so a
 // component holding answers or composite counts never has them to render while they are hidden.
 import type { ChipTone } from "../../components/atoms/Chip";
+import { formatBytes } from "./brief-notes";
 import type { ObservationAnswerCount, ObservationAnswerKey, ObservationCompositeDrilldownKey, ObservationDisagreementCount, ObservationGraderKey, ObservationItemStatusKey, ObservationStatusCount } from "../grading-contracts/grading/composite";
 import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
 import type { ObservationMeasurementState } from "../grading-contracts/grading/execution";
@@ -217,17 +218,23 @@ export function selectSubmissionNotice(input: { readonly is_pending: boolean; re
   }
 }
 
-export interface ReferenceDisplay { readonly source_label: string; readonly location: string; readonly is_agent_reported: boolean; readonly is_absent: boolean }
-/** Where one frozen reference came from, exactly. Reported output is labelled as the agent's, and an absent file as absent. */
+export interface ReferenceDisplay {
+  readonly source_label: string; readonly location: string; readonly is_agent_reported: boolean; readonly is_absent: boolean;
+  /** A binary file's size as an operator reads it; null for anything that is not a binary file. */
+  readonly binary_size: string | null;
+}
+/** Where one frozen reference came from, exactly. Reported output is labelled as the agent's, an absent file as absent,
+ * and a binary file by its size, since its bytes were never copied. */
 export function referenceDisplay(reference: ObservationEvidenceReference): ReferenceDisplay {
   switch (reference.source) {
-    case "revision": return { source_label: "Revision", location: reference.item_path ? `${reference.revision_id} ${reference.item_path}` : reference.revision_id, is_agent_reported: false, is_absent: false };
-    case "run_input": return { source_label: "Launch input", location: `${reference.run_id} ${reference.input_path}`, is_agent_reported: false, is_absent: false };
+    case "revision": return { source_label: "Revision", location: reference.item_path ? `${reference.revision_id} ${reference.item_path}` : reference.revision_id, is_agent_reported: false, is_absent: false, binary_size: null };
+    case "run_input": return { source_label: "Launch input", location: `${reference.run_id} ${reference.input_path}`, is_agent_reported: false, is_absent: false, binary_size: null };
     case "repository": {
       const lines = reference.line_range ? `:${reference.line_range.start}-${reference.line_range.end}` : "";
-      return { source_label: "Repository", location: `${reference.repository_key} ${reference.path}${lines} @ ${reference.commit_sha}`, is_agent_reported: false, is_absent: reference.is_absent };
+      return { source_label: "Repository", location: `${reference.repository_key} ${reference.path}${lines} @ ${reference.commit_sha}`, is_agent_reported: false, is_absent: reference.is_absent,
+        binary_size: reference.is_binary && reference.byte_size !== null ? formatBytes(reference.byte_size) : null };
     }
-    case "reported": return { source_label: "Agent-reported", location: `${reference.revision_id} ${reference.item_path}`, is_agent_reported: true, is_absent: false };
+    case "reported": return { source_label: "Agent-reported", location: `${reference.revision_id} ${reference.item_path}`, is_agent_reported: true, is_absent: false, binary_size: null };
   }
 }
 

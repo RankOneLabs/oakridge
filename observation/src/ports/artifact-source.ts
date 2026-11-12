@@ -46,6 +46,8 @@ export interface RepositoryFileRequest {
 }
 export type RepositoryFile =
   | { readonly state: "present"; readonly content: string }
+  /** The file is in the commit but is not text, so its bytes are not copied. */
+  | { readonly state: "binary"; readonly byte_size: number }
   /** The commit is readable and the file is not in it. */
   | { readonly state: "absent" }
   | { readonly state: "unavailable"; readonly detail: string };
