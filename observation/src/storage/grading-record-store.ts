@@ -89,7 +89,7 @@ async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope
     .where("producer", "=", producer).where("namespace", "=", namespace).where("run_id", "=", run_id).execute();
   const answers = await readAnswerRows(trx, tenant, { run_id });
   const questions = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", producer).where("namespace", "=", namespace).execute();
-  return { stages: context?.stages ?? [], pins: context?.pins ?? [], run_id: run_id as RunId, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id), logical_items: logical_items.map(logicalItemFromRow),
+  return { stages: context?.stages ?? [], pins: context?.pins ?? [], is_run_complete: context?.is_run_complete ?? false, run_id: run_id as RunId, is_grading_enabled: await isRunGradingEnabled(trx, tenant, run_id), logical_items: logical_items.map(logicalItemFromRow),
     revisions: revisions.map(revisionFromRow),
     occurrences: occurrences.map(({ json_pointer, occurrence_id, revision_id, logical_item_id, ...row }) => ({ ...row, occurrence_id: occurrence_id as ItemOccurrenceId,
       revision_id: revision_id as ArtifactRevisionId, logical_item_id: logical_item_id as LogicalItemId | null, item_path: json_pointer })),

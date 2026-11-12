@@ -30,7 +30,11 @@ test("a profile's new extractor and readiness stage appear in dependency order w
   expect(stage.publication).toMatchObject({ state: "published", is_final: false });
   const drill = selectDrilldown(snapshot, profile.composite, stage.items, uniformDrilldownPages(all));
   expect(drill.items.map((row) => row.item.item_path)).toEqual(["/items/2", "/items/10"]);
-  const last = selectComposite({ ...snapshot, revisions: [...snapshot.revisions, revision("release-1", "release", "audit-note")] }, profile.composite, snapshot.logical_items[0]!);
+  const released = { ...snapshot, revisions: [...snapshot.revisions, revision("release-1", "release", "audit-note")] };
+  // Units DBOS has not created yet may follow, so the last known stage is final only once the run is over.
+  const open = selectComposite(released, profile.composite, snapshot.logical_items[0]!);
+  expect(open.stages[2]).toMatchObject({ state: "gap", publication: { state: "published", is_final: false } });
+  const last = selectComposite({ ...released, is_run_complete: true }, profile.composite, snapshot.logical_items[0]!);
   expect(last.stages[2]).toMatchObject({ state: "gap", publication: { state: "published", is_final: true } });
   expect(last.stages[3]?.publication).toMatchObject({ is_final: false });
   expect([...rollup.stages, ...last.stages].every((stage) => !("coverage" in stage))).toBe(true);

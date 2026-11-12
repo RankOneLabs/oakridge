@@ -22,7 +22,7 @@ const context = { stages: [
   { stage: "analysis", artifact_kinds: ["analysis"] }, { stage: "tasks", artifact_kinds: ["tasks"] },
   { stage: "plan", artifact_kinds: ["plan"] }, { stage: "brief", artifact_kinds: ["brief"] },
   { stage: "implementation", artifact_kinds: ["assessment", "build_result"] }, { stage: "integration", artifact_kinds: ["assessment"] }
-], pins: [] };
+], pins: [], is_run_complete: true };
 const all = { limit: 200, offset: 0 };
 const pages = uniformDrilldownPages(all);
 const MACHINE_A = "machine-a", MACHINE_B = "machine-b", HUMAN = "human";

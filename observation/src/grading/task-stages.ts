@@ -12,7 +12,8 @@ export interface WorkflowUnit {
 export interface WorkflowStage { readonly stage: string; readonly artifact_kinds: readonly string[] }
 export interface StageReadError { readonly operation: "read_run_stages"; readonly entity_id: string; readonly detail: string }
 export interface RunStageSource { read(run_id: string): Promise<Result<readonly WorkflowUnit[], StageReadError>> }
-export interface RollupContext { readonly stages: readonly WorkflowStage[]; readonly pins: readonly CapturePin[] }
+/** `is_run_complete`: DBOS has settled every unit, so no stage can still appear or publish. */
+export interface RollupContext { readonly stages: readonly WorkflowStage[]; readonly pins: readonly CapturePin[]; readonly is_run_complete: boolean }
 
 /** Stable topological readiness order; stage-less parents still carry dependency paths.
  * Cyclic/unavailable dependencies never hide units: remaining units retain their read order. */
@@ -33,6 +34,9 @@ export function stagesFromReadiness(units: readonly WorkflowUnit[]): readonly Wo
   }
   return [...stages].map(([stage, kinds]) => ({ stage, artifact_kinds: [...kinds] }));
 }
+/** The root unit stays open until its children settle, so a run is over once every unit is terminal. */
+export const isRunComplete = (units: readonly WorkflowUnit[]): boolean =>
+  units.length > 0 && units.every((unit) => unit.status.kind === "done" || unit.status.kind === "cancelled");
 export const isStageGraded = (stage: WorkflowStage, pins: readonly CapturePin[]): boolean =>
   pins.some((pin) => stage.artifact_kinds.includes(pin.artifact_kind));
 export type StageState =

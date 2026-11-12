@@ -346,7 +346,8 @@ Each stage exposes a discriminated `state`, with no separate `coverage` field:
 | `linked` | The stage has current associated items for this task. |
 
 Publication carries `is_final: true` only for the last stage in the readiness order, once a revision
-is published. Appended stages are never final. Answers, approvals and links do not decide finality.
+is published and every DBOS unit of the run is done or cancelled. Until then DBOS may still create
+units for later stages, so no stage is final. Appended stages are never final. Answers, approvals and links do not decide finality.
 `not_graded`, `pending` and `gap` never imply a pass or a zero. Stages stand separately with no total
 verdict across them. kbbl renders the projection's stages in its order and title-cases keys for display;
 it has no workflow stage list. Question labels come from `question_text`.

@@ -135,7 +135,7 @@ export type ObservationItemStatusKey =
 
 export type ObservationStagePublication =
   | { readonly state: "pending" }
-  /** `is_final` comes from the stage alone: answers, links and approvals never decide it. */
+  /** `is_final` comes from the stage and the run alone: answers, links and approvals never decide it. */
   | { readonly state: "published"; readonly is_final: boolean; readonly unit_ids: readonly ObservationUnitId[] };
 
 export interface ObservationStageTotals {

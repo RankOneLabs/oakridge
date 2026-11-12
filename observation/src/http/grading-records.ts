@@ -1,7 +1,7 @@
-import { stagesFromReadiness, type RollupContext } from "../grading/task-stages";
+import { isRunComplete, stagesFromReadiness, type RollupContext } from "../grading/task-stages";
 import { filterCompositeStage, selectComposite, selectCompositePage, selectDrilldown, selectRunStages } from "../grading/composite";
 import { hasCapturedRun, readValidatedRun, selectGradeableItems } from "../storage/grading-record-store";
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { COMPOSITE_WINDOWS, EVIDENCE_WINDOWS, compositeRead, drilldownRowRead } from "../grading/item-reads";
 import type { CompositeDrilldownKey } from "../grading/composite";
@@ -12,6 +12,8 @@ import { credentialFor } from "./ingest-auth";
 import { errorResponse } from "./errors";
 import { listWindows, pagination } from "./items";
 import type { SourceDependencies } from "./sources";
+import type { Result } from "../domain/primitives";
+import type { TenantScope } from "../storage/database";
 
 const INVALID = "limit must be 1..200 and offset nonnegative, for the list and for each nested list";
 /**
@@ -43,21 +45,28 @@ export const parseDrilldownKey = (raw: string | undefined): CompositeDrilldownKe
   } catch { return null; }
 };
 
+/** Why a run's roll-up context is unavailable: the tenant never captured it, or DBOS could not be read. */
+type ContextError = { readonly kind: "not_captured" } | { readonly kind: "stage_read_failed"; readonly detail: string };
+const contextErrorResponse = (c: Context, error: ContextError): Response => error.kind === "not_captured"
+  ? errorResponse(c, 404, "not_found", "this tenant has captured no such run")
+  : errorResponse(c, 502, "stage_read_failed", error.detail);
+
 export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies): void {
   const path = deps.profile.composite;
-  const contextFor = async (run_id: string) => {
+  /** Tenant ownership is checked before DBOS is read, so a foreign run reveals none of its stages. */
+  const contextFor = async (tenant: TenantScope, run_id: string): Promise<Result<RollupContext, ContextError>> => {
+    if (!await hasCapturedRun(deps.db, tenant, run_id)) return { ok: false, error: { kind: "not_captured" } };
     const read = deps.stage_source ? await deps.stage_source.read(run_id) : { ok: true as const, value: [] };
-    if (!read.ok) return read;
-    const context: RollupContext = { stages: stagesFromReadiness(read.value), pins: deps.capture_configuration?.pins ?? [] };
+    if (!read.ok) return { ok: false, error: { kind: "stage_read_failed", detail: read.error.detail } };
+    const context: RollupContext = { stages: stagesFromReadiness(read.value), pins: deps.capture_configuration?.pins ?? [],
+      is_run_complete: isRunComplete(read.value) };
     return { ok: true as const, value: context };
   };
   app.get("/v1/runs/:run_id/grading-stages", async (c) => {
     const tenant = credentialFor(c.req.header("authorization"), deps.credentials.read);
     if (!tenant) return errorResponse(c, 403, "forbidden", "read credential required");
-    if (!await hasCapturedRun(deps.db, tenant, c.req.param("run_id")))
-      return errorResponse(c, 404, "not_found", "this tenant has captured no such run");
-    const context = await contextFor(c.req.param("run_id"));
-    if (!context.ok) return errorResponse(c, 502, "stage_read_failed", context.error.detail);
+    const context = await contextFor(tenant, c.req.param("run_id"));
+    if (!context.ok) return contextErrorResponse(c, context.error);
     const result = await readValidatedRun(deps.db, tenant, path, { run_id: c.req.param("run_id"), context: context.value, stage: null }, selectRunStages);
     return result.ok ? c.json(result.value) : errorResponse(c, 400, "invalid_stage", result.error.stage);
   });
@@ -92,8 +101,8 @@ export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies)
     const windows = listWindows(c.req.url, ["links"]);
     if (!page || !windows) return errorResponse(c, 400, "invalid_pagination", INVALID);
     const stage = c.req.query("stage") ?? null;
-    const context = await contextFor(c.req.param("run_id"));
-    if (!context.ok) return errorResponse(c, 502, "stage_read_failed", context.error.detail);
+    const context = await contextFor(tenant, c.req.param("run_id"));
+    if (!context.ok) return contextErrorResponse(c, context.error);
     const result = await readValidatedRun(deps.db, tenant, path, { run_id: c.req.param("run_id"), context: context.value, stage },
       (inputs) => selectGradeableItems(inputs, path, { stage, is_current_only: c.req.query("revisions") !== "all", page, links: windows.links }));
     return result.ok ? c.json(result.value) : errorResponse(c, 400, "invalid_stage", "unknown run stage");
@@ -120,8 +129,8 @@ export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies)
     const page = pagination(c.req.url);
     const windows = listWindows(c.req.url, COMPOSITE_WINDOWS);
     if (!page || !windows) return errorResponse(c, 400, "invalid_pagination", INVALID);
-    const context = await contextFor(c.req.param("run_id"));
-    if (!context.ok) return errorResponse(c, 502, "stage_read_failed", context.error.detail);
+    const context = await contextFor(tenant, c.req.param("run_id"));
+    if (!context.ok) return contextErrorResponse(c, context.error);
     const stage = c.req.query("stage") ?? null;
     const result = await readValidatedRun(deps.db, tenant, path, { run_id: c.req.param("run_id"), context: context.value, stage },
       (inputs) => selectCompositePage({ inputs, path, page }));
@@ -134,8 +143,8 @@ export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies)
     if (!tenant) return errorResponse(c, 403, "forbidden", "read credential required");
     const windows = listWindows(c.req.url, COMPOSITE_WINDOWS);
     if (!windows) return errorResponse(c, 400, "invalid_pagination", INVALID);
-    const context = await contextFor(c.req.param("run_id"));
-    if (!context.ok) return errorResponse(c, 502, "stage_read_failed", context.error.detail);
+    const context = await contextFor(tenant, c.req.param("run_id"));
+    if (!context.ok) return contextErrorResponse(c, context.error);
     const stage = c.req.query("stage") ?? null;
     const result = await readValidatedRun(deps.db, tenant, path, { run_id: c.req.param("run_id"), context: context.value, stage }, (inputs) => {
       const item = inputs.logical_items.find((candidate) => candidate.producer_local_id === c.req.param("local_id"));
@@ -149,8 +158,8 @@ export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies)
     if (!tenant) return errorResponse(c, 403, "forbidden", "read credential required");
     const page = pagination(c.req.url);
     if (!page) return errorResponse(c, 400, "invalid_pagination", INVALID);
-    const context = await contextFor(c.req.param("run_id"));
-    if (!context.ok) return errorResponse(c, 502, "stage_read_failed", context.error.detail);
+    const context = await contextFor(tenant, c.req.param("run_id"));
+    if (!context.ok) return contextErrorResponse(c, context.error);
     return c.json(await readLogicalItemLineage(deps.db, tenant, path, c.req.param("run_id"), c.req.param("local_id"), page, context.value));
   });
   /** The exact items, raw answers and frozen evidence behind one count of a composite. */
@@ -162,8 +171,8 @@ export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies)
     const rows = pagination(c.req.url);
     const windows = listWindows(c.req.url, ["questions", "links", "statuses", "answers", "superseded_answers", "results", ...EVIDENCE_WINDOWS]);
     if (!rows || !windows) return errorResponse(c, 400, "invalid_pagination", INVALID);
-    const context = await contextFor(c.req.param("run_id"));
-    if (!context.ok) return errorResponse(c, 502, "stage_read_failed", context.error.detail);
+    const context = await contextFor(tenant, c.req.param("run_id"));
+    if (!context.ok) return contextErrorResponse(c, context.error);
     const result = await readValidatedRun(deps.db, tenant, path, { run_id: c.req.param("run_id"), context: context.value, stage: key.stage },
       (inputs) => selectDrilldown(inputs, path, key, { ...windows, rows }));
     return result.ok ? c.json({ ...result.value, items: result.value.items.map((row) => drilldownRowRead(row, windows)) })

@@ -78,7 +78,7 @@ integration("captured Oakridge task, plan, brief and linked findings appear toge
     kind: "relation_declaration", event_kind: "analysis_links_declared", event_id: "link-analysis", run_id: "run-1",
     declaration: { run_id: "run-1", tasks_revision_id: "tasks-1", entries: [{ source_revision_id: "analysis-1", item_path: "/findings/0", task_ids: ["T7"] }] } });
   const rollup = await readLogicalItemComposite(db, tenant, oakridgeProfile.composite, "run-1", "T7", {
-    stages: ["analysis", "tasks", "plan", "brief", "assessment"].map((stage) => ({ stage, artifact_kinds: [stage] })), pins: registration.value.capture.pins
+    stages: ["analysis", "tasks", "plan", "brief", "assessment"].map((stage) => ({ stage, artifact_kinds: [stage] })), pins: registration.value.capture.pins, is_run_complete: false
   });
   if (!rollup) throw new Error("captured task missing");
   const results = rollup.stages.flatMap((stage) => stage.results);

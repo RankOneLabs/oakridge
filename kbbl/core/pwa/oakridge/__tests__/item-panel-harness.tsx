@@ -48,3 +48,5 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 export const wrap = (node: ReactNode) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } })}>{node}</QueryClientProvider>);
 export const panel = (onOpenTask = vi.fn()) => wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={onOpenTask} />);
+export const documentText = (): string => document.body.textContent ?? "";
+export const ariaText = (): string => Array.from(document.querySelectorAll("[aria-label]")).map((element) => element.getAttribute("aria-label")).join(" ");

@@ -289,7 +289,7 @@ integration("run readiness stages include unpublished and out-of-list stages, an
   expect(filtered.body.stages.items.map((stage) => stage.stage)).toEqual(["archived_stage"]);
 }));
 
-integration("grading stages require tenant capture before reading DBOS readiness", async () => scratchDatabase(async (db) => {
+integration("run reads require tenant capture before reading DBOS readiness", async () => scratchDatabase(async (db) => {
   const h = await setup(db);
   const reads: string[] = [];
   const app = createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: pins, stage_source: {
@@ -301,6 +301,13 @@ integration("grading stages require tenant capture before reading DBOS readiness
   const request = (run_id: string, token = "read") => app.request(`/v1/runs/${run_id}/grading-stages`, { headers: { authorization: `Bearer ${token}` } });
   expect((await request("missing")).status).toBe(404);
   expect((await request("run-1", "other-read")).status).toBe(404);
+  const drilldown = encodeURIComponent(JSON.stringify({ logical_item_id: "task", stage: "custom", selector: { kind: "items" } }));
+  const foreign = ["gradeable-items?stage=custom", "gradeable-items?stage=missing", "logical-items", "logical-items/T1",
+    "logical-items/T1/lineage", `composite-drilldown?key=${drilldown}`];
+  for (const read of foreign) { // Existing and unknown stages answer alike for a run this tenant never captured.
+    const response = await app.request(`/v1/runs/run-1/${read}`, { headers: { authorization: "Bearer other-read" } });
+    expect([read, response.status]).toEqual([read, 404]);
+  }
   expect(reads).toEqual([]);
   expect((await request("run-1")).status).toBe(200); // A captured launch suffices before any revision.
   await h.feed.launch(null, "null-input");

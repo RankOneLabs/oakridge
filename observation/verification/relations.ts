@@ -1,5 +1,5 @@
 import { createStageSource } from "../src/producers/oakridge/stage-source";
-import { stagesFromReadiness, type RollupContext } from "../src/grading/task-stages";
+import { isRunComplete, stagesFromReadiness, type RollupContext } from "../src/grading/task-stages";
 /**
  * Explicit late links and task composites on the real shadow, continuing `grading`:
  *
@@ -424,7 +424,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
   const read = async (task: string) => readLogicalItemComposite(db, tenant, path, run_id, task, { stages: [
     { stage: "analysis", artifact_kinds: ["analysis"] }, { stage: "tasks", artifact_kinds: ["tasks"] },
     { stage: "implementation", artifact_kinds: ["assessment"] }, { stage: "integration", artifact_kinds: ["assessment"] }
-  ], pins: registration.capture.pins });
+  ], pins: registration.capture.pins, is_run_complete: true });
   const pending = await read(shared);
   await revision("integration-1", "assessment", `${run_id}/integration/oakridge`, { findings: [finding([shared])] });
   const final = await read(shared);
@@ -504,7 +504,7 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
     reads = { ...opened.value, context: async (run_id) => {
       const units = await stage_source.read(run_id);
       if (!units.ok) throw new Error(units.error.detail);
-      return { stages: stagesFromReadiness(units.value), pins };
+      return { stages: stagesFromReadiness(units.value), pins, is_run_complete: isRunComplete(units.value) };
     } };
     const open = reads;
     let answeredBeforeTasks: readonly MeasurementReadback[] = [];

@@ -100,6 +100,7 @@ export interface CompositeAnswer {
 export interface CompositeInputs {
   readonly stages: readonly WorkflowStage[];
   readonly pins: readonly CapturePin[];
+  readonly is_run_complete: boolean;
   readonly run_id: RunId;
   readonly is_grading_enabled: boolean;
   readonly logical_items: readonly CompositeLogicalItem[];
@@ -304,7 +305,7 @@ export interface StageTotals {
 }
 export type StagePublication =
   | { readonly state: "pending" }
-  /** `is_final` comes from the stage alone: answers, links and approvals never decide it. */
+  /** `is_final` comes from the stage and the run alone: answers, links and approvals never decide it. */
   | { readonly state: "published"; readonly is_final: boolean; readonly unit_ids: readonly UnitId[] };
 export type SubjectScope = { readonly kind: "per_task"; readonly task_id: LogicalItemId } | { readonly kind: "per_item" };
 export const subjectScope = (task_id: LogicalItemId | null): SubjectScope => task_id === null ? { kind: "per_item" } : { kind: "per_task", task_id };
@@ -361,7 +362,7 @@ export function selectRunStages(inputs: CompositeInputs): readonly RunStageRead[
 }
 function selectPublication(stage: WorkflowStage, inputs: CompositeInputs, standings: readonly RevisionStanding[]): StagePublication {
   const unit_ids = [...new Set(standings.filter((standing) => standing.stage === stage.stage).map((standing) => standing.revision.unit_id))].sort();
-  return unit_ids.length === 0 ? { state: "pending" } : { state: "published", is_final: stage.stage === inputs.stages.at(-1)?.stage, unit_ids };
+  return unit_ids.length === 0 ? { state: "pending" } : { state: "published", is_final: inputs.is_run_complete && stage.stage === inputs.stages.at(-1)?.stage, unit_ids };
 }
 
 const countInto = <Value>(counts: Map<string, { readonly value: Value; count: number }>, key: string, value: Value): void => {
