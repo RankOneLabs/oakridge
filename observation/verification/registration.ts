@@ -18,6 +18,7 @@
  */
 import { err, ok, type Result } from "../src/domain/primitives";
 import { parseGradingDefinitions, planRegistration, type GradingDefinitions, type GradingRegistration } from "../src/grading/configuration";
+import { isPinTarget } from "../src/grading/evidence";
 import { citationsOf, parseFileCitation } from "../src/producers/oakridge/evidence";
 import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { NO_EVIDENCE, scenarioStatus, type FrozenEvidenceReadback, type PinReadback, type ProofCheck, type ProofFailure, type ReferenceReadback,
@@ -105,7 +106,8 @@ const sorted = (values: readonly string[]): readonly string[] => [...values].toS
 const same = (left: readonly string[], right: readonly string[]): boolean => JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
 const label = (pin: PinReadback): string => `${pin.revision_id}${pin.item_path}:${pin.question_id}`;
 
-interface ServedItem { readonly occurrence_id: string; readonly revision_id: string; readonly json_pointer: string; readonly item_kind: string }
+interface ServedItem { readonly occurrence_id: string; readonly revision_id: string; readonly json_pointer: string;
+  readonly artifact_kind: string; readonly item_selector: string; readonly item_kind: string }
 type ServedReference = { readonly ref: string; readonly source: string } & { readonly [field: string]: unknown };
 interface ServedEvidence {
   readonly evidence_set_id: string; readonly question_id: string; readonly question_version: string;
@@ -126,7 +128,8 @@ export const referenceReadback = (reference: ServedReference): ReferenceReadback
   is_absent: typeof reference.is_absent === "boolean" ? reference.is_absent : null, reported_by: text(reference.reported_by) });
 
 /** One captured item of a run, whether or not it has pins. */
-export interface ItemReadback { readonly occurrence_id: string; readonly revision_id: string; readonly item_path: string; readonly item_kind: string }
+export interface ItemReadback { readonly occurrence_id: string; readonly revision_id: string; readonly item_path: string;
+  readonly artifact_kind: string; readonly item_selector: string; readonly item_kind: string }
 /** One read of a run: every item, every pin, and every ready evidence set in full. */
 export interface RunReadback {
   readonly items: readonly ItemReadback[];
@@ -161,7 +164,8 @@ export async function readRunPins(io: ProofIo, run_id: string, checkpoint: strin
     }
   }
   return { pins, frozen, revision_ids: [...new Set(items.map((item) => item.revision_id))],
-    items: items.map((item) => ({ occurrence_id: item.occurrence_id, revision_id: item.revision_id, item_path: item.json_pointer, item_kind: item.item_kind })) };
+    items: items.map((item) => ({ occurrence_id: item.occurrence_id, revision_id: item.revision_id, item_path: item.json_pointer,
+      artifact_kind: item.artifact_kind, item_selector: item.item_selector, item_kind: item.item_kind })) };
 }
 
 /** Reads until `done` holds, or the attempts run out; a question still `collection_pending` has not been looked at. */
@@ -206,10 +210,10 @@ const nothingGraded = (rows: GradingRows | null): boolean => rows !== null && ro
 
 const questionKey = (pin: { readonly question_id: string; readonly question_version: string }): string => `${pin.question_id}@${pin.question_version}`;
 
-/** Every captured item has exactly the questions its kind applies, each pinned to the configuration's set. */
+/** Every captured item has exactly the questions whose declared target it is, each pinned to the configuration's set. */
 export function pinChecks(read: RunReadback, registration: GradingRegistration, run: string): readonly ProofCheck[] {
   const problems = read.items.flatMap((item) => {
-    const expected = new Map(registration.capture.pins.filter((pin) => pin.item_kind === item.item_kind).map((pin) => [questionKey(pin), pin]));
+    const expected = new Map(registration.capture.pins.filter((pin) => isPinTarget(pin, item)).map((pin) => [questionKey(pin), pin]));
     const pinned = read.pins.filter((pin) => pin.occurrence_id === item.occurrence_id);
     const place = `${item.revision_id}${item.item_path}`;
     const missing = [...expected.keys()].filter((key) => !pinned.some((pin) => questionKey(pin) === key)).map((key) => `${place}:${key} missing`);

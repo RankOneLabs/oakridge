@@ -5,10 +5,11 @@ import { join, resolve } from "node:path";
 import type { KbblHealth, ObservationHealth } from "../../kbbl/core/server/handlers/observation-health";
 import { err, ok } from "../src/domain/primitives";
 import { machineGraders, parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
+import { isPinTarget } from "../src/grading/evidence";
 import { oakridgeGradingRegistry } from "./grading-fixture";
 import { ASSESSMENT_FINDING_KIND, FINDING_KIND } from "../src/producers/oakridge/catalogue";
 import { runProof } from "../verification/proof";
-import { editedGraders, registrationScenario, type RegistrationSource } from "../verification/registration";
+import { editedGraders, pinChecks, registrationScenario, type ItemReadback, type RegistrationSource } from "../verification/registration";
 import { launcherStateSchema, NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, scenarioStatus, type LauncherState,
   type ObservationStatus, type ScenarioReport } from "../verification/proof-contract";
 import { liveScenario, runtimeScenario } from "../verification/scenarios";
@@ -555,6 +556,21 @@ describe("the stack's startup wait", () => {
 });
 
 describe("the registration scenario", () => {
+  test("a pin check expects a question only on items of its declared artifact and selector", () => {
+    const registration = plan(committedText);
+    const coverage = registration.capture.pins.find((pin) => pin.question_id === "acceptance_entry.task_coverage")!;
+    const entry = (id: string, artifact_kind: string, item_selector: string, item_path: string): ItemReadback =>
+      ({ occurrence_id: id, revision_id: `${artifact_kind}-1`, item_path, artifact_kind, item_selector, item_kind: "acceptance_entry" });
+    const plan_entry = entry("plan-entry", "plan", "/cohorts/*/acceptance_criteria/*", "/cohorts/0/acceptance_criteria/0");
+    const brief_entry = entry("brief-entry", "brief", "/acceptance_criteria/*", "/acceptance_criteria/0");
+    const pin = { checkpoint: "capture", run_id: "run-1", occurrence_id: plan_entry.occurrence_id, revision_id: plan_entry.revision_id,
+      item_path: plan_entry.item_path, item_kind: plan_entry.item_kind, question_id: coverage.question_id, question_version: coverage.question_version,
+      evidence_set_id: "set-1", pinned_evaluator_definition_ids: [...coverage.evaluator_definition_ids], readiness: "not_ready" as const,
+      not_ready_code: "collection_pending", ready_at: null, references: [] };
+    const checks = pinChecks({ items: [plan_entry, brief_entry], pins: [pin], frozen: [], revision_ids: [] }, registration, "first");
+    expect(checks.map((check) => [check.passed, check.detail])).toEqual([[true, "1 pinned question(s) on 2 item(s)"], [true, "all match"]]);
+  });
+
   const committedText = readFileSync(resolve(repository, "observation/grading-definitions.json"), "utf8");
   const plan = (text: string) => {
     const parsed = parseGradingDefinitions(JSON.parse(text), oakridgeGradingRegistry);
@@ -566,7 +582,7 @@ describe("the registration scenario", () => {
   const tick = () => new Promise<void>((done) => setImmediate(done));
 
   interface Occurrence { readonly run_id: string; readonly id: string; readonly revision_id: string; readonly item_path: string;
-    readonly item_kind: string; readonly cites_file: boolean; pinned: string | null; ready_at: string | null }
+    readonly artifact_kind: string; readonly item_selector: string; readonly item_kind: string; readonly cites_file: boolean; pinned: string | null; ready_at: string | null }
   interface ShadowOptions { readonly repin_after_restart?: boolean; readonly executions?: number; readonly nothing_cited?: boolean;
     readonly never_arrives?: boolean; readonly unstable_evidence?: boolean; readonly drops_correctness?: boolean;
     readonly wrong_commit?: boolean; readonly forgets_evidence?: boolean }
@@ -597,7 +613,7 @@ describe("the registration scenario", () => {
       }
     };
     const questionsOf = (occurrence: Occurrence) => plan(options.repin_after_restart && running ? running : occurrence.pinned!).capture.pins
-      .filter((pin) => pin.item_kind === occurrence.item_kind && !(options.drops_correctness && pin.question_id.endsWith("correctness")));
+      .filter((pin) => isPinTarget(pin, occurrence) && !(options.drops_correctness && pin.question_id.endsWith("correctness")));
     const isReady = (occurrence: Occurrence) => occurrence.ready_at !== null && !(forgotten && occurrence.run_id === "run-second" && !occurrence.cites_file
       && occurrence.item_kind === FINDING_KIND);
     const references = (occurrence: Occurrence) => [{ ref: "subject", source: "revision", revision_id: occurrence.revision_id, item_path: occurrence.item_path,
@@ -628,7 +644,8 @@ describe("the registration scenario", () => {
       observationGet: async (path) => {
         const run = /\/v1\/runs\/([^/]+)\/items/.exec(path)?.[1];
         if (run) return ok({ items: occurrences.filter((entry) => entry.run_id === run && entry.pinned).map((entry) =>
-          ({ occurrence_id: entry.id, revision_id: entry.revision_id, json_pointer: entry.item_path, item_kind: entry.item_kind })) });
+          ({ occurrence_id: entry.id, revision_id: entry.revision_id, json_pointer: entry.item_path, artifact_kind: entry.artifact_kind,
+            item_selector: entry.item_selector, item_kind: entry.item_kind })) });
         if (path.includes("/cursor")) return ok({ cursor: feed.cursor });
         const revision = /\/v1\/source-revisions\/(.+)$/.exec(path)?.[1];
         if (revision) return ok({ revision_id: decodeURIComponent(revision), run_id: "run-first", artifact_kind: "assessment" });
@@ -643,8 +660,9 @@ describe("the registration scenario", () => {
     const source: RegistrationSource = {
       async run(label, run_options) {
         const run_id = `run-${label}`;
-        const item = (id: string, revision_id: string, item_path: string, item_kind: string, cites_file: boolean) =>
-          occurrences.push({ run_id, id: `${run_id}-${id}`, revision_id: `${revision_id}-${run_id}`, item_path, item_kind, cites_file, pinned: null, ready_at: null });
+        const item = (id: string, artifact_kind: string, item_path: string, item_kind: string, cites_file: boolean) =>
+          occurrences.push({ run_id, id: `${run_id}-${id}`, revision_id: `${artifact_kind}-${run_id}`, item_path, artifact_kind,
+            item_selector: "/findings/*", item_kind, cites_file, pinned: null, ready_at: null });
         item("finding", "analysis", "/findings/0", FINDING_KIND, false);
         item("cited", "assessment", "/findings/0", ASSESSMENT_FINDING_KIND, !options.nothing_cited);
         item("uncited", "assessment", "/findings/1", ASSESSMENT_FINDING_KIND, false);
