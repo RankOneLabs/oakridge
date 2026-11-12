@@ -392,6 +392,7 @@ export_observation_credentials() {
 # with env-file loading off, so neither the shell nor observation/.env can add to it.
 exec_isolated_observation() {
   local variable pair service_port="$OAKRIDGE_OBSERVATION_SERVICE_PORT"
+  local stage_source_url="$DBOS_URL" stage_source_token="${OAKRIDGE_CORE_CONTROL_TOKEN:-${OAKRIDGE_CONTROL_TOKEN:-}}"
   for variable in $(compgen -e); do
     case "$variable" in
       PATH|HOME|USER|LOGNAME|LANG|LC_*|TZ|TMPDIR) ;;
@@ -399,6 +400,7 @@ exec_isolated_observation() {
     esac
   done
   export_observation_credentials
+  export OAKRIDGE_CORE_BASE_URL="$stage_source_url" OAKRIDGE_CORE_CONTROL_TOKEN="$stage_source_token"
   export OBSERVATION_DATABASE_URL="$SHADOW_OBSERVATION_DATABASE_URL" OBSERVATION_HOST=127.0.0.1 OBSERVATION_PORT="$service_port"
   while IFS= read -r pair; do
     if [ -n "$pair" ]; then export "$pair"; fi
@@ -409,6 +411,8 @@ exec_isolated_observation() {
 
 exec_default_observation() {
   export_observation_credentials
+  export OAKRIDGE_CORE_BASE_URL="$DBOS_URL"
+  export OAKRIDGE_CORE_CONTROL_TOKEN="${OAKRIDGE_CORE_CONTROL_TOKEN:-${OAKRIDGE_CONTROL_TOKEN:-}}"
   cd "$OBSERVATION_ROOT"
   exec bun run start
 }

@@ -37,7 +37,7 @@ integration("an ordered delivery captures its revision and reads back its proven
   const read = await app.request(`/v1/source-revisions/oakridge:${tenant.namespace}:rev-1`, { headers: { authorization: "Bearer read-secret" } });
   const revision = await read.json() as { readonly body: unknown; readonly body_digest: string };
   expect(revision).toMatchObject({ id: `oakridge:${tenant.namespace}:rev-1`, producer: "oakridge", namespace: tenant.namespace,
-    run_id: "run-1", unit_id: "build_result", stage: "implementation", artifact_kind: "build_result", definition_id: "definition-1", body: { z: 1, a: ["x"] } });
+    run_id: "run-1", unit_id: "build_result", stage: "build_result", artifact_kind: "build_result", definition_id: "definition-1", body: { z: 1, a: ["x"] } });
   const rehashed = canonicalDigest(revision.body);
   expect(rehashed.ok && String(rehashed.value)).toBe(revision.body_digest);
 }));

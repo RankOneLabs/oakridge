@@ -33,6 +33,7 @@ describe("shadow isolation", () => {
     expect(new URL(env.OBSERVATION_DATABASE_URL ?? "").pathname).toBe("/observation");
     expect(env.OBSERVATION_PORT).toBe(String(stack.ports.observation));
     expect(env.OBSERVATION_HOST).toBe("127.0.0.1");
+    expect(env.OAKRIDGE_CORE_BASE_URL).toBe(`http://127.0.0.1:${stack.ports.dbos}`);
     expect(cwd).toBe(stack.state_dir);
     expect(credentials(env.OBSERVATION_INGEST_CREDENTIALS)).toEqual([{ producer: "oakridge", namespace: "shadow-fixture", token: token(stack, "ingest") }]);
     expect(credentials(env.OBSERVATION_READ_CREDENTIALS)).toEqual([{ producer: "oakridge", namespace: "shadow-fixture", token: token(stack, "read") }]);
@@ -53,7 +54,7 @@ describe("shadow isolation", () => {
     const stack = await startedStack();
     await observationServing(stack);
     const names = Object.keys(stack.record("observation").env).filter((name) => !["PATH", "HOME", "PWD", "OLDPWD", "SHLVL", "_"].includes(name));
-    expect(names.toSorted()).toEqual(["OBSERVATION_DATABASE_URL", "OBSERVATION_GRADE_CREDENTIALS", "OBSERVATION_HOST",
+    expect(names.toSorted()).toEqual(["OAKRIDGE_CORE_BASE_URL", "OAKRIDGE_CORE_CONTROL_TOKEN", "OBSERVATION_DATABASE_URL", "OBSERVATION_GRADE_CREDENTIALS", "OBSERVATION_HOST",
       "OBSERVATION_INGEST_CREDENTIALS", "OBSERVATION_PORT", "OBSERVATION_READ_CREDENTIALS"]);
   }, TIMEOUT_MS);
 

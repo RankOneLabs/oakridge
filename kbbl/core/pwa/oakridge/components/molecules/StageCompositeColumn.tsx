@@ -30,7 +30,7 @@ export function StageCompositeColumn({ stage, isRevealed, onDrill, onWindow }: P
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="m-0 text-sm font-semibold text-[var(--text-primary)]">{stageLabel(view.stage)}</h4>
         <Chip tone={view.publication === "Final results" ? "accent" : "muted"}>{view.publication}</Chip>
-        {view.coverage === "gap" && <Chip tone="warning" testId="or-task-coverage-gap">No linked items</Chip>}
+        {view.state === "gap" && <Chip tone="warning" testId="or-task-coverage-gap">No linked items</Chip>}
       </div>
       {view.coverage === "linked" && <p className="m-0 text-xs text-[var(--text-muted)]">{view.contributing_items} linked {view.contributing_items === 1 ? "item" : "items"}</p>}
       {view.kind === "revealed" && (

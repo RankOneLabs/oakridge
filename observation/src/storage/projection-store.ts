@@ -1,3 +1,4 @@
+import { RELATION_SEMANTICS } from "../projection/relations";
 import { sql, type Selectable } from "kysely";
 import { canonicalJson } from "canonical-json";
 import type { ItemOccurrenceId, LogicalItemId, RelationId } from "../domain/identity";
@@ -12,7 +13,7 @@ import { logicalItemId, logicalItemRelation, logicalReference, occurrenceRelatio
 import { occurrenceId } from "../projection/occurrence-id";
 import type { CaptureConfiguration } from "../grading/evidence";
 import { pinOccurrenceInTransaction } from "./captured-evidence-store";
-import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
+import { jsonText, withTenant, withTenantSnapshot, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationItemOccurrence, ObservationSourceRevision } from "./db-types";
 
 export interface ProjectionSummary { readonly occurrences: number; readonly issues: number; readonly relations: number }
@@ -31,7 +32,7 @@ export interface ItemRelationRead {
   readonly target_occurrence_id: ItemOccurrenceId | null;
   readonly target_logical_item_id: LogicalItemId | null;
   readonly unresolved_target_ref: string | null;
-  readonly type: string;
+  readonly type: RelationType;
   readonly asserted_by: string;
   readonly evidence_ref: string;
   readonly algorithm: string | null;
@@ -301,7 +302,7 @@ export function listRelatedOccurrences(db: Database, tenant: TenantScope, logica
 }
 
 export function readLineage(db: Database, tenant: TenantScope, occurrence_id: string, page: Page, task_id?: LogicalItemId): Promise<LineagePage | null> {
-  return withTenant(db, tenant, async (trx) => {
+  return withTenantSnapshot(db, tenant, async (trx) => {
     const item = await trx.selectFrom("observation.item_occurrence").selectAll()
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("occurrence_id", "=", occurrence_id).executeTakeFirst();
@@ -357,7 +358,7 @@ export function readLineage(db: Database, tenant: TenantScope, occurrence_id: st
       }
     }
     const ordered = relations.filter((relation) => connected.has(relation.relation_id)
-      && (task_id === undefined || relation.type !== "assesses" || relation.target_logical_item_id === task_id));
+      && (task_id === undefined || relation.target_logical_item_id === null || !RELATION_SEMANTICS[relation.type].establishes_task_association || relation.target_logical_item_id === task_id));
     const slice = ordered.slice(page.offset, page.offset + page.limit);
     return { task_id: task_id ?? null, occurrence_id: occurrence_id as ItemOccurrenceId, relations: slice, edges: slice.filter((relation) => relation.unresolved_target_ref === null),
       unresolved: slice.filter((relation) => relation.unresolved_target_ref !== null),

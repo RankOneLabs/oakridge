@@ -1,3 +1,5 @@
+import { createStageSource } from "../src/producers/oakridge/stage-source";
+import { stagesFromReadiness, type RollupContext } from "../src/grading/task-stages";
 /**
  * Explicit late links and task composites on the real shadow, continuing `grading`:
  *
@@ -53,7 +55,7 @@ const WHOLE = { limit: 200, offset: 0 };
 export const UNRESOLVED_TASK = "T-not-in-this-run";
 const check = (name: string, passed: boolean, detail: string): ProofCheck => ({ name, passed, detail });
 
-export interface ObservationReads { readonly db: Database; readonly tenant: TenantScope; close(): Promise<void> }
+export interface ObservationReads { readonly db: Database; readonly tenant: TenantScope; context?(run_id: string): Promise<RollupContext>; close(): Promise<void> }
 export interface RelationsSource {
   run(label: GradingRunLabel, options: GradingRunOptions): Promise<{ readonly report: ScenarioReport; readonly run: RunReference | null }>;
   /** Plans two cohorts sharing one task, for the wider real run. */
@@ -118,22 +120,23 @@ export function compositeOriginalAnswerChecks(read: LogicalItemComposite | null,
   const stage = stageOf(read, "analysis");
   const originals = answered.flatMap((measurement) => measurement.observation_id ? [measurement.observation_id] : []);
   return [
-    check("the task's composite shows the original answer as soon as the link arrives", stage?.coverage === "linked" && (stage.answers.length > 0),
-      JSON.stringify(stage?.answers.map((count) => [count.question.question_id, count.answer, count.count]) ?? null)),
-    check("what its count opens is the original observation, not a new one", originals.length > 0 && originals.every((id) => row_observations.includes(id))
-      && row_observations.every((id) => originals.includes(id)), `${row_observations.join(", ")} against ${originals.join(", ")}`),
+    check("the task's composite shows the original answer as soon as the link arrives", stage?.coverage === "linked" && stage.results.some((result) => result.status.state === "answered"),
+      JSON.stringify(stage?.results.map((result) => result.status.state) ?? null)),
+    check("what its count opens is the original observation, not a new one", originals.length > 0 && originals.every((id) => row_observations.includes(id)), `${row_observations.join(", ")} against ${originals.join(", ")}`),
   ];
 }
 
 // --------------------------------------------------------------- a real run's reads ---
 
 async function composites(reads: ObservationReads, run_id: string): Promise<Paged<LogicalItemComposite>> {
-  return listRunComposites(reads.db, reads.tenant, path, run_id, WHOLE);
+  return listRunComposites(reads.db, reads.tenant, path, run_id, WHOLE, await reads.context?.(run_id));
 }
+const readTask = async (reads: ObservationReads, run_id: string, task_id: string): Promise<LogicalItemComposite | null> =>
+  readLogicalItemComposite(reads.db, reads.tenant, path, run_id, task_id, await reads.context?.(run_id));
 const untilLinked = async (io: ProofIo, reads: ObservationReads, run_id: string, task_id: string, stage: string): Promise<LogicalItemComposite | null> => {
   let read: LogicalItemComposite | null = null;
   for (let attempt = 0; attempt < DELIVERY_ATTEMPTS; attempt++) {
-    read = await readLogicalItemComposite(reads.db, reads.tenant, path, run_id, task_id);
+    read = await readTask(reads, run_id, task_id);
     if (stageOf(read, stage)?.coverage === "linked") return read;
     await io.sleep(POLL_MS);
   }
@@ -143,8 +146,8 @@ const declareRoute = (run_id: string): string => `/api/runs/${run_id}/analysis-l
 const answerObservations = async (reads: ObservationReads, run_id: string, read: LogicalItemComposite | null, stage: string): Promise<readonly string[]> => {
   const counted = stageOf(read, stage);
   if (!counted) return [];
-  const rows = await Promise.all(counted.answers.map((count) => readCompositeDrilldown(reads.db, reads.tenant, path, run_id, count.drilldown, uniformDrilldownPages(WHOLE))));
-  return [...new Set(rows.flatMap((page) => page.items.flatMap((row) => row.questions.items.flatMap((question) => question.answers.items.map((answer) => answer.observation_id as string)))))];
+  const rows = await readCompositeDrilldown(reads.db, reads.tenant, path, run_id, counted.items, uniformDrilldownPages(WHOLE));
+  return [...new Set(rows.items.flatMap((row) => row.questions.items.flatMap((question) => question.answers.items.map((answer) => answer.observation_id as string))))];
 };
 
 /** Every count opens exactly as many rows as it says, and a one-row page walks the same population. */
@@ -172,7 +175,7 @@ export function lineageChecks(lineage: LogicalItemLineage): readonly ProofCheck[
   const stages = new Set(lineage.items.flatMap((entry) => entry.kind === "contribution" ? [entry.item.stage] : []));
   return [check("the task's lineage runs through its task list, plan and brief entries at exact revisions and paths", ["tasks", "plan", "brief"].every((kind) => kinds.has(kind)),
     [...kinds].join(", ")),
-  check("the task's lineage reaches the analysis finding and the implementation assessment", stages.has("analysis") && stages.has("implementation"), [...stages].join(", "))];
+  check("the task's lineage reaches the analysis finding and the implementation assessment", stages.has("analysis") && stages.has("cohort"), [...stages].join(", "))];
 }
 
 /** Every run's latest count, added up: a later run's early checkpoint says nothing of an earlier run's requests. */
@@ -225,7 +228,7 @@ export interface SharedRunReads {
 }
 /** What a real run sharing one task between two cohorts must read. */
 export function sharedRunChecks(reads: SharedRunReads): readonly ProofCheck[] {
-  const implementation = stageOf(reads.shared, "implementation");
+  const implementation = stageOf(reads.shared, "cohort");
   const units = implementation?.publication.state === "published" ? implementation.publication.unit_ids : [];
   const contributing = [...new Set(reads.implementation_rows?.items.map((row) => row.item.unit_id) ?? [])].sort();
   const occurrences = reads.lineage.items.flatMap((entry) => entry.kind === "occurrence" ? [entry] : []);
@@ -314,11 +317,11 @@ async function sharedRun(io: ProofIo, source: RelationsSource, open: Observation
   measurements.push(...await readUntil(io, run.run_id, "shared-settled", settledRun));
   checkpoints.push(await relationCheckpoint(io, { checkpoint: "shared-settled", run_id: run.run_id, linked: (first as FindingAddress).occurrence_id, control: control_id }));
   readbacks.shared_addresses = { first, second, control };
-  const shared = await readLogicalItemComposite(open.db, open.tenant, path, run.run_id, SHARED_TASK);
-  const other = await readLogicalItemComposite(open.db, open.tenant, path, run.run_id, OTHER_TASK);
-  const implementation = stageOf(shared, "implementation");
+  const shared = await readTask(open, run.run_id, SHARED_TASK);
+  const other = await readTask(open, run.run_id, OTHER_TASK);
+  const implementation = stageOf(shared, "cohort");
   const implementation_rows = implementation ? await readCompositeDrilldown(open.db, open.tenant, path, run.run_id, implementation.items, uniformDrilldownPages(WHOLE)) : null;
-  const lineage = await readLogicalItemLineage(open.db, open.tenant, path, run.run_id, SHARED_TASK, WHOLE);
+  const lineage = await readLogicalItemLineage(open.db, open.tenant, path, run.run_id, SHARED_TASK, WHOLE, await open.context?.(run.run_id));
   const unlinked = await listRunUnlinkedItems(open.db, open.tenant, path, run.run_id, WHOLE);
   const unresolved = await listRunUnresolvedReferences(open.db, open.tenant, path, run.run_id, WHOLE);
   readbacks.shared_run = { shared, other, implementation_rows, lineage, unlinked, unresolved };
@@ -357,7 +360,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
     if (!digest.ok) throw new Error(digest.error.detail);
     const prefix = `${tenant.producer}:${tenant.namespace}:`;
     await send({ ...provenance, artifact_schema_version: "matrix-schema", kind: "artifact_revision", event_kind: "revision_published", run_id, event_id: `event:${revision_id}`,
-      revision: { format: "observation.artifact-revision/v3", source: { ...tenant, revision_id: `${prefix}${revision_id}`, run_id, unit_id, stage: "implementation", artifact_kind, artifact_schema_version: "matrix-schema",
+      revision: { format: "observation.artifact-revision/v3", source: { ...tenant, revision_id: `${prefix}${revision_id}`, run_id, unit_id, stage: artifact_kind === "assessment" ? (unit_id.split("/")[1] === "integration" ? "integration" : "implementation") : artifact_kind, artifact_kind, artifact_schema_version: "matrix-schema",
         definition_id: "matrix", predecessor_id: predecessor_id ? `${prefix}${predecessor_id}` : null, subject_id: null }, recorded_at: new Date(Date.UTC(2026, 10, 1, 0, sequence)).toISOString(),
         body, body_digest: digest.value as `canonical-json/v1:${string}` & { readonly __brand: "CanonicalDigest" } } });
   };
@@ -418,7 +421,10 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
   await answer({ occurrence_id: alpha, question_id: CORRECTNESS, value: "supported", reviewer: "reviewer-a", supersedes: wrong });
   await answer({ occurrence_id: alpha, question_id: CORRECTNESS, value: "contradicted", reviewer: "reviewer-b" });
   await answer({ occurrence_id: beta, question_id: CORRECTNESS, value: "contradicted" });
-  const read = async (task: string) => readLogicalItemComposite(db, tenant, path, run_id, task);
+  const read = async (task: string) => readLogicalItemComposite(db, tenant, path, run_id, task, { stages: [
+    { stage: "analysis", artifact_kinds: ["analysis"] }, { stage: "tasks", artifact_kinds: ["tasks"] },
+    { stage: "implementation", artifact_kinds: ["assessment"] }, { stage: "integration", artifact_kinds: ["assessment"] }
+  ], pins: registration.capture.pins });
   const pending = await read(shared);
   await revision("integration-1", "assessment", `${run_id}/integration/oakridge`, { findings: [finding([shared])] });
   const final = await read(shared);
@@ -490,7 +496,16 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
     const opened = await source.openObservation();
     checks.push(check("the shadow's observation database opens for composite reads", opened.ok, opened.ok ? opened.value.tenant.namespace : opened.error.detail));
     if (!opened.ok) return finish();
-    reads = opened.value;
+    const stage_source = createStageSource({ base_url: io.state.dbos.url, fetch: async (url) => {
+      const response = await io.dbos(new URL(url).pathname);
+      return response.ok ? Response.json(response.value) : new Response(response.error.detail, { status: 502 });
+    } });
+    const pins = plans.value.committed_plan.capture.pins;
+    reads = { ...opened.value, context: async (run_id) => {
+      const units = await stage_source.read(run_id);
+      if (!units.ok) throw new Error(units.error.detail);
+      return { stages: stagesFromReadiness(units.value), pins };
+    } };
     const open = reads;
     let answeredBeforeTasks: readonly MeasurementReadback[] = [];
     let beforeApproval: RelationCheckpoint | null = null;
@@ -616,14 +631,14 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
 
     const all = await composites(open, run.run_id);
     readbacks.composites_final = all;
-    const task = all.items.find((item) => stageOf(item, "analysis")?.coverage === "linked" && stageOf(item, "implementation")?.coverage === "linked")
+    const task = all.items.find((item) => stageOf(item, "analysis")?.coverage === "linked" && stageOf(item, "cohort")?.coverage === "linked")
       ?? all.items.find((item) => stageOf(item, "analysis")?.coverage === "linked");
     checks.push(check("a task reads its analysis and implementation stages side by side, with integration pending",
-      task !== undefined && stageOf(task, "analysis")?.coverage === "linked" && stageOf(task, "implementation")?.publication.state === "published"
+      task !== undefined && stageOf(task, "analysis")?.coverage === "linked" && stageOf(task, "cohort")?.publication.state === "published"
         && stageOf(task, "integration")?.publication.state === "pending", JSON.stringify(task?.stages.map((stage) => [stage.stage, stage.publication.state, stage.coverage]) ?? null)));
     if (task) {
       checks.push(...await drilldownChecks(open, run.run_id, task));
-      const lineage = await readLogicalItemLineage(open.db, open.tenant, path, run.run_id, task.producer_local_id, WHOLE);
+      const lineage = await readLogicalItemLineage(open.db, open.tenant, path, run.run_id, task.producer_local_id, WHOLE, await open.context?.(run.run_id));
       readbacks.lineage = lineage;
       checks.push(...lineageChecks(lineage));
     }

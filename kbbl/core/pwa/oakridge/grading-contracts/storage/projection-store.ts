@@ -2,6 +2,7 @@
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
 import type { ObservationItemOccurrenceId, ObservationLogicalItemId, ObservationRelationId } from "../domain/identity";
+import type { ObservationRelationType } from "../projection/extractor";
 
 export interface ObservationLineagePage { readonly task_id: ObservationLogicalItemId | null; readonly occurrence_id: ObservationItemOccurrenceId; readonly relations: readonly ObservationItemRelationRead[];
   readonly edges: readonly ObservationItemRelationRead[];
@@ -17,7 +18,7 @@ export interface ObservationItemRelationRead {
   readonly target_occurrence_id: ObservationItemOccurrenceId | null;
   readonly target_logical_item_id: ObservationLogicalItemId | null;
   readonly unresolved_target_ref: string | null;
-  readonly type: string;
+  readonly type: ObservationRelationType;
   readonly asserted_by: string;
   readonly evidence_ref: string;
   readonly algorithm: string | null;

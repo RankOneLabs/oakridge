@@ -83,3 +83,18 @@ test("paging failure data never leaks into another task", async () => {
   await screen.findByRole("alert");
   expect(screen.getByTestId("or-task-answer-count").textContent).toBe("items: 7");
 });
+
+test("task stages render arbitrary projection order and all four distinct states", () => {
+  const original = taskComposite().stages.items[0];
+  if (!original) throw new Error("fixture stage missing");
+  const stages: ObservationStageCompositeRead[] = [
+    { ...original, stage: "compliance_audit", state: "not_graded" },
+    { ...original, stage: "release", state: "pending" },
+    { ...original, stage: "custom_check", state: "gap", publication: { state: "published", is_final: false, unit_ids: paged([]) } },
+    { ...original, stage: "finish", state: "linked", publication: { state: "published", is_final: true, unit_ids: paged([]) } },
+  ];
+  mount(<TaskStageComposites runId="run-1" taskId="T1" stages={paged(stages)} isRevealed={false} onDrill={vi.fn()} />);
+  const columns = screen.getAllByTestId("or-task-stage");
+  expect(columns.map((column) => column.dataset.stage)).toEqual(["compliance_audit", "release", "custom_check", "finish"]);
+  expect(columns.map((column) => column.textContent)).toEqual(["Compliance AuditNot graded", "ReleasePending", "Custom CheckPublishedNo linked items", "FinishFinal results"]);
+});

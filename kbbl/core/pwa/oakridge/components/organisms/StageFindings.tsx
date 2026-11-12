@@ -1,3 +1,4 @@
+import type { ObservationRunStageRead } from "../../grading-contracts/grading/task-stages";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
@@ -14,6 +15,7 @@ const FIRST: ObservationPageRequest = { limit: 50, offset: 0 };
 interface Props {
   runId: string;
   stage: string;
+  state?: ObservationRunStageRead["state"];
   onOpenItem: (selection: ObservationItemAddress) => void;
   onOpenTask?: (task_id: string) => void;
   /** Older revisions stay inspectable, on request. */
@@ -21,7 +23,7 @@ interface Props {
 }
 
 /** Every finding of one stage, linked or not. It shows no answer, so it reads the same hidden or revealed. */
-export function StageFindings({ runId, stage, onOpenItem, onOpenTask, canShowOlder = true }: Props) {
+export function StageFindings({ runId, stage, state, onOpenItem, onOpenTask, canShowOlder = true }: Props) {
   const [page, setPage] = useState(FIRST);
   const [links, setLinks] = useState(FIRST);
   const [isOlderShown, setIsOlderShown] = useState(false);
@@ -30,12 +32,15 @@ export function StageFindings({ runId, stage, onOpenItem, onOpenTask, canShowOld
     <section className="flex flex-col gap-2" data-testid="or-stage-findings" data-stage={stage}>
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="m-0 text-sm font-semibold text-[var(--text-primary)]">{stageLabel(stage)} findings{query.data ? ` (${query.data.total})` : ""}</h4>
+        {state === "not_graded" && <Chip tone="muted">Not graded</Chip>}
+        {state === "pending" && <Chip tone="muted">Pending</Chip>}
+        {state === "gap" && <Chip tone="warning">No gradeable items</Chip>}
         {canShowOlder && <Button variant="secondary" size="xsmall" className="text-xs!" aria-pressed={isOlderShown} onClick={() => { setIsOlderShown(!isOlderShown); setPage(FIRST); }}>
           {isOlderShown ? "Latest revisions only" : "Include older revisions"}
         </Button>}
       </div>
       {query.isError && <FeedbackMessage tone="muted" testId="or-stage-findings-unavailable">Findings are unavailable: {query.error instanceof Error ? query.error.message : "observation did not answer"}</FeedbackMessage>}
-      {query.data?.total === 0 && <p className="m-0 text-sm text-[var(--text-muted)]">None published yet.</p>}
+      {query.data?.total === 0 && state !== "not_graded" && state !== "gap" && <p className="m-0 text-sm text-[var(--text-muted)]">None published yet.</p>}
       <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
         {query.data?.items.map((row) => (
           <li key={row.item.occurrence_id} className="flex flex-col gap-1 py-2" data-testid="or-stage-finding" data-item-path={row.item.item_path} data-revision={row.item.source_revision_id}>

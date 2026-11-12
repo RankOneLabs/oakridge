@@ -60,7 +60,7 @@ describe("automatic grades on the artifact", () => {
     fireEvent.click(await screen.findByTestId("or-item-automatic-toggle"));
     const glyphs = await screen.findAllByTestId("or-automatic-grade");
     expect(glyphs.map((glyph) => [glyph.getAttribute("data-glyph"), glyph.getAttribute("aria-label")])).toEqual([
-      ["negative", "Evidence support: does not support"], ["not_ready", "Correctness: Not ready"]]);
+      ["negative", "Does the cited evidence support it?: does not support"], ["not_ready", "Is this finding correct?: Not ready"]]);
     expect(document.body.innerHTML).not.toContain("leak-marker");
     expect(document.body.innerHTML).not.toContain("jev-1.14.0");
     fireEvent.click(screen.getByTestId("or-item-automatic-toggle"));

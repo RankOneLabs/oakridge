@@ -128,10 +128,10 @@ describe("the panel's question states", () => {
     expect(await screen.findAllByTestId("or-your-grade-choice")).toHaveLength(3);
   });
   it("relevance offers relevant, irrelevant and unclear", async () => {
-    world.status = itemStatus([supportQuestion({ question: { ...supportQuestion().question, question_id: id("finding.relevance"), allowed_values: ["relevant", "irrelevant", "unclear"] } })], {}, ANALYSIS);
+    world.status = itemStatus([supportQuestion({ question: { ...supportQuestion().question, question_id: id("finding.relevance"), question_text: "Is this finding relevant?", allowed_values: ["relevant", "irrelevant", "unclear"] } })], {}, ANALYSIS);
     wrap(<ItemPanel runId="run-1" selection={ANALYSIS} onOpenTask={vi.fn()} />);
     expect((await screen.findAllByTestId("or-your-grade-choice")).map((input) => (input as HTMLInputElement).value)).toEqual(["relevant", "irrelevant", "unclear"]);
-    expect(screen.getByTestId("or-item-question").textContent).toBe("Relevance");
+    expect(screen.getByTestId("or-item-question").textContent).toBe("Is this finding relevant?");
   });
   it("keeps not ready, off, pending, failed, deferred and real negative answers apart when revealed", async () => {
     world.status = itemStatus([supportQuestion({ machine: paged([
@@ -320,7 +320,7 @@ describe("the grading section and task drilldown", () => {
     const stages = await screen.findAllByTestId("or-task-stage");
     expect(stages.map((stage) => stage.getAttribute("data-stage"))).toEqual(["analysis", "implementation", "integration"]);
     expect(stages[0]!.textContent).toContain("Pending");
-    expect(within(stages[0]!).getByTestId("or-task-coverage-gap")).toBeTruthy();
+    expect(within(stages[0]!).queryByTestId("or-task-coverage-gap")).toBeNull();
     expect(stages[2]!.textContent).toContain("Final results");
     expect(within(stages[1]!).getByTestId("or-task-answer-count").textContent).toBe("items: 7");
     expect(within(stages[1]!).getByTestId("or-task-status-count").textContent).toContain("Budget deferred");
@@ -400,7 +400,7 @@ describe("the grading section and task drilldown", () => {
     section();
     expect((await screen.findByTestId("or-grading-unavailable")).textContent).toContain("not deployed");
     expect(await screen.findByTestId("or-grading-tasks-unavailable")).toBeTruthy();
-    expect((await screen.findAllByTestId("or-stage-findings-unavailable")).length).toBe(3);
+    expect(await screen.findByTestId("or-grading-stages-unavailable")).toBeTruthy();
   });
   it("a task panel for an uncaptured id says unresolved and stays open; a known one lists its linked items hidden", async () => {
     wrap(<TaskPanel runId="run-1" taskId="T404" onOpenItem={vi.fn()} />);
@@ -461,7 +461,10 @@ describe("every entry point opens the same item", () => {
     const onOpenItem = vi.fn();
     useGradingVisibility.getState().revealComposites("run-1");
     wrap(<RunGradingSection runId="run-1" onOpenItem={onOpenItem} onOpenTask={vi.fn()} />);
-    fireEvent.click((await screen.findAllByTestId("or-grade-item"))[0]!);
+    await screen.findAllByTestId("or-stage-finding");
+    const analysisStage = screen.getAllByTestId("or-stage-findings").find((stage) => stage.dataset.stage === "analysis");
+    if (!analysisStage) throw new Error("analysis stage missing");
+    fireEvent.click(within(analysisStage).getAllByTestId("or-grade-item")[0]!);
     expect(onOpenItem).toHaveBeenCalledWith(ANALYSIS);
   });
 });

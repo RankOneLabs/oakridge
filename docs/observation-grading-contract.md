@@ -308,63 +308,74 @@ them needs a `tasks` artifact field or an agent output, which is an operator dec
 
 ## Composites and lineage
 
-`observation/src/grading/composite.ts` holds the pure transforms, and the read functions in
-`observation/src/storage/grading-record-store.ts` run them over one repeatable-read snapshot of a run. Nothing
-is stored. The profile's `composite` path names the logical scope, relation type, contributing item kinds,
-stages and `stageOf`. For Oakridge the stages are `analysis`, `implementation` and `integration`. An
-assessment's stage comes from the declared unit in its recorded `unit_id`, which never enters an item's
-identity.
+The task roll-up is a read-only projection over one repeatable-read snapshot of a run's captured
+items, evidence, executions and answers. It writes no grades, evidence sets or executions, copies
+nothing onto the task and produces no overall verdict. The producer's `CompositePath` names only
+`logical_scope`. Association, stage placement and question selection contain no producer vocabulary.
 
-**Current selection.** Each unit's artifact is one stream with one current revision: the latest recorded
-that no revision in the stream names as its predecessor. This is decided per stream and before links are
-read, so every cohort keeps its own current revision, and a newer revision with no links replaces an older
-linked one instead of resurrecting it. Superseded revisions stay readable in history.
+**Association.** A task includes every occurrence whose own logical item is that task, plus source
+occurrences of resolved edges whose target logical item is the task and whose generic
+`RELATION_SEMANTICS` flag establishes task association. `assesses` establishes association;
+`supersedes`, `split_from` and `merged_from` establish and propagate it. Once an occurrence is
+associated, association flows to occurrences that name it through propagating edges. `derived_from`
+and `addresses` never establish or propagate task association. Unresolved edges never associate an
+item. A breadth-first traversal with a visited set returns each occurrence once, retaining a shortest
+provenance path: `own`, or the establishing edge followed by propagating hops. Each hop retains its
+`relation_id`, type, `evidence_ref` and `asserted_by`.
 
-**Answers.** A task composite counts only grades whose `task_id` is that task's logical_item_id.
-One finding naming T3 and T7 has independent subjects: a T3 answer never appears in or counts toward
-T7. Missing evaluations stay missing and never imply a pass. Per-item grades of linked items remain
-visible in the items drilldown as `is_linked_context: true`, excluded from task-level answer and status counts.
+**Current selection.** Each unit's artifact is one stream with one current revision: the latest
+recorded revision that no revision in that stream names as its predecessor. This is decided before
+association, so a newer empty revision replaces older linked items. Older revisions and corrected
+answers remain inspectable in history; every associated revision's results remain in the roll-up.
+Items within a stage are ordered by revision, then numeric path (`/items/2` before `/items/10`).
 
-A superseded answer is dropped from the counts by its own correction chain, never by
-recency across graders, and stays in history. Counts are per question version, per machine evaluator or
-human reviewer, per answer. Allowed values come from the registered question, so generic code holds no
-producer vocabulary.
+**Stages.** Every revision is placed using its captured workflow `stage`. The run's ordered stages
+and declared artifact kinds come from the DBOS readiness read: unit `depends_on` edges give a stable
+topological order, including units that have not started, and declared artifacts supply artifact kinds.
+This read does not extend or rewrite capture. A captured stage absent from readiness is appended after
+the ordered stages and its results are never dropped. Stage query parameters, including drilldown
+keys, are validated against the run's stages and unknown stages return `invalid_stage`.
 
-**Stages.** Stages stand side by side and nothing adds across them. A stage is `pending` until one of its
-revisions publishes. A stage marked final on publication is then `{ state: "published", is_final: true }`,
-whatever its answers, links or approvals. No current linked item is `coverage: "gap"`, in a stage and for
-the whole task; it is never a pass or a zero.
+Each stage exposes a discriminated `state`:
 
-**Status is not an answer.** `statuses` counts what is not an answer, with `totals` counting distinct items:
-
-| Status | Meaning |
+| State | Meaning |
 | --- | --- |
-| `not_ready` | The question's own wait, with its real code. Counted once per item and question, with no evaluator. |
-| `grading_off` | The run's launch chose no automatic grading. |
-| `awaiting_admission`, `pending` | Ready, and not answered yet. |
-| `budget_deferred` | The next request could not fit the run's allowance. |
-| `failed` | Ended with no answer, with its terminal cause. |
+| `not_graded` | No capture pin of the definitions in force targets a declared artifact kind of this stage. |
+| `pending` | The stage is graded but has no published revision. |
+| `gap` | A revision is published, but there is no current associated item for this task. |
+| `linked` | The stage has current associated items for this task. |
 
-A negative answer or a chosen `unclear` is an answer, and a human with no answer yet owes nothing, so has
-no status.
+Publication carries `is_final: true` only for the last stage in the readiness order, once a revision
+is published. Appended stages are never final. Answers, approvals and links do not decide finality.
+`not_graded`, `pending` and `gap` never imply a pass or a zero. Stages stand separately with no total
+verdict across them. kbbl renders the projection's stages in its order and title-cases keys for display;
+it has no workflow stage list. Question labels come from `question_text`.
 
-**Disagreement** is differing current answers on one occurrence, task and question. Different items answering
-differently is not disagreement, and neither is a corrected answer differing from its correction.
+**Scoped results.** Every associated item's pinned results retain their question id, version and
+text, evaluator, explicit status, evidence-set reference and association provenance. Each has scope
+`{ kind: "per_task", task_id }` or `{ kind: "per_item" }`. A per-task result appears only under its
+own task. Per-item grades remain visible as the item's own judgment; they never contribute to task
+answer, status or disagreement counts. The drilldown carries the same scopes and provenance, with
+frozen evidence, current answers and correction history, separated by evidence-set identity.
+
+**Missing is not passing.** Results retain `not_ready`, `awaiting_admission`, `pending`,
+`budget_deferred`, `failed`, `grading_off`, or `pinned` with no answer. None is an affirmative answer.
+An unready question keeps its reason, a failed execution keeps its terminal cause, and a pinned human
+evaluator without an answer remains visible without creating a task status count. A negative or chosen
+`unclear` answer stays an answer. Disagreement means differing current answers on the same occurrence,
+task and question, never different items answering differently or a correction differing from history.
 
 | Read | Returns |
 | --- | --- |
-| `readLogicalItemComposite`, `listRunComposites` | `LogicalItemComposite`, its stages and counts. A count carries its `drilldown` key. |
-| `readCompositeDrilldown` | `Paged<DrilldownRow>`: the exact items behind a count, with frozen evidence, statuses, current and superseded answers. |
-| `readLogicalItemLineage` | `LogicalItemLineage`: the task's list, plan and brief occurrences at exact revisions and paths, their declared edges, its linked items by stage, and unresolved references. |
-| `listRunUnlinkedItems`, `listRunUnresolvedReferences` | Items linked to nothing, and edges naming a target not captured. |
+| `readLogicalItemComposite`, `listRunComposites` | The task's ordered stages, scoped results and task-only counts, each count carrying a drilldown key. |
+| `readCompositeDrilldown` | Exact associated items with their scopes, provenance, frozen evidence, statuses and answers. |
+| `readLogicalItemLineage` | Own task occurrences and their edges, each other associated occurrence once with provenance, and unresolved references. |
+| `listRunUnlinkedItems` | Gradeable occurrences (any pinned evidence set) associated with no captured task, including unresolved-only items. |
+| `listRunUnresolvedReferences` | Every unresolved edge of every captured occurrence, irrespective of artifact, item kind or relation type. |
 
-Every returned list is `Paged` with the whole list's `total`, and each read is scoped to its tenant and
-run. A drilldown takes its own window for each of `rows`, `questions`, `links`, `statuses`, `answers` and
-`superseded_answers` (`DrilldownPages`), so a reader can continue any one list while holding the others
-still. An answer count is of items, and its drilldown `total` equals the count, because rows are chosen before the page is cut. A
-stage's count lists are complete summaries rather than pages, and each of their entries opens as a paged
-drilldown. These reads need no submission, assignment or reveal record. The HTTP forwarding,
-item navigation and panel belong to the later operator cohort, on these same contracts.
+HTTP lists are paged with whole-list totals; each nested list, including stage `results`, has its own
+window. Count drilldowns choose their qualifying rows before paging, so an answer count and its
+drilldown total agree. These reads need no submission, assignment or reveal record.
 
 ## HTTP routes
 
@@ -454,4 +465,4 @@ A **spec requirement** states required behavior. A **spec task** is an overall w
 
 Both questions offer `fully_covers`, `partially_covers`, `does_not_cover` and `unclear`. An empty requirement list gives no inferred links; the grader is instructed to answer unclear for task coverage. A named requirement or task that is absent makes the question not ready. Context is selected at the graded revision's recorded position within its tenant and run; later spec, task-list or plan revisions are excluded, and ready evidence remains frozen.
 
-The task, plan and brief viewers each open the same item grading panel at an exact revision and path. Partial coverage has a distinct glyph. Existing finding assessment composites retain their meaning; definition and contribution coverage opens separately from the spec task's lineage. New questions are pinned on new captures. An explicit operator-requested upgrade may add coverage questions to previously ungraded task/contribution occurrences, using the normal immutable evidence rows and ordinary reconciler; existing question pins, answers and frozen evidence are never changed.
+The task, plan and brief viewers each open the same item grading panel at an exact revision and path. Partial coverage has a distinct glyph. The relationship-driven task roll-up includes the task definition, plan and brief acceptance occurrences and associated findings in their captured stages. Their own per-item coverage grades stay visible with scope and provenance, separately from task-scoped answer, status and disagreement counts. Missing coverage results remain missing; no result is copied onto the task and no aggregate verdict is manufactured. New questions are pinned on new captures. An explicit operator-requested upgrade may add coverage questions to previously ungraded task/contribution occurrences, using the normal immutable evidence rows and ordinary reconciler; existing question pins, answers and frozen evidence are never changed.

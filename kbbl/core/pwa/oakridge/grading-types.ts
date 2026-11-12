@@ -5,9 +5,9 @@ import type { ObservationHumanSubmissionAcknowledgment } from "./grading-contrac
 /** The nested lists an item status read pages, each by `<name>_limit` and `<name>_offset`. */
 export type ItemStatusWindowName = "questions" | "references" | "pinned_evaluators" | "machine" | "attempts" | "answers" | "superseded_answers" | "links";
 /** The nested lists a task composite read pages. */
-export type CompositeWindowName = "stages" | "unit_ids" | "questions" | "answers" | "statuses" | "disagreements";
+export type CompositeWindowName = "stages" | "unit_ids" | "questions" | "answers" | "statuses" | "disagreements" | "results";
 /** The nested lists a drilldown read pages. */
-export type DrilldownWindowName = "questions" | "links" | "statuses" | "answers" | "superseded_answers" | "references" | "pinned_evaluators";
+export type DrilldownWindowName = "questions" | "links" | "statuses" | "answers" | "superseded_answers" | "references" | "pinned_evaluators" | "results";
 
 /** What became of one submission, as this browser knows it. */
 export type SubmissionResult =

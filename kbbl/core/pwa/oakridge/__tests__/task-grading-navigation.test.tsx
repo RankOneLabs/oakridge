@@ -17,10 +17,10 @@ afterEach(() => vi.useRealTimers());
 function navigationReads() {
   const boundary = vi.mocked(globalThis.fetch).getMockImplementation();
   if (!boundary) throw new Error("item-panel IO boundary is missing");
-  const contribution: ObservationLineageEntry = { kind: "contribution", relation_id: id("rel-1"), evidence_ref: "/findings/0/task_ids/0", asserted_by: "producer_explicit", item: world.status.item };
+  const contribution: ObservationLineageEntry = { kind: "contribution", provenance: { kind: "own", hops: [] }, item: world.status.item };
   const row: ObservationDrilldownRowRead = { item: world.status.item, links: paged([]), questions: paged(world.status.questions.items.map((question) => ({
-    task_id: question.task_id, is_linked_context: question.task_id === null, question: question.question, evidence: question.evidence,
-    statuses: paged([]), answers: paged([]), superseded_answers: paged([]),
+    task_id: question.task_id, scope: question.task_id === null ? { kind: "per_item" } : { kind: "per_task", task_id: question.task_id }, provenance: null, is_linked_context: question.task_id === null, question: question.question, evidence: question.evidence,
+    results: paged([]), statuses: paged([]), answers: paged([]), superseded_answers: paged([]),
   }))) };
   vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
     const url = new URL(String(input), "http://kbbl.test");
@@ -56,10 +56,10 @@ it("an unfiltered finding labels each task's questions and the task being graded
   wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={vi.fn()} />);
   const tabs = await screen.findAllByRole("tab");
   expect(tabs.map((tab) => tab.textContent)).toEqual([
-    "Correctness · Task T3", "Evidence support · Task T3", "Correctness · Task T7", "Evidence support · Task T7",
+    "Is this finding correct? · Task T3", "Does the cited evidence support it? · Task T3", "Is this finding correct? · Task T7", "Does the cited evidence support it? · Task T7",
   ]);
   expect(screen.getByTestId("or-item-question-task").textContent).toBe("Task T3");
-  fireEvent.click(screen.getByRole("tab", { name: "Evidence support · Task T7" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Does the cited evidence support it? · Task T7" }));
   expect(screen.getByTestId("or-item-question-task").textContent).toBe("Task T7");
   fireEvent.click(screen.getByRole("radio", { name: "supports" }));
   fireEvent.click(screen.getByTestId("or-your-grade-submit"));
@@ -69,7 +69,7 @@ it("an unfiltered finding labels each task's questions and the task being graded
 
 it.each<EntryPoint>(["task panel", "composite drilldown"])("an analysis finding opened from the %s shows and accepts relevance", async (source) => {
   const support = supportQuestion();
-  const relevance: ObservationQuestionStatusResponse = { ...support, task_id: null, question: { ...support.question, question_id: id("finding.relevance"), item_kind: "finding", allowed_values: ["relevant", "irrelevant", "unclear"] },
+  const relevance: ObservationQuestionStatusResponse = { ...support, task_id: null, question: { ...support.question, question_id: id("finding.relevance"), item_kind: "finding", question_text: "Is this finding relevant?", allowed_values: ["relevant", "irrelevant", "unclear"] },
     evidence: { ...support.evidence, task_id: null, question_id: id("finding.relevance") }, answers: paged([]), machine: paged([]) };
   world.status = itemStatus([relevance], { item: item(ANALYSIS, { artifact_kind: "analysis", item_kind: "finding", stage: "analysis" }) }, ANALYSIS);
   world.submit = () => json(acknowledged("relevant", { question: relevance.question }), 201);
@@ -83,7 +83,7 @@ it.each<EntryPoint>(["task panel", "composite drilldown"])("an analysis finding 
   cleanup();
   world.paths.length = 0;
   wrap(<ItemPanel runId="run-1" selection={selection} onOpenTask={vi.fn()} />);
-  expect((await screen.findByTestId("or-item-question")).textContent).toBe("Relevance");
+  expect((await screen.findByTestId("or-item-question")).textContent).toBe("Is this finding relevant?");
   fireEvent.click(await screen.findByRole("radio", { name: "relevant" }));
   fireEvent.click(screen.getByTestId("or-your-grade-submit"));
   expect((await screen.findByTestId("or-your-grade-saved")).textContent).toContain("relevant");
@@ -153,7 +153,7 @@ it("a 50-row task lineage reads each contribution's status once while lineage ke
   const boundary = vi.mocked(globalThis.fetch).getMockImplementation();
   if (!boundary) throw new Error("item-panel IO boundary is missing");
   const contributions: ObservationLineageEntry[] = Array.from({ length: 50 }, (_, index) => ({
-    kind: "contribution", relation_id: id(`relation-${index}`), evidence_ref: `/findings/${index}/task_ids/0`, asserted_by: "producer_explicit",
+    kind: "contribution", provenance: { kind: "own", hops: [] },
     item: { ...world.status.item, occurrence_id: id(`occurrence-${index}`), item_path: `/findings/${index}` },
   }));
   vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {

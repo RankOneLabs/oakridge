@@ -18,6 +18,11 @@ import { registerEvaluator, registerQuestion } from "../src/storage/grading-stor
 import { listRunItems } from "../src/storage/projection-store";
 
 const path = oakridgeProfile.composite;
+const context = { stages: [
+  { stage: "analysis", artifact_kinds: ["analysis"] }, { stage: "tasks", artifact_kinds: ["tasks"] },
+  { stage: "plan", artifact_kinds: ["plan"] }, { stage: "brief", artifact_kinds: ["brief"] },
+  { stage: "implementation", artifact_kinds: ["assessment", "build_result"] }, { stage: "integration", artifact_kinds: ["assessment"] }
+], pins: [] };
 const all = { limit: 200, offset: 0 };
 const pages = uniformDrilldownPages(all);
 const MACHINE_A = "machine-a", MACHINE_B = "machine-b", HUMAN = "human";
@@ -76,7 +81,7 @@ async function measure(h: Harness, input: Measure): Promise<string> {
   return observation_id;
 }
 const composite = async (h: Harness, task_id: string, run_id = "run-1"): Promise<LogicalItemComposite> => {
-  const read = await readLogicalItemComposite(h.db, h.scope, path, run_id, task_id);
+  const read = await readLogicalItemComposite(h.db, h.scope, path, run_id, task_id, { ...context, pins: configuration.pins });
   if (!read) throw new Error(`no composite for ${task_id}`);
   return read;
 };
@@ -95,7 +100,7 @@ const analysisBody = (ids: readonly string[]): JsonValue => ({ summary: "s", sou
 describe("current revisions", () => {
   const at = (minute: number): Date => new Date(Date.UTC(2026, 10, 1, 0, minute));
   const revision = (revision_id: string, unit_id: string, minute: number, predecessor_id: string | null = null, artifact_kind = "assessment"): CompositeRevision =>
-    ({ revision_id: revision_id as ArtifactRevisionId, unit_id: unit_id as UnitId, artifact_kind, predecessor_id: predecessor_id as ArtifactRevisionId | null, recorded_at: at(minute), captured_at: at(minute) });
+    ({ stage: "captured-stage", revision_id: revision_id as ArtifactRevisionId, unit_id: unit_id as UnitId, artifact_kind, predecessor_id: predecessor_id as ArtifactRevisionId | null, recorded_at: at(minute), captured_at: at(minute) });
   const current = (revisions: readonly CompositeRevision[]): readonly string[] => [...selectRevisionStandings(revisions, path).values()]
     .filter((standing) => standing.is_current).map((standing) => standing.revision.revision_id).sort();
 
@@ -112,10 +117,9 @@ describe("current revisions", () => {
   test("an artifact is its own stream within a unit", () => {
     expect(current([revision("a", "run/analysis", 1, null, "analysis"), revision("t", "run/analysis", 2, null, "tasks")])).toEqual(["a", "t"]);
   });
-  test("a revision's stage comes from the declared unit that published it, and other artifacts have none", () => {
-    expect(["analysis", "assessment", "tasks", "plan", "brief", "build_result"].map((artifact_kind) => path.stageOf({ artifact_kind, unit_id: "run/implementation/a" })))
-      .toEqual(["analysis", "implementation", null, null, null, null]);
-    expect(path.stageOf({ artifact_kind: "assessment", unit_id: "run/integration/oakridge" })).toBe("integration");
+  test("a revision's captured stage places every artifact without a profile mapping", () => {
+    const standings = selectRevisionStandings([revision("a", "arbitrary/unit", 1, null, "new-artifact")]);
+    expect(standings.get("a")?.stage).toBe("captured-stage");
   });
 });
 
@@ -162,7 +166,7 @@ integration("an item graded before any task appears under its task as soon as an
   const beforeLink = await facts();
   // An approval on its own links nothing, so the task reads as a coverage gap, never a pass or a zero.
   const gap = await composite(h, "T7");
-  expect([gap.coverage, stageOf(gap, "analysis").coverage, stageOf(gap, "analysis").answers]).toEqual(["gap", "gap", []]);
+  expect([gap.coverage, stageOf(gap, "analysis").coverage, stageOf(gap, "analysis").answers]).toEqual(["linked", "gap", []]);
   await h.feed.send(declare({ source: "analysis-1", path: "/findings/0", tasks: ["T7"] }));
   const read = await composite(h, "T7");
   expect(read.coverage).toBe("linked");
@@ -354,7 +358,7 @@ integration("an unknown task stays visible until the task arrives, then counts u
   const lineage = await readLogicalItemLineage(h.db, h.scope, path, "run-1", "T7", all);
   expect([lineage.is_captured, lineage.items.map((entry) => entry.kind)]).toEqual([false, ["unresolved"]]);
   await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", unit_id: "run-1/analysis", body: await fixtureBody("tasks") });
-  expect((await listRunUnresolvedReferences(h.db, h.scope, path, "run-1", all)).total).toBe(0);
+  expect((await listRunUnresolvedReferences(h.db, h.scope, path, "run-1", all)).items.every((reference) => reference.unresolved_target_ref !== "logical_item:task:T7")).toBe(true);
   expect(stageOf(await composite(h, "T7"), "implementation").totals.contributing_items).toBe(1);
 }));
 
