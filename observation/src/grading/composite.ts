@@ -451,7 +451,7 @@ function scopedResults(items: readonly Contribution[], task_id: LogicalItemId, r
       if (!definition || !entry.provenance) return [];
       const base = { item: contributionItem(entry), scope: subjectScope(set.task_id), question: { ...questionKey(set), item_kind: definition.item_kind,
         question_text: definition.question_text, allowed_values: definition.allowed_values }, evidence_set_id: set.evidence_set_id, provenance: entry.provenance };
-      const answers = selectCurrentAnswers(read.inputs.answers).filter((answer) => answer.evidence_set_id === set.evidence_set_id);
+      const answers = read.index.current_answers_by_evidence.get(set.evidence_set_id) ?? [];
       const statuses = (read.measurements.get(subjectIndexKey(entry.occurrence.occurrence_id, set.task_id)) ?? []).filter((measurement) => measurement.evidence.evidence_set_id === set.evidence_set_id);
       const results: ScopedResult[] = [
         ...answers.map((answer): ScopedResult => ({ ...base, evaluator: read.index.evaluators.get(answer.evaluator_definition_id) ?? null, status: { state: "answered", answer } })),
@@ -534,8 +534,9 @@ export const orderedItems = (contributions: readonly Contribution[]): readonly C
 
 /** Which of one occurrence's questions a selector opens, or none when it does not contribute to the count. */
 function selectedQuestions(selector: CompositeSelector, occurrence_id: ItemOccurrenceId, inputs: CompositeInputs, evaluators: ReadonlyMap<string, CompositeEvaluator>, index: CompositeIndexes): readonly QuestionKey[] {
-  const pinned = uniqueQuestions(inputs.evidence_sets.filter((evidence) => evidence.subject_occurrence_id === occurrence_id).map(questionKey));
-  const current = selectCurrentAnswers(inputs.answers).filter((answer) => answer.occurrence_id === occurrence_id);
+  const evidence = inputs.evidence_sets.filter((set) => set.subject_occurrence_id === occurrence_id);
+  const pinned = uniqueQuestions(evidence.map(questionKey));
+  const current = evidence.flatMap((set) => index.current_answers_by_evidence.get(set.evidence_set_id) ?? []);
   switch (selector.kind) {
     case "items": return pinned;
     case "history": return pinned;
@@ -572,7 +573,7 @@ export function selectDrilldown(inputs: CompositeInputs, path: CompositePath, ke
   const read = prepareCompositeRead(inputs, path);
   const { index } = read;
   const linked = selectLinkedContributions(selectContributions(inputs, path), key.logical_item_id).filter((contribution) => contribution.stage === key.stage);
-  const superseded = selectSupersededAnswers(inputs.answers);
+  const superseded = [...index.superseded_answers.values()].flat();
   const detail = (answer: CompositeAnswer): AnswerDetail => ({ ...answer, grader: graderOf(answer, evaluators) });
   const eligible = key.selector.kind === "history"
     ? linked.filter((contribution) => !contribution.is_current || superseded.some((answer) => answer.occurrence_id === contribution.occurrence.occurrence_id))
@@ -582,11 +583,11 @@ export function selectDrilldown(inputs: CompositeInputs, path: CompositePath, ke
     const questions = selectedQuestions(key.selector, occurrence_id, inputs, evaluators, index);
     if (questions.length === 0 && key.selector.kind !== "items" && key.selector.kind !== "history") return [];
     const measurements = occurrenceMeasurements(occurrence_id, inputs, index);
-    const answersOf = selectCurrentAnswers(inputs.answers).filter((answer) => answer.occurrence_id === occurrence_id);
+    const results = groupRows(scopedResults([contribution], key.logical_item_id, read), (result) => result.evidence_set_id);
     const opened = inputs.evidence_sets.filter((set) => set.subject_occurrence_id === occurrence_id && questions.some((question) => sameQuestion(set, question))).map((evidence): DrilldownQuestion => {
       const question = questionKey(evidence);
-      return { results: pageOf(scopedResults([contribution], key.logical_item_id, read).filter((result) => result.evidence_set_id === evidence.evidence_set_id), pages.results), task_id: evidence.task_id, scope: subjectScope(evidence.task_id), provenance: contribution.provenance, is_linked_context: evidence.task_id === null, question: questionSummary(question, index), evidence, statuses: pageOf(measurements.filter((measurement) => measurement.evidence.evidence_set_id === evidence.evidence_set_id), pages.statuses),
-        answers: pageOf(answersOf.filter((answer) => answer.evidence_set_id === evidence.evidence_set_id).map(detail), pages.answers),
+      return { results: pageOf(results.get(evidence.evidence_set_id) ?? [], pages.results), task_id: evidence.task_id, scope: subjectScope(evidence.task_id), provenance: contribution.provenance, is_linked_context: evidence.task_id === null, question: questionSummary(question, index), evidence, statuses: pageOf(measurements.filter((measurement) => measurement.evidence.evidence_set_id === evidence.evidence_set_id), pages.statuses),
+        answers: pageOf((index.current_answers_by_evidence.get(evidence.evidence_set_id) ?? []).map(detail), pages.answers),
         superseded_answers: pageOf(superseded.filter((answer) => answer.occurrence_id === occurrence_id && answer.evidence_set_id === evidence.evidence_set_id).map(detail), pages.superseded_answers) };
     });
     return [{ item: contributionItem(contribution), links: pageOf(contribution.links, pages.links), questions: pageOf(opened, pages.questions) }];

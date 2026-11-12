@@ -93,3 +93,25 @@ integration("captured Oakridge task, plan, brief and linked findings appear toge
     return fields.ok ? fields.value.id : null;
   })).toEqual(["T7"]);
 }));
+
+test("roll-up and drilldown keep corrections within their evidence set and subject", () => {
+  const source = revision("corrected", "inspect");
+  const item = occurrence("shared", source, task);
+  const taskSet = evidence(item, task), itemSet = evidence(item, null), otherSet = evidence(item, otherTask);
+  const old = answer(taskSet);
+  const corrected = { ...old, observation_id: "corrected-answer" as typeof old.observation_id,
+    execution_id: "corrected-execution" as typeof old.execution_id, supersedes_observation_id: old.observation_id };
+  const itemAnswer = answer(itemSet);
+  const snapshot = inputs({ revisions: [source], occurrences: [item], evidence_sets: [taskSet, itemSet, otherSet],
+    answers: [old, corrected, itemAnswer, answer(otherSet)] });
+  const rollup = selectComposite(snapshot, path, snapshot.logical_items[0]!);
+  const stage = rollup.stages[0];
+  if (!stage) throw new Error("fixture stage missing");
+  const expected = [String(corrected.observation_id), String(itemAnswer.observation_id)];
+  expect(stage.results.flatMap((result) => result.status.state === "answered" ? [String(result.status.answer.observation_id)] : [])).toEqual(expected);
+  const drill = selectDrilldown(snapshot, path, stage.items, uniformDrilldownPages(all));
+  const questions = drill.items.flatMap((row) => row.questions.items);
+  expect(questions.flatMap((question) => question.answers.items.map((answer) => String(answer.observation_id)))).toEqual(expected);
+  expect(questions.flatMap((question) => question.results.items.flatMap((result) => result.status.state === "answered" ? [String(result.status.answer.observation_id)] : []))).toEqual(expected);
+  expect(questions.flatMap((question) => question.superseded_answers.items.map((answer) => String(answer.observation_id)))).toEqual([String(old.observation_id)]);
+});
