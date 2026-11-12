@@ -278,12 +278,12 @@ export function stagePublicationLabel(stage: Pick<ObservationStageCompositeRead,
   return stage.publication.state === "published" && stage.publication.is_final ? "Final results" : "Published";
 }
 
-export interface HiddenStageView { readonly kind: "hidden"; readonly stage: string; readonly publication: string; readonly state: ObservationStageCompositeRead["state"]; readonly coverage: ObservationStageCompositeRead["coverage"]; readonly contributing_items: number }
+export interface HiddenStageView { readonly kind: "hidden"; readonly stage: string; readonly publication: string; readonly state: ObservationStageCompositeRead["state"]; readonly contributing_items: number }
 export interface RevealedStageView {
   readonly kind: "revealed";
   readonly stage: string;
   readonly publication: string;
-  readonly state: ObservationStageCompositeRead["state"]; readonly coverage: ObservationStageCompositeRead["coverage"];
+  readonly state: ObservationStageCompositeRead["state"];
   readonly contributing_items: number;
   readonly answers: readonly ObservationAnswerCount[];
   readonly statuses: readonly ObservationStatusCount[];
@@ -292,6 +292,6 @@ export interface RevealedStageView {
 }
 /** While hidden a stage says only what linking alone determines: it carries no answer, count of answers or status. */
 export const selectStageView = (stage: ObservationStageCompositeRead, is_revealed: boolean): HiddenStageView | RevealedStageView => {
-  const shared = { stage: stage.stage, state: stage.state, publication: stagePublicationLabel(stage), coverage: stage.coverage, contributing_items: stage.totals.contributing_items };
+  const shared = { stage: stage.stage, state: stage.state, publication: stagePublicationLabel(stage), contributing_items: stage.totals.contributing_items };
   return is_revealed ? { kind: "revealed", ...shared, answers: stage.answers.items, statuses: stage.statuses.items, disagreements: stage.disagreements.items, composite: stage } : { kind: "hidden", ...shared };
 };

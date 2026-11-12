@@ -32,7 +32,7 @@ export function StageCompositeColumn({ stage, isRevealed, onDrill, onWindow }: P
         <Chip tone={view.publication === "Final results" ? "accent" : "muted"}>{view.publication}</Chip>
         {view.state === "gap" && <Chip tone="warning" testId="or-task-coverage-gap">No linked items</Chip>}
       </div>
-      {view.coverage === "linked" && <p className="m-0 text-xs text-[var(--text-muted)]">{view.contributing_items} linked {view.contributing_items === 1 ? "item" : "items"}</p>}
+      {view.state === "linked" && <p className="m-0 text-xs text-[var(--text-muted)]">{view.contributing_items} linked {view.contributing_items === 1 ? "item" : "items"}</p>}
       {view.kind === "revealed" && (
         <div className="flex flex-col gap-2" data-testid="or-task-stage-counts">
           {stage.answers.total > 0 && <div className="flex flex-col gap-1">

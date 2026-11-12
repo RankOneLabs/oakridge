@@ -20,7 +20,7 @@ test("a link that moved nothing passes, and each kind of movement is caught by n
 });
 
 const composite = (coverage: "linked" | "gap", answers: readonly unknown[]): LogicalItemComposite => ({ run_id: "run-1", logical_item_id: "t", scope: "task", producer_local_id: "T1", coverage,
-  stages: [{ stage: "analysis", publication: { state: "published", is_final: false, unit_ids: ["run-1/analysis"] }, coverage, results: answers.map((answer) => ({ status: { state: "answered", answer } })), answers, statuses: [], disagreements: [], questions: [],
+  stages: [{ stage: "analysis", publication: { state: "published", is_final: false, unit_ids: ["run-1/analysis"] }, state: coverage, results: answers.map((answer) => ({ status: { state: "answered", answer } })), answers, statuses: [], disagreements: [], questions: [],
     totals: {} as never, items: {} as never, history: {} as never }] } as never as LogicalItemComposite);
 const answered = (observation_id: string) => ({ observation_id }) as MeasurementReadback;
 

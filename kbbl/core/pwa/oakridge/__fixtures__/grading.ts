@@ -62,18 +62,18 @@ export const acknowledged = (value: string, overrides: Partial<ObservationHumanS
   rationale: null, corrects_observation_id: null, recorded_at: "2026-11-01T00:00:00Z", ...overrides });
 
 const drilldown = (selector: object, stage: string) => ({ logical_item_id: id("l1"), stage, selector }) as ObservationStageCompositeRead["items"];
-const stageOf = (stage: string, overrides: Partial<ObservationStageCompositeRead> = {}): ObservationStageCompositeRead => ({ stage, state: "pending", results: paged([]), publication: { state: "pending" }, coverage: "gap",
+const stageOf = (stage: string, overrides: Partial<ObservationStageCompositeRead> = {}): ObservationStageCompositeRead => ({ stage, state: "pending", results: paged([]), publication: { state: "pending" },
   totals: { contributing_items: 0, not_ready_items: 0, pending_items: 0, failed_items: 0, budget_deferred_items: 0, grading_off_items: 0, superseded_items: 0, superseded_answers: 0 },
   questions: paged([]), answers: paged([]), statuses: paged([]), disagreements: paged([]), items: drilldown({ kind: "items" }, stage), history: drilldown({ kind: "history" }, stage), ...overrides });
 export const taskComposite = (task_id = "T1"): ObservationCompositeRead => ({ run_id: id("run-1"), logical_item_id: id("l1"), scope: "task", producer_local_id: task_id, coverage: "linked", stages: paged([
   stageOf("analysis"),
-  stageOf("implementation", { state: "linked", publication: { state: "published", is_final: false, unit_ids: paged(["run-1/implementation/one"]) }, coverage: "linked",
+  stageOf("implementation", { state: "linked", publication: { state: "published", is_final: false, unit_ids: paged(["run-1/implementation/one"]) },
     totals: { contributing_items: 2, not_ready_items: 0, pending_items: 1, failed_items: 0, budget_deferred_items: 0, grading_off_items: 0, superseded_items: 1, superseded_answers: 1 },
     answers: paged<ObservationAnswerCount>([{ question: { question_id: id("assessment_finding.evidence_support"), question_version: "1", item_kind: "assessment_finding", question_text: "Does the cited evidence support it?", allowed_values: null }, grader: { kind: "machine", evaluator_definition_id: id("jev"), backend_kind: "jev_direct", model: "jev-1.14.0" },
       answer: { state: "answered", value: "does_not_support" }, count: 7, drilldown: drilldown({ kind: "answer", marker: "support" }, "implementation") }]),
     statuses: paged<ObservationStatusCount>([{ question: { question_id: id("assessment_finding.correctness"), question_version: "1", item_kind: "assessment_finding", question_text: "Is this finding correct?", allowed_values: null }, evaluator_definition_id: id<ObservationEvaluatorDefinitionId>("jev"), status: { state: "budget_deferred" }, count: 5, drilldown: drilldown({ kind: "status" }, "implementation") }]),
     disagreements: paged<ObservationDisagreementCount>([{ question: { question_id: id("assessment_finding.evidence_support"), question_version: "1", item_kind: "assessment_finding", question_text: "Does the cited evidence support it?", allowed_values: null }, item_count: 9, drilldown: drilldown({ kind: "disagreement" }, "implementation") }]) }),
-  stageOf("integration", { state: "linked", publication: { state: "published", is_final: true, unit_ids: paged(["run-1/integration/final"]) }, coverage: "linked",
+  stageOf("integration", { state: "linked", publication: { state: "published", is_final: true, unit_ids: paged(["run-1/integration/final"]) },
     totals: { contributing_items: 1, not_ready_items: 0, pending_items: 0, failed_items: 0, budget_deferred_items: 0, grading_off_items: 0, superseded_items: 0, superseded_answers: 0 } }),
 ]) });
 export const findingRow = (selection: ObservationItemAddress, overrides: Partial<ObservationAddressedItem> = {}, links: ObservationGradeableItemRow["links"] = paged([])): ObservationGradeableItemRow => ({ item: item(selection, overrides), links });

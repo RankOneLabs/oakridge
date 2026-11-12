@@ -33,4 +33,5 @@ test("a profile's new extractor and readiness stage appear in dependency order w
   const last = selectComposite({ ...snapshot, revisions: [...snapshot.revisions, revision("release-1", "release", "audit-note")] }, profile.composite, snapshot.logical_items[0]!);
   expect(last.stages[2]).toMatchObject({ state: "gap", publication: { state: "published", is_final: true } });
   expect(last.stages[3]?.publication).toMatchObject({ is_final: false });
+  expect([...rollup.stages, ...last.stages].every((stage) => !("coverage" in stage))).toBe(true);
 });

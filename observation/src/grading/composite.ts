@@ -320,8 +320,6 @@ export interface ScopedResult {
 export type StageComposite = StageState & {
   readonly stage: string;
   readonly publication: StagePublication;
-  /** `gap` means no current item here is linked: a coverage gap, never a pass or a zero. */
-  readonly coverage: "linked" | "gap";
   readonly results: readonly ScopedResult[];
   readonly totals: StageTotals;
   readonly questions: readonly QuestionSummary[];
@@ -430,7 +428,7 @@ function stageComposite(stage: WorkflowStage, logical_item_id: LogicalItemId, li
   const history = inStage.filter((contribution) => !contribution.is_current);
   const publication = read.publications.get(stage.stage)!;
   const state = selectStageState({ stage, pins: read.inputs.pins, is_published: publication.state === "published", has_current_items: current.length > 0 });
-  return { stage: stage.stage, publication, ...state, results: scopedResults(inStage, logical_item_id, read), coverage: current.length > 0 ? "linked" : "gap",
+  return { stage: stage.stage, publication, ...state, results: scopedResults(inStage, logical_item_id, read),
     totals: { contributing_items: current.length, not_ready_items: inCondition(["not_ready"]), pending_items: inCondition(["pending", "awaiting_admission"]),
       failed_items: inCondition(["failed"]), budget_deferred_items: inCondition(["budget_deferred"]), grading_off_items: inCondition(["grading_off"]),
       superseded_items: history.length,

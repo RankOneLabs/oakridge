@@ -336,7 +336,7 @@ This read does not extend or rewrite capture. A captured stage absent from readi
 the ordered stages and its results are never dropped. Stage query parameters, including drilldown
 keys, are validated against the run's stages and unknown stages return `invalid_stage`.
 
-Each stage exposes a discriminated `state`:
+Each stage exposes a discriminated `state`, with no separate `coverage` field:
 
 | State | Meaning |
 | --- | --- |

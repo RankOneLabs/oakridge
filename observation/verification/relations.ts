@@ -120,7 +120,7 @@ export function compositeOriginalAnswerChecks(read: LogicalItemComposite | null,
   const stage = stageOf(read, "analysis");
   const originals = answered.flatMap((measurement) => measurement.observation_id ? [measurement.observation_id] : []);
   return [
-    check("the task's composite shows the original answer as soon as the link arrives", stage?.coverage === "linked" && stage.results.some((result) => result.status.state === "answered"),
+    check("the task's composite shows the original answer as soon as the link arrives", stage?.state === "linked" && stage.results.some((result) => result.status.state === "answered"),
       JSON.stringify(stage?.results.map((result) => result.status.state) ?? null)),
     check("what its count opens is the original observation, not a new one", originals.length > 0 && originals.every((id) => row_observations.includes(id)), `${row_observations.join(", ")} against ${originals.join(", ")}`),
   ];
@@ -137,7 +137,7 @@ const untilLinked = async (io: ProofIo, reads: ObservationReads, run_id: string,
   let read: LogicalItemComposite | null = null;
   for (let attempt = 0; attempt < DELIVERY_ATTEMPTS; attempt++) {
     read = await readTask(reads, run_id, task_id);
-    if (stageOf(read, stage)?.coverage === "linked") return read;
+    if (stageOf(read, stage)?.state === "linked") return read;
     await io.sleep(POLL_MS);
   }
   return read;
@@ -451,7 +451,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
       && lineage.items.some((entry) => entry.kind === "occurrence" && entry.revision_id === "plan-1" && !entry.is_current), `${lineage.total} entries`),
     check("matrix: an unknown task stays a visible reference", unknown.items.some((reference) => reference.unresolved_target_ref === "logical_item:task:T404"), `${unknown.total} reference(s)`),
     check("matrix: an unlinked item stays listed", unlinked.total > 0, `${unlinked.total} unlinked item(s)`),
-    check("matrix: a task nothing current links is a coverage gap in that stage", stageOf(other, "integration")?.coverage === "gap", "T8 in integration"),
+    check("matrix: a task nothing current links is a coverage gap in that stage", stageOf(other, "integration")?.state === "gap", "T8 in integration"),
   ] };
 }
 
@@ -631,11 +631,11 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
 
     const all = await composites(open, run.run_id);
     readbacks.composites_final = all;
-    const task = all.items.find((item) => stageOf(item, "analysis")?.coverage === "linked" && stageOf(item, "cohort")?.coverage === "linked")
-      ?? all.items.find((item) => stageOf(item, "analysis")?.coverage === "linked");
+    const task = all.items.find((item) => stageOf(item, "analysis")?.state === "linked" && stageOf(item, "cohort")?.state === "linked")
+      ?? all.items.find((item) => stageOf(item, "analysis")?.state === "linked");
     checks.push(check("a task reads its analysis and implementation stages side by side, with integration pending",
-      task !== undefined && stageOf(task, "analysis")?.coverage === "linked" && stageOf(task, "cohort")?.publication.state === "published"
-        && stageOf(task, "integration")?.publication.state === "pending", JSON.stringify(task?.stages.map((stage) => [stage.stage, stage.publication.state, stage.coverage]) ?? null)));
+      task !== undefined && stageOf(task, "analysis")?.state === "linked" && stageOf(task, "cohort")?.publication.state === "published"
+        && stageOf(task, "integration")?.publication.state === "pending", JSON.stringify(task?.stages.map((stage) => [stage.stage, stage.publication.state, stage.state]) ?? null)));
     if (task) {
       checks.push(...await drilldownChecks(open, run.run_id, task));
       const lineage = await readLogicalItemLineage(open.db, open.tenant, path, run.run_id, task.producer_local_id, WHOLE, await open.context?.(run.run_id));

@@ -69,8 +69,6 @@ export interface ObservationLogicalItemComposite {
 export type ObservationStageComposite = ObservationStageState & {
   readonly stage: string;
   readonly publication: ObservationStagePublication;
-  /** `gap` means no current item here is linked: a coverage gap, never a pass or a zero. */
-  readonly coverage: "linked" | "gap";
   readonly results: readonly ObservationScopedResult[];
   readonly totals: ObservationStageTotals;
   readonly questions: readonly ObservationQuestionSummary[];

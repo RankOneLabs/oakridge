@@ -166,7 +166,7 @@ integration("an item graded before any task appears under its task as soon as an
   const beforeLink = await facts();
   // An approval on its own links nothing, so the task reads as a coverage gap, never a pass or a zero.
   const gap = await composite(h, "T7");
-  expect([gap.coverage, stageOf(gap, "analysis").coverage, stageOf(gap, "analysis").answers]).toEqual(["linked", "gap", []]);
+  expect([gap.coverage, stageOf(gap, "analysis").state, stageOf(gap, "analysis").answers]).toEqual(["linked", "gap", []]);
   await h.feed.send(declare({ source: "analysis-1", path: "/findings/0", tasks: ["T7"] }));
   const read = await composite(h, "T7");
   expect(read.coverage).toBe("linked");
@@ -249,7 +249,7 @@ integration("stages stand side by side: integration is pending, then final once 
   await h.feed.revision({ revision_id: "integration-1", artifact_kind: "assessment", unit_id: "run-1/integration/oakridge", body: { findings: [finding(["T7"])] } });
   const unanswered = await composite(h, "T7");
   const integration_stage = stageOf(unanswered, "integration");
-  expect([integration_stage.publication, integration_stage.coverage, integration_stage.answers, integration_stage.totals.contributing_items]).toEqual([
+  expect([integration_stage.publication, integration_stage.state, integration_stage.answers, integration_stage.totals.contributing_items]).toEqual([
     { state: "published", is_final: true, unit_ids: ["run-1/integration/oakridge" as UnitId] }, "linked", [], 1]);
   const final = await occurrenceAt(h, "integration-1", "/findings/0");
   await readyAll(h, final);
@@ -260,7 +260,7 @@ integration("stages stand side by side: integration is pending, then final once 
   expect(answersIn(stageOf(read, "integration"))).toEqual([[CORRECTNESS_ID, MACHINE_A, "contradicted", 1]]);
   expect(Object.keys(read).sort()).toEqual(["coverage", "logical_item_id", "producer_local_id", "run_id", "scope", "stages"]);
   // A published integration with nothing linked to this task is final and a coverage gap.
-  expect([stageOf(await composite(h, "T8"), "integration").publication.state, stageOf(await composite(h, "T8"), "integration").coverage]).toEqual(["published", "gap"]);
+  expect([stageOf(await composite(h, "T8"), "integration").publication.state, stageOf(await composite(h, "T8"), "integration").state]).toEqual(["published", "gap"]);
 }));
 
 integration("corrections count once under their own reviewer; disagreement is only on one item and question", async () => scratchDatabase(async (db) => {
