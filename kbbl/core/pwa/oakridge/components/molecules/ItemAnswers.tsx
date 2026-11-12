@@ -30,7 +30,7 @@ export function ItemAnswers({ question, onWindow }: Props) {
       <div className="flex flex-col gap-1">
         <div className={artifactLabelClass}>Automatic evaluators ({question.machine.total})</div>
         {question.machine.total === 0 && <p className="text-sm text-[var(--text-muted)]">No automatic evaluator is pinned to this question.</p>}
-        <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+        <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
           {question.machine.items.map((machine) => {
             const display = measurementDisplay(machine.measurement);
             return (
@@ -65,7 +65,7 @@ export function ItemAnswers({ question, onWindow }: Props) {
       <div className="flex flex-col gap-1">
         <div className={artifactLabelClass}>Answers ({question.answers.total})</div>
         {question.answers.total === 0 && <p className="text-sm text-[var(--text-muted)]">No answer has been recorded.</p>}
-        <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+        <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
           {question.answers.items.map((answer) => <AnswerRow key={answer.observation_id} answer={answer} />)}
         </ul>
         <ListPager name="answers" page={question.answers} onWindow={(window) => onWindow("answers", window)} />
@@ -73,7 +73,7 @@ export function ItemAnswers({ question, onWindow }: Props) {
       {question.superseded_answers.total > 0 && (
         <div className="flex flex-col gap-1">
           <div className={artifactLabelClass}>Correction history ({question.superseded_answers.total})</div>
-          <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0" data-testid="or-item-answer-history">
+          <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0" data-testid="or-item-answer-history">
             {question.superseded_answers.items.map((answer) => <AnswerRow key={answer.observation_id} answer={answer} isCorrected />)}
           </ul>
           <ListPager name="superseded_answers" page={question.superseded_answers} onWindow={(window) => onWindow("superseded_answers", window)} />

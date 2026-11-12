@@ -91,18 +91,18 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
         ) : (
           <ol className="or-run-overview__list" data-testid="or-run-activity">
             {activity.items.map((item) => (
-              <li key={item.sequence} className="rounded-md border border-[var(--border-subtle)] px-3 py-2 text-sm">
+              <li key={item.sequence} className="rounded-md border border-[var(--border-decorative)] px-3 py-2 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[var(--text-primary)]">{item.summary}</span>
                   {item.is_optional_attention && (
-                    <span className="rounded border border-[var(--accent-blue)] px-1.5 py-0.5 text-xs text-[var(--accent-blue)]" data-testid="or-activity-optional-attention">
+                    <span className="rounded border border-[var(--accent-primary)] px-1.5 py-0.5 text-xs text-[var(--accent-primary)]" data-testid="or-activity-optional-attention">
                       optional attention
                     </span>
                   )}
                 </div>
                 {item.context !== null && <div className="text-xs text-[var(--text-muted)]">{item.context}</div>}
                 {item.pull_request_url !== null && (
-                  <a className="text-xs text-[var(--accent-blue)] underline" href={item.pull_request_url} target="_blank" rel="noreferrer">
+                  <a className="text-xs text-[var(--accent-primary)] underline" href={item.pull_request_url} target="_blank" rel="noreferrer">
                     Open pull request
                   </a>
                 )}

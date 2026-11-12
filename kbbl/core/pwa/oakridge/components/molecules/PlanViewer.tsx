@@ -23,7 +23,7 @@ function ScopeColumns({ scope }: { scope: PlanScope }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {columns.map(({ label, values }) => (
-        <div key={label} className="rounded-md border border-[var(--border-subtle)] px-3 py-2">
+        <div key={label} className="rounded-md border border-[var(--border-decorative)] px-3 py-2">
           <div className={artifactLabelClass}>{label} ({values.length})</div>
           {values.length > 0 ? (
             <ul className="m-0 mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">

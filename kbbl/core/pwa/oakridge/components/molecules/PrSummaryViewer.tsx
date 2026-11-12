@@ -26,7 +26,7 @@ export function PrSummaryViewer({ body, source }: ViewerProps) {
             href={pr.pr_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="self-start text-lg font-semibold text-[var(--accent-blue)] no-underline hover:underline"
+            className="self-start text-lg font-semibold text-[var(--accent-primary)] no-underline hover:underline"
             data-testid="or-pr-url"
           >
             {label ?? pr.pr_url} ↗

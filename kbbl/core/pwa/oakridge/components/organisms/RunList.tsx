@@ -21,9 +21,9 @@ function applyTabFilter(runs: RunSummary[], tab: FilterTab): RunSummary[] {
 }
 
 const tableHeaderClass =
-  "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
+  "border-b border-[var(--border-decorative)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
 const tableCellClass =
-  "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
+  "border-b border-[var(--border-decorative)] px-3 py-2.5 align-middle";
 function displayStatus(run: RunSummary): RunDisplayStatus {
   if (run.is_failed || run.status === "failed") return "failed";
   if (run.is_stuck) return "stuck";
@@ -78,7 +78,7 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, runA
         }
       />
 
-      <div className="mb-3 flex gap-1 border-b border-[var(--border-subtle)]" role="tablist">
+      <div className="mb-3 flex gap-1 border-b border-[var(--border-decorative)]" role="tablist">
         {FILTER_TABS.map((tab) => (
           <Button
             key={tab.key}

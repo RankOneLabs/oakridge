@@ -128,7 +128,7 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
     <li className="or-run-sidebar__row flex-wrap" data-testid="or-sidebar-session-item">
       <Button variant="sidebar-row"
         type="button"
-        className={isOpen ? "border-[var(--or-run-accent,var(--accent-blue))]! bg-[var(--bg-elevated)]!" : ""}
+        className={isOpen ? "border-[var(--or-run-accent,var(--accent-primary))]! bg-[var(--bg-elevated)]!" : ""}
         onClick={() => onOpen(row.session_id, "primary")}
         data-testid="or-sidebar-session"
         data-session-id={row.session_id}

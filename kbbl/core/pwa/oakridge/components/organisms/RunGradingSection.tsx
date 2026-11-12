@@ -70,7 +70,7 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
       {(unresolved.data?.total ?? 0) > 0 && (
         <section className="flex flex-col gap-1" data-testid="or-grading-unresolved">
           <h3 className="m-0 text-sm font-semibold text-[var(--text-primary)]">Unresolved task references ({unresolved.data?.total})</h3>
-          <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+          <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
             {unresolved.data?.items.map((reference) => (
               <li key={reference.relation_id} className="flex items-start gap-2 py-1.5" data-testid="or-grading-unresolved-reference">
                 <code className="or-code shrink-0">{reference.unresolved_target_ref}</code>

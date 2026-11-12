@@ -79,7 +79,7 @@ export function RunWorkspaceSidebar({
                 className={
                   arePanesEqual(workspace.primary, shortcut.pane) ||
                   arePanesEqual(workspace.secondary, shortcut.pane)
-                    ? "border-[var(--or-run-accent,var(--accent-blue))]! bg-[var(--bg-elevated)]!"
+                    ? "border-[var(--or-run-accent,var(--accent-primary))]! bg-[var(--bg-elevated)]!"
                     : ""
                 }
                 onClick={() => onOpenPane(shortcut.pane, "primary")}

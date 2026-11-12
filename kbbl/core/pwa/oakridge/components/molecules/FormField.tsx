@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 export const formControlClass =
-  "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
+  "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
 
 interface FormFieldProps {
   children: ReactNode;

@@ -5,7 +5,7 @@ import type { SentReviewFeedback } from "../../artifact-types";
 /** Feedback the operator already sent, kept on screen until the agent answers it with a new revision. */
 export function SentFeedbackCard({ feedback }: { feedback: SentReviewFeedback }) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4" data-testid="or-sent-feedback">
+    <div className="flex flex-col gap-2 rounded-lg border border-[var(--border-decorative)] bg-[var(--bg-elevated)] p-4" data-testid="or-sent-feedback">
       <div className="flex flex-wrap items-center gap-2.5 text-sm">
         <strong>{selectSentFeedbackTitle(feedback.decision)}</strong>
         <span className="text-[var(--text-secondary)]">{feedback.stage_name}</span>

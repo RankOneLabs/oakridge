@@ -4,21 +4,21 @@ type ButtonVariant = "primary" | "secondary" | "danger" | "armed" | "accent-outl
 type ButtonSize = "xsmall" | "small" | "medium";
 
 const BASE_CLASS =
-  "inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-blue)] disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] disabled:cursor-not-allowed disabled:opacity-50";
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
-  primary: "border border-[var(--accent-blue)] bg-[var(--accent-blue)] font-bold text-[var(--accent-contrast-fg)] hover:brightness-110",
+  primary: "border border-[var(--accent-primary)] bg-[var(--accent-primary)] font-bold text-[var(--accent-contrast-fg)] hover:brightness-110",
   secondary:
     "border border-[var(--border-muted)] bg-[var(--bg-surface)] font-normal text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]",
   danger:
     "border border-[var(--tone-danger-border)] bg-transparent text-[var(--tone-danger-fg)] hover:bg-[var(--tone-danger-fg)] hover:text-[var(--bg-app)]",
   armed: "border border-[var(--danger-fg)] bg-[var(--danger-bg)] font-semibold text-[var(--danger-fg)]",
-  "accent-outline": "border border-[var(--accent-blue)] bg-transparent text-[var(--accent-blue)] hover:bg-[var(--accent-blue)] hover:text-[var(--accent-contrast-fg)]",
+  "accent-outline": "border border-[var(--accent-primary)] bg-transparent text-[var(--accent-primary)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast-fg)]",
   "danger-strong": "border border-[var(--tone-danger-border)] bg-transparent text-[var(--tone-danger-fg)] hover:bg-[var(--tone-danger-fg)] hover:text-[var(--bg-app)]",
-  link: "border-0 bg-transparent p-0 text-[var(--accent-blue)] underline hover:text-[var(--text-primary)]",
+  link: "border-0 bg-transparent p-0 text-[var(--accent-primary)] underline hover:text-[var(--text-primary)]",
   "sidebar-row": "flex flex-1 min-w-0 flex-col gap-[0.15rem] rounded-[0.4rem] border border-transparent bg-transparent px-2 py-[0.4rem] text-left text-[var(--text-secondary)] cursor-pointer hover:bg-[var(--bg-elevated)]",
   "pane-action": "rounded-[0.4rem] border border-[var(--border-subtle)] bg-transparent px-[0.45rem] py-[0.2rem] text-xs! text-[var(--text-muted)] cursor-pointer",
-  "progress-row": "grid w-full grid-cols-[auto_minmax(0,1fr)_minmax(10rem,auto)_auto] items-center gap-4 min-h-[4.25rem] rounded-none border-0 border-b border-b-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 text-left text-[var(--text-primary)] cursor-pointer hover:bg-[var(--bg-elevated)] last:border-b-0 max-[767px]:grid-cols-[auto_minmax(0,1fr)_auto] max-[767px]:gap-3",
+  "progress-row": "grid w-full grid-cols-[auto_minmax(0,1fr)_minmax(10rem,auto)_auto] items-center gap-4 min-h-[4.25rem] rounded-none border-0 border-b border-b-[var(--border-decorative)] bg-[var(--bg-surface)] px-4 py-3 text-left text-[var(--text-primary)] cursor-pointer hover:bg-[var(--bg-elevated)] last:border-b-0 max-[767px]:grid-cols-[auto_minmax(0,1fr)_auto] max-[767px]:gap-3",
 };
 
 const SIZE_CLASS: Record<ButtonSize, string> = {

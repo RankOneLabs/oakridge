@@ -46,7 +46,7 @@ export function FrozenEvidenceList({ evidence, onWindow }: FrozenEvidenceListPro
         {evidence.references.items.map((reference) => {
           const display = referenceDisplay(reference);
           return (
-            <li key={reference.ref} className="flex flex-col gap-1 rounded-md border border-[var(--border-subtle)] px-2 py-1.5" data-testid="or-item-evidence-reference" data-source={reference.source}>
+            <li key={reference.ref} className="flex flex-col gap-1 rounded-md border border-[var(--border-decorative)] px-2 py-1.5" data-testid="or-item-evidence-reference" data-source={reference.source}>
               <div className="flex flex-wrap items-center gap-2">
                 <Chip tone={display.is_agent_reported ? "warning" : "muted"}>{display.source_label}</Chip>
                 <code className="or-code">{reference.ref}</code>

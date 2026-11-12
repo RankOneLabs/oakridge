@@ -66,7 +66,7 @@ export function BuilderHandoffPanel({ runId, unitLabel, revisionId, assessment, 
         <p className="m-0 text-sm text-[var(--text-secondary)]">Add, edit or remove an action to publish a new assessment revision. Untick it to exclude it from this send only.</p>
         {items.length > 0 ? <ol className="m-0 flex list-decimal flex-col gap-2 pl-6">
           {items.map((item, index) => (
-            <li key={item.id} className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2">
+            <li key={item.id} className="rounded-md border border-[var(--border-decorative)] bg-[var(--bg-surface)] p-2">
               <div className="flex items-start gap-2">
                 <label className="flex shrink-0 items-center gap-1 text-xs text-[var(--text-secondary)]">
                   <input type="checkbox" aria-label={`Include action ${index + 1}`} checked={item.is_included}
@@ -90,7 +90,7 @@ export function BuilderHandoffPanel({ runId, unitLabel, revisionId, assessment, 
         <AddNextAction isPending={edit.isPending} onAdd={(text) => submit(withItemAdded(body, text))} />
 
         <div className="flex items-center gap-2"><strong className="text-sm">Builder prompt preview</strong><Chip tone="neutral">{items.filter((item) => item.is_included).length} included</Chip></div>
-        <pre className="m-0 whitespace-pre-wrap rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 text-sm text-[var(--text-primary)]" data-testid="or-assessment-handoff-preview">{preview || "No actions included."}</pre>
+        <pre className="m-0 whitespace-pre-wrap rounded-md border border-[var(--border-decorative)] bg-[var(--bg-surface)] p-3 text-sm text-[var(--text-primary)]" data-testid="or-assessment-handoff-preview">{preview || "No actions included."}</pre>
         <p className="m-0 text-xs text-[var(--text-muted)]">Sending records a review decision. The builder revises, and the assessor reassesses the new build.</p>
         {target.kind === "review" && <SendToBuilder key={target.gate.id} gate={target.gate} preview={preview}
           isEditPending={edit.isPending} onSent={() => void sentFeedback.refetch()} />}

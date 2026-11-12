@@ -44,7 +44,7 @@ function DrilldownPages({ runId, drilldownKey, label, onClose, onOpenItem }: Pro
         <Button variant="secondary" size="xsmall" className="text-xs!" onClick={onClose} data-testid="or-task-drilldown-close">Close</Button>
       </div>
       {query.isError && <FeedbackMessage tone="danger">{query.error instanceof Error ? query.error.message : "observation did not answer"}</FeedbackMessage>}
-      <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+      <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
         {query.data?.items.map((row) => (
           <li key={row.item.occurrence_id} className="flex flex-col gap-2 py-2" data-testid="or-task-drilldown-row" data-item-path={row.item.item_path} data-revision={row.item.source_revision_id}>
             <div className="flex items-start gap-2">
@@ -58,7 +58,7 @@ function DrilldownPages({ runId, drilldownKey, label, onClose, onOpenItem }: Pro
             {row.questions.items.map((question) => (
               <div key={question.evidence.evidence_set_id} className="flex flex-col gap-1">
                 <div className={artifactLabelClass}>{questionLabel(question.question)} <Chip tone="muted">{question.scope.kind === "per_item" ? "Item grade" : "Task grade"}</Chip></div>
-                <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+                <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
                   {question.answers.items.map((answer) => <AnswerRow key={answer.observation_id} answer={answer} />)}
                   {question.superseded_answers.items.map((answer) => <AnswerRow key={answer.observation_id} answer={answer} isCorrected />)}
                 </ul>

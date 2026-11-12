@@ -101,7 +101,7 @@ export function SpecAnalysisViewer({ body, source, onOpenItem, itemGrading }: Vi
 
       <ArtifactSection title={`Proposed spec updates (${view.proposed_spec_updates.length})`} testId="or-spec-updates">
         {view.proposed_spec_updates.length > 0
-          ? <ol className="divide-y divide-[var(--border-subtle)]">
+          ? <ol className="divide-y divide-[var(--border-decorative)]">
             {view.proposed_spec_updates.map((update, index) => <li key={`${index}-${update.section}`} className="py-2">
               <h3 className="text-sm font-semibold text-[var(--text-primary)]">{update.section}</h3>
               <p className="whitespace-pre-wrap text-sm text-[var(--text-secondary)]">{update.change}</p>
@@ -120,7 +120,7 @@ export function SpecAnalysisViewer({ body, source, onOpenItem, itemGrading }: Vi
 
       {view.findings.length > 0 && (
         <ArtifactSection title={`Findings (${view.findings.length})`} testId="or-spec-findings">
-          <ul className="divide-y divide-[var(--border-subtle)]">
+          <ul className="divide-y divide-[var(--border-decorative)]">
             {view.findings.map((finding, index) => <ItemRow key={`${index}-${finding.id}`} status={finding.severity} id={finding.id} description={finding.description} action={gradeAction(finding.item_path)} />)}
           </ul>
         </ArtifactSection>
@@ -128,7 +128,7 @@ export function SpecAnalysisViewer({ body, source, onOpenItem, itemGrading }: Vi
 
       {view.requirements.length > 0 && (
         <ArtifactSection title={`Requirements (${view.requirements.length})`} testId="or-spec-requirements">
-          <ul className="divide-y divide-[var(--border-subtle)]">
+          <ul className="divide-y divide-[var(--border-decorative)]">
             {view.requirements.map((requirement, index) => <ItemRow key={`${index}-${requirement.id}`} status={requirement.status} id={requirement.id} description={requirement.description} />)}
           </ul>
         </ArtifactSection>
