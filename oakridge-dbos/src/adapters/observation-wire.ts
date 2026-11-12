@@ -5,13 +5,13 @@ export type JsonValue = string | number | boolean | null | readonly JsonValue[] 
 export type CanonicalDigest = `canonical-json/v1:${string}` & { readonly __brand: "CanonicalDigest" };
 export interface CaptureSource {
   readonly producer: string; readonly namespace: string; readonly revision_id: string; readonly run_id: string;
-  readonly unit_id: string; readonly artifact_kind: string; readonly artifact_schema_version: string;
+  readonly unit_id: string; readonly stage: string; readonly artifact_kind: string; readonly artifact_schema_version: string;
   readonly definition_id: string;
   readonly predecessor_id: string | null; readonly subject_id: string | null;
   readonly by_id?: string | null;
 }
 export interface CaptureEnvelope {
-  readonly format: "observation.artifact-revision/v2"; readonly source: CaptureSource; readonly recorded_at: string;
+  readonly format: "observation.artifact-revision/v3"; readonly source: CaptureSource; readonly recorded_at: string;
   readonly body: JsonValue;
   readonly body_digest: CanonicalDigest;
 }

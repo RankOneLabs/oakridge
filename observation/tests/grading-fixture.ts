@@ -60,6 +60,7 @@ export async function scratchDatabase(work: (db: Database) => Promise<void>): Pr
 export interface FixtureRevision {
   readonly revision_id: string;
   readonly artifact_kind: string;
+  readonly stage?: string;
   readonly body: JsonValue;
   readonly run_id?: string;
   readonly unit_id?: string;
@@ -79,8 +80,8 @@ export function revisionOutcome(input: FixtureRevision, scope: TenantScope = ten
   const prefix = `${scope.producer}:${scope.namespace}:`;
   const run_id = input.run_id ?? "run-1";
   return { ...provenance, kind: "artifact_revision", event_kind: "revision_published", run_id, event_id,
-    revision: { format: "observation.artifact-revision/v2", source: { ...scope, revision_id: `${prefix}${input.revision_id}`, run_id,
-      unit_id: input.unit_id ?? input.artifact_kind, artifact_kind: input.artifact_kind, artifact_schema_version: SCHEMA_VERSION,
+    revision: { format: "observation.artifact-revision/v3", source: { ...scope, revision_id: `${prefix}${input.revision_id}`, run_id,
+      unit_id: input.unit_id ?? input.artifact_kind, stage: input.stage ?? "implementation", artifact_kind: input.artifact_kind, artifact_schema_version: SCHEMA_VERSION,
       definition_id: DEFINITION_ID, predecessor_id: input.predecessor_id ? `${prefix}${input.predecessor_id}` : null,
       subject_id: input.subject_id ? `${prefix}${input.subject_id}` : null },
     recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z", body: input.body,

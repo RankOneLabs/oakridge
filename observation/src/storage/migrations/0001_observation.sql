@@ -1,4 +1,5 @@
 -- Observation baseline. Apply only to an empty PostgreSQL 15+ database.
+-- Stage metadata changes this baseline in place; rollout requires an observation dump and reset.
 CREATE SCHEMA observation;
 
 CREATE TABLE observation.schema_baseline (
@@ -14,6 +15,7 @@ CREATE TABLE observation.source_revision (
   revision_id text NOT NULL,
   run_id text NOT NULL,
   unit_id text NOT NULL,
+  stage text NOT NULL CHECK (stage <> ''),
   artifact_kind text NOT NULL,
   artifact_schema_version text NOT NULL,
   definition_id text NOT NULL,

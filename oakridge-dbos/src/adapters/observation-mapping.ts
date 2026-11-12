@@ -32,9 +32,9 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
       const revision_id = `${event.unit}:${event.artifact}:${input.revision_sequence}`;
       const prefix = `oakridge:${input.namespace}:`;
       return { ...provenance, artifact_schema_version: version, kind: "artifact_revision", event_kind: event.kind, ...identity,
-        revision: { format: "observation.artifact-revision/v2", source: {
+        revision: { format: "observation.artifact-revision/v3", source: {
           producer: "oakridge", namespace: input.namespace, revision_id: `${prefix}${revision_id}`,
-          run_id: identity.run_id, unit_id: event.unit, artifact_kind: event.artifact, artifact_schema_version: version,
+          run_id: identity.run_id, unit_id: event.unit, stage: input.stage, artifact_kind: event.artifact, artifact_schema_version: version,
           definition_id: definition.definition_id,
           predecessor_id: event.predecessor ? `${prefix}${event.predecessor}` : null,
           subject_id: event.subject ? `${prefix}${event.subject}` : null, by_id: event.by ?? null },

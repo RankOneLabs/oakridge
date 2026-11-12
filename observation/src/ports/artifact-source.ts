@@ -25,6 +25,7 @@ export interface ArtifactSource {
 }
 
 export interface CapturedRevision {
+  readonly stage: string;
   readonly revision_id: ArtifactRevisionId;
   readonly artifact_kind: string;
   readonly subject_id: string | null;

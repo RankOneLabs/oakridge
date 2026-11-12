@@ -357,7 +357,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
     if (!digest.ok) throw new Error(digest.error.detail);
     const prefix = `${tenant.producer}:${tenant.namespace}:`;
     await send({ ...provenance, artifact_schema_version: "matrix-schema", kind: "artifact_revision", event_kind: "revision_published", run_id, event_id: `event:${revision_id}`,
-      revision: { format: "observation.artifact-revision/v2", source: { ...tenant, revision_id: `${prefix}${revision_id}`, run_id, unit_id, artifact_kind, artifact_schema_version: "matrix-schema",
+      revision: { format: "observation.artifact-revision/v3", source: { ...tenant, revision_id: `${prefix}${revision_id}`, run_id, unit_id, stage: "implementation", artifact_kind, artifact_schema_version: "matrix-schema",
         definition_id: "matrix", predecessor_id: predecessor_id ? `${prefix}${predecessor_id}` : null, subject_id: null }, recorded_at: new Date(Date.UTC(2026, 10, 1, 0, sequence)).toISOString(),
         body, body_digest: digest.value as `canonical-json/v1:${string}` & { readonly __brand: "CanonicalDigest" } } });
   };

@@ -29,8 +29,8 @@ const sources: CapturedSources = {
   readRunInput: async () => ({ spec: "s", repositories: [{ key: "primary", preparation: { repository_path: "/repos/primary" } },
     { key: "other", preparation: { repository_path: "/repos/other" } }] }),
   readRevision: async (revision_id): Promise<CapturedRevision | null> => revision_id === "assessment-1"
-    ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "assessment", subject_id: "build-1", body: { head_sha: HEAD, test_evidence: reportedTests } }
-    : revision_id === "build-1" ? { revision_id: revision_id as ArtifactRevisionId, artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } } : null,
+    ? { revision_id: revision_id as ArtifactRevisionId, stage: "implementation", artifact_kind: "assessment", subject_id: "build-1", body: { head_sha: HEAD, test_evidence: reportedTests } }
+    : revision_id === "build-1" ? { revision_id: revision_id as ArtifactRevisionId, stage: "implementation", artifact_kind: "build_result", subject_id: null, body: { head_sha: HEAD } } : null,
   readRevisionAt: async () => null, readLogicalItemAt: async () => ({ revision_id: "tasks-1" as ArtifactRevisionId, item_path: "/tasks/0", item_kind: "task", selected_value: { id: "T7" } }), readLinkedItems: async () => [],
   repository: { hasCommit: async (path) => path === "/repos/other",
     readFile: async ({ path }) => path === "core/gone.ts" ? { state: "absent" } : { state: "present", content: "one\ntwo\nthree\nfour" } },

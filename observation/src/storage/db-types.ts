@@ -14,6 +14,7 @@ export interface ObservationSourceRevision {
   revision_id: string;
   run_id: string;
   unit_id: string;
+  stage: string;
   artifact_kind: string;
   artifact_schema_version: string;
   definition_id: string;

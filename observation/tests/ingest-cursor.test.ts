@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Client } from "pg";
 import { createApp } from "../src/http/app";
 import { oakridgeProfile } from "./grading-fixture";
-import { decodeSourceEventDelivery } from "../src/ingest/cursor";
+import { decodeSourceEventDelivery, type SourceEventDelivery } from "../src/ingest/cursor";
 import { openDatabase, withTenant } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { dropScratchDatabase } from "./database-fixture";
@@ -33,7 +33,7 @@ integration("acknowledgement commits outcome and cursor together; stale delivery
       const auth = { authorization: "Bearer ingest-secret" };
       const first = await app.request("/v1/sources/oakridge/cursor", { headers: auth });
       expect(await first.json()).toEqual({ cursor: { commit_txid: "0", id: "" } });
-      const delivery = { previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "20", id: "event-1" },
+      const delivery: SourceEventDelivery = { previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "20", id: "event-1" },
         outcome: { format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
           kind: "unmapped", event_kind: "future", run_id: "run-1", event_id: "event-1", reason: "unknown variant" } };
       const send = () => app.request("/v1/sources/oakridge/events", { method: "POST", headers: { ...auth, "content-type": "application/json" },
@@ -48,4 +48,14 @@ integration("acknowledgement commits outcome and cursor together; stale delivery
         cursor: { cursor: delivery.cursor }, unmapped: { items: [delivery.outcome], total: 1, limit: 50, offset: 0 }, stored: ["event-1"] });
     } finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
+});
+
+
+test("source events accept only v1", () => {
+  const delivery: SourceEventDelivery = { previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: "event-1" },
+    outcome: { format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
+      kind: "ignored", event_kind: "operator_decided", run_id: "run-1", event_id: "event-1" } };
+  expect(decodeSourceEventDelivery(delivery)).toEqual(delivery);
+  expect(decodeSourceEventDelivery({ ...delivery, outcome: { ...delivery.outcome,
+    format: "observation.source-event/" + "v2" } })).toBeNull();
 });

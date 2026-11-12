@@ -29,11 +29,12 @@ export const TARGET_TABLES: Readonly<Record<string, TableSpec>> = {
     ],
   },
   source_revision: {
-    columns: [...TENANT, "revision_id text", "run_id text", "unit_id text", "artifact_kind text", "artifact_schema_version text",
+    columns: [...TENANT, "revision_id text", "run_id text", "unit_id text", "stage text", "artifact_kind text", "artifact_schema_version text",
       "definition_id text", "body jsonb", "body_digest text", "recorded_at timestamptz", "captured_at timestamptz default",
       "predecessor_id text null", "subject_id text null"],
     primary_key: "producer,namespace,revision_id", unique: [], foreign_keys: [],
     checks: [
+      "stage <> ''",
       `body_digest ~ ${CANONICAL_DIGEST}`,
       "producer <> '' AND namespace <> '' AND revision_id <> ''",
       "predecessor_id IS NULL OR predecessor_id <> ''",
