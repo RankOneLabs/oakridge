@@ -122,7 +122,7 @@ export const TARGET_TABLES: Readonly<Record<string, TableSpec>> = {
   },
   evidence_set: {
     columns: [...TENANT, "evidence_set_id text", "subject_occurrence_id text", "task_id text null", "question_id text", "question_version text",
-      "pinned_evaluator_definition_ids text[]", "readiness text", "not_ready_code text null", "not_ready_detail text null",
+      "pinned_evaluator_definition_ids text[]", "collection_plan jsonb null", "readiness text", "not_ready_code text null", "not_ready_detail text null",
       "evidence_refs jsonb default", "is_incomplete boolean default", "incompleteness_reason text null",
       "created_at timestamptz default", "ready_at timestamptz null"],
     primary_key: "producer,namespace,evidence_set_id",
@@ -136,6 +136,7 @@ export const TARGET_TABLES: Readonly<Record<string, TableSpec>> = {
       "readiness IN ('not_ready', 'ready')",
       `evidence_set_id ~ ${CANONICAL_DIGEST}`,
       "cardinality(pinned_evaluator_definition_ids) > 0",
+      "collection_plan IS NULL OR (jsonb_typeof(collection_plan) = 'object' AND collection_plan->>'question_id' = question_id AND collection_plan->>'question_version' = question_version AND jsonb_typeof(collection_plan->'evidence') = 'array') IS TRUE",
       "jsonb_typeof(evidence_refs) = 'array'",
       "(readiness = 'ready') = (ready_at IS NOT NULL)",
       "(readiness = 'not_ready') = (not_ready_code IS NOT NULL AND not_ready_detail IS NOT NULL)",

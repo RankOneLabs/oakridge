@@ -138,6 +138,7 @@ export interface ObservationEvidenceSet {
   question_id: string;
   question_version: string;
   pinned_evaluator_definition_ids: string[];
+  collection_plan: JsonValue | null;
   readiness: string;
   not_ready_code: string | null;
   not_ready_detail: string | null;

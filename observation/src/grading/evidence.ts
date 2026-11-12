@@ -1,5 +1,6 @@
+import { z } from "zod";
 import { canonicalDigest } from "canonical-json";
-import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, LogicalItemId, RunId } from "../domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, LogicalItemId, QuestionId, RunId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { CapturedSources } from "../ports/artifact-source";
 import type { EvidenceCapabilities, EvidenceCapabilityReference, EvidenceCollector } from "../ports/producer-profile";
@@ -73,6 +74,7 @@ export interface CaptureTarget {
 /** One question and the full evaluator set an occurrence of its declared target is pinned to when captured. */
 export type CapturePin = QuestionKey & QuestionScope & CaptureTarget & {
   readonly evaluator_definition_ids: readonly EvaluatorDefinitionId[];
+  readonly collection_plan?: EvidencePlan;
 }
 /** A pin applies only to an occurrence of its declared artifact, selector and item kind. One item kind
  * can be selected from several artifacts, so item kind alone does not identify a target. */
@@ -187,10 +189,19 @@ export function memoizedSources(sources: CapturedSources): CapturedSources {
     readLinkedItems: memoizedRead((id: ItemOccurrenceId) => sources.readLinkedItems(id), (id) => id) };
 }
 export interface EvidencePlan extends QuestionKey { readonly evidence: readonly EvidenceCapabilityReference[] }
+export const capabilityReferenceSchema = z.union([z.string().min(1), z.strictObject({ capability: z.string().min(1), params: z.json().optional() })]);
+const evidencePlanSchema = z.strictObject({ question_id: z.string().min(1), question_version: z.string().min(1), evidence: z.array(capabilityReferenceSchema) });
+export interface EvidencePlanError { readonly operation: "decode_evidence_plan"; readonly entity_id: string; readonly detail: string }
+/** JSONB plans mirror capture pins, including the question key they are immutable under. */
+export function decodeEvidencePlan(raw: JsonValue): Result<EvidencePlan, EvidencePlanError> {
+  const parsed = evidencePlanSchema.safeParse(raw);
+  return parsed.success ? ok({ ...parsed.data, question_id: parsed.data.question_id as QuestionId })
+    : err({ operation: "decode_evidence_plan", entity_id: "collection_plan", detail: parsed.error.message });
+}
 /** A question id only selects its declared plan; no producer code dispatches on it. */
 export function createCapabilityCollector(plans: readonly EvidencePlan[], capabilities: EvidenceCapabilities): EvidenceCollector {
   return { async collect(artifact, question, sources) {
-    const plan = plans.find((entry) => entry.question_id === question.question_id && entry.question_version === question.question_version);
+    const plan = question.collection_plan ?? plans.find((entry) => entry.question_id === question.question_id && entry.question_version === question.question_version);
     if (!plan) return { state: "not_ready", reason: { code: "definition_unavailable", detail: "pinned definition is unavailable in this process" } };
     const context = { artifact, question, sources: memoizedSources(sources) };
     const references: EvidenceReference[] = [];

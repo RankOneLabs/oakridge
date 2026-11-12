@@ -1,6 +1,6 @@
 import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
-import type { SubjectQuestion } from "../grading/evidence";
+import { decodeEvidencePlan, type SubjectQuestion } from "../grading/evidence";
 import type { ArtifactSource, CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, LogicalItemContextRequest, RepositoryReader,
   SourceArtifact } from "../ports/artifact-source";
 import type { EvidenceCollector } from "../ports/producer-profile";
@@ -33,8 +33,19 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
     });
   }
 
-  collect(artifact: SourceArtifact, question: SubjectQuestion): Promise<EvidenceCollection> {
-    return this.dependencies.collector.collect(artifact, question, this);
+  async collect(artifact: SourceArtifact, question: SubjectQuestion): Promise<EvidenceCollection> {
+    const { db, tenant, run_id, collector } = this.dependencies;
+    const pin = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set as e")
+      .innerJoin("observation.item_occurrence as i", (join) => join.onRef("i.producer", "=", "e.producer")
+        .onRef("i.namespace", "=", "e.namespace").onRef("i.occurrence_id", "=", "e.subject_occurrence_id"))
+      .select("e.collection_plan").where("e.producer", "=", tenant.producer).where("e.namespace", "=", tenant.namespace)
+      .where("i.run_id", "=", run_id).where("e.subject_occurrence_id", "=", artifact.occurrence_id)
+      .where("e.task_id", question.task_id === null ? "is" : "=", question.task_id)
+      .where("e.question_id", "=", question.question_id).where("e.question_version", "=", question.question_version).executeTakeFirst());
+    if (pin?.collection_plan === null || pin === undefined) return collector.collect(artifact, question, this);
+    const plan = decodeEvidencePlan(pin.collection_plan);
+    if (!plan.ok) return { state: "not_ready", reason: { code: "invalid_collection_plan", detail: plan.error.detail } };
+    return collector.collect(artifact, { ...question, collection_plan: plan.value }, this);
   }
 
   readRunInput(): Promise<JsonValue | null> {

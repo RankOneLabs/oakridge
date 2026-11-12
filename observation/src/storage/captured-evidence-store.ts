@@ -58,7 +58,7 @@ export async function pinSubjectInTransaction(trx: DatabaseTransaction, tenant: 
   if (!id.ok) return err({ operation: "evidence_store", entity_id: subject.subject_occurrence_id, detail: id.error.detail });
   await trx.insertInto("observation.evidence_set").values({ producer: tenant.producer, namespace: tenant.namespace,
     evidence_set_id: id.value, ...subject, question_id: pin.question_id,
-    question_version: pin.question_version, pinned_evaluator_definition_ids: [...pin.evaluator_definition_ids],
+    question_version: pin.question_version, collection_plan: pin.collection_plan ? jsonText(pin.collection_plan as unknown as JsonValue) : null, pinned_evaluator_definition_ids: [...pin.evaluator_definition_ids],
     readiness: "not_ready", not_ready_code: COLLECTION_PENDING.code, not_ready_detail: COLLECTION_PENDING.detail,
     incompleteness_reason: null, ready_at: null })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "subject_occurrence_id", "task_id", "question_id", "question_version"]).doNothing()).execute();

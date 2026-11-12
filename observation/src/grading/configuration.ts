@@ -3,7 +3,7 @@ import { canonicalDigest, canonicalJson } from "canonical-json";
 import type { EvaluatorDefinitionId, QuestionId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { evaluatorIdentity, instructionDigest, type EvaluatorDefinition } from "./evaluator";
-import { createCapabilityCollector, type CaptureConfiguration, type CapturePin, type QuestionScope } from "./evidence";
+import { capabilityReferenceSchema, createCapabilityCollector, type CaptureConfiguration, type CapturePin, type QuestionScope } from "./evidence";
 import type { EvidenceCapabilities, EvidenceCapabilityReference, EvidenceCollector } from "../ports/producer-profile";
 import type { QuestionDefinition, QuestionKey } from "./question";
 import { runnerEntry } from "./runner";
@@ -33,7 +33,7 @@ export interface GradingRegistry {
 const pointerSchema = z.string().regex(/^\/(?:[^~]|~[01])*$/);
 const targetSchema = z.strictObject({ artifact: z.string().min(1), selector: pointerSchema });
 export type GradingTarget = z.infer<typeof targetSchema>;
-const evidenceSchema = z.union([z.string().min(1), z.strictObject({ capability: z.string().min(1), params: z.json().optional() })]);
+const evidenceSchema = capabilityReferenceSchema;
 const questionSchema = z.strictObject({
   text: z.string().nullable(), response: z.enum(["boolean", "choice", "ordinal", "numeric", "text", "structured"]),
   values: z.array(z.json()).nullable(), missing_evidence_policy: z.enum(["fail", "abstain"]),
@@ -180,9 +180,10 @@ interface QuestionSelection {
   readonly human: EvaluatorDefinition;
   readonly scope: QuestionScope;
   readonly targets: readonly GradingTarget[];
+  readonly evidence: readonly EvidenceCapabilityReference[];
 }
 
-function pinQuestion({ question, graders, human, scope, targets }: QuestionSelection): Result<PinnedQuestion, GraderConfigurationError> {
+function pinQuestion({ question, graders, human, scope, targets, evidence }: QuestionSelection): Result<PinnedQuestion, GraderConfigurationError> {
   const evaluators: EvaluatorDefinition[] = [];
   for (const grader of graders) {
     const evaluator = configuredEvaluator(question, grader);
@@ -193,7 +194,7 @@ function pinQuestion({ question, graders, human, scope, targets }: QuestionSelec
   }
   const key: QuestionKey = { question_id: question.question_id, question_version: question.question_version };
   const pinned = [...evaluators, human].map((evaluator) => evaluator.evaluator_definition_id as EvaluatorDefinitionId);
-  return ok({ evaluators, pins: targets.map((target) => ({ ...key, ...scope, artifact_kind: target.artifact, item_selector: target.selector, item_kind: question.item_kind, evaluator_definition_ids: pinned })),
+  return ok({ evaluators, pins: targets.map((target) => ({ ...key, ...scope, artifact_kind: target.artifact, item_selector: target.selector, item_kind: question.item_kind, evaluator_definition_ids: pinned, collection_plan: { ...key, evidence } })),
     graders: evaluators.map((evaluator) => ({ runner: evaluator.backend_kind, question: key,
       evaluator_definition_id: evaluator.evaluator_definition_id as EvaluatorDefinitionId })) });
 }
@@ -254,7 +255,7 @@ export function planRegistration(configuration: GradingDefinitions, registry: Gr
       return failure("duplicate_grader", `${definition.id}:human`, "the same grader is configured twice");
     const question = questionDefinition(definition, selectors[0]!.item_kind);
     if (!question.ok) return question;
-    const result = pinQuestion({ question: question.value, graders: machineGraders(definition), human: human.value, scope: definitionScope(definition), targets: definition.targets });
+    const result = pinQuestion({ question: question.value, graders: machineGraders(definition), human: human.value, scope: definitionScope(definition), targets: definition.targets, evidence: definition.evidence });
     if (!result.ok) return result;
     questions.push(question.value);
     pinned.push(result.value);
