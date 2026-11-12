@@ -9,7 +9,7 @@ import { gradeNext, type GradingWorkerDependencies } from "../src/grading/worker
 import { createApp } from "../src/http/app";
 import type { RepositoryReader } from "../src/ports/artifact-source";
 import type { GradeRunner } from "../src/ports/grade-runner";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "./grading-fixture";
 import { oakridgeProfile, oakridgeGradingRegistry } from "./grading-fixture";
 import { withTenant, type Database } from "../src/storage/database";
 import { createEvidenceReconciler, type EvidenceReconciler } from "../src/storage/evidence-pipeline";
@@ -143,7 +143,7 @@ integration("with grading off, every supported question still gets frozen human-
   const measured = await readItemMeasurements(db, tenant, await occurrenceAt(db, "run-1-assessment", "/findings/1"));
   expect(measured?.questions.map((entry) => [entry.evidence.question_id, entry.is_human_ready, entry.machine.map((machine) => machine.measurement.state)]))
     .toEqual([[CORRECTNESS_ID, true, ["grading_off"]], [EVIDENCE_SUPPORT_ID, true, ["grading_off"]]]);
-  expect(await life.counts()).toMatchObject({ ready: 7, executions: 0, attempts: 0, answers: 0 });
+  expect(await life.counts()).toMatchObject({ ready: 9, executions: 0, attempts: 0, answers: 0 });
   expect(life.requests.sent).toEqual([]);
 }));
 
@@ -151,7 +151,7 @@ integration("a launch that carried no config has grading off", async () => scrat
   const life = await lifecycle(db);
   await life.feed.launch(LAUNCH, "run-1", null);
   await captureAssessment(life);
-  expect(await life.counts()).toMatchObject({ ready: 6, executions: 0 });
+  expect(await life.counts()).toMatchObject({ ready: 8, executions: 0 });
   expect(await readRunSpend(db, tenant, "run-1")).toMatchObject({ is_grading_enabled: false, captured_config: null });
 }));
 
@@ -162,8 +162,8 @@ integration("spec tasks are admitted alongside findings; risks, decisions and wh
   await captureAssessment(life);
   const kinds = [...new Set((await executionsOf(db)).map((row) => row.item_kind))].sort();
   expect(kinds).toEqual(["assessment_finding", "finding", "task"]);
-  // 1 Relevance + 3 resolved task subjects x 2 questions + 2 spec task coverage questions.
-  expect((await executionsOf(db)).length).toBe(9);
+  // 1 Relevance + (3 resolved task subjects + 1 task-less subject) x 2 questions + 2 task coverage questions.
+  expect((await executionsOf(db)).length).toBe(11);
 }));
 
 integration("Correctness waits for its subject build while Evidence support of the same finding is admitted", async () => scratchDatabase(async (db) => {
@@ -182,14 +182,15 @@ integration("Correctness waits for its subject build while Evidence support of t
   expect(after?.questions.map((entry) => entry.machine[0]?.measurement.state)).toEqual(["pending", "pending"]);
 }));
 
-integration("an integration assessment creates no subjects for missing or unresolved task links", async () => scratchDatabase(async (db) => {
+integration("an integration assessment grades task-less findings while unresolved task ids remain unpinned", async () => scratchDatabase(async (db) => {
   const life = await lifecycle(db);
   await life.feed.launch(LAUNCH, "run-1", runConfig(true));
   await captureAssessment(life);
   const rows = await executionsOf(db);
   // /findings/2 has no task and no citation; /findings/3 names a task the run never captured.
-  for (const path of ["/findings/2", "/findings/3"])
-    expect(rows.filter((row) => row.json_pointer === path).map((row) => row.question_id).sort()).toEqual([]);
+  expect(rows.filter((row) => row.json_pointer === "/findings/2").map((row) => row.question_id).sort())
+    .toEqual([CORRECTNESS_ID, EVIDENCE_SUPPORT_ID]);
+  expect(rows.filter((row) => row.json_pointer === "/findings/3")).toEqual([]);
 }));
 
 integration("repeated reconciliation, source replay and restart add no execution and resend nothing completed", async () => scratchDatabase(async (db) => {
@@ -255,7 +256,7 @@ integration("negative and unclear answers are valid completed answers", async ()
   await life.drain(life.worker((context) => answer(negative[context.question.question_id] ?? "unclear")));
   const answers = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grade_observation").select("answer_payload").execute());
   expect(new Set(answers.map((row) => (row.answer_payload as { value: string }).value))).toEqual(new Set(["contradicted", "unclear"]));
-  expect(await life.counts()).toMatchObject({ executions: 6, completed: 6, answers: 6 });
+  expect(await life.counts()).toMatchObject({ executions: 8, completed: 8, answers: 8 });
 }));
 
 integration("an answer outside the pinned choices is retried and exhaustion ends failed with no grade", async () => scratchDatabase(async (db) => {
@@ -438,7 +439,7 @@ integration("deferral sends nothing and writes no answer; a released reservation
   const deps = life.worker(firstAllowed, { controls: { run_spend: 0.01, retry_limit: 3, provider_deadline_ms: 30_000, lease_ms: 60_000 } });
   await life.drain(deps);
   const spend = await readRunSpend(db, tenant, "run-1");
-  expect([spend.executions.completed, spend.executions.budget_deferred, spend.requests_sent, life.requests.sent.length]).toEqual([1, 6, 1, 1]);
+  expect([spend.executions.completed, spend.executions.budget_deferred, spend.requests_sent, life.requests.sent.length]).toEqual([1, 8, 1, 1]);
   const deferred = (await executionsOf(db)).find((row) => row.status === "budget_deferred")!;
   const measured = await readItemMeasurements(db, tenant, await occurrenceAt(db, deferred.revision_id, deferred.json_pointer));
   expect(measured?.questions.flatMap((entry) => entry.machine.map((machine) => machine.measurement.state))).toContain("budget_deferred");
@@ -448,7 +449,7 @@ integration("deferral sends nothing and writes no answer; a released reservation
   await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution").set({ status: "queued" })
     .where("status", "=", "budget_deferred").execute());
   await life.drain(restarted);
-  expect((await readRunSpend(db, tenant, "run-1")).executions).toMatchObject({ completed: 3, budget_deferred: 4 });
+  expect((await readRunSpend(db, tenant, "run-1")).executions).toMatchObject({ completed: 3, budget_deferred: 6 });
   // A claim that ends without a request releases its reservation and re-queues the run's deferred work.
   await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution").set({ status: "queued" })
     .where("status", "=", "budget_deferred").execute());
@@ -494,4 +495,32 @@ integration("accept and request-changes delivered over HTTP start no pass and ad
   // The same items were admittable all along: a pass started by anything else admits them.
   await life.reconciler.reconcileRun(tenant, "run-1");
   expect((await life.counts()).executions).toBe(1);
+}));
+
+integration("a task first published after its finding makes both assessment questions gradeable with frozen provenance", async () => scratchDatabase(async (db) => {
+  const life = await lifecycle(db);
+  await life.feed.launch(LAUNCH, "run-1", runConfig(true));
+  await life.feed.revision({ revision_id: "finding-before-task", artifact_kind: "assessment", recorded_at: "2026-11-01T00:00:00Z",
+    body: { findings: [{ task_ids: ["LATE"], evidence: [], criterion: "Late task", status: "met" }] } });
+  const occurrence_id = await occurrenceAt(db, "finding-before-task", "/findings/0");
+  expect((await readItemMeasurements(db, tenant, occurrence_id))?.questions).toEqual([]);
+  const task = { id: "LATE", description: "The first captured definition", requirement_ids: [] };
+  await life.feed.revision({ revision_id: "first-late-task", artifact_kind: "tasks", recorded_at: "2026-11-01T00:00:01Z", body: { tasks: [task] } });
+  // A newer task definition is already available when evidence is first collected.
+  await life.feed.revision({ revision_id: "edited-late-task", artifact_kind: "tasks", recorded_at: "2026-11-01T00:00:02Z",
+    body: { tasks: [{ ...task, description: "A later edit must not replace the resolving definition" }] } });
+  await life.reconciler.reconcileRun(tenant, "run-1");
+  const ready = (await readItemMeasurements(db, tenant, occurrence_id))!;
+  expect(ready.questions).toHaveLength(2);
+  for (const question of ready.questions) {
+    expect(question.evidence.readiness).toMatchObject({ state: "ready", references: [{ ref: "subject" },
+      { ref: "task_context:0", source: "revision", revision_id: "first-late-task", item_path: "/tasks/0", content: task }] });
+    expect(String(question.evidence.task_id)).toBe("oakridge:grading-test:run-1:task:LATE");
+  }
+  await life.drain(life.worker(firstAllowed));
+  const measured = (await readItemMeasurements(db, tenant, occurrence_id))!;
+  expect(measured.questions.map((question) => [question.evidence.question_id, question.machine[0]!.measurement.state]))
+    .toEqual([[CORRECTNESS_ID, "answered"], [EVIDENCE_SUPPORT_ID, "answered"]]);
+  await life.reconciler.reconcileRun(tenant, "run-1");
+  expect((await readItemMeasurements(db, tenant, occurrence_id))!.questions.map((question) => question.evidence)).toEqual(measured.questions.map((question) => question.evidence));
 }));

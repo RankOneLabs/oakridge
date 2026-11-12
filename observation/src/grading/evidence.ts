@@ -1,6 +1,9 @@
+import { z } from "zod";
 import { canonicalDigest } from "canonical-json";
-import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, LogicalItemId, RunId } from "../domain/identity";
+import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, LogicalItemId, QuestionId, RunId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
+import type { CapturedSources } from "../ports/artifact-source";
+import type { EvidenceCapabilities, EvidenceCapabilityReference, EvidenceCollector } from "../ports/producer-profile";
 import type { QuestionKey } from "./question";
 
 /** A line or inclusive line range cited within a repository file. */
@@ -71,6 +74,7 @@ export interface CaptureTarget {
 /** One question and the full evaluator set an occurrence of its declared target is pinned to when captured. */
 export type CapturePin = QuestionKey & QuestionScope & CaptureTarget & {
   readonly evaluator_definition_ids: readonly EvaluatorDefinitionId[];
+  readonly collection_plan?: EvidencePlan;
 }
 /** A pin applies only to an occurrence of its declared artifact, selector and item kind. One item kind
  * can be selected from several artifacts, so item kind alone does not identify a target. */
@@ -120,20 +124,23 @@ export interface SubjectRelation {
   readonly unresolved_target_ref: string | null;
   readonly evidence_ref: string;
 }
-export interface SubjectOccurrence { readonly occurrence_id: ItemOccurrenceId; readonly json_pointer: string }
+export interface SubjectOccurrence { readonly occurrence_id: ItemOccurrenceId; readonly json_pointer: string; readonly selected_value: JsonValue }
 export interface SubjectGeneration {
   readonly occurrence: SubjectOccurrence;
   readonly scope: QuestionScope;
   readonly relations: readonly SubjectRelation[];
 }
 export interface GradingSubject { readonly subject_occurrence_id: ItemOccurrenceId; readonly task_id: LogicalItemId | null }
-/** Only resolved assesses edges under the declared task_ids pointer create task subjects. */
+/** Empty declared ids create one task-less subject; otherwise only resolved assesses edges create subjects. */
 export function gradingSubjects({ occurrence, scope, relations }: SubjectGeneration): readonly GradingSubject[] {
   const subject_occurrence_id = occurrence.occurrence_id;
   if (scope.scope === "per_item") return [{ subject_occurrence_id, task_id: null }];
+  const ids = valueAtPointer(occurrence.selected_value, scope.task_ids);
+  if (Array.isArray(ids) && ids.length === 0) return [{ subject_occurrence_id, task_id: null }];
+  if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) return [];
   const prefix = `${occurrence.json_pointer}${scope.task_ids}/`;
   const tasks = relations.filter((relation) => relation.type === "assesses" && relation.unresolved_target_ref === null
-    && relation.target_logical_item_id !== null && relation.evidence_ref.startsWith(prefix));
+    && relation.target_logical_item_id !== null && ids.some((_, index) => relation.evidence_ref === `${prefix}${index}`));
   return [...new Set(tasks.map((relation) => relation.target_logical_item_id as LogicalItemId))]
     .sort().map((task_id) => ({ subject_occurrence_id, task_id }));
 }
@@ -144,4 +151,83 @@ export function evidenceSetId({ subject_occurrence_id, question, task_id }: Evid
   const digest = canonicalDigest([subject_occurrence_id, task_id, question.question_id, question.question_version]);
   return digest.ok ? ok(digest.value as unknown as EvidenceSetId)
     : err({ operation: "evidence_set_id", entity_id: subject_occurrence_id, detail: digest.error.detail });
+}
+
+/** RFC 6901 pointers work for both selected item fields and captured source lists. */
+export function valueAtPointer(value: JsonValue, pointer: string): JsonValue | undefined {
+  if (pointer === "") return value;
+  if (!pointer.startsWith("/") || /~(?![01])/.test(pointer)) return undefined;
+  let current: JsonValue | undefined = value;
+  for (const token of pointer.slice(1).split("/")) {
+    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (current === null || typeof current !== "object") return undefined;
+    current = Array.isArray(current) ? (/^(0|[1-9][0-9]*)$/.test(key) ? current[Number(key)] : undefined) : (current as { readonly [key: string]: JsonValue })[key];
+  }
+  return current;
+}
+
+/** Promise memoization includes missing reads: all entries see one captured context per collection. */
+function memoizedRead<Input, Output>(read: (input: Input) => Promise<Output>, key: (input: Input) => string): (input: Input) => Promise<Output> {
+  const cache = new Map<string, Promise<Output>>();
+  return (input) => {
+    const identity = key(input);
+    const existing = cache.get(identity);
+    if (existing) return existing;
+    const pending = read(input);
+    cache.set(identity, pending);
+    return pending;
+  };
+}
+export function memoizedSources(sources: CapturedSources): CapturedSources {
+  const input = memoizedRead(() => sources.readRunInput(), () => "input");
+  const revisionAt = memoizedRead((request: { readonly kind: string; readonly revision_id: import("../domain/identity").ArtifactRevisionId }) =>
+    sources.readRevisionAt(request.kind, request.revision_id), (request) => JSON.stringify(request));
+  return { repository: sources.repository, readRunInput: () => input(undefined),
+    readRevision: memoizedRead((id: string) => sources.readRevision(id), (id) => id),
+    readRevisionAt: (kind, revision_id) => revisionAt({ kind, revision_id }),
+    readLogicalItemAt: memoizedRead((request: import("../ports/artifact-source").LogicalItemContextRequest) => sources.readLogicalItemAt(request), JSON.stringify),
+    readLinkedItems: memoizedRead((id: ItemOccurrenceId) => sources.readLinkedItems(id), (id) => id) };
+}
+export interface EvidencePlan extends QuestionKey { readonly evidence: readonly EvidenceCapabilityReference[] }
+export const capabilityReferenceSchema = z.union([z.string().min(1), z.strictObject({ capability: z.string().min(1), params: z.json().optional() })]);
+const evidencePlanSchema = z.strictObject({ question_id: z.string().min(1), question_version: z.string().min(1), evidence: z.array(capabilityReferenceSchema) });
+export interface EvidencePlanError { readonly operation: "decode_evidence_plan"; readonly entity_id: string; readonly detail: string }
+/** JSONB plans mirror capture pins, including the question key they are immutable under. */
+export function decodeEvidencePlan(raw: JsonValue): Result<EvidencePlan, EvidencePlanError> {
+  const parsed = evidencePlanSchema.safeParse(raw);
+  return parsed.success ? ok({ ...parsed.data, question_id: parsed.data.question_id as QuestionId })
+    : err({ operation: "decode_evidence_plan", entity_id: "collection_plan", detail: parsed.error.message });
+}
+/** A question id only selects its declared plan; no producer code dispatches on it. */
+export function createCapabilityCollector(plans: readonly EvidencePlan[], capabilities: EvidenceCapabilities): EvidenceCollector {
+  return { async collect(artifact, question, sources) {
+    const plan = question.collection_plan ?? plans.find((entry) => entry.question_id === question.question_id && entry.question_version === question.question_version);
+    if (!plan) return { state: "not_ready", reason: { code: "definition_unavailable", detail: "pinned definition is unavailable in this process" } };
+    const context = { artifact, question, sources: memoizedSources(sources) };
+    const references: EvidenceReference[] = [];
+    for (const entry of plan.evidence) {
+      const name = typeof entry === "string" ? entry : entry.capability;
+      const capability = Object.hasOwn(capabilities, name) ? capabilities[name] : undefined;
+      if (!capability) return { state: "not_ready", reason: { code: "capability_unavailable", detail: name } };
+      const result = await capability.resolve(context, typeof entry === "string" ? {} : entry.params ?? {});
+      if (result.state === "not_ready") return result;
+      references.push(...result.references);
+    }
+    return { state: "ready", references };
+  } };
+}
+
+
+export interface SubjectTaskRequest {
+  readonly pinned_tasks: readonly (LogicalItemId | null)[];
+  readonly scope: QuestionScope | undefined;
+  readonly task_id: LogicalItemId | null;
+}
+/** Pinned subjects are authoritative; current configuration only describes an as-yet unpinned question. */
+export function subjectTaskProblem({ pinned_tasks, scope, task_id }: SubjectTaskRequest): "task_required" | "task_not_applicable" | null {
+  const has_taskless = pinned_tasks.includes(null);
+  const has_tasks = pinned_tasks.some((task) => task !== null);
+  if (task_id === null && !has_taskless && (has_tasks || scope?.scope === "per_task")) return "task_required";
+  if (task_id !== null && !has_tasks && (has_taskless || scope?.scope === "per_item")) return "task_not_applicable";
+  return null;
 }

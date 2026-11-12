@@ -39,11 +39,11 @@ test("invalid definitions fail before selecting provider settings", () => {
   expect(configured({ questions: [] })).toMatchObject({ ok: false, error: { kind: "invalid_definitions" } });
 });
 
-test("an unsupported question fails before selecting provider settings", async () => {
+test("an unknown capability fails before selecting provider settings", async () => {
   const [definition] = await committedDefinitions();
-  expect(configured([{ ...definition!, id: "finding.relevnce" }]))
+  expect(configured([{ ...definition!, id: "finding.relevnce", evidence: ["absent_capability"] }]))
     .toMatchObject({ ok: false, error: { operation: "provider_credentials", kind: "invalid_definitions",
-      entity_id: "finding.relevnce", detail: expect.stringContaining("evidence collector") } });
+      entity_id: "finding.relevnce", detail: expect.stringContaining("absent_capability") } });
 });
 
 test("an unknown runner fails instead of selecting nothing for it", () => {

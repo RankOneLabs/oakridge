@@ -3,7 +3,7 @@ import { canonicalJson } from "canonical-json";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
 import type { EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, QuestionId, ReviewerId, RunId } from "../domain/identity";
-import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../grading/evidence";
+import { subjectTaskProblem, NO_CAPTURE_PINS, type CaptureConfiguration } from "../grading/evidence";
 import type { QuestionDefinition, QuestionKey } from "../grading/question";
 import { evaluatorIdentity, instructionDigest, type EvaluatorDefinition } from "../grading/evaluator";
 import { humanChoiceAnswer, submissionAttemptLabel, submissionDigest } from "../grading/execution";
@@ -226,10 +226,9 @@ export async function submitHumanAnswer(db: Database, tenant: TenantScope, revie
       .where("subject_occurrence_id", "=", input.occurrence_id).where("question_id", "=", input.question_id)
       .where("question_version", "=", input.question_version).execute();
     const declared = configuration.pins.find((pin) => pin.question_id === input.question_id && pin.question_version === input.question_version);
-    const is_per_task = subjects.length > 0 ? subjects.some((set) => set.task_id !== null) : declared?.scope === "per_task";
     const task_id = input.task_id ?? null;
-    if (is_per_task && task_id === null) return refuse({ kind: "task_required", question });
-    if (!is_per_task && task_id !== null && (subjects.length > 0 || declared)) return refuse({ kind: "task_not_applicable", question });
+    const task_problem = subjectTaskProblem({ pinned_tasks: subjects.map((set) => set.task_id as LogicalItemId | null), scope: declared, task_id });
+    if (task_problem) return refuse({ kind: task_problem, question });
     const evidence = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("subject_occurrence_id", "=", input.occurrence_id).where("task_id", task_id === null ? "is" : "=", task_id)
       .where("question_id", "=", input.question_id).where("question_version", "=", input.question_version).executeTakeFirst();

@@ -1,5 +1,6 @@
 import type { Context, Hono } from "hono";
 import type { LogicalItemId, QuestionId } from "../domain/identity";
+import { subjectTaskProblem } from "../grading/evidence";
 import type { QuestionKey } from "../grading/question";
 import { EVIDENCE_WINDOWS, QUESTION_STATUS_WINDOWS } from "../grading/item-reads";
 import { readItemAnswers, readItemAt, readItemEvidence, readItemStatus } from "../storage/grading-record-store";
@@ -54,9 +55,9 @@ async function taskFilterProblem(deps: SourceDependencies, tenant: TenantScope,
   const subjects = (await readOccurrenceEvidence(deps.db, tenant, occurrence_id as ItemOccurrenceId))
     .filter((set) => set.question_id === question_id && set.question_version === question_version);
   const pin = deps.capture_configuration?.pins.find((pin) => pin.question_id === question_id && pin.question_version === question_version);
-  const is_per_task = subjects.length > 0 ? subjects.some((set) => set.task_id !== null) : pin?.scope === "per_task";
-  if (is_per_task && !task_id) return "task_id is required for a per_task question";
-  if (!is_per_task && task_id && (subjects.length > 0 || pin)) return "task_id is not applicable to a per_item question";
+  const problem = subjectTaskProblem({ pinned_tasks: subjects.map((set) => set.task_id), scope: pin, task_id: task_id as LogicalItemId | undefined ?? null });
+  if (problem === "task_required") return "task_id is required for a per_task question without a task-less subject";
+  if (problem === "task_not_applicable") return "task_id is not applicable to this pinned task-less or per_item subject";
   return null;
 }
 

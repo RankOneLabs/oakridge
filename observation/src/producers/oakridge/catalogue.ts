@@ -169,4 +169,15 @@ export function oakridgeCatalogue(artifact_kind: string, schema_version: string)
 
 /** Registered extractor addresses; question bindings belong to grading-definitions.json. */
 export const OAKRIDGE_SELECTORS: readonly RegisteredSelector[] = allDefinitions(VERSION).map(({ artifact_kind, item_selector, item_kind }) =>
-  ({ artifact_kind, item_selector, item_kind }));
+  ({ artifact_kind, item_selector, item_kind, item_fields: fieldsForItem(item_kind) }));
+
+/** Fields mirrored by Task, AcceptanceEntry, AssessmentFinding and the catalogue mappings above. */
+function fieldsForItem(item_kind: string): readonly string[] {
+  switch (item_kind) {
+    case "task": return ["/id", "/description", "/requirement_ids"];
+    case "acceptance_entry": return ["/id", "/text", "/decision_ids"];
+    case "assessment_finding": return ["/task_ids", "/evidence"];
+    case "finding": return ["/id", "/description", "/severity"];
+    default: return [];
+  }
+}
