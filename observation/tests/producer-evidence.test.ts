@@ -5,7 +5,7 @@ import type { EvidenceReference } from "../src/grading/evidence";
 import type { CapturedRevision, CapturedSources, LinkedItem, RepositoryFile, SourceArtifact } from "../src/ports/artifact-source";
 import { citationsOf, oakridgeEvidence, parseFileCitation } from "../src/producers/oakridge/evidence";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID, TASK_COVERAGE_ID, CONTRIBUTION_COVERAGE_ID } from "../src/producers/oakridge/evidence";
-import { scopeOf, OAKRIDGE_QUESTIONS, COVERAGE_VALUES, createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant } from "./grading-fixture";
+import { scopeOf, targetOf, OAKRIDGE_QUESTIONS, COVERAGE_VALUES, createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant } from "./grading-fixture";
 import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
 import { readOccurrenceEvidence, collectPinnedQuestion } from "../src/storage/captured-evidence-store";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
@@ -158,7 +158,7 @@ test("a question outside the profile is reported rather than collected", async (
 integration("captured sources feed the collector within one run, and collection freezes per question", async () => scratchDatabase(async (db) => {
   for (const question of OAKRIDGE_QUESTIONS) await registerQuestion(db, tenant, question);
   await registerEvaluator(db, tenant, evaluator("human"));
-  const configuration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question, evaluator_definition_ids: [evaluatorId("human")] })) };
+  const configuration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question, ...targetOf(question.question_id), evaluator_definition_ids: [evaluatorId("human")] })) };
   const feed = createFeed(db, tenant, configuration);
   await feed.launch(launch);
   await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });

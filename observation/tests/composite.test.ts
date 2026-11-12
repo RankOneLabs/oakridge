@@ -9,7 +9,7 @@ import { evaluationDigest, submissionAttemptLabel, submissionDigest } from "../s
 import type { GradeAnswer } from "../src/grading/observation";
 import type { SourceEventOutcome } from "../src/ingest/cursor";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
-import { scopeOf, OAKRIDGE_QUESTIONS, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
+import { scopeOf, targetOf, OAKRIDGE_QUESTIONS, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { listRunComposites, listRunUnlinkedItems, listRunUnresolvedReferences, readCompositeDrilldown, readLogicalItemComposite, readLogicalItemLineage } from "../src/storage/grading-record-store";
@@ -20,7 +20,7 @@ const path = oakridgeProfile.composite;
 const all = { limit: 200, offset: 0 };
 const pages = uniformDrilldownPages(all);
 const MACHINE_A = "machine-a", MACHINE_B = "machine-b", HUMAN = "human";
-const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question,
+const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question, ...targetOf(question.question_id),
   evaluator_definition_ids: [evaluatorId(MACHINE_A), evaluatorId(MACHINE_B), evaluatorId(HUMAN)] })) };
 const finding = (task_ids: readonly string[], extra: { readonly [key: string]: JsonValue } = {}): JsonValue => ({ task_ids: [...task_ids], criterion: "c", status: "met", evidence: [], ...extra });
 const choice = (value: string): GradeAnswer => ({ state: "answered", kind: "choice", value });

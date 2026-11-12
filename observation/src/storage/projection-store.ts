@@ -102,17 +102,17 @@ async function saveLogicalItem(trx: DatabaseTransaction, tenant: TenantScope, ru
   const logical_item_id = logicalItemId({ ...tenant, run_id, scope: item_scope, producer_local_id });
   await trx.insertInto("observation.logical_item").values({ ...scope(tenant), logical_item_id, run_id, scope: item_scope, producer_local_id })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "logical_item_id"]).doNothing()).execute();
-  const resolved = await sql<{ source_occurrence_id: string; item_kind: string }>`UPDATE observation.item_relation relation
+  const resolved = await sql<{ source_occurrence_id: string }>`UPDATE observation.item_relation relation
     SET target_logical_item_id = ${logical_item_id}, unresolved_target_ref = NULL
     FROM observation.item_occurrence source
     WHERE relation.producer = ${tenant.producer} AND relation.namespace = ${tenant.namespace}
       AND relation.unresolved_target_ref = ${logicalReference(item_scope, producer_local_id)}
       AND source.producer = relation.producer AND source.namespace = relation.namespace
       AND source.occurrence_id = relation.source_occurrence_id AND source.run_id = ${run_id}
-    RETURNING source.occurrence_id AS source_occurrence_id, source.item_kind`.execute(trx);
+    RETURNING source.occurrence_id AS source_occurrence_id`.execute(trx);
   // Newly resolved subjects use the configuration in force now. Existing pins never change.
   for (const source of resolved.rows) await pinOccurrenceInTransaction(trx, tenant,
-    source.source_occurrence_id as ItemOccurrenceId, source.item_kind,
+    source.source_occurrence_id as ItemOccurrenceId,
     { pins: configuration.pins.filter((pin) => pin.scope === "per_task") }, logical_item_id as LogicalItemId);
   return logical_item_id;
 }
@@ -258,7 +258,7 @@ export async function projectRevisionInTransaction(trx: DatabaseTransaction, ten
   for (const selection of selections) for (const link of selection.item.links)
     if (await saveLink(trx, tenant, revision, selection.occurrence_id, link)) relationCount++;
   for (const selection of selections.filter((selection) => selection.is_new))
-    await pinOccurrenceInTransaction(trx, tenant, selection.occurrence_id as ItemOccurrenceId, selection.item.item_kind, context.configuration);
+    await pinOccurrenceInTransaction(trx, tenant, selection.occurrence_id as ItemOccurrenceId, context.configuration);
   if (await saveSubjectRelation(trx, tenant, revision, context.extraction)) relationCount++;
   return { occurrences: selections.length, issues: pass.issues.length + collisionCount, relations: relationCount };
 }

@@ -136,12 +136,12 @@ integration("PostgreSQL versions below 15 are refused before DDL", async () => s
 
 /** Exercise the edited baseline through real capture, then probe its subject constraints. */
 async function baselineSubject(db: import("../src/storage/database").Database) {
-  const { createFeed, fixtureBody, evaluator, evaluatorId, OAKRIDGE_QUESTIONS, tenant } = await import("./grading-fixture");
+  const { createFeed, fixtureBody, evaluator, evaluatorId, OAKRIDGE_QUESTIONS, targetOf, tenant } = await import("./grading-fixture");
   const { registerQuestion, registerEvaluator } = await import("../src/storage/grading-store");
   const question = OAKRIDGE_QUESTIONS[0]!;
   await registerQuestion(db, tenant, question);
   await registerEvaluator(db, tenant, evaluator("human"));
-  await createFeed(db, tenant, { pins: [{ scope: "per_item", ...question, evaluator_definition_ids: [evaluatorId("human")] }] })
+  await createFeed(db, tenant, { pins: [{ scope: "per_item", ...question, ...targetOf(question.question_id), evaluator_definition_ids: [evaluatorId("human")] }] })
     .revision({ revision_id: "analysis", artifact_kind: "analysis", body: await fixtureBody("analysis") });
   return (await db.selectFrom("observation.evidence_set").selectAll().executeTakeFirstOrThrow());
 }

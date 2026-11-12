@@ -1,17 +1,18 @@
-import { expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { sql } from "kysely";
-import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../src/domain/identity";
-import { COLLECTION_PENDING } from "../src/grading/evidence";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "../src/producers/oakridge/evidence";
-import { OAKRIDGE_QUESTIONS, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
-import { collectPinnedQuestion, readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
-import type { CaptureConfiguration } from "../src/grading/evidence";
+import type { ArtifactRevisionId, ItemOccurrenceId, QuestionId, RunId } from "../src/domain/identity";
+import { planRegistration } from "../src/grading/configuration";
+import { COLLECTION_PENDING, isPinTarget, type CapturePin } from "../src/grading/evidence";
+import { CONTRIBUTION_COVERAGE_ID, CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID, TASK_COVERAGE_ID } from "../src/producers/oakridge/evidence";
+import { OAKRIDGE_QUESTIONS, committedDefinitions, oakridgeGradingRegistry, questionVersion, targetOf, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
+import { collectPinnedQuestion, pinSubjectInTransaction, readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
+import { NO_CAPTURE_PINS as NO_PINS, type CaptureConfiguration } from "../src/grading/evidence";
 import { withTenant, type Database } from "../src/storage/database";
-import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
+import { registerDefinitions, registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems, projectRevisionInTransaction } from "../src/storage/projection-store";
 
 const pinsFor = (...evaluators: readonly string[]): CaptureConfiguration => ({ pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const,
-  question_id: question.question_id, question_version: question.question_version, item_kind: question.item_kind,
+  question_id: question.question_id, question_version: question.question_version, ...targetOf(question.question_id),
   evaluator_definition_ids: evaluators.map(evaluatorId) })) });
 
 async function registerAll(db: Database): Promise<void> {
@@ -50,7 +51,7 @@ integration("a pin needs a registered question and evaluator, and rejects anothe
     .rejects.toThrow("evaluator definition that does not exist");
   await expect(createFeed(db, tenant, pinsFor("grader-a", "grader-a")).revision({ revision_id: "analysis-1", artifact_kind: "analysis", body }))
     .rejects.toThrow("pins an evaluator twice");
-  const mismatched: CaptureConfiguration = { pins: [{ scope: "per_item", ...OAKRIDGE_QUESTIONS[1]!, item_kind: "finding", evaluator_definition_ids: [evaluatorId("grader-a")] }] };
+  const mismatched: CaptureConfiguration = { pins: [{ scope: "per_item", ...OAKRIDGE_QUESTIONS[1]!, ...targetOf(RELEVANCE_ID), evaluator_definition_ids: [evaluatorId("grader-a")] }] };
   await expect(createFeed(db, tenant, mismatched).revision({ revision_id: "analysis-1", artifact_kind: "analysis", body }))
     .rejects.toThrow("does not apply to its subject item kind");
   // The refused deliveries rolled back with their capture transaction.
@@ -121,4 +122,95 @@ integration("referenced definitions survive: a change under the same key is refu
   const reworded = await registerQuestion(db, tenant, { ...OAKRIDGE_QUESTIONS[0]!, question_text: "Reworded" });
   expect(reworded).toMatchObject({ ok: false, error: { detail: "question definition identity conflict" } });
   expect((await registerQuestion(db, tenant, { ...OAKRIDGE_QUESTIONS[0]!, question_version: "2", question_text: "Reworded" })).ok).toBe(true);
+}));
+
+/** The committed definitions, registered: the configuration the service captures with. */
+async function committedCapture(db: Database) {
+  const registration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+  if (!registration.ok) throw new Error(registration.error.detail);
+  const registered = await registerDefinitions(db, tenant, registration.value);
+  if (!registered.ok) throw new Error(registered.error.detail);
+  return registration.value;
+}
+/** Distinct pinned question ids per captured artifact and selector, in a stable order. */
+async function pinnedByTarget(db: Database): Promise<{ readonly [target: string]: readonly string[] }> {
+  const page = await listRunItems(db, tenant, "run-1", { limit: 200, offset: 0 });
+  const grouped = new Map<string, Set<string>>();
+  for (const item of page.items) {
+    const target = `${item.artifact_kind} ${item.item_selector}`;
+    const questions = grouped.get(target) ?? new Set<string>();
+    for (const set of await readOccurrenceEvidence(db, tenant, item.occurrence_id as ItemOccurrenceId)) questions.add(set.question_id);
+    grouped.set(target, questions);
+  }
+  return Object.fromEntries([...grouped].sort(([left], [right]) => left.localeCompare(right)).map(([target, questions]) => [target, [...questions].sort()]));
+}
+async function captureEveryArtifact(feed: ReturnType<typeof createFeed>): Promise<void> {
+  // Tasks come first so every assessment finding naming a known task resolves at capture.
+  for (const artifact_kind of ["tasks", "analysis", "plan", "brief", "assessment"])
+    await feed.revision({ revision_id: `${artifact_kind}-1`, artifact_kind, body: await fixtureBody(artifact_kind) });
+}
+
+test("a pin's target is its artifact, selector and item kind together", () => {
+  const plan = { artifact_kind: "plan", item_selector: "/cohorts/*/acceptance_criteria/*", item_kind: "acceptance_entry" };
+  expect([
+    isPinTarget(plan, plan),
+    isPinTarget(plan, { ...plan, artifact_kind: "brief", item_selector: "/acceptance_criteria/*" }),
+    isPinTarget(plan, { ...plan, item_selector: "/acceptance_criteria/*" }),
+    isPinTarget(plan, { ...plan, item_kind: "decision" }),
+  ]).toEqual([true, false, false, false]);
+});
+
+integration("plan acceptance entries are pinned task coverage and brief acceptance entries are not", async () => scratchDatabase(async (db) => {
+  const registration = await committedCapture(db);
+  await captureEveryArtifact(createFeed(db, tenant, registration.capture));
+  const pinned = await pinnedByTarget(db);
+  expect([pinned["plan /cohorts/*/acceptance_criteria/*"], pinned["brief /acceptance_criteria/*"]]).toEqual([[CONTRIBUTION_COVERAGE_ID], []]);
+}));
+
+integration("every captured item is pinned exactly the questions whose declared target is its artifact and selector", async () => scratchDatabase(async (db) => {
+  const registration = await committedCapture(db);
+  await captureEveryArtifact(createFeed(db, tenant, registration.capture));
+  expect(await pinnedByTarget(db)).toEqual({
+    "analysis /findings/*": [RELEVANCE_ID],
+    "analysis /proposed_spec_updates/*": [],
+    "analysis /requirements/*/status": [],
+    "analysis /risks/*": [],
+    "assessment /findings/*": [CORRECTNESS_ID, EVIDENCE_SUPPORT_ID],
+    "brief /acceptance_criteria/*": [],
+    "brief /approaches_rejected/*": [],
+    "brief /decisions_made/*": [],
+    "plan /cohorts/*/acceptance_criteria/*": [CONTRIBUTION_COVERAGE_ID],
+    "plan /cohorts/*/decisions/*": [],
+    "plan /risks/*": [],
+    "tasks /tasks/*": [TASK_COVERAGE_ID],
+  });
+}));
+
+integration("late task resolution pins only per-task questions targeting the finding's artifact and selector", async () => scratchDatabase(async (db) => {
+  const registration = await committedCapture(db);
+  const correctness = registration.capture.pins.find((pin) => pin.question_id === CORRECTNESS_ID)!;
+  const elsewhere = "assessment_finding.elsewhere" as QuestionId;
+  // Same item kind and scope as correctness, declared for another artifact.
+  await registerQuestion(db, tenant, { ...registration.questions.find((question) => question.question_id === CORRECTNESS_ID)!, question_id: elsewhere });
+  const decoy: CapturePin = { ...correctness, question_id: elsewhere, artifact_kind: "integration" };
+  const feed = createFeed(db, tenant, { pins: [...registration.capture.pins, decoy] });
+  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", body: await fixtureBody("assessment") });
+  const both_tasks = (await listRunItems(db, tenant, "run-1", { limit: 200, offset: 0 })).items
+    .find((item) => item.artifact_kind === "assessment" && item.json_pointer === "/findings/0")?.occurrence_id as ItemOccurrenceId | undefined;
+  expect(await readOccurrenceEvidence(db, tenant, both_tasks!)).toEqual([]);
+  await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
+  const pinned = await readOccurrenceEvidence(db, tenant, both_tasks!);
+  expect(pinned.map((set) => [set.question_id, set.task_id?.split(":").at(-1)])).toEqual([
+    [CORRECTNESS_ID, "T7"], [CORRECTNESS_ID, "T8"], [EVIDENCE_SUPPORT_ID, "T7"], [EVIDENCE_SUPPORT_ID, "T8"]]);
+}));
+
+integration("a pin refuses an occurrence outside its declared target, and the refusal writes nothing", async () => scratchDatabase(async (db) => {
+  await registerAll(db);
+  const body = await fixtureBody("analysis");
+  const relevance = OAKRIDGE_QUESTIONS.find((question) => question.question_id === RELEVANCE_ID)!;
+  await createFeed(db, tenant, NO_PINS).revision({ revision_id: "analysis-1", artifact_kind: "analysis", body });
+  const [finding] = await occurrences(db, "finding");
+  const pin: CapturePin = { scope: "per_item", ...relevance, ...targetOf(RELEVANCE_ID), artifact_kind: "assessment", evaluator_definition_ids: [evaluatorId("grader-a")] };
+  const refused = await withTenant(db, tenant, (trx) => pinSubjectInTransaction(trx, tenant, { subject: { subject_occurrence_id: finding!, task_id: null }, pin }));
+  expect([refused.ok, await readOccurrenceEvidence(db, tenant, finding!)]).toEqual([false, []]);
 }));

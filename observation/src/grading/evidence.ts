@@ -60,12 +60,23 @@ export function providerEvidence(reference: EvidenceReference): JsonObject {
   }
 }
 
-/** One question and the full evaluator set an occurrence of its item kind is pinned to when captured. */
 export type QuestionScope = { readonly scope: "per_item" } | { readonly scope: "per_task"; readonly task_ids: string };
-export type CapturePin = QuestionKey & QuestionScope & {
+/** The identity of a captured item that a question targets. Mirrors the artifact_kind, item_selector
+ * and item_kind columns of observation.item_occurrence. */
+export interface CaptureTarget {
+  readonly artifact_kind: string;
+  readonly item_selector: string;
   readonly item_kind: string;
+}
+/** One question and the full evaluator set an occurrence of its declared target is pinned to when captured. */
+export type CapturePin = QuestionKey & QuestionScope & CaptureTarget & {
   readonly evaluator_definition_ids: readonly EvaluatorDefinitionId[];
 }
+/** A pin applies only to an occurrence of its declared artifact, selector and item kind. One item kind
+ * can be selected from several artifacts, so item kind alone does not identify a target. */
+export const isPinTarget = (pin: CaptureTarget, occurrence: CaptureTarget): boolean =>
+  pin.artifact_kind === occurrence.artifact_kind && pin.item_selector === occurrence.item_selector
+  && pin.item_kind === occurrence.item_kind;
 /** The configuration in force when an occurrence is captured. Later edits reach later captures. */
 export interface CaptureConfiguration { readonly pins: readonly CapturePin[] }
 export const NO_CAPTURE_PINS: CaptureConfiguration = { pins: [] };
