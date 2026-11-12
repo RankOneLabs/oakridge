@@ -20,7 +20,7 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
   const { row, definition } = input;
   const event = row.payload;
   const identity = { run_id: row.run_id ?? "", event_id: row.id };
-  const provenance = { format: "observation.source-event/v2", definition_id: definition?.definition_id ?? null, artifact_schema_version: null } as const;
+  const provenance = { format: "observation.source-event/v1", definition_id: definition?.definition_id ?? null, artifact_schema_version: null } as const;
   const unmapped = (reason: string): SourceEventOutcome => ({ ...provenance, kind: "unmapped", event_kind: event.kind, ...identity, reason });
   switch (event.kind) {
     case "revision_published": {
@@ -45,8 +45,6 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
       const committed = input.run_config ?? { state: "none" };
       if (committed.state === "malformed") return unmapped("committed run config is malformed");
       return { ...provenance, kind: "run_input", event_kind: event.kind, ...identity, input: event.input,
-        stages: definition.stage_names.map((stage) => ({ stage,
-          artifact_kinds: definition.artifact_names[stage]! })),
         input_schema_version: declarationDigest(definition.checked_program.workflow.input as JsonValue),
         config: committed.state === "committed" ? committed.config : null };
     }

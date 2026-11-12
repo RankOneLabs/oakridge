@@ -3,7 +3,6 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { sql } from "kysely";
 import type { Event } from "../src/core-client/core-types";
 import type { Workflow } from "../src/core-client/core-types";
-import { readRunWorkflowStages } from "../../observation/src/storage/run-capture-store";
 import { createApp } from "../../observation/src/http/app";
 import { oakridgeProfile } from "../../observation/src/producers/oakridge/profile";
 import { openDatabase as openObservationDatabase, withTenant } from "../../observation/src/storage/database";
@@ -57,7 +56,6 @@ test("adapter, Oakridge and observation outages replay committed events from the
       .toEqual({ prompt: true, type: false });
     const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "capture" } });
     expect(await runUntil(1)).toBe(1);
-    expect(await readRunWorkflowStages(observation, tenant, run_id)).toEqual([{ position: 0, stage: "document", artifact_kinds: ["draft", "critique"] }]);
     // A new adapter instance starts from the cursor persisted in observation.
     const unit = unitOf(run_id, "document");
     const action = await actionOf(authority, run_id, "writer");

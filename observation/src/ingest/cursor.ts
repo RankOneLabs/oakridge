@@ -12,12 +12,12 @@ export interface RunConfigWire {
   readonly sessions: { readonly [stage: string]: { readonly [worker: string]: SessionSettingsWire } };
   readonly grading_enabled: boolean;
 }
-export interface SourceEventProvenance { readonly format: "observation.source-event/v2";
+export interface SourceEventProvenance { readonly format: "observation.source-event/v1";
   readonly definition_id: string | null; readonly artifact_schema_version: string | null }
 export type SourceEventOutcome = SourceEventProvenance & (
   | { readonly kind: "artifact_revision"; readonly event_kind: "revision_published"; readonly run_id: string; readonly event_id: string; readonly revision: CaptureEnvelope }
   | { readonly kind: "run_input"; readonly event_kind: "launched"; readonly run_id: string; readonly event_id: string; readonly input: unknown;
-      readonly input_schema_version: string; readonly stages: readonly { readonly stage: string; readonly artifact_kinds: readonly string[] }[]; readonly config: RunConfigWire | null }
+      readonly input_schema_version: string; readonly config: RunConfigWire | null }
   | { readonly kind: "ignored"; readonly event_kind: "operator_decided" | "worker_started" | "worker_ended" | "retry_requested" | "cancel_requested";
       readonly run_id: string; readonly event_id: string }
   /** A producer's explicit relations, carried as journaled: the injected profile reads them. */
@@ -43,21 +43,9 @@ export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery |
   const outcome = value.outcome;
   if (typeof outcome.kind !== "string" || typeof outcome.event_kind !== "string" || typeof outcome.run_id !== "string"
     || typeof outcome.event_id !== "string" || outcome.event_id !== value.cursor.id) return null;
-  if (outcome.format !== "observation.source-event/v2" || !(outcome.artifact_schema_version === null || typeof outcome.artifact_schema_version === "string")) return null;
+  if (outcome.format !== "observation.source-event/v1" || !(outcome.artifact_schema_version === null || typeof outcome.artifact_schema_version === "string")) return null;
   if (!(outcome.definition_id === null || typeof outcome.definition_id === "string")) return null;
   if (outcome.kind === "artifact_revision" && !decodeCapture(outcome.revision).ok) return null;
-  if (outcome.kind === "run_input") {
-    if (typeof outcome.input_schema_version !== "string" || outcome.input_schema_version.length === 0
-      || !Object.hasOwn(outcome, "input") || !Array.isArray(outcome.stages)) return null;
-    const names = new Set<string>();
-    for (const entry of outcome.stages) {
-      if (!record(entry) || typeof entry.stage !== "string" || entry.stage.length === 0 || names.has(entry.stage)
-        || !Array.isArray(entry.artifact_kinds)
-        || !entry.artifact_kinds.every((kind: unknown) => typeof kind === "string" && kind.length > 0)) return null;
-      names.add(entry.stage);
-    }
-  }
-
   if (outcome.kind === "unmapped" && typeof outcome.reason !== "string") return null;
   if (outcome.kind === "run_input" && !runConfig(outcome.config)) return null;
   if (outcome.kind === "relation_declaration" && !record(outcome.declaration)) return null;

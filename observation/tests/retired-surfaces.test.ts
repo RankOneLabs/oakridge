@@ -67,7 +67,7 @@ for (const decision of ["accept", "request_changes"]) integration(`operator ${de
 
 test("the retired review-to-grade and collaboration wire variants are refused", () => {
   const position = { previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: "event-1" } };
-  const fields = { format: "observation.source-event/v2", definition_id: null, artifact_schema_version: null, run_id: "run-1", event_id: "event-1" };
+  const fields = { format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null, run_id: "run-1", event_id: "event-1" };
   expect(decodeSourceEventDelivery({ ...position, outcome: { ...fields, kind: "human_grade", event_kind: "operator_decided", evaluator: { kind: "human" },
     target: "rev-1", decision_id: null } })).toBeNull();
   expect(decodeSourceEventDelivery({ ...position, outcome: { ...fields, kind: "collaboration_thread", event_kind: "collaboration_thread" } })).toBeNull();

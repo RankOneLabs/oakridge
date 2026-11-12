@@ -211,11 +211,6 @@ export const TARGET_TABLES: Readonly<Record<string, TableSpec>> = {
       "supersedes_observation_id IS NULL OR supersedes_observation_id <> observation_id",
     ],
   },
-  run_workflow_stage: {
-    columns: [...TENANT, "run_id text", "position integer", "stage text", "artifact_kinds text[]"],
-    primary_key: "producer,namespace,run_id,position", unique: ["producer,namespace,run_id,stage"], foreign_keys: [],
-    checks: ["position >= 0", "stage <> ''", "producer <> '' AND namespace <> '' AND run_id <> ''"],
-  },
   source_event_cursor: {
     columns: [...TENANT, "commit_txid bigint default", "event_id text default"],
     primary_key: "producer,namespace", unique: [], foreign_keys: [],
@@ -235,7 +230,6 @@ export const DISCARDED_TABLES = ["grading_job", "evaluation_eligibility", "sourc
 
 export const TARGET_TRIGGERS: Readonly<Record<string, readonly string[]>> = {
   source_revision: ["source_revision_append_only"],
-  run_workflow_stage: ["run_workflow_stage_append_only"],
   item_occurrence: ["item_occurrence_append_only"],
   question_definition: ["question_definition_append_only"],
   evaluator_definition: ["evaluator_definition_append_only"],

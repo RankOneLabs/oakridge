@@ -218,15 +218,6 @@ export interface ObservationGradeObservation {
   recorded_at: Generated<Date>;
 }
 
-export interface ObservationRunWorkflowStage {
-  producer: string;
-  namespace: string;
-  run_id: string;
-  position: number;
-  stage: string;
-  artifact_kinds: string[];
-}
-
 export interface ObservationSourceEventCursor {
   producer: string;
   namespace: string;
@@ -260,7 +251,6 @@ export interface DB {
   "observation.evaluation_execution": ObservationEvaluationExecution;
   "observation.grading_provider_attempt": ObservationGradingProviderAttempt;
   "observation.grade_observation": ObservationGradeObservation;
-  "observation.run_workflow_stage": ObservationRunWorkflowStage;
   "observation.source_event_cursor": ObservationSourceEventCursor;
   "observation.source_event_outcome": ObservationSourceEventOutcome;
 }

@@ -79,9 +79,6 @@ ORDER BY kind,table_name,name`);
 
 interface CatalogProtectionChange { readonly description: string; readonly statement: string }
 const protectionChanges: readonly CatalogProtectionChange[] = [
-  { description: "disabled workflow stage row-level security", statement: "ALTER TABLE observation.run_workflow_stage DISABLE ROW LEVEL SECURITY" },
-  { description: "a weakened workflow stage tenant policy", statement: "ALTER POLICY run_workflow_stage_tenant ON observation.run_workflow_stage USING (true)" },
-  { description: "a removed workflow stage append-only trigger", statement: "DROP TRIGGER run_workflow_stage_append_only ON observation.run_workflow_stage" },
   { description: "a weakened append-only function", statement: "CREATE OR REPLACE FUNCTION observation.reject_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN OLD; END $$" },
   { description: "a weakened tenant policy", statement: "ALTER POLICY source_revision_tenant ON observation.source_revision USING (true)" },
   { description: "disabled row-level security", statement: "ALTER TABLE observation.source_revision DISABLE ROW LEVEL SECURITY" },

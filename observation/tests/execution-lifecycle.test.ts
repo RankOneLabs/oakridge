@@ -483,7 +483,7 @@ integration("accept and request-changes delivered over HTTP start no pass and ad
     const next = { commit_txid: String(3 + index), id: `decision:${decision}` };
     const response = await app.request("/v1/sources/oakridge/events", { method: "POST",
       headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
-      body: JSON.stringify({ previous: cursor, cursor: next, outcome: { format: "observation.source-event/v2", definition_id: DEFINITION_ID,
+      body: JSON.stringify({ previous: cursor, cursor: next, outcome: { format: "observation.source-event/v1", definition_id: DEFINITION_ID,
         artifact_schema_version: SCHEMA_VERSION, kind: "ignored", event_kind: "operator_decided", run_id: "run-1", event_id: next.id } }) });
     expect(response.status).toBe(200);
     cursor = next;

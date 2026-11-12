@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import { decodeWorkflowSource, hasSafeWireNumbers, type TypeExpression } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, isIdentity, type DefinitionId } from "./definition-identity";
-import { referencedPromptPaths, type AuthoredWorkflow, type StageArtifactNames, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type ResolvedDefinition } from "./definition-objects";
+import { referencedPromptPaths, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type ResolvedDefinition } from "./definition-objects";
 
 export const DEFINITION_STORE_ROOT = resolve(import.meta.dir, "../definitions");
 type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable";
@@ -40,20 +40,15 @@ function matchesNames(value: unknown, names: readonly string[]): value is readon
   return Array.isArray(value) && value.length === names.length && new Set(value).size === names.length
     && value.every((name) => typeof name === "string" && names.includes(name));
 }
-function matchesArtifactNames(value: unknown, source: AuthoredWorkflow): value is StageArtifactNames {
-  return isObject(value) && matchesNames(Object.keys(value), Object.keys(source.stages))
-    && Object.entries(source.stages).every(([stage, declaration]) => matchesNames(value[stage], Object.keys(declaration.artifacts)));
-}
 export function isCommittedDefinition(value: unknown): value is CommittedDefinition {
-  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "schema_names", "stage_names", "artifact_names"])) return false;
+  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "schema_names", "stage_names"])) return false;
   const source = decodeWorkflowSource(value.source);
   if (source === null || !isIdentity(value.operation_registry_id) || !isObject(value.prompts)) return false;
   if (!Object.entries(value.prompts).every(([path, id]) => isPromptPath(path) && isIdentity(id))) return false;
   const paths = referencedPromptPaths(source);
   return matchesNames(Object.keys(value.prompts), paths)
     && matchesNames(value.schema_names, Object.keys(source.schemas ?? {}))
-    && matchesNames(value.stage_names, Object.keys(source.stages))
-    && matchesArtifactNames(value.artifact_names, source);
+    && matchesNames(value.stage_names, Object.keys(source.stages));
 }
 /** Mirrors workflow-model::Type (the input_schema/output_schema contract). */
 function isTypeExpression(value: unknown, depth = 0): value is TypeExpression {
@@ -136,7 +131,6 @@ export function resolveDefinition(definition_id: DefinitionId, store_root = DEFI
     operations: operations.value,
     schema_names: committed.schema_names,
     stage_names: committed.stage_names,
-    artifact_names: committed.artifact_names,
   } };
 }
 

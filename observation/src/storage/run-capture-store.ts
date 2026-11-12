@@ -34,16 +34,3 @@ export async function readCapturedRunConfig(trx: DatabaseTransaction, tenant: Te
     .where("outcome_kind", "=", "run_input").executeTakeFirst();
   return row?.config ?? null;
 }
-
-/** Launch metadata captured from the pinned definition, in authored order. */
-export interface RunWorkflowStage {
-  readonly position: number;
-  readonly stage: string;
-  readonly artifact_kinds: readonly string[];
-}
-export function readRunWorkflowStages(db: Database, tenant: TenantScope, run_id: string): Promise<RunWorkflowStage[]> {
-  return withTenant(db, tenant, (trx) => trx.selectFrom("observation.run_workflow_stage")
-    .select(["position", "stage", "artifact_kinds"])
-    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-    .where("run_id", "=", run_id).orderBy("position").execute());
-}

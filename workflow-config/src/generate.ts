@@ -81,12 +81,6 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
   const order: DefinitionOrder = {
     schema_names: schemas?.items.map(({ key }) => String(key)) ?? [],
     stage_names: stages.items.map(({ key }) => String(key)),
-    artifact_names: Object.fromEntries(stages.items.map(({ key, value }) => {
-      if (!YAML.isMap(value)) throw new Error(`invalid stage ${String(key)}`);
-      const artifacts = value.get("artifacts");
-      if (!YAML.isMap(artifacts)) throw new Error(`invalid artifacts for stage ${String(key)}`);
-      return [String(key), artifacts.items.map(({ key }) => String(key))];
-    })),
   };
   const authored = document.toJS();
   const source = decodeWorkflowSource(authored);

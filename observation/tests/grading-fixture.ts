@@ -71,7 +71,7 @@ export interface FixtureRevision {
 export const fixtureBody = async (name: string): Promise<JsonValue> =>
   await Bun.file(new URL(`../fixtures/oakridge/${name}-revision.json`, import.meta.url)).json() as JsonValue;
 
-const provenance = { format: "observation.source-event/v2", definition_id: DEFINITION_ID, artifact_schema_version: SCHEMA_VERSION } as const;
+const provenance = { format: "observation.source-event/v1", definition_id: DEFINITION_ID, artifact_schema_version: SCHEMA_VERSION } as const;
 
 /** The envelope the ordered feed carries for one revision. */
 export function revisionOutcome(input: FixtureRevision, scope: TenantScope = tenant, event_id = `event:${input.revision_id}`): SourceEventOutcome {
@@ -93,7 +93,7 @@ export const runConfig = (grading_enabled: boolean): RunConfigWire => ({ session
 /** The launch event that captures a run's input and its committed config. A launch that
  * committed no config carries null, which leaves automatic grading off. */
 export const launchOutcome = (input: JsonValue, run_id = "run-1", config: RunConfigWire | null = null): SourceEventOutcome => ({ ...provenance,
-  kind: "run_input", event_kind: "launched", run_id, event_id: `launch:${run_id}`, input, input_schema_version: SCHEMA_VERSION, stages: [], config });
+  kind: "run_input", event_kind: "launched", run_id, event_id: `launch:${run_id}`, input, input_schema_version: SCHEMA_VERSION, config });
 
 export interface Feed {
   send(outcome: SourceEventOutcome, override?: CaptureConfiguration): Promise<SourceEventCursor>;

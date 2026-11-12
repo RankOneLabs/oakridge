@@ -345,7 +345,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
   if (!human) return { checks: [check("the selection has a human evaluator", false, "missing")], reads: null };
   let cursor: SourceEventCursor = { commit_txid: "0", id: "" };
   let sequence = 0;
-  const provenance = { format: "observation.source-event/v2", definition_id: "matrix", artifact_schema_version: null } as const;
+  const provenance = { format: "observation.source-event/v1", definition_id: "matrix", artifact_schema_version: null } as const;
   const send = async (outcome: SourceEventOutcome): Promise<void> => {
     const next = { commit_txid: String(++sequence), id: outcome.event_id };
     const result = await deliverSourceEvent(db, tenant, { previous: cursor, cursor: next, outcome }, { extraction: oakridgeProfile.extraction, configuration: registration.capture });
@@ -361,7 +361,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
         definition_id: "matrix", predecessor_id: predecessor_id ? `${prefix}${predecessor_id}` : null, subject_id: null }, recorded_at: new Date(Date.UTC(2026, 10, 1, 0, sequence)).toISOString(),
         body, body_digest: digest.value as `canonical-json/v1:${string}` & { readonly __brand: "CanonicalDigest" } } });
   };
-  await send({ ...provenance, kind: "run_input", event_kind: "launched", run_id, event_id: "launch", input: { spec: "synthetic" }, input_schema_version: "matrix-schema", stages: [],
+  await send({ ...provenance, kind: "run_input", event_kind: "launched", run_id, event_id: "launch", input: { spec: "synthetic" }, input_schema_version: "matrix-schema",
     config: { sessions: {}, grading_enabled: true } });
   const plan = await fixture("plan") as { readonly [key: string]: JsonValue };
   const brief = await fixture("brief") as { readonly [key: string]: JsonValue };

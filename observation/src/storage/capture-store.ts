@@ -135,12 +135,6 @@ export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: 
       event_id: outcome.event_id, run_id: outcome.run_id, commit_txid: sql<number>`${delivery.cursor.commit_txid}::bigint`,
       event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: jsonText(outcome as unknown as JsonValue) })
       .onConflict((target) => target.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
-    if (outcome.kind === "run_input" && outcome.stages.length > 0) {
-      await trx.insertInto("observation.run_workflow_stage").values(outcome.stages.map((entry, position) => ({
-        producer: tenant.producer, namespace: tenant.namespace, run_id: outcome.run_id, position,
-        stage: entry.stage, artifact_kinds: [...entry.artifact_kinds],
-      }))).execute();
-    }
     await sql`UPDATE observation.source_event_cursor SET commit_txid = ${delivery.cursor.commit_txid}::bigint, event_id = ${delivery.cursor.id}
       WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx);
     return { status: 200, body: { cursor: delivery.cursor } };
