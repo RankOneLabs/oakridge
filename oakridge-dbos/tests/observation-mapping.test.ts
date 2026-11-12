@@ -8,7 +8,7 @@ import { runOps } from "../src/ops";
 import type { CommittedEventRow, CommittedRunConfig, PinnedDefinitionRead } from "../src/storage/read-store";
 
 const definition = (schema: unknown, digest = "bundle-a"): PinnedDefinitionRead => ({
-  definition_id: digest as PinnedDefinitionRead["definition_id"], operation_registry_id: "0" as PinnedDefinitionRead["operation_registry_id"], prompts: {}, operations: [], schema_names: [], stage_names: [], source: {} as PinnedDefinitionRead["source"],
+  definition_id: digest as PinnedDefinitionRead["definition_id"], operation_registry_id: "0" as PinnedDefinitionRead["operation_registry_id"], prompts: {}, operations: [], schema_names: [], stage_names: ["writing"], source: {} as PinnedDefinitionRead["source"],
   checked_program: { digest, stages: ["writing"], workflow: { workflow: "test", input: { kind: "text" },
     run: {} as PinnedDefinitionRead["checked_program"]["workflow"]["run"], schemas: {},
     stages: { writing: { input: { kind: "text" }, artifacts: { draft: { kind: "document", schema: schema as { kind: "text" } } },
@@ -76,4 +76,17 @@ test("a launch that committed no config carries none, and a malformed one is unm
   const malformed = launched({ state: "malformed" });
   expect([none.kind === "run_input" ? none.config : none.kind, malformed.kind === "unmapped" ? malformed.reason : malformed.kind])
     .toEqual([null, "committed run config is malformed"]);
+});
+
+test("artifact revisions capture the publishing stage independently of unit declaration names", () => {
+  const outcome = mapObservationEvent({ row: row({ kind: "revision_published", unit: "run-1/implementation/cohort", artifact: "draft", body: "text" }),
+    definition: definition({ kind: "text" }), namespace: "test", stage: "writing", revision_sequence: 1, run_config: null });
+  expect(outcome).toMatchObject({ format: "observation.source-event/v1", kind: "artifact_revision",
+    revision: { format: "observation.artifact-revision/v3", source: { stage: "writing" } } });
+});
+
+test("a revision with no resolved stage remains unmapped", () => {
+  expect(mapObservationEvent({ row: row({ kind: "revision_published", unit: "run-1/writing", artifact: "draft", body: "text" }),
+    definition: definition({ kind: "text" }), namespace: "test", stage: null, revision_sequence: 1, run_config: null }))
+    .toMatchObject({ kind: "unmapped", reason: "unit run-1/writing has no stage" });
 });

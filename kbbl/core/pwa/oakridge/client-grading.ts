@@ -1,3 +1,4 @@
+import type { ObservationRunStageRead } from "./grading-contracts/grading/task-stages";
 // Observation reads and the one submission, through kbbl's forwarding routes. The browser holds no
 // observation token: kbbl authenticates the operator and supplies the matching capability.
 import type { ObservationItemOccurrenceId, ObservationLogicalItemId, ObservationReviewerId } from "./grading-contracts/domain/identity";
@@ -102,3 +103,5 @@ export async function submitAnswer(occurrence_id: ObservationItemOccurrenceId, s
     return { kind: "failed", message: cause instanceof Error ? cause.message : "the request did not complete" };
   }
 }
+
+export const readRunStages = (run_id: string): Promise<readonly ObservationRunStageRead[]> => read(`/runs/${id(run_id)}/stages`);

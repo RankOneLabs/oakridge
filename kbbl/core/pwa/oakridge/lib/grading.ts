@@ -53,7 +53,8 @@ const QUESTION_LABELS: Readonly<Record<string, string>> = {
   "task.requirement_coverage": "Spec requirement coverage",
   "acceptance_entry.task_coverage": "Spec task coverage",
 };
-export const questionLabel = ({ question_id }: Pick<ObservationQuestionKey, "question_id">): string => QUESTION_LABELS[question_id] ?? question_id;
+export const questionLabel = (question: Pick<ObservationQuestionKey, "question_id"> & { readonly question_text?: string | null }): string =>
+  question.question_text ?? QUESTION_LABELS[question.question_id] ?? question.question_id;
 /** Name the evaluated task even when its link is outside the current links page. */
 export function selectQuestionTaskLabel(task_id: ObservationLogicalItemId | null, links: readonly ObservationLogicalLinkRead[]): string | null {
   if (task_id === null) return null;
@@ -270,21 +271,19 @@ export function selectSpecTaskId(item: Pick<ObservationAddressedItem, "item_kind
 
 export const taskLinkLabel = (link: ObservationLogicalLinkRead): string => link.state === "resolved" ? link.producer_local_id : `${link.producer_local_id} (unresolved)`;
 
-export const STAGE_LABELS: Readonly<Record<string, string>> = { analysis: "Analysis", implementation: "Implementation", integration: "Integration" };
-export const stageLabel = (stage: string): string => STAGE_LABELS[stage] ?? stage;
-export function stagePublicationLabel(stage: Pick<ObservationStageCompositeRead, "publication">): string {
-  if (stage.publication.state === "pending") return "Pending";
-  return stage.publication.is_final ? "Final results" : "Published";
+export const stageLabel = (stage: string): string => stage.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+export function stagePublicationLabel(stage: Pick<ObservationStageCompositeRead, "publication" | "state">): string {
+  if (stage.state === "not_graded") return "Not graded";
+  if (stage.state === "pending") return "Pending";
+  return stage.publication.state === "published" && stage.publication.is_final ? "Final results" : "Published";
 }
-const STAGE_ORDER = ["analysis", "implementation", "integration"];
-export const GRADING_STAGES: readonly string[] = STAGE_ORDER;
 
-export interface HiddenStageView { readonly kind: "hidden"; readonly stage: string; readonly publication: string; readonly coverage: ObservationStageCompositeRead["coverage"]; readonly contributing_items: number }
+export interface HiddenStageView { readonly kind: "hidden"; readonly stage: string; readonly publication: string; readonly state: ObservationStageCompositeRead["state"]; readonly contributing_items: number }
 export interface RevealedStageView {
   readonly kind: "revealed";
   readonly stage: string;
   readonly publication: string;
-  readonly coverage: ObservationStageCompositeRead["coverage"];
+  readonly state: ObservationStageCompositeRead["state"];
   readonly contributing_items: number;
   readonly answers: readonly ObservationAnswerCount[];
   readonly statuses: readonly ObservationStatusCount[];
@@ -293,6 +292,6 @@ export interface RevealedStageView {
 }
 /** While hidden a stage says only what linking alone determines: it carries no answer, count of answers or status. */
 export const selectStageView = (stage: ObservationStageCompositeRead, is_revealed: boolean): HiddenStageView | RevealedStageView => {
-  const shared = { stage: stage.stage, publication: stagePublicationLabel(stage), coverage: stage.coverage, contributing_items: stage.totals.contributing_items };
+  const shared = { stage: stage.stage, state: stage.state, publication: stagePublicationLabel(stage), contributing_items: stage.totals.contributing_items };
   return is_revealed ? { kind: "revealed", ...shared, answers: stage.answers.items, statuses: stage.statuses.items, disagreements: stage.disagreements.items, composite: stage } : { kind: "hidden", ...shared };
 };

@@ -1,5 +1,5 @@
 import type { JsonValue } from "../domain/primitives";
-import type { CaptureEnvelope } from "./capture";
+import { decodeCapture, type CaptureEnvelope } from "./capture";
 
 /** The producer's durable position in authority.event, represented as decimal text to avoid bigint precision loss. */
 export interface SourceEventCursor { readonly commit_txid: string; readonly id: string }
@@ -45,7 +45,7 @@ export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery |
     || typeof outcome.event_id !== "string" || outcome.event_id !== value.cursor.id) return null;
   if (outcome.format !== "observation.source-event/v1" || !(outcome.artifact_schema_version === null || typeof outcome.artifact_schema_version === "string")) return null;
   if (!(outcome.definition_id === null || typeof outcome.definition_id === "string")) return null;
-  if (outcome.kind === "artifact_revision" && (!record(outcome.revision) || outcome.revision.format !== "observation.artifact-revision/v2")) return null;
+  if (outcome.kind === "artifact_revision" && !decodeCapture(outcome.revision).ok) return null;
   if (outcome.kind === "unmapped" && typeof outcome.reason !== "string") return null;
   if (outcome.kind === "run_input" && !runConfig(outcome.config)) return null;
   if (outcome.kind === "relation_declaration" && !record(outcome.declaration)) return null;

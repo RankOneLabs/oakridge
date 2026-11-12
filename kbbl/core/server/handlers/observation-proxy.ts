@@ -59,6 +59,7 @@ export function mountObservationProxyRoutes(app: Hono, deps: ObservationProxyDep
   const item = (c: Context) => `/v1/items/${segment(c.req.param("id"))}`;
 
   app.use("/oakridge/observation/*", bodyLimit({ maxSize: 1_048_576, onError: (c) => c.json({ error: { code: "oversized_payload", message: "body too large" } }, 413) }));
+  read("/runs/:run_id/stages", (c) => `${run(c)}/grading-stages`);
   read("/runs/:run_id/grading", (c) => `${run(c)}/grading-spend`);
   read("/runs/:run_id/items/at", (c) => `${run(c)}/items/at`);
   read("/runs/:run_id/findings", (c) => `${run(c)}/gradeable-items`);

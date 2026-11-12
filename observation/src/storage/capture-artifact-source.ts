@@ -1,6 +1,6 @@
 import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
-import type { SubjectQuestion } from "../grading/evidence";
+import { decodeEvidencePlan, type SubjectQuestion } from "../grading/evidence";
 import type { ArtifactSource, CapturedRevision, CapturedSources, EvidenceCollection, LinkedItem, LogicalItemContextRequest, RepositoryReader,
   SourceArtifact } from "../ports/artifact-source";
 import type { EvidenceCollector } from "../ports/producer-profile";
@@ -13,6 +13,14 @@ export interface CaptureSourceDependencies {
   readonly run_id: string;
   readonly collector: EvidenceCollector;
   readonly repository: RepositoryReader;
+}
+
+/** The columns a logical-item lookup reads from captured occurrences. */
+interface CapturedLogicalItemRow {
+  readonly revision_id: string;
+  readonly json_pointer: string;
+  readonly item_kind: string;
+  readonly selected_value: JsonValue;
 }
 
 /** Reads only observation's captured copies, bounded by tenant and run. What counts as evidence
@@ -33,8 +41,19 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
     });
   }
 
-  collect(artifact: SourceArtifact, question: SubjectQuestion): Promise<EvidenceCollection> {
-    return this.dependencies.collector.collect(artifact, question, this);
+  async collect(artifact: SourceArtifact, question: SubjectQuestion): Promise<EvidenceCollection> {
+    const { db, tenant, run_id, collector } = this.dependencies;
+    const pin = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set as e")
+      .innerJoin("observation.item_occurrence as i", (join) => join.onRef("i.producer", "=", "e.producer")
+        .onRef("i.namespace", "=", "e.namespace").onRef("i.occurrence_id", "=", "e.subject_occurrence_id"))
+      .select("e.collection_plan").where("e.producer", "=", tenant.producer).where("e.namespace", "=", tenant.namespace)
+      .where("i.run_id", "=", run_id).where("e.subject_occurrence_id", "=", artifact.occurrence_id)
+      .where("e.task_id", question.task_id === null ? "is" : "=", question.task_id)
+      .where("e.question_id", "=", question.question_id).where("e.question_version", "=", question.question_version).executeTakeFirst());
+    if (pin?.collection_plan === null || pin === undefined) return collector.collect(artifact, question, this);
+    const plan = decodeEvidencePlan(pin.collection_plan);
+    if (!plan.ok) return { state: "not_ready", reason: { code: "invalid_collection_plan", detail: plan.error.detail } };
+    return collector.collect(artifact, { ...question, collection_plan: plan.value }, this);
   }
 
   readRunInput(): Promise<JsonValue | null> {
@@ -45,7 +64,7 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
   async readRevision(revision_id: string): Promise<CapturedRevision | null> {
     const { db, tenant, run_id } = this.dependencies;
     const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_revision")
-      .select(["revision_id", "artifact_kind", "subject_id", "body"])
+      .select(["revision_id", "stage", "artifact_kind", "subject_id", "body"])
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("run_id", "=", run_id).where("revision_id", "=", revision_id).executeTakeFirst());
     return row ? { ...row, revision_id: row.revision_id as ArtifactRevisionId } : null;
@@ -57,7 +76,7 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
       .innerJoin("observation.source_revision as subject", (join) => join.onRef("subject.producer", "=", "context.producer")
         .onRef("subject.namespace", "=", "context.namespace").onRef("subject.run_id", "=", "context.run_id")
         .on("subject.revision_id", "=", subject_revision_id))
-      .select(["context.revision_id", "context.artifact_kind", "context.subject_id", "context.body"])
+      .select(["context.revision_id", "context.stage", "context.artifact_kind", "context.subject_id", "context.body"])
       .where("context.producer", "=", tenant.producer).where("context.namespace", "=", tenant.namespace)
       .where("context.run_id", "=", run_id).where("context.artifact_kind", "=", artifact_kind)
       .where((eb) => eb.or([eb("context.recorded_at", "<", eb.ref("subject.recorded_at")),
@@ -67,16 +86,37 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
     return row ? { ...row, revision_id: row.revision_id as ArtifactRevisionId } : null;
   }
 
-  /** One logical item at the source position and selection requested by the producer. */
+  /** Prefer context at the subject revision. Late references may use their first captured definition,
+   * never the latest definition: later edits cannot become the context of an older subject. */
   async readLogicalItemAt(request: LogicalItemContextRequest): Promise<LinkedItem | null> {
     const revision = await this.readRevisionAt(request.artifact_kind, request.subject_revision_id);
-    if (!revision) return null;
     const { db, tenant, run_id } = this.dependencies;
-    const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").selectAll()
+    const historical = revision ? await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence")
+      .select(["revision_id", "json_pointer", "item_kind", "selected_value"])
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("run_id", "=", run_id)
-      .where("revision_id", "=", revision.revision_id).where("logical_item_id", "=", request.logical_item_id).where("item_kind", "=", request.item_kind).executeTakeFirst());
-    return row ? { revision_id: revision.revision_id, item_path: row.json_pointer, item_kind: row.item_kind,
+      .where("revision_id", "=", revision.revision_id).where("logical_item_id", "=", request.logical_item_id)
+      .where("item_kind", "=", request.item_kind).executeTakeFirst()) : null;
+    const row = historical ?? (request.allow_late_reference ? await this.readFirstLaterLogicalItem(request) : null);
+    return row ? { revision_id: row.revision_id as ArtifactRevisionId, item_path: row.json_pointer, item_kind: row.item_kind,
       selected_value: row.selected_value } : null;
+  }
+
+  private async readFirstLaterLogicalItem(request: LogicalItemContextRequest): Promise<CapturedLogicalItemRow | null> {
+    const { db, tenant, run_id } = this.dependencies;
+    return await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence as item")
+      .innerJoin("observation.source_revision as context", (join) => join.onRef("context.producer", "=", "item.producer")
+        .onRef("context.namespace", "=", "item.namespace").onRef("context.revision_id", "=", "item.revision_id"))
+      .innerJoin("observation.source_revision as subject", (join) => join.onRef("subject.producer", "=", "context.producer")
+        .onRef("subject.namespace", "=", "context.namespace").onRef("subject.run_id", "=", "context.run_id")
+        .on("subject.revision_id", "=", request.subject_revision_id))
+      .select(["item.revision_id", "item.json_pointer", "item.item_kind", "item.selected_value"])
+      .where("item.producer", "=", tenant.producer).where("item.namespace", "=", tenant.namespace).where("item.run_id", "=", run_id)
+      .where("item.logical_item_id", "=", request.logical_item_id).where("item.item_kind", "=", request.item_kind)
+      .where("context.artifact_kind", "=", request.artifact_kind)
+      .where((eb) => eb.or([eb("context.recorded_at", ">", eb.ref("subject.recorded_at")),
+        eb.and([eb("context.recorded_at", "=", eb.ref("subject.recorded_at")), eb("context.captured_at", ">", eb.ref("subject.captured_at"))])]))
+      .orderBy("context.captured_at", "asc").orderBy("context.recorded_at", "asc").orderBy("context.revision_id", "asc")
+      .orderBy("item.json_pointer", "asc").orderBy("item.occurrence_id", "asc").executeTakeFirst()) ?? null;
   }
 
   /** Follows only resolved producer edges to a logical item, then that item's occurrences. */

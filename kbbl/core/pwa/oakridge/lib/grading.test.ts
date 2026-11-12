@@ -157,20 +157,20 @@ describe("frozen references", () => {
 });
 
 describe("stages", () => {
-  const stage = (overrides: Partial<ObservationStageCompositeRead>): ObservationStageCompositeRead => ({ stage: "integration", publication: { state: "pending" }, coverage: "gap", questions: empty(), answers: empty(), statuses: empty(), disagreements: empty(),
+  const stage = (overrides: Partial<ObservationStageCompositeRead>): ObservationStageCompositeRead => ({ stage: "integration", state: "pending", results: empty(), publication: { state: "pending" }, questions: empty(), answers: empty(), statuses: empty(), disagreements: empty(),
     totals: { contributing_items: 0, not_ready_items: 0, pending_items: 0, failed_items: 0, budget_deferred_items: 0, grading_off_items: 0, superseded_items: 0, superseded_answers: 0 },
     items: { logical_item_id: id("t"), stage: "integration", selector: { kind: "items" } }, history: { logical_item_id: id("t"), stage: "integration", selector: { kind: "history" } }, ...overrides });
   const published = (is_final: boolean): ObservationStageCompositeRead["publication"] => ({ state: "published", is_final, unit_ids: empty() });
   test("integration is pending, then final results; another stage is only published", () => {
     expect(stagePublicationLabel(stage({}))).toBe("Pending");
-    expect(stagePublicationLabel(stage({ publication: published(true) }))).toBe("Final results");
-    expect(stagePublicationLabel(stage({ publication: published(false) }))).toBe("Published");
+    expect(stagePublicationLabel(stage({ state: "linked", publication: published(true) }))).toBe("Final results");
+    expect(stagePublicationLabel(stage({ state: "linked", publication: published(false) }))).toBe("Published");
   });
   test("a hidden stage carries no answer, status or disagreement at all", () => {
-    const count: ObservationAnswerCount = { question: { question_id: id("q"), question_version: "1" }, grader: { kind: "human", evaluator_definition_id: id("h"), reviewer_id: id("r") }, answer: { state: "answered", value: "supports" }, count: 3, drilldown: stage({}).items };
-    const full = stage({ answers: { ...empty(), items: [count], total: 1 }, publication: published(false), coverage: "linked" });
+    const count: ObservationAnswerCount = { question: { question_id: id("q"), question_version: "1", question_text: "Configured question", item_kind: "finding", allowed_values: null }, grader: { kind: "human", evaluator_definition_id: id("h"), reviewer_id: id("r") }, answer: { state: "answered", value: "supports" }, count: 3, drilldown: stage({}).items };
+    const full = stage({ answers: { ...empty(), items: [count], total: 1 }, publication: published(false), state: "linked" });
     const hidden = selectStageView(full, false);
-    expect(Object.keys(hidden).sort()).toEqual(["contributing_items", "coverage", "kind", "publication", "stage"]);
+    expect(Object.keys(hidden).sort()).toEqual(["contributing_items", "kind", "publication", "stage", "state"]);
     expect(JSON.stringify(hidden)).not.toContain("supports");
     expect(selectStageView(full, true)).toMatchObject({ kind: "revealed", answers: [count] });
   });
@@ -207,7 +207,7 @@ describe("artifact glances", () => {
       question("assessment_finding.correctness", { machine: paged([machine({ state: "failed", terminal_cause: null, error: "boom" }), machine({ state: "budget_deferred" }), machine({ state: "pending", status: "queued" })]) }),
     ]);
     expect(selectAutomaticGlances(status).map(({ glyph, label }) => [glyph, label])).toEqual([
-      ["negative", "Evidence support: does not support"], ["failed", "Correctness: Failed"], ["budget_deferred", "Correctness: Budget deferred"], ["waiting", "Correctness: Pending"]]);
+      ["negative", "Does the cited evidence support it?: does not support"], ["failed", "Does the cited evidence support it?: Failed"], ["budget_deferred", "Does the cited evidence support it?: Budget deferred"], ["waiting", "Does the cited evidence support it?: Pending"]]);
   });
   test("show all addresses exactly the findings each row addresses", () => {
     const source = { revision_id: compositeId({ kind: "artifact", runId: "run-1", unitId: "u", name: "assessment:u:assessment:2" }) };

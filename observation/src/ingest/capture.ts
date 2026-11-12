@@ -9,6 +9,7 @@ export interface CaptureSource {
   readonly revision_id: string;
   readonly run_id: string;
   readonly unit_id: string;
+  readonly stage: string;
   readonly artifact_kind: string;
   readonly artifact_schema_version: string;
   readonly definition_id: string;
@@ -17,7 +18,7 @@ export interface CaptureSource {
   readonly by_id?: string | null;
 }
 export interface CaptureEnvelope {
-  readonly format: "observation.artifact-revision/v2";
+  readonly format: "observation.artifact-revision/v3";
   readonly source: CaptureSource;
   readonly recorded_at: string;
   readonly body: JsonValue;
@@ -44,10 +45,10 @@ function revisionReference(value: unknown, prefix: string, field: string): Resul
 
 /** Decode only fields from the accepted L0 envelope; canonical body hashing is the integrity check. */
 export function decodeCapture(input: unknown): Result<CaptureDelivery, CaptureError> {
-  if (!object(input) || input.format !== "observation.artifact-revision/v2") return failure("envelope", "invalid capture format");
+  if (!object(input) || input.format !== "observation.artifact-revision/v3") return failure("envelope", "invalid capture format");
   if (!object(input.source)) return failure("source", "source is required");
   const source = input.source;
-  for (const field of ["producer", "namespace", "revision_id", "run_id", "unit_id", "artifact_kind", "artifact_schema_version", "definition_id"] as const)
+  for (const field of ["producer", "namespace", "revision_id", "run_id", "unit_id", "stage", "artifact_kind", "artifact_schema_version", "definition_id"] as const)
     if (!nonempty(source[field])) return failure(`source.${field}`, `${field} is required`);
   const revision_id = source.revision_id;
   if (!nonempty(revision_id)) return failure("source.revision_id", "revision_id is required");

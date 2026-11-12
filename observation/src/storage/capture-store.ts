@@ -13,6 +13,7 @@ export interface SourceRevisionRead {
   readonly namespace: string;
   readonly run_id: string;
   readonly unit_id: string;
+  readonly stage: string;
   readonly revision_id: string;
   readonly artifact_kind: string;
   readonly artifact_schema_version: string;
@@ -33,7 +34,7 @@ export type CaptureOutcome =
 function sourceRead(row: Selectable<ObservationSourceRevision>): SourceRevisionRead {
   const id = `${row.producer}:${row.namespace}:${row.revision_id}`;
   const prefix = `${row.producer}:${row.namespace}:`;
-  return { id, producer: row.producer, namespace: row.namespace, run_id: row.run_id, unit_id: row.unit_id,
+  return { id, producer: row.producer, namespace: row.namespace, run_id: row.run_id, unit_id: row.unit_id, stage: row.stage,
     revision_id: id, artifact_kind: row.artifact_kind, artifact_schema_version: row.artifact_schema_version,
     definition_id: row.definition_id,
     body: row.body, body_digest: row.body_digest,
@@ -53,11 +54,11 @@ export async function captureInTransaction(trx: DatabaseTransaction, delivery: C
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${producer}:${namespace}:revision:${revision_id}`}, 0))`.execute(trx);
   const existing = await trx.selectFrom("observation.source_revision").selectAll()
     .where("producer", "=", producer).where("namespace", "=", namespace).where("revision_id", "=", revision_id).executeTakeFirst();
-  if (existing?.body_digest === body_digest && existing.predecessor_id === predecessor_id && existing.subject_id === subject_id)
+  if (existing?.body_digest === body_digest && existing.predecessor_id === predecessor_id && existing.subject_id === subject_id && existing.stage === source.stage)
     return { kind: "identical" };
   if (existing) return { kind: "revision_identity_conflict", stored_digest: existing.body_digest, incoming_digest: body_digest };
   await trx.insertInto("observation.source_revision").values({ producer, namespace, revision_id,
-    run_id: source.run_id, unit_id: source.unit_id, artifact_kind: source.artifact_kind,
+    run_id: source.run_id, unit_id: source.unit_id, stage: source.stage, artifact_kind: source.artifact_kind,
     artifact_schema_version: source.artifact_schema_version, definition_id: source.definition_id, body: jsonText(body),
     body_digest, predecessor_id, subject_id, recorded_at: new Date(recorded_at) }).execute();
   return { kind: "captured" };

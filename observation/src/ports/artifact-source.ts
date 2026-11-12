@@ -25,6 +25,7 @@ export interface ArtifactSource {
 }
 
 export interface CapturedRevision {
+  readonly stage: string;
   readonly revision_id: ArtifactRevisionId;
   readonly artifact_kind: string;
   readonly subject_id: string | null;
@@ -60,6 +61,8 @@ export interface LogicalItemContextRequest {
   readonly subject_revision_id: ArtifactRevisionId;
   readonly artifact_kind: string;
   readonly item_kind: string;
+  /** When no definition exists at the subject, use the first captured definition after it. */
+  readonly allow_late_reference?: boolean;
 }
 export interface CapturedSources {
   readRunInput(): Promise<JsonValue | null>;

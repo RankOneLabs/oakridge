@@ -63,6 +63,8 @@ test("adapter, Oakridge and observation outages replay committed events from the
     await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
     await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Long" }, by: action }, writer: executor(action) });
     expect(await runUntil(3)).toBe(3);
+    expect(await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_revision").select("stage")
+      .where("run_id", "=", run_id).execute())).toEqual([{ stage: "document" }]);
     // Reopen the Oakridge database handle as a restarted process would.
     const reopened = openDatabase(authority.url);
     try {

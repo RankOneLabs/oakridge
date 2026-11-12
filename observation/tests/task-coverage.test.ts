@@ -1,12 +1,13 @@
+import { questionVersion } from "./grading-fixture";
 import { expect, test } from "bun:test";
 import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../src/domain/identity";
 import { ok, type JsonValue } from "../src/domain/primitives";
 import { parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
 import { gradeNext } from "../src/grading/worker";
 import type { CapturedRevision, CapturedSources, SourceArtifact } from "../src/ports/artifact-source";
-import { oakridgeEvidence } from "../src/producers/oakridge/evidence";
+import { oakridgeEvidence } from "./grading-fixture";
 import { oakridgeGradingRegistry, committedDefinitions, createFeed, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
-import { CONTRIBUTION_COVERAGE_ID, TASK_COVERAGE_ID } from "../src/producers/oakridge/evidence";
+import { CONTRIBUTION_COVERAGE_ID, TASK_COVERAGE_ID } from "./grading-fixture";
 import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
 import { collectPinnedQuestion, pinOccurrenceInTransaction, readOccurrenceEvidence } from "../src/storage/captured-evidence-store";
 import { withTenant } from "../src/storage/database";
@@ -23,7 +24,7 @@ const cohort = { id: "api", scope: "Organization API", decisions: [], acceptance
 const plan = { cohorts: [cohort], risks: [] };
 const brief = { cohort_id: "api", goal: "Organization reads", files_in_scope: ["api.ts"], decisions_made: [], approaches_rejected: [], acceptance_criteria: [contribution] };
 const revision = (id: string, artifact_kind: string, body: JsonValue): CapturedRevision =>
-  ({ revision_id: id as ArtifactRevisionId, artifact_kind, body, subject_id: null });
+  ({ revision_id: id as ArtifactRevisionId, stage: "implementation", artifact_kind, body, subject_id: null });
 const revisions = [revision("analysis-1", "analysis", analysis), revision("spec-1", "spec", "Approved specification with explicit Spec tasks"),
   revision("tasks-1", "tasks", tasks), revision("plan-1", "plan", plan), revision("brief-1", "brief", brief)];
 const repository = { hasCommit: async () => false, readFile: async () => ({ state: "absent" as const }) };
@@ -37,7 +38,7 @@ const subject = (kind: "task" | "acceptance_entry", revision_id: string, path: s
     run_id: "run-1" as RunId, selected_value: kind === "task" ? TASK : contribution });
 
 test("a spec task is judged against full linked requirements at exact revision paths, not just their status", async () => {
-  const result = await oakridgeEvidence.collect(subject("task", "tasks-1", "/tasks/0"), { task_id: null, question_id: TASK_COVERAGE_ID, question_version: "1" }, sources());
+  const result = await oakridgeEvidence.collect(subject("task", "tasks-1", "/tasks/0"), { task_id: null, question_id: TASK_COVERAGE_ID, question_version: questionVersion(TASK_COVERAGE_ID) }, sources());
   expect(result).toMatchObject({ state: "ready", references: [
     { ref: "subject", revision_id: "tasks-1", item_path: "/tasks/0" },
     { ref: "spec", revision_id: "spec-1", content: "Approved specification with explicit Spec tasks" },
@@ -47,13 +48,13 @@ test("a spec task is judged against full linked requirements at exact revision p
 
 test("an absent explicit requirement waits instead of silently grading the remaining context", async () => {
   const context = revisions.map((entry) => entry.artifact_kind === "analysis" ? revision("analysis-1", "analysis", { ...analysis, requirements: [] }) : entry);
-  const result = await oakridgeEvidence.collect(subject("task", "tasks-1", "/tasks/0"), { task_id: null, question_id: TASK_COVERAGE_ID, question_version: "1" }, sources(context));
+  const result = await oakridgeEvidence.collect(subject("task", "tasks-1", "/tasks/0"), { task_id: null, question_id: TASK_COVERAGE_ID, question_version: questionVersion(TASK_COVERAGE_ID) }, sources(context));
   expect(result).toMatchObject({ state: "not_ready", reason: { code: "requirements_unavailable", detail: expect.stringContaining("R1") } });
 });
 
 test("a plan contribution retains its exact cohort context and the combined plan for a shared task", async () => {
   const result = await oakridgeEvidence.collect(subject("acceptance_entry", "plan-1", "/cohorts/0/acceptance_criteria/0"),
-    { task_id: null, question_id: CONTRIBUTION_COVERAGE_ID, question_version: "1" }, sources());
+    { task_id: null, question_id: CONTRIBUTION_COVERAGE_ID, question_version: questionVersion(CONTRIBUTION_COVERAGE_ID) }, sources());
   expect(result).toMatchObject({ state: "ready", references: expect.arrayContaining([
     { source: "revision", ref: "plan", revision_id: "plan-1", item_path: null, content: plan },
     { source: "revision", ref: "contribution_context", revision_id: "plan-1", item_path: "/cohorts/0", content: cohort }]) });
@@ -61,7 +62,7 @@ test("a plan contribution retains its exact cohort context and the combined plan
 
 test("a brief contribution carries its brief and plan alongside the original spec task", async () => {
   const result = await oakridgeEvidence.collect(subject("acceptance_entry", "brief-1", "/acceptance_criteria/0"),
-    { task_id: null, question_id: CONTRIBUTION_COVERAGE_ID, question_version: "1" }, sources());
+    { task_id: null, question_id: CONTRIBUTION_COVERAGE_ID, question_version: questionVersion(CONTRIBUTION_COVERAGE_ID) }, sources());
   expect(result).toMatchObject({ state: "ready", references: expect.arrayContaining([
     { source: "revision", ref: "spec_task", revision_id: "tasks-1", item_path: "/tasks/0", content: TASK },
     { source: "revision", ref: "plan", revision_id: "plan-1", item_path: null, content: plan },
@@ -70,11 +71,11 @@ test("a brief contribution carries its brief and plan alongside the original spe
 
 test("an unassigned contribution never guesses a spec task from similar wording", async () => {
   const artifact = { ...subject("acceptance_entry", "plan-1", "/cohorts/0/acceptance_criteria/0"), selected_value: { ...contribution, id: "T404" } };
-  expect(await oakridgeEvidence.collect(artifact, { task_id: null, question_id: CONTRIBUTION_COVERAGE_ID, question_version: "1" }, sources()))
+  expect(await oakridgeEvidence.collect(artifact, { task_id: null, question_id: CONTRIBUTION_COVERAGE_ID, question_version: questionVersion(CONTRIBUTION_COVERAGE_ID) }, sources()))
     .toMatchObject({ state: "not_ready", reason: { code: "task_unavailable" } });
 });
 
-integration("tasks and plan contributions freeze their original context and execute through the ordinary worker; briefs are not pinned", async () => scratchDatabase(async (db) => {
+integration("tasks, plan contributions and briefs freeze their original context and execute through the ordinary worker", async () => scratchDatabase(async (db) => {
   const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
@@ -92,10 +93,7 @@ integration("tasks and plan contributions freeze their original context and exec
   const source = new CaptureArtifactSource({ db, tenant, run_id: "run-1", collector: oakridgeEvidence, repository });
   const items = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "artifact_kind"])
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("item_kind", "in", ["task", "acceptance_entry"]).execute());
-  // Task coverage targets plan acceptance entries only; a brief entry shares the item kind, not the target.
-  const [briefs, graded] = [items.filter((item) => item.artifact_kind === "brief"), items.filter((item) => item.artifact_kind !== "brief")];
-  expect(await Promise.all(briefs.map((item) => readOccurrenceEvidence(db, tenant, item.occurrence_id as ItemOccurrenceId)))).toEqual([[]]);
-  for (const item of graded) {
+  for (const item of items) {
     const occurrence = item.occurrence_id as ItemOccurrenceId;
     const pinned = await readOccurrenceEvidence(db, tenant, occurrence);
     expect(pinned).toHaveLength(1);
@@ -118,8 +116,8 @@ integration("tasks and plan contributions freeze their original context and exec
         probabilities: null, external_execution_id: null });
     } }) };
   while ((await gradeNext(worker, tenant)).kind !== "idle") { /* drain ordinary leased executions */ }
-  expect(requests).toBe(2);
-  for (const item of graded) expect((await readItemMeasurements(db, tenant, item.occurrence_id))?.questions[0]?.machine[0]?.measurement)
+  expect(requests).toBe(3);
+  for (const item of items) expect((await readItemMeasurements(db, tenant, item.occurrence_id))?.questions[0]?.machine[0]?.measurement)
     .toMatchObject({ state: "answered", answer: { value: "partially_covers" } });
 }));
 
@@ -144,4 +142,59 @@ integration("an explicit coverage upgrade adds only the new question and leaves 
   const original = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set").selectAll()
     .where("question_id", "!=", TASK_COVERAGE_ID).execute());
   expect(original).toEqual(before);
+}));
+
+test("coverage sources and list pointers come from capability parameters and share captured reads", async () => {
+  const { createCapabilityCollector } = await import("../src/grading/evidence");
+  const { oakridgeCapabilities } = await import("../src/producers/oakridge/evidence");
+  const question = { task_id: null, question_id: TASK_COVERAGE_ID, question_version: "test-parameters" };
+  const task_source = { artifact: "work", list: "/entries" };
+  const context = [revision("work-1", "work", { entries: [TASK] }), revision("rules-1", "rules", { clauses: [requirement] })];
+  const calls: string[] = [];
+  const source = { ...sources(context), readRevisionAt: async (kind: string) => {
+    calls.push(kind);
+    return context.find((entry) => entry.artifact_kind === kind) ?? null;
+  } };
+  const collector = createCapabilityCollector([{ ...question, evidence: ["subject", { capability: "spec_task", params: task_source },
+    { capability: "requirement", params: { artifact: "rules", list: "/clauses", task_source } }] }], oakridgeCapabilities);
+  const result = await collector.collect(subject("task", "work-1", "/entries/0"), question, source);
+  expect(result).toMatchObject({ state: "ready", references: [{ ref: "subject" },
+    { ref: "spec_task", revision_id: "work-1", item_path: "/entries/0", content: TASK },
+    { ref: "requirement:0", revision_id: "rules-1", item_path: "/clauses/0", content: requirement }] });
+  expect(calls).toEqual(["work", "rules"]);
+});
+
+integration("a brief resolves its task, requirements and plan at the brief's own revision", async () => scratchDatabase(async (db) => {
+  const registration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+  if (!registration.ok) throw new Error(registration.error.detail);
+  await registerDefinitions(db, tenant, registration.value);
+  const feed = createFeed(db, tenant, registration.value.capture);
+  await feed.launch({ spec: "Original spec" });
+  await feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body: analysis, recorded_at: "2026-11-01T00:00:00Z" });
+  await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: tasks, recorded_at: "2026-11-01T00:00:01Z" });
+  await feed.revision({ revision_id: "plan-1", artifact_kind: "plan", body: plan, recorded_at: "2026-11-01T00:00:02Z" });
+  const revisedRequirement = { ...requirement, description: "Reads must include organization details" };
+  const revisedTask = { ...TASK, description: "Include organization details" };
+  const revisedPlan = { ...plan, summary: "More precise contribution" };
+  await feed.revision({ revision_id: "analysis-2", artifact_kind: "analysis", body: { ...analysis, requirements: [revisedRequirement] }, recorded_at: "2026-11-01T00:00:03Z" });
+  await feed.revision({ revision_id: "tasks-2", artifact_kind: "tasks", body: { tasks: [revisedTask] }, recorded_at: "2026-11-01T00:00:04Z" });
+  await feed.revision({ revision_id: "plan-2", artifact_kind: "plan", body: revisedPlan, recorded_at: "2026-11-01T00:00:05Z" });
+  await feed.revision({ revision_id: "brief", artifact_kind: "brief", body: brief, recorded_at: "2026-11-01T00:00:06Z" });
+  await feed.revision({ revision_id: "analysis-3", artifact_kind: "analysis", body: { ...analysis, requirements: [] }, recorded_at: "2026-11-01T00:00:07Z" });
+  await feed.revision({ revision_id: "tasks-3", artifact_kind: "tasks", body: { tasks: [] }, recorded_at: "2026-11-01T00:00:08Z" });
+  await feed.revision({ revision_id: "plan-3", artifact_kind: "plan", body: { cohorts: [], risks: [] }, recorded_at: "2026-11-01T00:00:09Z" });
+  const item = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").selectAll()
+    .where("artifact_kind", "=", "brief").where("item_kind", "=", "acceptance_entry").executeTakeFirstOrThrow());
+  expect(item).toMatchObject({ revision_id: "brief", item_scope: "task", producer_local_id: "T1", json_pointer: "/acceptance_criteria/0" });
+  const sets = await readOccurrenceEvidence(db, tenant, item.occurrence_id as ItemOccurrenceId);
+  expect(sets).toHaveLength(1);
+  const source = new CaptureArtifactSource({ db, tenant, run_id: "run-1", collector: registration.value.collector, repository });
+  const collected = await collectPinnedQuestion(db, tenant, source, sets[0]!);
+  expect(collected).toMatchObject({ ok: true, value: { readiness: { state: "ready", references: [
+    { ref: "subject", revision_id: "brief" }, { ref: "spec" },
+    { ref: "spec_task", revision_id: "tasks-2", content: revisedTask },
+    { ref: "requirement:0", revision_id: "analysis-2", content: revisedRequirement },
+    { ref: "plan", revision_id: "plan-2", content: revisedPlan },
+    { ref: "contribution_context", revision_id: "brief", item_path: null, content: brief },
+  ] } } });
 }));

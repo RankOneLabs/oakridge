@@ -1,3 +1,4 @@
+import { targetOf } from "./grading-fixture";
 import { expect } from "bun:test";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
@@ -5,8 +6,8 @@ import { humanEvaluator } from "../src/grading/configuration";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { createApp } from "../src/http/app";
 import type { Credentials } from "../src/http/ingest-auth";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID } from "../src/producers/oakridge/evidence";
-import { OAKRIDGE_QUESTIONS, targetOf, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID } from "./grading-fixture";
+import { OAKRIDGE_QUESTIONS, questionVersion, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import type { Database, TenantScope } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
@@ -33,7 +34,11 @@ async function setup(db: Database, grading_enabled = false): Promise<Harness> {
   }
   const feed = createFeed(db, tenant, pins);
   await feed.launch({ spec: "the spec" }, "run-1", runConfig(grading_enabled));
-  return { db, feed, app: createApp({ db, credentials, profile: oakridgeProfile }) };
+  return { db, feed, app: createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: pins, stage_source: { read: async () => ({ ok: true, value: [
+    { unit_id: "t", stage: "tasks", depends_on: [], status: { kind: "done" }, artifacts: [{ artifact_key: "tasks" }] },
+    { unit_id: "i", stage: "implementation", depends_on: ["t"], status: { kind: "active" }, artifacts: [{ artifact_key: "assessment" }] },
+    { unit_id: "f", stage: "integration", depends_on: ["i"], status: { kind: "not_started" }, artifacts: [{ artifact_key: "assessment" }] }
+  ] }) } }) };
 }
 const get = async <Body>(h: Harness, path: string, token = "read"): Promise<{ status: number; body: Body }> => {
   const response = await h.app.request(path, { headers: { authorization: `Bearer ${token}` } });
@@ -103,7 +108,7 @@ integration("explicit task links are separate from the address: empty is valid a
   expect((await status(h, unknown.occurrence_id)).links.items).toMatchObject([{ state: "unresolved", producer_local_id: "T404" }]);
   expect((await get(h, "/v1/runs/run-1/logical-items/T404")).status).toBe(404);
   expect((await get<Paged<{ item: { item_path: string } }>>(h, "/v1/runs/run-1/unresolved-references")).body.items.map((row) => row.item.item_path)).toEqual(["/findings/2"]);
-  expect((await get<Paged<{ item_path: string; source_revision_id: string }>>(h, "/v1/runs/run-1/unlinked-items")).body.items).toMatchObject([{ item_path: "/findings/1", source_revision_id: "assessment-1" }]);
+  expect((await get<Paged<{ item_path: string; source_revision_id: string }>>(h, "/v1/runs/run-1/unlinked-items")).body.items).toMatchObject([{ item_path: "/findings/1", source_revision_id: "assessment-1" }, { item_path: "/findings/2", source_revision_id: "assessment-1" }]);
   const findings = (await get<Paged<{ item: { item_path: string }; links: Paged<{ producer_local_id: string }> }>>(h, "/v1/runs/run-1/gradeable-items?stage=implementation")).body;
   expect(findings.total).toBe(3);
   expect(findings.items.map((row) => [row.item.item_path, row.links.total])).toEqual([["/findings/0", 2], ["/findings/1", 0], ["/findings/2", 1]]);
@@ -266,4 +271,46 @@ integration("an evidence set by id is the named paged evidence read: each nested
   expect((await get(h, route(), "grade")).status).toBe(403);
   expect((await h.app.request(route())).status).toBe(403);
   expect((await get(h, "/v1/evidence-sets/unknown")).status).toBe(404);
+}));
+
+integration("run readiness stages include unpublished and out-of-list stages, and every stage selector rejects unknown keys", async () => scratchDatabase(async (db) => {
+  const h = await setup(db);
+  await h.feed.revision({ revision_id: "tasks-extra", artifact_kind: "tasks", stage: "archived_stage", body: tasks(["T1"]) });
+  const stages = await get<readonly { stage: string }[]>(h, "/v1/runs/run-1/grading-stages");
+  expect(stages.body.map((entry) => entry.stage)).toEqual(["tasks", "implementation", "integration", "archived_stage"]);
+  const rollup = await get<{ stages: Paged<{ stage: string; state: string }> }>(h, "/v1/runs/run-1/logical-items/T1");
+  expect(rollup.body.stages.items.find((stage) => stage.stage === "integration")?.state).toBe("pending");
+  for (const endpoint of ["logical-items", "logical-items/T1", "gradeable-items"]) {
+    expect((await get(h, `/v1/runs/run-1/${endpoint}?stage=unknown`)).status).toBe(400);
+  }
+  const key = { logical_item_id: "task", stage: "unknown", selector: { kind: "items" } };
+  expect((await get(h, `/v1/runs/run-1/composite-drilldown?key=${encodeURIComponent(JSON.stringify(key))}`)).status).toBe(400);
+  const filtered = await get<{ stages: Paged<{ stage: string }> }>(h, "/v1/runs/run-1/logical-items/T1?stage=archived_stage");
+  expect(filtered.body.stages.items.map((stage) => stage.stage)).toEqual(["archived_stage"]);
+}));
+
+integration("run reads require tenant capture before reading DBOS readiness", async () => scratchDatabase(async (db) => {
+  const h = await setup(db);
+  const reads: string[] = [];
+  const app = createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: pins, stage_source: {
+    read: async (run_id) => {
+      reads.push(run_id);
+      return { ok: true, value: [{ unit_id: "u", stage: "custom", depends_on: [], status: { kind: "not_started" }, artifacts: [] }] };
+    }
+  } });
+  const request = (run_id: string, token = "read") => app.request(`/v1/runs/${run_id}/grading-stages`, { headers: { authorization: `Bearer ${token}` } });
+  expect((await request("missing")).status).toBe(404);
+  expect((await request("run-1", "other-read")).status).toBe(404);
+  const drilldown = encodeURIComponent(JSON.stringify({ logical_item_id: "task", stage: "custom", selector: { kind: "items" } }));
+  const foreign = ["gradeable-items?stage=custom", "gradeable-items?stage=missing", "logical-items", "logical-items/T1",
+    "logical-items/T1/lineage", `composite-drilldown?key=${drilldown}`];
+  for (const read of foreign) { // Existing and unknown stages answer alike for a run this tenant never captured.
+    const response = await app.request(`/v1/runs/run-1/${read}`, { headers: { authorization: "Bearer other-read" } });
+    expect([read, response.status]).toEqual([read, 404]);
+  }
+  expect(reads).toEqual([]);
+  expect((await request("run-1")).status).toBe(200); // A captured launch suffices before any revision.
+  await h.feed.launch(null, "null-input");
+  expect((await request("null-input")).status).toBe(200);
+  expect(reads).toEqual(["run-1", "null-input"]);
 }));

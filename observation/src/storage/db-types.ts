@@ -14,6 +14,7 @@ export interface ObservationSourceRevision {
   revision_id: string;
   run_id: string;
   unit_id: string;
+  stage: string;
   artifact_kind: string;
   artifact_schema_version: string;
   definition_id: string;
@@ -138,6 +139,7 @@ export interface ObservationEvidenceSet {
   question_id: string;
   question_version: string;
   pinned_evaluator_definition_ids: string[];
+  collection_plan: JsonValue | null;
   readiness: string;
   not_ready_code: string | null;
   not_ready_detail: string | null;

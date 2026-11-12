@@ -60,6 +60,7 @@ export async function scratchDatabase(work: (db: Database) => Promise<void>): Pr
 export interface FixtureRevision {
   readonly revision_id: string;
   readonly artifact_kind: string;
+  readonly stage?: string;
   readonly body: JsonValue;
   readonly run_id?: string;
   readonly unit_id?: string;
@@ -79,8 +80,8 @@ export function revisionOutcome(input: FixtureRevision, scope: TenantScope = ten
   const prefix = `${scope.producer}:${scope.namespace}:`;
   const run_id = input.run_id ?? "run-1";
   return { ...provenance, kind: "artifact_revision", event_kind: "revision_published", run_id, event_id,
-    revision: { format: "observation.artifact-revision/v2", source: { ...scope, revision_id: `${prefix}${input.revision_id}`, run_id,
-      unit_id: input.unit_id ?? input.artifact_kind, artifact_kind: input.artifact_kind, artifact_schema_version: SCHEMA_VERSION,
+    revision: { format: "observation.artifact-revision/v3", source: { ...scope, revision_id: `${prefix}${input.revision_id}`, run_id,
+      unit_id: input.unit_id ?? input.artifact_kind, stage: input.stage ?? (input.artifact_kind === "assessment" ? (input.unit_id?.split("/")[1] === "integration" ? "integration" : "implementation") : input.artifact_kind), artifact_kind: input.artifact_kind, artifact_schema_version: SCHEMA_VERSION,
       definition_id: DEFINITION_ID, predecessor_id: input.predecessor_id ? `${prefix}${input.predecessor_id}` : null,
       subject_id: input.subject_id ? `${prefix}${input.subject_id}` : null },
     recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z", body: input.body,
@@ -138,7 +139,7 @@ export function questionVersion(question_id: string): string {
   if (!question) throw new Error(`no committed question ${question_id}`);
   return question.question_version;
 }
-export const oakridgeProfile = createOakridgeProfile(OAKRIDGE_QUESTIONS);
+export const oakridgeProfile = createOakridgeProfile(OAKRIDGE_QUESTIONS, committedRegistration.value.collector);
 export { oakridgeGradingRegistry };
 export const COVERAGE_VALUES = OAKRIDGE_QUESTIONS.find((question) => question.question_id === "task.requirement_coverage")!.allowed_values!;
 
@@ -172,3 +173,11 @@ export function targetOf(question_id: string): import("../src/grading/evidence")
   if (!pin) throw new Error(`no target for ${question_id}`);
   return { artifact_kind: pin.artifact_kind, item_selector: pin.item_selector, item_kind: pin.item_kind };
 }
+
+
+export const oakridgeEvidence = committedRegistration.value.collector;
+export const RELEVANCE_ID = "finding.relevance" as QuestionId;
+export const CORRECTNESS_ID = "assessment_finding.correctness" as QuestionId;
+export const EVIDENCE_SUPPORT_ID = "assessment_finding.evidence_support" as QuestionId;
+export const TASK_COVERAGE_ID = "task.requirement_coverage" as QuestionId;
+export const CONTRIBUTION_COVERAGE_ID = "acceptance_entry.task_coverage" as QuestionId;

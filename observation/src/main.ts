@@ -1,3 +1,5 @@
+import { createStageSource } from "./producers/oakridge/stage-source";
+import type { RunStageSource } from "./grading/task-stages";
 import { fileURLToPath } from "node:url";
 import { parseGradingDefinitions, planRegistration, selectedRunners, type GradingRegistry, type GradingRegistration } from "./grading/configuration";
 import { requireRunnerCredentials } from "./grading/provider-credentials";
@@ -59,6 +61,7 @@ async function registerAll(db: Database, tenants: readonly TenantScope[], regist
 }
 
 export interface StartupOptions {
+  readonly stage_source?: RunStageSource;
   readonly grading_definitions_file?: string;
   readonly repository?: RepositoryReader;
   /** Resolves each pinned evaluator's runner; the retained registry unless a test supplies one. */
@@ -97,7 +100,7 @@ export async function startObservation(env: NodeJS.ProcessEnv = process.env, opt
   const graders = await readDefinitions(options.grading_definitions_file ?? GRADING_DEFINITIONS_FILE);
   const registration = graders.ok ? prepareGrading(graders.value, oakridgeGradingRegistry, env) : graders;
   if (!registration.ok) throw new Error(`observation cannot start: ${registration.error.kind}: ${registration.error.entity_id}: ${registration.error.detail}`);
-  const profile = oakridgeProfile(registration.value.questions);
+  const profile = oakridgeProfile(registration.value.questions, registration.value.collector);
   const controls = gradingControls(env);
   if (!controls.ok) throw new Error(`observation cannot start: invalid_controls: ${controls.error.entity_id}: ${controls.error.detail}`);
   const db = openDatabase(env.OBSERVATION_DATABASE_URL);
@@ -112,7 +115,8 @@ export async function startObservation(env: NodeJS.ProcessEnv = process.env, opt
     const evidence = createEvidenceReconciler({ db, collector: profile.evidence, repository: options.repository ?? createGitRepositoryReader(),
       admission: { retry_limit: controls.value.retry_limit } });
     const capability = graderCapability(registration.value);
-    const app = createApp({ db, credentials, profile, capture_configuration: registration.value.capture, evidence,
+    const app = createApp({ db, credentials, profile,
+      stage_source: options.stage_source ?? createStageSource({ base_url: env.OAKRIDGE_CORE_BASE_URL ?? "http://127.0.0.1:8790", token: env.OAKRIDGE_CORE_CONTROL_TOKEN ?? env.OAKRIDGE_CONTROL_TOKEN }), capture_configuration: registration.value.capture, evidence,
       grader_capability: () => capability });
     const server = Bun.serve({ fetch: app.fetch, hostname: env.OBSERVATION_HOST ?? "127.0.0.1", port: Number(env.OBSERVATION_PORT ?? 8791) });
     // Work an earlier process left is taken up: waiting questions, ready questions to admit, and

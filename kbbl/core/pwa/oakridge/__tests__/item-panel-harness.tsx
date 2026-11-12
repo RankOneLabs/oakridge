@@ -17,13 +17,14 @@ const reads = (path: string): Response | null => {
   if (path.endsWith("/status")) return json(world.status);
   if (path.endsWith("/lineage") && path.includes("/items/")) return json({ occurrence_id: OCCURRENCE, relations: [], total: 0, limit: 20, offset: 0, republication: null });
   if (path.endsWith("/answers")) return json(paged(world.own));
+  if (path.endsWith("/stages")) return json(taskComposite().stages.items.map(({ stage, state }) => ({ stage, state, artifact_kinds: [] })));
   if (path.endsWith("/grading")) return json({ run_id: id("run-1"), is_grading_enabled: false, committed: 0.13, requests_sent: 13, attempts: 13, executions: { completed: 3 } });
   if (path.endsWith("/tasks")) return json(paged([taskComposite()]));
   if (path.endsWith("/tasks/T1")) return json(taskComposite());
   if (path.endsWith("/tasks/T404")) return json({ error: { code: "not_found", message: "no such task" } }, 404);
-  if (/\/tasks\/[^/]+\/lineage$/.test(path)) return json({ ...paged([{ kind: "contribution", relation_id: id("rel-1"), evidence_ref: "e", asserted_by: "producer_explicit", item: item(IMPLEMENTATION) }]), run_id: id("run-1"), producer_local_id: "T1", is_captured: true });
+  if (/\/tasks\/[^/]+\/lineage$/.test(path)) return json({ ...paged([{ kind: "contribution", provenance: { kind: "relation", hops: [{ relation_id: id("rel-1"), type: "assesses", evidence_ref: "e", asserted_by: "producer_explicit" }] }, item: item(IMPLEMENTATION) }]), run_id: id("run-1"), producer_local_id: "T1", is_captured: true });
   if (path.endsWith("/unresolved-task-references")) return json(paged([{ item: item(IMPLEMENTATION), relation_id: id("rel-2"), unresolved_target_ref: "logical_item:task:T404", evidence_ref: "e" }]));
-  if (path.endsWith("/drilldown")) return json(paged([{ item: item(IMPLEMENTATION), links: paged([]), questions: paged([{ question: { question_id: id("assessment_finding.evidence_support"), question_version: "1" }, evidence: supportQuestion().evidence, statuses: paged([]),
+  if (path.endsWith("/drilldown")) return json(paged([{ item: item(IMPLEMENTATION), links: paged([]), questions: paged([{ task_id: null, scope: { kind: "per_item" }, provenance: { kind: "own", hops: [] }, is_linked_context: true, question: supportQuestion().question, evidence: supportQuestion().evidence, results: paged([]), statuses: paged([]),
     answers: paged([reviewerAnswer("raw-answer", "does_not_support", "second-reviewer")]), superseded_answers: paged([]) }]) }]));
   return null;
 };
@@ -47,3 +48,5 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 export const wrap = (node: ReactNode) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } })}>{node}</QueryClientProvider>);
 export const panel = (onOpenTask = vi.fn()) => wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={onOpenTask} />);
+export const documentText = (): string => document.body.textContent ?? "";
+export const ariaText = (): string => Array.from(document.querySelectorAll("[aria-label]")).map((element) => element.getAttribute("aria-label")).join(" ");

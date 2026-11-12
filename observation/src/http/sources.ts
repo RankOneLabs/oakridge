@@ -1,3 +1,4 @@
+import type { RunStageSource } from "../grading/task-stages";
 import type { Hono } from "hono";
 import { decodeCapture } from "../ingest/capture";
 import { decodeSourceEventDelivery, type SourceEventOutcome } from "../ingest/cursor";
@@ -12,6 +13,7 @@ import { pagination } from "./items";
 
 export interface SourceDependencies {
   readonly db: Database;
+  readonly stage_source?: RunStageSource;
   readonly credentials: Credentials;
   readonly profile: ProducerProfile;
   /** Absent until a configuration is composed: occurrences are captured with no pins. */

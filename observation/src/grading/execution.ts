@@ -4,7 +4,7 @@ import type { CanonicalizationError } from "../domain/errors";
 import type { JsonValue, Result } from "../domain/primitives";
 import type { EvidenceReadiness } from "./evidence";
 import type { GradeAnswer } from "./observation";
-import type { QuestionDefinition } from "./question";
+import { questionAnswerProblem, type QuestionDefinition } from "./question";
 
 /** What one measurement measures. Grades read this through their execution. */
 export interface EvaluationIdentity {
@@ -161,14 +161,7 @@ export function failureDisposition(category: string, execution: { readonly retri
 
 /** Why an answer cannot complete its pinned question, or null when it can. Negative and unclear
  * answers inside the allowed set are valid completed answers. */
-export function answerProblem(question: QuestionDefinition, answer: GradeAnswer): string | null {
-  if (answer.kind !== question.response_kind) return `answer kind ${answer.kind} differs from question kind ${question.response_kind}`;
-  if (answer.state !== "answered") return answer.reason.length > 0 ? null : "an abstention needs a reason";
-  if ((question.response_kind === "choice" || question.response_kind === "ordinal")
-    && !(question.allowed_values ?? []).some((allowed) => allowed === answer.value))
-    return `answer ${String(answer.value)} is not an allowed value of ${question.question_id}@${question.question_version}`;
-  return null;
-}
+export const answerProblem = questionAnswerProblem;
 
 /** One measurement's status, as a later reader distinguishes them. Absence of an answer is never an answer. */
 export type MeasurementState =

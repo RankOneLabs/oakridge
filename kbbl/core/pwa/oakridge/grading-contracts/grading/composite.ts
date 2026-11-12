@@ -7,6 +7,8 @@ import type { ObservationEvidenceSet } from "./evidence";
 import type { ObservationExecutionTerminalCause } from "./execution";
 import type { ObservationGradeAnswer } from "./observation";
 import type { ObservationQuestionKey } from "./question";
+import type { ObservationAssociationProvenance } from "./task-association";
+import type { ObservationStageState } from "./task-stages";
 import type { ObservationRelationType } from "../projection/extractor";
 
 export interface ObservationPaged<Item> extends ObservationPageRequest { readonly items: readonly Item[]; readonly total: number }
@@ -27,7 +29,7 @@ export type ObservationLineageEntry =
   /** An edge such an occurrence declared; `unresolved_target_ref` keeps a target not captured visible. */
   | { readonly kind: "edge"; readonly relation: ObservationCompositeRelation; readonly revision_id: ObservationArtifactRevisionId; readonly item_path: string }
   /** An item linked to it, current or superseded, with the explicit edge that links them. */
-  | { readonly kind: "contribution"; readonly item: ObservationContributionItem; readonly relation_id: ObservationRelationId; readonly evidence_ref: string; readonly asserted_by: string }
+  | { readonly kind: "contribution"; readonly item: ObservationContributionItem; readonly provenance: ObservationAssociationProvenance }
   /** An item that named this logical item before any such item was captured. */
   | { readonly kind: "unresolved"; readonly item: ObservationContributionItem; readonly relation_id: ObservationRelationId; readonly unresolved_target_ref: string; readonly evidence_ref: string };
 
@@ -50,6 +52,7 @@ export interface ObservationContributionItem {
   readonly stage: string;
   readonly unit_id: ObservationUnitId;
   readonly is_current: boolean;
+  readonly provenance: ObservationAssociationProvenance | null;
 }
 
 export interface ObservationUnresolvedReference { readonly item: ObservationContributionItem; readonly relation_id: ObservationRelationId; readonly unresolved_target_ref: string; readonly evidence_ref: string }
@@ -63,11 +66,10 @@ export interface ObservationLogicalItemComposite {
   readonly stages: readonly ObservationStageComposite[];
 }
 
-export interface ObservationStageComposite {
+export type ObservationStageComposite = ObservationStageState & {
   readonly stage: string;
   readonly publication: ObservationStagePublication;
-  /** `gap` means no current item here is linked: a coverage gap, never a pass or a zero. */
-  readonly coverage: "linked" | "gap";
+  readonly results: readonly ObservationScopedResult[];
   readonly totals: ObservationStageTotals;
   readonly questions: readonly ObservationQuestionSummary[];
   readonly answers: readonly ObservationAnswerCount[];
@@ -86,6 +88,20 @@ export interface ObservationCompositeRelation {
   readonly type: ObservationRelationType;
   readonly asserted_by: string;
   readonly evidence_ref: string;
+}
+
+export type ObservationSubjectScope = { readonly kind: "per_task"; readonly task_id: ObservationLogicalItemId } | { readonly kind: "per_item" };
+
+export interface ObservationQuestionSummary extends ObservationQuestionKey { readonly item_kind: string; readonly question_text: string | null; readonly allowed_values: readonly ObservationJsonValue[] | null }
+
+export interface ObservationScopedResult {
+  readonly item: ObservationContributionItem;
+  readonly scope: ObservationSubjectScope;
+  readonly question: ObservationQuestionSummary;
+  readonly evaluator: ObservationCompositeEvaluator | null;
+  readonly evidence_set_id: ObservationEvidenceSetId;
+  readonly provenance: ObservationAssociationProvenance;
+  readonly status: ObservationItemStatusKey | { readonly state: "pinned" } | { readonly state: "answered"; readonly answer: ObservationCompositeAnswer };
 }
 
 export interface ObservationAnswerDetail extends ObservationCompositeAnswer { readonly grader: ObservationGraderKey }
@@ -119,7 +135,7 @@ export type ObservationItemStatusKey =
 
 export type ObservationStagePublication =
   | { readonly state: "pending" }
-  /** `is_final` comes from the stage alone: answers, links and approvals never decide it. */
+  /** `is_final` comes from the stage and the run alone: answers, links and approvals never decide it. */
   | { readonly state: "published"; readonly is_final: boolean; readonly unit_ids: readonly ObservationUnitId[] };
 
 export interface ObservationStageTotals {
@@ -133,13 +149,19 @@ export interface ObservationStageTotals {
   readonly superseded_answers: number;
 }
 
-export interface ObservationQuestionSummary extends ObservationQuestionKey { readonly item_kind: string; readonly question_text: string | null; readonly allowed_values: readonly ObservationJsonValue[] | null }
+export interface ObservationAnswerCount { readonly question: ObservationQuestionSummary; readonly grader: ObservationGraderKey; readonly answer: ObservationAnswerKey; readonly count: number; readonly drilldown: ObservationCompositeDrilldownKey }
 
-export interface ObservationAnswerCount { readonly question: ObservationQuestionKey; readonly grader: ObservationGraderKey; readonly answer: ObservationAnswerKey; readonly count: number; readonly drilldown: ObservationCompositeDrilldownKey }
+export interface ObservationStatusCount { readonly question: ObservationQuestionSummary; readonly evaluator_definition_id: ObservationEvaluatorDefinitionId | null; readonly status: ObservationItemStatusKey; readonly count: number; readonly drilldown: ObservationCompositeDrilldownKey }
 
-export interface ObservationStatusCount { readonly question: ObservationQuestionKey; readonly evaluator_definition_id: ObservationEvaluatorDefinitionId | null; readonly status: ObservationItemStatusKey; readonly count: number; readonly drilldown: ObservationCompositeDrilldownKey }
+export interface ObservationDisagreementCount { readonly question: ObservationQuestionSummary; readonly item_count: number; readonly drilldown: ObservationCompositeDrilldownKey }
 
-export interface ObservationDisagreementCount { readonly question: ObservationQuestionKey; readonly item_count: number; readonly drilldown: ObservationCompositeDrilldownKey }
+export interface ObservationCompositeEvaluator {
+  readonly evaluator_definition_id: ObservationEvaluatorDefinitionId;
+  readonly kind: "model" | "code" | "human";
+  readonly backend_kind: string;
+  readonly provider: string;
+  readonly model: string | null;
+}
 
 export interface ObservationCompositeAnswer {
   readonly task_id: ObservationLogicalItemId | null;
