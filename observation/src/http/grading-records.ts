@@ -1,6 +1,6 @@
 import { stagesFromReadiness, type RollupContext } from "../grading/task-stages";
 import { filterCompositeStage, selectComposite, selectCompositePage, selectDrilldown, selectRunStages } from "../grading/composite";
-import { readValidatedRun, selectGradeableItems } from "../storage/grading-record-store";
+import { hasCapturedRun, readValidatedRun, selectGradeableItems } from "../storage/grading-record-store";
 import type { Hono } from "hono";
 import { z } from "zod";
 import { COMPOSITE_WINDOWS, EVIDENCE_WINDOWS, compositeRead, drilldownRowRead } from "../grading/item-reads";
@@ -54,6 +54,8 @@ export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies)
   app.get("/v1/runs/:run_id/grading-stages", async (c) => {
     const tenant = credentialFor(c.req.header("authorization"), deps.credentials.read);
     if (!tenant) return errorResponse(c, 403, "forbidden", "read credential required");
+    if (!await hasCapturedRun(deps.db, tenant, c.req.param("run_id")))
+      return errorResponse(c, 404, "not_found", "this tenant has captured no such run");
     const context = await contextFor(c.req.param("run_id"));
     if (!context.ok) return errorResponse(c, 502, "stage_read_failed", context.error.detail);
     const result = await readValidatedRun(deps.db, tenant, path, { run_id: c.req.param("run_id"), context: context.value, stage: null }, selectRunStages);

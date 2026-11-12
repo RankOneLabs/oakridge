@@ -288,3 +288,22 @@ integration("run readiness stages include unpublished and out-of-list stages, an
   const filtered = await get<{ stages: Paged<{ stage: string }> }>(h, "/v1/runs/run-1/logical-items/T1?stage=archived_stage");
   expect(filtered.body.stages.items.map((stage) => stage.stage)).toEqual(["archived_stage"]);
 }));
+
+integration("grading stages require tenant capture before reading DBOS readiness", async () => scratchDatabase(async (db) => {
+  const h = await setup(db);
+  const reads: string[] = [];
+  const app = createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: pins, stage_source: {
+    read: async (run_id) => {
+      reads.push(run_id);
+      return { ok: true, value: [{ unit_id: "u", stage: "custom", depends_on: [], status: { kind: "not_started" }, artifacts: [] }] };
+    }
+  } });
+  const request = (run_id: string, token = "read") => app.request(`/v1/runs/${run_id}/grading-stages`, { headers: { authorization: `Bearer ${token}` } });
+  expect((await request("missing")).status).toBe(404);
+  expect((await request("run-1", "other-read")).status).toBe(404);
+  expect(reads).toEqual([]);
+  expect((await request("run-1")).status).toBe(200); // A captured launch suffices before any revision.
+  await h.feed.launch(null, "null-input");
+  expect((await request("null-input")).status).toBe(200);
+  expect(reads).toEqual(["run-1", "null-input"]);
+}));

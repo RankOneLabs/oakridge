@@ -240,6 +240,20 @@ export function readItemAnswers(db: Database, tenant: TenantScope, occurrence_id
   });
 }
 
+/** A run belongs to this reader only after its tenant captured an event or revision. */
+export function hasCapturedRun(db: Database, tenant: TenantScope, run_id: string): Promise<boolean> {
+  return withTenant(db, tenant, async (trx) => {
+    const event = await trx.selectFrom("observation.source_event_outcome").select("run_id")
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", run_id).executeTakeFirst();
+    if (event) return true;
+    const revision = await trx.selectFrom("observation.source_revision").select("run_id")
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", run_id).executeTakeFirst();
+    return revision !== undefined;
+  });
+}
+
 /** HTTP stage selectors are validated in the very snapshot used for their rows. */
 export interface ValidatedRunRead { readonly run_id: string; readonly context: RollupContext; readonly stage: string | null }
 export function readValidatedRun<Value>(db: Database, tenant: TenantScope, path: CompositePath, request: ValidatedRunRead,
