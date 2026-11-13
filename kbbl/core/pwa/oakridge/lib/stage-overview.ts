@@ -67,7 +67,9 @@ export function selectStageEvaluation({ source, stages, findings, tasks, statuse
   const ids = new Set(rows.map(({ item }) => item.occurrence_id));
   const selectedStatuses = statuses.filter((status) => status.state !== "loaded" || ids.has(status.value.item.occurrence_id));
   const taskIds = new Set(rows.flatMap((row) => row.links.items.flatMap((link) => link.state === "resolved" ? [link.logical_item_id] : [])));
-  return { stages: stages.state === "loaded" ? { ...stages, value: stages.value.filter((stage) => stage.stage === source.unit.stage) } : stages,
+  // Observation stages are run-level grading context and carry no revision ids.
+  // Their labels are not authority stage identities; item reads below use revision ids.
+  return { stages,
     findings: findings.state === "loaded" ? { ...findings, value: rows } : findings,
     tasks: tasks.state === "loaded" ? { ...tasks, value: tasks.value.filter((task) => taskIds.has(task.logical_item_id)) } : tasks,
     statuses: selectedStatuses,
