@@ -3,6 +3,7 @@ import { Hono } from "hono";
 
 import type { ObservationServerConfig } from "./observation-health";
 import { mountObservationProxyRoutes, type ObservationProxyDeps } from "./observation-proxy";
+import { validateGradingDraft } from "../../pwa/oakridge/client-grading-config";
 
 const observation: ObservationServerConfig = { url: "http://observation.test/", namespace: "shadow", readToken: "read-secret", gradeToken: "grade-secret", configureToken: "configure-secret" };
 const ORIGIN = "http://kbbl.test";
@@ -183,6 +184,21 @@ const configurationRequest = (app: Hono, route: ConfigurationRoute, headers: Rec
     headers: { "content-type": "application/json", ...headers }, ...(route.method === "GET" ? {} : { body }) });
 
 describe("explicit configuration routes use only the server-held configure capability", () => {
+  test("the PWA validates the saved draft through the authenticated JSON proxy", async () => {
+    const calls = upstream(() => Response.json({ valid: true }));
+    const forward = globalThis.fetch;
+    const app = mounted();
+    globalThis.fetch = (async (input, init) => {
+      if (String(input).startsWith("/oakridge/")) {
+        const headers = new Headers(init?.headers);
+        headers.set("authorization", asOperator.authorization);
+        return app.request(String(input), { ...init, headers });
+      }
+      return forward(input, init);
+    }) as typeof fetch;
+    expect(await validateGradingDraft()).toEqual({ kind: "validated" });
+    expect(calls).toEqual([expect.objectContaining({ method: "POST", url: "http://observation.test/v1/grading-config/draft/validate", body: {}, authorization: "Bearer configure-secret" })]);
+  });
   test.each([...configurationRoutes])("$method $path forwards only after control authentication", async (route) => {
     const calls = upstream();
     const app = mounted();
