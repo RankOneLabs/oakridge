@@ -25,7 +25,7 @@ export function allProviderCredentialNames(): readonly string[] {
     .flatMap(({ credentials }) => [...credentials.required, ...credentials.optional]);
 }
 
-/** The runners grading-definitions.json selects, read through the same contract startup registers from. */
+/** The runners published grading configuration selects, read through the same contract startup registers from. */
 export function configuredRunnerNames(definitions: unknown, registry: GradingRegistry): Result<readonly string[], ProviderCredentialError> {
   const parsed = parseGradingDefinitions(definitions, registry);
   return parsed.ok ? ok(selectedRunners(parsed.value))

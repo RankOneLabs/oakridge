@@ -2,7 +2,7 @@
 import { planRegistration } from "../src/grading/configuration";
 import { registerDefinitions } from "../src/storage/grading-store";
 import { readLogicalItemComposite } from "../src/storage/grading-record-store";
-import { committedDefinitions, createFeed, fixtureBody, integration, oakridgeGradingRegistry, oakridgeProfile, scratchDatabase, tenant } from "./grading-fixture";
+import { fixtureDefinitions, createFeed, fixtureBody, integration, oakridgeGradingRegistry, oakridgeProfile, scratchDatabase, tenant } from "./grading-fixture";
 
 import { objectAt } from "../src/projection/extractor";
 import { expect, test } from "bun:test";
@@ -66,7 +66,7 @@ test("unlinked means pinned and unassociated, while unresolved references includ
 });
 
 integration("captured Oakridge task, plan, brief and linked findings appear together without decisions, requirements or other tasks", async () => scratchDatabase(async (db) => {
-  const registration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+  const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   const registered = await registerDefinitions(db, tenant, registration.value);
   if (!registered.ok) throw new Error(registered.error.detail);

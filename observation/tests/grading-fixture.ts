@@ -5,7 +5,7 @@ import { canonicalDigest } from "canonical-json";
 import { Client } from "pg";
 import { sql } from "kysely";
 import { configuredRunnerNames, credentialsForRunners } from "../src/grading/provider-credentials";
-import { GRADING_DEFINITIONS_FILE } from "../src/main";
+const GRADING_FIXTURE = new URL("./fixtures/grading-definitions.json", import.meta.url);
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest, type EvaluatorDefinition } from "../src/grading/evaluator";
@@ -125,13 +125,13 @@ export function createFeed(db: Database, scope: TenantScope = tenant, configurat
 
 export const occurrenceIdOf = (value: string): ItemOccurrenceId => value as ItemOccurrenceId;
 
-/** The committed selection, read from the file the service reads. Tests take graders from here. */
-export const committedDefinitions = async (): Promise<GradingDefinitions> => {
-  const parsed = parseGradingDefinitions(await Bun.file(GRADING_DEFINITIONS_FILE).json(), oakridgeGradingRegistry);
+/** Test-owned definitions; runtime code never reads this fixture. */
+export const fixtureDefinitions = async (): Promise<GradingDefinitions> => {
+  const parsed = parseGradingDefinitions(await Bun.file(GRADING_FIXTURE).json(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(JSON.stringify(parsed.error));
   return parsed.value;
 };
-const committedRegistration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+const committedRegistration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
 if (!committedRegistration.ok) throw new Error(JSON.stringify(committedRegistration.error));
 export const OAKRIDGE_QUESTIONS = committedRegistration.value.questions;
 export function questionVersion(question_id: string): string {

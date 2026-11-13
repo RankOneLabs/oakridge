@@ -15,7 +15,7 @@ import { withTenant, type Database } from "../src/storage/database";
 import { createEvidenceReconciler, type EvidenceReconciler } from "../src/storage/evidence-pipeline";
 import { claimNext, completeExecution, failExecution, markRequestSent, readItemMeasurements, readRunSpend } from "../src/storage/execution-store";
 import { registerDefinitions } from "../src/storage/grading-store";
-import { committedDefinitions, createFeed, databaseUrl, DEFINITION_ID, fixtureBody, integration, runConfig, SCHEMA_VERSION, scratchDatabase, tenant,
+import { fixtureDefinitions, createFeed, databaseUrl, DEFINITION_ID, fixtureBody, integration, runConfig, SCHEMA_VERSION, scratchDatabase, tenant,
   type Feed } from "./grading-fixture";
 
 const HEAD = "1111111111111111111111111111111111111111";
@@ -61,7 +61,7 @@ interface Lifecycle {
 }
 
 async function lifecycle(db: Database, retry_limit = 3): Promise<Lifecycle> {
-  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
+  const parsed = parseGradingDefinitions(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   const planned = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!planned.ok) throw new Error(planned.error.detail);

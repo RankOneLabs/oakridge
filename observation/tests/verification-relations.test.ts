@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
 import type { LogicalItemComposite, LogicalItemLineage } from "../src/grading/composite";
-import { oakridgeGradingRegistry, committedDefinitions, integration, scratchDatabase } from "./grading-fixture";
+import { oakridgeGradingRegistry, fixtureDefinitions, integration, scratchDatabase } from "./grading-fixture";
 import type { MeasurementReadback, RelationCheckpoint } from "../verification/proof-contract";
 import { compositeOriginalAnswerChecks, lineageChecks, sharedRunChecks, sharedTaskMatrix, totalRequests, unchangedChecks, UNRESOLVED_TASK, withoutLinks, type SharedRunReads } from "../verification/relations";
 
@@ -69,7 +69,7 @@ test("a real shared run must reach both cohorts, real revisions and pending inte
 });
 
 integration("the shared-task matrix passes through real delivery, and sends no request", async () => scratchDatabase(async (db) => {
-  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
+  const parsed = parseGradingDefinitions(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);

@@ -4,7 +4,7 @@ import type { ArtifactRevisionId, ItemOccurrenceId, QuestionId, RunId } from "..
 import { planRegistration } from "../src/grading/configuration";
 import { COLLECTION_PENDING, isPinTarget, type CapturePin } from "../src/grading/evidence";
 import { CONTRIBUTION_COVERAGE_ID, CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID, TASK_COVERAGE_ID } from "./grading-fixture";
-import { OAKRIDGE_QUESTIONS, committedDefinitions, oakridgeGradingRegistry, questionVersion, targetOf, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
+import { OAKRIDGE_QUESTIONS, fixtureDefinitions, oakridgeGradingRegistry, questionVersion, targetOf, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 import { collectPinnedQuestion, pinSubjectInTransaction, readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { NO_CAPTURE_PINS as NO_PINS, type CaptureConfiguration } from "../src/grading/evidence";
 import { withTenant, type Database } from "../src/storage/database";
@@ -126,7 +126,7 @@ integration("referenced definitions survive: a change under the same key is refu
 
 /** The committed definitions, registered: the configuration the service captures with. */
 async function committedCapture(db: Database) {
-  const registration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+  const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   const registered = await registerDefinitions(db, tenant, registration.value);
   if (!registered.ok) throw new Error(registered.error.detail);
@@ -218,9 +218,9 @@ integration("a pin refuses an occurrence outside its declared target, and the re
 // Recorded before implementation from questions.ts and catalogue.ts at 1c7d8017 (#799).
 // Questions were selected by item kind, including both acceptance-entry extractors.
 test("every pre-cleanup question/catalogue target has a capture pin", async () => {
-  const { committedDefinitions, oakridgeGradingRegistry } = await import("./grading-fixture");
+  const { fixtureDefinitions, oakridgeGradingRegistry } = await import("./grading-fixture");
   const { planRegistration } = await import("../src/grading/configuration");
-  const registration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+  const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   expect(registration.value.capture.pins).toMatchObject([
     { question_id: "finding.relevance", item_kind: "finding", artifact_kind: "analysis", item_selector: "/findings/*" },
@@ -233,11 +233,11 @@ test("every pre-cleanup question/catalogue target has a capture pin", async () =
 });
 
 integration("the pre-cleanup fixture retains every target, task-less subject, and evidence reference family", async () => scratchDatabase(async (db) => {
-  const { committedDefinitions, oakridgeGradingRegistry } = await import("./grading-fixture");
+  const { fixtureDefinitions, oakridgeGradingRegistry } = await import("./grading-fixture");
   const { planRegistration } = await import("../src/grading/configuration");
   const { registerDefinitions } = await import("../src/storage/grading-store");
   const { CaptureArtifactSource } = await import("../src/storage/capture-artifact-source");
-  const registration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+  const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   await registerDefinitions(db, tenant, registration.value);
   const feed = createFeed(db, tenant, registration.value.capture);

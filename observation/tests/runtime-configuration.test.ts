@@ -5,7 +5,7 @@ import { oakridgeProfile } from "../src/producers/oakridge/profile";
 import { createApp } from "../src/http/app";
 import { withTenant } from "../src/storage/database";
 import { registerDefinitions } from "../src/storage/grading-store";
-import { committedDefinitions, integration, oakridgeGradingRegistry, revisionOutcome, scratchDatabase, tenant } from "./grading-fixture";
+import { fixtureDefinitions, integration, oakridgeGradingRegistry, revisionOutcome, scratchDatabase, tenant } from "./grading-fixture";
 
 function snapshot(definitions: GradingDefinitions, version: number | null = null) {
   const registration = planRegistration(definitions, oakridgeGradingRegistry);
@@ -14,7 +14,7 @@ function snapshot(definitions: GradingDefinitions, version: number | null = null
   return runtimeSnapshot({ registration: registration.value, version, hash: hash.value,
     profile: oakridgeProfile(registration.value.questions, registration.value.collector), applied_at: "2026-11-01T00:00:00Z" });
 }
-const definitions = await committedDefinitions();
+const definitions = await fixtureDefinitions();
 
 test("runtime replacement swaps a complete immutable snapshot and retains earlier snapshots", () => {
   const initial = snapshot(definitions);

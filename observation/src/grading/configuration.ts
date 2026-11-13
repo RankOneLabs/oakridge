@@ -56,7 +56,7 @@ interface GradingDefinitionFields {
   readonly evaluators: readonly EvaluatorEntry[];
 }
 export type GradingDefinition = GradingDefinitionFields & QuestionScope;
-/** observation/grading-definitions.json is the only question and evaluator selection. */
+/** Published install-state configuration selects questions and evaluators. */
 export type GradingDefinitions = readonly GradingDefinition[];
 const configurationSchema = z.array(definitionSchema).min(1);
 
@@ -155,7 +155,7 @@ function shapeFailure(raw: unknown, issue: z.core.$ZodIssue | undefined): Result
   const index = issue?.path[0];
   const entry: unknown = Array.isArray(raw) && typeof index === "number" ? raw[index] : null;
   const identity = z.object({ id: z.string() }).safeParse(entry);
-  const entity_id = identity.success ? identity.data.id : "grading-definitions.json";
+  const entity_id = identity.success ? identity.data.id : "published grading configuration";
   const scope = z.object({ scope: z.string(), task_ids: z.unknown().optional() }).safeParse(entry);
   const detail = issue ? `${issue.path.join(".") || "/"}: ${issue.message}` : "invalid definitions";
   if (scope.success) {
@@ -234,7 +234,7 @@ export interface RegisteredGrader {
   readonly question: QuestionKey;
   readonly evaluator_definition_id: EvaluatorDefinitionId;
 }
-/** Everything startup registers, and the pins a capture writes until the next restart. */
+/** Everything startup registers, and the pins a capture writes until the next runtime refresh. */
 export interface GradingRegistration {
   readonly questions: readonly QuestionDefinition[];
   readonly evaluators: readonly EvaluatorDefinition[];

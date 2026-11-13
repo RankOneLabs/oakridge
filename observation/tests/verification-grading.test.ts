@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { machineGraders, parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
-import { oakridgeGradingRegistry, committedDefinitions } from "./grading-fixture";
+import { oakridgeGradingRegistry, fixtureDefinitions } from "./grading-fixture";
 import { CONCURRENT_ESTIMATE_PER_CALL, concurrencyEdit, EDITED_ESTIMATE_PER_CALL, editedRunChecks, failureChecks, gradingEdit, launchConfigCheck,
   offRunChecks, pinnedArrivalChecks, pinReadbackChecks, secondWorkerChecks, settledRun, unlinkedAnalysisChecks,
   waitingCaptureChecks } from "../verification/grading";
@@ -8,7 +8,7 @@ import type { FrozenEvidenceReadback, MeasurementReadback, PinReadback, SecondWo
   StaleSettlementReadback } from "../verification/proof-contract";
 
 const configured = async () => {
-  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
+  const parsed = parseGradingDefinitions(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   return parsed.value;
 };

@@ -1,18 +1,18 @@
 /**
  * Startup registration, capture pins and per-question evidence on the real shadow, across a
- * grading-definitions.json edit and restart, with a required lookup forced to wait on a real capture:
+ * runtime publication, with a required lookup forced to wait on a real capture:
  *
  *   start on the committed selection -> launch a real run and stop observation while it runs to
  *   its assessment -> withhold the launch repository holding the assessed commit and restart, so
- *   observation captures the run and its file-citing questions wait -> edit grading-definitions.json and
- *   restart: the edit registers new definitions, the first run keeps its pins and still waits ->
- *   supply the repository and restart: the same questions become ready on their original pins,
+ *   observation captures the run and its file-citing questions wait -> publish new configuration on the running service:
+ *   publication registers new definitions, the first run keeps its pins and still waits ->
+ *   supply the repository: the same questions become ready on their original pins,
  *   reading each cited file at the assessed commit -> capture a second real run with observation
  *   up, which takes the edited selection, while evidence frozen earlier in it stays unchanged by
  *   every later revision and link -> nothing executed, called a provider or answered throughout.
  *
  * Both runs are real development runs launched through source-run on the same stack. The
- * committed grading-definitions.json and the withheld repository are restored whatever happens. This
+ * original published configuration and the withheld repository are restored whatever happens. This
  * scenario sends no provider request; automatic-execution-lifecycle continues it with real
  * executions.
  */
@@ -58,7 +58,7 @@ export interface RegistrationSource {
 }
 
 /** The edit an operator makes to swap graders: new instructions for every configured grader.
- * Only grading-definitions.json changes; the runner and model stay real so a later cohort can execute them. */
+ * Only published configuration changes; the runner and model stay real so a later cohort can execute them. */
 export function editedGraders(configuration: GradingDefinitions): GradingDefinitions {
   return configuration.map((entry) => ({ ...entry, evaluators: entry.evaluators.map((grader) => {
     if (!("model" in grader)) return grader;
@@ -70,7 +70,7 @@ export function editedGraders(configuration: GradingDefinitions): GradingDefinit
   }) }));
 }
 
-/** The committed grading-definitions.json, its edit, and the registration each plans. */
+/** The original published configuration, its edit, and the registration each plans. */
 export interface GraderPlans {
   readonly committed: GradingDefinitions;
   readonly edited: GradingDefinitions;
@@ -85,11 +85,11 @@ function planned(configuration: GradingDefinitions, entity_id: string): Result<G
 }
 function parsed(text: string): Result<GradingDefinitions, ProofFailure> {
   let json: unknown;
-  try { json = JSON.parse(text); } catch (cause) { return err(planFailure("grading-definitions.json", cause instanceof Error ? cause.message : String(cause))); }
+  try { json = JSON.parse(text); } catch (cause) { return err(planFailure("published configuration", cause instanceof Error ? cause.message : String(cause))); }
   const configuration = parseGradingDefinitions(json, oakridgeGradingRegistry);
-  return configuration.ok ? configuration : err(planFailure("grading-definitions.json", configuration.error.detail));
+  return configuration.ok ? configuration : err(planFailure("published configuration", configuration.error.detail));
 }
-/** Parses the committed grading-definitions.json, derives the edit and plans both registrations. */
+/** Parses the original published configuration, derives the edit and plans both registrations. */
 export function graderPlans(text: string): Result<GraderPlans, ProofFailure> {
   const committed = parsed(text);
   if (!committed.ok) return committed;
@@ -388,11 +388,22 @@ export function laterRevisionChecks(snapshots: readonly RunReadback[], final: Ru
 
 export async function registrationScenario(io: ProofIo, source: RegistrationSource): Promise<ScenarioReport> {
   if (await io.stackAnswers()) return { id: "registration", status: "failed", evidence: NO_EVIDENCE,
-    checks: [check("this proof owns the stack", false, "a shadow is already running; this proof restarts it with an edited grading-definitions.json")] };
-  const original = await io.readGraders();
-  const plans = graderPlans(original);
+    checks: [check("this proof owns the stack", false, "a shadow is already running; this proof owns its lifecycle and publishes configuration edits")] };
+  try { return await registrationScenarioOwned(io, source); }
+  finally { await io.stopStack(); await source.supplyRepository(); }
+}
+async function registrationScenarioOwned(io: ProofIo, source: RegistrationSource): Promise<ScenarioReport> {
+  const initial = await io.startStack();
+  if (!initial.ok) {
+    await source.supplyRepository();
+    return { id: "registration", status: "failed", evidence: NO_EVIDENCE, checks: [check("the stack starts", false, initial.error.detail)] };
+  }
+  const ready = await settleObservation(io);
+  if (!observationSettled(ready.health)) throw new Error(`observation is unavailable: ${ready.health}; ${ready.launcher}`);
+  const original = await io.readGradingConfiguration();
+  const plans = graderPlans(JSON.stringify(original.definitions));
   if (!plans.ok) return { id: "registration", status: "failed", evidence: NO_EVIDENCE,
-    checks: [check("grading-definitions.json and its edit plan a registration", false, `${plans.error.entity_id}: ${plans.error.detail}`)] };
+    checks: [check("published configuration and its edit plan a registration", false, `${plans.error.entity_id}: ${plans.error.detail}`)] };
   const { edited, committed_plan, edited_plan } = plans.value;
   const checks: ProofCheck[] = [];
   const registrations: RegistrationReadback[] = [];
@@ -411,7 +422,7 @@ export async function registrationScenario(io: ProofIo, source: RegistrationSour
     return read;
   };
   const startOn = async (checkpoint: string, registration: GradingRegistration): Promise<boolean> => {
-    const started = await io.startStack();
+    const started = await io.stackAnswers() ? ok(undefined) : await io.startStack();
     checks.push(check(`the stack starts (${checkpoint})`, started.ok, started.ok ? "answered" : started.error.detail));
     if (!started.ok) return false;
     const settled = await settleObservation(io);
@@ -457,9 +468,8 @@ export async function registrationScenario(io: ProofIo, source: RegistrationSour
     const waited = atCapture.pins.filter(isWaiting);
     rows = await gradingRows(io);
     checks.push(check("capture and collection execute nothing", nothingGraded(rows), JSON.stringify(rows)));
-    await io.stopStack();
 
-    await io.writeGraders(JSON.stringify(edited, null, 2) + "\n");
+    await io.publishGradingConfiguration(edited);
     if (!await startOn("edited, repository withheld", edited_plan)) return finish();
     const committedIds = definitionIds(committed_plan);
     const editedIds = definitionIds(edited_plan);
@@ -469,7 +479,6 @@ export async function registrationScenario(io: ProofIo, source: RegistrationSour
       `${stored.length} stored; ${editedIds.filter((id) => !committedIds.includes(id)).length} new`));
     const afterSwap = record(await readUntil(io, first_run.run_id, "first-after-swap"));
     checks.push(...retainedChecks(atCapture.pins, afterSwap, frozen, "after the swap"), stillWaitingCheck(waited, afterSwap));
-    await io.stopStack();
 
     const supplied = await source.supplyRepository();
     checks.push(check("the withheld repository is supplied", supplied.ok, supplied.ok ? supplied.value : supplied.error.detail));
@@ -499,8 +508,10 @@ export async function registrationScenario(io: ProofIo, source: RegistrationSour
       frozen.size > 0 && nothingGraded(rows), `${frozen.size} frozen evidence set(s); ${JSON.stringify(rows)}`));
     return finish();
   } finally {
-    await io.stopStack();
-    await io.writeGraders(original);
+    try {
+      if (!await io.stackAnswers()) { const restored = await io.startStack(); if (!restored.ok) throw new Error(restored.error.detail); }
+      await io.publishGradingConfiguration(original.definitions);
+    } finally { await io.stopStack(); }
     await source.supplyRepository();
   }
 }

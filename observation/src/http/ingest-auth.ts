@@ -2,9 +2,10 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { ReviewerId } from "../domain/identity";
 import type { TenantScope } from "../storage/database";
 
+export interface ConfigureCredential { readonly token: string }
 export interface Credential extends TenantScope { readonly token: string; readonly reviewer_id?: string }
 export interface Credentials { readonly ingest: readonly Credential[]; readonly read: readonly Credential[];
-  readonly grade?: readonly Credential[] }
+  readonly grade?: readonly Credential[]; readonly configure?: readonly ConfigureCredential[] }
 
 function sameSecret(left: string, right: string): boolean {
   const a = Buffer.from(left);
@@ -15,7 +16,7 @@ export function bearerToken(header: string | undefined): string | null {
   const match = /^Bearer ([^\s]+)$/.exec(header ?? "");
   return match?.[1] ?? null;
 }
-export function credentialFor(header: string | undefined, credentials: readonly Credential[]): Credential | null {
+export function credentialFor<T extends ConfigureCredential>(header: string | undefined, credentials: readonly T[]): T | null {
   const token = bearerToken(header);
   if (!token) return null;
   return credentials.find((credential) => sameSecret(token, credential.token)) ?? null;
@@ -40,8 +41,13 @@ export function credentialsFromEnv(env: NodeJS.ProcessEnv): Credentials {
   const grade = configuredCredentials(env.OBSERVATION_GRADE_CREDENTIALS);
   if (grade.some((credential) => !credential.reviewer_id?.trim()))
     throw new Error("grade credentials require a reviewer_id binding");
-  const all = [...ingest, ...read, ...grade];
+  const raw: unknown = JSON.parse(env.OBSERVATION_CONFIGURE_CREDENTIALS ?? "[]");
+  if (!Array.isArray(raw) || !raw.every((item) => item && typeof item === "object"
+    && Object.keys(item).length === 1 && typeof item.token === "string" && item.token.length > 0))
+    throw new Error("invalid observation configure credential configuration");
+  const configure = raw as ConfigureCredential[];
+  const all = [...ingest, ...read, ...grade, ...configure];
   if (all.some((item, index) => all.findIndex((candidate) => sameSecret(item.token, candidate.token)) !== index))
     throw new Error("observation credential tokens must be unique across capabilities");
-  return { ingest, read, grade };
+  return { ingest, read, grade, configure };
 }

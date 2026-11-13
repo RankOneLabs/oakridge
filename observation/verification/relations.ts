@@ -482,9 +482,6 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
       provider_request_count: totalRequests(checkpoints) };
   };
   const finish = (): ScenarioReport => ({ id: "relations", status: scenarioStatus(checks), checks, evidence: evidence() });
-  const original = await io.readGraders();
-  const plans = graderPlans(original);
-  if (!plans.ok) { checks.push(check("grading-definitions.json plans a registration", false, plans.error.detail)); return finish(); }
   const started = await io.startStack();
   checks.push(check("the stack starts on the committed selection", started.ok, started.ok ? "answered" : started.error.detail));
   if (!started.ok) return finish();
@@ -493,6 +490,8 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
     const settled = await settleObservation(io);
     checks.push(check("observation is up", observationSettled(settled.health), `health ${settled.health}; launcher ${settled.launcher}`));
     if (!observationSettled(settled.health)) return finish();
+    const plans = graderPlans(JSON.stringify((await io.readGradingConfiguration()).definitions));
+    if (!plans.ok) { checks.push(check("published configuration plans a registration", false, plans.error.detail)); return finish(); }
     const opened = await source.openObservation();
     checks.push(check("the shadow's observation database opens for composite reads", opened.ok, opened.ok ? opened.value.tenant.namespace : opened.error.detail));
     if (!opened.ok) return finish();

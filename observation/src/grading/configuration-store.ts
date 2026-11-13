@@ -1,14 +1,15 @@
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, link, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import { randomUUID, createHash } from "node:crypto";
 import { canonicalDigest } from "canonical-json";
 import { err, ok, type Result } from "../domain/primitives";
 import { configurationDocumentSchema, configurationHash, type DraftConfiguration, type PublishedConfiguration, type GradingDefinitions } from "./configuration";
 
 interface StoredJsonDocument { readonly document: unknown }
 export interface StoredDraft { readonly document: DraftConfiguration; readonly digest: string }
-interface StoreErrorContext { readonly operation: "grading_config_store"; readonly entity_id: string; readonly detail: string }
+interface StoreErrorContext { readonly operation: "grading_config_store"; readonly entity_id: string; readonly detail: string; readonly version?: number; readonly hash?: string | null }
 export type ConfigurationStoreError = StoreErrorContext & (
   | { readonly kind: "draft_conflict"; readonly current_digest: string | null }
   | { readonly kind: "io" | "invalid_document" | "invalid_version" }
@@ -71,7 +72,12 @@ export function createGradingConfigStore(root: string): GradingConfigStore {
     try {
       await checkDirectories(is_version);
       const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      try { return ok({ document: JSON.parse(await file.readFile("utf8")) as unknown }); } finally { await file.close(); }
+      try {
+        const text = await file.readFile("utf8");
+        try { return ok({ document: JSON.parse(text) as unknown }); }
+        catch (cause) { return err({ operation: "grading_config_store", kind: "invalid_document", entity_id: path,
+          detail: detailOf(cause), hash: createHash("sha256").update(text).digest("hex") }); }
+      } finally { await file.close(); }
     } catch (cause) { return codeOf(cause) === "ENOENT" ? ok(null) : failure("io", path, detailOf(cause)); }
   };
   const write = async (path: string, document: DraftConfiguration | PublishedConfiguration, exclusive: boolean): Promise<Result<void, ConfigurationStoreError>> => {
@@ -108,20 +114,27 @@ export function createGradingConfigStore(root: string): GradingConfigStore {
   const readVersion: ConfigurationStoreTransaction["readVersion"] = async (version) => {
     if (!validVersion(version)) return failure("invalid_version", String(version), "version must be an integer from 1 to 999999");
     const raw = await read(versionPath(version), true);
-    if (!raw.ok) return raw;
+    if (!raw.ok) return err({ ...raw.error, version, hash: raw.error.hash ?? null });
     if (raw.value === null) return ok(null);
+    const identity = z.object({ hash: z.string() }).safeParse(raw.value.document);
+    const diagnostic_hash = identity.success ? identity.data.hash : createHash("sha256").update(JSON.stringify(raw.value.document)).digest("hex");
+    const rejected = (detail: string): Result<never, ConfigurationStoreError> => err({ operation: "grading_config_store",
+      kind: "invalid_document", entity_id: String(version), detail, version, hash: diagnostic_hash });
     const parsed = configurationDocumentSchema.safeParse(raw.value.document);
     if (!parsed.success || parsed.data.status !== "published" || parsed.data.version !== version)
-      return failure("invalid_document", String(version), "expected matching published version");
+      return rejected("expected matching published version");
     const hash = configurationHash(parsed.data.definitions);
-    if (!hash.ok || hash.value !== parsed.data.hash) return failure("invalid_document", String(version), "published hash mismatch");
+    if (!hash.ok || hash.value !== parsed.data.hash) return rejected("published hash mismatch");
     return ok(parsed.data);
   };
   const latestVersion: ConfigurationStoreTransaction["latestVersion"] = async () => {
     const listed = await listVersions();
     if (!listed.ok) return listed;
     const version = listed.value.at(-1);
-    return version === undefined ? ok(null) : readVersion(version);
+    if (version === undefined) return ok(null);
+    const latest = await readVersion(version);
+    return latest.ok && latest.value === null ? err({ operation: "grading_config_store", kind: "invalid_document",
+      entity_id: String(version), detail: "latest published version disappeared", version, hash: null }) : latest;
   };
   const transaction: ConfigurationStoreTransaction = {
     readDraft, listVersions, readVersion, latestVersion,
