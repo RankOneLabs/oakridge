@@ -1,11 +1,8 @@
-import dagre from "dagre";
+import { selectGraphLayout } from "./graph-layout";
 import type { CohortId } from "../run-types";
 import type { PlanCohort } from "./plan";
 
 export const PLAN_GRAPH_NODE = { width: 240, height: 92 } as const;
-const RANK_GAP = 48;
-const NODE_GAP = 24;
-const MARGIN = 4;
 
 export interface PlanGraphNode {
   cohort: PlanCohort;
@@ -29,46 +26,13 @@ export interface PlanGraphLayout {
   edges: PlanGraphEdge[];
 }
 
-interface Point {
-  x: number;
-  y: number;
-}
-
-/** Straight first and last legs with smooth bends between, so arrowheads meet nodes square-on. */
-function selectEdgePath(points: Point[]): string {
-  const first = points[0];
-  const last = points.at(-1);
-  if (!first || !last) return "";
-  const bends = points.slice(1, -1);
-  const curves = bends.map((bend, index) => {
-    const next = bends[index + 1] ?? last;
-    return ` Q${bend.x},${bend.y} ${(bend.x + next.x) / 2},${(bend.y + next.y) / 2}`;
-  });
-  return `M${first.x},${first.y}${curves.join("")} L${last.x},${last.y}`;
-}
-
 export function selectPlanGraphLayout(cohorts: PlanCohort[]): PlanGraphLayout {
-  const graph = new dagre.graphlib.Graph();
-  graph.setGraph({ rankdir: "TB", ranksep: RANK_GAP, nodesep: NODE_GAP, marginx: MARGIN, marginy: MARGIN });
-  graph.setDefaultEdgeLabel(() => ({}));
-
-  const ids = new Set(cohorts.map((cohort) => cohort.id));
-  for (const cohort of cohorts) graph.setNode(cohort.id, { ...PLAN_GRAPH_NODE });
-  // A dependency on a cohort the plan does not contain would make dagre invent a node.
-  const dependencies = cohorts.flatMap((cohort) =>
-    [...new Set(cohort.depends_on)].filter((from) => ids.has(from)).map((from) => ({ from, to: cohort.id })));
-  for (const { from, to } of dependencies) graph.setEdge(from, to);
-
-  dagre.layout(graph);
-
-  const { width = 0, height = 0 } = graph.graph();
-  return {
-    width,
-    height,
-    nodes: cohorts.map((cohort) => {
-      const { x, y } = graph.node(cohort.id);
-      return { cohort, x: x - PLAN_GRAPH_NODE.width / 2, y: y - PLAN_GRAPH_NODE.height / 2 };
-    }),
-    edges: dependencies.map(({ from, to }) => ({ from, to, path: selectEdgePath(graph.edge(from, to).points) })),
-  };
+  const layout = selectGraphLayout({
+    nodes: cohorts.map((cohort) => ({ id: cohort.id, ...PLAN_GRAPH_NODE })),
+    edges: cohorts.flatMap((cohort) => cohort.depends_on.map((from) => ({ from, to: cohort.id }))),
+  });
+  return { ...layout, nodes: cohorts.map((cohort, index) => {
+    const node = layout.nodes[index];
+    return { cohort, x: node?.x ?? 0, y: node?.y ?? 0 };
+  }) };
 }
