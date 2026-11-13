@@ -102,3 +102,23 @@ test("array prerequisites remain visible and parallel dependency kinds stay sepa
   expect(within(screen.getByRole("region", { name: "Workflow overview" })).getByText('· after: ["first"]')).toBeTruthy();
   expect(within(screen.getByTestId("or-def-selection")).getByText('["first"]')).toBeTruthy();
 });
+
+test("unit routes select their stage and route changes update aria-current", () => {
+  const view = render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation" }} onNavigate={() => {}} onBack={() => {}} />);
+  const inspector = within(screen.getByRole("region", { name: "Stage inspector" }));
+  const nav = within(inspector.getByLabelText("Stages in authored order"));
+  expect(nav.getByRole("link", { name: "implementation" }).getAttribute("aria-current")).toBe("page");
+  expect(nav.getByRole("link", { name: "cohort" }).getAttribute("aria-current")).toBe("page");
+  view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "integration" }} onNavigate={() => {}} onBack={() => {}} />);
+  expect(inspector.getByRole("heading", { name: "Stage: integration" })).toBeTruthy();
+  expect(nav.getByRole("link", { name: "implementation" }).hasAttribute("aria-current")).toBe(false);
+});
+test("let expressions preserve spacing and link whole identifiers to definitions", () => {
+  render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "cohort" }} onNavigate={() => {}} onBack={() => {}} />);
+  const completion = screen.getByRole("region", { name: "Completion" });
+  const expression = completion.querySelector("p code")!;
+  expect(expression.textContent).toBe(detail.effective_workflow.stages.cohort!.done_when);
+  const link = within(expression as HTMLElement).getByRole("link", { name: "pr_published" });
+  expect(link.getAttribute("href")).toContain("#stage-cohort-let-pr_published");
+  expect(document.getElementById("stage-cohort-let-pr_published")?.textContent).toContain("published(pr)");
+});
