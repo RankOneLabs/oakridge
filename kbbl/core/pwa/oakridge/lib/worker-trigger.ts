@@ -8,10 +8,23 @@ export interface WorkerTrigger {
   handoff: string | null;
 }
 export function selectWorkerTrigger(worker: OperatorWorker): WorkerTrigger {
-  if (worker.kind === "code") return { when: worker.when ?? null, every: worker.every ?? null,
-    evaluates: null, modes: worker.every ? ["periodic"] : [], handoff: null };
-  return { when: worker.when ?? null, every: null, evaluates: worker.evaluates ?? null,
-    modes: [...(worker.prompts.initial ? ["missing" as const] : []),
+  if (worker.kind === "code")
+    return {
+      when: worker.when ?? null,
+      every: worker.every ?? null,
+      evaluates: null,
+      modes: worker.every ? ["periodic"] : [],
+      handoff: null,
+    };
+  return {
+    when: worker.when ?? null,
+    every: null,
+    evaluates: worker.evaluates ?? null,
+    modes: [
+      ...(worker.prompts.initial ? ["missing" as const] : []),
       ...(worker.prompts.review ? ["review_of" as const] : []),
-      ...(worker.prompts.revise ? ["changes_requested" as const] : [])], handoff: worker.prompts.handoff ?? null };
+      ...(worker.prompts.revise ? ["changes_requested" as const] : []),
+    ],
+    handoff: worker.prompts.handoff ?? null,
+  };
 }

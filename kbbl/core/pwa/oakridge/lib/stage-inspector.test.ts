@@ -4,18 +4,50 @@ import type { OperatorDefinitionDetail } from "../operator-contracts/projections
 import { selectStageInspector } from "./stage-inspector";
 const detail = fixture.definition as unknown as OperatorDefinitionDetail;
 test("unit selection resolves implementation to cohort", () => {
-  expect(selectStageInspector(detail, { kind: "unit", path: "implementation" })?.name).toBe("cohort");
+  expect(selectStageInspector(detail, { kind: "unit", path: "implementation" })?.name).toBe(
+    "cohort",
+  );
 });
 test("artifact relationships join effective workers and reviews", () => {
-  expect(selectStageInspector(detail, { kind: "stage", stage: "cohort" })?.artifacts.find(item => item.name === "build_result"))
-    .toEqual({ name: "build_result", producers: ["builder"], consumers: ["pr_closed"] });
+  expect(
+    selectStageInspector(detail, { kind: "stage", stage: "cohort" })?.artifacts.find(
+      (item) => item.name === "build_result",
+    ),
+  ).toEqual({ name: "build_result", producers: ["builder"], consumers: ["pr_closed"] });
 });
 test("analysis exposes both spec consumers from dependency references", () => {
-  expect(selectStageInspector(detail, { kind: "stage", stage: "analysis" })?.readers.filter(reader => reader.outcome_path[0] === "spec").map(reader => reader.downstream).sort()).toEqual(["briefs", "planning"]);
+  expect(
+    selectStageInspector(detail, { kind: "stage", stage: "analysis" })
+      ?.readers.filter((reader) => reader.outcome_path[0] === "spec")
+      .map((reader) => reader.downstream)
+      .sort(),
+  ).toEqual(["briefs", "planning"]);
 });
 test("planning exposes collection reads of plan.cohorts", () => {
-  expect(selectStageInspector(detail, { kind: "stage", stage: "planning" })?.readers).toContainEqual({ upstream: "planning", downstream: "briefs", binding: { kind: "for_each" }, outcome_path: ["plan", "cohorts"] });
+  expect(
+    selectStageInspector(detail, { kind: "stage", stage: "planning" })?.readers,
+  ).toContainEqual({
+    upstream: "planning",
+    downstream: "briefs",
+    binding: { kind: "for_each" },
+    outcome_path: ["plan", "cohorts"],
+  });
 });
 test("unknown selections do not silently select a different stage", () => {
   expect(selectStageInspector(detail, { kind: "unit", path: "absent" })).toBeNull();
+});
+
+test("whole implementation outcomes are listed separately from named fields", () => {
+  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  expect(model?.wholeOutcomeReaders).toContainEqual({
+    upstream: "implementation",
+    downstream: "integration",
+    binding: { kind: "input", field: "cohorts" },
+    outcome_path: [],
+  });
+  expect(
+    model?.outcomes
+      .flatMap((outcome) => outcome.readers)
+      .every((reader) => reader.outcome_path.length > 0),
+  ).toBe(true);
 });

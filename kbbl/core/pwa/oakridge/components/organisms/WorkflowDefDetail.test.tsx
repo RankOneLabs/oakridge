@@ -122,3 +122,16 @@ test("let expressions preserve spacing and link whole identifiers to definitions
   expect(link.getAttribute("href")).toContain("#stage-cohort-let-pr_published");
   expect(document.getElementById("stage-cohort-let-pr_published")?.textContent).toContain("published(pr)");
 });
+
+test("whole-outcome reads appear once outside the per-field downstream lists", () => {
+  render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "cohort" }} onNavigate={() => {}} onBack={() => {}} />);
+  const completion = within(screen.getByRole("region", { name: "Completion" }));
+  expect(completion.getAllByRole("link", { name: "integration.input.cohorts" })).toHaveLength(1);
+  expect(completion.getByRole("link", { name: "integration.input.cohorts" }).parentElement?.textContent).toContain("reads the whole outcome");
+});
+
+test("direct stage anchors normalize selection and reveal template details", () => {
+  render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "cohort#stage-cohort-template-worker-pr_watch" }} onNavigate={() => {}} onBack={() => {}} />);
+  expect(within(screen.getByRole("region", { name: "Stage inspector" })).getByRole("heading", { name: "Stage: cohort" })).toBeTruthy();
+  expect((document.getElementById("stage-cohort-template-worker-pr_watch") as HTMLDetailsElement).open).toBe(true);
+});
