@@ -17,11 +17,14 @@ const references: ObservationEvidenceReference[] = [
 ];
 const definition: ObservationEvaluatorDefinition = { evaluator_definition_id: "jev", kind: "model", backend_kind: "pinned-runner", provider: "fixture", model: "pinned-model", prompt_digest: "pinned-prompt", instruction_text: "Pinned historical instructions: inspect the exact cited revision.", config_digest: "old-config", runtime_revision: "old-runtime", cost_metadata: null, seed: null, attempt_controls: null };
 function withDefinitions(status = 200) {
-  const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+  const base = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!base) throw new Error("Grading fixture requires the item-panel fetch harness");
   vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
     if (String(input).includes("/evaluator-definitions/")) {
       world.paths.push(String(input));
-      const evaluatorId = decodeURIComponent(String(input).split("/").at(-1)!);
+      const pathId = String(input).split("/").at(-1);
+      if (!pathId) throw new Error("Evaluator fixture requires a definition id in the request path");
+      const evaluatorId = decodeURIComponent(pathId);
       return status === 404 ? json({ error: { code: "not_found" } }, 404) : json({ ...definition, evaluator_definition_id: evaluatorId });
     }
     return base(input, init);
@@ -45,7 +48,8 @@ it("makes all four provenance classes inspectable with their recorded locations 
   const rows = await screen.findAllByTestId("or-item-evidence-reference");
   expect(rows.map((row) => row.getAttribute("data-provenance"))).toEqual(["artifact_revision", "run_input", "repository_file_at_commit", "agent_reported"]);
   for (const [index, reference] of references.entries()) {
-    const row = rows[index]!;
+    const row = rows[index];
+    if (!row) throw new Error(`Evidence fixture requires a rendered reference at index ${index}`);
     expect(within(row).getByText(index === 3 ? "Reported" : "Independently retrieved")).toBeTruthy();
     expect(row.querySelector(`[aria-label="Evidence content: ${reference.ref}"]`)?.textContent).toContain(String(reference.content));
   }

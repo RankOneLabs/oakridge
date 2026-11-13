@@ -10,7 +10,14 @@ export interface PromptView {
   readonly inputs: OperatorAttemptView["intent"];
   readonly session_id: string | null;
 }
-export function selectPromptView(unit: OperatorUnitView, attempt_id: string): PromptView | null {
+interface PromptSelection {
+  readonly units: readonly OperatorUnitView[];
+  readonly unit_id: string;
+  readonly attempt_id: string;
+}
+export function selectPromptView({ units, unit_id, attempt_id }: PromptSelection): PromptView | null {
+  const unit = units.find((candidate) => candidate.unit_id === unit_id);
+  if (!unit) return null;
   const attempt = unit.attempts.find((candidate) => candidate.id === attempt_id);
   if (!attempt) return null;
   const prompt = attempt.intent?.prompt;

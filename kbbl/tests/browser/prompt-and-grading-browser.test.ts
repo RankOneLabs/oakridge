@@ -61,6 +61,8 @@ test("prompt and grading detail browser handoff", async () => {
     page.on("pageerror", (error) => errors.push(error));
     await page.goto(`${server.url.href}?prompt&unit=${encodeURIComponent(unit.unit_id)}`);
     await page.getByText("Authorization: Bearer [redacted]", { exact: false }).waitFor();
+    expect(await page.getByRole("heading", { name: "Session context" }).count()).toBe(1);
+    expect(await page.getByText("Shared sessions can include other attempts and later tasks.", { exact: false }).count()).toBe(1);
     expect(await page.getByRole("region").count()).toBe(3);
     expect(await page.getByRole("textbox").count()).toBe(0);
     if (screenshots) { mkdirSync(screenshots, { recursive: true }); await page.screenshot({ path: join(screenshots, "prompt-viewer.png"), fullPage: true }); }

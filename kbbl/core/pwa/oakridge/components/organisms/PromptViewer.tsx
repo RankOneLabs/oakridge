@@ -7,8 +7,7 @@ import { StructuredValue } from "../molecules/StructuredValue";
 interface Props { runId: string; unitId: string; attemptId: string }
 export function PromptViewer({ runId, unitId, attemptId }: Props) {
   const units = useOperatorUnits(runId);
-  const unit = units.data?.find((candidate) => candidate.unit_id === unitId);
-  const view = unit ? selectPromptView(unit, attemptId) : null;
+  const view = selectPromptView({ units: units.data ?? [], unit_id: unitId, attempt_id: attemptId });
   const executed = useExecutedPrompt(view?.session_id ?? null);
   if (units.isError) return <FeedbackMessage tone="danger">Prompt provenance unavailable.</FeedbackMessage>;
   if (!units.data) return <FeedbackMessage>Loading prompt provenance…</FeedbackMessage>;
@@ -38,8 +37,10 @@ export function PromptViewerContent({ view, executed, isExecutedError = false }:
       {isExecutedError ? <FeedbackMessage tone="danger">Executed content unavailable: the session read failed.</FeedbackMessage>
         : executed === null ? <FeedbackMessage>Loading executed content…</FeedbackMessage>
         : executed.state === "not_retained" ? <FeedbackMessage>Executed content was not retained for this attempt.</FeedbackMessage>
-        : executed.turns.map((turn) => <div key={turn.turn_id} className="flex flex-col gap-1"><h4 className="break-all text-xs text-[var(--text-muted)]">{turn.turn_id} · {turn.created_at}</h4>
-          <pre className="m-0 whitespace-pre-wrap break-words rounded-md border border-[var(--border-decorative)] p-3 text-xs">{turn.text}</pre></div>)}
+        : <><h4 className="m-0 text-sm font-medium">Session context</h4>
+          <FeedbackMessage>This is the session-wide transcript. Shared sessions can include other attempts and later tasks. The selected attempt’s template and inputs are shown above. These turns crossed the dispatch boundary; delivery or completion can be uncertain.</FeedbackMessage>
+          {executed.turns.map((turn) => <div key={turn.turn_id} className="flex flex-col gap-1"><h5 className="m-0 break-all text-xs text-[var(--text-muted)]">{turn.turn_id} · {turn.created_at}</h5>
+            <pre className="m-0 whitespace-pre-wrap break-words rounded-md border border-[var(--border-decorative)] p-3 text-xs">{turn.text}</pre></div>)}</>}
     </section>
   </article>;
 }
