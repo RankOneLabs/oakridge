@@ -4,10 +4,18 @@ import { GradingConfigFeedback } from "../components/molecules/GradingConfigFeed
 import { useGradingConfiguration } from "../hooks/useGradingConfiguration";
 interface GradingConfigViewProps { readonly version: number | null; readonly onNavigate: (version: number | null) => void }
 export function GradingConfigView({ version, onNavigate }: GradingConfigViewProps) {
+  return <GradingConfigRoute key={version ?? "draft"} version={version} onNavigate={onNavigate} />;
+}
+function GradingConfigRoute({ version, onNavigate }: GradingConfigViewProps) {
   const query = useGradingConfiguration(version);
-  if (query.isPending || query.isFetching) return <p className="p-6">Loading grading configuration…</p>;
-  if (query.isError || !query.data.ok) return <div className="grid gap-3 p-6"><h1>Grading configuration unavailable</h1>
+  if (query.snapshot === null) {
+    if (query.isPending || query.isFetching || query.data?.ok) return <p className="p-6">Loading grading configuration…</p>;
+    return <div className="grid gap-3 p-6"><h1>Grading configuration unavailable</h1>
     <GradingConfigFeedback feedback={query.data?.ok === false ? query.data.feedback : { kind: "transport_error", detail: query.error?.message ?? "Unavailable" }} />
     <Button onClick={() => void query.refetch()}>Retry</Button></div>;
-  return <GradingConfigBrowser key={`${version}:${query.dataUpdatedAt}`} initial={query.data.value} version={version} onNavigate={onNavigate} onReload={() => void query.refetch()} />;
+  }
+  return <>
+    <GradingConfigFeedback feedback={query.reloadFeedback} />
+    <GradingConfigBrowser key={query.snapshot.revision} initial={query.snapshot.read} version={version} onNavigate={onNavigate} onReload={() => void query.reload()} />
+  </>;
 }

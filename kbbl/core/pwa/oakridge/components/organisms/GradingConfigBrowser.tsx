@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useGradingNavigationGuard } from "../../hooks/useGradingNavigationGuard";
 import { Button } from "../../../components/atoms/Button";
 import { GradingDefinitionEditor } from "./GradingDefinitionEditor";
 import { GradingJsonField } from "../molecules/GradingConfigFields";
@@ -29,6 +30,7 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload }:
   const header = configurationHeader(draft, read.latest);
   const summaries = definitionSummaries(version === null ? draft.definitions : publishedDefinitions(read.selected));
   const isBlocked = rawError !== null || hasJsonErrors(jsonInputs);
+  useGradingNavigationGuard(draft.dirty || isBlocked);
   const issues = validationIssues(feedback);
   const edit = (path: GradingPath, value: Json) => {
     setDraft((current) => editDraft(current, path, value));
@@ -86,10 +88,6 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload }:
     if (draft.dirty || isBlocked) setRestoreVersion(number);
     else void initialize(number);
   };
-  const navigate = (number: number | null) => {
-    if ((draft.dirty || isBlocked) && !window.confirm("Discard unsaved local edits and open another view?")) return;
-    onNavigate(number);
-  };
   return <div className="mx-auto grid w-full max-w-6xl gap-5 p-4 md:p-6" data-testid="grading-config-browser">
     <header className="grid gap-2"><p className="text-sm text-[var(--text-muted)]">Oakridge / Configuration</p><h1 className="text-2xl font-semibold">Grading configuration</h1>
       <p>{header.published}</p><p data-testid="grading-draft-status">{header.draft}</p>
@@ -97,8 +95,8 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload }:
       <details><summary>Runtime status</summary><pre className="whitespace-pre-wrap break-all">{JSON.stringify(read.runtime, null, 2)}</pre></details>
     </header>
     <nav aria-label="Grading versions" className="flex flex-wrap gap-2">
-      <Button disabled={isBusy} onClick={() => navigate(null)}>Latest and draft</Button>
-      {read.versions.versions.map((item) => <Button key={item.version} disabled={isBusy} onClick={() => navigate(item.version)}>Version {item.version}</Button>)}
+      <Button disabled={isBusy} onClick={() => onNavigate(null)}>Latest and draft</Button>
+      {read.versions.versions.map((item) => <Button key={item.version} disabled={isBusy} onClick={() => onNavigate(item.version)}>Version {item.version}</Button>)}
       {read.versions.damaged_versions.map((item) => <p role="alert" key={item.version}>Version {item.version} unavailable: {item.error.detail}</p>)}
       <Button disabled={isBusy} onClick={() => { if ((!draft.dirty && !isBlocked) || window.confirm("Discard local edits and reload the draft?")) onReload(); }}>Reload</Button>
     </nav>

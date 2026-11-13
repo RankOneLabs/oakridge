@@ -5,6 +5,14 @@
 import type { RoutePaneTarget } from "../oakridge/lib/run-workspace";
 import type { ArtifactId, Sid } from "./ids";
 
+type HashNavigationGuard = () => boolean;
+let navigationGuard: HashNavigationGuard | null = null;
+export function registerHashNavigationGuard(guard: HashNavigationGuard): () => void {
+  navigationGuard = guard;
+  return () => { if (navigationGuard === guard) navigationGuard = null; };
+}
+export const acceptHashNavigation = (): boolean => navigationGuard?.() ?? true;
+
 export function readHashSid(): string | null {
   const hash = window.location.hash.slice(1);
   if (!hash) return null;
