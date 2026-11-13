@@ -6,7 +6,7 @@ import type { ObservationPaged, ObservationPageRequest } from "../../grading-con
 import { useRunUnresolvedReferences } from "../../hooks/useRunUnresolvedReferences";
 import { selectSpecTaskId, taskLinkLabel } from "../../lib/grading";
 import { selectUnresolvedTaskAssociations } from "../../lib/grading-detail";
-import { ListPager } from "./ListPager";
+import { ListPager } from "../molecules/ListPager";
 
 interface Props {
   readonly runId: string;

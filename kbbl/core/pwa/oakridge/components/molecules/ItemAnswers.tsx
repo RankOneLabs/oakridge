@@ -1,4 +1,4 @@
-import { EvaluatorDefinition } from "./EvaluatorDefinition";
+import { EvaluatorDefinition } from "../organisms/EvaluatorDefinition";
 import { selectEvaluatorDefinitionIds } from "../../lib/grading-detail";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ObservationAnswerDetail, ObservationPageRequest } from "../../grading-contracts/grading/composite";

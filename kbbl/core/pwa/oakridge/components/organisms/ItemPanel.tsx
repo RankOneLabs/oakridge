@@ -1,4 +1,4 @@
-import { ItemTaskAssociations } from "../molecules/ItemTaskAssociations";
+import { ItemTaskAssociations } from "./ItemTaskAssociations";
 import { usePinnedQuestionPage } from "../../hooks/usePinnedQuestionPage";
 import type { ObservationQuestionKey } from "../../grading-contracts/grading/question";
 import { selectItemQuestion } from "../../lib/review-selection";
