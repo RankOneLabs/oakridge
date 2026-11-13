@@ -45,3 +45,21 @@ test("bare map and contains references and key expressions retain their bindings
     { binding: { kind: "for_each" }, outcome_path: [] }, { binding: { kind: "key" }, outcome_path: [] },
   ]);
 });
+
+test.each(["a . outcome.value", "a. outcome . value", "a\n.\toutcome . value", "map ( a , a . outcome . value )"])(
+  "whitespace preserves sibling outcome references in %s", (expression) => {
+    const result = selectDefinitionDependencies({ ...source("review-loop"), run: { outcome: {}, units: {
+      a: {}, b: { input: { value: expression } },
+    } } });
+    expect(result.references).toEqual([{ downstream: "b", binding: { kind: "input", field: "value" }, upstream: "a", outcome_path: ["value"] }]);
+  },
+);
+
+test.each(["input . a.outcome.value", "input\n.\ta . outcome . value", "input . map(a, item)", "input . contains(a, key)"])(
+  "whitespace in field access creates no sibling edges in %s", (expression) => {
+    const result = selectDefinitionDependencies({ ...source("review-loop"), run: { outcome: {}, units: {
+      a: {}, b: { input: { value: expression } },
+    } } });
+    expect(result).toEqual({ references: [], edges: [], per_member_after: [] });
+  },
+);

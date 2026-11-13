@@ -15,18 +15,46 @@ function selectBindings(unit: OperatorUnit): BindingExpression[] {
   ];
 }
 
+/** Tokens preserve quoted strings and field access while ignoring whitespace. */
+function selectExpressionTokens(expression: string): string[] {
+  return expression.match(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_][A-Za-z_0-9]*|[^\s]/g) ?? [];
+}
+
+function selectOutcomePath(tokens: readonly string[], index: number): string[] | null {
+  if (tokens[index - 1] === "." || tokens[index + 1] !== "." || tokens[index + 2] !== "outcome") return null;
+  const path: string[] = [];
+  for (let cursor = index + 3; tokens[cursor] === "."; cursor += 2) {
+    const field = tokens[cursor + 1];
+    if (!field || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(field)) break;
+    path.push(field);
+  }
+  return path;
+}
+
 /** Only sibling identifiers establish dependencies; strings and dotted field names do not. */
 function selectExpressionPaths(expression: string, sibling: string): string[][] {
-  const lexical = expression.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, (quoted) => " ".repeat(quoted.length));
-  const escaped = sibling.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const outcome = new RegExp(`(?<![\\w.])${escaped}\\.outcome((?:\\.[A-Za-z_][A-Za-z_0-9]*)*)`, "g");
-  const paths = [...lexical.matchAll(outcome)].map((match) => (match[1] ?? "").split(".").filter(Boolean));
-  const bare = new RegExp(`(?<![\\w.])(?:map|contains)\\s*\\(\\s*${escaped}\\s*[,)]`, "g");
-  for (const match of lexical.matchAll(bare)) {
-    const argument = lexical.slice((match.index ?? 0) + match[0].length).split(/[,)\n]/)[0] ?? "";
+  const tokens = selectExpressionTokens(expression);
+  const paths = tokens.flatMap((token, index) => {
+    if (token !== sibling) return [];
+    const path = selectOutcomePath(tokens, index);
+    return path === null ? [] : [path];
+  });
+  for (const [index, token] of tokens.entries()) {
+    if ((token !== "map" && token !== "contains") || tokens[index - 1] === ".") continue;
+    if (tokens[index + 1] !== "(" || tokens[index + 2] !== sibling) continue;
+    const separator = tokens[index + 3];
+    if (separator !== "," && separator !== ")") continue;
+    const argument: string[] = [];
+    if (separator === ",") {
+      for (let cursor = index + 4; cursor < tokens.length; cursor++) {
+        const next = tokens[cursor];
+        if (next === "," || next === ")") break;
+        if (next) argument.push(next);
+      }
+    }
     // Only the paired argument replaces a bare reference with a specific outcome path.
-    const paired = new RegExp(`(?<![\\w.])${escaped}\\.outcome(?:\\.[A-Za-z_][A-Za-z_0-9]*)*`);
-    if (!paired.test(argument)) paths.push([]);
+    const has_paired_outcome = argument.some((value, offset) => value === sibling && selectOutcomePath(argument, offset) !== null);
+    if (!has_paired_outcome) paths.push([]);
   }
   return paths;
 }
