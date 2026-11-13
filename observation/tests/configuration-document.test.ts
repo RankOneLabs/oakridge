@@ -48,3 +48,26 @@ test("published definitions also retain semantic registry validation", () => {
     ok: false, error: { kind: "invalid_configuration", issues: [{ definition_index: 0, path: [0, "evidence"] }] },
   });
 });
+
+for (const ids of [["review", "review:detail"], ["review:detail", "review"]] as const) {
+  test(`exact definition IDs take precedence over prefixes in ${ids.join(", ")}`, () => {
+    const overlapping = ids.map((id) => ({ ...definitions[0]!, id, evaluators: [{ runner: "human" as const }],
+      evidence: id === "review:detail" ? ["unregistered"] : definitions[0]!.evidence }));
+    const index = ids.indexOf("review:detail");
+    expect(parseConfigurationDocument({ ...published, definitions: overlapping }, oakridgeGradingRegistry)).toMatchObject({
+      ok: false, error: { kind: "invalid_configuration", entity_id: "review:detail",
+        issues: [{ definition_index: index, path: [index, "evidence"] }] },
+    });
+  });
+  test(`evaluator errors use the longest definition prefix in ${ids.join(", ")}`, () => {
+    const overlapping = ids.map((id) => ({ ...definitions[0]!, id,
+      evaluators: id === "review:detail"
+        ? [{ runner: "unregistered", model: "fixture", instructions: "fixture", estimated_cost_per_call: 1 }]
+        : [{ runner: "human" as const }] }));
+    const index = ids.indexOf("review:detail");
+    expect(parseConfigurationDocument({ ...published, definitions: overlapping }, oakridgeGradingRegistry)).toMatchObject({
+      ok: false, error: { kind: "invalid_configuration", entity_id: "review:detail:unregistered",
+        issues: [{ definition_index: index, path: [index, "evaluators"] }] },
+    });
+  });
+}

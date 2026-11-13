@@ -90,6 +90,14 @@ export interface ConfigurationDocumentError {
 /** Whole-configuration identity: array order matters; wrapper metadata is excluded. */
 export const configurationHash = (definitions: readonly unknown[]): ReturnType<typeof canonicalDigest> => canonicalDigest(definitions);
 
+function configurationIssueDefinitionIndex(definitions: GradingDefinitions, entity_id: string): number {
+  const exact = definitions.findIndex((definition) => definition.id === entity_id);
+  if (exact >= 0) return exact;
+  return definitions.reduce((best_index, definition, index) =>
+    entity_id.startsWith(`${definition.id}:`) && (best_index < 0 || definition.id.length > definitions[best_index]!.id.length)
+      ? index : best_index, -1);
+}
+
 /** Shape errors keep their definition index and field path for later editors. */
 export function configurationIssues(raw: unknown, error: GraderConfigurationError): readonly ConfigurationIssue[] {
   const shape = configurationSchema.safeParse(raw);
@@ -99,7 +107,7 @@ export function configurationIssues(raw: unknown, error: GraderConfigurationErro
   }));
   const index = error.kind === "duplicate_definition"
     ? shape.data.findIndex((definition, index) => definition.id === error.entity_id && shape.data.findIndex((entry) => entry.id === definition.id) < index)
-    : shape.data.findIndex((definition) => error.entity_id === definition.id || error.entity_id.startsWith(`${definition.id}:`));
+    : configurationIssueDefinitionIndex(shape.data, error.entity_id);
   const field = /^(\w+(?:\.\w+)*):/.exec(error.detail)?.[1];
   const fallback = error.kind === "duplicate_definition" ? "id"
     : ["unknown_runner", "duplicate_grader", "invalid_instructions"].includes(error.kind) ? "evaluators" : "question";
