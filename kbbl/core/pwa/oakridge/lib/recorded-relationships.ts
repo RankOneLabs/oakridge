@@ -28,10 +28,12 @@ export type RecordedLink =
   | (RecordedReference & { readonly kind: "revision_subject" })
   | (RecordedReference & { readonly kind: "grading_subject" })
   | (RecordedReference & { readonly kind: "task_association" });
+/** Identity columns shared by recorded revision snapshots and full artifact histories. */
+export interface RecordedRevisionIdentity extends Pick<OperatorArtifactRevisionView, "id" | "run_id" | "unit_id" | "artifact_key"> {}
 export interface RelationshipIndex {
   readonly run_id: string;
   readonly units: readonly OperatorUnitView[];
-  readonly revisions: readonly OperatorArtifactRevisionView[];
+  readonly revisions: readonly RecordedRevisionIdentity[];
 }
 const absent = (raw_reference: string | null): RecordedResolution => ({ state: raw_reference === null ? "not_captured" : "unresolved", target: null });
 export function selectRevisionLink(index: RelationshipIndex, reference: { readonly kind: "effect_input_revision" | "revision_predecessor" | "revision_subject"; readonly revision_id: string | null; readonly label: string }): RecordedLink {
@@ -48,16 +50,26 @@ export const selectDependencyLinks = (index: RelationshipIndex, unit: OperatorUn
     ? { state: "resolved", target: { run_id: index.run_id, unit_id, artifact_id: null, revision_id: null, item_path: null, subject_occurrence_id: null, question: null,
       pane: { kind: "unit", unit_id } } } : absent(unit_id) }));
 
-/** Recognize explicit revision reference fields and RevisionState objects, never arbitrary ids or prose. */
-export function selectInputRevisionIds(value: unknown): readonly string[] {
-  if (Array.isArray(value)) return value.flatMap(selectInputRevisionIds);
-  if (value === null || typeof value !== "object") return [];
-  const reference = value as { readonly revision_id?: unknown; readonly id?: unknown; readonly unit?: unknown; readonly artifact?: unknown; readonly [field: string]: unknown };
-  const id = typeof reference.revision_id === "string" ? reference.revision_id
-    : typeof reference.id === "string" && typeof reference.unit === "string" && typeof reference.artifact === "string" ? reference.id : null;
-  // A revision's body is content, not an additional provenance graph.
-  return id === null ? Object.values(reference).flatMap(selectInputRevisionIds) : [id];
+export interface RecordedArtifactLocation { readonly unit_id: string; readonly artifact_key: string }
+export interface RecordedInputRevisionReference { readonly revision_id: string; readonly location: RecordedArtifactLocation | null }
+interface InputReferenceFields {
+  readonly revision_id?: unknown; readonly id?: unknown; readonly unit?: unknown; readonly artifact?: unknown;
+  readonly unit_id?: unknown; readonly artifact_key?: unknown; readonly [field: string]: unknown;
 }
+/** Recognize explicit reference fields and RevisionState objects, never ids hidden in prose or names. */
+export function selectInputRevisionReferences(value: unknown): readonly RecordedInputRevisionReference[] {
+  if (Array.isArray(value)) return value.flatMap(selectInputRevisionReferences);
+  if (value === null || typeof value !== "object") return [];
+  const reference = value as InputReferenceFields;
+  const revision_id = typeof reference.revision_id === "string" ? reference.revision_id
+    : typeof reference.id === "string" && typeof reference.unit === "string" && typeof reference.artifact === "string" ? reference.id : null;
+  if (revision_id === null) return Object.values(reference).flatMap(selectInputRevisionReferences);
+  const unit_id = typeof reference.unit_id === "string" ? reference.unit_id : reference.unit;
+  const artifact_key = typeof reference.artifact_key === "string" ? reference.artifact_key : reference.artifact;
+  // A captured revision's body is content, not another provenance graph.
+  return [{ revision_id, location: typeof unit_id === "string" && typeof artifact_key === "string" ? { unit_id, artifact_key } : null }];
+}
+export const selectInputRevisionIds = (value: unknown): readonly string[] => selectInputRevisionReferences(value).map((reference) => reference.revision_id);
 export function selectIntentLinks(index: RelationshipIndex, unit: OperatorUnitView): readonly RecordedLink[] {
   return unit.attempts.flatMap((attempt) => {
     if (!attempt.intent) return [selectRevisionLink(index, { kind: "effect_input_revision", revision_id: null, label: `${attempt.worker} #${attempt.number}: intent not captured` })];
