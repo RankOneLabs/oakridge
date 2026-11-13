@@ -31,7 +31,7 @@ test("prompt and grading detail browser handoff", async () => {
   const references: ObservationEvidenceReference[] = [
     { source: "revision", ref: "build_result", revision_id: id("build-result:revision-2"), item_path: "/tests", content: { passed: 42, failed: 0, summary: "All endpoint tests passed." } },
     { source: "run_input", ref: "original_spec", run_id: id("run-1"), input_path: "/spec", content: "Expose organization reads by recorded organization id." },
-    { source: "repository", ref: "citation:0", repository_key: "oakridge", commit_sha: "80e0a459", path: "src/organizations.ts", line_range: { start: 20, end: 24 }, is_absent: false, content: "export const readOrganization = (id: OrganizationId) => store.read(id);" },
+    { source: "repository", ref: "citation:0", repository_key: "oakridge", commit_sha: "80e0a459", path: "src/organizations.ts", line_range: { start: 20, end: 24 }, is_absent: false, is_binary: false, byte_size: null, content: "export const readOrganization = (id: OrganizationId) => store.read(id);" },
     { source: "reported", reported_by: "agent", ref: "citation:1", revision_id: id("assessment:revision-1"), item_path: "/findings/1/evidence/0", content: { kind: "output", citation: "worker test report", detail: "The worker reported that all 42 tests passed." } },
   ];
   const status = itemStatus([{ ...question, machine: { ...question.machine, items: question.machine.items.map((machine) => ({ ...machine, evaluator_definition_id: id("jev") })) }, evidence: { ...question.evidence, references: paged(references) }, superseded_answers: paged([reviewerAnswer("old-answer", "supports", "previous-reviewer", { is_current: false, comments: "Earlier answer before independent evidence was retained." })]) }]);

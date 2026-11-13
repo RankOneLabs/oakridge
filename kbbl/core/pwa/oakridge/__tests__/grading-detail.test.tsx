@@ -12,7 +12,7 @@ import { ItemPanel } from "../components/organisms/ItemPanel";
 const references: ObservationEvidenceReference[] = [
   { source: "revision", ref: "reported-name-is-irrelevant", revision_id: id("exact-old-revision"), item_path: "/findings/2", content: "frozen artifact content" },
   { source: "run_input", ref: "launch", run_id: id("run-1"), input_path: "/spec", content: "frozen run input" },
-  { source: "repository", ref: "reported-name", repository_key: "oakridge", path: "src/test.ts", commit_sha: "recorded-commit", line_range: null, is_absent: false, content: "retrieved file content" },
+  { source: "repository", ref: "reported-name", repository_key: "oakridge", path: "src/test.ts", commit_sha: "recorded-commit", line_range: null, is_absent: false, is_binary: false, byte_size: null, content: "retrieved file content" },
   { source: "reported", ref: "retrieved-name", reported_by: "agent", revision_id: id("report-revision"), item_path: "/evidence/1", content: "agent reported content" },
 ];
 const definition: ObservationEvaluatorDefinition = { evaluator_definition_id: "jev", kind: "model", backend_kind: "pinned-runner", provider: "fixture", model: "pinned-model", prompt_digest: "pinned-prompt", instruction_text: "Pinned historical instructions: inspect the exact cited revision.", config_digest: "old-config", runtime_revision: "old-runtime", cost_metadata: null, seed: null, attempt_controls: null };
