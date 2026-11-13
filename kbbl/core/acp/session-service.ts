@@ -1,3 +1,5 @@
+import type { ExecutedPromptTurn } from "../executed-prompt";
+import { toSnapshot, turnToReceipt, turnToOpenTurn } from "./pwa-wire";
 // Application service used by HTTP handlers (§8.6). Routes never reach into
 // an SDK connection; everything goes through this facade. Every prompt is
 // dispatched through the controller's accepted-turn loop, so "one active
@@ -19,9 +21,7 @@ import {
 import {
   sha256Hex,
   startSpecHash,
-  toSnapshot,
   type AcpSessionStore,
-  type OpenTurnRow,
 } from "./store";
 import {
   acpError,
@@ -33,7 +33,6 @@ import {
   type AcpSessionSnapshot,
   type AcpSessionStartSpec,
   type AcpSessionWorkflowIdentity,
-  type AcpTurnRow,
   type AcpUiEvent,
   type AdvanceResult,
   type EnsureResult,
@@ -45,7 +44,6 @@ import {
   type TerminalObservation,
   type TurnKey,
   type UiSessionHistory,
-  type UiOpenTurn,
   type WorktreeProvider,
 } from "./types";
 
@@ -67,26 +65,6 @@ export interface AcpSessionServiceDeps {
 }
 
 const OBSERVE_POLL_MS = 100;
-
-function turnToReceipt(row: AcpTurnRow): InputReceipt {
-  return {
-    sid: row.sid,
-    turn_key: row.turn_key,
-    payload_hash: row.payload_hash,
-    status: row.status,
-    created_at: row.created_at,
-  };
-}
-
-function turnToOpenTurn(row: OpenTurnRow): UiOpenTurn {
-  return {
-    turnKey: row.turn_key,
-    source: row.source,
-    text: row.payload,
-    status: row.status,
-    createdAt: row.created_at,
-  };
-}
 
 export interface HistoryLease {
   readonly history: UiSessionHistory;
@@ -230,6 +208,10 @@ export class AcpSessionService {
     }
     const fresh = this.deps.store.getSession(sid);
     return ok(toSnapshot(fresh ?? row));
+  }
+
+  readPromptTurns(sid: string): ExecutedPromptTurn[] | null {
+    return this.deps.store.readPromptTurns(sid as KbblSessionId);
   }
 
   listSessions(): AcpSessionSnapshot[] {

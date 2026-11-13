@@ -1,3 +1,4 @@
+import type { ExecutedPromptTurn } from "../executed-prompt";
 // Typed repository over acp_sessions + acp_turns (migration 027). All
 // SQLite access for the ACP substrate goes through this class — no raw
 // queries in the controller/service. Mutations are idempotent where the
@@ -11,7 +12,6 @@ import type {
   AcpFailureCode,
   AcpSessionEnd,
   AcpSessionRow,
-  AcpSessionSnapshot,
   AcpSessionStatus,
   AcpSessionStartSpec,
   AcpSessionWorkflowIdentity,
@@ -684,6 +684,15 @@ export class AcpSessionStore {
     ).get(sid) !== null;
   }
 
+  /** Retained prompt payloads in creation order; only the redaction boundary may serialize these. */
+  readPromptTurns(sid: KbblSessionId): ExecutedPromptTurn[] | null {
+    if (!this.getSession(sid)) return null;
+    const turns = this.db.prepare<ExecutedPromptTurn, [string]>(
+      "SELECT turn_key AS turn_id, created_at, payload AS text FROM acp_turns WHERE sid = ? ORDER BY created_at ASC, rowid ASC",
+    ).all(sid);
+    return turns.length === 0 ? null : turns;
+  }
+
   /** Oldest-first retained deliveries awaiting dispatch (§11.3). */
   listAcceptedTurns(sid: KbblSessionId): AcpTurnRow[] {
     return this.db
@@ -795,27 +804,4 @@ export class AcpSessionStore {
     this.notifySessionsChanged();
     return result;
   }
-}
-
-export function toSnapshot(row: AcpSessionRow): AcpSessionSnapshot {
-  return {
-    sid: row.sid,
-    name: row.name,
-    agent_profile: row.agent_profile,
-    status: row.status,
-    acp_session_id: row.acp_session_id,
-    artifact_id: row.artifact_id,
-    project_workdir: row.project_workdir,
-    worktree_path: row.worktree_path,
-    worktree_branch: row.worktree_branch,
-    worktree_base_ref: row.worktree_base_ref,
-    requested_model: row.requested_model,
-    requested_effort: row.requested_effort,
-    end_reason: row.end_reason,
-    end_detail: row.end_detail,
-    fenced_by: row.fenced_by,
-    last_activity_at: row.last_activity_at,
-    created_at: row.created_at,
-    workflow: row.workflow,
-  };
 }

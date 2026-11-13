@@ -1,3 +1,5 @@
+import type { AcpSessionRow, AcpTurnRow, InputReceipt, UiOpenTurn } from "./types";
+import type { OpenTurnRow } from "./store";
 // Browser wire shape for sessions (§14.1): the one snapshot type the PWA
 // consumes, shared by the /sessions list, POST /sessions, and the /inbox
 // stream. Sourced from AcpSessionSnapshot. The agent-issued acp_session_id
@@ -93,5 +95,48 @@ export function toPwaSessionSnapshot(
     archivedAt,
     pendingPermissionCount,
     workflow: toPwaWorkflowIdentity(snapshot.workflow),
+  };
+}
+
+export function toSnapshot(row: AcpSessionRow): AcpSessionSnapshot {
+  return {
+    sid: row.sid,
+    name: row.name,
+    agent_profile: row.agent_profile,
+    status: row.status,
+    acp_session_id: row.acp_session_id,
+    artifact_id: row.artifact_id,
+    project_workdir: row.project_workdir,
+    worktree_path: row.worktree_path,
+    worktree_branch: row.worktree_branch,
+    worktree_base_ref: row.worktree_base_ref,
+    requested_model: row.requested_model,
+    requested_effort: row.requested_effort,
+    end_reason: row.end_reason,
+    end_detail: row.end_detail,
+    fenced_by: row.fenced_by,
+    last_activity_at: row.last_activity_at,
+    created_at: row.created_at,
+    workflow: row.workflow,
+  };
+}
+
+export function turnToReceipt(row: AcpTurnRow): InputReceipt {
+  return {
+    sid: row.sid,
+    turn_key: row.turn_key,
+    payload_hash: row.payload_hash,
+    status: row.status,
+    created_at: row.created_at,
+  };
+}
+
+export function turnToOpenTurn(row: OpenTurnRow): UiOpenTurn {
+  return {
+    turnKey: row.turn_key,
+    source: row.source,
+    text: row.payload,
+    status: row.status,
+    createdAt: row.created_at,
   };
 }
