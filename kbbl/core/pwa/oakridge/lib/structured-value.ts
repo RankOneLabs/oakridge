@@ -18,3 +18,16 @@ export function toStructuredNode(value: unknown): StructuredNode {
   if (typeof value === "object") return { kind: "section", fields: Object.entries(value).map(([key, entry]) => ({ label: humaniseKey(key), node: toStructuredNode(entry) })) };
   return { kind: "text", text: String(value) };
 }
+
+/** JSON pointer paths are addresses, including escaped keys and the root's empty pointer. */
+export interface StructuredPathNode {
+  readonly item_path: string;
+  readonly label: string;
+  readonly value: unknown;
+  readonly children: readonly StructuredPathNode[];
+}
+export function selectStructuredPaths(value: unknown, item_path = "", label = "Body"): StructuredPathNode {
+  const entries = value !== null && typeof value === "object" ? Object.entries(value) : [];
+  return { item_path, label, value, children: entries.map(([key, child]) =>
+    selectStructuredPaths(child, `${item_path}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`, key)) };
+}

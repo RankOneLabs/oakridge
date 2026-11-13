@@ -13,3 +13,9 @@ test("nested objects become labelled sections and arrays become lists", () => {
 });
 
 test("empty collections retain their structure", () => expect([toStructuredNode([]), toStructuredNode({})]).toEqual([{ kind: "list", items: [] }, { kind: "section", fields: [] }]));
+
+import { selectStructuredPaths } from "./structured-value";
+test("field paths preserve arrays, empty values and JSON pointer escaping", () => {
+  const tree = selectStructuredPaths({ "a/b~": [null, { title: "value" }] });
+  expect(tree.children[0]?.children[1]?.children[0]?.item_path).toBe("/a~1b~0/1/title");
+});

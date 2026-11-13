@@ -1,3 +1,4 @@
+import { ArtifactReviewHeader } from "../molecules/ArtifactReviewHeader";
 import { useEffect, useState } from "react";
 import { useArtifact } from "../../hooks/useArtifact";
 import { useThreads } from "../../hooks/useThreads";
@@ -10,8 +11,9 @@ import { useRunGates } from "../../hooks/useRunGates";
 import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
 import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { useArtifactBody } from "../../hooks/useArtifactBody";
+import { selectFindingSelections, selectItemSelection } from "../../lib/grading";
 import { settleEdit } from "../../lib/edit-outcome";
-import { resolveViewer } from "../../artifactRegistry";
+import { resolveViewer, selectViewerItemPaths } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ArtifactRevision } from "../../artifact-types";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
@@ -42,11 +44,12 @@ import { ShowAutomaticGrades } from "./ShowAutomaticGrades";
  */
 interface ArtifactReviewProps {
   artifactId: string;
+  revisionId?: string;
   onOpenItem?: (selection: ObservationItemAddress) => void;
   onOpenTask?: (task_id: string) => void;
 }
 
-export function ArtifactReview({ artifactId, onOpenItem, onOpenTask }: ArtifactReviewProps) {
+export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -59,8 +62,9 @@ export function ArtifactReview({ artifactId, onOpenItem, onOpenTask }: ArtifactR
   const threadsQuery = useThreads(artifactId, commentable);
   const reviewItemsQuery = useReviewItems(artifactId, hasReviewItems);
   const revisions = query.data?.revisions ?? [];
+  const pinnedIndex = revisionId ? revisions.findIndex((candidate) => candidate.id === revisionId || selectItemSelection({ revision_id: candidate.id }, "")?.source_revision_id === revisionId) : -1;
   const revIdx = selectedRevIdx === null
-    ? Math.max(0, revisions.length - 1)
+    ? (revisionId ? pinnedIndex : Math.max(0, revisions.length - 1))
     : Math.min(selectedRevIdx, Math.max(0, revisions.length - 1));
   const revision = revisions[revIdx] as ArtifactRevision | undefined;
   const atomEdit = useAtomEdit(revision?.id ?? artifactId, artifactId);
@@ -72,7 +76,7 @@ export function ArtifactReview({ artifactId, onOpenItem, onOpenTask }: ArtifactR
 
   useEffect(() => {
     setSelectedRevIdx(null);
-  }, [artifactId]);
+  }, [artifactId, revisionId]);
 
   const postThread = usePostThread(artifactId);
   const postMessage = usePostMessage(artifactId, selectedThreadId ?? "");
@@ -162,31 +166,7 @@ export function ArtifactReview({ artifactId, onOpenItem, onOpenTask }: ArtifactR
     patchReviewItem.mutate({ id, req: { status: "waived", resolution: resolution || undefined } });
   }
 
-  const header = (
-      <header className="or-artifact-detail__header">
-        <h2 className="or-artifact-detail__title" data-testid="or-artifact-type">
-          {artifact.type_id}
-        </h2>
-        <div className="or-artifact-detail__meta">
-          <span className="or-label">Stage</span>
-          <span data-testid="or-artifact-stage">{artifact.producing_stage}</span>
-          {artifact.label && (
-            <>
-              <span className="or-label">Unit</span>
-              <code className="or-code" data-testid="or-artifact-unit-label">{artifact.label}</code>
-            </>
-          )}
-          <span className="or-label">Run</span>
-          <span>{artifact.run_id.slice(0, 8)}</span>
-          {artifact.component_id && (
-            <>
-              <span className="or-label">Component</span>
-              <code className="or-code">{artifact.component_id}</code>
-            </>
-          )}
-        </div>
-      </header>
-  );
+  const header = <ArtifactReviewHeader artifact={artifact} />;
 
   const revisionNavigation = revisions.length > 1 ? (
     <ArtifactRevisionNavigation
@@ -196,6 +176,10 @@ export function ArtifactReview({ artifactId, onOpenItem, onOpenTask }: ArtifactR
     />
   ) : undefined;
 
+  const grading = onOpenItem ? {
+    renderItemAction: (selection: ObservationItemAddress) => <ItemGradeAction runId={artifact.run_id} selection={selection} onOpenItem={onOpenItem} />,
+    renderShowAll: (selections: readonly ObservationItemAddress[]) => <ShowAutomaticGrades selections={selections} />,
+  } : undefined;
   const artifactContent = revision ? (
         <section className="or-artifact-detail__revision">
           <div className="or-revision-panel__meta">
@@ -228,16 +212,13 @@ export function ArtifactReview({ artifactId, onOpenItem, onOpenTask }: ArtifactR
               gate={artifactGate && revIdx === revisions.length - 1 ? artifactGate : undefined}
               onOpenItem={onOpenItem}
               onOpenTask={onOpenTask}
-              itemGrading={onOpenItem ? {
-                renderItemAction: (selection) => <ItemGradeAction runId={artifact.run_id} selection={selection} onOpenItem={onOpenItem} />,
-                renderShowAll: (selections) => <ShowAutomaticGrades selections={selections} />,
-              } : undefined}
+              itemGrading={grading}
             />
           ) : (
             <ArtifactJsonRevisionPanel revision={revision} descriptor={artifact.review} />
           )}
         </section>
-      ) : <FeedbackMessage>No revisions.</FeedbackMessage>;
+      ) : <FeedbackMessage>{revisionId ? `Recorded revision ${revisionId} is unavailable.` : "No revisions."}</FeedbackMessage>;
 
       {/* ── Collab chrome: review items ─────────────────────────────────── */}
   const reviewItemsContent = hasReviewItems ? (
@@ -288,6 +269,7 @@ export function ArtifactReview({ artifactId, onOpenItem, onOpenTask }: ArtifactR
       header={header}
       revisionNavigation={revisionNavigation}
       artifact={artifactContent}
+      structuredArtifact={Viewer && revision ? <ArtifactJsonRevisionPanel revision={revision} structured itemGrading={grading} selections={selectFindingSelections({ revision_id: revision.id }, selectViewerItemPaths(Viewer, revision.body))} /> : undefined}
       reviewItems={reviewItemsContent}
       threads={threadsContent}
       gateActions={gateActions}
