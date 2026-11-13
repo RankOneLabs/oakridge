@@ -11,12 +11,12 @@ export function LetExpression({ model, expression }: LetExpressionProps) {
     <code>
       {tokens.map((text, index) =>
         Object.hasOwn(model.stage.let ?? {}, text) ? (
-          <a key={index} href={stageElementHref(model, "let", text)}>
+          <a key={index} href={stageElementHref(model, { kind: "let", name: text })}>
             {text}
           </a>
         ) : Object.hasOwn(model.stage.artifacts, text) &&
           !tokens[index - 1]?.trimEnd().endsWith(".") ? (
-          <a key={index} href={stageElementHref(model, "artifact", text)}>
+          <a key={index} href={stageElementHref(model, { kind: "artifact", name: text })}>
             {text}
           </a>
         ) : (

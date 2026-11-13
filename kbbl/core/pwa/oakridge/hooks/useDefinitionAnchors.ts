@@ -43,9 +43,7 @@ export function useDefinitionAnchors({
     const href = anchor?.getAttribute("href");
     if (!href?.startsWith("#oakridge/defs/")) return;
     event.preventDefault();
-    const [route, target] = href.slice(1).split("#");
-    onNavigate(`#${route}`);
-    if (target) requestAnimationFrame(() => revealDefinitionAnchor(target));
+    onNavigate(href);
   }
 
   return { selection, onClick };

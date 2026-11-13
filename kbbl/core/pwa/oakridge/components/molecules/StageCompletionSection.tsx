@@ -32,7 +32,7 @@ export function StageCompletionSection({ model }: StageSectionProps) {
         </div>
       )}
       {model.outcomes.map(({ name, expression, readers }) => (
-        <div key={name} id={stageElementId(model.name, "outcome", name)}>
+        <div key={name} id={stageElementId({ stage: model.name, kind: "outcome", name: name })}>
           <h4>outcome.{name}</h4>
           <LetExpression model={model} expression={expression} />
           <h5>Downstream readers</h5>

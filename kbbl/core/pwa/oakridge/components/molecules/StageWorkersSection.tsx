@@ -12,14 +12,18 @@ export function StageWorkersSection({ model }: StageSectionProps) {
       {model.workers.map(({ key, worker, source }) => {
         const trigger = selectWorkerTrigger(worker);
         return (
-          <article key={key} id={stageElementId(model.name, "worker", key)} tabIndex={-1}>
+          <article
+            key={key}
+            id={stageElementId({ stage: model.name, kind: "worker", name: key })}
+            tabIndex={-1}
+          >
             <h4>{key}</h4>
             <p>
               {worker.kind}
               {worker.kind === "code" && ` · operation: ${worker.operation}`}
             </p>
             {source && (
-              <a href={stageElementHref(model, "template-worker", source.template)}>
+              <a href={stageElementHref(model, { kind: "template-worker", name: source.template })}>
                 from template {source.template}
               </a>
             )}
@@ -32,7 +36,7 @@ export function StageWorkersSection({ model }: StageSectionProps) {
             {trigger.evaluates && (
               <p>
                 evaluates:{" "}
-                <a href={stageElementHref(model, "artifact", trigger.evaluates)}>
+                <a href={stageElementHref(model, { kind: "artifact", name: trigger.evaluates })}>
                   {trigger.evaluates}
                 </a>
               </p>
@@ -41,9 +45,21 @@ export function StageWorkersSection({ model }: StageSectionProps) {
             {worker.kind === "agent" && <p>session: {worker.session ?? "default"}</p>}
             <dl>
               {Object.entries(worker.inputs).map(([name, expression]) => (
-                <div key={name} id={stageElementId(model.name, "worker-input", `${key}.${name}`)}>
+                <div
+                  key={name}
+                  id={stageElementId({
+                    stage: model.name,
+                    kind: "worker-input",
+                    name: `${key}.${name}`,
+                  })}
+                >
                   <dt>
-                    <a href={stageElementHref(model, "worker-input", `${key}.${name}`)}>
+                    <a
+                      href={stageElementHref(model, {
+                        kind: "worker-input",
+                        name: `${key}.${name}`,
+                      })}
+                    >
                       inputs.{name}
                     </a>
                   </dt>
@@ -56,7 +72,11 @@ export function StageWorkersSection({ model }: StageSectionProps) {
             <p>
               produces:{" "}
               {worker.produces.map((name) => (
-                <a key={name} className="mr-2" href={stageElementHref(model, "artifact", name)}>
+                <a
+                  key={name}
+                  className="mr-2"
+                  href={stageElementHref(model, { kind: "artifact", name: name })}
+                >
                   {name}
                 </a>
               ))}

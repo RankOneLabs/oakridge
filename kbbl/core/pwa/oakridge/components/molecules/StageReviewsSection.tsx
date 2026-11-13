@@ -9,14 +9,19 @@ export function StageReviewsSection({ model }: StageSectionProps) {
     <section aria-label="Reviews" className="rounded border border-[var(--border-muted)] p-3">
       <h3>Reviews</h3>
       {model.reviews.map(({ key, review, source, decisions }) => (
-        <article key={key} id={stageElementId(model.name, "review", key)} tabIndex={-1}>
+        <article
+          key={key}
+          id={stageElementId({ stage: model.name, kind: "review", name: key })}
+          tabIndex={-1}
+        >
           <h4>{key}</h4>
           <p>
-            of: <a href={stageElementHref(model, "artifact", review.of)}>{review.of}</a> · by:{" "}
-            {review.by}
+            of:{" "}
+            <a href={stageElementHref(model, { kind: "artifact", name: review.of })}>{review.of}</a>{" "}
+            · by: {review.by}
           </p>
           {source && (
-            <a href={stageElementHref(model, "template-review", source.template)}>
+            <a href={stageElementHref(model, { kind: "template-review", name: source.template })}>
               from template {source.template}
             </a>
           )}
@@ -45,11 +50,14 @@ export function StageReviewsSection({ model }: StageSectionProps) {
               <p>effect: {decision.effect}</p>
               {decision.on && (
                 <p>
-                  on: <a href={stageElementHref(model, "artifact", decision.on)}>{decision.on}</a>
+                  on:{" "}
+                  <a href={stageElementHref(model, { kind: "artifact", name: decision.on })}>
+                    {decision.on}
+                  </a>
                 </p>
               )}
               {source && (
-                <a href={stageElementHref(model, "decision-set", source.set)}>
+                <a href={stageElementHref(model, { kind: "decision-set", name: source.set })}>
                   from decision set {source.set}
                 </a>
               )}

@@ -13,7 +13,7 @@ export function selectWorkerTrigger(worker: OperatorWorker): WorkerTrigger {
       when: worker.when ?? null,
       every: worker.every ?? null,
       evaluates: null,
-      modes: worker.every ? ["periodic"] : [],
+      modes: worker.every ? ["periodic"] : ["missing"],
       handoff: null,
     };
   return {

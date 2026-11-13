@@ -9,7 +9,11 @@ export function StageBindingsSection({ model }: StageSectionProps) {
       <h3>Bindings (let)</h3>
       <dl>
         {Object.entries(model.stage.let ?? {}).map(([name, expression]) => (
-          <div key={name} id={stageElementId(model.name, "let", name)} tabIndex={-1}>
+          <div
+            key={name}
+            id={stageElementId({ stage: model.name, kind: "let", name: name })}
+            tabIndex={-1}
+          >
             <dt>{name}</dt>
             <dd>
               <LetExpression model={model} expression={expression} />

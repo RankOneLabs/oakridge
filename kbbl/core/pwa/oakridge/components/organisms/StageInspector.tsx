@@ -1,7 +1,6 @@
 import type { DefinitionSelection } from "../../../lib/hash";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
-import { selectStageInspector } from "../../lib/stage-inspector";
-import { selectDefinitionOverview } from "../../lib/definition-overview";
+import { selectStageInspector, selectStageNavigation } from "../../lib/stage-inspector";
 import { definitionStageHref, definitionUnitHref } from "../../lib/definition-selection";
 import { StageInputsSection } from "../molecules/StageInputsSection";
 import { StageBindingsSection } from "../molecules/StageBindingsSection";
@@ -15,7 +14,7 @@ interface StageInspectorProps {
   selection: DefinitionSelection | null;
 }
 export function StageInspector({ definition, selection }: StageInspectorProps) {
-  const overview = selectDefinitionOverview(definition);
+  const stages = selectStageNavigation(definition);
   const model = selectStageInspector(definition, selection);
   return (
     <section
@@ -23,32 +22,30 @@ export function StageInspector({ definition, selection }: StageInspectorProps) {
       className="grid gap-5 md:grid-cols-[minmax(14rem,1fr)_minmax(0,2fr)]"
     >
       <aside className="grid content-start gap-3" aria-label="Stages in authored order">
-        {overview.stages.map((name) => (
+        {stages.map(({ name, units }) => (
           <div key={name} className="rounded border border-[var(--border-muted)] p-3">
             <a
-              href={definitionStageHref(overview.id, name)}
+              href={definitionStageHref(definition.definition_id, name)}
               aria-current={model?.name === name ? "page" : undefined}
               className={model?.name === name ? "font-bold" : undefined}
             >
               {name}
             </a>
             <ul>
-              {overview.units
-                .filter((unit) => unit.stage === name)
-                .map((unit) => (
-                  <li key={unit.path}>
-                    <a
-                      href={definitionUnitHref(overview.id, unit.path)}
-                      aria-current={
-                        selection?.kind === "unit" && selection.path === unit.path
-                          ? "page"
-                          : undefined
-                      }
-                    >
-                      {unit.path}
-                    </a>
-                  </li>
-                ))}
+              {units.map((unit) => (
+                <li key={unit.path}>
+                  <a
+                    href={definitionUnitHref(definition.definition_id, unit.path)}
+                    aria-current={
+                      selection?.kind === "unit" && selection.path === unit.path
+                        ? "page"
+                        : undefined
+                    }
+                  >
+                    {unit.path}
+                  </a>
+                </li>
+              ))}
             </ul>
           </div>
         ))}
