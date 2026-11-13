@@ -107,7 +107,9 @@ export function publicationFailure(error: ObservationPublicationError): GradingF
   }
 }
 export const sectionIssues = (issues: readonly ObservationConfigurationIssue[], index: number, path: GradingPath): readonly ObservationConfigurationIssue[] =>
-  issues.filter((issue) => issue.definition_index === index && (issue.path.length === 0 || [index, ...path].every((key, offset) => issue.path[offset] === key)));
+  issues.filter((issue) => issue.definition_index === index && [index, ...path].every((key, offset) => issue.path[offset] === key));
+export const definitionIssues = (issues: readonly ObservationConfigurationIssue[], index: number): readonly ObservationConfigurationIssue[] =>
+  issues.filter((issue) => issue.definition_index === index && (issue.path.length === 0 || (issue.path.length === 1 && issue.path[0] === index)));
 export function feedbackText(feedback: GradingFeedback): string {
   switch (feedback.kind) {
     case "saving": return "Saving draft…";

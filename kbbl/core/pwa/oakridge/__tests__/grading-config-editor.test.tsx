@@ -131,6 +131,20 @@ describe("shared draft operations", () => {
     expect(within(screen.getByRole("region", { name: "Evaluators" })).getByRole("alert").textContent).toContain("Recipe is incomplete");
     expect(within(screen.getByRole("region", { name: "Question" })).queryByRole("alert")).toBeNull();
   });
+  it("places id validation issues beside the Definition id field", async () => {
+    browser(); vi.mocked(fetch).mockResolvedValueOnce(failure("invalid_configuration", { issues: [{ definition_index: 0, path: [0, "id"], detail: "Definition id must be unique" }] }));
+    click("Validate saved draft"); await screen.findByText("Validation failed. Review the issues below.");
+    expect(within(screen.getByRole("group", { name: "Definition id field" })).getByRole("alert").textContent).toBe("Definition id must be unique");
+  });
+  it("shows an empty-path definition issue once in the editor, outside its sections", async () => {
+    browser(); vi.mocked(fetch).mockResolvedValueOnce(failure("invalid_configuration", { issues: [{ definition_index: 0, path: [], detail: "Definition is incomplete" }] }));
+    click("Validate saved draft"); await screen.findByText("Validation failed. Review the issues below.");
+    const editor = within(screen.getByTestId("grading-definition-editor"));
+    expect(editor.getAllByText("Definition is incomplete")).toHaveLength(1);
+    for (const section of ["Question", "Targets", "Evidence", "Evaluators"]) {
+      expect(within(editor.getByRole("region", { name: section })).queryByRole("alert")).toBeNull();
+    }
+  });
   it("compares local field paths and restores a version only after confirmation, using the current digest", async () => {
     browser(); change("Question text", "Local revision"); click("Compare with latest");
     expect(screen.getByTestId("grading-config-diff").textContent).toContain("definitions.0.question.text");
