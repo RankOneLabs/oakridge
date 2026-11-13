@@ -40,6 +40,11 @@ export interface GradingRuntimeRead {
   readonly applied_at: string;
   readonly last_failure: PublicationError | null;
 }
+/** Preconditions accepted by the HTTP publish route; recovery options belong to the offline command. */
+export interface PublishRequest {
+  readonly expected_draft_digest: string | null;
+  readonly expected_latest_version: number | null;
+}
 /** Derive browser choices from the same registries that validate publication. */
 export function gradingCatalogue(registry: GradingRegistry, runners: Readonly<Record<string, RunnerRegistryEntry>>): GradingCatalogue {
   return { selectors: registry.selectors.map(({ artifact_kind, item_selector, item_kind, item_fields }) =>
@@ -57,7 +62,7 @@ export interface GradingConfigDependencies {
 }
 const digestSchema = z.string().nullable();
 const draftRequest = z.strictObject({ expected_draft_digest: digestSchema, document: configurationDocumentSchema });
-const publishRequest = z.strictObject({ expected_draft_digest: digestSchema, expected_latest_version: z.number().int().positive().nullable() });
+const publishRequest: z.ZodType<PublishRequest> = z.strictObject({ expected_draft_digest: digestSchema, expected_latest_version: z.number().int().positive().nullable() });
 export function configurationFailure(c: Context, error: PublicationError | ConfigurationStoreError): Response {
   const status: ErrorStatus = error.kind === "invalid_configuration" || error.kind === "invalid_document" ? 422
     : ["draft_conflict", "version_conflict", "unconfigured_credential"].includes(error.kind) ? 409 : 500;

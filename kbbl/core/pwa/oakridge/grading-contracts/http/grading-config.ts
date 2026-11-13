@@ -8,6 +8,11 @@ import type { ObservationPublicationError } from "../grading/publication";
 import type { ObservationErrorBody } from "./errors";
 import type { ObservationGraderCapability } from "./health";
 
+export interface ObservationPublishRequest {
+  readonly expected_draft_digest: string | null;
+  readonly expected_latest_version: number | null;
+}
+
 export interface ObservationGradingCatalogue {
   readonly selectors: readonly ObservationRegisteredSelector[];
   readonly evidence_capabilities: readonly ObservationEvidenceCapabilityRead[];

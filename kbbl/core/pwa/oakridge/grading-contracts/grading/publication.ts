@@ -3,10 +3,6 @@
 
 import type { ObservationConfigurationIssue } from "./configuration";
 
-export interface ObservationPublishRequest { readonly expected_draft_digest: string | null; readonly expected_latest_version: number | null;
-  /** Offline recovery always appends history, even when restoring the latest content. */
-  readonly force_new_version?: boolean }
-
 export type ObservationPublicationOutcome = ObservationPublicationMetadata & (
   | { readonly outcome: "published" } | { readonly outcome: "unchanged" } | { readonly outcome: "reapplied" }
 );

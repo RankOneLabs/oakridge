@@ -38,7 +38,7 @@ export type { RunStageRead } from "../grading/task-stages";
 // Configure-capability grading configuration reads and writes.
 export type { ConfigurationDocument, DraftConfiguration, PublishedConfiguration } from "../grading/configuration";
 export type { StoredDraft } from "../grading/configuration-store";
-export type { PublishRequest, PublicationOutcome, PublicationError } from "../grading/publication";
-export type { GradingCatalogue, GradingRuntimeRead, VersionListing, ConfigurationErrorBody } from "./grading-config";
+export type { PublicationOutcome, PublicationError } from "../grading/publication";
+export type { PublishRequest, GradingCatalogue, GradingRuntimeRead, VersionListing, ConfigurationErrorBody } from "./grading-config";
 // GET /v1/evaluator-definitions/:id, scoped to the read credential's tenant.
 export type { EvaluatorDefinitionRead } from "../storage/grading-store";
