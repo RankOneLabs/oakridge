@@ -27,7 +27,7 @@ const state: LauncherState = launcherStateSchema.parse({ name: "test", state_dir
   observation: { port: 4, url: "http://observation", database: "observation", namespace: "shadow-test",
     ingest_token_file: "/i", read_token_file: "/r", grade_token_file: "/g", status_file: "/s" }, provider_env_file: "/env" });
 
-const kbblHealth = (observation: ObservationHealth): KbblHealth => ({ status: "ok", observation, capabilities: { read: true, grade: true } });
+const kbblHealth = (observation: ObservationHealth): KbblHealth => ({ status: "ok", observation, capabilities: { read: true, grade: true, configure: true } });
 const status = (value: ObservationStatus["state"], detail = ""): ObservationStatus => ({ state: value, detail, recorded_at: "now" });
 
 /** A stack whose answers the test fixes; nothing here reaches a process or network. */

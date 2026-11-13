@@ -195,7 +195,7 @@ describe("provider credentials", () => {
     const stack = await startedStack((created) => created.writeGraders("jev_direct"));
     await observationServing(stack);
     const written = stack.logText() + readFileSync(stack.stateFile("observation-status.json"), "utf8");
-    for (const secret of ["live-provider-key", token(stack, "ingest"), token(stack, "read"), token(stack, "grade"),
+    for (const secret of ["live-provider-key", token(stack, "ingest"), token(stack, "read"), token(stack, "grade"), token(stack, "configure"),
       readFileSync(stack.stateFile("observation-database.password"), "utf8").trim()]) expect(written).not.toContain(secret);
   }, TIMEOUT_MS);
 });
@@ -210,15 +210,20 @@ describe("capability wiring", () => {
     expect(env.OAKRIDGE_OBSERVATION_INGEST_TOKEN).toBe(token(stack, "ingest"));
     expect(env.OAKRIDGE_OBSERVATION_READ_TOKEN).toBeUndefined();
     expect(env.OAKRIDGE_OBSERVATION_GRADE_TOKEN).toBeUndefined();
+    expect(env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN).toBeUndefined();
   }, TIMEOUT_MS);
 
-  test("kbbl holds the URL and the read and grade capabilities, and not ingest", async () => {
-    const stack = await startedStack();
+  test("kbbl holds read, grade and its own shadow configure capability", async () => {
+    const stack = fixture();
+    stack.start({ env: { OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN: "live-configure" } });
+    await stack.stackServing();
     await observationServing(stack);
     const { env } = stack.record("kbbl");
     expect(env.OAKRIDGE_OBSERVATION_URL).toBe(`http://127.0.0.1:${stack.ports.observation}`);
     expect(env.OAKRIDGE_OBSERVATION_READ_TOKEN).toBe(token(stack, "read"));
     expect(env.OAKRIDGE_OBSERVATION_GRADE_TOKEN).toBe(token(stack, "grade"));
+    expect(env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN).toBe(token(stack, "configure"));
+    expect(env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN).not.toBe("live-configure");
     expect(env.OAKRIDGE_OBSERVATION_INGEST_TOKEN).toBeUndefined();
   }, TIMEOUT_MS);
 
@@ -344,6 +349,10 @@ describe("supervision", () => {
     const read_token = readFileSync(join(stack.home, ".local/state/oakridge/observation-read.token"), "utf8").trim();
     expect(stack.record("kbbl").env.OAKRIDGE_OBSERVATION_READ_TOKEN).toBe(read_token);
     expect(credentials(stack.record("observation").env.OBSERVATION_READ_CREDENTIALS)[0]?.token).toBe(read_token);
+    const configure_token = readFileSync(join(stack.home, ".local/state/oakridge/observation-configure.token"), "utf8").trim();
+    expect(stack.record("kbbl").env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN).toBe(configure_token);
+    expect(JSON.parse(stack.record("observation").env.OBSERVATION_CONFIGURE_CREDENTIALS ?? "[]")).toEqual([{ token: configure_token }]);
+    expect(stack.record("dbos").env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN).toBeUndefined();
   }, TIMEOUT_MS);
 
   test("the default install keeps provider keys out of DBOS and kbbl too", async () => {

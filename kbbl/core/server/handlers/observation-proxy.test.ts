@@ -4,12 +4,12 @@ import { Hono } from "hono";
 import type { ObservationServerConfig } from "./observation-health";
 import { mountObservationProxyRoutes, type ObservationProxyDeps } from "./observation-proxy";
 
-const observation: ObservationServerConfig = { url: "http://observation.test/", namespace: "shadow", readToken: "read-secret", gradeToken: "grade-secret" };
+const observation: ObservationServerConfig = { url: "http://observation.test/", namespace: "shadow", readToken: "read-secret", gradeToken: "grade-secret", configureToken: "configure-secret" };
 const ORIGIN = "http://kbbl.test";
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
 
-interface Forwarded { url: string; method: string; authorization: string | null; headers: Record<string, string>; body: unknown }
+interface Forwarded { url: string; method: string; authorization: string | null; headers: Record<string, string>; body: unknown; rawBody: string | null }
 function upstream(answer: (call: Forwarded) => Response = () => Response.json({ ok: true })): Forwarded[] {
   const calls: Forwarded[] = [];
   globalThis.fetch = (async (input, init) => {
@@ -17,7 +17,7 @@ function upstream(answer: (call: Forwarded) => Response = () => Response.json({ 
     const names: Record<string, string> = {};
     headers.forEach((value, name) => { names[name] = value; });
     const call: Forwarded = { url: String(input), method: init?.method ?? "GET", authorization: headers.get("authorization"),
-      headers: names, body: init?.body ? JSON.parse(String(init.body)) : null };
+      headers: names, rawBody: init?.body === undefined ? null : String(init.body), body: init?.body ? JSON.parse(String(init.body)) : null };
     calls.push(call);
     return answer(call);
   }) as typeof fetch;
@@ -168,5 +168,76 @@ describe("refusals and outages stay truthful", () => {
     expect((await post(app, ["not", "an", "object"])).status).toBe(400);
     expect((await app.request(`/oakridge/observation/items/${ITEM}/answers`, { method: "POST", headers: { ...asOperator, "content-type": "application/json" }, body: "{" })).status).toBe(400);
     expect(calls).toEqual([]);
+  });
+});
+
+interface ConfigurationRoute { readonly method: "GET" | "PUT" | "POST"; readonly path: string }
+const configurationRoutes: readonly ConfigurationRoute[] = [
+  { method: "GET", path: "draft" }, { method: "PUT", path: "draft" },
+  { method: "POST", path: "draft/validate" }, { method: "GET", path: "versions" },
+  { method: "GET", path: "versions/7" }, { method: "POST", path: "publish" },
+  { method: "GET", path: "runtime" }, { method: "GET", path: "catalogue" },
+];
+const configurationRequest = (app: Hono, route: ConfigurationRoute, headers: Record<string, string> = asOperator, body = "{}") =>
+  app.request(`/oakridge/observation/grading-config/${route.path}`, { method: route.method,
+    headers: { "content-type": "application/json", ...headers }, ...(route.method === "GET" ? {} : { body }) });
+
+describe("explicit configuration routes use only the server-held configure capability", () => {
+  test.each([...configurationRoutes])("$method $path forwards only after control authentication", async (route) => {
+    const calls = upstream();
+    const app = mounted();
+    expect((await configurationRequest(app, route, { authorization: "Bearer configure-secret" })).status).toBe(401);
+    expect(calls).toEqual([]);
+    expect((await configurationRequest(app, route)).status).toBe(200);
+    expect(calls).toEqual([expect.objectContaining({ method: route.method, authorization: "Bearer configure-secret",
+      url: `http://observation.test/v1/grading-config/${route.path}`, body: route.method === "GET" ? null : {} })]);
+  });
+  test.each([...configurationRoutes])("$method $path refuses an absent configure capability", async (route) => {
+    const calls = upstream();
+    const response = await configurationRequest(mounted({ observation: { ...observation, configureToken: null } }), route);
+    expect([response.status, await response.json()]).toMatchObject([503, { error: { code: "observation_capability_missing" } }]);
+    expect(calls).toEqual([]);
+  });
+  test("unlisted configuration routes and methods never forward", async () => {
+    const calls = upstream();
+    for (const method of ["GET", "PUT", "POST"] as const)
+      expect((await configurationRequest(mounted(), { method, path: "future-write" })).status).toBe(404);
+    expect((await configurationRequest(mounted(), { method: "POST", path: "catalogue" })).status).toBe(404);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("each configuration write validates browser policy and re-serializes an object", () => {
+  test.each(configurationRoutes.filter((route) => route.method !== "GET"))("$method $path enforces JSON, origin, control and object bodies", async (route) => {
+    const calls = upstream();
+    const app = mounted();
+    expect((await configurationRequest(app, route, { ...asOperator, "content-type": "text/plain" })).status).toBe(415);
+    expect((await configurationRequest(app, route, { ...asOperator, origin: "http://evil.test" })).status).toBe(403);
+    for (const body of ["[]", "null", '"text"', "1", "true", "{", ""] ) {
+      const response = await configurationRequest(app, route, asOperator, body);
+      expect([response.status, await response.json()]).toMatchObject([400, { error: { code: "invalid_json" } }]);
+    }
+    expect((await configurationRequest(app, route, { cookie: "kbbl_ctrl=browser-secret" })).status).toBe(401);
+    expect(calls).toEqual([]);
+    const body = { expected_draft_digest: "digest", expected_latest_version: null, document: { status: "draft", definitions: [] } };
+    expect((await configurationRequest(app, route, { cookie: "kbbl_ctrl=browser-secret", origin: ORIGIN },
+      JSON.stringify(body, null, 2))).status).toBe(200);
+    expect(calls[0]).toMatchObject({ body, rawBody: JSON.stringify(body),
+      headers: { authorization: "Bearer configure-secret", "content-type": "application/json" } });
+  });
+});
+
+describe("historical evaluator definitions", () => {
+  test("the encoded id uses the read token and the control check", async () => {
+    const calls = upstream();
+    const app = mounted();
+    const id = encodeURIComponent("canonical-json/v1:abc/%?#");
+    const path = `/oakridge/observation/evaluator-definitions/${id}`;
+    expect((await app.request(path)).status).toBe(401);
+    expect((await app.request(path, { headers: { authorization: "Bearer read-secret" } })).status).toBe(401);
+    expect(calls).toEqual([]);
+    expect((await app.request(path, { headers: asOperator })).status).toBe(200);
+    expect(calls).toEqual([expect.objectContaining({ url: `http://observation.test/v1/evaluator-definitions/${id}`,
+      method: "GET", authorization: "Bearer read-secret" })]);
   });
 });

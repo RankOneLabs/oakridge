@@ -32,14 +32,22 @@ export interface GradingRegistry {
 
 const pointerSchema = z.string().regex(/^\/(?:[^~]|~[01])*$/);
 const targetSchema = z.strictObject({ artifact: z.string().min(1), selector: pointerSchema });
-export type GradingTarget = z.infer<typeof targetSchema>;
+export type GradingTarget = { readonly artifact: string; readonly selector: string };
 const evidenceSchema = capabilityReferenceSchema;
 const questionSchema = z.strictObject({
   text: z.string().nullable(), response: z.enum(["boolean", "choice", "ordinal", "numeric", "text", "structured"]),
   values: z.array(z.json()).nullable(), missing_evidence_policy: z.enum(["fail", "abstain"]),
   abstain_semantics: z.string(), unclear_semantics: z.string(), interpretation_caveats: z.string(),
 });
-export type GradingQuestion = z.infer<typeof questionSchema>;
+export type GradingQuestion = {
+  readonly text: string | null;
+  readonly response: QuestionDefinition["response_kind"];
+  readonly values: readonly JsonValue[] | null;
+  readonly missing_evidence_policy: QuestionDefinition["missing_evidence_policy"];
+  readonly abstain_semantics: string;
+  readonly unclear_semantics: string;
+  readonly interpretation_caveats: string;
+};
 const graderEntrySchema = z.strictObject({ runner: z.string().min(1).refine((runner) => runner !== "human"),
   model: z.string().min(1), instructions: z.json(), estimated_cost_per_call: z.number().finite().nonnegative() });
 const definitionFields = { id: z.string().min(1), targets: z.array(targetSchema).min(1), evidence: z.array(evidenceSchema),

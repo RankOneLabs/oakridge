@@ -1,6 +1,7 @@
 /**
  * Generates kbbl/core/pwa/oakridge/grading-contracts/ from the grading API
- * observation declares in observation/src/http/grading-api.ts.
+ * observation declares in observation/src/http/grading-api.ts, including the
+ * configuration document, catalogue, publication, runtime and historical evaluator reads.
  *
  * Every type the API references is copied from its one observation declaration
  * with every name prefixed `Observation`. Branded ids keep their brands, so the

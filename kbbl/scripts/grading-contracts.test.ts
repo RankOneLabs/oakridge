@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { expect, test } from "bun:test";
+import ts from "typescript";
 
 const root = resolve(import.meta.dir, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
@@ -17,6 +18,13 @@ test("every grading API export is generated in exactly one contract file", () =>
     const declaring = contracts().filter(({ source }) => new RegExp(`export (interface|type) Observation${name}\\b`).test(source));
     expect({ name, files: declaring.map(({ file }) => file) }).toEqual({ name, files: [expect.any(String)] });
   }
+});
+
+test("the browser publish request exposes only HTTP publication preconditions", () => {
+  const source = ts.createSourceFile("grading-config.ts", read(`${CONTRACTS}/http/grading-config.ts`), ts.ScriptTarget.Latest, true);
+  const request = source.statements.find((node): node is ts.InterfaceDeclaration =>
+    ts.isInterfaceDeclaration(node) && node.name.text === "ObservationPublishRequest");
+  expect(request?.members.map((member) => member.name?.getText(source))).toEqual(["expected_draft_digest", "expected_latest_version"]);
 });
 
 test("generated grading contracts import only each other, and only as types", () => {

@@ -1,3 +1,4 @@
+import { readEvaluatorDefinition } from "../storage/grading-store";
 import { isRunComplete, stagesFromReadiness, type RollupContext } from "../grading/task-stages";
 import { filterCompositeStage, selectComposite, selectCompositePage, selectDrilldown, selectRunStages } from "../grading/composite";
 import { hasCapturedRun, readValidatedRun, selectGradeableItems } from "../storage/grading-record-store";
@@ -69,6 +70,12 @@ export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies)
     if (!context.ok) return contextErrorResponse(c, context.error);
     const result = await readValidatedRun(deps.db, tenant, path, { run_id: c.req.param("run_id"), context: context.value, stage: null }, selectRunStages);
     return result.ok ? c.json(result.value) : errorResponse(c, 400, "invalid_stage", result.error.stage);
+  });
+  app.get("/v1/evaluator-definitions/:id", async (c) => {
+    const tenant = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!tenant) return errorResponse(c, 403, "forbidden", "read credential required");
+    const definition = await readEvaluatorDefinition(deps.db, tenant, c.req.param("id"));
+    return definition ? c.json(definition) : errorResponse(c, 404, "not_found", "evaluator definition not found");
   });
   app.get("/v1/questions/:id/versions/:version", async (c) => {
     const tenant = credentialFor(c.req.header("authorization"), deps.credentials.read);
