@@ -149,10 +149,14 @@ describe("frozen references", () => {
   test("reported output is labelled agent-reported, and a missing file absent, with exact provenance", () => {
     const reported: ObservationEvidenceReference = { ...fields, source: "reported", reported_by: "agent", revision_id: id("r"), item_path: "/findings/0/evidence/1" };
     expect(referenceDisplay(reported)).toMatchObject({ is_agent_reported: true, source_label: "Agent-reported" });
-    const absent: ObservationEvidenceReference = { ...fields, content: null, source: "repository", repository_key: "oakridge", commit_sha: "abc", path: "a.ts", line_range: { start: 2, end: 4 }, is_absent: true };
-    expect(referenceDisplay(absent)).toEqual({ source_label: "Repository", location: "oakridge a.ts:2-4 @ abc", is_agent_reported: false, is_absent: true });
+    const absent: ObservationEvidenceReference = { ...fields, content: null, source: "repository", repository_key: "oakridge", commit_sha: "abc", path: "a.ts", line_range: { start: 2, end: 4 }, is_absent: true, is_binary: false, byte_size: null };
+    expect(referenceDisplay(absent)).toEqual({ source_label: "Repository", location: "oakridge a.ts:2-4 @ abc", is_agent_reported: false, is_absent: true, binary_size: null });
     expect(referenceDisplay({ ...fields, source: "run_input", run_id: id("run-1"), input_path: "/spec" })).toMatchObject({ source_label: "Launch input", location: "run-1 /spec" });
     expect(referenceDisplay({ ...fields, source: "revision", revision_id: id("r"), item_path: null })).toMatchObject({ location: "r" });
+  });
+  test("a binary file is present and labelled by its size, with no content to show", () => {
+    const binary: ObservationEvidenceReference = { ...fields, content: null, source: "repository", repository_key: "oakridge", commit_sha: "abc", path: "docs/demo.png", line_range: null, is_absent: false, is_binary: true, byte_size: 409_600 };
+    expect(referenceDisplay(binary)).toEqual({ source_label: "Repository", location: "oakridge docs/demo.png @ abc", is_agent_reported: false, is_absent: false, binary_size: "400 KB" });
   });
 });
 

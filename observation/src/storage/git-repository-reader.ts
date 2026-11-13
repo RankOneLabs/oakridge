@@ -3,7 +3,7 @@ import type { RepositoryFile, RepositoryFileRequest, RepositoryReader } from "..
 const COMMIT = /^[0-9a-f]{7,64}$/i;
 const GIT_TIMEOUT_MS = 10_000;
 
-interface GitOutput { readonly code: number | null; readonly stdout: string; readonly stderr: string }
+interface GitOutput { readonly code: number | null; readonly stdout: Uint8Array; readonly stderr: string }
 type Git = (repository_path: string, args: readonly string[]) => Promise<GitOutput | null>;
 
 /** The IO boundary: a git that cannot be spawned is reported as null, never thrown. */
@@ -11,8 +11,8 @@ const spawnGit: Git = async (repository_path, args) => {
   try {
     const child = Bun.spawn(["git", "-C", repository_path, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore",
       timeout: GIT_TIMEOUT_MS, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/", GIT_TERMINAL_PROMPT: "0" } });
-    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    return { code, stdout, stderr };
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).arrayBuffer(), new Response(child.stderr).text(), child.exited]);
+    return { code, stdout: new Uint8Array(stdout), stderr };
   } catch { return null; }
 };
 
@@ -20,13 +20,19 @@ const spawnGit: Git = async (repository_path, args) => {
 const isTreePath = (path: string): boolean => path.length > 0 && !path.startsWith("/") && !path.split("/").includes("..");
 
 /** Whether `git ls-tree -z` output holds an entry for exactly this path. */
-const listsPath = (listing: string, path: string): boolean =>
-  listing.split("\0").some((entry) => entry.slice(entry.indexOf("\t") + 1) === path);
+const listsPath = (listing: Uint8Array, path: string): boolean =>
+  new TextDecoder().decode(listing).split("\0").some((entry) => entry.slice(entry.indexOf("\t") + 1) === path);
+
+/** A NUL byte marks a file binary, as git itself treats one, and no JSON text stored as jsonb can hold it. */
+const isBinary = (bytes: Uint8Array): boolean => bytes.includes(0);
+/** File bytes as the evidence that can carry them: text content, or only the size of a binary file. */
+const fileOf = (bytes: Uint8Array): RepositoryFile => isBinary(bytes) ? { state: "binary", byte_size: bytes.byteLength }
+  : { state: "present", content: new TextDecoder().decode(bytes) };
 
 /**
  * Reads files at an exact commit with `git ls-tree` and `git cat-file`, never from a worktree. A readable commit
  * without the path is `absent`, which is evidence; a repository, commit, tree or object that cannot be read
- * is `unavailable`, which makes the question that needed it wait.
+ * is `unavailable`, which makes the question that needed it wait. A binary file is `binary`: present, sized, not copied.
  */
 export function createGitRepositoryReader(git: Git = spawnGit): RepositoryReader {
   const hasCommit = async (repository_path: string, commit_sha: string): Promise<boolean> =>
@@ -44,7 +50,7 @@ export function createGitRepositoryReader(git: Git = spawnGit): RepositoryReader
       if (listed.code !== 0) return { state: "unavailable", detail: listed.stderr.trim() || `the tree of ${commit_sha} could not be read` };
       if (!listsPath(listed.stdout, path)) return { state: "absent" };
       const content = await git(repository_path, ["cat-file", "-p", `${commit_sha}:${path}`]);
-      return content?.code === 0 ? { state: "present", content: content.stdout }
+      return content?.code === 0 ? fileOf(content.stdout)
         : { state: "unavailable", detail: content?.stderr.trim() || "git could not be run" };
     },
   };

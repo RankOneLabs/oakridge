@@ -43,7 +43,7 @@ describe("frozen evidence decoding", () => {
     const value = { kind: "test", citation: "bun run test:pwa", detail: null };
     expect(decodeEvidenceContent(reported("citation:1", value))).toEqual({ kind: "reported_citation", value });
   });
-  test("repository file text", () => expect(decodeEvidenceContent({ source: "repository", ref: "citation:0", repository_key: "oakridge", commit_sha: "abc123", path: "a.ts", line_range: null, is_absent: false, content: "export const count = 1;" })).toEqual({ kind: "file_text", value: "export const count = 1;" }));
+  test("repository file text", () => expect(decodeEvidenceContent({ source: "repository", ref: "citation:0", repository_key: "oakridge", commit_sha: "abc123", path: "a.ts", line_range: null, is_absent: false, is_binary: false, byte_size: null, content: "export const count = 1;" })).toEqual({ kind: "file_text", value: "export const count = 1;" }));
   test("launch spec text", () => expect(decodeEvidenceContent({ source: "run_input", run_id: id("run-1"), input_path: "/spec", ref: "spec", content: "Show evidence fields" })).toEqual({ kind: "spec_text", value: "Show evidence fields" }));
   test("revision spec text", () => expect(decodeEvidenceContent(revision("spec", "Updated spec"))).toEqual({ kind: "spec_text", value: "Updated spec" }));
   test.each([
