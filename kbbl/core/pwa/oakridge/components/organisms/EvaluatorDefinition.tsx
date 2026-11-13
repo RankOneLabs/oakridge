@@ -2,7 +2,10 @@ import { GradingReadError } from "../../client-grading";
 import { useEvaluatorDefinition } from "../../hooks/useEvaluatorDefinition";
 
 /** Mounted only inside revealed answers, including historical evaluators. */
-export function EvaluatorDefinition({ evaluatorId }: { evaluatorId: string }) {
+interface EvaluatorDefinitionProps {
+  readonly evaluatorId: string;
+}
+export function EvaluatorDefinition({ evaluatorId }: EvaluatorDefinitionProps) {
   const read = useEvaluatorDefinition(evaluatorId);
   return <section className="flex flex-col gap-1 rounded-md border border-[var(--border-decorative)] p-2" data-testid="or-evaluator-definition">
     <h4 className="m-0 break-all text-xs font-medium">Pinned evaluator <code>{evaluatorId}</code></h4>

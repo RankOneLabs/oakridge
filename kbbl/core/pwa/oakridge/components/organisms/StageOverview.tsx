@@ -62,12 +62,21 @@ export function StageOverviewContent({ runId, label, inputs, execution, evaluati
     </section>
   </article>;
 }
-function ReadNotice({ name, read }: { name: string; read: StageRead<readonly unknown[] | ObservationItemStatusResponse> }) {
+interface ReadNoticeProps {
+  readonly name: string;
+  readonly read: StageRead<readonly unknown[] | ObservationItemStatusResponse>;
+}
+function ReadNotice({ name, read }: ReadNoticeProps) {
   if (read.state !== "loaded") return <p>{name}: {read.state === "pending" ? "loading…" : "unavailable."}</p>;
   if (read.is_partial) return <p>{name}: partial read; open a linked viewer for paged detail.</p>;
   return Array.isArray(read.value) && read.value.length === 0 ? <p>{name}: none recorded for this unit.</p> : null;
 }
-function EvaluationItem({ runId, status, onOpenBeside }: { runId: string; status: ObservationItemStatusResponse; onOpenBeside: Props["onOpenBeside"] }) {
+interface EvaluationItemProps {
+  readonly runId: string;
+  readonly status: ObservationItemStatusResponse;
+  readonly onOpenBeside: Props["onOpenBeside"];
+}
+function EvaluationItem({ runId, status, onOpenBeside }: EvaluationItemProps) {
   const revealed = useGradingVisibility((state) => state.revealed_item_keys);
   const questions = selectEvaluationQuestions(status, revealed);
   const selections = selectEvaluationSelections(status);

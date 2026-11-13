@@ -1,5 +1,8 @@
 import type { ArtifactDetail } from "../../artifact-types";
-export function ArtifactReviewHeader({ artifact }: { artifact: ArtifactDetail }) {
+interface ArtifactReviewHeaderProps {
+  readonly artifact: ArtifactDetail;
+}
+export function ArtifactReviewHeader({ artifact }: ArtifactReviewHeaderProps) {
   return (
       <header className="or-artifact-detail__header">
         <h2 className="or-artifact-detail__title" data-testid="or-artifact-type">

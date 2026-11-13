@@ -90,7 +90,11 @@ export function ArtifactJsonRevisionPanel({ revision, descriptor, structured = f
   );
 }
 
-function FieldNode({ node, itemGrading }: { node: GradedStructuredPathNode; itemGrading?: ItemGradingSlots }) {
+interface FieldNodeProps {
+  readonly node: GradedStructuredPathNode;
+  readonly itemGrading?: ItemGradingSlots;
+}
+function FieldNode({ node, itemGrading }: FieldNodeProps) {
   return <ul className="ml-4 list-none text-sm"><li>
     <span>{node.label}</span> <code className="or-code">{node.item_path === "" ? '(root: "")' : node.item_path}</code>
     {node.selections.map((selection) => <span key={selection.item_path}>{itemGrading?.renderItemAction(selection)}</span>)}
