@@ -12,9 +12,31 @@ interface DefinitionGraphBreadcrumb {
   name: string;
   path: string;
 }
+export type DefinitionGraphEdge = DependencyEdge & { offset_x: number };
+
+/** Parallel kinds must remain visibly distinct even though Dagre routes one path per pair. */
+function selectGraphEdges(edges: DependencyEdge[]): DefinitionGraphEdge[] {
+  const kinds = new Map<string, Set<DependencyEdge["kind"]>>();
+  for (const edge of edges) {
+    const pair = JSON.stringify([edge.from, edge.to]);
+    const pair_kinds = kinds.get(pair) ?? new Set<DependencyEdge["kind"]>();
+    pair_kinds.add(edge.kind);
+    kinds.set(pair, pair_kinds);
+  }
+  return edges.map((edge) => ({
+    ...edge,
+    offset_x:
+      (kinds.get(JSON.stringify([edge.from, edge.to]))?.size ?? 0) > 1
+        ? edge.kind === "explicit"
+          ? -6
+          : 6
+        : 0,
+  }));
+}
+
 export interface DefinitionGraphModel {
   units: DefinitionUnitOverview[];
-  edges: DependencyEdge[];
+  edges: DefinitionGraphEdge[];
   layout: GraphLayout<string>;
   breadcrumbs: DefinitionGraphBreadcrumb[];
 }
@@ -29,13 +51,13 @@ export function selectDefinitionGraph({
   const parent = selected?.is_group ? selected.path : (selected?.parent ?? null);
   const units = overview.units.filter((unit) => unit.parent === parent);
   const ids = new Set(units.map((unit) => unit.path));
-  const edges = dependencies.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
+  const edges = selectGraphEdges(dependencies.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to)));
   const layout = selectGraphLayout({
     nodes: units.map((unit) => ({
       id: unit.path,
       width: Math.max(
         330,
-        ...[unit.for_each, unit.key_expression, unit.after, unit.pool].map(
+        ...[unit.for_each, unit.key_expression, unit.after_text, unit.pool].map(
           (text) => (text?.length ?? 0) * 7 + 100,
         ),
       ),

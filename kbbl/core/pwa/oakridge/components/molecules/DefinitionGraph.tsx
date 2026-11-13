@@ -58,6 +58,7 @@ export function DefinitionGraph(props: DefinitionGraphProps) {
               <g
                 key={JSON.stringify([edge.from, edge.to, edge.kind])}
                 className={`or-definition-edge or-definition-edge--${edge.kind}`}
+                transform={`translate(${edge.offset_x},0)`}
               >
                 <path
                   d={positioned?.path}
@@ -103,7 +104,7 @@ export function DefinitionGraph(props: DefinitionGraphProps) {
                   {unit.pool !== null ? `pool: ${unit.pool}` : ""}
                 </text>
                 <text x="12" y="136">
-                  {unit.after !== null ? `after: ${unit.after}` : ""}
+                  {unit.after_text !== null ? `after: ${unit.after_text}` : ""}
                 </text>
               </g>
             );

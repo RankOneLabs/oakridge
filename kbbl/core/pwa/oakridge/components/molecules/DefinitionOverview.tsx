@@ -1,5 +1,9 @@
 import { Button } from "../../../components/atoms/Button";
-import type { DefinitionOverview as Overview } from "../../lib/definition-overview";
+import {
+  selectDefinitionSelection,
+  selectDefinitionSchemaParts,
+  type DefinitionOverview as Overview,
+} from "../../lib/definition-overview";
 import {
   definitionSchemaElementId,
   definitionStageHref,
@@ -12,22 +16,22 @@ interface DefinitionOverviewProps {
 function SchemaType({ text, overview }: { text: string; overview: Overview }) {
   return (
     <>
-      {text.split(/([A-Za-z_][A-Za-z_0-9]*)/).map((part, index) =>
-        overview.schemas.some((schema) => schema.key === part) ? (
+      {selectDefinitionSchemaParts(text, overview.schemas).map((part, index) =>
+        part.kind === "schema" ? (
           <Button
             variant="link"
             className="or-definition-link"
             key={index}
             onClick={() => {
-              const entry = document.getElementById(definitionSchemaElementId(part));
+              const entry = document.getElementById(definitionSchemaElementId(part.text));
               entry?.scrollIntoView({ block: "nearest" });
               entry?.focus();
             }}
           >
-            {part}
+            {part.text}
           </Button>
         ) : (
-          part
+          part.text
         ),
       )}
     </>
@@ -96,7 +100,7 @@ export function DefinitionOverview({ overview }: DefinitionOverviewProps) {
             {unit.pool !== null && <span> · pool: {unit.pool}</span>}
             {unit.for_each !== null && <code> · for_each: {unit.for_each}</code>}
             {unit.key_expression !== null && <code> · key: {unit.key_expression}</code>}
-            {unit.after !== null && <code> · after: {unit.after}</code>}
+            {unit.after_text !== null && <code> · after: {unit.after_text}</code>}
           </li>
         ))}
       </ul>
@@ -161,28 +165,31 @@ export function DefinitionSelectionSummary({
   overview,
   selection,
 }: DefinitionOverviewProps & { selection: import("../../../lib/hash").DefinitionSelection | null }) {
-  if (!selection) return <p>Select a stage or unit to inspect its declaration.</p>;
-  if (selection.kind === "stage") {
-    if (!overview.stages.includes(selection.stage))
-      return <p>Stage {selection.stage} is not in this definition.</p>;
+  const summary = selectDefinitionSelection({ overview, selection });
+  if (summary.kind === "none") return <p>Select a stage or unit to inspect its declaration.</p>;
+  if (summary.kind === "missing") {
+    return summary.selection.kind === "stage" ? (
+      <p>Stage {summary.selection.stage} is not in this definition.</p>
+    ) : (
+      <p>Unit {summary.selection.path} is not in this definition.</p>
+    );
+  }
+  if (summary.kind === "stage") {
     return (
       <>
-        <h3>Stage: {selection.stage}</h3>
+        <h3>Stage: {summary.stage}</h3>
         <p>Invoked by:</p>
         <ul>
-          {overview.units
-            .filter((unit) => unit.stage === selection.stage)
-            .map((unit) => (
-              <li key={unit.path}>
-                <a href={definitionUnitHref(overview.id, unit.path)}>{unit.path}</a>
-              </li>
-            ))}
+          {summary.callers.map((unit) => (
+            <li key={unit.path}>
+              <a href={definitionUnitHref(overview.id, unit.path)}>{unit.path}</a>
+            </li>
+          ))}
         </ul>
       </>
     );
   }
-  const unit = overview.units.find((unit) => unit.path === selection.path);
-  if (!unit) return <p>Unit {selection.path} is not in this definition.</p>;
+  const { unit } = summary;
   return (
     <>
       <h3>Unit: {unit.path}</h3>
@@ -208,7 +215,7 @@ export function DefinitionSelectionSummary({
             ["pool", unit.pool],
             ["for_each", unit.for_each],
             ["key", unit.key_expression],
-            ["after", unit.after],
+            ["after", unit.after_text],
           ] as const
         ).map(
           ([name, value]) =>

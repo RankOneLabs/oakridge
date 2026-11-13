@@ -39,7 +39,7 @@ const dependencies = selectDefinitionDependencies(workflow);
 test("root graph keeps nested units and their edges out of the root level", () => {
   const graph = selectDefinitionGraph({ overview, dependencies, selection: null });
   expect(graph.units.map((unit) => unit.path)).toEqual(["start", "work"]);
-  expect(graph.edges).toEqual([{ kind: "explicit", from: "start", to: "work" }]);
+  expect(graph.edges).toEqual([{ kind: "explicit", from: "start", to: "work", offset_x: 0 }]);
   expect(graph.breadcrumbs).toEqual([]);
 });
 
@@ -50,7 +50,9 @@ test("nested group selection filters its level and links each ancestor breadcrum
     selection: { kind: "unit", path: "work/nested" },
   });
   expect(graph.units.map((unit) => unit.path)).toEqual(["work/nested/item", "work/nested/finish"]);
-  expect(graph.edges).toEqual([{ kind: "explicit", from: "work/nested/item", to: "work/nested/finish" }]);
+  expect(graph.edges).toEqual([
+    { kind: "explicit", from: "work/nested/item", to: "work/nested/finish", offset_x: 0 },
+  ]);
   expect(graph.breadcrumbs).toEqual([
     { name: "work", path: "work" },
     { name: "nested", path: "work/nested" },
@@ -104,4 +106,28 @@ test("development graph includes all eleven authored referenced dependencies", (
       .map((edge) => `${edge} (referenced)`)
       .sort(),
   );
+});
+
+test("parallel dependency kinds receive separate routes without changing their relationships", () => {
+  const workflow = {
+    ...detail.workflow,
+    run: {
+      outcome: {},
+      units: {
+        first: { stage: "analysis" },
+        second: { stage: "planning", after: ["first"], input: { spec: "first.outcome.spec" } },
+      },
+    },
+  };
+  const dependencies = selectDefinitionDependencies(workflow);
+  const graph = selectDefinitionGraph({
+    overview: selectDefinitionOverview({ ...detail, workflow }),
+    dependencies,
+    selection: null,
+  });
+  expect(graph.edges).toEqual([
+    { ...dependencies.edges[0], offset_x: -6 },
+    { ...dependencies.edges[1], offset_x: 6 },
+  ]);
+  expect(graph.layout.edges).toHaveLength(1);
 });

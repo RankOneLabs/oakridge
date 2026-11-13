@@ -84,3 +84,21 @@ test("explicit after arrays render a solid labelled edge and linked relation", (
   expect(within(relation).getByRole("link", { name: "first" }).getAttribute("href"))
     .toBe(`#oakridge/defs/${detail.definition_id}/units/first`);
 });
+
+test("array prerequisites remain visible and parallel dependency kinds stay separate", () => {
+  state.data = { ...detail, workflow: { ...detail.workflow, run: { outcome: {}, units: {
+    first: { stage: "analysis" },
+    second: { stage: "planning", after: ["first"], input: { spec: "first.outcome.spec" } },
+  } } } };
+  render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "second" }} onNavigate={() => {}} onBack={() => {}} />);
+  const graph = screen.getByRole("region", { name: "Definition dependencies" });
+  const explicit = graph.querySelector(".or-definition-edge--explicit");
+  const referenced = graph.querySelector(".or-definition-edge--referenced");
+  expect(explicit?.getAttribute("transform")).toBe("translate(-6,0)");
+  expect(referenced?.getAttribute("transform")).toBe("translate(6,0)");
+  expect(explicit?.querySelector("text")?.textContent).toBe("after");
+  expect(referenced?.querySelector("text")?.textContent).toBe("outcome.spec");
+  expect(within(graph).getByText('after: ["first"]')).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Workflow overview" })).getByText('· after: ["first"]')).toBeTruthy();
+  expect(within(screen.getByTestId("or-def-selection")).getByText('["first"]')).toBeTruthy();
+});
