@@ -55,3 +55,32 @@ test("schema references focus the overview entry without changing the route", ()
   fireEvent.click(screen.getByRole("button", { name: "final_merge_policy" }));
   expect(document.activeElement).toBe(schema);
 });
+
+test("explicit after arrays render a solid labelled edge and linked relation", () => {
+  state.data = {
+    ...detail,
+    workflow: {
+      ...detail.workflow,
+      run: {
+        outcome: {},
+        units: {
+          first: { stage: "analysis" },
+          second: { stage: "planning", after: ["first"] },
+        },
+      },
+    },
+  };
+  render(<WorkflowDefDetail definitionId="d1" selection={null} onNavigate={() => {}} onBack={() => {}} />);
+  const graph = screen.getByRole("region", { name: "Definition dependencies" });
+  const edge = graph.querySelector(".or-definition-edge--explicit");
+  expect(edge).toBeTruthy();
+  expect(edge?.querySelector("path")).toBeTruthy();
+  expect(edge?.querySelector("text")?.textContent).toBe("after");
+  expect(graph.querySelector(".or-definition-edge--referenced")).toBeNull();
+  const relation = within(graph).getByRole("list", { name: "Dependency edges" });
+  expect(relation.textContent).toBe("second after first");
+  expect(within(relation).getByRole("link", { name: "second" }).getAttribute("href"))
+    .toBe(`#oakridge/defs/${detail.definition_id}/units/second`);
+  expect(within(relation).getByRole("link", { name: "first" }).getAttribute("href"))
+    .toBe(`#oakridge/defs/${detail.definition_id}/units/first`);
+});

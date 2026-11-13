@@ -1,58 +1,134 @@
 import type { DefinitionSelection } from "../../../lib/hash";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
-import { selectDefinitionOverview } from "../../lib/definition-overview";
+import type { DefinitionOverview } from "../../lib/definition-overview";
+import { selectDefinitionGraph } from "../../lib/definition-graph";
 import { selectDefinitionDependencies, type DependencyEdge } from "../../lib/definition-dependencies";
-import { selectGraphLayout } from "../../lib/graph-layout";
 import { definitionHref, definitionStageHref, definitionUnitHref } from "../../lib/definition-selection";
 
-interface DefinitionGraphProps { definition: OperatorDefinitionDetail; selection: DefinitionSelection | null }
-function edgeLabel(edge: DependencyEdge): string {
-  return edge.kind === "explicit" ? "after" : [...new Set(edge.references.map((ref) => ["outcome", ...ref.outcome_path].join(".")))].join(", ");
+interface DefinitionGraphProps {
+  definition: OperatorDefinitionDetail;
+  selection: DefinitionSelection | null;
+  overview: DefinitionOverview;
 }
-function selectDefinitionGraph({ definition, selection }: DefinitionGraphProps) {
-  const overview = selectDefinitionOverview(definition);
-  const selected = selection?.kind === "unit" ? overview.units.find((unit) => unit.path === selection.path) : null;
-  const parent = selected?.is_group ? selected.path : selected?.parent ?? null;
-  const units = overview.units.filter((unit) => unit.parent === parent);
-  const ids = new Set(units.map((unit) => unit.path));
-  const edges = selectDefinitionDependencies(definition.workflow).edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
-  const layout = selectGraphLayout({ nodes: units.map((unit) => ({ id: unit.path, width: Math.max(330, ...[unit.for_each, unit.key_expression, unit.after, unit.pool].map((text) => (text?.length ?? 0) * 7 + 100)), height: 150 })), edges });
-  const breadcrumbs = (parent?.split("/") ?? []).map((name, index, parts) => ({ name, path: parts.slice(0, index + 1).join("/") }));
-  return { units, edges, layout, breadcrumbs };
+function edgeLabel(edge: DependencyEdge): string {
+  return edge.kind === "explicit"
+    ? "after"
+    : [...new Set(edge.references.map((ref) => ["outcome", ...ref.outcome_path].join(".")))].join(", ");
 }
 export function DefinitionGraph(props: DefinitionGraphProps) {
   const { definition } = props;
-  const { units, edges, layout, breadcrumbs } = selectDefinitionGraph(props);
+  const { units, edges, layout, breadcrumbs } = selectDefinitionGraph({
+    overview: props.overview,
+    selection: props.selection,
+    dependencies: selectDefinitionDependencies(definition.workflow),
+  });
   const id = definition.definition_id;
-  return <section aria-label="Definition dependencies"><h3>Dependencies</h3>
-    <nav aria-label="Graph level"><a href={definitionHref(id)}>Root</a>{breadcrumbs.map((crumb) => <span key={crumb.path}> / <a href={definitionUnitHref(id, crumb.path)}>{crumb.name}</a></span>)}</nav>
-    <div className="or-definition-graph"><svg width={layout.width} height={layout.height} role="img" aria-label="Unit dependency graph">
-      <defs><marker id="definition-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="currentColor" /></marker></defs>
-      {edges.map((edge) => {
-        const positioned = layout.edges.find((item) => item.from === edge.from && item.to === edge.to);
-        const target = layout.nodes.find((node) => node.id === edge.to);
-        const source = layout.nodes.find((node) => node.id === edge.from);
-        return <g key={JSON.stringify([edge.from, edge.to, edge.kind])} className={`or-definition-edge or-definition-edge--${edge.kind}`}>
-          <path d={positioned?.path} fill="none" stroke="currentColor" markerEnd="url(#definition-arrow)" />
-          <text x={((source?.x ?? 0) + (target?.x ?? 0)) / 2 + 10} y={((source?.y ?? 0) + 150 + (target?.y ?? 0)) / 2 + (edge.kind === "explicit" ? -6 : 12)}>{edgeLabel(edge)}</text>
-        </g>;
-      })}
-      {layout.nodes.map((node) => {
-        const unit = units.find((item) => item.path === node.id);
-        if (!unit) return null;
-        return <g key={node.id} transform={`translate(${node.x},${node.y})`}>
-          <rect width={node.width} height={node.height} rx="6" className="or-definition-node" />
-          <a href={definitionUnitHref(id, unit.path)}><text x="12" y="24">{unit.key}{unit.is_group ? " (group)" : ""}</text></a>
-          {unit.stage && <a href={definitionStageHref(id, unit.stage)}><text x="12" y="47">{unit.stage}</text></a>}
-          <text x="12" y="70">{unit.for_each !== null ? `for_each: ${unit.for_each}` : ""}</text>
-          <text x="12" y="92">{unit.key_expression !== null ? `key: ${unit.key_expression}` : ""}</text>
-          <text x="12" y="114">{unit.pool !== null ? `pool: ${unit.pool}` : ""}</text>
-          <text x="12" y="136">{unit.after !== null ? `after: ${unit.after}` : ""}</text>
-        </g>;
-      })}
-    </svg></div>
-    <ul aria-label="Dependency edges">{edges.flatMap((edge) => edge.kind === "explicit"
-      ? [<li key={JSON.stringify(edge)}><a href={definitionUnitHref(id, edge.to)}>{edge.to}</a> after <a href={definitionUnitHref(id, edge.from)}>{edge.from}</a></li>]
-      : edge.references.map((ref) => <li key={JSON.stringify(ref)}><a href={definitionUnitHref(id, ref.downstream)}>{ref.downstream}</a> reads <a href={definitionUnitHref(id, ref.upstream)}>{ref.upstream}</a>.{["outcome", ...ref.outcome_path].join(".")} via {ref.binding.kind === "input" ? `input.${ref.binding.field}` : ref.binding.kind}</li>))}</ul>
-  </section>;
+  return (
+    <section aria-label="Definition dependencies">
+      <h3>Dependencies</h3>
+      <nav aria-label="Graph level">
+        <a href={definitionHref(id)}>Root</a>
+        {breadcrumbs.map((crumb) => (
+          <span key={crumb.path}>
+            {" "}
+            / <a href={definitionUnitHref(id, crumb.path)}>{crumb.name}</a>
+          </span>
+        ))}
+      </nav>
+      <div className="or-definition-graph">
+        <svg width={layout.width} height={layout.height} role="img" aria-label="Unit dependency graph">
+          <defs>
+            <marker
+              id="definition-arrow"
+              viewBox="0 0 10 10"
+              refX="10"
+              refY="5"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto"
+            >
+              <path d="M0,0 L10,5 L0,10 Z" fill="currentColor" />
+            </marker>
+          </defs>
+          {edges.map((edge) => {
+            const positioned = layout.edges.find((item) => item.from === edge.from && item.to === edge.to);
+            const target = layout.nodes.find((node) => node.id === edge.to);
+            const source = layout.nodes.find((node) => node.id === edge.from);
+            return (
+              <g
+                key={JSON.stringify([edge.from, edge.to, edge.kind])}
+                className={`or-definition-edge or-definition-edge--${edge.kind}`}
+              >
+                <path
+                  d={positioned?.path}
+                  fill="none"
+                  stroke="currentColor"
+                  markerEnd="url(#definition-arrow)"
+                />
+                <text
+                  x={((source?.x ?? 0) + (target?.x ?? 0)) / 2 + 10}
+                  y={((source?.y ?? 0) + 150 + (target?.y ?? 0)) / 2 + (edge.kind === "explicit" ? -6 : 12)}
+                >
+                  {edgeLabel(edge)}
+                </text>
+              </g>
+            );
+          })}
+          {layout.nodes.map((node) => {
+            const unit = units.find((item) => item.path === node.id);
+            if (!unit) return null;
+            return (
+              <g key={node.id} transform={`translate(${node.x},${node.y})`}>
+                <rect width={node.width} height={node.height} rx="6" className="or-definition-node" />
+                <a href={definitionUnitHref(id, unit.path)}>
+                  <text x="12" y="24">
+                    {unit.key}
+                    {unit.is_group ? " (group)" : ""}
+                  </text>
+                </a>
+                {unit.stage && (
+                  <a href={definitionStageHref(id, unit.stage)}>
+                    <text x="12" y="47">
+                      {unit.stage}
+                    </text>
+                  </a>
+                )}
+                <text x="12" y="70">
+                  {unit.for_each !== null ? `for_each: ${unit.for_each}` : ""}
+                </text>
+                <text x="12" y="92">
+                  {unit.key_expression !== null ? `key: ${unit.key_expression}` : ""}
+                </text>
+                <text x="12" y="114">
+                  {unit.pool !== null ? `pool: ${unit.pool}` : ""}
+                </text>
+                <text x="12" y="136">
+                  {unit.after !== null ? `after: ${unit.after}` : ""}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <ul aria-label="Dependency edges">
+        {edges.flatMap((edge) =>
+          edge.kind === "explicit"
+            ? [
+                <li key={JSON.stringify(edge)}>
+                  <a href={definitionUnitHref(id, edge.to)}>{edge.to}</a> after{" "}
+                  <a href={definitionUnitHref(id, edge.from)}>{edge.from}</a>
+                </li>,
+              ]
+            : edge.references.map((ref) => (
+                <li key={JSON.stringify(ref)}>
+                  <a href={definitionUnitHref(id, ref.downstream)}>{ref.downstream}</a> reads{" "}
+                  <a href={definitionUnitHref(id, ref.upstream)}>{ref.upstream}</a>.
+                  {["outcome", ...ref.outcome_path].join(".")} via{" "}
+                  {ref.binding.kind === "input" ? `input.${ref.binding.field}` : ref.binding.kind}
+                </li>
+              )),
+        )}
+      </ul>
+    </section>
+  );
 }

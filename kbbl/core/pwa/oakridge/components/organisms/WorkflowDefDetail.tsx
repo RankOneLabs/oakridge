@@ -25,7 +25,7 @@ export function WorkflowDefDetail({ definitionId, selection, onNavigate, onBack 
     <Button variant="secondary" onClick={onBack}>← Workflows</Button>
     <h1>Workflow definition</h1>
     <DefinitionOverview overview={overview} />
-    <DefinitionGraph definition={definition} selection={selection} />
+    <DefinitionGraph overview={overview} definition={definition} selection={selection} />
     <section data-testid="or-def-selection" aria-label="Selected declaration"><DefinitionSelectionSummary overview={overview} selection={selection} /></section>
     <DefinitionRawView key={JSON.stringify(selection)} definition={definition} selection={selection} />
   </div>;
