@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { KbblHealth, ObservationHealth } from "../../kbbl/core/server/handlers/observation-health";
 import { err, ok } from "../src/domain/primitives";
-import { machineGraders, parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
+import { configurationHash, machineGraders, parseGradingDefinitions, planRegistration, type GradingDefinitions, type PublishedConfiguration } from "../src/grading/configuration";
 import { isPinTarget } from "../src/grading/evidence";
-import { oakridgeGradingRegistry } from "./grading-fixture";
+import { fixtureDefinitions, oakridgeGradingRegistry } from "./grading-fixture";
 import { ASSESSMENT_FINDING_KIND, FINDING_KIND } from "../src/producers/oakridge/catalogue";
 import { runProof } from "../verification/proof";
 import { editedGraders, pinChecks, registrationScenario, type ItemReadback, type RegistrationSource } from "../verification/registration";
@@ -16,6 +16,8 @@ import { liveScenario, runtimeScenario } from "../verification/scenarios";
 import { awaitRunCapture, isRunCaptured, readRunCapture } from "../verification/run-capture";
 import { awaitLaunch, type LaunchedProcess, type ProofIo } from "../verification/shadow-session";
 import { relationsScenario } from "../verification/relations";
+import { runtimeRefreshScenario } from "../verification/runtime-refresh";
+import { gradingScenario, type GradingSource, type GradingRunLabel } from "../verification/grading";
 import { sourceRunScenario, type ReviewCheckpoint, type SourceRunInput } from "../verification/source-run";
 
 const repository = resolve(import.meta.dir, "../..");
@@ -25,7 +27,7 @@ const state: LauncherState = launcherStateSchema.parse({ name: "test", state_dir
   observation: { port: 4, url: "http://observation", database: "observation", namespace: "shadow-test",
     ingest_token_file: "/i", read_token_file: "/r", grade_token_file: "/g", status_file: "/s" }, provider_env_file: "/env" });
 
-const kbblHealth = (observation: ObservationHealth): KbblHealth => ({ status: "ok", observation, capabilities: { read: true, grade: true } });
+const kbblHealth = (observation: ObservationHealth): KbblHealth => ({ status: "ok", observation, capabilities: { read: true, grade: true, configure: true } });
 const status = (value: ObservationStatus["state"], detail = ""): ObservationStatus => ({ state: value, detail, recorded_at: "now" });
 
 /** A stack whose answers the test fixes; nothing here reaches a process or network. */
@@ -34,10 +36,16 @@ function fakeIo(overrides: Partial<ProofIo> = {}): ProofIo {
   return { state, startStack: async () => ok(undefined), stopStack: async () => {}, stackAnswers: async () => false,
     observationStatus: async () => status("running", "pid_42"), kbblHealth: async () => kbblHealth({ state: "no_configured_graders" }),
     dbosHealthy: async () => true,
-    tokens: async () => ok({ capabilities: { ingest: "i", read: "r", grade: "g" }, private_files: true }),
+    tokens: async () => ok({ capabilities: { ingest: "i", read: "r", grade: "g", configure: "c" }, private_files: true }),
     shadowQuery: async () => ok("1"), killObservation: () => {}, dbos: async () => ok({}), observationGet: async () => ok({}),
-    publisherFailures: async () => [], readGraders: async () => "{}", writeGraders: async () => {},
+    publisherFailures: async () => [], readGradingConfiguration: async () => publishedFixture("[]"), publishGradingConfiguration: async () => {},
     now: () => clock, sleep: async (ms) => { clock += ms; }, ...overrides };
+}
+function publishedFixture(text: string): PublishedConfiguration {
+  const definitions = JSON.parse(text) as GradingDefinitions;
+  const hash = configurationHash(definitions);
+  if (!hash.ok) throw new Error(hash.error.detail);
+  return { status: "published", version: 1, hash: hash.value, published_at: "2026-11-01T00:00:00Z", definitions };
 }
 const failing = (report: ScenarioReport) => report.checks.filter((check) => !check.passed).map((check) => check.name);
 
@@ -67,6 +75,91 @@ const feedIo = (feed: () => Feed): Pick<ProofIo, "shadowQuery" | "observationGet
   },
 });
 const refused = (detail: string) => err({ operation: "observation_request", entity_id: "x", detail });
+
+test.each(["assessment-on", "analysis-concurrent"] as const)("grading restores configuration after observation dies during %s", async (failure_at) => {
+  const directory = mkdtempSync(join(tmpdir(), "grading-cleanup-"));
+  const provider_env_file = join(directory, "provider.env");
+  writeFileSync(provider_env_file, "TYPESAFE_API_KEY=fixture\nJEV_API_KEY=fixture\n");
+  const original = await fixtureDefinitions();
+  let definitions = original;
+  let stack = false;
+  let observation = false;
+  let label: GradingRunLabel = "analysis-on";
+  let provider_refuses = false;
+  let worker_prepared = false;
+  let worker_closed = false;
+  let restored = false;
+  let clock = 0;
+  const feed = caughtUp("assessment");
+  const io = fakeIo({
+    state: { ...state, provider_env_file },
+    now: () => clock, sleep: async (ms) => { clock += ms; },
+    stackAnswers: async () => stack,
+    startStack: async (options) => { stack = observation = true; provider_refuses = options?.provider_env_file?.includes("refused") ?? false; return ok(undefined); },
+    stopStack: async () => { stack = observation = false; },
+    observationStatus: async () => status(observation ? "running" : "exited", observation ? "pid_42" : "killed"),
+    kbblHealth: async () => {
+      const planned = planRegistration(definitions, oakridgeGradingRegistry);
+      if (!planned.ok) throw new Error(planned.error.detail);
+      return kbblHealth(observation ? { state: "configured", graders: planned.value.graders.map((grader) =>
+        ({ runner: grader.runner, evaluatorDefinitionId: grader.evaluator_definition_id })) } : { state: "down", reason: "unreachable" });
+    },
+    readGradingConfiguration: async () => {
+      if (!observation) throw new Error("configuration API is down");
+      return publishedFixture(JSON.stringify(definitions));
+    },
+    publishGradingConfiguration: async (next) => {
+      if (!observation) throw new Error("cannot restore to a dead service");
+      definitions = next;
+      restored = next === original || JSON.stringify(next) === JSON.stringify(original);
+    },
+    killObservation: () => {
+      observation = false;
+      if (label === failure_at) throw new Error("injected failure after observation died");
+    },
+    shadowQuery: async (_database, query) => {
+      if (query.includes("source_event_outcome")) return ok(JSON.stringify(feed.outcomes));
+      if (query.includes("json_agg")) return ok(JSON.stringify(feed.events));
+      if (query.includes("config::text")) return ok(JSON.stringify({ grading_enabled: !query.includes("analysis-off") }));
+      return ok("1");
+    },
+    observationGet: async (path) => {
+      if (path.endsWith("/cursor")) return ok({ cursor: feed.cursor });
+      if (path.includes("/source-revisions/")) return ok({ revision_id: decodeURIComponent(path.split("/").at(-1)!), run_id: "run-assessment-on", artifact_kind: "assessment" });
+      if (path.includes("/grading-spend")) return ok({ is_grading_enabled: !path.includes("analysis-off"), captured_config: { grading_enabled: !path.includes("analysis-off") },
+        committed: 0, requests_sent: 0, attempts: 0, executions: {} });
+      if (path.includes("/runs/")) return ok({ items: [{ occurrence_id: label, revision_id: "analysis", json_pointer: "/findings/0",
+        artifact_kind: "analysis", item_selector: "/findings/*", item_kind: FINDING_KIND }] });
+      if (path.includes("/evidence?")) return ok({ items: [] });
+      const in_flight = !provider_refuses && (label === "analysis-failing" || label === "analysis-concurrent");
+      return ok({ questions: { items: [{ evidence: { evidence_set_id: "evidence", question_id: "q", question_version: "1", readiness: { state: "ready" } },
+        human: { state: "ready" }, machine: { items: [{ evaluator_definition_id: "fixture", model: "fixture", execution_id: "execution",
+          measurement: { state: in_flight ? "pending" : provider_refuses ? "failed" : "answered", code: in_flight ? "claimed" : undefined },
+          attempts: { items: [{ attempt: 1, request_sent: true, outcome: in_flight ? null : "completed" }] } }] } }] } });
+    },
+  });
+  const source: GradingSource = {
+    run: async (next_label, options) => {
+      label = next_label;
+      const run = { run_id: `run-${label}`, definition_id: "development" };
+      await options.after_launch?.(run);
+      return { run, report: { id: "source-run", status: "passed", checks: [], evidence: NO_EVIDENCE } };
+    },
+    withholdRepository: async () => ok("withheld"), supplyRepository: async () => ok("supplied"),
+    secondWorker: async () => {
+      await io.readGradingConfiguration();
+      worker_prepared = true;
+      return ok({ db: {} as never, tenant: { producer: "oakridge", namespace: "n" }, run_spend: 5, lease_ms: 1, runners: () => null,
+        close: async () => { worker_closed = true; } });
+    },
+  };
+  try {
+    const report = await gradingScenario(io, source);
+    expect({ restored, stack, worker_prepared, worker_closed, failure: report.checks.find((entry) => entry.name === "the scenario completes")?.detail })
+      .toEqual({ restored: true, stack: false, worker_prepared: failure_at === "analysis-concurrent", worker_closed: failure_at === "analysis-concurrent",
+        failure: "injected failure after observation died" });
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 
 describe("the live proof's prerequisites", () => {
   test("a missing configured key fails the proof and keeps the launcher's reason", async () => {
@@ -137,6 +230,77 @@ describe("the runtime scenario", () => {
       shadowQuery: async (database, query) => query.includes("LIMIT 1") ? ok("6/e2") : io.shadowQuery(database, query) }));
     expect(failing(report)).toContain("the ordered feed delivered every event of the run");
     expect(report.evidence.run_capture?.undelivered_event_ids).toEqual(["e1", "e2"]);
+  });
+});
+
+describe("the runtime refresh proof", () => {
+  interface RefreshFaults { readonly changed_pid?: boolean; readonly changed_history?: boolean; readonly stale_pins?: boolean; readonly failed_capture?: boolean }
+
+  /** Captures keep the evaluator ids in force when the source run begins. */
+  async function refresh(faults: RefreshFaults = {}) {
+    const original = await fixtureDefinitions();
+    const planned = (definitions: GradingDefinitions) => {
+      const result = planRegistration(definitions, oakridgeGradingRegistry);
+      if (!result.ok) throw new Error(result.error.detail);
+      return result.value;
+    };
+    let definitions = original;
+    let version = 1;
+    let stops = 0;
+    let captures = 0;
+    const publications: GradingDefinitions[] = [];
+    const item = { occurrence_id: "finding", revision_id: "analysis", json_pointer: "/findings/0",
+      artifact_kind: "analysis", item_selector: "/findings/*", item_kind: FINDING_KIND };
+    const original_pins = planned(original).capture.pins.filter((pin) => isPinTarget(pin, item));
+    const io = fakeIo({
+      stackAnswers: async () => true,
+      stopStack: async () => { stops++; },
+      observationStatus: async () => status("running", faults.changed_pid && version > 1 ? "pid_43" : "pid_42"),
+      readGradingConfiguration: async () => publishedFixture(JSON.stringify(original)),
+      publishGradingConfiguration: async (next) => { publications.push(next); definitions = next; version++; },
+      shadowQuery: async () => ok(faults.changed_history && version > 1 ? "changed history" : "original history bytes"),
+      observationGet: async (path) => {
+        if (path.endsWith("/runtime")) return ok({ version, hash: publishedFixture(JSON.stringify(definitions)).hash });
+        if (path.includes("/items?")) return ok({ items: [item] });
+        if (path.includes("/status?")) return ok({ questions: { items: [{ evidence: { evidence_set_id: "evidence", question_id: "q",
+          question_version: "1", readiness: { state: "ready" } }, human: { state: "ready" }, machine: { items: [{
+          evaluator_definition_id: original_pins[0]!.evaluator_definition_ids[0], model: "fixture", execution_id: "execution",
+          measurement: { state: "answered", observation_id: "grade", answer: true }, attempts: { items: [] } }] } }] } });
+        const pins = faults.stale_pins ? original_pins : planned(definitions).capture.pins.filter((pin) => isPinTarget(pin, item));
+        return ok({ items: pins.map((pin) => ({ evidence_set_id: `evidence:${pin.question_id}`, question_id: pin.question_id,
+          question_version: pin.question_version, pinned_evaluator_definition_ids: { items: pin.evaluator_definition_ids },
+          readiness: { state: "ready", ready_at: "now" }, references: { items: [] } })) });
+      },
+    });
+    const source: Pick<GradingSource, "run"> = { run: async () => {
+      captures++;
+      if (faults.failed_capture && captures === 2) throw new Error("later capture failed");
+      return { run: { run_id: `run-${captures}`, definition_id: "development" },
+        report: { id: "source-run", status: "passed", checks: [], evidence: NO_EVIDENCE } };
+    } };
+    const report = await runtimeRefreshScenario(io, source);
+    return { report, publications, original, stops };
+  }
+
+  test("it verifies publication and immutable history without restarting, then republishes the original", async () => {
+    const result = await refresh();
+    expect({ failures: failing(result.report), publications: result.publications.length, restored: result.publications.at(-1), stops: result.stops })
+      .toEqual({ failures: [], publications: 2, restored: result.original, stops: 0 });
+  });
+
+  test.each([
+    [{ changed_pid: true }, "the observation process id is unchanged"],
+    [{ changed_history: true }, "earlier pins and grades are byte-identical"],
+    [{ stale_pins: true }, "each after-refresh item has exactly its questions, pinned to the selection in force at its capture"],
+  ] as const)("it rejects broken refresh invariants: %j", async (faults, failure) => {
+    const result = await refresh(faults);
+    expect(failing(result.report)).toContain(failure);
+  });
+
+  test("it restores the original after publication even when the later capture throws", async () => {
+    const result = await refresh({ failed_capture: true });
+    expect({ status: result.report.status, restored: result.publications.at(-1), stops: result.stops })
+      .toEqual({ status: "failed", restored: result.original, stops: 0 });
   });
 });
 
@@ -219,9 +383,9 @@ describe("a run's capture", () => {
 });
 
 test("a relations run that gave the proof none of its steps cannot read as a pass", async () => {
-  const graders = await Bun.file(resolve(import.meta.dir, "../grading-definitions.json")).text();
+  const graders = await Bun.file(resolve(import.meta.dir, "./fixtures/grading-definitions.json")).text();
   const run = { run_id: "run-1", definition_id: "definition-1" };
-  const report = await relationsScenario(fakeIo({ readGraders: async () => graders }), { shared_input: {} as SourceRunInput,
+  const report = await relationsScenario(fakeIo({ readGradingConfiguration: async () => publishedFixture(graders) }), { shared_input: {} as SourceRunInput,
     run: async () => ({ report: { id: "source-run", status: "passed", checks: [], evidence: NO_EVIDENCE }, run }),
     openObservation: async () => ok({ db: {} as never, tenant: { producer: "oakridge", namespace: "n" }, close: async () => {} }) }, "matrix");
   expect([report.status, failing(report)]).toEqual(["failed", ["the links run gave the proof its findings and tasks"]]);
@@ -574,7 +738,7 @@ describe("the registration scenario", () => {
     expect(checks.map((check) => [check.passed, check.detail])).toEqual([[true, "2 pinned question(s) on 3 item(s)"], [true, "all match"]]);
   });
 
-  const committedText = readFileSync(resolve(repository, "observation/grading-definitions.json"), "utf8");
+  const committedText = readFileSync(resolve(repository, "observation/tests/fixtures/grading-definitions.json"), "utf8");
   const plan = (text: string) => {
     const parsed = parseGradingDefinitions(JSON.parse(text), oakridgeGradingRegistry);
     if (!parsed.ok) throw new Error(parsed.error.detail);
@@ -590,7 +754,7 @@ describe("the registration scenario", () => {
     readonly never_arrives?: boolean; readonly unstable_evidence?: boolean; readonly drops_correctness?: boolean;
     readonly wrong_commit?: boolean; readonly forgets_evidence?: boolean }
 
-  /** A shadow whose observation registers whatever grading-definitions.json held when it last started, pins
+  /** A shadow whose observation registers the latest published configuration, pins
    * each captured item with the selection running at its capture, and reads a cited file only
    * while the launch repository is in place. */
   function shadow(options: ShadowOptions = {}) {
@@ -626,8 +790,8 @@ describe("the registration scenario", () => {
     const io = fakeIo({
       now: () => clock,
       sleep: async (ms) => { clock += ms; await tick(); },
-      readGraders: async () => graders,
-      writeGraders: async (text) => { graders = text; },
+      readGradingConfiguration: async () => publishedFixture(graders),
+      publishGradingConfiguration: async (definitions) => { const text = JSON.stringify(definitions, null, 2) + "\n"; graders = text; running = text; for (const evaluator of plan(text).evaluators) stored.add(evaluator.evaluator_definition_id); occurrences.forEach(collect); },
       startStack: async () => {
         running = graders; killed = false;
         for (const evaluator of plan(graders).evaluators) stored.add(evaluator.evaluator_definition_id);
@@ -635,6 +799,7 @@ describe("the registration scenario", () => {
         occurrences.forEach(collect);
         return ok(undefined);
       },
+      stackAnswers: async () => running !== null && !killed,
       stopStack: async () => { running = null; },
       killObservation: () => { killed = true; },
       kbblHealth: async () => kbblHealth(running && !killed ? { state: "configured", graders: plan(running).graders.map((grader) =>
@@ -683,7 +848,7 @@ describe("the registration scenario", () => {
       repository_key: "oakridge",
       readCited: async (commit_sha, path) => ok(commit_sha === "abc" && path === "core/a.ts" ? "one\ntwo\nthree\nfour" : null),
       withholdRepository: async () => { withheld = true; return ok("withheld"); },
-      supplyRepository: async () => { withheld = false; return ok("supplied"); },
+      supplyRepository: async () => { withheld = false; occurrences.forEach(collect); return ok("supplied"); },
     };
     return { io, source, graders: () => graders, withheld: () => withheld };
   }
@@ -759,7 +924,7 @@ describe("the registration scenario", () => {
     expect(stack.withheld()).toBe(false);
   });
 
-  test("the edit changes only grading-definitions.json and keeps every runner and model", () => {
+  test("the edit changes only published definitions and keeps every runner and model", () => {
     const committed = parseGradingDefinitions(JSON.parse(committedText), oakridgeGradingRegistry);
     if (!committed.ok) throw new Error(committed.error.detail);
     const edited = editedGraders(committed.value);

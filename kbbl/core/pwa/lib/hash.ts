@@ -5,6 +5,14 @@
 import type { RoutePaneTarget } from "../oakridge/lib/run-workspace";
 import type { ArtifactId, Sid } from "./ids";
 
+type HashNavigationGuard = () => boolean;
+let navigationGuard: HashNavigationGuard | null = null;
+export function registerHashNavigationGuard(guard: HashNavigationGuard): () => void {
+  navigationGuard = guard;
+  return () => { if (navigationGuard === guard) navigationGuard = null; };
+}
+export const acceptHashNavigation = (): boolean => navigationGuard?.() ?? true;
+
 export function readHashSid(): string | null {
   const hash = window.location.hash.slice(1);
   if (!hash) return null;
@@ -69,6 +77,7 @@ export type OakridgeSubRoute =
   | { sub: "session"; session_id: Sid }
   | { sub: "new-run" }
   | { sub: "create-project" }
+  | { sub: "grading-config"; version: number | null }
   | { sub: "defs" }
   | { sub: "def"; id: string };
 
@@ -97,10 +106,13 @@ function parseRunRoute(rest: string): OakridgeSubRoute | null {
   const [rawId, paneKind, rawPaneId] = segments;
   if (!rawId) return null;
   const id = tryDecode(rawId);
+  if (segments.length === 5 && paneKind === "prompt" && rawPaneId && segments[3] === "attempt" && segments[4]) return { sub: "run", id, pane: { kind: "prompt", unit_id: tryDecode(rawPaneId), attempt_id: tryDecode(segments[4]) } };
+  if (segments.length === 5 && paneKind === "artifact" && rawPaneId && segments[3] === "revision" && segments[4]) return { sub: "run", id, pane: { kind: "artifact", artifact_id: tryDecode(rawPaneId) as ArtifactId, revision_id: tryDecode(segments[4]) } };
   if (segments.length === 3 && rawPaneId) {
     if (paneKind === "session") {
       return { sub: "run", id, pane: { kind: "session", session_id: tryDecode(rawPaneId) as Sid } };
     }
+    if (paneKind === "unit") return { sub: "run", id, pane: { kind: "unit", unit_id: tryDecode(rawPaneId) } };
     if (paneKind === "artifact") {
       return { sub: "run", id, pane: { kind: "artifact", artifact_id: tryDecode(rawPaneId) as ArtifactId } };
     }
@@ -117,7 +129,9 @@ export function formatRunWorkspaceHash(runId: string, pane: RoutePaneTarget | nu
   const base = `oakridge/run/${encodeURIComponent(runId)}`;
   if (pane === null) return base;
   if (pane.kind === "session") return `${base}/session/${encodeURIComponent(pane.session_id)}`;
-  return `${base}/artifact/${encodeURIComponent(pane.artifact_id)}`;
+  if (pane.kind === "prompt") return `${base}/prompt/${encodeURIComponent(pane.unit_id)}/attempt/${encodeURIComponent(pane.attempt_id)}`;
+  if (pane.kind === "unit") return `${base}/unit/${encodeURIComponent(pane.unit_id)}`;
+  return `${base}/artifact/${encodeURIComponent(pane.artifact_id)}${pane.revision_id ? `/revision/${encodeURIComponent(pane.revision_id)}` : ""}`;
 }
 
 /**
@@ -136,7 +150,7 @@ export function readHashRoute(
   rawHash = window.location.hash,
   search = window.location.search,
 ): HashRoute | null {
-  const hash = rawHash.startsWith("#") ? rawHash.slice(1) : rawHash;
+  const hash = (rawHash.startsWith("#") ? rawHash.slice(1) : rawHash).replace(/^\//, "");
   if (hash === "sessions") return { view: "sessions", route: { sub: "sessions" } };
   if (hash === "oakridge" || hash.startsWith("oakridge/")) {
     const rest = hash.slice("oakridge".length);
@@ -172,6 +186,9 @@ export function readHashRoute(
     if (rest === "/create-project") {
       return { view: "oakridge", route: { sub: "create-project" } };
     }
+    if (rest === "/grading-config") return { view: "oakridge", route: { sub: "grading-config", version: null } };
+    const gradingVersion = /^\/grading-config\/versions\/([1-9]\d*)$/.exec(rest);
+    if (gradingVersion && Number.isSafeInteger(Number(gradingVersion[1]))) return { view: "oakridge", route: { sub: "grading-config", version: Number(gradingVersion[1]) } };
     if (rest === "/defs") {
       return { view: "oakridge", route: { sub: "defs" } };
     }

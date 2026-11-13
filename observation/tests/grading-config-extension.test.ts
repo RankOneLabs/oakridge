@@ -8,12 +8,12 @@ import { createEvidenceReconciler } from "../src/storage/evidence-pipeline";
 import { readItemMeasurements } from "../src/storage/execution-store";
 import { registerDefinitions } from "../src/storage/grading-store";
 import { listRunItems } from "../src/storage/projection-store";
-import { committedDefinitions, createFeed, integration, oakridgeGradingRegistry, runConfig, scratchDatabase, tenant } from "./grading-fixture";
+import { fixtureDefinitions, createFeed, integration, oakridgeGradingRegistry, runConfig, scratchDatabase, tenant } from "./grading-fixture";
 
 const repository = { hasCommit: async () => false, readFile: async () => ({ state: "absent" as const }) };
 
 for (const is_valid of [true, false]) integration(`a configuration-only question ${is_valid ? "persists a readable grade" : "refuses an answer outside its schema"}`, async () => scratchDatabase(async (db) => {
-  const definitions = await committedDefinitions();
+  const definitions = await fixtureDefinitions();
   const added = { ...definitions[0]!, id: "finding.config_extension", question: { ...definitions[0]!.question, text: "Does this finding match the captured spec?" } };
   const parsed = parseGradingDefinitions([...definitions, added], oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);

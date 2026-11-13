@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 
 import { openTestDb } from "../db/test-db";
-import { AcpSessionStore, startSpecHash } from "./store";
+import { AcpSessionStore } from "./store";
+import { startSpecHash } from "./start-spec-hash";
 import type {
   AcpSessionStartSpec,
   AcpSessionWorkflowIdentity,

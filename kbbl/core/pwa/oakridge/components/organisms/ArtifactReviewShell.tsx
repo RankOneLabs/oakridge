@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { Button } from "../../../components/atoms/Button";
+import { useState, type ReactNode } from "react";
 import type { ArtifactReviewDescriptor } from "../../artifact-types";
 
 interface ArtifactReviewShellProps {
@@ -6,6 +7,7 @@ interface ArtifactReviewShellProps {
   header: ReactNode;
   revisionNavigation?: ReactNode;
   artifact: ReactNode;
+  structuredArtifact?: ReactNode;
   reviewItems?: ReactNode;
   threads?: ReactNode;
   gateActions?: ReactNode;
@@ -17,12 +19,21 @@ export function ArtifactReviewShell({
   header,
   revisionNavigation,
   artifact,
+  structuredArtifact,
   reviewItems,
   threads,
   gateActions,
 }: ArtifactReviewShellProps) {
+  const [mode, setMode] = useState<"rendered" | "structured">("rendered");
+  const presentation = structuredArtifact ? <section>
+    <div role="tablist" aria-label="Artifact presentation">
+      {(["rendered", "structured"] as const).map((value) => <Button key={value} variant={mode === value ? "primary" : "secondary"} size="xsmall" role="tab" aria-selected={mode === value} onClick={() => setMode(value)}>{value}</Button>)}
+    </div>
+    <div hidden={mode !== "rendered"}>{artifact}</div>
+    <div hidden={mode !== "structured"}>{structuredArtifact}</div>
+  </section> : artifact;
   const slots: Record<string, ReactNode> = {
-    artifact,
+    artifact: presentation,
     review_items: reviewItems,
     threads,
     gate_actions: gateActions,

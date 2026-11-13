@@ -51,9 +51,10 @@ function sourceRoutes(path: string, content: string): readonly SourceRoute[] {
           const literal = routeLiteral(argument);
           if (literal !== null) {
             // kbbl owns configuration, session inventory, ACP session input,
-            // and the run-activity compatibility proxy.
+            // redacted executed prompts, and the run-activity compatibility proxy.
             if (literal === "/oakridge/config" || (literal === "/sessions" && method === "GET")
               || (literal === "/sessions/:value/input" && method === "POST")
+              || (literal === "/oakridge/sessions/:value/executed-prompt" && method === "GET")
               || literal.startsWith("/oakridge/api/run_events?")) return;
             const normalized = literal.replace(/^\/oakridge\/api(?=\/)/, "").split("?")[0];
             if (normalized?.startsWith("/")) routes.push({ method, path: normalized, source: path });
@@ -101,6 +102,18 @@ test("route guard detects dead routes in helpers, pagination and direct fetches"
   `);
   expect(routes.filter(({ method, path }) => !matchRoute(method, path)).map((route) => route.path))
     .toEqual(["/missing-get", "/missing-post/:value", "/missing-fetch", "/sessions/:value/missing", "/missing-delete"]);
+});
+
+test("only the kbbl-owned GET executed-prompt route is outside the DBOS contract", () => {
+  const routes = sourceRoutes("helper.ts", `
+    get(\`/oakridge/sessions/\${sid}/executed-prompt\`);
+    post(\`/oakridge/sessions/\${sid}/executed-prompt\`, {});
+    get(\`/oakridge/sessions/\${sid}/missing\`);
+  `);
+  expect(routes).toEqual([
+    { method: "POST", path: "/oakridge/sessions/:value/executed-prompt", source: "helper.ts" },
+    { method: "GET", path: "/oakridge/sessions/:value/missing", source: "helper.ts" },
+  ]);
 });
 
 test("operator listing, pinning and digest launch have explicit authority", () => {

@@ -1,3 +1,8 @@
+import { parseAssessment } from "./lib/assessment";
+import { parsePlan } from "./lib/plan";
+import { parseTasks } from "./lib/tasks";
+import { isBuildBrief } from "./lib/build-brief";
+import { isSpecAnalysis } from "./lib/spec-analysis";
 import type { ComponentType, ReactNode } from "react";
 import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./artifact-types";
 import type { EditOutcome } from "./lib/edit-outcome";
@@ -57,4 +62,23 @@ const REGISTRY: Record<string, RegistryEntry> = {
 export function resolveViewer(componentId: string | null | undefined): ComponentType<ViewerProps> | null {
   if (!componentId) return null;
   return REGISTRY[componentId]?.Viewer ?? null;
+}
+
+/** The same contract-defined gradeable collections used by the registered viewers. */
+export function selectViewerItemPaths(Viewer: ComponentType<ViewerProps>, body: unknown): readonly string[] {
+  if (Viewer === SpecAnalysisViewer && isSpecAnalysis(body)) return body.findings.map((_, index) => `/findings/${index}`);
+  if (Viewer === BuildBriefViewer && isBuildBrief(body)) return body.acceptance_criteria.map((_, index) => `/acceptance_criteria/${index}`);
+  if (Viewer === AssessmentReview) {
+    const parsed = parseAssessment(body);
+    return parsed.ok ? parsed.value.findings.map((finding) => finding.item_path) : [];
+  }
+  if (Viewer === TasksViewer) {
+    const parsed = parseTasks(body);
+    return parsed.ok ? parsed.value.tasks.map((_, index) => `/tasks/${index}`) : [];
+  }
+  if (Viewer === PlanViewer) {
+    const parsed = parsePlan(body);
+    return parsed.ok ? parsed.value.cohorts.flatMap((cohort, cohortIndex) => cohort.acceptance_criteria.map((_, index) => `/cohorts/${cohortIndex}/acceptance_criteria/${index}`)) : [];
+  }
+  return [];
 }

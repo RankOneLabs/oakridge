@@ -1,4 +1,4 @@
-import { expect } from "bun:test";
+import { test, expect } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,12 +11,17 @@ import type { RepositoryFile, RepositoryReader } from "../src/ports/artifact-sou
 import { TASK_SCOPE } from "../src/producers/oakridge/catalogue";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "./grading-fixture";
 import { oakridgeProfile, oakridgeGradingRegistry } from "./grading-fixture";
+import { createGradingConfigStore } from "../src/grading/configuration-store";
+import { createGradingPublication } from "../src/grading/publication";
+import { RuntimeConfiguration, runtimeSnapshot } from "../src/grading/runtime-configuration";
+import { oakridgeProfile as createProfile } from "../src/producers/oakridge/profile";
 import { startObservation } from "../src/main";
 import type { RunnerResolver } from "../src/grading/worker";
 import type { GradeRunner } from "../src/ports/grade-runner";
 import { withTenant, type Database } from "../src/storage/database";
+import { registerQuestion } from "../src/storage/grading-store";
 import { declareRelationInTransaction } from "../src/storage/projection-store";
-import { committedDefinitions, credentialEnv, databaseUrl, fixtureBody, integration, launchOutcome, revisionOutcome, runConfig, scratchDatabase,
+import { fixtureDefinitions, credentialEnv, databaseUrl, fixtureBody, integration, launchOutcome, revisionOutcome, runConfig, scratchDatabase,
   tenant } from "./grading-fixture";
 
 const HEAD = "1111111111111111111111111111111111111111";
@@ -40,20 +45,44 @@ function repository(): RepositoryReader & { accessible: boolean; reads: string[]
 interface Service { readonly port: number; stop(): Promise<void> }
 interface Harness {
   start(graders: GradingDefinitions | unknown, runners?: RunnerResolver): Promise<Service>;
+  publish(service: Service, definitions: GradingDefinitions): Promise<void>;
   send(service: Service, outcome: SourceEventOutcome): Promise<void>;
   get(service: Service, path: string): Promise<unknown>;
 }
 async function harness(db: Database, reader: RepositoryReader, directory: string): Promise<Harness> {
   let cursor: SourceEventCursor = { commit_txid: "0", id: "" };
-  let sequence = 0;
   const url = await databaseUrl(db);
   return {
     async start(graders, runners) {
-      const grading_definitions_file = join(directory, `graders-${++sequence}.json`);
-      await Bun.write(grading_definitions_file, JSON.stringify(graders));
+      const grading_config_dir = directory;
+      const store = createGradingConfigStore(directory);
+      const empty = planRegistration([], oakridgeGradingRegistry);
+      if (!empty.ok) throw new Error(empty.error.detail);
+      const runtime = new RuntimeConfiguration(runtimeSnapshot({ version: null, hash: null, registration: empty.value,
+        profile: createProfile([], empty.value.collector), applied_at: new Date().toISOString() }));
+      const publication = createGradingPublication({ db, store, runtime, registry: oakridgeGradingRegistry, credentials,
+        env: credentialEnv(graders), profile: (registration) => createProfile(registration.questions, registration.collector) });
+      const draft = await store.readDraft();
+      if (!draft.ok) throw new Error(draft.error.detail);
+      const saved = await store.saveDraft(draft.value?.digest ?? null, { status: "draft", definitions: graders as JsonValue[] });
+      const latest = await store.latestVersion();
+      if (!saved.ok || !latest.ok) throw new Error("cannot prepare store");
+      const published = await publication.publish({ expected_draft_digest: saved.value.digest, expected_latest_version: latest.value?.version ?? null });
+      if (!published.ok) throw new Error(published.error.detail);
       return startObservation({ ...credentialEnv(graders), OBSERVATION_DATABASE_URL: url, OBSERVATION_PORT: "0",
         OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest), OBSERVATION_READ_CREDENTIALS: JSON.stringify(credentials.read),
-        OBSERVATION_GRADE_CREDENTIALS: JSON.stringify(credentials.grade) }, { grading_definitions_file, repository: reader, runners, worker_idle_ms: 20 });
+        OBSERVATION_GRADE_CREDENTIALS: JSON.stringify(credentials.grade), OBSERVATION_CONFIGURE_CREDENTIALS: JSON.stringify([{ token: "configure-secret" }]) }, { grading_config_dir, repository: reader, runners, worker_idle_ms: 20 });
+    },
+    async publish(service, definitions) {
+      const headers = { authorization: "Bearer configure-secret", "content-type": "application/json" };
+      const base = `http://127.0.0.1:${service.port}/v1/grading-config`;
+      const draft = await (await fetch(`${base}/draft`, { headers })).json() as { digest: string } | null;
+      const versions = await (await fetch(`${base}/versions`, { headers })).json() as { versions: { version: number }[] };
+      const saved = await (await fetch(`${base}/draft`, { method: "PUT", headers,
+        body: JSON.stringify({ expected_draft_digest: draft?.digest ?? null, document: { status: "draft", definitions } }) })).json() as { digest: string };
+      const response = await fetch(`${base}/publish`, { method: "POST", headers, body: JSON.stringify({ expected_draft_digest: saved.digest,
+        expected_latest_version: versions.versions.at(-1)?.version ?? null }) });
+      expect(response.status).toBe(201);
     },
     async send(service, outcome) {
       const next = { commit_txid: String(Number(cursor.commit_txid) + 1), id: outcome.event_id };
@@ -114,11 +143,11 @@ async function counts(db: Database): Promise<Record<string, number>> {
     (SELECT count(*)::integer FROM observation.grade_observation) AS answers`.execute(trx)).rows[0]!);
 }
 async function configured(): Promise<GradingDefinitions> {
-  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
+  const parsed = parseGradingDefinitions(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   return parsed.value;
 }
-/** The swap an operator makes: the same runners with another model. Only grading-definitions.json changes. */
+/** The swap an operator makes: the same runners with another model. Only the published configuration changes. */
 const swapped = (configuration: GradingDefinitions): GradingDefinitions => configuration.map((entry) =>
   ({ ...entry, evaluators: entry.evaluators.map((grader) => "model" in grader ? { ...grader, model: `${grader.model}-swapped` } : grader) }));
 const pinsOf = (configuration: GradingDefinitions, question_id: string) => {
@@ -151,38 +180,47 @@ integration("startup registers the configured definitions and reports them, and 
   expect(human).toHaveLength(1);
 }));
 
-integration("startup refuses an unknown runner or a missing key, clearly and before registering anything", async () => withHarness(async (db) => {
-  const configuration = await configured();
-  const env: Record<string, string> = { ...credentialEnv(configuration), OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0",
-    OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest) };
-  const directory = await mkdtemp(join(tmpdir(), "observation-unknown-"));
+test("startup requires an explicit configuration directory", async () => {
+  await expect(startObservation({ OBSERVATION_DATABASE_URL: "postgres://unused" })).rejects.toThrow("OBSERVATION_GRADING_CONFIG_DIR is required");
+});
+integration("an empty store registers nothing and reports no configured graders", async () => scratchDatabase(async (db) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-empty-"));
   try {
-    const grading_definitions_file = join(directory, "grading-definitions.json");
-    await Bun.write(grading_definitions_file, JSON.stringify(configuration.map((entry) =>
-      ({ ...entry, evaluators: entry.evaluators.map((grader) => ({ ...grader, runner: "stub_model" })) }))));
-    await expect(startObservation(env, { grading_definitions_file })).rejects.toThrow("observation cannot start: unknown_runner: finding.relevance:stub_model");
-    await Bun.write(grading_definitions_file, "{invalid JSON");
-    await expect(startObservation(env, { grading_definitions_file })).rejects.toThrow("observation cannot start: invalid_definitions:");
-    await expect(startObservation(env, { grading_definitions_file: join(directory, "absent.json") })).rejects.toThrow("observation cannot start: invalid_definitions");
+    const service = await startObservation({ OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0", OBSERVATION_GRADING_CONFIG_DIR: directory,
+      OBSERVATION_CONFIGURE_CREDENTIALS: '[{"token":"configure"}]' });
+    try {
+      expect(await (await fetch(`http://127.0.0.1:${service.port}/health`)).json()).toMatchObject({ graders: { state: "none_configured" } });
+      expect(await (await fetch(`http://127.0.0.1:${service.port}/v1/grading-config/runtime`, { headers: { authorization: "Bearer configure" } })).json())
+        .toMatchObject({ version: null, hash: null, graders: { state: "none_configured" } });
+    }
+    finally { await service.stop(); }
+    expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
   } finally { await rm(directory, { recursive: true, force: true }); }
-  const { [Object.keys(credentialEnv(configuration))[0]!]: _missing, ...keyless } = env;
-  await expect(startObservation(keyless)).rejects.toThrow(/observation cannot start: missing_credential: /);
-  expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
 }));
-
-integration("startup refuses an unknown capability before registering anything", async () => withHarness(async (db) => {
-  const configuration = await configured();
-  const env = { ...credentialEnv(configuration), OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0",
-    OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest) };
-  const directory = await mkdtemp(join(tmpdir(), "observation-unsupported-question-"));
+integration("startup fails on the latest version with its identity and never falls back", async () => withHarness(async (db) => {
+  const definitions = await configured();
+  const directory = await mkdtemp(join(tmpdir(), "observation-fail-fast-"));
+  const env = { ...credentialEnv(definitions), OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0", OBSERVATION_GRADING_CONFIG_DIR: directory };
   try {
-    const grading_definitions_file = join(directory, "grading-definitions.json");
-    const renamed = configuration.map((entry, index) => index === 0 ? { ...entry, evidence: ["absent_capability"] } : entry);
-    await Bun.write(grading_definitions_file, JSON.stringify(renamed));
-    await expect(startObservation(env, { grading_definitions_file }))
-      .rejects.toThrow("observation cannot start: unknown_capability: finding.relevance: evidence: absent_capability is not registered");
+    const store = createGradingConfigStore(directory);
+    const first = await store.allocateAndWritePublished({ definitions, published_at: new Date().toISOString() });
+    if (!first.ok) throw new Error(first.error.detail);
+    for (const [kind, changed] of [
+      ["unknown_runner", definitions.map((entry) => ({ ...entry, evaluators: entry.evaluators.map((grader) => ("model" in grader ? { ...grader, runner: "stub_model" } : grader)) }))],
+      ["unknown_capability", definitions.map((entry) => ({ ...entry, evidence: ["absent_capability"] }))],
+    ] as const) {
+      const saved = await store.allocateAndWritePublished({ definitions: changed, published_at: new Date().toISOString() });
+      if (!saved.ok) throw new Error(saved.error.detail);
+      await expect(startObservation(env)).rejects.toThrow(`observation cannot start: grading configuration version ${saved.value.version} (hash ${saved.value.hash}): ${kind}:`);
+    }
+    const saved = await store.allocateAndWritePublished({ definitions, published_at: new Date().toISOString() });
+    if (!saved.ok) throw new Error(saved.error.detail);
+    await expect(startObservation({ ...env, ...Object.fromEntries(Object.keys(credentialEnv(definitions)).map((key) => [key, ""])) }))
+      .rejects.toThrow(`observation cannot start: grading configuration version ${saved.value.version} (hash ${saved.value.hash}): missing_credential:`);
+    await Bun.write(join(directory, "versions/000005.json"), JSON.stringify({ ...saved.value, version: 5, definitions: [{}] }));
+    await expect(startObservation(env)).rejects.toThrow(`observation cannot start: grading configuration version 5 (hash ${saved.value.hash}): invalid_document:`);
+    expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
   } finally { await rm(directory, { recursive: true, force: true }); }
-  expect(await counts(db)).toMatchObject({ questions: 0, evaluators: 0 });
 }));
 
 integration("not-ready capture, config swap and restart, readiness arrival and a later capture keep each occurrence's own pins",
@@ -214,7 +252,7 @@ integration("not-ready capture, config swap and restart, readiness arrival and a
   for (const set of [...citedBefore, ...uncitedBefore]) expect(set.pinned_evaluator_definition_ids).toEqual(pinsOf(before, set.question_id));
   await first.stop();
 
-  // The swap is a grading-definitions.json edit and a restart. Nothing already captured is repinned or regraded.
+  // The swap is a publication followed by a restart. Nothing already captured is repinned or regraded.
   const second = await h.start(after);
   expect((await evidenceOf(h, second, cited)).map((set) => set.pinned_evaluator_definition_ids)).toEqual(citedBefore.map((set) => set.pinned_evaluator_definition_ids));
   expect(question(await evidenceOf(h, second, uncited), EVIDENCE_SUPPORT_ID)).toEqual(question(uncitedBefore, EVIDENCE_SUPPORT_ID));
@@ -383,4 +421,53 @@ for (const edit of ["wording", "targets"] as const) integration(`waiting subject
     });
     expect(response.status).toBe(201);
   } finally { await service?.stop(); }
+}));
+
+integration("runtime publication changes new captures without restarting and preserves earlier pins and grades byte for byte", async () => withHarness(async (db, h) => {
+  const before = await configured();
+  const after = swapped(before);
+  const requests: string[] = [];
+  const service = await h.start(before, recordingRunners(requests));
+  const runtime = async () => (await fetch(`http://127.0.0.1:${service.port}/v1/grading-config/runtime`, {
+    headers: { authorization: "Bearer configure-secret" } })).json() as Promise<{ hash: string; version: number }>;
+  const history = () => withTenant(db, tenant, async (trx) => (await sql<{ snapshot: string }>`SELECT jsonb_build_object(
+    'pins', (SELECT jsonb_agg(to_jsonb(e) ORDER BY evidence_set_id) FROM observation.evidence_set e
+      JOIN observation.item_occurrence i ON (i.producer, i.namespace, i.occurrence_id) = (e.producer, e.namespace, e.subject_occurrence_id) WHERE i.revision_id = 'analysis-before'),
+    'grades', (SELECT jsonb_agg(to_jsonb(g) ORDER BY observation_id) FROM observation.grade_observation g
+      JOIN observation.evaluation_execution x USING (producer, namespace, execution_id)
+      JOIN observation.item_occurrence i ON (i.producer, i.namespace, i.occurrence_id) = (x.producer, x.namespace, x.subject_occurrence_id) WHERE i.revision_id = 'analysis-before'))::text AS snapshot`.execute(trx)).rows[0]!.snapshot);
+  try {
+    await h.send(service, launchOutcome(launch, "run-1", runConfig(true)));
+    await h.send(service, revisionOutcome({ revision_id: "analysis-before", artifact_kind: "analysis", body: await fixtureBody("analysis") }));
+    await until(() => executionsBy(db), (rows) => rows.length > 0 && rows.every((row) => row.status === "completed"));
+    const frozen = await history();
+    const old = await runtime();
+    const pid = process.pid;
+    await h.publish(service, after);
+    const refreshed = await runtime();
+    expect([refreshed.version, refreshed.hash !== old.hash, process.pid]).toEqual([old.version + 1, true, pid]);
+    expect(await history()).toBe(frozen);
+    await h.send(service, revisionOutcome({ revision_id: "analysis-after", artifact_kind: "analysis", body: await fixtureBody("analysis") }));
+    const rows = await until(() => executionsBy(db), (rows) => rows.some((row) => row.revision_id === "analysis-after") && rows.every((row) => row.status === "completed"));
+    for (const row of rows.filter((row) => row.revision_id === "analysis-after")) expect(pinsOf(after, row.question_id)).toContain(row.evaluator_definition_id as never);
+    expect(await history()).toBe(frozen);
+  } finally { await service.stop(); }
+}));
+
+integration("startup registration failure names the latest version and hash", async () => scratchDatabase(async (db) => {
+  const definitions = await configured();
+  const directory = await mkdtemp(join(tmpdir(), "observation-register-failure-"));
+  try {
+    const store = createGradingConfigStore(directory);
+    const published = await store.allocateAndWritePublished({ definitions, published_at: new Date().toISOString() });
+    if (!published.ok) throw new Error(published.error.detail);
+    const planned = planRegistration(definitions, oakridgeGradingRegistry);
+    if (!planned.ok) throw new Error(planned.error.detail);
+    const question = planned.value.questions[0]!;
+    const inserted = await registerQuestion(db, tenant, { ...question, question_text: "Conflicting immutable definition" });
+    expect(inserted.ok).toBe(true);
+    await expect(startObservation({ ...credentialEnv(definitions), OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0",
+      OBSERVATION_GRADING_CONFIG_DIR: directory, OBSERVATION_READ_CREDENTIALS: JSON.stringify([{ ...tenant, token: "read" }]) }))
+      .rejects.toThrow(`observation cannot start: grading configuration version 1 (hash ${published.value.hash}): registration_failed: ${question.question_id}: question definition identity conflict`);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 }));

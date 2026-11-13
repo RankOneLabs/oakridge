@@ -29,7 +29,7 @@ export type ObservationStatus = z.infer<typeof observationStatusSchema>;
 export interface ProofFailure { readonly operation: string; readonly entity_id: string; readonly detail: string }
 export interface ProofCheck { readonly name: string; readonly passed: boolean; readonly detail: string }
 export type ScenarioStatus = "passed" | "failed" | "not_run";
-export type ScenarioId = "runtime" | "live" | "source-run" | "registration" | "grading" | "relations" | "workspace";
+export type ScenarioId = "runtime" | "runtime-refresh" | "live" | "source-run" | "registration" | "grading" | "relations" | "workspace";
 
 export interface RunReference { readonly run_id: string; readonly definition_id: string }
 /** Position in the ordered feed, as the authority and the service each report it. */

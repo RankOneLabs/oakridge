@@ -15,7 +15,7 @@ import type { CapturedRevision, CapturedSources, SourceArtifact } from "../src/p
 import type { GradeRunner } from "../src/ports/grade-runner";
 import { oakridgeEvidence } from "./grading-fixture";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID } from "./grading-fixture";
-import { OAKRIDGE_QUESTIONS, committedDefinitions } from "./grading-fixture";
+import { OAKRIDGE_QUESTIONS, fixtureDefinitions } from "./grading-fixture";
 import { createFastinoGlideRunner } from "../src/runners/fastino-glide";
 import { createJevDirectRunner } from "../src/runners/jev-direct";
 import { createLlmJudgeRunner } from "../src/runners/llm-judge";
@@ -43,9 +43,9 @@ async function frozen(question: QuestionDefinition): Promise<readonly EvidenceRe
   if (collected.state !== "ready") throw new Error(JSON.stringify(collected));
   return collected.references;
 }
-/** The committed grading-definitions.json grader for the question, optionally moved to another retained runner. */
+/** The fixture grader for the question, optionally moved to another retained runner. */
 async function configured(question: QuestionDefinition, change: (grader: GraderEntry) => GraderEntry = (grader) => grader) {
-  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
+  const parsed = parseGradingDefinitions(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   const grader = machineGraders(parsed.value.find((entry) => entry.id === question.question_id)!)[0]!;
   const evaluator = configuredEvaluator(question, change(grader));
@@ -89,7 +89,7 @@ const transports = {
   llm_judge: (transport: (url: string, init: RequestInit) => Promise<Response>) =>
     createLlmJudgeRunner({ api_key: "key", base_url: "https://judge.invalid/v1", transport }),
 } as const;
-/** Each runner gets instructions in its own shape; the System One runners use grading-definitions.json's as committed. */
+/** Each runner gets instructions in its own shape; the System One runners use the fixture instructions. */
 const asRunner = (runner: keyof typeof transports) => (grader: GraderEntry): GraderEntry => runner === "llm_judge"
   ? { ...grader, runner, instructions: { rubric: "Does the cited evidence support the finding?", max_evidence_chars: 32_000 } }
   : { ...grader, runner };
@@ -106,8 +106,8 @@ test("Correctness also sends the exact build it assessed, as a revision", async 
   expect(sent).toEqual({ ...expectedEvidence, build_result: { source: "revision", revision_id: "build-1", item_path: null, content: { head_sha: HEAD } } });
 });
 
-test("grading-definitions.json instructions describe the request the System One runners send", async () => {
-  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
+test("fixture instructions describe the request the System One runners send", async () => {
+  const parsed = parseGradingDefinitions(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   for (const entry of parsed.value) for (const grader of machineGraders(entry)) {
     const text = (grader.instructions as { system_one: { instructions: string } }).system_one.instructions;

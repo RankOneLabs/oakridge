@@ -20,6 +20,7 @@ import { mountLiveStreamRoutes } from "./handlers/live-stream";
 import { compressEventStream } from "./event-stream-compression";
 import { mountHealthRoutes, type ObservationServerConfig } from "./handlers/observation-health";
 import { mountObservationProxyRoutes } from "./handlers/observation-proxy";
+import { mountExecutedPromptRoutes } from "./handlers/executed-prompt";
 import {
   isRuntimeId,
   RUNTIME_EFFORTS,
@@ -107,6 +108,7 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- ACP per-session routes (§14) ----
   mountAcpPerSidRoutes(app, { acp });
+  mountExecutedPromptRoutes(app, { acp, browserControlToken: authPolicy.mode === "token" ? authPolicy.token : undefined });
 
   // ---- per-session skills (app-owned sources over the ACP backend;
   // agent slash commands reach the PWA via `commands` UI events) ----

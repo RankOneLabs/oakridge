@@ -223,16 +223,19 @@ mapfile -t provider_names <<< "$PROVIDER_NAMES"
 
 # These are this script's own names; an exported value must not ride along to a child.
 export -n OBSERVATION_ROOT OBSERVATION_URL OBSERVATION_NAMESPACE \
-  OBSERVATION_INGEST_TOKEN OBSERVATION_READ_TOKEN OBSERVATION_GRADE_TOKEN 2>/dev/null || true
+  OBSERVATION_INGEST_TOKEN OBSERVATION_READ_TOKEN OBSERVATION_GRADE_TOKEN OBSERVATION_CONFIGURE_TOKEN 2>/dev/null || true
 # Without the flag, a URL and tokens exported for a separate deployment pass through.
 OBSERVATION_URL="${OAKRIDGE_OBSERVATION_URL:-}"
 OBSERVATION_INGEST_TOKEN="${OAKRIDGE_OBSERVATION_INGEST_TOKEN:-}"
 OBSERVATION_READ_TOKEN="${OAKRIDGE_OBSERVATION_READ_TOKEN:-}"
 OBSERVATION_GRADE_TOKEN="${OAKRIDGE_OBSERVATION_GRADE_TOKEN:-}"
+OBSERVATION_CONFIGURE_TOKEN="${OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN:-}"
 OBSERVATION_NAMESPACE="${OAKRIDGE_OBSERVATION_NAMESPACE:-default}"
 OBSERVATION_REVIEWER_ID="oakridge-operator"
 SHADOW_OBSERVATION_DATABASE_URL=""
 OBSERVATION_STATUS_FILE="$STATE_DIR/observation-status.json"
+OBSERVATION_GRADING_CONFIG_DIR="$STATE_DIR/observation/grading-config"
+mkdir -p "$OBSERVATION_GRADING_CONFIG_DIR"
 provider_settings=""
 
 # What became of the observation child, for operators and the verification
@@ -256,7 +259,8 @@ read_state_secret() {
 prepare_observation_capabilities() {
   OBSERVATION_INGEST_TOKEN="$(read_state_secret observation-ingest.token)" \
     && OBSERVATION_READ_TOKEN="$(read_state_secret observation-read.token)" \
-    && OBSERVATION_GRADE_TOKEN="$(read_state_secret observation-grade.token)"
+    && OBSERVATION_GRADE_TOKEN="$(read_state_secret observation-grade.token)" \
+    && OBSERVATION_CONFIGURE_TOKEN="$(read_state_secret observation-configure.token)"
 }
 
 # The shadow's container must be what its settings say before a database goes in it.
@@ -324,7 +328,7 @@ prepare_isolated_observation() {
     || { observation_preflight_failed "$(preflight_failure database_provisioning_failed database_provisioning_timed_out)"; return 1; }
   selection_failure="$(mktemp)"
   if ! provider_settings="$(within_preflight bun --no-env-file "$OBSERVATION_ROOT/scripts/provider-env.ts" select \
-    --env-file "$OAKRIDGE_OBSERVATION_PROVIDER_ENV_FILE" --graders "$OBSERVATION_ROOT/grading-definitions.json" 2>"$selection_failure")"; then
+    --env-file "$OAKRIDGE_OBSERVATION_PROVIDER_ENV_FILE" --store-dir "$OBSERVATION_GRADING_CONFIG_DIR" 2>"$selection_failure")"; then
     local detail
     detail="$(head -n 1 "$selection_failure" | tr -cd 'A-Za-z0-9_:,-')"
     rm -f "$selection_failure"
@@ -382,6 +386,8 @@ trap stop_from_signal INT TERM
 trap stop_services EXIT
 
 export_observation_credentials() {
+  export OBSERVATION_GRADING_CONFIG_DIR
+  export OBSERVATION_CONFIGURE_CREDENTIALS="[{\"token\":\"$OBSERVATION_CONFIGURE_TOKEN\"}]"
   local tenant="\"producer\":\"oakridge\",\"namespace\":\"$OBSERVATION_NAMESPACE\""
   export OBSERVATION_INGEST_CREDENTIALS="[{$tenant,\"token\":\"$OBSERVATION_INGEST_TOKEN\"}]"
   export OBSERVATION_READ_CREDENTIALS="[{$tenant,\"token\":\"$OBSERVATION_READ_TOKEN\"}]"
@@ -451,7 +457,7 @@ if [ -z "$OBSERVATION_INGEST_TOKEN" ]; then DBOS_OBSERVATION_URL=""; fi
 echo "oakridge: starting DBOS backend at $DBOS_URL"
 (
   cd "$DBOS_ROOT"
-  unset "${provider_names[@]}" OAKRIDGE_OBSERVATION_READ_TOKEN OAKRIDGE_OBSERVATION_GRADE_TOKEN
+  unset "${provider_names[@]}" OAKRIDGE_OBSERVATION_READ_TOKEN OAKRIDGE_OBSERVATION_GRADE_TOKEN OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN
   DBOS_SYSTEM_DATABASE_URL="$DBOS_SYSTEM_DATABASE_URL" \
     OAKRIDGE_PROMPT_ROOT="${OAKRIDGE_PROMPT_ROOT:-$OAKRIDGE_ROOT}" \
     KBBL_BASE_URL="${KBBL_BASE_URL:-$KBBL_URL}" \
@@ -479,6 +485,7 @@ env "${kbbl_unset[@]}" \
   OAKRIDGE_OBSERVATION_NAMESPACE="$OBSERVATION_NAMESPACE" \
   OAKRIDGE_OBSERVATION_READ_TOKEN="$OBSERVATION_READ_TOKEN" \
   OAKRIDGE_OBSERVATION_GRADE_TOKEN="$OBSERVATION_GRADE_TOKEN" \
+  OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN="$OBSERVATION_CONFIGURE_TOKEN" \
   ${kbbl_env_file_setting[@]+"${kbbl_env_file_setting[@]}"} \
   "$OAKRIDGE_ROOT/kbbl/scripts/kbbl-start" ${kbbl_args[@]+"${kbbl_args[@]}"} &
 kbbl_pid=$!

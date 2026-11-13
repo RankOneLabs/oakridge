@@ -441,6 +441,7 @@
             "kind": "missing"
           },
           "kbbl_session_id": "356152db-dda9-457d-86fa-6a8cbd492050",
+          "intent": null,
           "created_at": "2026-10-15T23:43:14.200Z",
           "is_current": true
         },
@@ -458,6 +459,7 @@
             "replaces": null
           },
           "kbbl_session_id": null,
+          "intent": null,
           "created_at": "2026-10-15T23:43:14.364Z",
           "is_current": true
         }

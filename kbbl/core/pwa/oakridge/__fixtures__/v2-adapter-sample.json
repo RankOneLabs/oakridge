@@ -375,6 +375,7 @@
             "kind": "missing"
           },
           "kbbl_session_id": "5ac7adb4-8c65-4b17-a68d-52c558663370",
+          "intent": null,
           "created_at": "2026-10-15T23:43:06.770Z",
           "is_current": true
         }
@@ -589,6 +590,7 @@
             "kind": "missing"
           },
           "kbbl_session_id": "66009876-9b76-4202-b8e0-98453fd876ae",
+          "intent": null,
           "created_at": "2026-10-15T23:43:07.316Z",
           "is_current": true
         }
@@ -812,6 +814,7 @@
             "kind": "missing"
           },
           "kbbl_session_id": "a1450533-37d2-488a-962b-a7455984a6fc",
+          "intent": null,
           "created_at": "2026-10-15T23:43:07.317Z",
           "is_current": true
         }
@@ -966,6 +969,7 @@
             "kind": "missing"
           },
           "kbbl_session_id": null,
+          "intent": null,
           "created_at": "2026-10-15T23:43:07.641Z",
           "is_current": true
         },
@@ -981,6 +985,7 @@
             "kind": "missing"
           },
           "kbbl_session_id": "d16cc705-35bd-49df-8a89-6ba935d726ab",
+          "intent": null,
           "created_at": "2026-10-15T23:43:07.833Z",
           "is_current": true
         },
@@ -998,6 +1003,7 @@
             "replaces": null
           },
           "kbbl_session_id": null,
+          "intent": null,
           "created_at": "2026-10-15T23:43:07.997Z",
           "is_current": false
         },
@@ -1014,6 +1020,7 @@
             "revision": "run-a45f120736398800/implementation/a:build_result:1"
           },
           "kbbl_session_id": "3652020b-7dad-4b63-ac76-0a4b296ea3c4",
+          "intent": null,
           "created_at": "2026-10-15T23:43:08.106Z",
           "is_current": true
         },
@@ -1031,6 +1038,7 @@
             "replaces": null
           },
           "kbbl_session_id": null,
+          "intent": null,
           "created_at": "2026-10-15T23:43:09.237Z",
           "is_current": true
         }
@@ -1505,6 +1513,7 @@
             "kind": "missing"
           },
           "kbbl_session_id": "12d0faca-f49d-438d-ab4f-417c5941cbcc",
+          "intent": null,
           "created_at": "2026-10-15T23:43:07.056Z",
           "is_current": true
         }
@@ -1646,6 +1655,7 @@
             "kind": "missing"
           },
           "kbbl_session_id": null,
+          "intent": null,
           "created_at": "2026-10-15T23:43:06.596Z",
           "is_current": true
         }

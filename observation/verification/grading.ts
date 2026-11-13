@@ -5,9 +5,9 @@
  *   start on the committed selection -> an enabled run's analysis is answered by the configured
  *   provider before the run has any task -> a run with grading off gets human-ready evidence and
  *   sends nothing -> an enabled run captured while its launch repository is withheld answers its
- *   ready questions while file-citing ones wait -> edit grading-definitions.json (new instructions, and an
- *   estimate per call that lets one request fit the run allowance) and restart: the waits keep their
- *   pins and are not admitted -> supply the repository and restart: they are answered with the
+ *   ready questions while file-citing ones wait -> edit published configuration (new instructions, and an
+ *   estimate per call that lets one request fit the run allowance): the waits keep their
+ *   pins and are not admitted -> supply the repository: they are answered with the
  *   evaluators pinned at capture -> an enabled run captured under the edit is measured with the new
  *   evaluators, and the request that cannot fit is budget_deferred with no request -> restart: nothing
  *   is admitted or sent again -> point the provider at an endpoint that never answers, kill observation
@@ -22,7 +22,7 @@
  * At every checkpoint the proof keeps each run's captured launch config beside the authority's, every
  * question and evaluator pin, and the frozen evidence references; a missing readback fails the proof.
  * Every run is a real development run on the same stack. Grades and provider failures write nothing
- * to Oakridge: each run's authority events are counted before and after its grading. grading-definitions.json,
+ * to Oakridge: each run's authority events are counted before and after its grading. The original configuration,
  * the withheld repository and the provider settings are restored whatever happens.
  */
 import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
@@ -30,7 +30,7 @@ import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canonicalDigest } from "canonical-json";
-import type { JsonValue, Result } from "../src/domain/primitives";
+import { ok, type JsonValue, type Result } from "../src/domain/primitives";
 import { fitsRunAllowance } from "../src/grading/budget";
 import type { GradingDefinitions, GradingRegistration } from "../src/grading/configuration";
 import type { ClaimResult, ExecutionClaim, SettlementResult } from "../src/grading/execution";
@@ -437,9 +437,9 @@ export function secondWorkerChecks(read: SecondWorkerReadback): readonly ProofCh
   ];
 }
 
-/** The shadow's real provider settings, only those the runners grading-definitions.json selects can read. */
+/** The shadow's real provider settings, only those selected by the published runners. */
 export async function providerSettings(io: ProofIo): Promise<Readonly<Record<string, string>>> {
-  const runners = configuredRunnerNames(JSON.parse(await io.readGraders()), oakridgeGradingRegistry);
+  const runners = configuredRunnerNames((await io.readGradingConfiguration()).definitions, oakridgeGradingRegistry);
   if (!runners.ok) throw new Error(runners.error.detail);
   const credentials = credentialsForRunners(runners.value);
   if (!credentials.ok) throw new Error(credentials.error.detail);
@@ -448,10 +448,10 @@ export async function providerSettings(io: ProofIo): Promise<Readonly<Record<str
     .flatMap((setting) => { const value = real.get(setting); return value ? [[setting, value]] : []; }));
 }
 
-/** Settings for every runner grading-definitions.json selects, from the shadow's real provider file: the key replaced, or the endpoint moved. */
+/** Settings for every published runner, from the shadow's real provider file: the key replaced, or the endpoint moved. */
 async function providerVariant(io: ProofIo, directory: string, name: string, change: (setting: string, value: string) => string | null)
   : Promise<string> {
-  const runners = configuredRunnerNames(JSON.parse(await io.readGraders()), oakridgeGradingRegistry);
+  const runners = configuredRunnerNames((await io.readGradingConfiguration()).definitions, oakridgeGradingRegistry);
   if (!runners.ok) throw new Error(runners.error.detail);
   const credentials = credentialsForRunners(runners.value);
   if (!credentials.ok) throw new Error(credentials.error.detail);
@@ -483,10 +483,18 @@ async function authorityConfig(io: ProofIo, run_id: string): Promise<unknown> {
 export async function gradingScenario(io: ProofIo, source: GradingSource): Promise<ScenarioReport> {
   if (await io.stackAnswers()) return { id: "grading", status: "failed", evidence: NO_EVIDENCE,
     checks: [check("this proof owns the stack", false, "a shadow is already running; this proof restarts it with edited settings")] };
-  const original = await io.readGraders();
-  const plans = graderPlans(original);
+  try { return await gradingScenarioOwned(io, source); }
+  finally { await io.stopStack(); await source.supplyRepository(); }
+}
+async function gradingScenarioOwned(io: ProofIo, source: GradingSource): Promise<ScenarioReport> {
+  const initial = await io.startStack();
+  if (!initial.ok) throw new Error(initial.error.detail);
+  const ready = await settleObservation(io);
+  if (!observationSettled(ready.health)) throw new Error(`observation is unavailable: ${ready.health}; ${ready.launcher}`);
+  const original = await io.readGradingConfiguration();
+  const plans = graderPlans(JSON.stringify(original.definitions));
   if (!plans.ok) return { id: "grading", status: "failed", evidence: NO_EVIDENCE,
-    checks: [check("grading-definitions.json and its edit plan a registration", false, `${plans.error.entity_id}: ${plans.error.detail}`)] };
+    checks: [check("published configuration and its edit plan a registration", false, `${plans.error.entity_id}: ${plans.error.detail}`)] };
   const edit = gradingEdit(plans.value.committed);
   const edited_plan = graderPlans(JSON.stringify(edit));
   if (!edited_plan.ok) return { id: "grading", status: "failed", evidence: NO_EVIDENCE,
@@ -526,7 +534,7 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
   };
   const finish = (): ScenarioReport => ({ id: "grading", status: scenarioStatus(checks), checks, evidence: evidence() });
   const startOn = async (checkpoint: string, registration: GradingRegistration, options: StackOptions = {}): Promise<boolean> => {
-    const started = await io.startStack(options);
+    const started = await io.stackAnswers() ? ok(undefined) : await io.startStack(options);
     checks.push(check(`the stack starts (${checkpoint})`, started.ok, started.ok ? "answered" : started.error.detail));
     if (!started.ok) return false;
     const settled = await settleObservation(io);
@@ -619,20 +627,18 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
     const atCapture = await settle(assessed.run_id, "assessment-at-capture");
     checks.push(...waitingCaptureChecks(atCapture.read));
     const waited = atCapture.read.filter((measurement) => measurement.state === "not_ready");
-    await io.stopStack();
 
-    // 4. The edit and a restart: the waits keep their pins and nothing more is admitted or sent.
-    await io.writeGraders(JSON.stringify(edit, null, 2) + "\n");
+    // 4. Publish the edit on the running service: the waits keep their pins and nothing more is admitted or sent.
+    await io.publishGradingConfiguration(edit);
     if (!await startOn("edited, repository withheld", edited)) return finish();
     await io.sleep(QUIET_MS);
     const afterEdit = await settle(assessed.run_id, "assessment-after-edit");
     const stillWaiting = afterEdit.read.filter((measurement) => waited.some((earlier) => earlier.evidence_set_id === measurement.evidence_set_id
       && earlier.evaluator_definition_id === measurement.evaluator_definition_id && measurement.state === "not_ready" && measurement.execution_id === null));
-    checks.push(check("questions waiting on a withheld input still wait through the edit and restart, unadmitted",
+    checks.push(check("questions waiting on a withheld input still wait through publication, unadmitted",
       waited.length > 0 && stillWaiting.length === waited.length, `${stillWaiting.length} of ${waited.length} still waiting`));
-    checks.push(check("the restart sends nothing already answered again", afterEdit.spend.requests_sent === atCapture.spend.requests_sent,
+    checks.push(check("publication sends nothing already answered again", afterEdit.spend.requests_sent === atCapture.spend.requests_sent,
       `${atCapture.spend.requests_sent} then ${afterEdit.spend.requests_sent} request(s)`));
-    await io.stopStack();
 
     // 5. The input arrives: the waits are answered with their original evaluators.
     const supplied = await source.supplyRepository();
@@ -660,14 +666,14 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
       || JSON.stringify(before[index]!.executions) !== JSON.stringify(after[index]!.executions));
     checks.push(check("a restart admits, sends and regrades nothing", moved.length === 0,
       moved.length === 0 ? `${runs.length} run(s) unchanged` : moved.map((run) => run.run_id).join(", ")));
-    await io.stopStack();
 
     // 8. A provider that never answers, an observation killed mid-request, and a key the provider refuses.
-    await io.writeGraders(original);
+    await io.publishGradingConfiguration(original.definitions);
     const unanswered = await providerVariant(io, directory, "provider-unanswered.env", (setting, value) =>
       setting.endsWith("_BASE_URL") ? UNANSWERED_BASE_URL : value);
     const refused = await providerVariant(io, directory, "provider-refused.env", (setting, value) =>
       setting.endsWith("_BASE_URL") ? (value || null) : "oakridge-proof-refused-key");
+    await io.stopStack();
     if (!await startOn("committed, provider unanswered", committed, { provider_env_file: unanswered })) return finish();
     const failing = await runTo("analysis-failing", { grading_enabled: true, through: "analysis", capture: "await" });
     if (!failing) return finish();
@@ -683,11 +689,11 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
     checks.push(...failureChecks(exhausted.read, exhausted.spend));
     checks.push(check("provider failures write no Oakridge authority record", failingEvents !== null && await authorityEvents(io, failing.run_id) === failingEvents,
       `${failingEvents} authority event(s) before and after the failures`));
-    await io.stopStack();
 
     // 9. A second worker on the same database: simultaneous claims at one run's allowance, a reclaim,
     // stale claims refused, and a real request settled by the second worker.
-    await io.writeGraders(JSON.stringify(concurrency, null, 2) + "\n");
+    await io.publishGradingConfiguration(concurrency);
+    await io.stopStack();
     if (!await startOn("concurrency edit, provider unanswered", concurrent, { provider_env_file: unanswered })) return finish();
     const contested = await runTo("analysis-concurrent", { grading_enabled: true, through: "analysis", capture: "await" });
     if (!contested) return finish();
@@ -696,11 +702,14 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
     checks.push(check("the service holds one claim with its request in flight", held.read.some((measurement) => measurement.detail === "claimed"),
       countBy(held.read)));
     const contestedEvents = await authorityEvents(io, contested.run_id);
-    checks.push(await stopObservation("observation is killed with its claim in flight while DBOS keeps serving"));
+    // Preparing runners reads the configuration API, so it must precede the service's death.
     const worker = await source.secondWorker();
     checks.push(check("a second worker opens the shadow's observation database", worker.ok, worker.ok ? worker.value.tenant.namespace : worker.error.detail));
     if (!worker.ok) return finish();
-    try { second_worker = await secondWorkerPhase(io, worker.value, contested.run_id, CONCURRENT_ESTIMATE_PER_CALL); }
+    try {
+      checks.push(await stopObservation("observation is killed with its claim in flight while DBOS keeps serving"));
+      second_worker = await secondWorkerPhase(io, worker.value, contested.run_id, CONCURRENT_ESTIMATE_PER_CALL);
+    }
     finally { await worker.value.close(); }
     checks.push(...secondWorkerChecks(second_worker));
     await io.stopStack();
@@ -721,9 +730,20 @@ export async function gradingScenario(io: ProofIo, source: GradingSource): Promi
     checks.push(check("the scenario completes", false, cause instanceof Error ? cause.message : String(cause)));
     return finish();
   } finally {
-    await io.stopStack();
-    await io.writeGraders(original);
-    await source.supplyRepository();
-    await rm(directory, { recursive: true, force: true });
+    try {
+      // DBOS/kbbl may answer while observation is dead. A normal restart also restores real provider settings.
+      await io.stopStack();
+      const restored = await io.startStack();
+      if (!restored.ok) throw new Error(restored.error.detail);
+      const ready = await settleObservation(io);
+      if (!observationSettled(ready.health)) throw new Error(`cannot restore grading configuration: ${ready.health}; ${ready.launcher}`);
+      await io.publishGradingConfiguration(original.definitions);
+    } finally {
+      try { await io.stopStack(); }
+      finally {
+        try { await source.supplyRepository(); }
+        finally { await rm(directory, { recursive: true, force: true }); }
+      }
+    }
   }
 }

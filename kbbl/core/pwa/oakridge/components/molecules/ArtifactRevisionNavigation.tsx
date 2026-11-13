@@ -6,7 +6,7 @@ import { selectStatusTone } from "../../lib/status-tone";
 
 interface ArtifactRevisionNavigationProps {
   revisions: readonly ArtifactRevision[];
-  selectedIndex: number;
+  selectedIndex: number | null;
   onSelect: (index: number) => void;
 }
 

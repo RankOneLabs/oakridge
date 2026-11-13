@@ -38,7 +38,7 @@ export async function settleObservation(io: ProofIo): Promise<ObservationFacts> 
 async function isolationChecks(io: ProofIo): Promise<readonly ProofCheck[]> {
   const { state } = io;
   const tokens = await io.tokens();
-  const distinct = tokens.ok && new Set(Object.values(tokens.value.capabilities)).size === 3;
+  const distinct = tokens.ok && new Set(Object.values(tokens.value.capabilities)).size === 4;
   const connected = await io.shadowQuery(state.postgres.authority_database,
     `SELECT count(*) FROM pg_stat_activity WHERE datname = '${state.observation.database}' AND usename = '${state.observation.database}'`);
   const role = await io.shadowQuery(state.postgres.authority_database, `SELECT rolsuper FROM pg_roles WHERE rolname = '${state.observation.database}'`);

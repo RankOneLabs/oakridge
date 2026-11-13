@@ -35,6 +35,9 @@ describe("shadow isolation", () => {
     expect(env.OBSERVATION_HOST).toBe("127.0.0.1");
     expect(env.OAKRIDGE_CORE_BASE_URL).toBe(`http://127.0.0.1:${stack.ports.dbos}`);
     expect(cwd).toBe(stack.state_dir);
+    expect(env.OBSERVATION_GRADING_CONFIG_DIR).toBe(stack.stateFile("observation/grading-config"));
+    expect(existsSync(env.OBSERVATION_GRADING_CONFIG_DIR!)).toBe(true);
+    expect(JSON.parse(env.OBSERVATION_CONFIGURE_CREDENTIALS ?? "[]") as { token: string }[]).toEqual([{ token: token(stack, "configure") }]);
     expect(credentials(env.OBSERVATION_INGEST_CREDENTIALS)).toEqual([{ producer: "oakridge", namespace: "shadow-fixture", token: token(stack, "ingest") }]);
     expect(credentials(env.OBSERVATION_READ_CREDENTIALS)).toEqual([{ producer: "oakridge", namespace: "shadow-fixture", token: token(stack, "read") }]);
     expect(credentials(env.OBSERVATION_GRADE_CREDENTIALS)).toEqual([{ producer: "oakridge", namespace: "shadow-fixture", token: token(stack, "grade"), reviewer_id: "oakridge-operator" }]);
@@ -54,7 +57,7 @@ describe("shadow isolation", () => {
     const stack = await startedStack();
     await observationServing(stack);
     const names = Object.keys(stack.record("observation").env).filter((name) => !["PATH", "HOME", "PWD", "OLDPWD", "SHLVL", "_"].includes(name));
-    expect(names.toSorted()).toEqual(["OAKRIDGE_CORE_BASE_URL", "OAKRIDGE_CORE_CONTROL_TOKEN", "OBSERVATION_DATABASE_URL", "OBSERVATION_GRADE_CREDENTIALS", "OBSERVATION_HOST",
+    expect(names.toSorted()).toEqual(["OAKRIDGE_CORE_BASE_URL", "OAKRIDGE_CORE_CONTROL_TOKEN", "OBSERVATION_CONFIGURE_CREDENTIALS", "OBSERVATION_DATABASE_URL", "OBSERVATION_GRADE_CREDENTIALS", "OBSERVATION_GRADING_CONFIG_DIR", "OBSERVATION_HOST",
       "OBSERVATION_INGEST_CREDENTIALS", "OBSERVATION_PORT", "OBSERVATION_READ_CREDENTIALS"]);
   }, TIMEOUT_MS);
 
@@ -70,9 +73,9 @@ describe("shadow isolation", () => {
   test("capability state lives in the resolved directory, private and distinct", async () => {
     const stack = await startedStack();
     await observationServing(stack);
-    const tokens = ["ingest", "read", "grade"].map((capability) => token(stack, capability));
-    expect(new Set(tokens).size).toBe(3);
-    for (const capability of ["ingest", "read", "grade"])
+    const tokens = ["ingest", "read", "grade", "configure"].map((capability) => token(stack, capability));
+    expect(new Set(tokens).size).toBe(4);
+    for (const capability of ["ingest", "read", "grade", "configure"])
       expect(statSync(stack.stateFile(`observation-${capability}.token`)).mode & 0o777).toBe(0o600);
     expect(statSync(stack.stateFile("observation-database.password")).mode & 0o777).toBe(0o600);
     expect(existsSync(join(stack.home, ".local/state/oakridge"))).toBe(false);
@@ -107,7 +110,7 @@ describe("shadow isolation", () => {
     await stack.stackServing();
     await observationServing(stack);
     const after = stack.record("observation").env;
-    for (const name of ["OBSERVATION_DATABASE_URL", "OBSERVATION_PORT", "OBSERVATION_INGEST_CREDENTIALS", "OBSERVATION_READ_CREDENTIALS", "OBSERVATION_GRADE_CREDENTIALS"])
+    for (const name of ["OBSERVATION_DATABASE_URL", "OBSERVATION_PORT", "OBSERVATION_INGEST_CREDENTIALS", "OBSERVATION_READ_CREDENTIALS", "OBSERVATION_GRADE_CREDENTIALS", "OBSERVATION_CONFIGURE_CREDENTIALS", "OBSERVATION_GRADING_CONFIG_DIR"])
       expect(after[name]).toBe(before[name] ?? "");
     expect(stack.dockerLog("provisioned").match(/CREATE DATABASE/g)).toHaveLength(1);
   }, TIMEOUT_MS);
@@ -192,7 +195,7 @@ describe("provider credentials", () => {
     const stack = await startedStack((created) => created.writeGraders("jev_direct"));
     await observationServing(stack);
     const written = stack.logText() + readFileSync(stack.stateFile("observation-status.json"), "utf8");
-    for (const secret of ["live-provider-key", token(stack, "ingest"), token(stack, "read"), token(stack, "grade"),
+    for (const secret of ["live-provider-key", token(stack, "ingest"), token(stack, "read"), token(stack, "grade"), token(stack, "configure"),
       readFileSync(stack.stateFile("observation-database.password"), "utf8").trim()]) expect(written).not.toContain(secret);
   }, TIMEOUT_MS);
 });
@@ -207,15 +210,20 @@ describe("capability wiring", () => {
     expect(env.OAKRIDGE_OBSERVATION_INGEST_TOKEN).toBe(token(stack, "ingest"));
     expect(env.OAKRIDGE_OBSERVATION_READ_TOKEN).toBeUndefined();
     expect(env.OAKRIDGE_OBSERVATION_GRADE_TOKEN).toBeUndefined();
+    expect(env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN).toBeUndefined();
   }, TIMEOUT_MS);
 
-  test("kbbl holds the URL and the read and grade capabilities, and not ingest", async () => {
-    const stack = await startedStack();
+  test("kbbl holds read, grade and its own shadow configure capability", async () => {
+    const stack = fixture();
+    stack.start({ env: { OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN: "live-configure" } });
+    await stack.stackServing();
     await observationServing(stack);
     const { env } = stack.record("kbbl");
     expect(env.OAKRIDGE_OBSERVATION_URL).toBe(`http://127.0.0.1:${stack.ports.observation}`);
     expect(env.OAKRIDGE_OBSERVATION_READ_TOKEN).toBe(token(stack, "read"));
     expect(env.OAKRIDGE_OBSERVATION_GRADE_TOKEN).toBe(token(stack, "grade"));
+    expect(env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN).toBe(token(stack, "configure"));
+    expect(env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN).not.toBe("live-configure");
     expect(env.OAKRIDGE_OBSERVATION_INGEST_TOKEN).toBeUndefined();
   }, TIMEOUT_MS);
 
@@ -341,6 +349,10 @@ describe("supervision", () => {
     const read_token = readFileSync(join(stack.home, ".local/state/oakridge/observation-read.token"), "utf8").trim();
     expect(stack.record("kbbl").env.OAKRIDGE_OBSERVATION_READ_TOKEN).toBe(read_token);
     expect(credentials(stack.record("observation").env.OBSERVATION_READ_CREDENTIALS)[0]?.token).toBe(read_token);
+    const configure_token = readFileSync(join(stack.home, ".local/state/oakridge/observation-configure.token"), "utf8").trim();
+    expect(stack.record("kbbl").env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN).toBe(configure_token);
+    expect(JSON.parse(stack.record("observation").env.OBSERVATION_CONFIGURE_CREDENTIALS ?? "[]")).toEqual([{ token: configure_token }]);
+    expect(stack.record("dbos").env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN).toBeUndefined();
   }, TIMEOUT_MS);
 
   test("the default install keeps provider keys out of DBOS and kbbl too", async () => {

@@ -32,14 +32,22 @@ export interface GradingRegistry {
 
 const pointerSchema = z.string().regex(/^\/(?:[^~]|~[01])*$/);
 const targetSchema = z.strictObject({ artifact: z.string().min(1), selector: pointerSchema });
-export type GradingTarget = z.infer<typeof targetSchema>;
+export type GradingTarget = { readonly artifact: string; readonly selector: string };
 const evidenceSchema = capabilityReferenceSchema;
 const questionSchema = z.strictObject({
   text: z.string().nullable(), response: z.enum(["boolean", "choice", "ordinal", "numeric", "text", "structured"]),
   values: z.array(z.json()).nullable(), missing_evidence_policy: z.enum(["fail", "abstain"]),
   abstain_semantics: z.string(), unclear_semantics: z.string(), interpretation_caveats: z.string(),
 });
-export type GradingQuestion = z.infer<typeof questionSchema>;
+export type GradingQuestion = {
+  readonly text: string | null;
+  readonly response: QuestionDefinition["response_kind"];
+  readonly values: readonly JsonValue[] | null;
+  readonly missing_evidence_policy: QuestionDefinition["missing_evidence_policy"];
+  readonly abstain_semantics: string;
+  readonly unclear_semantics: string;
+  readonly interpretation_caveats: string;
+};
 const graderEntrySchema = z.strictObject({ runner: z.string().min(1).refine((runner) => runner !== "human"),
   model: z.string().min(1), instructions: z.json(), estimated_cost_per_call: z.number().finite().nonnegative() });
 const definitionFields = { id: z.string().min(1), targets: z.array(targetSchema).min(1), evidence: z.array(evidenceSchema),
@@ -56,9 +64,81 @@ interface GradingDefinitionFields {
   readonly evaluators: readonly EvaluatorEntry[];
 }
 export type GradingDefinition = GradingDefinitionFields & QuestionScope;
-/** observation/grading-definitions.json is the only question and evaluator selection. */
+/** Published install-state configuration selects questions and evaluators. */
 export type GradingDefinitions = readonly GradingDefinition[];
 const configurationSchema = z.array(definitionSchema).min(1);
+
+export interface DraftConfiguration { readonly status: "draft"; readonly definitions: readonly JsonValue[] }
+export interface PublishedConfiguration {
+  readonly status: "published";
+  readonly version: number;
+  readonly hash: string;
+  readonly published_at: string;
+  readonly definitions: GradingDefinitions;
+}
+export type ConfigurationDocument = DraftConfiguration | PublishedConfiguration;
+export const configurationDocumentSchema = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("draft"), definitions: z.array(z.json()) }),
+  z.strictObject({ status: z.literal("published"), version: z.number().int().positive(), hash: z.string(),
+    published_at: z.iso.datetime({ offset: true }), definitions: configurationSchema }),
+]);
+export interface ConfigurationIssue {
+  readonly definition_index: number | null;
+  readonly path: readonly (string | number)[];
+  readonly detail: string;
+}
+export interface ConfigurationDocumentError {
+  readonly operation: "configuration_document";
+  readonly kind: "invalid_configuration" | "hash_mismatch";
+  readonly entity_id: string;
+  readonly detail: string;
+  readonly issues: readonly ConfigurationIssue[];
+}
+
+/** Whole-configuration identity: array order matters; wrapper metadata is excluded. */
+export const configurationHash = (definitions: readonly unknown[]): ReturnType<typeof canonicalDigest> => canonicalDigest(definitions);
+
+function configurationIssueDefinitionIndex(definitions: GradingDefinitions, entity_id: string): number {
+  const exact = definitions.findIndex((definition) => definition.id === entity_id);
+  if (exact >= 0) return exact;
+  return definitions.reduce((best_index, definition, index) =>
+    entity_id.startsWith(`${definition.id}:`) && (best_index < 0 || definition.id.length > definitions[best_index]!.id.length)
+      ? index : best_index, -1);
+}
+
+/** Shape errors keep their definition index and field path for later editors. */
+export function configurationIssues(raw: unknown, error: GraderConfigurationError): readonly ConfigurationIssue[] {
+  const shape = configurationSchema.safeParse(raw);
+  if (!shape.success) return shape.error.issues.map((issue) => ({
+    definition_index: typeof issue.path[0] === "number" ? issue.path[0] : null,
+    path: issue.path.map((part) => typeof part === "symbol" ? String(part) : part), detail: issue.message,
+  }));
+  const index = error.kind === "duplicate_definition"
+    ? shape.data.findIndex((definition, index) => definition.id === error.entity_id && shape.data.findIndex((entry) => entry.id === definition.id) < index)
+    : configurationIssueDefinitionIndex(shape.data, error.entity_id);
+  const field = /^(\w+(?:\.\w+)*):/.exec(error.detail)?.[1];
+  const fallback = error.kind === "duplicate_definition" ? "id"
+    : ["unknown_runner", "duplicate_grader", "invalid_instructions"].includes(error.kind) ? "evaluators" : "question";
+  return [{ definition_index: index < 0 ? null : index, path: index < 0 ? [] : [index, ...(field ?? fallback).split(".")], detail: error.detail }];
+}
+
+/** Stored documents are strict wrappers; only published definitions must be complete. */
+export function parseConfigurationDocument(raw: unknown, registry: GradingRegistry): Result<ConfigurationDocument, ConfigurationDocumentError> {
+  const parsed = configurationDocumentSchema.safeParse(raw);
+  if (!parsed.success) return err({ operation: "configuration_document", kind: "invalid_configuration", entity_id: "configuration",
+    detail: parsed.error.message, issues: parsed.error.issues.map((issue) => ({
+      definition_index: issue.path[0] === "definitions" && typeof issue.path[1] === "number" ? issue.path[1] : null,
+      path: issue.path.map((part) => typeof part === "symbol" ? String(part) : part), detail: issue.message,
+    })) });
+  if (parsed.data.status === "draft") return ok(parsed.data);
+  const definitions = parseGradingDefinitions(parsed.data.definitions, registry);
+  if (!definitions.ok) return err({ operation: "configuration_document", kind: "invalid_configuration", entity_id: definitions.error.entity_id,
+    detail: definitions.error.detail, issues: configurationIssues(parsed.data.definitions, definitions.error) });
+  const hash = configurationHash(definitions.value);
+  if (!hash.ok || hash.value !== parsed.data.hash) return err({ operation: "configuration_document", kind: "hash_mismatch",
+    entity_id: String(parsed.data.version), detail: hash.ok ? "recorded hash differs from definitions" : hash.error.detail, issues: [] });
+  return ok({ ...parsed.data, definitions: definitions.value });
+}
 
 /** Human evaluation is implicit even when explicitly listed in the file. */
 export const machineGraders = (definition: GradingDefinition): readonly GraderEntry[] =>
@@ -83,7 +163,7 @@ function shapeFailure(raw: unknown, issue: z.core.$ZodIssue | undefined): Result
   const index = issue?.path[0];
   const entry: unknown = Array.isArray(raw) && typeof index === "number" ? raw[index] : null;
   const identity = z.object({ id: z.string() }).safeParse(entry);
-  const entity_id = identity.success ? identity.data.id : "grading-definitions.json";
+  const entity_id = identity.success ? identity.data.id : "published grading configuration";
   const scope = z.object({ scope: z.string(), task_ids: z.unknown().optional() }).safeParse(entry);
   const detail = issue ? `${issue.path.join(".") || "/"}: ${issue.message}` : "invalid definitions";
   if (scope.success) {
@@ -162,7 +242,7 @@ export interface RegisteredGrader {
   readonly question: QuestionKey;
   readonly evaluator_definition_id: EvaluatorDefinitionId;
 }
-/** Everything startup registers, and the pins a capture writes until the next restart. */
+/** Everything startup registers, and the pins a capture writes until the next runtime refresh. */
 export interface GradingRegistration {
   readonly questions: readonly QuestionDefinition[];
   readonly evaluators: readonly EvaluatorDefinition[];

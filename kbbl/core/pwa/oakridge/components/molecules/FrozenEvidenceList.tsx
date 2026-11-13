@@ -2,23 +2,21 @@ import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ObservationPageRequest } from "../../grading-contracts/grading/composite";
-import type { ObservationEvidenceReference } from "../../grading-contracts/grading/evidence";
-import { decodeEvidenceContent, selectEvidenceSummary } from "../../lib/evidence-content";
+import { type EvidenceContent, selectEvidenceSummary } from "../../lib/evidence-content";
 import type { ObservationEvidenceRead } from "../../grading-contracts/grading/item-reads";
-import { referenceDisplay } from "../../lib/grading";
+import { selectGradingEvidence } from "../../lib/grading-detail";
 import { artifactLabelClass } from "./ArtifactSection";
 import { EvidenceContentView } from "./EvidenceContentView";
 import { ListPager } from "./ListPager";
 
-interface FrozenReferenceContentProps { reference: ObservationEvidenceReference }
+interface FrozenReferenceContentProps { content: EvidenceContent }
 interface FrozenEvidenceListProps {
   evidence: ObservationEvidenceRead;
   onWindow: (window: ObservationPageRequest) => void;
 }
 
-function FrozenReferenceContent({ reference }: FrozenReferenceContentProps) {
+function FrozenReferenceContent({ content }: FrozenReferenceContentProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const content = decodeEvidenceContent(reference);
   const summary = selectEvidenceSummary(content);
   if (summary === null) return <EvidenceContentView content={content} />;
   return (
@@ -44,17 +42,20 @@ export function FrozenEvidenceList({ evidence, onWindow }: FrozenEvidenceListPro
       {evidence.references.total === 0 && <p className="text-sm text-[var(--text-muted)]">No evidence was cited.</p>}
       <ul className="m-0 flex list-none flex-col gap-2 p-0">
         {evidence.references.items.map((reference) => {
-          const display = referenceDisplay(reference);
+          const detail = selectGradingEvidence(reference);
+          const display = detail.display;
           return (
-            <li key={reference.ref} className="flex flex-col gap-1 rounded-md border border-[var(--border-decorative)] px-2 py-1.5" data-testid="or-item-evidence-reference" data-source={reference.source}>
+            <li key={reference.ref} className="flex flex-col gap-1 rounded-md border border-[var(--border-decorative)] px-2 py-1.5" data-testid="or-item-evidence-reference" data-source={reference.source} data-provenance={detail.provenance}>
               <div className="flex flex-wrap items-center gap-2">
                 <Chip tone={display.is_agent_reported ? "warning" : "muted"}>{display.source_label}</Chip>
+                <Chip tone={display.is_agent_reported ? "warning" : "muted"}>{detail.provenance_label}</Chip>
                 <code className="or-code">{reference.ref}</code>
                 <span className="break-all font-mono text-xs text-[var(--text-muted)]">{display.location}</span>
                 {display.is_absent && <Chip tone="neutral">Absent at this commit</Chip>}
                 {display.binary_size !== null && <Chip tone="neutral">Binary file, {display.binary_size}, not shown</Chip>}
               </div>
-              {!display.is_absent && reference.content !== null && <FrozenReferenceContent key={`${reference.ref}:${display.location}`} reference={reference} />}
+              {!display.is_absent && reference.content !== null && <div aria-label={`Evidence content: ${reference.ref}`}><FrozenReferenceContent key={`${reference.ref}:${display.location}`} content={detail.inspection.content} /></div>}
+              {reference.content === null && <p className="m-0 text-xs">Evidence content was not captured.</p>}
             </li>
           );
         })}

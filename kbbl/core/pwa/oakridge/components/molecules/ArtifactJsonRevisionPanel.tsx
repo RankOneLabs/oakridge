@@ -1,3 +1,7 @@
+import type { ItemGradingSlots } from "../../artifactRegistry";
+import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
+import { stringify as stringifyYaml } from "yaml";
+import { selectGradedStructuredPaths, type GradedStructuredPathNode } from "../../lib/structured-value";
 import type { ArtifactRevision, ArtifactReviewDescriptor } from "../../artifact-types";
 
 /**
@@ -30,6 +34,9 @@ function stringifySection(value: unknown): string {
 interface ArtifactJsonRevisionPanelProps {
   revision: ArtifactRevision;
   descriptor?: ArtifactReviewDescriptor | null;
+  structured?: boolean;
+  selections?: readonly ObservationItemAddress[];
+  itemGrading?: ItemGradingSlots;
 }
 
 /**
@@ -39,7 +46,7 @@ interface ArtifactJsonRevisionPanelProps {
  *
  * Presentational — it renders the revision it is handed and owns nothing.
  */
-export function ArtifactJsonRevisionPanel({ revision, descriptor }: ArtifactJsonRevisionPanelProps) {
+export function ArtifactJsonRevisionPanel({ revision, descriptor, structured = false, selections = [], itemGrading }: ArtifactJsonRevisionPanelProps) {
   const bodyText = stringifyPayload(revision.body);
   const validationText =
     revision.validation !== null && revision.validation !== undefined
@@ -51,10 +58,12 @@ export function ArtifactJsonRevisionPanel({ revision, descriptor }: ArtifactJson
     revision.body !== null && typeof revision.body === "object" && !Array.isArray(revision.body);
 
   return (
-    <div className="or-revision-panel" data-testid="or-revision-panel">
+    <div className="or-revision-panel" data-testid="or-revision-panel" data-revision-id={revision.id}>
+      {structured && <p className="break-all text-xs"><span className="or-label">Revision </span><code>{revision.id}</code></p>}
+      {structured && <section aria-label="Field tree"><h3>Fields and item paths</h3>{itemGrading?.renderShowAll(selections)}<FieldNode node={selectGradedStructuredPaths(revision.body, selections)} itemGrading={itemGrading} /></section>}
       <div className="or-revision-panel__body">
-        <span className="or-label">Body</span>
-        {sections.length > 0 && isKeyedBody ? (
+        <span className="or-label">{structured ? "Raw JSON" : "Body"}</span>
+        {!structured && sections.length > 0 && isKeyedBody ? (
           <div data-testid="or-descriptor-sections">
             {sections.map((section) => {
               const value = (revision.body as Record<string, unknown>)[section];
@@ -70,6 +79,7 @@ export function ArtifactJsonRevisionPanel({ revision, descriptor }: ArtifactJson
           <pre className="or-pre" data-testid="or-revision-body">{bodyText}</pre>
         )}
       </div>
+      {structured && <section><h3>YAML</h3><pre className="or-pre" data-testid="or-revision-yaml">{stringifyYaml(revision.body)}</pre></section>}
       {validationText && (
         <div className="or-revision-panel__validation">
           <span className="or-label">Validation</span>
@@ -78,4 +88,17 @@ export function ArtifactJsonRevisionPanel({ revision, descriptor }: ArtifactJson
       )}
     </div>
   );
+}
+
+interface FieldNodeProps {
+  readonly node: GradedStructuredPathNode;
+  readonly itemGrading?: ItemGradingSlots;
+}
+function FieldNode({ node, itemGrading }: FieldNodeProps) {
+  return <ul className="ml-4 list-none text-sm"><li>
+    <span>{node.label}</span> <code className="or-code">{node.item_path === "" ? '(root: "")' : node.item_path}</code>
+    {node.selections.map((selection) => <span key={selection.item_path}>{itemGrading?.renderItemAction(selection)}</span>)}
+    {node.children.length === 0 && <pre className="or-pre">{stringifyPayload(node.value)}</pre>}
+    {node.children.map((child) => <FieldNode key={child.item_path} node={child} itemGrading={itemGrading} />)}
+  </li></ul>;
 }

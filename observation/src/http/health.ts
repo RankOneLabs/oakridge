@@ -1,3 +1,4 @@
+import type { RuntimeConfiguration } from "../grading/runtime-configuration";
 import type { Hono } from "hono";
 import { sql } from "kysely";
 import type { Database } from "../storage/database";
@@ -16,6 +17,7 @@ export interface ObservationHealth {
 }
 export interface HealthDependencies {
   readonly db: Database;
+  readonly runtime_configuration?: RuntimeConfiguration;
   /** Absent means nothing is registered. */
   readonly grader_capability?: () => GraderCapability;
   readonly database_check_ms?: number;
@@ -58,8 +60,9 @@ export async function readObservationHealth(probe: DatabaseProbe, grader_capabil
 /** Open like the DBOS health route: it carries availability and registered capability, never a credential. */
 export function registerHealthRoute(app: Hono, deps: HealthDependencies): void {
   const probe = databaseProbe(deps.db, deps.database_check_ms ?? DATABASE_CHECK_MS);
+  const runtime = deps.runtime_configuration;
   app.get("/health", async (c) => {
-    const health = await readObservationHealth(probe, deps.grader_capability);
+    const health = await readObservationHealth(probe, runtime ? () => runtime.current().grader_capability : deps.grader_capability);
     return c.json(health, health.status === "ok" ? 200 : 503);
   });
 }

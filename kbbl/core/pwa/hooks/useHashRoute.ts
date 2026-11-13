@@ -1,11 +1,17 @@
 import { useState, useEffect } from "react";
-import { readHashRoute } from "../lib/hash";
+import { acceptHashNavigation, readHashRoute } from "../lib/hash";
 import type { HashRoute } from "../lib/hash";
 
 export function useHashRoute(): HashRoute | null {
   const [route, setRoute] = useState<HashRoute | null>(() => readHashRoute());
   useEffect(() => {
-    const onHash = () => setRoute(readHashRoute());
+    const onHash = (event: HashChangeEvent) => {
+      if (!acceptHashNavigation()) {
+        event.stopImmediatePropagation();
+        return;
+      }
+      setRoute(readHashRoute());
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);

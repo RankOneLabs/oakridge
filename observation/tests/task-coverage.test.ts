@@ -6,7 +6,7 @@ import { parseGradingDefinitions, planRegistration } from "../src/grading/config
 import { gradeNext } from "../src/grading/worker";
 import type { CapturedRevision, CapturedSources, SourceArtifact } from "../src/ports/artifact-source";
 import { oakridgeEvidence } from "./grading-fixture";
-import { oakridgeGradingRegistry, committedDefinitions, createFeed, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
+import { oakridgeGradingRegistry, fixtureDefinitions, createFeed, integration, runConfig, scratchDatabase, tenant } from "./grading-fixture";
 import { CONTRIBUTION_COVERAGE_ID, TASK_COVERAGE_ID } from "./grading-fixture";
 import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
 import { collectPinnedQuestion, pinOccurrenceInTransaction, readOccurrenceEvidence } from "../src/storage/captured-evidence-store";
@@ -76,7 +76,7 @@ test("an unassigned contribution never guesses a spec task from similar wording"
 });
 
 integration("tasks, plan contributions and briefs freeze their original context and execute through the ordinary worker", async () => scratchDatabase(async (db) => {
-  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
+  const parsed = parseGradingDefinitions(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
@@ -122,7 +122,7 @@ integration("tasks, plan contributions and briefs freeze their original context 
 }));
 
 integration("an explicit coverage upgrade adds only the new question and leaves prior capture pins unchanged", async () => scratchDatabase(async (db) => {
-  const parsed = parseGradingDefinitions(await committedDefinitions(), oakridgeGradingRegistry);
+  const parsed = parseGradingDefinitions(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
@@ -165,7 +165,7 @@ test("coverage sources and list pointers come from capability parameters and sha
 });
 
 integration("a brief resolves its task, requirements and plan at the brief's own revision", async () => scratchDatabase(async (db) => {
-  const registration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+  const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   await registerDefinitions(db, tenant, registration.value);
   const feed = createFeed(db, tenant, registration.value.capture);

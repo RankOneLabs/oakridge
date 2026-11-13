@@ -9,7 +9,7 @@ import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openS
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { parseGradingDefinitions, machineGraders } from "../../observation/src/grading/configuration";
+import { configurationHash, parseGradingDefinitions, machineGraders } from "../../observation/src/grading/configuration";
 import { oakridgeGradingRegistry } from "../../observation/src/producers/oakridge/profile";
 
 const REPOSITORY = resolve(import.meta.dir, "../..");
@@ -31,6 +31,8 @@ export const INHERITED_LIVE_ENV: Readonly<Record<string, string>> = {
   OBSERVATION_HOST: "0.0.0.0",
   OBSERVATION_INGEST_CREDENTIALS: `[{"producer":"oakridge","namespace":"live","token":"inherited-ingest"}]`,
   OBSERVATION_READ_CREDENTIALS: `[{"producer":"oakridge","namespace":"live","token":"inherited-read"}]`,
+  OBSERVATION_CONFIGURE_CREDENTIALS: `[{"token":"inherited-configure"}]`,
+  OBSERVATION_GRADING_CONFIG_DIR: "/inherited/live-store",
   OBSERVATION_GRADE_CREDENTIALS: `[{"producer":"oakridge","namespace":"live","token":"inherited-grade","reviewer_id":"live"}]`,
   OAKRIDGE_OBSERVATION_URL: "http://127.0.0.1:8791",
   OAKRIDGE_OBSERVATION_NAMESPACE: "live",
@@ -147,12 +149,17 @@ export class LauncherFixture {
   }
 
   writeGraders(...runners: string[]): void {
-    const parsed = parseGradingDefinitions(JSON.parse(readFileSync(join(REPOSITORY, "observation/grading-definitions.json"), "utf8")), oakridgeGradingRegistry);
+    const parsed = parseGradingDefinitions(JSON.parse(readFileSync(join(REPOSITORY, "observation/tests/fixtures/grading-definitions.json"), "utf8")), oakridgeGradingRegistry);
     if (!parsed.ok) throw new Error(parsed.error.detail);
     const definition = parsed.value[0]!;
     const grader = machineGraders(definition)[0]!;
-    writeFileSync(join(this.checkout, "observation/grading-definitions.json"), JSON.stringify([{ ...definition,
-      evaluators: runners.map((runner) => ({ ...grader, runner })) }]));
+    const definitions = [{ ...definition, evaluators: runners.map((runner) => ({ ...grader, runner })) }];
+    const hash = configurationHash(definitions);
+    if (!hash.ok) throw new Error(hash.error.detail);
+    const versions = join(this.state_dir, "observation/grading-config/versions");
+    mkdirSync(versions, { recursive: true });
+    writeFileSync(join(versions, "000001.json"), JSON.stringify({ status: "published", version: 1,
+      hash: hash.value, published_at: "2026-11-01T00:00:00Z", definitions }));
   }
   behave(name: ChildName, behaviour: ObservationBehaviour): void { writeFileSync(join(this.records, `${name}.behaviour`), behaviour); }
   dockerFlag(flag: "refuse-provisioning" | "wrong-binding" | "hang-postgres"): void { writeFileSync(join(this.docker_state, flag), ""); }

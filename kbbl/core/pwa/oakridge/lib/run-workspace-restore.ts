@@ -1,3 +1,4 @@
+import { parseCompositeId } from "../adapters/core";
 // Restore-and-precedence for the run workspace.
 //
 // Two rules, both decided here rather than left to the caller:
@@ -67,6 +68,7 @@ export interface RunEntityIndex {
    */
   readonly purged_session_ids: ReadonlySet<string>;
   readonly artifact_ids: ReadonlySet<string>;
+  readonly run_id?: string;
 }
 
 export interface RunEntityIndexInput {
@@ -110,6 +112,7 @@ export const indexRunEntities = ({
   return {
     sessions:
       sessions.kind === "loaded" ? { kind: "known", ids: session_ids } : { kind: "unknown" },
+    run_id: run.id,
     purged_session_ids: purgedSessionIds,
     artifact_ids,
   };
@@ -131,6 +134,8 @@ export const isPaneResolvable = (pane: RunWorkspacePane, index: RunEntityIndex):
   switch (pane.kind) {
     case "overview":
     case "list":
+    case "prompt":
+    case "unit":
     case "grading":
     case "item":
     case "task":
@@ -139,8 +144,14 @@ export const isPaneResolvable = (pane: RunWorkspacePane, index: RunEntityIndex):
       if (index.purged_session_ids.has(pane.session_id)) return false;
       if (index.sessions.kind === "unknown") return true;
       return index.sessions.ids.has(pane.session_id);
-    case "artifact":
-      return index.artifact_ids.has(pane.artifact_id);
+    case "artifact": {
+      if (index.artifact_ids.has(pane.artifact_id)) return true;
+      // The legacy run adapter omits unregistered artifact schemas. A recorded
+      // authority link still opens their existing JSON viewer, which reports missing data.
+      const parsed = parseCompositeId(pane.artifact_id, "artifact");
+      return parsed.ok && index.run_id !== undefined && parsed.value.runId === index.run_id
+        && (pane.revision_id !== undefined || (pane.run_id === index.run_id && pane.unit_id === parsed.value.unitId));
+    }
   }
 };
 

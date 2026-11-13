@@ -13,9 +13,9 @@ export interface ObservationProxyDeps {
 }
 
 const OBSERVATION_FORWARD_TIMEOUT_MS = 30_000;
-type Capability = "read" | "grade";
+type Capability = "read" | "grade" | "configure";
 const capabilityToken = (config: ObservationServerConfig, capability: Capability): string | null =>
-  capability === "read" ? config.readToken : config.gradeToken;
+  capability === "read" ? config.readToken : capability === "grade" ? config.gradeToken : config.configureToken;
 
 /** The whole of what a browser may submit. Anything else, a reviewer or evaluator included, is not forwarded. */
 const SUBMISSION_FIELDS = ["question_id", "question_version", "task_id", "submission_id", "answer", "rationale", "corrects_observation_id"] as const;
@@ -72,6 +72,23 @@ export function mountObservationProxyRoutes(app: Hono, deps: ObservationProxyDep
   read("/items/:id/status", (c) => `${item(c)}/status`);
   read("/items/:id/answers", (c) => `${item(c)}/answers`);
   read("/items/:id/lineage", (c) => `${item(c)}/lineage`);
+  read("/evaluator-definitions/:id", (c) => `/v1/evaluator-definitions/${segment(c.req.param("id"))}`);
+  app.get("/oakridge/observation/grading-config/draft", (c) => forward(c, "configure", "/v1/grading-config/draft"));
+  app.get("/oakridge/observation/grading-config/versions", (c) => forward(c, "configure", "/v1/grading-config/versions"));
+  app.get("/oakridge/observation/grading-config/versions/:version", (c) => forward(c, "configure", `/v1/grading-config/versions/${segment(c.req.param("version"))}`));
+  app.get("/oakridge/observation/grading-config/runtime", (c) => forward(c, "configure", "/v1/grading-config/runtime"));
+  app.get("/oakridge/observation/grading-config/catalogue", (c) => forward(c, "configure", "/v1/grading-config/catalogue"));
+  const configureWrite = async (c: Context, path: string): Promise<Response> => {
+    const rejection = browserJsonWriteRejection(write_policy, c.req.raw);
+    if (rejection) return rejection;
+    const input: unknown = await c.req.json().catch(() => null);
+    if (input === null || typeof input !== "object" || Array.isArray(input))
+      return refusal(c, 400, "invalid_json", "a JSON object is required");
+    return forward(c, "configure", path, JSON.stringify(input));
+  };
+  app.put("/oakridge/observation/grading-config/draft", (c) => configureWrite(c, "/v1/grading-config/draft"));
+  app.post("/oakridge/observation/grading-config/draft/validate", (c) => configureWrite(c, "/v1/grading-config/draft/validate"));
+  app.post("/oakridge/observation/grading-config/publish", (c) => configureWrite(c, "/v1/grading-config/publish"));
   /** Names this server's reviewer, so the panel can tell the operator's own answer apart. */
   app.get("/oakridge/observation/reviewer", (c) => forward(c, "grade", "/v1/reviewer"));
   app.post("/oakridge/observation/items/:id/answers", async (c) => {

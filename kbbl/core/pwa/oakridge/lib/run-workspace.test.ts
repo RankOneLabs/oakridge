@@ -223,3 +223,9 @@ describe("the item pane", () => {
     expect(describePane({ kind: "grading" })).toEqual({ title: "Grading", subtitle: null });
   });
 });
+
+it("two revisions of an artifact can be compared side by side", () => {
+  const artifact_id = "artifact" as import("../../lib/ids").ArtifactId;
+  const state = openInPane({ primary: { kind: "artifact", artifact_id, revision_id: "old" }, secondary: null }, "secondary", { kind: "artifact", artifact_id, revision_id: "new" });
+  expect(state.secondary).toEqual({ kind: "artifact", artifact_id, revision_id: "new" });
+});

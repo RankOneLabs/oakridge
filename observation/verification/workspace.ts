@@ -245,7 +245,7 @@ export async function workspaceScenario(io: ProofIo, source: WorkspaceSource): P
     const readWrites = await fetch(`${io.state.observation.url}/v1/items/${encodeURIComponent(chosen.occurrence_id)}/answers`, { ...post({ ...question, submission_id: "read-token", answer: positive }), headers: { "content-type": "application/json", authorization: `Bearer ${tokens.value.capabilities.read}` } });
     checks.push(check("a grade capability reads nothing, and a read capability writes nothing", !gradeReads.ok && readWrites.status === 403, `grade read ${gradeReads.ok ? "allowed" : "refused"}; read write ${readWrites.status}`));
     const guarded = new Hono();
-    mountObservationProxyRoutes(guarded, { observation: { url: io.state.observation.url, namespace: io.state.observation.namespace, readToken: tokens.value.capabilities.read, gradeToken: tokens.value.capabilities.grade }, browserControlToken: "proof-control-token", allowedOrigins: [] });
+    mountObservationProxyRoutes(guarded, { observation: { url: io.state.observation.url, namespace: io.state.observation.namespace, readToken: tokens.value.capabilities.read, gradeToken: tokens.value.capabilities.grade, configureToken: tokens.value.capabilities.configure }, browserControlToken: "proof-control-token", allowedOrigins: [] });
     const guardedRead = `/oakridge/observation${itemPath(chosen.occurrence_id)}/status`;
     const anonymous = await guarded.request(guardedRead);
     const operator = await guarded.request(guardedRead, { headers: { authorization: "Bearer proof-control-token" } });

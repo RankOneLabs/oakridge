@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
-import { allProviderCredentialNames, configuredRunnerNames, credentialsForRunners, parseEnvFile,
+import { allProviderCredentialNames, configuredRunnerNames, credentialsForRunners, offerRunnerCredentials, parseEnvFile,
   selectProviderEnvironment } from "../src/grading/provider-credentials";
 import { runnerRegistry } from "../src/grading/runner";
 
 import { machineGraders } from "../src/grading/configuration";
-import { committedDefinitions, oakridgeGradingRegistry } from "./grading-fixture";
+import { fixtureDefinitions, oakridgeGradingRegistry } from "./grading-fixture";
 
 const graders = async (...runners: string[]) => {
-  const [definition] = await committedDefinitions();
+  const [definition] = await fixtureDefinitions();
   const grader = machineGraders(definition!)[0]!;
   return [{ ...definition!, evaluators: runners.map((runner, index) =>
     runner === "human" ? { runner: "human" as const } : { ...grader, runner, model: `model-${index}` }) }];
@@ -30,7 +30,7 @@ test("human-only definitions select no provider settings", async () => {
 });
 
 test("a grader without its model, instructions or cost is refused before selecting settings", async () => {
-  const [definition] = await committedDefinitions();
+  const [definition] = await fixtureDefinitions();
   expect(configured([{ ...definition, evaluators: [{ runner: "jev_direct" }] }]))
     .toMatchObject({ ok: false, error: { kind: "invalid_definitions" } });
 });
@@ -40,7 +40,7 @@ test("invalid definitions fail before selecting provider settings", () => {
 });
 
 test("an unknown capability fails before selecting provider settings", async () => {
-  const [definition] = await committedDefinitions();
+  const [definition] = await fixtureDefinitions();
   expect(configured([{ ...definition!, id: "finding.relevnce", evidence: ["absent_capability"] }]))
     .toMatchObject({ ok: false, error: { operation: "provider_credentials", kind: "invalid_definitions",
       entity_id: "finding.relevnce", detail: expect.stringContaining("absent_capability") } });
@@ -64,6 +64,29 @@ test("a missing required setting names the setting and no value", () => {
   const selected = selectProviderEnvironment(requirements.value, parseEnvFile("FASTINO_API_KEY=secret-value\nTYPESAFE_API_KEY=\n"));
   expect(selected).toMatchObject({ ok: false, error: { kind: "missing_credential", entity_id: "TYPESAFE_API_KEY" } });
   expect(JSON.stringify(selected)).not.toContain("secret-value");
+});
+
+const credentialsOf = (runners: string[]) => {
+  const credentials = credentialsForRunners(runners);
+  if (!credentials.ok) throw new Error("fixture runners are retained");
+  return credentials.value;
+};
+
+test("a runner the draft adds has its settings selected so a restart lets the draft publish", () => {
+  const offered = offerRunnerCredentials(credentialsOf(["jev_direct"]), credentialsOf(["fastino_glide"]));
+  const selected = selectProviderEnvironment(offered, parseEnvFile("TYPESAFE_API_KEY=key\nFASTINO_API_KEY=other\n"));
+  expect(selected.ok && [...selected.value]).toEqual([["TYPESAFE_API_KEY", "key"], ["FASTINO_API_KEY", "other"]]);
+});
+
+test("a draft runner's absent setting does not stop selection", () => {
+  const offered = offerRunnerCredentials(credentialsOf(["jev_direct"]), credentialsOf(["fastino_glide"]));
+  const selected = selectProviderEnvironment(offered, parseEnvFile("TYPESAFE_API_KEY=key\n"));
+  expect(selected.ok && [...selected.value]).toEqual([["TYPESAFE_API_KEY", "key"]]);
+});
+
+test("a published runner's required setting stays required when the draft also selects it", () => {
+  const offered = offerRunnerCredentials(credentialsOf(["jev_direct"]), credentialsOf(["jev_direct"]));
+  expect(selectProviderEnvironment(offered, parseEnvFile(""))).toMatchObject({ ok: false, error: { kind: "missing_credential", entity_id: "TYPESAFE_API_KEY" } });
 });
 
 test("no configured runner selects nothing", () => {

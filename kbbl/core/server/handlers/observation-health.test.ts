@@ -9,7 +9,7 @@ import {
   type ObservationServerConfig,
 } from "./observation-health";
 
-const config: ObservationServerConfig = { url: "http://observation.test", namespace: "shadow", readToken: "read-secret", gradeToken: "grade-secret" };
+const config: ObservationServerConfig = { url: "http://observation.test", namespace: "shadow", readToken: "read-secret", gradeToken: "grade-secret", configureToken: "configure-secret" };
 const answering = (body: unknown, status = 200): typeof fetch =>
   (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
 const service = (graders: unknown, database = "available") => ({ service: "observation", status: "ok", database, graders });
@@ -21,10 +21,14 @@ describe("observationServerConfigFromEnv", () => {
   test("no URL means observation is not part of this deployment", () => {
     expect(observationServerConfigFromEnv({ OAKRIDGE_OBSERVATION_READ_TOKEN: "read" })).toBeNull();
   });
-  test("reads the URL, namespace and both server-held capabilities", () => {
+  test("reads the URL, namespace and all server-held capabilities", () => {
     expect(observationServerConfigFromEnv({ OAKRIDGE_OBSERVATION_URL: "http://o", OAKRIDGE_OBSERVATION_NAMESPACE: "shadow-a",
-      OAKRIDGE_OBSERVATION_READ_TOKEN: "r", OAKRIDGE_OBSERVATION_GRADE_TOKEN: "g" }))
-      .toEqual({ url: "http://o", namespace: "shadow-a", readToken: "r", gradeToken: "g" });
+      OAKRIDGE_OBSERVATION_READ_TOKEN: "r", OAKRIDGE_OBSERVATION_GRADE_TOKEN: "g", OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN: " c " }))
+      .toEqual({ url: "http://o", namespace: "shadow-a", readToken: "r", gradeToken: "g", configureToken: "c" });
+  });
+  test("empty or missing configure credentials are absent", () => {
+    for (const configure of [undefined, "", "   "])
+      expect(observationServerConfigFromEnv({ OAKRIDGE_OBSERVATION_URL: "http://o", OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN: configure })?.configureToken).toBeNull();
   });
 });
 
@@ -84,11 +88,16 @@ describe("GET /health", () => {
   test("kbbl stays healthy and reports the observation component separately", async () => {
     const result = await read({ config, fetcher: (async () => { throw new Error("connection refused"); }) as unknown as typeof fetch });
     expect(result.status).toBe(200);
-    expect(result.body).toEqual({ status: "ok", observation: { state: "down", reason: "unreachable" }, capabilities: { read: true, grade: true } });
+    expect(result.body).toEqual({ status: "ok", observation: { state: "down", reason: "unreachable" }, capabilities: { read: true, grade: true, configure: true } });
   });
   test("capabilities report presence and never a value", async () => {
     const result = await read({ config: { ...config, gradeToken: null }, fetcher: answering(service({ state: "none_configured" })) });
-    expect(result.body.capabilities).toEqual({ read: true, grade: false });
+    expect(result.body.capabilities).toEqual({ read: true, grade: false, configure: true });
     expect(result.text).not.toContain("read-secret");
+    expect(result.text).not.toContain("configure-secret");
+  });
+  test("an absent configure capability reports false", async () => {
+    const result = await read({ config: { ...config, configureToken: null }, fetcher: answering(service({ state: "none_configured" })) });
+    expect(result.body.capabilities).toEqual({ read: true, grade: true, configure: false });
   });
 });

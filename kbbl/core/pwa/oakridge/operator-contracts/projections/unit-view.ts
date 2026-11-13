@@ -2,6 +2,7 @@
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
 import type { OperatorAttemptStatus, OperatorCause, OperatorDeclaredDecisionEffect, OperatorMode, OperatorUnitStatus } from "../core-client/core-types";
+import type { OperatorEngineInputs, OperatorPinnedPrompt } from "../domain/effect-instruction";
 import type { OperatorJsonValue } from "../domain/primitives";
 import type { OperatorAttention } from "./attention";
 
@@ -51,6 +52,7 @@ export interface OperatorAttemptView {
   readonly mode: OperatorMode["kind"];
   readonly cause: OperatorCause;
   readonly kbbl_session_id: string | null;
+  readonly intent: OperatorAttemptIntentView | null;
   readonly created_at: string;
   /** The worker's latest attempt; earlier ones are superseded. */
   readonly is_current: boolean;
@@ -102,5 +104,11 @@ export interface OperatorArtifactRevisionView {
 export type OperatorAttemptStatusKind = OperatorAttemptStatus["kind"];
 
 export interface OperatorAttemptFailure { readonly code: string; readonly detail: string }
+
+export interface OperatorAttemptIntentView {
+  readonly inputs: OperatorBodyValue;
+  readonly engine_inputs: OperatorEngineInputs;
+  readonly prompt: OperatorPinnedPrompt | null;
+}
 
 export interface OperatorDecisionField { readonly key: string; readonly label: string }

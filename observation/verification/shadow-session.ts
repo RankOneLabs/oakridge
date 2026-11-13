@@ -3,6 +3,9 @@
  * and speaks to what that started. Nothing here creates a database, capability or
  * service; the launcher resolved them, and these are clients of that state.
  */
+import type { VersionListing } from "../src/http/grading-config";
+import type { StoredDraft } from "../src/grading/configuration-store";
+import { configurationDocumentSchema, type PublishedConfiguration, type GradingDefinitions } from "../src/grading/configuration";
 import { access, mkdir, readFile, rename, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { closeSync, openSync } from "node:fs";
@@ -12,7 +15,6 @@ import { launcherStateSchema, observationStatusSchema, type LauncherState, type 
 
 const REPOSITORY_ROOT = resolve(import.meta.dir, "../..");
 const LAUNCHER = resolve(REPOSITORY_ROOT, "scripts/oakridge-shadow");
-const GRADERS = resolve(REPOSITORY_ROOT, "observation/grading-definitions.json");
 const REQUEST_TIMEOUT_MS = 5_000;
 const QUERY_TIMEOUT_MS = 30_000;
 const PUBLISHER_FAILURE_LINES = 5;
@@ -29,7 +31,7 @@ export const observationFacts = (health: KbblHealth | null, status: ObservationS
   health: health?.observation.state ?? "kbbl_unavailable",
   launcher: status ? `${status.state}${status.detail ? `: ${status.detail}` : ""}` : "no status recorded" });
 
-export interface Capabilities { readonly ingest: string; readonly read: string; readonly grade: string }
+export interface Capabilities { readonly ingest: string; readonly read: string; readonly grade: string; readonly configure: string }
 export interface TokenFacts { readonly capabilities: Capabilities; readonly private_files: boolean }
 
 export interface StackOptions { readonly provider_env_file?: string }
@@ -53,9 +55,10 @@ export interface ProofIo {
   observationGet(path: string, capability: keyof Capabilities): Promise<Result<unknown, ProofFailure>>;
   /** The publisher's latest refusals, from a stack this proof started; an attached stack logs elsewhere. */
   publisherFailures(): Promise<readonly string[]>;
-  /** observation/grading-definitions.json, the selection the next observation start registers. */
-  readGraders(): Promise<string>;
-  writeGraders(text: string): Promise<void>;
+  /** Latest published definitions, read over the authenticated configuration API. */
+  readGradingConfiguration(): Promise<PublishedConfiguration>;
+  /** Saves a draft and publishes it on the running shadow, preserving immutable history. */
+  publishGradingConfiguration(definitions: GradingDefinitions): Promise<void>;
   now(): number;
   sleep(ms: number): Promise<void>;
 }
@@ -119,16 +122,25 @@ export function createShadowIo(state: LauncherState, log_path: string): ProofIo 
   const stackAnswers = async () => (await readJson(`${state.dbos.url}/health`))?.status === 200
     && (await readJson(`${state.kbbl.url}/health`))?.status === 200;
   const tokens = async (): Promise<Result<TokenFacts, ProofFailure>> => {
-    const paths = [state.observation.ingest_token_file, state.observation.read_token_file, state.observation.grade_token_file];
+    const paths = [state.observation.ingest_token_file, state.observation.read_token_file, state.observation.grade_token_file, join(state.state_dir, "observation-configure.token")];
     try {
-      const [ingest = "", read = "", grade = ""] = await Promise.all(paths.map(async (path) => (await readFile(path, "utf8")).trim()));
-      return ok({ capabilities: { ingest, read, grade }, private_files: (await Promise.all(paths.map(isPrivate))).every(Boolean) });
+      const [ingest = "", read = "", grade = "", configure = ""] = await Promise.all(paths.map(async (path) => (await readFile(path, "utf8")).trim()));
+      return ok({ capabilities: { ingest, read, grade, configure }, private_files: (await Promise.all(paths.map(isPrivate))).every(Boolean) });
     } catch (cause) { return failure("read_tokens", state.state_dir, cause instanceof Error ? cause.message : String(cause)); }
   };
   const authenticated = async (url: string, init: RequestInit, operation: string): Promise<Result<unknown, ProofFailure>> => {
     const response = await readJson(url, init);
     if (!response) return failure(operation, url, "no response");
     return response.status < 400 ? ok(response.body) : failure(operation, url, `HTTP ${response.status}`);
+  };
+  const configure = async (path: string, method = "GET", body?: unknown): Promise<unknown> => {
+    const facts = await tokens();
+    if (!facts.ok) throw new Error(facts.error.detail);
+    const response = await authenticated(`${state.observation.url}/v1/grading-config/${path}`, { method,
+      headers: { authorization: `Bearer ${facts.value.capabilities.configure}`, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, "configuration_request");
+    if (!response.ok) throw new Error(`${response.error.entity_id}: ${response.error.detail}`);
+    return response.value;
   };
   return {
     state,
@@ -178,10 +190,19 @@ export function createShadowIo(state: LauncherState, log_path: string): ProofIo 
       const log = await readFile(log_path, "utf8").catch(() => "");
       return log.split("\n").filter((line) => line.includes("observation publisher:")).slice(-PUBLISHER_FAILURE_LINES);
     },
-    readGraders: () => readFile(GRADERS, "utf8"),
-    async writeGraders(text) {
-      await Bun.write(`${GRADERS}.pending`, text);
-      await rename(`${GRADERS}.pending`, GRADERS);
+    async readGradingConfiguration() {
+      const versions = await configure("versions") as VersionListing;
+      if (versions.latest_version === null) throw new Error("the shadow has no published grading configuration; import one before running verification");
+      const document = configurationDocumentSchema.parse(await configure(`versions/${versions.latest_version}`));
+      if (document.status !== "published") throw new Error("expected published configuration");
+      return document;
+    },
+    async publishGradingConfiguration(definitions) {
+      const versions = await configure("versions") as VersionListing;
+      const draft = await configure("draft") as StoredDraft | null;
+      const document = configurationDocumentSchema.parse({ status: "draft", definitions });
+      const saved = await configure("draft", "PUT", { expected_draft_digest: draft?.digest ?? null, document }) as StoredDraft;
+      await configure("publish", "POST", { expected_draft_digest: saved.digest, expected_latest_version: versions.latest_version });
     },
     now: () => Date.now(),
     sleep: (ms) => Bun.sleep(ms),
