@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogueArtifactKinds, catalogueItemSelectors, configurationDiff, configurationHeader, createDraft, definitionSummaries, editDraft, parseDefinitions, publicationFailure, publicationFeedback, saveFailed, saveSucceeded, sectionIssues, definitionWithScope, evaluatorWithRunner } from "./grading-config";
+import { catalogueArtifactKinds, catalogueEvidenceCapability, catalogueEvidenceNames, catalogueItemSelectors, catalogueRunners, configurationDiff, configurationHeader, createDraft, definitionSummaries, editDraft, parseDefinitions, publicationFailure, publicationFeedback, saveFailed, saveSucceeded, sectionIssues, definitionWithScope, evaluatorWithRunner } from "./grading-config";
 import type { ObservationPublicationError } from "../grading-contracts/grading/publication";
 import type { ObservationGradingCatalogue } from "../grading-contracts/http/grading-config";
 
@@ -12,9 +12,24 @@ const catalogue: ObservationGradingCatalogue = {
     { artifact_kind: "assessment", item_selector: "/items/*", item_kind: "finding", item_fields: [] },
     { artifact_kind: "analysis", item_selector: "/tasks/*", item_kind: "task", item_fields: [] },
   ],
-  evidence_capabilities: [], runners: [],
+  evidence_capabilities: [{ name: "subject", params_schema: { type: "object" }, subject_requirements: { fields: [], task_subject: false } }], runners: ["judge", "human", "judge"],
 };
 describe("grading catalogue options", () => {
+  it("selects evidence capability names from the catalogue", () => {
+    expect(catalogueEvidenceNames(catalogue)).toEqual(["subject"]);
+  });
+  it("selects the capability with its parameter schema", () => {
+    expect(catalogueEvidenceCapability(catalogue, "subject")).toEqual(catalogue.evidence_capabilities[0]);
+  });
+  it("has no schema for an unregistered capability", () => {
+    expect(catalogueEvidenceCapability(catalogue, "unknown")).toBeUndefined();
+  });
+  it("selects unique runners with one implicit human entry", () => {
+    expect(catalogueRunners(catalogue)).toEqual(["judge", "human"]);
+  });
+  it("offers human when the catalogue has no machine runners", () => {
+    expect(catalogueRunners({ ...catalogue, runners: [] })).toEqual(["human"]);
+  });
   it("selects unique artifact kinds in catalogue order", () => {
     expect(catalogueArtifactKinds(catalogue)).toEqual(["analysis", "assessment"]);
   });

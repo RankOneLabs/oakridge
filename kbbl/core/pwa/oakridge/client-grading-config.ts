@@ -31,7 +31,7 @@ export const readGradingRuntime = (): Promise<ConfigurationResult<ObservationGra
 export const saveGradingDraft = (definitions: readonly Json[], digest: string | null): Promise<ConfigurationResult<ObservationStoredDraft>> =>
   request("/draft", write("PUT", { document: { status: "draft", definitions }, expected_draft_digest: digest }));
 export async function validateGradingDraft(): Promise<GradingFeedback> {
-  const result = await request<{ readonly valid: true }>("/draft/validate", write("POST"));
+  const result = await request<{ readonly valid: true }>("/draft/validate", write("POST", {}));
   return result.ok ? (result.value?.valid === true ? { kind: "validated" } : { kind: "transport_error", detail: "Unexpected validation response" }) : result.feedback;
 }
 export async function publishGradingDraft(preconditions: ObservationPublishRequest): Promise<GradingFeedback> {

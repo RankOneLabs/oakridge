@@ -121,7 +121,10 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload }:
         {isRaw ? <GradingJsonField label="Whole definitions array (raw JSON)" text={rawText} error={rawError ?? undefined} onChange={(text) => {
           setRawText(text); const parsed = parseDefinitions(text);
           setRawError(parsed.ok ? null : parsed.error);
-          if (parsed.ok) setDraft((current) => replaceDefinitions(current, jsonList(parsed.value)));
+          if (parsed.ok) {
+            setDraft((current) => replaceDefinitions(current, jsonList(parsed.value)));
+            setJsonInputs({});
+          }
         }} /> : <div className="grid gap-5 md:grid-cols-[minmax(14rem,1fr)_minmax(0,2fr)]">
           <aside className="grid content-start gap-3"><h2>Shared draft · {summaries.length} definitions</h2>
             {summaries.map((summary) => <article key={summary.index} className="grid gap-2 rounded border border-[var(--border-muted)] p-3">

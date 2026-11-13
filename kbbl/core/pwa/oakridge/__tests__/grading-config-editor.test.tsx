@@ -6,7 +6,7 @@ import { GradingConfigView } from "../views/GradingConfigView";
 import { GradingConfigFeedback } from "../components/molecules/GradingConfigFeedback";
 import { configDefinitions, configRead, publishedConfig } from "./grading-config-fixture";
 import { readHashRoute } from "../../lib/hash";
-import { atPath, type GradingFeedback } from "../lib/grading-config";
+import { atPath, replaceAtPath, type GradingFeedback } from "../lib/grading-config";
 import type { ObservationJsonValue as Json } from "../grading-contracts/domain/primitives";
 interface SentRequest { readonly path: string; readonly method: string; readonly body: Json | null }
 let sent: SentRequest[];
@@ -81,6 +81,14 @@ describe("grading configuration browser and structured sections", () => {
     change("Whole definitions array (raw JSON)", '[{"id":"new"}]'); click("Structured sections");
     expect((screen.getByLabelText("Definition id") as HTMLTextAreaElement).value).toBe("new");
     expect(screen.getByTestId("grading-draft-status").textContent).toBe("Unsaved local edits");
+  });
+  it("shows and saves raw replacements instead of cached structured JSON text", async () => {
+    browser(); change("Allowed values (JSON list or null)", '["weak"]'); click("Raw JSON");
+    const replacement = JSON.parse((screen.getByLabelText("Whole definitions array (raw JSON)") as HTMLTextAreaElement).value) as Json;
+    change("Whole definitions array (raw JSON)", JSON.stringify(replaceAtPath(replacement, [0, "question", "values"], ["strong"]))); click("Structured sections");
+    expect(JSON.parse((screen.getByLabelText("Allowed values (JSON list or null)") as HTMLTextAreaElement).value)).toEqual(["strong"]);
+    click("Save draft"); await screen.findByText("Draft saved · draft-saved");
+    expect(atPath(sent.find((request) => request.method === "PUT")?.body, ["document", "definitions", 0, "question", "values"])).toEqual(["strong"]);
   });
   it("blocks save on malformed section JSON and retains it when selecting a different definition", () => {
     browser(); change("Allowed values (JSON list or null)", "[");

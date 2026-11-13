@@ -91,6 +91,12 @@ export const catalogueArtifactKinds = (catalogue: ObservationGradingCatalogue): 
   [...new Set(catalogue.selectors.map((selector) => selector.artifact_kind))];
 export const catalogueItemSelectors = (catalogue: ObservationGradingCatalogue, artifactKind: Json | undefined): readonly string[] =>
   catalogue.selectors.filter((selector) => selector.artifact_kind === artifactKind).map((selector) => selector.item_selector);
+export const catalogueEvidenceNames = (catalogue: ObservationGradingCatalogue): readonly string[] =>
+  catalogue.evidence_capabilities.map((capability) => capability.name);
+export const catalogueEvidenceCapability = (catalogue: ObservationGradingCatalogue, name: string) =>
+  catalogue.evidence_capabilities.find((capability) => capability.name === name);
+export const catalogueRunners = (catalogue: ObservationGradingCatalogue): readonly string[] =>
+  [...new Set([...catalogue.runners, "human"])];
 export function configurationDiff(before: Json | undefined, after: Json | undefined, path: GradingPath = []): readonly GradingDifference[] {
   if (JSON.stringify(before) === JSON.stringify(after)) return [];
   if (before === undefined || after === undefined) return [{ kind: before === undefined ? "added" : "removed", path, before, after }];

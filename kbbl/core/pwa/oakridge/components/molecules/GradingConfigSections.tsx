@@ -1,7 +1,7 @@
 import { Button } from "../../../components/atoms/Button";
 import type { ObservationJsonValue as Json } from "../../grading-contracts/domain/primitives";
 import type { ObservationGradingCatalogue } from "../../grading-contracts/http/grading-config";
-import { atPath, catalogueArtifactKinds, catalogueItemSelectors, definitionWithScope, evaluatorWithRunner, jsonList, jsonObject, jsonText, type GradingPath } from "../../lib/grading-config";
+import { atPath, catalogueArtifactKinds, catalogueEvidenceCapability, catalogueEvidenceNames, catalogueItemSelectors, catalogueRunners, definitionWithScope, evaluatorWithRunner, jsonList, jsonObject, jsonText, type GradingPath } from "../../lib/grading-config";
 import { GradingSelect, GradingTextField, type GradingEdit } from "./GradingConfigFields";
 
 export interface GradingSectionProps {
@@ -39,9 +39,9 @@ export function GradingConfigEvidence({ definition, catalogue, onEdit, jsonField
   const evidence = jsonList(jsonObject(definition).evidence);
   return <div className="grid gap-3">{evidence.map((reference, index) => {
     const name = typeof reference === "string" ? reference : jsonText(jsonObject(reference).capability);
-    const capability = catalogue.evidence_capabilities.find((entry) => entry.name === name);
+    const capability = catalogueEvidenceCapability(catalogue, name);
     return <div key={index} className="grid gap-2 rounded border border-[var(--border-muted)] p-3">
-      <GradingSelect label={`Evidence capability ${index + 1}`} value={name} options={catalogue.evidence_capabilities.map((entry) => entry.name)} onChange={(value) => onEdit(["evidence", index], typeof reference === "string" ? value : { ...jsonObject(reference), capability: value })} />
+      <GradingSelect label={`Evidence capability ${index + 1}`} value={name} options={catalogueEvidenceNames(catalogue)} onChange={(value) => onEdit(["evidence", index], typeof reference === "string" ? value : { ...jsonObject(reference), capability: value })} />
       {typeof reference === "string" ? <Button onClick={() => onEdit(["evidence", index], { capability: name, params: {} })}>Add optional params</Button> : <>
         {jsonField(`Evidence params ${index + 1} (JSON)`, ["evidence", index, "params"])}
         <Button onClick={() => onEdit(["evidence", index], name)}>Remove optional params</Button>
@@ -59,7 +59,7 @@ export function GradingConfigEvaluators({ definition, catalogue, onEdit, jsonFie
     const recipe = atPath(definition, [...instructionsPath, "system_one"]);
     return <div key={index} className="grid gap-3 rounded border border-[var(--border-muted)] p-3">
       <h4>Evaluator {index + 1}</h4>
-      <GradingSelect label={`Runner ${index + 1}`} value={runner} options={[...new Set([...catalogue.runners, "human"])]} onChange={(value) => onEdit(path, evaluatorWithRunner(entry, value))} />
+      <GradingSelect label={`Runner ${index + 1}`} value={runner} options={catalogueRunners(catalogue)} onChange={(value) => onEdit(path, evaluatorWithRunner(entry, value))} />
       {runner !== "human" && <>
         <GradingTextField label={`Model ${index + 1}`} value={evaluator.model} onChange={(value) => onEdit([...path, "model"], value)} />
         {jsonField(`Estimated cost per call ${index + 1} (JSON number)`, [...path, "estimated_cost_per_call"])}
