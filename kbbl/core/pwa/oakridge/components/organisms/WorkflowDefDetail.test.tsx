@@ -102,3 +102,57 @@ test("array prerequisites remain visible and parallel dependency kinds stay sepa
   expect(within(screen.getByRole("region", { name: "Workflow overview" })).getByText('· after: ["first"]')).toBeTruthy();
   expect(within(screen.getByTestId("or-def-selection")).getByText('["first"]')).toBeTruthy();
 });
+
+test("unit routes select their stage and route changes update aria-current", () => {
+  const view = render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation" }} onNavigate={() => {}} onBack={() => {}} />);
+  const inspector = within(screen.getByRole("region", { name: "Stage inspector" }));
+  const nav = within(inspector.getByLabelText("Stages in authored order"));
+  expect(nav.getByRole("link", { name: "implementation" }).getAttribute("aria-current")).toBe("page");
+  expect(nav.getByRole("link", { name: "cohort" }).getAttribute("aria-current")).toBe("page");
+  view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "integration" }} onNavigate={() => {}} onBack={() => {}} />);
+  expect(inspector.getByRole("heading", { name: "Stage: integration" })).toBeTruthy();
+  expect(nav.getByRole("link", { name: "implementation" }).hasAttribute("aria-current")).toBe(false);
+});
+test("let expressions preserve spacing and link whole identifiers to definitions", () => {
+  render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "cohort" }} onNavigate={() => {}} onBack={() => {}} />);
+  const completion = screen.getByRole("region", { name: "Completion" });
+  const expression = completion.querySelector("p code");
+  if (!(expression instanceof HTMLElement)) throw new Error("Missing completion expression");
+  expect(expression.textContent).toBe(detail.effective_workflow.stages.cohort?.done_when);
+  const link = within(expression).getByRole("link", { name: "pr_published" });
+  expect(link.getAttribute("href")).toContain("#stage-cohort-let-pr_published");
+  expect(document.getElementById("stage-cohort-let-pr_published")?.textContent).toContain("published(pr)");
+});
+
+test("whole-outcome reads appear once outside the per-field downstream lists", () => {
+  render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "cohort" }} onNavigate={() => {}} onBack={() => {}} />);
+  const completion = within(screen.getByRole("region", { name: "Completion" }));
+  expect(completion.getAllByRole("link", { name: "integration.input.cohorts" })).toHaveLength(1);
+  expect(completion.getByRole("link", { name: "integration.input.cohorts" }).parentElement?.textContent).toContain("reads the whole outcome");
+});
+
+test("direct stage anchors normalize selection and reveal template details", () => {
+  render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "cohort#stage-cohort-template-worker-pr_watch" }} onNavigate={() => {}} onBack={() => {}} />);
+  expect(within(screen.getByRole("region", { name: "Stage inspector" })).getByRole("heading", { name: "Stage: cohort" })).toBeTruthy();
+  expect((document.getElementById("stage-cohort-template-worker-pr_watch") as HTMLDetailsElement).open).toBe(true);
+});
+
+test("artifact links retain anchor targets for history and reveal after route selection", () => {
+  const navigate = vi.fn();
+  const view = render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "cohort" }} onNavigate={navigate} onBack={() => {}} />);
+  const workers = within(screen.getByRole("region", { name: "Workers" }));
+  const template = workers.getByRole("link", { name: "from template pr_watch" });
+  const href = template.getAttribute("href");
+  fireEvent.click(template);
+  expect(navigate).toHaveBeenLastCalledWith(href);
+  expect(href).toContain("/stages/cohort#stage-cohort-template-worker-pr_watch");
+  const details = document.getElementById("stage-cohort-template-worker-pr_watch");
+  if (!(details instanceof HTMLDetailsElement)) throw new Error("Missing worker template");
+  details.scrollIntoView = vi.fn();
+  view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "cohort#stage-cohort-template-worker-pr_watch" }} onNavigate={navigate} onBack={() => {}} />);
+  expect(details.open).toBe(true);
+  expect(details.scrollIntoView).toHaveBeenCalled();
+  expect(document.activeElement).toBe(details);
+  fireEvent.click(workers.getAllByRole("link", { name: "build_result" })[0] as HTMLElement);
+  expect(navigate).toHaveBeenLastCalledWith(expect.stringContaining("/stages/cohort#stage-cohort-artifact-build_result"));
+});
