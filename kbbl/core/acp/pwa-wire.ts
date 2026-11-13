@@ -1,5 +1,5 @@
 import type { AcpSessionRow, AcpTurnRow, InputReceipt, UiOpenTurn } from "./types";
-import type { OpenTurnRow } from "./store";
+import type { OpenTurnRow } from "./store-turns";
 // Browser wire shape for sessions (§14.1): the one snapshot type the PWA
 // consumes, shared by the /sessions list, POST /sessions, and the /inbox
 // stream. Sourced from AcpSessionSnapshot. The agent-issued acp_session_id

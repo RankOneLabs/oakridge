@@ -1,4 +1,6 @@
-import type { ExecutedPromptTurn } from "../executed-prompt";
+import { AcpTurnStore, type AcceptTurnInput, type AcceptTurnOutcome, type OpenTurnRow, type RetainedPromptTurn, type BootSweepResult } from "./store-turns";
+import { AcpWorktreeStore, type ReusableWorktreeClaimInput, type ReusableWorktreeClaim, type WorktreeAssignment } from "./store-worktrees";
+import { nowIso, toAcpSessionRow, type RawAcpSessionRow } from "./store-records";
 // Typed repository over acp_sessions + acp_turns (migration 027). All
 // SQLite access for the ACP substrate goes through this class — no raw
 // queries in the controller/service. Mutations are idempotent where the
@@ -6,44 +8,19 @@ import type { ExecutedPromptTurn } from "../executed-prompt";
 // move together (claim + insert, sweep).
 
 import type { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
 
 import type {
-  AcpFailureCode,
   AcpSessionEnd,
   AcpSessionRow,
   AcpSessionStatus,
-  AcpSessionStartSpec,
   AcpSessionWorkflowIdentity,
   AcpTurnRow,
-  AcpTurnSource,
-  AcpTurnStatus,
   KbblSessionId,
   ResumableKey,
   TerminalSessionSummary,
   TerminalSessionSummaryDraft,
   TurnKey,
 } from "./types";
-
-// Stable canonicalization of a start spec: sort object keys recursively, then sha256 the JSON. Same spec must hash identically
-// regardless of property order in the HTTP body.
-function stableValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableValue);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, stableValue(item)]),
-  );
-}
-
-export function sha256Hex(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-export function startSpecHash(spec: AcpSessionStartSpec): string {
-  return sha256Hex(JSON.stringify(stableValue(spec)));
-}
 
 export interface ClaimInput {
   sid: KbblSessionId;
@@ -65,22 +42,6 @@ export type ClaimOutcome =
   | { kind: "existing"; row: AcpSessionRow }
   | { kind: "spec_conflict"; row: AcpSessionRow };
 
-export interface AcceptTurnInput {
-  sid: KbblSessionId;
-  turn_key: TurnKey;
-  source: AcpTurnSource;
-  payload: string;
-}
-
-export type AcceptTurnOutcome =
-  | { kind: "created"; row: AcpTurnRow }
-  | { kind: "existing"; row: AcpTurnRow }
-  | { kind: "payload_conflict"; row: AcpTurnRow };
-
-export type OpenTurnRow = AcpTurnRow & {
-  status: Extract<AcpTurnStatus, "accepted" | "prompting">;
-};
-
 interface RawTerminalSessionSummary {
   sid: KbblSessionId;
   schema_version: number;
@@ -91,87 +52,15 @@ interface RawTerminalSessionSummary {
   updated_at: string;
 }
 
-/** Worktree columns written once resolution finishes (setWorktree). */
-export interface WorktreeAssignment {
-  worktree_path: string;
-  worktree_branch: string | null;
-  worktree_base_ref: string | null;
-  parent_sid: KbblSessionId | null;
-  /** Original repo root; set on inheritance where it differs from spec.workdir. */
-  project_workdir?: string;
-}
-
-/** Atomic transfer result when a workflow retry takes over an existing checkout. */
-export interface ReusableWorktreeClaim extends WorktreeAssignment {
-  worktree_branch: string;
-  worktree_base_ref: string;
-  parent_sid: KbblSessionId;
-  project_workdir: string;
-}
-
-export interface ReusableWorktreeClaimInput {
-  sid: KbblSessionId;
-  project_workdir: string;
-  worktree_branch: string;
-}
-
-export interface BootSweepResult {
-  turns_marked_unknown: number;
-  turns_retained_accepted: number;
-  sessions_marked_idle: number;
-  sessions_marked_failed: number;
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-/**
- * `acp_sessions`' actual column shape: the workflow identity is three flat
- * nullable TEXT columns, not the nested object `AcpSessionRow` exposes.
- * Every `SELECT *`/`RETURNING *` reads this shape; `toAcpSessionRow`
- * assembles the nested `workflow` member consumers see.
- */
-interface RawAcpSessionRow {
-  sid: KbblSessionId;
-  resumable_key: ResumableKey | null;
-  start_spec_hash: string | null;
-  agent_profile: string;
-  acp_session_id: string | null;
-  name: string;
-  artifact_id: string | null;
-  project_workdir: string;
-  worktree_path: string;
-  worktree_branch: string | null;
-  worktree_base_ref: string | null;
-  parent_sid: KbblSessionId | null;
-  requested_model: string | null;
-  requested_effort: string | null;
-  requested_mode: string | null;
-  status: AcpSessionStatus;
-  end_reason: string | null;
-  end_detail: string | null;
-  fenced_by: string | null;
-  last_activity_at: string;
-  created_at: string;
-  updated_at: string;
-  run_id: string | null;
-  unit_id: string | null;
-  worker: string | null;
-}
-
-/** Absence is the nullable: yields `null` unless all three columns are non-null. */
-function toAcpSessionRow(raw: RawAcpSessionRow): AcpSessionRow {
-  const { run_id, unit_id, worker, ...rest } = raw;
-  const workflow: AcpSessionWorkflowIdentity | null =
-    run_id !== null && unit_id !== null && worker !== null ? { run_id, unit_id, worker } : null;
-  return { ...rest, workflow } as AcpSessionRow;
-}
-
 export class AcpSessionStore {
   private readonly sessionsChangedListeners = new Set<() => void>();
 
-  constructor(private readonly db: Database) {}
+  private readonly turns: AcpTurnStore;
+  private readonly worktrees: AcpWorktreeStore;
+  constructor(private readonly db: Database) {
+    this.turns = new AcpTurnStore(db);
+    this.worktrees = new AcpWorktreeStore(db);
+  }
 
   /**
    * Coarse change feed over the sessions table (§14.1 inbox): fired after
@@ -205,7 +94,9 @@ export class AcpSessionStore {
         }
         if (existing.workflow === null && input.workflow !== null) {
           this.writeWorkflowIdentity(existing.sid, input.workflow);
-          return { kind: "existing", row: this.getSession(existing.sid)! };
+          const updated = this.getSession(existing.sid);
+          if (!updated) throw new Error("ACP workflow identity update lost its session");
+          return { kind: "existing", row: updated };
         }
         return { kind: "existing", row: existing };
       }
@@ -282,7 +173,8 @@ export class AcpSessionStore {
         input.workflow?.run_id ?? null,
         input.workflow?.unit_id ?? null,
         input.workflow?.worker ?? null,
-      )!;
+      );
+    if (!row) throw new Error("ACP session insert returned no row");
     this.notifySessionsChanged();
     return toAcpSessionRow(row);
   }
@@ -329,120 +221,21 @@ export class AcpSessionStore {
     return new Map(rows.map((row) => [row.sid, row.archived_at]));
   }
 
-  /**
-   * Transfer a deterministic workflow checkout from its terminal owner to a
-   * provisioning retry. Selection and both ownership writes share one SQLite
-   * transaction, so two retries cannot start agents in the same directory.
-   */
   claimReusableWorktree(input: ReusableWorktreeClaimInput): ReusableWorktreeClaim | null {
-    const claimed = this.db.transaction((): ReusableWorktreeClaim | null => {
-      const replacement = this.getSession(input.sid);
-      if (!replacement || replacement.status !== "provisioning") return null;
-
-      const owner = this.db
-        .prepare<RawAcpSessionRow, [string, string, string]>(
-          `SELECT owner.* FROM acp_sessions owner
-           WHERE owner.project_workdir = ? AND owner.worktree_branch = ?
-             AND owner.status IN ('ended', 'fenced', 'failed')
-             AND COALESCE(owner.fenced_by, '') NOT LIKE 'purge:%'
-             AND NOT EXISTS (
-               SELECT 1 FROM acp_sessions active
-               WHERE active.sid != owner.sid AND active.sid != ?
-                 AND active.status NOT IN ('ended', 'fenced', 'failed')
-                 AND (
-                   active.worktree_branch = owner.worktree_branch
-                   OR active.worktree_path = owner.worktree_path
-                 )
-             )
-           ORDER BY owner.updated_at DESC LIMIT 1`,
-        )
-        .get(input.project_workdir, input.worktree_branch, input.sid);
-      if (!owner || !owner.worktree_branch || !owner.worktree_base_ref) return null;
-
-      const ts = nowIso();
-      const released = this.db
-        .prepare(
-          `UPDATE acp_sessions
-           SET worktree_path = project_workdir, worktree_branch = NULL,
-               worktree_base_ref = NULL, updated_at = ?
-           WHERE sid = ? AND worktree_branch = ?
-             AND status IN ('ended', 'fenced', 'failed')
-             AND COALESCE(fenced_by, '') NOT LIKE 'purge:%'`,
-        )
-        .run(ts, owner.sid, owner.worktree_branch);
-      if (released.changes !== 1) return null;
-
-      const assigned = this.db
-        .prepare(
-          `UPDATE acp_sessions
-           SET project_workdir = ?, worktree_path = ?, worktree_branch = ?,
-               worktree_base_ref = ?, parent_sid = ?, updated_at = ?
-           WHERE sid = ? AND status = 'provisioning'`,
-        )
-        .run(
-          owner.project_workdir,
-          owner.worktree_path,
-          owner.worktree_branch,
-          owner.worktree_base_ref,
-          owner.sid,
-          ts,
-          input.sid,
-        );
-      if (assigned.changes !== 1) throw new Error("replacement worktree claim was lost");
-
-      return {
-        worktree_path: owner.worktree_path,
-        worktree_branch: owner.worktree_branch,
-        worktree_base_ref: owner.worktree_base_ref,
-        parent_sid: owner.sid,
-        project_workdir: owner.project_workdir,
-      };
-    })();
+    const claimed = this.worktrees.claimReusableWorktree(input);
     if (claimed) this.notifySessionsChanged();
     return claimed;
   }
-
-  /** Mark cleanup before its first await so no retry can claim this checkout. */
   markPurgeStarted(sid: KbblSessionId): AcpSessionRow | null {
-    const row = this.db
-      .prepare<RawAcpSessionRow, [string, string, string]>(
-        `UPDATE acp_sessions SET fenced_by = ?, updated_at = ?
-         WHERE sid = ? RETURNING *`,
-      )
-      .get(`purge:${sid}`, nowIso(), sid);
+    const row = this.worktrees.markPurgeStarted(sid);
     if (row) this.notifySessionsChanged();
-    return row ? toAcpSessionRow(row) : null;
+    return row;
   }
-
-  /**
-   * Whether another session records `branch` in `projectWorkdir`, or is still
-   * provisioning there and may be creating it now. A branch no session claims
-   * was left behind by a crash.
-   */
   hasOtherBranchClaimant(sid: KbblSessionId, projectWorkdir: string, branch: string): boolean {
-    const row = this.db
-      .prepare<{ present: number }, [string, string, string]>(
-        `SELECT 1 AS present FROM acp_sessions
-         WHERE sid != ? AND project_workdir = ? AND (worktree_branch = ? OR status = 'provisioning')
-         LIMIT 1`,
-      )
-      .get(sid, projectWorkdir, branch);
-    return row !== null;
+    return this.worktrees.hasOtherBranchClaimant(sid, projectWorkdir, branch);
   }
-
-  hasOtherWorktreeOwner(
-    sid: KbblSessionId,
-    worktreePath: string,
-    worktreeBranch: string,
-  ): boolean {
-    const row = this.db
-      .prepare<{ present: number }, [string, string, string]>(
-        `SELECT 1 AS present FROM acp_sessions
-         WHERE sid != ? AND (worktree_path = ? OR worktree_branch = ?)
-         LIMIT 1`,
-      )
-      .get(sid, worktreePath, worktreeBranch);
-    return row !== null;
+  hasOtherWorktreeOwner(sid: KbblSessionId, worktreePath: string, worktreeBranch: string): boolean {
+    return this.worktrees.hasOtherWorktreeOwner(sid, worktreePath, worktreeBranch);
   }
 
   setStatus(sid: KbblSessionId, status: AcpSessionStatus): void {
@@ -483,23 +276,7 @@ export class AcpSessionStore {
   }
 
   setWorktree(sid: KbblSessionId, worktree: WorktreeAssignment): void {
-    this.db
-      .prepare(
-        `UPDATE acp_sessions
-         SET worktree_path = ?, worktree_branch = ?, worktree_base_ref = ?,
-             parent_sid = ?, project_workdir = COALESCE(?, project_workdir),
-             updated_at = ?
-         WHERE sid = ?`,
-      )
-      .run(
-        worktree.worktree_path,
-        worktree.worktree_branch,
-        worktree.worktree_base_ref,
-        worktree.parent_sid,
-        worktree.project_workdir ?? null,
-        nowIso(),
-        sid,
-      );
+    this.worktrees.setWorktree(sid, worktree);
     this.notifySessionsChanged();
   }
 
@@ -623,184 +400,19 @@ export class AcpSessionStore {
     this.notifySessionsChanged();
   }
 
-  /**
-   * Idempotent turn accept (§9.3): same key + same hash returns the prior
-   * row; same key + different hash is a payload conflict; otherwise the
-   * turn is inserted as `accepted`.
-   */
-  acceptTurn(input: AcceptTurnInput): AcceptTurnOutcome {
-    const payloadHash = sha256Hex(input.payload);
-    return this.db.transaction((): AcceptTurnOutcome => {
-      const existing = this.getTurn(input.sid, input.turn_key);
-      if (existing) {
-        if (existing.payload_hash !== payloadHash) {
-          return { kind: "payload_conflict", row: existing };
-        }
-        return { kind: "existing", row: existing };
-      }
-      const row = this.db
-        .prepare<AcpTurnRow, [string, string, string, string, string, string]>(
-          `INSERT INTO acp_turns (
-             sid, turn_key, source, payload_hash, payload, status, created_at
-           ) VALUES (?, ?, ?, ?, ?, 'accepted', ?)
-           RETURNING *`,
-        )
-        .get(
-          input.sid,
-          input.turn_key,
-          input.source,
-          payloadHash,
-          input.payload,
-          nowIso(),
-        )!;
-      return { kind: "created", row };
-    })();
+  acceptTurn(input: AcceptTurnInput): AcceptTurnOutcome { return this.turns.acceptTurn(input); }
+  getTurn(sid: KbblSessionId, turnKey: TurnKey): AcpTurnRow | null { return this.turns.getTurn(sid, turnKey); }
+  getInitialTurn(sid: KbblSessionId): AcpTurnRow | null { return this.turns.getInitialTurn(sid); }
+  hasDispatchedTurns(sid: KbblSessionId): boolean { return this.turns.hasDispatchedTurns(sid); }
+  readPromptTurns(sid: KbblSessionId): RetainedPromptTurn[] | null { return this.turns.readPromptTurns(sid); }
+  listAcceptedTurns(sid: KbblSessionId): AcpTurnRow[] { return this.turns.listAcceptedTurns(sid); }
+  listOpenTurns(sid: KbblSessionId): OpenTurnRow[] { return this.turns.listOpenTurns(sid); }
+  markTurnPrompting(sid: KbblSessionId, turnKey: TurnKey): void { this.turns.markTurnPrompting(sid, turnKey); }
+  completeTurn(sid: KbblSessionId, turnKey: TurnKey, outcome: Parameters<AcpTurnStore["completeTurn"]>[2]): void {
+    this.turns.completeTurn(sid, turnKey, outcome);
   }
-
-  getTurn(sid: KbblSessionId, turnKey: TurnKey): AcpTurnRow | null {
-    return (
-      this.db
-        .prepare<AcpTurnRow, [string, string]>(
-          "SELECT * FROM acp_turns WHERE sid = ? AND turn_key = ?",
-        )
-        .get(sid, turnKey) ?? null
-    );
-  }
-
-  getInitialTurn(sid: KbblSessionId): AcpTurnRow | null {
-    return (
-      this.db
-        .prepare<AcpTurnRow, [string]>(
-          "SELECT * FROM acp_turns WHERE sid = ? AND source = 'initial' ORDER BY created_at ASC LIMIT 1",
-        )
-        .get(sid) ?? null
-    );
-  }
-
-  /** Whether a prompt may have reached the agent, including uncertain outcomes. */
-  hasDispatchedTurns(sid: KbblSessionId): boolean {
-    return this.db.prepare<{ found: number }, [string]>(
-      "SELECT 1 AS found FROM acp_turns WHERE sid = ? AND (status <> 'accepted' OR started_at IS NOT NULL) LIMIT 1",
-    ).get(sid) !== null;
-  }
-
-  /** Retained prompt payloads in creation order; only the redaction boundary may serialize these. */
-  readPromptTurns(sid: KbblSessionId): ExecutedPromptTurn[] | null {
-    if (!this.getSession(sid)) return null;
-    const turns = this.db.prepare<ExecutedPromptTurn, [string]>(
-      "SELECT turn_key AS turn_id, created_at, payload AS text FROM acp_turns WHERE sid = ? ORDER BY created_at ASC, rowid ASC",
-    ).all(sid);
-    return turns.length === 0 ? null : turns;
-  }
-
-  /** Oldest-first retained deliveries awaiting dispatch (§11.3). */
-  listAcceptedTurns(sid: KbblSessionId): AcpTurnRow[] {
-    return this.db
-      .prepare<AcpTurnRow, [string]>(
-        "SELECT * FROM acp_turns WHERE sid = ? AND status = 'accepted' ORDER BY created_at ASC, rowid ASC",
-      )
-      .all(sid);
-  }
-
-  listOpenTurns(sid: KbblSessionId): OpenTurnRow[] {
-    return this.db
-      .prepare<OpenTurnRow, [string]>(
-        "SELECT * FROM acp_turns WHERE sid = ? AND status IN ('accepted', 'prompting') ORDER BY created_at ASC, rowid ASC",
-      )
-      .all(sid);
-  }
-
-  /**
-   * §10.7 ordering rule: written in its own transaction BEFORE
-   * session/prompt is sent, so a crash can distinguish "never reached the
-   * agent" (accepted) from "may have" (prompting).
-   */
-  markTurnPrompting(sid: KbblSessionId, turnKey: TurnKey): void {
-    const ts = nowIso();
-    this.db
-      .prepare(
-        "UPDATE acp_turns SET status = 'prompting', started_at = ? WHERE sid = ? AND turn_key = ?",
-      )
-      .run(ts, sid, turnKey);
-  }
-
-  completeTurn(
-    sid: KbblSessionId,
-    turnKey: TurnKey,
-    outcome: {
-      status: Extract<
-        AcpTurnStatus,
-        "succeeded" | "cancelled" | "failed" | "unknown"
-      >;
-      stop_reason?: string;
-      failure_code?: AcpFailureCode;
-      failure_detail?: string;
-    },
-  ): void {
-    this.db
-      .prepare(
-        `UPDATE acp_turns
-         SET status = ?, stop_reason = ?, failure_code = ?, failure_detail = ?,
-             completed_at = ?
-         WHERE sid = ? AND turn_key = ?`,
-      )
-      .run(
-        outcome.status,
-        outcome.stop_reason ?? null,
-        outcome.failure_code ?? null,
-        outcome.failure_detail ?? null,
-        nowIso(),
-        sid,
-        turnKey,
-      );
-  }
-
-  /** Boot recovery sweep, one transaction. */
   bootSweep(): BootSweepResult {
-    const result = this.db.transaction((): BootSweepResult => {
-      const ts = nowIso();
-      this.db.prepare(
-        `UPDATE acp_turns
-         SET status = 'accepted', completed_at = NULL, failure_code = NULL, failure_detail = NULL
-         WHERE source = 'initial' AND status IN ('prompting', 'unknown')
-           AND sid IN (SELECT sid FROM acp_sessions WHERE resumable_key IS NOT NULL
-             AND status NOT IN ('failed', 'fenced', 'ended'))`,
-      ).run();
-      const unknownTurns = this.db
-        .prepare(
-          `UPDATE acp_turns
-           SET status = 'unknown', failure_code = 'kbbl_restart',
-               failure_detail = 'kbbl restarted while the turn was prompting',
-               completed_at = ?
-           WHERE status = 'prompting'`,
-        )
-        .run(ts);
-      const retained = this.db
-        .prepare<{ n: number }, []>(
-          "SELECT COUNT(*) AS n FROM acp_turns WHERE status = 'accepted'",
-        )
-        .get()!;
-      const idleSessions = this.db
-        .prepare(
-          "UPDATE acp_sessions SET status = 'idle', updated_at = ? WHERE status = 'prompting'",
-        )
-        .run(ts);
-      const failedSessions = this.db
-        .prepare(
-          `UPDATE acp_sessions
-           SET status = 'failed', end_reason = 'kbbl_restart',
-               end_detail = 'kbbl restarted while the session was provisioning',
-               updated_at = ?
-           WHERE status = 'provisioning'`,
-        )
-        .run(ts);
-      return {
-        turns_marked_unknown: unknownTurns.changes,
-        turns_retained_accepted: retained.n,
-        sessions_marked_idle: idleSessions.changes,
-        sessions_marked_failed: failedSessions.changes,
-      };
-    })();
+    const result = this.turns.bootSweep();
     this.notifySessionsChanged();
     return result;
   }

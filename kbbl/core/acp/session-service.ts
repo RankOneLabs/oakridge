@@ -1,4 +1,5 @@
-import type { ExecutedPromptTurn } from "../executed-prompt";
+import { sha256Hex, startSpecHash } from "./start-spec-hash";
+import type { RetainedPromptTurn } from "./store-turns";
 import { toSnapshot, turnToReceipt, turnToOpenTurn } from "./pwa-wire";
 // Application service used by HTTP handlers (§8.6). Routes never reach into
 // an SDK connection; everything goes through this facade. Every prompt is
@@ -18,11 +19,7 @@ import {
   ManualCompactionSummaryGenerator,
   type SessionSummaryGenerator,
 } from "./session-summary";
-import {
-  sha256Hex,
-  startSpecHash,
-  type AcpSessionStore,
-} from "./store";
+import type { AcpSessionStore } from "./store";
 import {
   acpError,
   err,
@@ -210,7 +207,7 @@ export class AcpSessionService {
     return ok(toSnapshot(fresh ?? row));
   }
 
-  readPromptTurns(sid: string): ExecutedPromptTurn[] | null {
+  readPromptTurns(sid: string): RetainedPromptTurn[] | null {
     return this.deps.store.readPromptTurns(sid as KbblSessionId);
   }
 
