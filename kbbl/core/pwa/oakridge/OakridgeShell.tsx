@@ -1,3 +1,4 @@
+import { definitionHref } from "./lib/definition-selection";
 import { Button } from "../components/atoms/Button";
 import { GradingConfigView } from "./views/GradingConfigView";
 import { useOakridgeConfig } from "./hooks/useOakridgeConfig";
@@ -52,7 +53,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
   const navigateToNewRun = () => onNavigate("oakridge/new-run");
   const navigateToCreateProject = () => onNavigate("oakridge/create-project");
   const navigateToDefs = () => onNavigate("oakridge/defs");
-  const navigateToDef = (id: string) => onNavigate(`oakridge/def/${encodeURIComponent(id)}`);
+  const navigateToDef = (id: string) => onNavigate(definitionHref(id));
 
   let content: React.ReactNode;
   switch (route.sub) {
@@ -123,6 +124,8 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
       content = (
         <WorkflowDefDetailView
           definitionId={route.id}
+          selection={route.selection}
+          onNavigate={onNavigate}
           onBack={navigateToDefs}
         />
       );
