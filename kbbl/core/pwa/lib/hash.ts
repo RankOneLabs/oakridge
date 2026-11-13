@@ -97,6 +97,7 @@ function parseRunRoute(rest: string): OakridgeSubRoute | null {
   const [rawId, paneKind, rawPaneId] = segments;
   if (!rawId) return null;
   const id = tryDecode(rawId);
+  if (segments.length === 5 && paneKind === "prompt" && rawPaneId && segments[3] === "attempt" && segments[4]) return { sub: "run", id, pane: { kind: "prompt", unit_id: tryDecode(rawPaneId), attempt_id: tryDecode(segments[4]) } };
   if (segments.length === 5 && paneKind === "artifact" && rawPaneId && segments[3] === "revision" && segments[4]) return { sub: "run", id, pane: { kind: "artifact", artifact_id: tryDecode(rawPaneId) as ArtifactId, revision_id: tryDecode(segments[4]) } };
   if (segments.length === 3 && rawPaneId) {
     if (paneKind === "session") {
@@ -119,6 +120,7 @@ export function formatRunWorkspaceHash(runId: string, pane: RoutePaneTarget | nu
   const base = `oakridge/run/${encodeURIComponent(runId)}`;
   if (pane === null) return base;
   if (pane.kind === "session") return `${base}/session/${encodeURIComponent(pane.session_id)}`;
+  if (pane.kind === "prompt") return `${base}/prompt/${encodeURIComponent(pane.unit_id)}/attempt/${encodeURIComponent(pane.attempt_id)}`;
   if (pane.kind === "unit") return `${base}/unit/${encodeURIComponent(pane.unit_id)}`;
   return `${base}/artifact/${encodeURIComponent(pane.artifact_id)}${pane.revision_id ? `/revision/${encodeURIComponent(pane.revision_id)}` : ""}`;
 }

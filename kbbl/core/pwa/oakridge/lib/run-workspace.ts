@@ -24,7 +24,8 @@ import { areSelectionsEqual } from "./grading";
 export type RoutePaneTarget =
   | { kind: "session"; session_id: Sid }
   | { kind: "artifact"; artifact_id: ArtifactId; revision_id?: string; run_id?: string; unit_id?: string }
-  | { kind: "unit"; unit_id: string };
+  | { kind: "unit"; unit_id: string }
+  | { kind: "prompt"; unit_id: string; attempt_id: string };
 
 /**
  * What one slot can show. A closed discriminated union — a tag plus the payload
@@ -89,6 +90,7 @@ export const arePanesEqual = (
   if (left.kind === "artifact" && right.kind === "artifact") {
     return left.artifact_id === right.artifact_id && left.revision_id === right.revision_id;
   }
+  if (left.kind === "prompt" && right.kind === "prompt") return left.unit_id === right.unit_id && left.attempt_id === right.attempt_id;
   if (left.kind === "unit" && right.kind === "unit") return left.unit_id === right.unit_id;
   if (left.kind === "item" && right.kind === "item") return areSelectionsEqual(left.selection, right.selection) && JSON.stringify(left.question ?? null) === JSON.stringify(right.question ?? null) && left.subject_occurrence_id === right.subject_occurrence_id;
   if (left.kind === "task" && right.kind === "task") return left.task_id === right.task_id;
@@ -113,6 +115,8 @@ export const describePane = (pane: RunWorkspacePane): RunPaneHeading => {
       return { title: "Stages", subtitle: null };
     case "session":
       return { title: "Session", subtitle: pane.session_id.slice(0, 8) };
+    case "prompt":
+      return { title: "Prompt", subtitle: pane.attempt_id };
     case "unit":
       return { title: "Stage overview", subtitle: pane.unit_id };
     case "artifact":

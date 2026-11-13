@@ -31,7 +31,7 @@ export function StageOverviewContent({ runId, label, inputs, execution, evaluati
       <RelationshipLinks links={inputs.links} onOpen={onOpenBeside} />
       {inputs.attempts.length === 0 && <p>No attempts recorded.</p>}
       {inputs.attempts.map((attempt) => <section key={attempt.id}><h4>{attempt.worker} #{attempt.number}</h4>
-        {attempt.intent ? <><h5>Prompt</h5>{attempt.intent.prompt ? <StructuredValue value={attempt.intent.prompt} /> : <p>This worker has no prompt.</p>}<details><summary>Recorded inputs and engine inputs</summary><StructuredValue value={attempt.intent.inputs} /><h5>Engine inputs</h5><StructuredValue value={attempt.intent.engine_inputs} /></details></> : <p>Intent not captured.</p>}
+        {attempt.intent ? <><h5>Prompt</h5>{attempt.intent.prompt ? <Button variant="secondary" size="xsmall" onClick={() => onOpenBeside({ kind: "prompt", unit_id: attempt.unit_id, attempt_id: attempt.id })}>Prompt {attempt.intent.prompt.path} · {attempt.intent.prompt.digest}</Button> : <p>This worker has no prompt.</p>}<details><summary>Recorded inputs and engine inputs</summary><StructuredValue value={attempt.intent.inputs} /><h5>Engine inputs</h5><StructuredValue value={attempt.intent.engine_inputs} /></details></> : <p>Intent not captured.</p>}
       </section>)}
     </section>
     <section className="flex flex-col gap-3" aria-label="Execution and outputs"><h3>Execution and outputs</h3>

@@ -16,7 +16,7 @@ export interface StageOverviewSource {
   readonly index: RelationshipIndex;
   readonly artifacts: readonly OperatorArtifactDetail[];
 }
-export interface StageInputAttempt extends Pick<OperatorUnitView["attempts"][number], "id" | "worker" | "number" | "intent"> {}
+export interface StageInputAttempt extends Pick<OperatorUnitView["attempts"][number], "id" | "unit_id" | "worker" | "number" | "intent"> {}
 export interface StageInputs {
   readonly resolved_input: OperatorUnitView["input"];
   readonly attempts: StageInputAttempt[];
@@ -24,7 +24,7 @@ export interface StageInputs {
 }
 export const selectStageInputs = ({ unit, index }: StageOverviewSource): StageInputs => ({
   resolved_input: unit.input,
-  attempts: unit.attempts.map(({ id, worker, number, intent }) => ({ id, worker, number, intent })),
+  attempts: unit.attempts.map(({ id, unit_id, worker, number, intent }) => ({ id, unit_id, worker, number, intent })),
   links: [...selectDependencyLinks(index, unit), ...selectIntentLinks(index, unit)],
 });
 export interface StageAttempt extends Pick<OperatorUnitView["attempts"][number], "id" | "worker" | "number" | "status" | "mode" | "cause" | "is_current" | "failure"> { readonly session: RunWorkspacePane | null }
