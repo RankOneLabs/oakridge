@@ -134,6 +134,7 @@ export const isPaneResolvable = (pane: RunWorkspacePane, index: RunEntityIndex):
   switch (pane.kind) {
     case "overview":
     case "list":
+    case "prompt":
     case "unit":
     case "grading":
     case "item":

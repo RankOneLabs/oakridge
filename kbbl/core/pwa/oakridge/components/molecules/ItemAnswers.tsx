@@ -1,3 +1,5 @@
+import { EvaluatorDefinition } from "../organisms/EvaluatorDefinition";
+import { selectEvaluatorDefinitionIds } from "../../lib/grading-detail";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ObservationAnswerDetail, ObservationPageRequest } from "../../grading-contracts/grading/composite";
 import type { ObservationQuestionStatusResponse } from "../../grading-contracts/storage/grading-record-store";
@@ -13,6 +15,7 @@ export function AnswerRow({ answer, isCorrected = false }: { answer: Observation
         <Chip tone={answer.answer.state === "answered" ? answerTone(answer.answer.value) : "neutral"}>{gradeAnswerLabel(answer.answer)}</Chip>
         {isCorrected && <span className="text-xs text-[var(--text-muted)]">Corrected</span>}
       </div>
+      {answer.comments && <p className="m-0 text-xs text-[var(--text-muted)]">Comments: {answer.comments}</p>}
       {answer.rationale && <p className="m-0 text-xs text-[var(--text-muted)]">{answer.rationale}</p>}
     </li>
   );
@@ -25,8 +28,10 @@ interface Props {
 
 /** Every evaluator's status and every answer. Rendered only when revealed, so hidden mode has nothing here to leak. */
 export function ItemAnswers({ question, onWindow }: Props) {
+  const evaluatorIds = selectEvaluatorDefinitionIds(question);
   return (
     <section className="flex flex-col gap-3" data-testid="or-item-answers">
+      {evaluatorIds.map((id) => <EvaluatorDefinition key={id} evaluatorId={id} />)}
       <div className="flex flex-col gap-1">
         <div className={artifactLabelClass}>Automatic evaluators ({question.machine.total})</div>
         {question.machine.total === 0 && <p className="text-sm text-[var(--text-muted)]">No automatic evaluator is pinned to this question.</p>}

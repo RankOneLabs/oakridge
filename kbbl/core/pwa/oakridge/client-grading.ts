@@ -1,3 +1,4 @@
+import type { ObservationEvaluatorDefinition } from "./grading-contracts/grading/evaluator";
 import type { ObservationRunStageRead } from "./grading-contracts/grading/task-stages";
 // Observation reads and the one submission, through kbbl's forwarding routes. The browser holds no
 // observation token: kbbl authenticates the operator and supplies the matching capability.
@@ -73,6 +74,20 @@ export function readRunFindings(run_id: string, query: { readonly stage: string;
 }
 export const readRunUnresolved = (run_id: string, page: ObservationPageRequest): Promise<ObservationPaged<ObservationUnresolvedReferenceRead>> =>
   read(`/runs/${id(run_id)}/unresolved-task-references`, windowParams(page));
+/** No occurrence filter exists on this read: exhaust every run page before reporting this item's references. */
+export async function readItemUnresolved(run_id: string, occurrence_id: ObservationItemOccurrenceId): Promise<readonly ObservationUnresolvedReferenceRead[]> {
+  const rows: ObservationUnresolvedReferenceRead[] = [];
+  let offset = 0;
+  while (true) {
+    const page = await readRunUnresolved(run_id, { limit: 200, offset });
+    rows.push(...page.items.filter(({ item }) => item.occurrence_id === occurrence_id));
+    const nextOffset = offset + page.items.length;
+    if (nextOffset >= page.total) return rows;
+    // A truncated response must not turn an incomplete scan into a false empty result.
+    if (nextOffset === offset) throw new GradingReadError(502, "incomplete_page", "Unresolved task reference read did not advance.");
+    offset = nextOffset;
+  }
+}
 /** A page of a run's tasks. Each nested window applies to that list in every task on the page. */
 export interface RunTasksRequest { readonly run_id: string; readonly page: ObservationPageRequest; readonly nested: WindowQuery }
 export const readRunTasks = ({ run_id, page, nested }: RunTasksRequest): Promise<ObservationPaged<ObservationCompositeRead>> =>
@@ -105,3 +120,7 @@ export async function submitAnswer(occurrence_id: ObservationItemOccurrenceId, s
 }
 
 export const readRunStages = (run_id: string): Promise<readonly ObservationRunStageRead[]> => read(`/runs/${id(run_id)}/stages`);
+
+/** Read the immutable definition that actually graded the item. */
+export const readEvaluatorDefinition = (evaluator_id: string): Promise<ObservationEvaluatorDefinition> =>
+  read(`/evaluator-definitions/${id(evaluator_id)}`);

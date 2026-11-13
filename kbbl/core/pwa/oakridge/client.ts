@@ -1,3 +1,5 @@
+import type { ExecutedPromptRead } from "./lib/prompt-view";
+import type { ExecutedPromptTurn } from "../../executed-prompt";
 // API client for the Oakridge backend proxy at /oakridge/api/*.
 // All paths are same-origin relative so the PWA needs no CORS config.
 
@@ -268,4 +270,15 @@ export function confirmFinalPullRequest(
 
 export function fetchArtifactTypes(): Promise<ArtifactTypeDescriptor[]> {
   return Promise.resolve(artifactTypes());
+}
+
+/** The local kbbl read has already redacted all publication credentials. */
+export async function readExecutedPrompt(session_id: string): Promise<ExecutedPromptRead> {
+  const response = await fetch(`/oakridge/sessions/${encodeURIComponent(session_id)}/executed-prompt`);
+  if (response.status === 404) {
+    const body = await response.json() as { readonly error?: { readonly code?: string } };
+    if (body.error?.code === "not_retained") return { state: "not_retained" };
+  }
+  if (!response.ok) throw new Error(`Executed prompt read failed (${response.status})`);
+  return { state: "retained", turns: await response.json() as ExecutedPromptTurn[] };
 }

@@ -1,3 +1,4 @@
+import { PromptViewer } from "./PromptViewer";
 import { useOperatorUnits } from "../../hooks/useOperatorUnits";
 import { selectStageRead } from "../../hooks/useStageOverview";
 import type { StageRead } from "../../lib/stage-overview";
@@ -240,6 +241,8 @@ function PaneBody({ pane, runId, overview, units, activity, onRunDeleted, onOpen
           onOpenItem={openItem}
         />
       );
+    case "prompt":
+      return <PromptViewer runId={runId} unitId={pane.unit_id} attemptId={pane.attempt_id} />;
     case "unit":
       return <StageOverview runId={runId} unitId={pane.unit_id} onOpenBeside={onOpenBeside} />;
     case "artifact":

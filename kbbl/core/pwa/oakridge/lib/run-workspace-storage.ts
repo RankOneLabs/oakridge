@@ -84,6 +84,11 @@ const parseStoredPane = (value: unknown): RunWorkspacePane | null => {
       const sessionId = nonEmptyString(value.session_id);
       return sessionId === null ? null : { kind: "session", session_id: sessionId as Sid };
     }
+    case "prompt": {
+      const unit_id = nonEmptyString(value.unit_id);
+      const attempt_id = nonEmptyString(value.attempt_id);
+      return unit_id === null || attempt_id === null ? null : { kind: "prompt", unit_id, attempt_id };
+    }
     case "unit": {
       const unit_id = nonEmptyString(value.unit_id);
       return unit_id === null ? null : { kind: "unit", unit_id };
