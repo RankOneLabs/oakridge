@@ -6,7 +6,7 @@ import type { KbblHealth, ObservationHealth } from "../../kbbl/core/server/handl
 import { err, ok } from "../src/domain/primitives";
 import { configurationHash, machineGraders, parseGradingDefinitions, planRegistration, type GradingDefinitions, type PublishedConfiguration } from "../src/grading/configuration";
 import { isPinTarget } from "../src/grading/evidence";
-import { oakridgeGradingRegistry } from "./grading-fixture";
+import { fixtureDefinitions, oakridgeGradingRegistry } from "./grading-fixture";
 import { ASSESSMENT_FINDING_KIND, FINDING_KIND } from "../src/producers/oakridge/catalogue";
 import { runProof } from "../verification/proof";
 import { editedGraders, pinChecks, registrationScenario, type ItemReadback, type RegistrationSource } from "../verification/registration";
@@ -16,6 +16,8 @@ import { liveScenario, runtimeScenario } from "../verification/scenarios";
 import { awaitRunCapture, isRunCaptured, readRunCapture } from "../verification/run-capture";
 import { awaitLaunch, type LaunchedProcess, type ProofIo } from "../verification/shadow-session";
 import { relationsScenario } from "../verification/relations";
+import { runtimeRefreshScenario } from "../verification/runtime-refresh";
+import type { GradingSource } from "../verification/grading";
 import { sourceRunScenario, type ReviewCheckpoint, type SourceRunInput } from "../verification/source-run";
 
 const repository = resolve(import.meta.dir, "../..");
@@ -143,6 +145,77 @@ describe("the runtime scenario", () => {
       shadowQuery: async (database, query) => query.includes("LIMIT 1") ? ok("6/e2") : io.shadowQuery(database, query) }));
     expect(failing(report)).toContain("the ordered feed delivered every event of the run");
     expect(report.evidence.run_capture?.undelivered_event_ids).toEqual(["e1", "e2"]);
+  });
+});
+
+describe("the runtime refresh proof", () => {
+  interface RefreshFaults { readonly changed_pid?: boolean; readonly changed_history?: boolean; readonly stale_pins?: boolean; readonly failed_capture?: boolean }
+
+  /** Captures keep the evaluator ids in force when the source run begins. */
+  async function refresh(faults: RefreshFaults = {}) {
+    const original = await fixtureDefinitions();
+    const planned = (definitions: GradingDefinitions) => {
+      const result = planRegistration(definitions, oakridgeGradingRegistry);
+      if (!result.ok) throw new Error(result.error.detail);
+      return result.value;
+    };
+    let definitions = original;
+    let version = 1;
+    let stops = 0;
+    let captures = 0;
+    const publications: GradingDefinitions[] = [];
+    const item = { occurrence_id: "finding", revision_id: "analysis", json_pointer: "/findings/0",
+      artifact_kind: "analysis", item_selector: "/findings/*", item_kind: FINDING_KIND };
+    const original_pins = planned(original).capture.pins.filter((pin) => isPinTarget(pin, item));
+    const io = fakeIo({
+      stackAnswers: async () => true,
+      stopStack: async () => { stops++; },
+      observationStatus: async () => status("running", faults.changed_pid && version > 1 ? "pid_43" : "pid_42"),
+      readGradingConfiguration: async () => publishedFixture(JSON.stringify(original)),
+      publishGradingConfiguration: async (next) => { publications.push(next); definitions = next; version++; },
+      shadowQuery: async () => ok(faults.changed_history && version > 1 ? "changed history" : "original history bytes"),
+      observationGet: async (path) => {
+        if (path.endsWith("/runtime")) return ok({ version, hash: publishedFixture(JSON.stringify(definitions)).hash });
+        if (path.includes("/items?")) return ok({ items: [item] });
+        if (path.includes("/status?")) return ok({ questions: { items: [{ evidence: { evidence_set_id: "evidence", question_id: "q",
+          question_version: "1", readiness: { state: "ready" } }, human: { state: "ready" }, machine: { items: [{
+          evaluator_definition_id: original_pins[0]!.evaluator_definition_ids[0], model: "fixture", execution_id: "execution",
+          measurement: { state: "answered", observation_id: "grade", answer: true }, attempts: { items: [] } }] } }] } });
+        const pins = faults.stale_pins ? original_pins : planned(definitions).capture.pins.filter((pin) => isPinTarget(pin, item));
+        return ok({ items: pins.map((pin) => ({ evidence_set_id: `evidence:${pin.question_id}`, question_id: pin.question_id,
+          question_version: pin.question_version, pinned_evaluator_definition_ids: { items: pin.evaluator_definition_ids },
+          readiness: { state: "ready", ready_at: "now" }, references: { items: [] } })) });
+      },
+    });
+    const source: Pick<GradingSource, "run"> = { run: async () => {
+      captures++;
+      if (faults.failed_capture && captures === 2) throw new Error("later capture failed");
+      return { run: { run_id: `run-${captures}`, definition_id: "development" },
+        report: { id: "source-run", status: "passed", checks: [], evidence: NO_EVIDENCE } };
+    } };
+    const report = await runtimeRefreshScenario(io, source);
+    return { report, publications, original, stops };
+  }
+
+  test("it verifies publication and immutable history without restarting, then republishes the original", async () => {
+    const result = await refresh();
+    expect({ failures: failing(result.report), publications: result.publications.length, restored: result.publications.at(-1), stops: result.stops })
+      .toEqual({ failures: [], publications: 2, restored: result.original, stops: 0 });
+  });
+
+  test.each([
+    [{ changed_pid: true }, "the observation process id is unchanged"],
+    [{ changed_history: true }, "earlier pins and grades are byte-identical"],
+    [{ stale_pins: true }, "each after-refresh item has exactly its questions, pinned to the selection in force at its capture"],
+  ] as const)("it rejects broken refresh invariants: %j", async (faults, failure) => {
+    const result = await refresh(faults);
+    expect(failing(result.report)).toContain(failure);
+  });
+
+  test("it restores the original after publication even when the later capture throws", async () => {
+    const result = await refresh({ failed_capture: true });
+    expect({ status: result.report.status, restored: result.publications.at(-1), stops: result.stops })
+      .toEqual({ status: "failed", restored: result.original, stops: 0 });
   });
 });
 
