@@ -51,6 +51,10 @@ export type OperatorWorkerRuntime = { readonly "harness": string; readonly "mode
 
 export type OperatorSessionMode = "resume" | "fresh" | "shared";
 
+export type OperatorRevisionState = { readonly "artifact": string; readonly "body": unknown; readonly "by"?: string | null; readonly "decision_cursor"?: number; readonly "id": string; readonly "predecessor"?: string | null; readonly "seq": number; readonly "subject"?: string | null; readonly "unit": string };
+
+export type OperatorFeedbackEntry = { readonly "decision": string; readonly "id": string; readonly "payload": unknown; readonly "review": string; readonly "target": string };
+
 export type OperatorUnitDependencies = null | (string)[] | string;
 
 export type OperatorEditPolicy = { readonly "kind": "always" } | { readonly "kind": "frozen_when_accepted" };

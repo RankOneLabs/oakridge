@@ -40,3 +40,23 @@ test("a unit input that is not a record is left whole", () => {
   const view = { input: "plain" } as unknown as UnitView;
   expect(selectUnitInputFields(view, ["brief"]).input).toBe("plain");
 });
+
+import type { EffectInstruction, WorkerInstruction } from "../src/domain/effect-instruction";
+import type { AttemptRecord } from "../src/storage/schema-records";
+import { selectAttemptIntent } from "../src/projections/unit-view";
+import type { RunRead } from "../src/storage/read-store";
+const attempt = { action_id: "action-1", seq: 2 } as AttemptRecord;
+const intentFor = (worker: WorkerInstruction): RunRead["intents"] => [{ action_id: attempt.action_id, seq: 2,
+  payload: { inputs: { source: "recorded" }, engine_inputs: { previous: null, feedback: [], subject: null }, worker } as unknown as EffectInstruction }];
+test("an agent attempt exposes its recorded inputs, engine inputs and pinned prompt", () => {
+  const worker = { kind: "agent", prompt: { path: "prompts/build.md", digest: "sha256-pinned" } } as WorkerInstruction;
+  expect(selectAttemptIntent(attempt, intentFor(worker))).toEqual({ inputs: { source: "recorded" },
+    engine_inputs: { previous: null, feedback: [], subject: null }, prompt: worker.kind === "agent" ? worker.prompt : null });
+});
+test("a promptless code worker exposes a null prompt", () => {
+  expect(selectAttemptIntent(attempt, intentFor({ kind: "code", operation: "check", every: null, artifact: "result" }))?.prompt).toBeNull();
+});
+test("an attempt without its own recorded intent exposes null", () => {
+  const intents = intentFor({ kind: "code", operation: "check", every: null, artifact: "result" });
+  expect(selectAttemptIntent({ ...attempt, seq: 1 }, intents)).toBeNull();
+});
