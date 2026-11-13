@@ -1,6 +1,6 @@
 import { usePinnedQuestionPage } from "../../hooks/usePinnedQuestionPage";
 import type { ObservationQuestionKey } from "../../grading-contracts/grading/question";
-import { sameQuestion } from "../../lib/grading";
+import { selectItemQuestion } from "../../lib/review-selection";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
@@ -69,8 +69,7 @@ export function ItemPanel({ runId, selection, questionTarget, subjectOccurrenceI
   const { item, links, questions, is_grading_enabled: isGradingEnabled } = status.data;
   const specTaskId = selectSpecTaskId(item);
   const header = selectItemHeader(item.selected_value);
-  const targetIndex = questionTarget ? questions.items.findIndex((candidate) => sameQuestion(candidate.question, questionTarget)) : 0;
-  const question = questions.items[selectedIndex === null ? targetIndex : Math.min(selectedIndex, Math.max(0, questions.items.length - 1))] ?? null;
+  const { question, is_target_missing: isTargetMissing } = selectItemQuestion({ questions: questions.items, target: questionTarget, selected_index: selectedIndex });
   const taskLabel = question === null ? null : selectQuestionTaskLabel(question.task_id, links.items);
   return (
     <article className="flex flex-col gap-4 p-3" data-testid="or-item-panel" data-occurrence={item.occurrence_id} data-item-path={item.item_path} data-revision={item.source_revision_id}>
@@ -111,7 +110,7 @@ export function ItemPanel({ runId, selection, questionTarget, subjectOccurrenceI
         </div>
       )}
 
-      {questionTarget && selectedIndex === null && targetIndex < 0 && <FeedbackMessage>The recorded question is not in this page. Browse questions to locate it.</FeedbackMessage>}
+      {isTargetMissing && <FeedbackMessage>The recorded question is not in this page. Browse questions to locate it.</FeedbackMessage>}
       {question && (
         <>
           <section className="flex flex-col gap-1" data-testid="or-item-question-text">

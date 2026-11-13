@@ -1,7 +1,7 @@
 import type { ItemGradingSlots } from "../../artifactRegistry";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { stringify as stringifyYaml } from "yaml";
-import { selectStructuredPaths, type StructuredPathNode } from "../../lib/structured-value";
+import { selectGradedStructuredPaths, type GradedStructuredPathNode } from "../../lib/structured-value";
 import type { ArtifactRevision, ArtifactReviewDescriptor } from "../../artifact-types";
 
 /**
@@ -60,7 +60,7 @@ export function ArtifactJsonRevisionPanel({ revision, descriptor, structured = f
   return (
     <div className="or-revision-panel" data-testid="or-revision-panel" data-revision-id={revision.id}>
       {structured && <p className="break-all text-xs"><span className="or-label">Revision </span><code>{revision.id}</code></p>}
-      {structured && <section aria-label="Field tree"><h3>Fields and item paths</h3>{itemGrading?.renderShowAll(selections)}<FieldNode node={selectStructuredPaths(revision.body)} selections={selections} itemGrading={itemGrading} /></section>}
+      {structured && <section aria-label="Field tree"><h3>Fields and item paths</h3>{itemGrading?.renderShowAll(selections)}<FieldNode node={selectGradedStructuredPaths(revision.body, selections)} itemGrading={itemGrading} /></section>}
       <div className="or-revision-panel__body">
         <span className="or-label">{structured ? "Raw JSON" : "Body"}</span>
         {!structured && sections.length > 0 && isKeyedBody ? (
@@ -90,11 +90,11 @@ export function ArtifactJsonRevisionPanel({ revision, descriptor, structured = f
   );
 }
 
-function FieldNode({ node, selections, itemGrading }: { node: StructuredPathNode; selections: readonly ObservationItemAddress[]; itemGrading?: ItemGradingSlots }) {
+function FieldNode({ node, itemGrading }: { node: GradedStructuredPathNode; itemGrading?: ItemGradingSlots }) {
   return <ul className="ml-4 list-none text-sm"><li>
     <span>{node.label}</span> <code className="or-code">{node.item_path === "" ? '(root: "")' : node.item_path}</code>
-    {selections.filter((selection) => selection.item_path === node.item_path).map((selection) => <span key={selection.item_path}>{itemGrading?.renderItemAction(selection)}</span>)}
+    {node.selections.map((selection) => <span key={selection.item_path}>{itemGrading?.renderItemAction(selection)}</span>)}
     {node.children.length === 0 && <pre className="or-pre">{stringifyPayload(node.value)}</pre>}
-    {node.children.map((child) => <FieldNode key={child.item_path} node={child} selections={selections} itemGrading={itemGrading} />)}
+    {node.children.map((child) => <FieldNode key={child.item_path} node={child} itemGrading={itemGrading} />)}
   </li></ul>;
 }

@@ -19,3 +19,15 @@ test("field paths preserve arrays, empty values and JSON pointer escaping", () =
   const tree = selectStructuredPaths({ "a/b~": [null, { title: "value" }] });
   expect(tree.children[0]?.children[1]?.children[0]?.item_path).toBe("/a~1b~0/1/title");
 });
+
+import { selectGradedStructuredPaths } from "./structured-value";
+import { artifactRevisionIdOf, logicalItemIdOf } from "./grading-ids";
+test("field grading joins exact escaped pointers and retains separate recorded task scopes", () => {
+  const root = { source_revision_id: artifactRevisionIdOf("revision"), item_path: "" };
+  const field = { ...root, item_path: "/a~1b/0", task_id: logicalItemIdOf("task-1") };
+  const otherTask = { ...field, task_id: logicalItemIdOf("task-2") };
+  const nonmatching = { ...root, item_path: "/a/b/0" };
+  const tree = selectGradedStructuredPaths({ "a/b": ["value"] }, [root, field, otherTask, nonmatching]);
+  expect({ root: tree.selections, array: tree.children[0]?.selections, item: tree.children[0]?.children[0]?.selections })
+    .toEqual({ root: [root], array: [], item: [field, otherTask] });
+});

@@ -1,3 +1,4 @@
+import { selectArtifactRevision } from "../../lib/review-selection";
 import { ArtifactReviewHeader } from "../molecules/ArtifactReviewHeader";
 import { useEffect, useState } from "react";
 import { useArtifact } from "../../hooks/useArtifact";
@@ -11,11 +12,10 @@ import { useRunGates } from "../../hooks/useRunGates";
 import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
 import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { useArtifactBody } from "../../hooks/useArtifactBody";
-import { selectFindingSelections, selectItemSelection } from "../../lib/grading";
+import { selectFindingSelections } from "../../lib/grading";
 import { settleEdit } from "../../lib/edit-outcome";
 import { resolveViewer, selectViewerItemPaths } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
-import type { ArtifactRevision } from "../../artifact-types";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
@@ -62,11 +62,9 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
   const threadsQuery = useThreads(artifactId, commentable);
   const reviewItemsQuery = useReviewItems(artifactId, hasReviewItems);
   const revisions = query.data?.revisions ?? [];
-  const pinnedIndex = revisionId ? revisions.findIndex((candidate) => candidate.id === revisionId || selectItemSelection({ revision_id: candidate.id }, "")?.source_revision_id === revisionId) : -1;
-  const revIdx = selectedRevIdx === null
-    ? (revisionId ? pinnedIndex : Math.max(0, revisions.length - 1))
-    : Math.min(selectedRevIdx, Math.max(0, revisions.length - 1));
-  const revision = revisions[revIdx] as ArtifactRevision | undefined;
+  const revisionSelection = selectArtifactRevision({ revisions, pinned_revision_id: revisionId, selected_index: selectedRevIdx });
+  const revIdx = revisionSelection?.index ?? null;
+  const revision = revisionSelection?.revision;
   const atomEdit = useAtomEdit(revision?.id ?? artifactId, artifactId);
   const bodyEdit = useArtifactBody(revision?.id ?? artifactId, artifactId);
   const gatesQuery = useRunGates(query.data?.run_id ?? "", Boolean(query.data?.run_id));
