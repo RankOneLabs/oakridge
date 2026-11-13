@@ -156,3 +156,19 @@ test("artifact links retain anchor targets for history and reveal after route se
   fireEvent.click(workers.getAllByRole("link", { name: "build_result" })[0] as HTMLElement);
   expect(navigate).toHaveBeenLastCalledWith(expect.stringContaining("/stages/cohort#stage-cohort-artifact-build_result"));
 });
+
+test("following the current declaration link again reveals its target without navigating", () => {
+  const navigate = vi.fn();
+  const anchored = "cohort#stage-cohort-template-worker-pr_watch";
+  render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: anchored }} onNavigate={navigate} onBack={() => {}} />);
+  const template = within(screen.getByRole("region", { name: "Workers" })).getByRole("link", { name: "from template pr_watch" });
+  const details = document.getElementById("stage-cohort-template-worker-pr_watch");
+  if (!(details instanceof HTMLDetailsElement)) throw new Error("Missing worker template");
+  details.open = false;
+  details.scrollIntoView = vi.fn();
+  window.location.hash = template.getAttribute("href") ?? "";
+  fireEvent.click(template);
+  expect(navigate).not.toHaveBeenCalled();
+  expect(details.open).toBe(true);
+  expect(details.scrollIntoView).toHaveBeenCalled();
+});

@@ -63,3 +63,17 @@ test.each(["input . a.outcome.value", "input\n.\ta . outcome . value", "input . 
     expect(result).toEqual({ references: [], edges: [], per_member_after: [] });
   },
 );
+
+test.each([
+  ["build-step.outcome.result", "build-step", ["result"]],
+  ["$prep.outcome.result", "$prep", ["result"]],
+  ["(a).outcome.result", "a", ["result"]],
+  ["(a.outcome).result", "a", ["result"]],
+  ["not (a.outcome.result)", "a", ["result"]],
+  ["map((a), a.outcome.result)", "a", ["result"]],
+])("compiler identifiers and grouping preserve the reference in %s", (expression, upstream, outcome_path) => {
+  const result = selectDefinitionDependencies({ ...source("review-loop"), run: { outcome: {}, units: {
+    a: {}, "build-step": {}, $prep: {}, step: {}, b: { input: { value: expression } },
+  } } });
+  expect(result.references).toEqual([{ downstream: "b", binding: { kind: "input", field: "value" }, upstream, outcome_path }]);
+});

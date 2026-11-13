@@ -195,13 +195,17 @@ export function readHashRoute(
       return { view: "oakridge", route: { sub: "defs" } };
     }
     if (rest.startsWith("/defs/")) {
-      const segments = rest.slice("/defs/".length).split("/");
+      // A declaration anchor is an exact DOM id: split it off before decoding and keep it verbatim.
+      const anchorAt = rest.indexOf("#");
+      const routePath = anchorAt === -1 ? rest : rest.slice(0, anchorAt);
+      const anchor = anchorAt === -1 ? "" : rest.slice(anchorAt);
+      const segments = routePath.slice("/defs/".length).split("/");
       const [rawId, kind, ...path] = segments;
       if (rawId && segments.every(Boolean)) {
         const id = tryDecode(rawId);
         if (segments.length === 1) return { view: "oakridge", route: { sub: "def", id, selection: null } };
-        if (kind === "stages" && path.length === 1) return { view: "oakridge", route: { sub: "def", id, selection: { kind: "stage", stage: tryDecode(path[0] as string) } } };
-        if (kind === "units" && path.length > 0) return { view: "oakridge", route: { sub: "def", id, selection: { kind: "unit", path: path.map(tryDecode).join("/") } } };
+        if (kind === "stages" && path.length === 1) return { view: "oakridge", route: { sub: "def", id, selection: { kind: "stage", stage: tryDecode(path[0] as string) + anchor } } };
+        if (kind === "units" && path.length > 0) return { view: "oakridge", route: { sub: "def", id, selection: { kind: "unit", path: path.map(tryDecode).join("/") + anchor } } };
       }
     }
     return { view: "oakridge", route: { sub: "runs" } };

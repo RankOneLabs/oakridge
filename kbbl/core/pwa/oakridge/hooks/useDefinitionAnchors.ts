@@ -43,6 +43,11 @@ export function useDefinitionAnchors({
     const href = anchor?.getAttribute("href");
     if (!href?.startsWith("#oakridge/defs/")) return;
     event.preventDefault();
+    // Navigating to the current hash changes no route, so reveal its target directly.
+    if (href === window.location.hash) {
+      revealDefinitionAnchor(href.split("#")[2]);
+      return;
+    }
     onNavigate(href);
   }
 

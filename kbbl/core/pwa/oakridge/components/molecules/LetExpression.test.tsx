@@ -24,3 +24,23 @@ test("standalone artifacts link while property accesses and quoted names do not"
   expect(view.container.textContent).toBe(expression);
   expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["spec"]);
 });
+
+test("a field sharing a let binding's name stays verbatim", () => {
+  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  if (!model) throw new Error("Missing cohort stage");
+  const view = render(<LetExpression model={model} expression="input.brief_value and brief_value" />);
+  expect(view.container.textContent).toBe("input.brief_value and brief_value");
+  expect(screen.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+    expect.stringContaining("#stage-cohort-let-brief_value"),
+  ]);
+});
+
+test("hyphenated and dollar identifiers link whole, never by their parts", () => {
+  const cohort = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  if (!cohort) throw new Error("Missing cohort stage");
+  const artifact = cohort.stage.artifacts.build_result;
+  const model = { ...cohort, stage: { ...cohort.stage, artifacts: { ...cohort.stage.artifacts, "build-result": artifact, "$draft": artifact, build: artifact } } };
+  const view = render(<LetExpression model={model} expression="latest(build-result) and latest($draft)" />);
+  expect(view.container.textContent).toBe("latest(build-result) and latest($draft)");
+  expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["build-result", "$draft"]);
+});

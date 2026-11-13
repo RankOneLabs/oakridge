@@ -15,9 +15,33 @@ function selectBindings(unit: OperatorUnit): BindingExpression[] {
   ];
 }
 
-/** Tokens preserve quoted strings and field access while ignoring whitespace. */
+/** Words follow the compiler lexer: a letter, `_` or `$`, then alphanumerics, `_`, `-` or `$`. */
+const WORD = /^[A-Za-z_$][A-Za-z0-9_$-]*$/;
+const OPERATOR_WORDS = new Set(["and", "or", "not"]);
+
+/** A `(` opens a call only after a callee; any other `(` only groups. */
+function isCallParen(previous: string | undefined): boolean {
+  return previous === ")" || (previous !== undefined && WORD.test(previous) && !OPERATOR_WORDS.has(previous));
+}
+
+/**
+ * Tokens preserve quoted strings and field access while ignoring whitespace.
+ * Grouping parentheses are dropped because the compiler treats them as transparent
+ * to field access: `(a).outcome.x` and `(a.outcome).x` both read `a.outcome.x`.
+ */
 function selectExpressionTokens(expression: string): string[] {
-  return expression.match(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_][A-Za-z_0-9]*|[^\s]/g) ?? [];
+  const tokens = expression.match(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_$][A-Za-z0-9_$-]*|[^\s]/g) ?? [];
+  const kept: string[] = [];
+  const is_grouping: boolean[] = [];
+  for (const token of tokens) {
+    if (token === "(") {
+      const grouping = !isCallParen(kept[kept.length - 1]);
+      is_grouping.push(grouping);
+      if (grouping) continue;
+    } else if (token === ")" && is_grouping.pop()) continue;
+    kept.push(token);
+  }
+  return kept;
 }
 
 function selectOutcomePath(tokens: readonly string[], index: number): string[] | null {
@@ -25,7 +49,7 @@ function selectOutcomePath(tokens: readonly string[], index: number): string[] |
   const path: string[] = [];
   for (let cursor = index + 3; tokens[cursor] === "."; cursor += 2) {
     const field = tokens[cursor + 1];
-    if (!field || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(field)) break;
+    if (!field || !WORD.test(field)) break;
     path.push(field);
   }
   return path;

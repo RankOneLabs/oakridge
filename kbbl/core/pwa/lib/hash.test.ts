@@ -169,6 +169,11 @@ describe("definition selection routes", () => {
   ])("parses %s", (href, selection) => {
     expect(readHashRoute(href as string, "")).toEqual({ view: "oakridge", route: { sub: "def", id: "d1", selection } });
   });
+  it("keeps a declaration anchor verbatim while decoding the stage", () => {
+    expect(readHashRoute("#oakridge/defs/d1/stages/a%2Fb#stage-a%2Fb-artifact-%24draft", "")).toEqual({
+      view: "oakridge", route: { sub: "def", id: "d1", selection: { kind: "stage", stage: "a/b#stage-a%2Fb-artifact-%24draft" } },
+    });
+  });
   it.each(["/defs/d1/units/", "/defs/d1/units/a//b", "/defs/d1/unknown/a", "/defs/d1/stages/a/b", "/def/d1"])("rejects %s", (path) => {
     expect(readHashRoute("#oakridge" + path, "")).toEqual({ view: "oakridge", route: { sub: "runs" } });
   });
