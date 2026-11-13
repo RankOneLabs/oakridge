@@ -25,6 +25,7 @@ export interface DefinitionSummary {
   readonly targets: readonly { artifact: string; selector: string }[];
   readonly evidence: readonly string[]; readonly text: string; readonly allowedValues: string;
   readonly evaluators: readonly { runner: string; model: string }[];
+  readonly targetsText: string; readonly evidenceText: string; readonly evaluatorsText: string;
 }
 export interface ConfigurationHeader { readonly published: string; readonly draft: string }
 export interface GradingDifference {
@@ -69,11 +70,16 @@ export function parseDefinitions(text: string): JsonParseResult {
 export function definitionSummaries(definitions: readonly Json[]): readonly DefinitionSummary[] {
   return definitions.map((value, index) => {
     const definition = jsonObject(value), question = jsonObject(definition.question);
+    const targets = jsonList(definition.targets).map((target) => ({ artifact: jsonText(jsonObject(target).artifact), selector: jsonText(jsonObject(target).selector) }));
+    const evidence = jsonList(definition.evidence).map((reference) => typeof reference === "string" ? reference : jsonText(jsonObject(reference).capability));
+    const evaluators = jsonList(definition.evaluators).map((entry) => ({ runner: jsonText(jsonObject(entry).runner), model: jsonText(jsonObject(entry).model) }));
     return { index, id: jsonText(definition.id) || `Definition ${index + 1}`, scope: jsonText(definition.scope),
-      targets: jsonList(definition.targets).map((target) => ({ artifact: jsonText(jsonObject(target).artifact), selector: jsonText(jsonObject(target).selector) })),
-      evidence: jsonList(definition.evidence).map((reference) => typeof reference === "string" ? reference : jsonText(jsonObject(reference).capability)),
-      text: jsonText(question.text), allowedValues: JSON.stringify(question.values ?? null),
-      evaluators: jsonList(definition.evaluators).map((entry) => ({ runner: jsonText(jsonObject(entry).runner), model: jsonText(jsonObject(entry).model) })) };
+      targets,
+      evidence,
+      text: jsonText(question.text) || "No question text", allowedValues: JSON.stringify(question.values ?? null),
+      evaluators, targetsText: targets.map((target) => `${target.artifact} ${target.selector}`).join(", ") || "None",
+      evidenceText: evidence.join(", ") || "None",
+      evaluatorsText: evaluators.map((entry) => `${entry.runner}${entry.model ? ` · ${entry.model}` : ""}`).join(", ") || "None" };
   });
 }
 export const configurationHeader = (state: GradingDraftState, latest: ObservationPublishedConfiguration | null): ConfigurationHeader => ({
@@ -127,3 +133,13 @@ export interface GradingJsonInput { readonly path: GradingPath; readonly text: s
 export type GradingJsonInputs = Readonly<Record<string, GradingJsonInput>>;
 export const hasJsonErrors = (inputs: GradingJsonInputs): boolean => Object.values(inputs).some((input) => input.error !== null);
 export const validationIssues = (feedback: GradingFeedback | null): readonly ObservationConfigurationIssue[] => feedback?.kind === "validation_failed" ? feedback.issues : [];
+
+export const definitionWithScope = (definition: Json, scope: Json): Json => {
+  const { task_ids, ...fields } = jsonObject(definition);
+  return scope === "per_task" ? { ...fields, scope, task_ids: task_ids ?? "" } : { ...fields, scope };
+};
+export const evaluatorWithRunner = (entry: Json, runner: Json): Json => {
+  if (runner === "human") return { runner };
+  const fields = jsonObject(entry);
+  return { ...fields, runner, instructions: fields.runner === runner ? fields.instructions ?? {} : {} };
+};

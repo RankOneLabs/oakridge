@@ -69,6 +69,7 @@ export type OakridgeSubRoute =
   | { sub: "session"; session_id: Sid }
   | { sub: "new-run" }
   | { sub: "create-project" }
+  | { sub: "grading-config"; version: number | null }
   | { sub: "defs" }
   | { sub: "def"; id: string };
 
@@ -139,7 +140,7 @@ export function readHashRoute(
   rawHash = window.location.hash,
   search = window.location.search,
 ): HashRoute | null {
-  const hash = rawHash.startsWith("#") ? rawHash.slice(1) : rawHash;
+  const hash = (rawHash.startsWith("#") ? rawHash.slice(1) : rawHash).replace(/^\//, "");
   if (hash === "sessions") return { view: "sessions", route: { sub: "sessions" } };
   if (hash === "oakridge" || hash.startsWith("oakridge/")) {
     const rest = hash.slice("oakridge".length);
@@ -175,6 +176,9 @@ export function readHashRoute(
     if (rest === "/create-project") {
       return { view: "oakridge", route: { sub: "create-project" } };
     }
+    if (rest === "/grading-config") return { view: "oakridge", route: { sub: "grading-config", version: null } };
+    const gradingVersion = /^\/grading-config\/versions\/([1-9]\d*)$/.exec(rest);
+    if (gradingVersion && Number.isSafeInteger(Number(gradingVersion[1]))) return { view: "oakridge", route: { sub: "grading-config", version: Number(gradingVersion[1]) } };
     if (rest === "/defs") {
       return { view: "oakridge", route: { sub: "defs" } };
     }

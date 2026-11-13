@@ -1,3 +1,5 @@
+import { Button } from "../components/atoms/Button";
+import { GradingConfigView } from "./views/GradingConfigView";
 import { useOakridgeConfig } from "./hooks/useOakridgeConfig";
 import { RunListView } from "./views/RunListView";
 import { RunDetailView } from "./views/RunDetailView";
@@ -107,6 +109,9 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
         />
       );
       break;
+    case "grading-config":
+      content = <GradingConfigView version={route.version} onNavigate={(version) => onNavigate(version === null ? "/oakridge/grading-config" : `/oakridge/grading-config/versions/${version}`)} />;
+      break;
     case "defs":
       content = (
         <WorkflowDefListView
@@ -127,6 +132,11 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
 
   return (
     <div className="or-shell" data-testid="or-shell">
+      <nav aria-label="Oakridge" className="flex flex-wrap gap-2 p-3">
+        <Button onClick={navigateToRuns}>Runs</Button>
+        <Button onClick={navigateToDefs}>Workflows</Button>
+        <Button onClick={() => onNavigate("/oakridge/grading-config")}>Grading configuration</Button>
+      </nav>
       <main className="or-shell__content">
         {content}
       </main>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { configurationDiff, configurationHeader, createDraft, definitionSummaries, editDraft, parseDefinitions, publicationFailure, publicationFeedback, saveFailed, saveSucceeded, sectionIssues } from "./grading-config";
+import { configurationDiff, configurationHeader, createDraft, definitionSummaries, editDraft, parseDefinitions, publicationFailure, publicationFeedback, saveFailed, saveSucceeded, sectionIssues, definitionWithScope, evaluatorWithRunner } from "./grading-config";
 import type { ObservationPublicationError } from "../grading-contracts/grading/publication";
 
 import type { ObservationJsonValue } from "../grading-contracts/domain/primitives";
@@ -17,7 +17,7 @@ describe("the shared grading draft", () => {
     expect(saveSucceeded(edited, { digest: "next", document: { status: "draft", definitions: edited.definitions } })).toEqual({ ...edited, dirty: false, baseDigest: "next" });
   });
   it("summarizes definitions identically for published and draft JSON", () => {
-    expect(definitionSummaries(definitions)).toEqual([{ index: 0, id: "quality", scope: "per_item", targets: [{ artifact: "finding", selector: "/items" }], evidence: ["source", "code"], text: "Useful?", allowedValues: "[true,false]", evaluators: [{ runner: "llm_judge", model: "test" }, { runner: "human", model: "" }] }]);
+    expect(definitionSummaries(definitions)).toEqual([{ index: 0, id: "quality", scope: "per_item", targets: [{ artifact: "finding", selector: "/items" }], evidence: ["source", "code"], text: "Useful?", allowedValues: "[true,false]", targetsText: "finding /items", evidenceText: "source, code", evaluatorsText: "llm_judge · test, human", evaluators: [{ runner: "llm_judge", model: "test" }, { runner: "human", model: "" }] }]);
   });
   it("selects absent, saved and unsaved header status", () => {
     expect(configurationHeader(createDraft(null, null), null).draft).toBe("No draft");
@@ -28,6 +28,10 @@ describe("the shared grading draft", () => {
     expect(configurationDiff([{ id: "old", removed: true }], [{ id: "new", added: 7 }])).toEqual([
       { kind: "changed", path: [0, "id"], before: "old", after: "new" }, { kind: "removed", path: [0, "removed"], before: true, after: undefined }, { kind: "added", path: [0, "added"], before: undefined, after: 7 },
     ]);
+  });
+  it("changes scope and human runner without retaining incompatible fields", () => {
+    expect(definitionWithScope({ id: "q", scope: "per_task", task_ids: "/tasks" }, "per_item")).toEqual({ id: "q", scope: "per_item" });
+    expect(evaluatorWithRunner({ runner: "llm_judge", model: "judge", instructions: { rubric: "old" } }, "human")).toEqual({ runner: "human" });
   });
   it("matches service issue paths including the definition index", () => {
     const issue = { definition_index: 2, path: [2, "evaluators", 0, "instructions"], detail: "Bad recipe" };
