@@ -60,6 +60,78 @@ export type GradingDefinition = GradingDefinitionFields & QuestionScope;
 export type GradingDefinitions = readonly GradingDefinition[];
 const configurationSchema = z.array(definitionSchema).min(1);
 
+export interface DraftConfiguration { readonly status: "draft"; readonly definitions: readonly JsonValue[] }
+export interface PublishedConfiguration {
+  readonly status: "published";
+  readonly version: number;
+  readonly hash: string;
+  readonly published_at: string;
+  readonly definitions: GradingDefinitions;
+}
+export type ConfigurationDocument = DraftConfiguration | PublishedConfiguration;
+export const configurationDocumentSchema = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("draft"), definitions: z.array(z.json()) }),
+  z.strictObject({ status: z.literal("published"), version: z.number().int().positive(), hash: z.string(),
+    published_at: z.iso.datetime({ offset: true }), definitions: configurationSchema }),
+]);
+export interface ConfigurationIssue {
+  readonly definition_index: number | null;
+  readonly path: readonly (string | number)[];
+  readonly detail: string;
+}
+export interface ConfigurationDocumentError {
+  readonly operation: "configuration_document";
+  readonly kind: "invalid_configuration" | "hash_mismatch";
+  readonly entity_id: string;
+  readonly detail: string;
+  readonly issues: readonly ConfigurationIssue[];
+}
+
+/** Whole-configuration identity: array order matters; wrapper metadata is excluded. */
+export const configurationHash = (definitions: readonly unknown[]): ReturnType<typeof canonicalDigest> => canonicalDigest(definitions);
+
+function configurationIssueDefinitionIndex(definitions: GradingDefinitions, entity_id: string): number {
+  const exact = definitions.findIndex((definition) => definition.id === entity_id);
+  if (exact >= 0) return exact;
+  return definitions.reduce((best_index, definition, index) =>
+    entity_id.startsWith(`${definition.id}:`) && (best_index < 0 || definition.id.length > definitions[best_index]!.id.length)
+      ? index : best_index, -1);
+}
+
+/** Shape errors keep their definition index and field path for later editors. */
+export function configurationIssues(raw: unknown, error: GraderConfigurationError): readonly ConfigurationIssue[] {
+  const shape = configurationSchema.safeParse(raw);
+  if (!shape.success) return shape.error.issues.map((issue) => ({
+    definition_index: typeof issue.path[0] === "number" ? issue.path[0] : null,
+    path: issue.path.map((part) => typeof part === "symbol" ? String(part) : part), detail: issue.message,
+  }));
+  const index = error.kind === "duplicate_definition"
+    ? shape.data.findIndex((definition, index) => definition.id === error.entity_id && shape.data.findIndex((entry) => entry.id === definition.id) < index)
+    : configurationIssueDefinitionIndex(shape.data, error.entity_id);
+  const field = /^(\w+(?:\.\w+)*):/.exec(error.detail)?.[1];
+  const fallback = error.kind === "duplicate_definition" ? "id"
+    : ["unknown_runner", "duplicate_grader", "invalid_instructions"].includes(error.kind) ? "evaluators" : "question";
+  return [{ definition_index: index < 0 ? null : index, path: index < 0 ? [] : [index, ...(field ?? fallback).split(".")], detail: error.detail }];
+}
+
+/** Stored documents are strict wrappers; only published definitions must be complete. */
+export function parseConfigurationDocument(raw: unknown, registry: GradingRegistry): Result<ConfigurationDocument, ConfigurationDocumentError> {
+  const parsed = configurationDocumentSchema.safeParse(raw);
+  if (!parsed.success) return err({ operation: "configuration_document", kind: "invalid_configuration", entity_id: "configuration",
+    detail: parsed.error.message, issues: parsed.error.issues.map((issue) => ({
+      definition_index: issue.path[0] === "definitions" && typeof issue.path[1] === "number" ? issue.path[1] : null,
+      path: issue.path.map((part) => typeof part === "symbol" ? String(part) : part), detail: issue.message,
+    })) });
+  if (parsed.data.status === "draft") return ok(parsed.data);
+  const definitions = parseGradingDefinitions(parsed.data.definitions, registry);
+  if (!definitions.ok) return err({ operation: "configuration_document", kind: "invalid_configuration", entity_id: definitions.error.entity_id,
+    detail: definitions.error.detail, issues: configurationIssues(parsed.data.definitions, definitions.error) });
+  const hash = configurationHash(definitions.value);
+  if (!hash.ok || hash.value !== parsed.data.hash) return err({ operation: "configuration_document", kind: "hash_mismatch",
+    entity_id: String(parsed.data.version), detail: hash.ok ? "recorded hash differs from definitions" : hash.error.detail, issues: [] });
+  return ok({ ...parsed.data, definitions: definitions.value });
+}
+
 /** Human evaluation is implicit even when explicitly listed in the file. */
 export const machineGraders = (definition: GradingDefinition): readonly GraderEntry[] =>
   definition.evaluators.filter((entry): entry is GraderEntry => "model" in entry);

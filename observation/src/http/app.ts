@@ -1,3 +1,4 @@
+import type { RuntimeConfiguration } from "../grading/runtime-configuration";
 import { Hono } from "hono";
 import { errorResponse } from "./errors";
 import { credentialFor } from "./ingest-auth";
@@ -9,7 +10,16 @@ import { registerGradingRecordRoutes } from "./grading-records";
 import { registerHealthRoute, type HealthDependencies } from "./health";
 import type { SourceDependencies } from "./sources";
 
-export function createApp(deps: SourceDependencies & HealthDependencies): Hono {
+export type AppDependencies = (SourceDependencies & HealthDependencies)
+  | (Omit<SourceDependencies, "profile" | "capture_configuration"> & HealthDependencies & { readonly runtime_configuration: RuntimeConfiguration });
+
+export function createApp(input: AppDependencies): Hono {
+  const runtime = input.runtime_configuration ?? null;
+  const deps: SourceDependencies & HealthDependencies = runtime ? { ...input,
+    get profile() { return runtime.current().profile; },
+    get capture_configuration() { return runtime.current().capture_configuration; },
+    grader_capability: () => runtime.current().grader_capability,
+  } : input as SourceDependencies & HealthDependencies;
   const app = new Hono();
   registerHealthRoute(app, deps);
   registerSourceRoutes(app, deps);
