@@ -45,6 +45,17 @@ export function credentialsForRunners(runners: readonly string[]): Result<Runner
   return ok({ required: [...new Set(required)], optional: [...new Set(optional)] });
 }
 
+/**
+ * Settings for runners the draft adds are offered, never required: a restart must
+ * hand them to the child so publishing that draft can succeed, but an unfinished
+ * draft or an absent key cannot stop startup. Publication still demands them.
+ */
+export function offerRunnerCredentials(published: RunnerCredentials, offered: RunnerCredentials): RunnerCredentials {
+  const required = new Set(published.required);
+  const optional = [...published.optional, ...offered.required, ...offered.optional].filter((name) => !required.has(name));
+  return { required: published.required, optional: [...new Set(optional)] };
+}
+
 const ASSIGNMENT = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/;
 
 function assignedValue(raw: string): string {

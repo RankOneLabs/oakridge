@@ -6,13 +6,16 @@
  *   provider-env.ts live-port --env-file <path>            the port the live service binds
  *   provider-env.ts select --env-file <path> --store-dir <path>
  *
- * `select` prints NAME=VALUE lines for the configured runners only. Failure
+ * `select` prints NAME=VALUE lines for the configured runners only: those the
+ * latest published version selects, whose required settings must be present, and
+ * those a valid draft adds, whose settings ride along when the file holds them so
+ * a restart lets that draft publish. Failure
  * prints `<kind>:<entity>` on stderr, which names settings but never a value.
  */
 import { createGradingConfigStore } from "../src/grading/configuration-store";
 import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { parseArgs } from "node:util";
-import { allProviderCredentialNames, configuredRunnerNames, credentialsForRunners, parseEnvFile,
+import { allProviderCredentialNames, configuredRunnerNames, credentialsForRunners, offerRunnerCredentials, parseEnvFile,
   selectProviderEnvironment, type ProviderCredentialError } from "../src/grading/provider-credentials";
 import { err, ok, type Result } from "../src/domain/primitives";
 
@@ -23,11 +26,19 @@ async function readEntries(path: string): Promise<ReadonlyMap<string, string>> {
   return parseEnvFile(await file.exists() ? await file.text() : "");
 }
 
-/** Provider selection follows precisely the published version startup loads. */
+/** Required provider settings follow precisely the published version startup loads. */
 async function readRunners(directory: string): Promise<Result<readonly string[], ProviderCredentialError>> {
   const latest = await createGradingConfigStore(directory).latestVersion();
   if (!latest.ok) return err({ operation: "provider_credentials", kind: "invalid_definitions", entity_id: latest.error.entity_id, detail: latest.error.detail });
   return latest.value ? configuredRunnerNames(latest.value.definitions, oakridgeGradingRegistry) : ok([]);
+}
+
+/** An unreadable or invalid draft offers nothing; publishing it reports the problem instead. */
+async function readDraftRunners(directory: string): Promise<readonly string[]> {
+  const draft = await createGradingConfigStore(directory).readDraft();
+  if (!draft.ok || !draft.value) return [];
+  const runners = configuredRunnerNames(draft.value.document.definitions, oakridgeGradingRegistry);
+  return runners.ok ? runners.value : [];
 }
 
 async function selectLines(env_file: string, store_dir: string): Promise<Result<readonly string[], ProviderCredentialError>> {
@@ -35,7 +46,9 @@ async function selectLines(env_file: string, store_dir: string): Promise<Result<
   if (!runners.ok) return runners;
   const credentials = credentialsForRunners(runners.value);
   if (!credentials.ok) return credentials;
-  const selected = selectProviderEnvironment(credentials.value, await readEntries(env_file));
+  const offered = credentialsForRunners(await readDraftRunners(store_dir));
+  if (!offered.ok) return offered;
+  const selected = selectProviderEnvironment(offerRunnerCredentials(credentials.value, offered.value), await readEntries(env_file));
   return selected.ok ? ok([...selected.value].map(([name, value]) => `${name}=${value}`)) : selected;
 }
 
