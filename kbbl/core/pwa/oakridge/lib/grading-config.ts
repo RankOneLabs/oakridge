@@ -2,6 +2,7 @@ import type { ObservationJsonValue as Json } from "../grading-contracts/domain/p
 import type { ObservationConfigurationIssue, ObservationPublishedConfiguration } from "../grading-contracts/grading/configuration";
 import type { ObservationStoredDraft } from "../grading-contracts/grading/configuration-store";
 import type { ObservationPublicationError, ObservationPublicationOutcome } from "../grading-contracts/grading/publication";
+import type { ObservationGradingCatalogue } from "../grading-contracts/http/grading-config";
 
 export type GradingPath = readonly (string | number)[];
 export interface GradingDraftState {
@@ -86,6 +87,10 @@ export const configurationHeader = (state: GradingDraftState, latest: Observatio
   published: latest ? `Latest published version ${latest.version} · ${latest.published_at}` : "No published version",
   draft: state.dirty ? "Unsaved local edits" : state.baseDigest ? "Saved draft" : "No draft",
 });
+export const catalogueArtifactKinds = (catalogue: ObservationGradingCatalogue): readonly string[] =>
+  [...new Set(catalogue.selectors.map((selector) => selector.artifact_kind))];
+export const catalogueItemSelectors = (catalogue: ObservationGradingCatalogue, artifactKind: Json | undefined): readonly string[] =>
+  catalogue.selectors.filter((selector) => selector.artifact_kind === artifactKind).map((selector) => selector.item_selector);
 export function configurationDiff(before: Json | undefined, after: Json | undefined, path: GradingPath = []): readonly GradingDifference[] {
   if (JSON.stringify(before) === JSON.stringify(after)) return [];
   if (before === undefined || after === undefined) return [{ kind: before === undefined ? "added" : "removed", path, before, after }];

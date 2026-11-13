@@ -1,7 +1,7 @@
 import { Button } from "../../../components/atoms/Button";
 import type { ObservationJsonValue as Json } from "../../grading-contracts/domain/primitives";
 import type { ObservationGradingCatalogue } from "../../grading-contracts/http/grading-config";
-import { atPath, definitionWithScope, evaluatorWithRunner, jsonList, jsonObject, jsonText, type GradingPath } from "../../lib/grading-config";
+import { atPath, catalogueArtifactKinds, catalogueItemSelectors, definitionWithScope, evaluatorWithRunner, jsonList, jsonObject, jsonText, type GradingPath } from "../../lib/grading-config";
 import { GradingSelect, GradingTextField, type GradingEdit } from "./GradingConfigFields";
 
 export interface GradingSectionProps {
@@ -27,8 +27,8 @@ export function GradingConfigTargets({ definition, catalogue, onEdit, jsonField 
     <GradingSelect label="Scope" value={object.scope} options={["per_item", "per_task"]} onChange={(value) => onEdit([], definitionWithScope(definition, value))} />
     {object.scope === "per_task" && <GradingTextField label="Task pointer (task_ids JSON pointer)" value={object.task_ids} onChange={(value) => onEdit(["task_ids"], value)} />}
     {targets.map((target, index) => <div key={index} className="grid gap-2 rounded border border-[var(--border-muted)] p-3">
-      <GradingSelect label={`Artifact kind ${index + 1}`} value={jsonObject(target).artifact} options={[...new Set(catalogue.selectors.map((selector) => selector.artifact_kind))]} onChange={(value) => onEdit(["targets", index, "artifact"], value)} />
-      <GradingSelect label={`Item selector ${index + 1}`} value={jsonObject(target).selector} options={catalogue.selectors.filter((selector) => selector.artifact_kind === jsonObject(target).artifact).map((selector) => selector.item_selector)} onChange={(value) => onEdit(["targets", index, "selector"], value)} />
+      <GradingSelect label={`Artifact kind ${index + 1}`} value={jsonObject(target).artifact} options={catalogueArtifactKinds(catalogue)} onChange={(value) => onEdit(["targets", index, "artifact"], value)} />
+      <GradingSelect label={`Item selector ${index + 1}`} value={jsonObject(target).selector} options={catalogueItemSelectors(catalogue, jsonObject(target).artifact)} onChange={(value) => onEdit(["targets", index, "selector"], value)} />
       <Button size="small" variant="danger" onClick={() => onEdit(["targets"], targets.filter((_, position) => position !== index))}>Remove target {index + 1}</Button>
     </div>)}
     <Button onClick={() => onEdit(["targets"], [...targets, { artifact: catalogue.selectors[0]?.artifact_kind ?? "", selector: catalogue.selectors[0]?.item_selector ?? "" }])}>Add target</Button>

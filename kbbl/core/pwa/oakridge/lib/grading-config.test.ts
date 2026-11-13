@@ -1,10 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { configurationDiff, configurationHeader, createDraft, definitionSummaries, editDraft, parseDefinitions, publicationFailure, publicationFeedback, saveFailed, saveSucceeded, sectionIssues, definitionWithScope, evaluatorWithRunner } from "./grading-config";
+import { catalogueArtifactKinds, catalogueItemSelectors, configurationDiff, configurationHeader, createDraft, definitionSummaries, editDraft, parseDefinitions, publicationFailure, publicationFeedback, saveFailed, saveSucceeded, sectionIssues, definitionWithScope, evaluatorWithRunner } from "./grading-config";
 import type { ObservationPublicationError } from "../grading-contracts/grading/publication";
+import type { ObservationGradingCatalogue } from "../grading-contracts/http/grading-config";
 
 import type { ObservationJsonValue } from "../grading-contracts/domain/primitives";
 
 const definitions: readonly ObservationJsonValue[] = [{ id: "quality", scope: "per_item", targets: [{ artifact: "finding", selector: "/items" }], evidence: ["source", { capability: "code", params: {} }], question: { text: "Useful?", values: [true, false] }, evaluators: [{ runner: "llm_judge", model: "test" }, { runner: "human" }] }];
+const catalogue: ObservationGradingCatalogue = {
+  selectors: [
+    { artifact_kind: "analysis", item_selector: "/findings/*", item_kind: "finding", item_fields: [] },
+    { artifact_kind: "assessment", item_selector: "/items/*", item_kind: "finding", item_fields: [] },
+    { artifact_kind: "analysis", item_selector: "/tasks/*", item_kind: "task", item_fields: [] },
+  ],
+  evidence_capabilities: [], runners: [],
+};
+describe("grading catalogue options", () => {
+  it("selects unique artifact kinds in catalogue order", () => {
+    expect(catalogueArtifactKinds(catalogue)).toEqual(["analysis", "assessment"]);
+  });
+  it("selects only the item selectors registered for the artifact kind", () => {
+    expect(catalogueItemSelectors(catalogue, "analysis")).toEqual(["/findings/*", "/tasks/*"]);
+  });
+  it("offers no item selectors for an unregistered artifact kind", () => {
+    expect(catalogueItemSelectors(catalogue, "unknown")).toEqual([]);
+  });
+  it("offers no artifact kinds for an empty catalogue", () => {
+    expect(catalogueArtifactKinds({ ...catalogue, selectors: [] })).toEqual([]);
+  });
+});
 describe("the shared grading draft", () => {
   it("edits a nested path without changing the base document or concurrency tokens", () => {
     const state = createDraft({ document: { status: "draft", definitions }, digest: "base" }, 4);
