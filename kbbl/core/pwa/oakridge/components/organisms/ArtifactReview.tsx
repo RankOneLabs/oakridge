@@ -184,7 +184,7 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
         <section className="or-artifact-detail__revision">
           <div className="or-revision-panel__meta">
             <span className="or-label">Revision</span>
-            <code className="or-code">{revision.id.slice(0, 8)}</code>
+            <code className="or-code break-all">{revision.id}</code>
             <Chip tone={selectStatusTone(revision.status)} testId="or-revision-status">
               {revision.status}
             </Chip>

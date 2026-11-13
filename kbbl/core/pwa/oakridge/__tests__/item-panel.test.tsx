@@ -1,3 +1,4 @@
+import type { ObservationQuestionKey } from "../grading-contracts/grading/question";
 import { ariaText, documentText, json, panel, world, wrap } from "./item-panel-harness";
 import plan from "../lib/__fixtures__/id-linked-plan.json";
 import { describe, expect, it, vi } from "vitest";
@@ -367,4 +368,22 @@ it("passes the selected task through status, lineage, own-answer reads and submi
       return url.pathname.endsWith(`/${surface}`) && url.searchParams.get("task_id") === task_id;
     })).toBe(true);
   }
+});
+
+it("opens a recorded grading question by exact id and version beyond the first page", async () => {
+  const target: ObservationQuestionKey = { question_id: id("target-question"), question_version: "v2" };
+  const question = supportQuestion();
+  const originalFetch = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!originalFetch) throw new Error("grading fetch fixture missing");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = new URL(String(input), "http://kbbl.test");
+    if (url.pathname.endsWith("/status")) {
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const entry = offset === 0 ? question : { ...question, question: { ...question.question, ...target, question_text: "Exact recorded question" } };
+      return json(itemStatus([entry], { questions: { ...paged([entry]), total: 201, offset } }));
+    }
+    return originalFetch(input, init);
+  });
+  wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} questionTarget={target} onOpenTask={() => {}} />);
+  await waitFor(() => expect(screen.getByTestId("or-item-question-text").textContent).toContain("Exact recorded question"));
 });

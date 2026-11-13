@@ -1,3 +1,5 @@
+import { selectStageRows, type StageRead } from "../../lib/stage-overview";
+import type { OperatorUnitView } from "../../operator-contracts/projections/unit-view";
 import { GRADING_PANE } from "../../lib/run-workspace";
 import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId, Sid } from "../../../lib/ids";
@@ -7,6 +9,7 @@ import type { RunActivityRead } from "../../lib/run-activity";
 import { StatusBadge } from "../atoms/StatusBadge";
 
 interface RunOverviewPaneProps {
+  units?: StageRead<readonly OperatorUnitView[]>;
   overview: RunOverview;
   activity: RunActivityRead;
   onOpenPane: (pane: RunWorkspacePane) => void;
@@ -21,7 +24,7 @@ const rowButtonClass = "w-full justify-start! border-[var(--border-subtle)]! py-
  * nothing itself — every value is derived by the selector and handed down, so
  * this file stays markup and the derivations stay unit-tested.
  */
-export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewPaneProps) {
+export function RunOverviewPane({ overview, activity, units, onOpenPane }: RunOverviewPaneProps) {
   const openSession = (sessionId: Sid) => onOpenPane({ kind: "session", session_id: sessionId });
   const openArtifact = (artifactId: ArtifactId) =>
     onOpenPane({ kind: "artifact", artifact_id: artifactId });
@@ -40,6 +43,10 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
         </span>
       </section>
 
+      <section aria-label="Stages">
+        <h4 className="or-run-overview__heading">Stages</h4>
+        {units?.state === "loaded" ? <ul className="or-run-overview__list">{selectStageRows(units.value).map((unit) => <li key={unit.unit_id}><Button variant="secondary" size="xsmall" onClick={() => onOpenPane({ kind: "unit", unit_id: unit.unit_id })}>{unit.label} · {unit.stage} · {unit.status}</Button></li>)}</ul> : <p>Stages {units?.state === "unavailable" ? "unavailable" : "loading…"}</p>}
+      </section>
       <section>
         <h4 className="or-run-overview__heading">Current session</h4>
         {!overview.is_session_list_known ? (

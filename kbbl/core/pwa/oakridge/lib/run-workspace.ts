@@ -1,3 +1,4 @@
+import type { ObservationQuestionKey } from "../grading-contracts/grading/question";
 // The run command center's pane model.
 //
 // A run workspace is exactly two slots — never a window manager. There is no
@@ -22,7 +23,8 @@ import { areSelectionsEqual } from "./grading";
  */
 export type RoutePaneTarget =
   | { kind: "session"; session_id: Sid }
-  | { kind: "artifact"; artifact_id: ArtifactId };
+  | { kind: "artifact"; artifact_id: ArtifactId; revision_id?: string; run_id?: string; unit_id?: string }
+  | { kind: "unit"; unit_id: string };
 
 /**
  * What one slot can show. A closed discriminated union — a tag plus the payload
@@ -32,14 +34,23 @@ export type RoutePaneTarget =
  * `session` and `artifact` bodies arrive in c3; the model carries them from the
  * first commit so the persisted shape never has to be migrated to admit them.
  */
+export interface RecordedPaneContext {
+  readonly run_id?: string;
+  readonly unit_id?: string;
+  readonly artifact_id?: ArtifactId | null;
+  readonly revision_id?: string;
+  readonly item_path?: string;
+  readonly subject_occurrence_id?: string;
+  readonly question?: ObservationQuestionKey | null;
+}
 export type RunWorkspacePane =
   | { kind: "overview" }
   | { kind: "list" }
   | { kind: "grading" }
   /** One finding by its exact revision and path, whichever view opened it. */
-  | { kind: "item"; selection: ObservationItemAddress }
+  | ({ kind: "item"; selection: ObservationItemAddress } & RecordedPaneContext)
   /** One run-scoped task. Navigation only: a task is never an item's address. */
-  | { kind: "task"; task_id: string }
+  | ({ kind: "task"; task_id: string } & RecordedPaneContext)
   | RoutePaneTarget;
 
 export type RunWorkspacePaneKind = RunWorkspacePane["kind"];
@@ -76,9 +87,10 @@ export const arePanesEqual = (
     return left.session_id === right.session_id;
   }
   if (left.kind === "artifact" && right.kind === "artifact") {
-    return left.artifact_id === right.artifact_id;
+    return left.artifact_id === right.artifact_id && left.revision_id === right.revision_id;
   }
-  if (left.kind === "item" && right.kind === "item") return areSelectionsEqual(left.selection, right.selection);
+  if (left.kind === "unit" && right.kind === "unit") return left.unit_id === right.unit_id;
+  if (left.kind === "item" && right.kind === "item") return areSelectionsEqual(left.selection, right.selection) && JSON.stringify(left.question ?? null) === JSON.stringify(right.question ?? null) && left.subject_occurrence_id === right.subject_occurrence_id;
   if (left.kind === "task" && right.kind === "task") return left.task_id === right.task_id;
   return true;
 };
@@ -101,6 +113,8 @@ export const describePane = (pane: RunWorkspacePane): RunPaneHeading => {
       return { title: "Stages", subtitle: null };
     case "session":
       return { title: "Session", subtitle: pane.session_id.slice(0, 8) };
+    case "unit":
+      return { title: "Stage overview", subtitle: pane.unit_id };
     case "artifact":
       return { title: "Artifact", subtitle: pane.artifact_id.slice(0, 8) };
     case "grading":

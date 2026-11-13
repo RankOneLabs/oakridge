@@ -1,3 +1,6 @@
+import { usePinnedQuestionPage } from "../../hooks/usePinnedQuestionPage";
+import type { ObservationQuestionKey } from "../../grading-contracts/grading/question";
+import { sameQuestion } from "../../lib/grading";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
@@ -23,6 +26,8 @@ const FIRST_LINEAGE: ObservationPageRequest = { limit: 20, offset: 0 };
 interface Props {
   runId: string;
   selection: ObservationItemAddress;
+  questionTarget?: ObservationQuestionKey | null;
+  subjectOccurrenceId?: string;
   onOpenTask: (task_id: string) => void;
 }
 
@@ -38,30 +43,34 @@ function Unavailable({ error }: { error: unknown }) {
  * evidence, lineage, answers and Your grade out. It carries no approval control and asks nothing
  * about tasks; a task link here is navigation only.
  */
-export function ItemPanel({ runId, selection, onOpenTask }: Props) {
+export function ItemPanel({ runId, selection, questionTarget, subjectOccurrenceId, onOpenTask }: Props) {
   const key = itemSelectionKey(selection);
   const isRevealed = useGradingVisibility((state) => state.revealed_item_keys.has(key));
   const reveal = useGradingVisibility((state) => state.revealItem);
   const hide = useGradingVisibility((state) => state.hideItem);
   const address = useItemAt(runId, selection);
-  const occurrenceId = address.data?.occurrence_id ?? null;
+  const isSubjectResolved = subjectOccurrenceId === undefined || subjectOccurrenceId === address.data?.occurrence_id;
+  const occurrenceId = isSubjectResolved ? address.data?.occurrence_id ?? null : null;
   const [windows, setWindows] = useState<WindowQuery>({});
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [questionsPage, setQuestionsPage] = useState(FIRST_QUESTIONS);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [questionsPage, setQuestionsPage] = useState<ObservationPageRequest | null>(null);
+  const pinnedQuestion = usePinnedQuestionPage(occurrenceId, selection.task_id, questionTarget);
   const [lineagePage, setLineagePage] = useState(FIRST_LINEAGE);
-  const status = useItemStatus(occurrenceId === null ? null : { occurrence_id: occurrenceId, task_id: selection.task_id, top: questionsPage, nested: windows });
+  const status = useItemStatus(occurrenceId === null ? null : { occurrence_id: occurrenceId, task_id: selection.task_id, top: questionsPage ?? pinnedQuestion.data ?? FIRST_QUESTIONS, nested: windows });
   const lineage = useItemLineage(occurrenceId, lineagePage, selection.task_id);
   const setWindow = (name: string, window: ObservationPageRequest) => setWindows((current) => ({ ...current, [name]: window }));
   const showQuestions = (window: ObservationPageRequest) => { setQuestionsPage(window); setSelectedIndex(0); setWindows({}); };
 
   if (address.isError) return <Unavailable error={address.error} />;
+  if (address.data && !isSubjectResolved) return <FeedbackMessage>Recorded grading subject unresolved: {subjectOccurrenceId}</FeedbackMessage>;
   if (status.isError) return <Unavailable error={status.error} />;
   if (!status.data) return <FeedbackMessage testId="or-item-loading">Loading item…</FeedbackMessage>;
 
   const { item, links, questions, is_grading_enabled: isGradingEnabled } = status.data;
   const specTaskId = selectSpecTaskId(item);
   const header = selectItemHeader(item.selected_value);
-  const question = questions.items[Math.min(selectedIndex, Math.max(0, questions.items.length - 1))] ?? null;
+  const targetIndex = questionTarget ? questions.items.findIndex((candidate) => sameQuestion(candidate.question, questionTarget)) : 0;
+  const question = questions.items[selectedIndex === null ? targetIndex : Math.min(selectedIndex, Math.max(0, questions.items.length - 1))] ?? null;
   const taskLabel = question === null ? null : selectQuestionTaskLabel(question.task_id, links.items);
   return (
     <article className="flex flex-col gap-4 p-3" data-testid="or-item-panel" data-occurrence={item.occurrence_id} data-item-path={item.item_path} data-revision={item.source_revision_id}>
@@ -102,6 +111,7 @@ export function ItemPanel({ runId, selection, onOpenTask }: Props) {
         </div>
       )}
 
+      {questionTarget && selectedIndex === null && targetIndex < 0 && <FeedbackMessage>The recorded question is not in this page. Browse questions to locate it.</FeedbackMessage>}
       {question && (
         <>
           <section className="flex flex-col gap-1" data-testid="or-item-question-text">

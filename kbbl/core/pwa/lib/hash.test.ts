@@ -150,3 +150,13 @@ describe("session targets", () => {
     expect(readHashPermissionTarget()).toBe("request/second");
   });
 });
+
+it("round trips a unit pane with encoded path ids", () => {
+  const hash = formatRunWorkspaceHash("run", { kind: "unit", unit_id: "run/collection/key" });
+  expect(readHashRoute(`#${hash}`)).toEqual({ view: "oakridge", route: { sub: "run", id: "run", pane: { kind: "unit", unit_id: "run/collection/key" } } });
+});
+it("round trips an exact pinned artifact revision", () => {
+  const artifact_id = "artifact" as import("./ids").ArtifactId;
+  const pane = { kind: "artifact" as const, artifact_id, revision_id: "unit/artifact:2" };
+  expect(readHashRoute(`#${formatRunWorkspaceHash("run", pane)}`)).toEqual({ view: "oakridge", route: { sub: "run", id: "run", pane } });
+});

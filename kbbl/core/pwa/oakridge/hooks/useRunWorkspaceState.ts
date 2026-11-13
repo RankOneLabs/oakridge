@@ -57,7 +57,8 @@ export interface RunWorkspaceStateHandle {
 /** A stable identity for the route's pane, so effects fire on a real change. */
 const routePaneKeyOf = (pane: RoutePaneTarget | null): string => {
   if (pane === null) return "";
-  return pane.kind === "session" ? `session:${pane.session_id}` : `artifact:${pane.artifact_id}`;
+  if (pane.kind === "unit") return `unit:${pane.unit_id}`;
+  return pane.kind === "session" ? `session:${pane.session_id}` : `artifact:${pane.artifact_id}:${pane.revision_id ?? "latest"}`;
 };
 
 /**

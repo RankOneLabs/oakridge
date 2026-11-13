@@ -360,3 +360,8 @@ describe("a sessions read that failed", () => {
     expect(resolution.state.primary).toEqual(sessionPane("sid-c1-prior"));
   });
 });
+
+it("a pinned authority revision can open the JSON viewer for a schema omitted by the legacy run list", () => {
+  const index = indexRunEntities({ run: RUN, sessions: { kind: "loaded", attempts: [] }, purgedSessionIds: new Set() });
+  expect(isPaneResolvable({ kind: "artifact", artifact_id: "v2|artifact|run-1|unit|unregistered" as ArtifactId, revision_id: "recorded-revision" }, index)).toBe(true);
+});

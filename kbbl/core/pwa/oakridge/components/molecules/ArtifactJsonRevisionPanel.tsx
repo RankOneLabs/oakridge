@@ -59,9 +59,10 @@ export function ArtifactJsonRevisionPanel({ revision, descriptor, structured = f
 
   return (
     <div className="or-revision-panel" data-testid="or-revision-panel" data-revision-id={revision.id}>
+      {structured && <p className="break-all text-xs"><span className="or-label">Revision </span><code>{revision.id}</code></p>}
       {structured && <section aria-label="Field tree"><h3>Fields and item paths</h3>{itemGrading?.renderShowAll(selections)}<FieldNode node={selectStructuredPaths(revision.body)} selections={selections} itemGrading={itemGrading} /></section>}
       <div className="or-revision-panel__body">
-        <span className="or-label">Body</span>
+        <span className="or-label">{structured ? "Raw JSON" : "Body"}</span>
         {!structured && sections.length > 0 && isKeyedBody ? (
           <div data-testid="or-descriptor-sections">
             {sections.map((section) => {
