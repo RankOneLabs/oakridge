@@ -50,3 +50,10 @@ export const wrap = (node: ReactNode) => render(<QueryClientProvider client={new
 export const panel = (onOpenTask = vi.fn()) => wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={onOpenTask} />);
 export const documentText = (): string => document.body.textContent ?? "";
 export const ariaText = (): string => Array.from(document.querySelectorAll("[aria-label]")).map((element) => element.getAttribute("aria-label")).join(" ");
+
+/** A missing indexed control should fail with a fixture error, never a null assertion. */
+export function requireControl(controls: readonly HTMLElement[], index: number): HTMLElement {
+  const control = controls[index];
+  if (!control) throw new Error(`fixture requires control at index ${index}`);
+  return control;
+}
