@@ -1,3 +1,4 @@
+import type { ObservationEvaluatorDefinition } from "./grading-contracts/grading/evaluator";
 import type { ObservationRunStageRead } from "./grading-contracts/grading/task-stages";
 // Observation reads and the one submission, through kbbl's forwarding routes. The browser holds no
 // observation token: kbbl authenticates the operator and supplies the matching capability.
@@ -105,3 +106,7 @@ export async function submitAnswer(occurrence_id: ObservationItemOccurrenceId, s
 }
 
 export const readRunStages = (run_id: string): Promise<readonly ObservationRunStageRead[]> => read(`/runs/${id(run_id)}/stages`);
+
+/** Read the immutable definition that actually graded the item. */
+export const readEvaluatorDefinition = (evaluator_id: string): Promise<ObservationEvaluatorDefinition> =>
+  read(`/evaluator-definitions/${id(evaluator_id)}`);

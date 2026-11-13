@@ -14,7 +14,7 @@ it.each(["task", "acceptance_entry"])("shows a %s's captured text and explicit s
   panel(open);
   const task = await screen.findByTestId("or-item-spec-task");
   expect(task.textContent).toBe("T7");
-  expect(screen.getByText(item_kind === "task" ? "Define organizations" : "Expose organization reads")).toBeTruthy();
+  expect(screen.getAllByText(item_kind === "task" ? "Define organizations" : "Expose organization reads").length).toBeGreaterThan(0);
   expect(screen.queryByText("None linked")).toBeNull();
   fireEvent.click(task);
   expect(open).toHaveBeenCalledWith("T7");
@@ -157,7 +157,10 @@ describe("the panel's question states", () => {
     const links = await screen.findAllByTestId("or-item-task-link");
     expect(links.map((link) => [link.textContent, link.getAttribute("data-link-state")])).toEqual([["T1", "resolved"], ["T404 (unresolved)", "unresolved"]]);
     fireEvent.click(links[1]!);
-    expect(onOpenTask).toHaveBeenCalledWith("T404");
+    expect(onOpenTask).not.toHaveBeenCalled();
+    expect(links[1]?.tagName).toBe("SPAN");
+    fireEvent.click(links[0]!);
+    expect(onOpenTask).toHaveBeenCalledWith("T1");
   });
   it("an unlinked item opens the same, with no task read and no approval control", async () => {
     world.status = itemStatus([supportQuestion()], { links: paged([]) });

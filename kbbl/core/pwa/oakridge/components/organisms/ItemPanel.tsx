@@ -1,3 +1,4 @@
+import { ItemTaskAssociations } from "../molecules/ItemTaskAssociations";
 import { usePinnedQuestionPage } from "../../hooks/usePinnedQuestionPage";
 import type { ObservationQuestionKey } from "../../grading-contracts/grading/question";
 import { selectItemQuestion } from "../../lib/review-selection";
@@ -11,7 +12,7 @@ import type { ObservationItemAddress } from "../../grading-contracts/grading/ite
 import { useItemAt } from "../../hooks/useItemAt";
 import { useItemLineage } from "../../hooks/useItemLineage";
 import { useItemStatus } from "../../hooks/useItemStatus";
-import { itemSelectionKey, questionLabel, selectItemHeader, selectQuestionTaskLabel, selectSpecTaskId, stageLabel, taskLinkLabel } from "../../lib/grading";
+import { itemSelectionKey, questionLabel, selectItemHeader, selectQuestionTaskLabel, stageLabel } from "../../lib/grading";
 import { useGradingVisibility } from "../../state/gradingVisibility";
 import { artifactLabelClass } from "../molecules/ArtifactSection";
 import { FrozenEvidenceList } from "../molecules/FrozenEvidenceList";
@@ -67,13 +68,12 @@ export function ItemPanel({ runId, selection, questionTarget, subjectOccurrenceI
   if (!status.data) return <FeedbackMessage testId="or-item-loading">Loading item…</FeedbackMessage>;
 
   const { item, links, questions, is_grading_enabled: isGradingEnabled } = status.data;
-  const specTaskId = selectSpecTaskId(item);
   const header = selectItemHeader(item.selected_value);
   const { question, is_target_missing: isTargetMissing } = selectItemQuestion({ questions: questions.items, target: questionTarget, selected_index: selectedIndex });
   const taskLabel = question === null ? null : selectQuestionTaskLabel(question.task_id, links.items);
   return (
     <article className="flex flex-col gap-4 p-3" data-testid="or-item-panel" data-occurrence={item.occurrence_id} data-item-path={item.item_path} data-revision={item.source_revision_id}>
-      <header className="flex flex-col gap-1.5">
+      <header aria-label="Selected subject" className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
           {item.stage && <Chip tone="neutral">{stageLabel(item.stage)}</Chip>}
           <code className="or-code">{item.source_revision_id}</code>
@@ -84,15 +84,8 @@ export function ItemPanel({ runId, selection, questionTarget, subjectOccurrenceI
         {header.kind === "text"
           ? <p className="m-0 whitespace-pre-wrap text-sm text-[var(--text-primary)]">{header.text}</p>
           : <StructuredValue value={header.value} />}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-muted)]" data-testid="or-item-task-links">
-          <span>{specTaskId === null ? "Linked spec tasks" : "Spec task"}</span>
-          {specTaskId !== null && <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(specTaskId)} data-testid="or-item-spec-task">{specTaskId}</Button>}
-          {specTaskId === null && links.total === 0 && <Chip tone="muted">None linked</Chip>}
-          {links.items.map((link) => (
-            <Button key={link.relation_id} variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(link.producer_local_id)} data-testid="or-item-task-link" data-link-state={link.state}>{taskLinkLabel(link)}</Button>
-          ))}
-          <ListPager name="links" page={links} onWindow={(window) => setWindow("links", window)} />
-        </div>
+        <details><summary className="text-xs">Selected subject</summary><StructuredValue value={item.selected_value} /></details>
+        <ItemTaskAssociations runId={runId} item={item} links={links} onOpenTask={onOpenTask} onWindow={(window) => setWindow("links", window)} />
       </header>
 
       {questions.total === 0 ? <p className="m-0 text-sm text-[var(--text-muted)]" data-testid="or-item-no-questions">No question was pinned to this item.</p> : (
