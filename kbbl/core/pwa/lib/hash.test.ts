@@ -52,9 +52,9 @@ describe("readHashRoute oakridge routes", () => {
       view: "oakridge",
       route: { sub: "run", id: "run-1", pane: null },
     });
-    expect(withHash("#oakridge/def/def%2F1")).toEqual({
+    expect(withHash("#oakridge/defs/def%2F1")).toEqual({
       view: "oakridge",
-      route: { sub: "def", id: "def/1" },
+      route: { sub: "def", id: "def/1", selection: null },
     });
     expect(withHash("#oakridge/review-inbox")).toEqual({
       view: "oakridge",
@@ -159,4 +159,22 @@ it("round trips an exact pinned artifact revision", () => {
   const artifact_id = "artifact" as import("./ids").ArtifactId;
   const pane = { kind: "artifact" as const, artifact_id, revision_id: "unit/artifact:2" };
   expect(readHashRoute(`#${formatRunWorkspaceHash("run", pane)}`)).toEqual({ view: "oakridge", route: { sub: "run", id: "run", pane } });
+});
+
+describe("definition selection routes", () => {
+  it.each([
+    ["#oakridge/defs/d1/stages/a%2Fb", { kind: "stage", stage: "a/b" }],
+    ["#oakridge/defs/d1/units/work/item", { kind: "unit", path: "work/item" }],
+    ["#oakridge/defs/d1/units/a%20b", { kind: "unit", path: "a b" }],
+  ])("parses %s", (href, selection) => {
+    expect(readHashRoute(href as string, "")).toEqual({ view: "oakridge", route: { sub: "def", id: "d1", selection } });
+  });
+  it("keeps a declaration anchor verbatim while decoding the stage", () => {
+    expect(readHashRoute("#oakridge/defs/d1/stages/a%2Fb#stage-a%2Fb-artifact-%24draft", "")).toEqual({
+      view: "oakridge", route: { sub: "def", id: "d1", selection: { kind: "stage", stage: "a/b#stage-a%2Fb-artifact-%24draft" } },
+    });
+  });
+  it.each(["/defs/d1/units/", "/defs/d1/units/a//b", "/defs/d1/unknown/a", "/defs/d1/stages/a/b", "/def/d1"])("rejects %s", (path) => {
+    expect(readHashRoute("#oakridge" + path, "")).toEqual({ view: "oakridge", route: { sub: "runs" } });
+  });
 });

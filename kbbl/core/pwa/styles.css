@@ -3171,3 +3171,14 @@ a:focus-visible {
 .session-config-error {
   color: var(--danger-fg);
 }
+
+.or-definition-overview pre, .or-definition-raw pre { overflow: auto; max-height: 28rem; }
+.or-definition-overview li { margin-block: .4rem; }
+.or-definition-link { color: var(--accent-primary); text-decoration: underline; cursor: pointer; }
+.or-definition-graph { overflow: auto; padding: 1rem; }
+.or-definition-graph text { fill: currentColor; font-size: 12px; }
+.or-definition-graph a text { text-decoration: underline; }
+.or-definition-node { fill: var(--bg-surface); stroke: currentColor; }
+.or-definition-edge--referenced path { stroke-dasharray: 6 4; }
+.or-definition-edge text { font-size: 10px; }
+.or-definition-raw { margin-block: 1.5rem; }

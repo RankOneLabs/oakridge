@@ -67,6 +67,8 @@ export function readHashSessionTarget(): SessionHashTarget | null {
   return params.get("focus") === "pending-permission" ? "pending-permission" : null;
 }
 
+export type DefinitionSelection = { kind: "stage"; stage: string } | { kind: "unit"; path: string };
+
 export type OakridgeSubRoute =
   | { sub: "runs" }
   | { sub: "review-inbox" }
@@ -79,7 +81,7 @@ export type OakridgeSubRoute =
   | { sub: "create-project" }
   | { sub: "grading-config"; version: number | null }
   | { sub: "defs" }
-  | { sub: "def"; id: string };
+  | { sub: "def"; id: string; selection: DefinitionSelection | null };
 
 export type HashRoute =
   | { view: "sessions"; route: { sub: "sessions" } }
@@ -192,11 +194,18 @@ export function readHashRoute(
     if (rest === "/defs") {
       return { view: "oakridge", route: { sub: "defs" } };
     }
-    if (rest.startsWith("/def/")) {
-      const raw = rest.slice("/def/".length);
-      if (raw) {
-        const id = tryDecode(raw);
-        return { view: "oakridge", route: { sub: "def", id } };
+    if (rest.startsWith("/defs/")) {
+      // A declaration anchor is an exact DOM id: split it off before decoding and keep it verbatim.
+      const anchorAt = rest.indexOf("#");
+      const routePath = anchorAt === -1 ? rest : rest.slice(0, anchorAt);
+      const anchor = anchorAt === -1 ? "" : rest.slice(anchorAt);
+      const segments = routePath.slice("/defs/".length).split("/");
+      const [rawId, kind, ...path] = segments;
+      if (rawId && segments.every(Boolean)) {
+        const id = tryDecode(rawId);
+        if (segments.length === 1) return { view: "oakridge", route: { sub: "def", id, selection: null } };
+        if (kind === "stages" && path.length === 1) return { view: "oakridge", route: { sub: "def", id, selection: { kind: "stage", stage: tryDecode(path[0] as string) + anchor } } };
+        if (kind === "units" && path.length > 0) return { view: "oakridge", route: { sub: "def", id, selection: { kind: "unit", path: path.map(tryDecode).join("/") + anchor } } };
       }
     }
     return { view: "oakridge", route: { sub: "runs" } };

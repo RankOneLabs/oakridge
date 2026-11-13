@@ -30,7 +30,7 @@ export interface DefinitionPage { readonly items: readonly DefinitionSummary[]; 
 export interface DefinitionGraphNode { readonly key: string; readonly stage: string; readonly depends_on: readonly string[] }
 export interface DefinitionGraph { readonly nodes: readonly DefinitionGraphNode[]; readonly edges: readonly { readonly from: string; readonly to: string }[] }
 /** One committed definition with its authored workflow source. */
-export interface DefinitionDetail extends DefinitionSummary { readonly workflow: Workflow | AuthoredWorkflow; readonly graph: DefinitionGraph }
+export interface DefinitionDetail extends DefinitionSummary { readonly workflow: Workflow | AuthoredWorkflow; readonly effective_workflow: ParsedWorkflow; readonly graph: DefinitionGraph }
 
 /** One unit a workflow declares: its key in its group, the group's path, and its own path, unique in the workflow. */
 interface DeclaredUnit { readonly key: string; readonly prefix: string; readonly path: string; readonly unit: Unit }
@@ -61,7 +61,7 @@ export const selectDefinitionSummary = (definition: DefinitionSource): Definitio
 export const selectPinnedDefinition = (definition: DefinitionSource): PinnedDefinition =>
   selectDefinitionSummary(definition);
 export const selectDefinitionDetail = (definition: DefinitionSource): DefinitionDetail =>
-  ({ ...selectDefinitionSummary(definition), workflow: definition.source, graph: selectDefinitionGraph(definition.source) });
+  ({ ...selectDefinitionSummary(definition), workflow: definition.source, effective_workflow: definition.checked_program.workflow, graph: selectDefinitionGraph(definition.source) });
 
 function graphNode({ key, prefix, path, unit }: DeclaredUnit): DefinitionGraphNode {
   // A string `after` is an expression evaluated per collection member, not a unit key: it has no static edge.
