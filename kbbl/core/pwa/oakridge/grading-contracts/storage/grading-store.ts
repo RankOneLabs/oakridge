@@ -3,8 +3,15 @@
 
 import type { ObservationEvaluatorDefinitionId, ObservationEvidenceSetId, ObservationExecutionId, ObservationGradeObservationId, ObservationItemOccurrenceId, ObservationLogicalItemId, ObservationReviewerId, ObservationRunId } from "../domain/identity";
 import type { ObservationJsonValue } from "../domain/primitives";
+import type { ObservationEvaluatorDefinition } from "../grading/evaluator";
 import type { ObservationGradeAnswer } from "../grading/observation";
 import type { ObservationQuestionKey } from "../grading/question";
+
+export interface ObservationEvaluatorDefinitionRead extends Omit<ObservationEvaluatorDefinition, "instruction_text"> {
+  readonly identity_digest: string;
+  /** Stored nullable for definitions registered without instruction text. */
+  readonly instruction_text: string | null;
+}
 
 export interface ObservationRecordedSubmission {
   readonly task_id: ObservationLogicalItemId | null;

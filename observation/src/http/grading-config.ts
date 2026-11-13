@@ -1,14 +1,17 @@
 import { z } from "zod";
 import type { Hono, Context } from "hono";
-import { configurationDocumentSchema, configurationIssues, parseGradingDefinitions, planRegistration, selectedRunners, type GradingRegistry } from "../grading/configuration";
+import { configurationDocumentSchema, configurationIssues, parseGradingDefinitions, planRegistration, selectedRunners, type GradingRegistry, type RegisteredSelector } from "../grading/configuration";
 import type { GradingConfigStore, ConfigurationStoreError } from "../grading/configuration-store";
 import type { GradingPublication, PublicationError } from "../grading/publication";
+import { runnerRegistry, type RunnerRegistryEntry } from "../grading/runner";
+import type { JsonValue } from "../domain/primitives";
+import type { GraderCapability } from "./health";
 import type { RuntimeConfiguration } from "../grading/runtime-configuration";
 import { requireRunnerCredentials } from "../grading/provider-credentials";
 import { credentialFor, type Credentials } from "./ingest-auth";
 import { errorResponse, type ErrorBody, type ErrorStatus } from "./errors";
 
-interface ConfigurationErrorBody extends ErrorBody {
+export interface ConfigurationErrorBody extends ErrorBody {
   readonly error: ErrorBody["error"] & (PublicationError | ConfigurationStoreError);
 }
 export interface VersionSummary { readonly version: number; readonly hash: string; readonly published_at: string; readonly definition_count: number }
@@ -18,6 +21,32 @@ export interface VersionListing {
   readonly damaged_versions: readonly DamagedVersion[];
   /** Includes damaged history so clients can publish with the actual latest version precondition. */
   readonly latest_version: number | null;
+}
+/** JSON Schema is an open JSON vocabulary, exported by the registered zod schema. */
+export interface EvidenceCapabilityRead {
+  readonly name: string;
+  readonly subject_requirements: { readonly fields: readonly string[]; readonly task_subject: boolean };
+  readonly params_schema: JsonValue;
+}
+export interface GradingCatalogue {
+  readonly selectors: readonly RegisteredSelector[];
+  readonly evidence_capabilities: readonly EvidenceCapabilityRead[];
+  readonly runners: readonly string[];
+}
+export interface GradingRuntimeRead {
+  readonly version: number | null;
+  readonly hash: string | null;
+  readonly graders: GraderCapability;
+  readonly applied_at: string;
+  readonly last_failure: PublicationError | null;
+}
+/** Derive browser choices from the same registries that validate publication. */
+export function gradingCatalogue(registry: GradingRegistry, runners: Readonly<Record<string, RunnerRegistryEntry>>): GradingCatalogue {
+  return { selectors: registry.selectors.map(({ artifact_kind, item_selector, item_kind, item_fields }) =>
+    ({ artifact_kind, item_selector, item_kind, item_fields })),
+    evidence_capabilities: Object.entries(registry.capabilities).map(([name, capability]) => ({ name,
+      subject_requirements: capability.subject, params_schema: z.toJSONSchema(capability.params) as JsonValue })),
+    runners: Object.keys(runners) };
 }
 export interface GradingConfigDependencies {
   readonly store: GradingConfigStore;
@@ -43,6 +72,7 @@ export function registerGradingConfigRoutes(app: Hono, deps: GradingConfigDepend
       return errorResponse(c, 401, "unauthorized", "configure credential required");
     await next();
   });
+  app.get("/v1/grading-config/catalogue", (c) => c.json(gradingCatalogue(deps.registry, runnerRegistry)));
   app.get("/v1/grading-config/draft", async (c) => {
     const draft = await deps.store.readDraft();
     return draft.ok ? c.json(draft.value) : configurationFailure(c, draft.error);
@@ -100,6 +130,6 @@ export function registerGradingConfigRoutes(app: Hono, deps: GradingConfigDepend
   app.get("/v1/grading-config/runtime", (c) => {
     const current = deps.runtime.current();
     return c.json({ version: current.version, hash: current.hash, graders: current.grader_capability,
-      applied_at: current.applied_at, last_failure });
+      applied_at: current.applied_at, last_failure } satisfies GradingRuntimeRead);
   });
 }

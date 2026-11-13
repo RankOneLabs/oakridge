@@ -57,6 +57,26 @@ export async function registerQuestion(db: Database, tenant: TenantScope, questi
   } catch (cause) { return failure("register_question", question.question_id, String(cause)); }
 }
 
+/** The immutable row the tenant actually graded with, including its pinned instruction text. */
+export interface EvaluatorDefinitionRead extends Omit<EvaluatorDefinition, "instruction_text"> {
+  readonly identity_digest: string;
+  /** Stored nullable for definitions registered without instruction text. */
+  readonly instruction_text: string | null;
+}
+export async function readEvaluatorDefinition(db: Database, tenant: TenantScope, id: string): Promise<EvaluatorDefinitionRead | null> {
+  return withTenant(db, tenant, async (trx) => {
+    const row = await trx.selectFrom("observation.evaluator_definition").selectAll()
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("evaluator_definition_id", "=", id).executeTakeFirst();
+    if (!row) return null;
+    return { evaluator_definition_id: row.evaluator_definition_id, kind: row.kind as EvaluatorDefinition["kind"],
+      backend_kind: row.backend_kind, provider: row.provider, model: row.model, prompt_digest: row.prompt_digest,
+      config_digest: row.config_digest, runtime_revision: row.runtime_revision, cost_metadata: row.cost_metadata,
+      seed: row.seed, attempt_controls: row.attempt_controls, identity_digest: row.identity_digest,
+      instruction_text: row.instruction_text };
+  });
+}
+
 export async function registerEvaluator(db: Database, tenant: TenantScope, evaluator: EvaluatorDefinition): Promise<Result<void, GradingError>> {
   const digest = evaluatorIdentity(evaluator);
   if (!digest.ok) return failure("register_evaluator", evaluator.evaluator_definition_id, digest.error.detail);
