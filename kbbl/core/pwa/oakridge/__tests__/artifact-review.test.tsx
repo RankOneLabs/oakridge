@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 
 import { ArtifactReview } from "../components/organisms/ArtifactReview";
 import { TasksViewer } from "../components/molecules/TasksViewer";
-import type { ArtifactDetail, ParkedGate } from "../artifact-types";
+import type { ArtifactDetail, ArtifactRevision, ParkedGate } from "../artifact-types";
 import { invalidateCachedRunUnits } from "../client";
 
 // Split out of oakridge.test.tsx when the chrome union landed: the review
@@ -46,6 +46,14 @@ const PARKED_GATE_FIXTURE: ParkedGate = {
   actionable: true,
 };
 
+const REVISION_FIXTURE: ArtifactRevision = {
+  id: "rev-1",
+  status: "approved",
+  created_at: "2026-07-01T09:00:00Z",
+  body: { title: "Spec body" },
+  validation: { valid: true },
+};
+
 const ARTIFACT_FIXTURE: ArtifactDetail = {
   id: "art-1",
   type_id: "spec_v2",
@@ -54,15 +62,7 @@ const ARTIFACT_FIXTURE: ArtifactDetail = {
   anchor_schema: null,
   run_id: "run-1",
   producing_stage: "spec",
-  revisions: [
-    {
-      id: "rev-1",
-      status: "approved",
-      created_at: "2026-07-01T09:00:00Z",
-      body: { title: "Spec body" },
-      validation: { valid: true },
-    },
-  ],
+  revisions: [REVISION_FIXTURE],
 };
 
 describe("ArtifactReview", () => {
@@ -92,7 +92,7 @@ describe("ArtifactReview", () => {
     const described: ArtifactDetail = {
       ...ARTIFACT_FIXTURE,
       revisions: [{
-        ...ARTIFACT_FIXTURE.revisions[0]!,
+        ...REVISION_FIXTURE,
         body: { details: "Second", summary: "First" },
       }],
       review: {
@@ -120,8 +120,8 @@ describe("ArtifactReview", () => {
     const artifact: ArtifactDetail = {
       ...ARTIFACT_FIXTURE,
       revisions: [
-        ARTIFACT_FIXTURE.revisions[0]!,
-        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", status: "draft" },
+        REVISION_FIXTURE,
+        { ...REVISION_FIXTURE, id: "rev-2", status: "draft" },
       ],
     };
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -145,7 +145,7 @@ describe("ArtifactReview", () => {
       ...ARTIFACT_FIXTURE,
       component_id: "dev-plan-viewer",
       revisions: [{
-        ...ARTIFACT_FIXTURE.revisions[0]!,
+        ...REVISION_FIXTURE,
         body: {
           summary: "One cohort.",
           cohorts: [{
@@ -205,8 +205,8 @@ describe("assessment builder handoff inside the review", () => {
       producing_stage: "assessor", label: "alpha",
       capabilities: { reviewable: true, commentable: false, atom_editable: true, review_items: false },
       revisions: [
-        { ...ARTIFACT_FIXTURE.revisions[0]!, body: ASSESSMENT_BODY },
-        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", body: CURRENT_ASSESSMENT_BODY },
+        { ...REVISION_FIXTURE, body: ASSESSMENT_BODY },
+        { ...REVISION_FIXTURE, id: "rev-2", body: CURRENT_ASSESSMENT_BODY },
       ],
     };
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
@@ -240,8 +240,8 @@ describe("task edit refusal", () => {
 describe("artifact presentation", () => {
   it("defaults to rendered and uses the same pinned revision in the structured tree and raw formats", async () => {
     const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "dev-pr-summary-viewer",
-      revisions: [{ ...ARTIFACT_FIXTURE.revisions[0]!, body: { summary: "Earlier content" } },
-        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", body: { summary: "Latest content" } }] };
+      revisions: [{ ...REVISION_FIXTURE, body: { summary: "Earlier content" } },
+        { ...REVISION_FIXTURE, id: "rev-2", body: { summary: "Latest content" } }] };
     wrap(<ArtifactReview artifactId="art-1" revisionId="rev-1" />, artifact);
     expect(screen.getByRole("tab", { name: "rendered" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "structured" }));
@@ -264,7 +264,7 @@ it("keeps grade controls and blind state across presentation switches without gr
   useGradingVisibility.setState({ revealed_item_keys: new Set() });
   const revisionId = compositeId({ kind: "artifact", runId: "run-1", unitId: "u", name: "tasks:raw-revision" });
   const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "dev-tasks-viewer", capabilities: { atom_editable: true, commentable: false, reviewable: false, review_items: false },
-    revisions: [{ ...ARTIFACT_FIXTURE.revisions[0]!, id: revisionId, body: { tasks: [{ id: "T1", description: "Recorded task", requirement_ids: [] }] } }] };
+    revisions: [{ ...REVISION_FIXTURE, id: revisionId, body: { tasks: [{ id: "T1", description: "Recorded task", requirement_ids: [] }] } }] };
   const status = itemStatus([supportQuestion()]);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
