@@ -12,11 +12,11 @@ import { type Database, withTenant } from "../src/storage/database";
 import { registerDefinitions } from "../src/storage/grading-store";
 import { createEvidenceReconciler } from "../src/storage/evidence-pipeline";
 import { gradeNext } from "../src/grading/worker";
-import { committedDefinitions, createFeed, credentialEnv, integration, oakridgeGradingRegistry, runConfig, scratchDatabase, tenant } from "./grading-fixture";
+import { fixtureDefinitions, createFeed, credentialEnv, integration, oakridgeGradingRegistry, runConfig, scratchDatabase, tenant } from "./grading-fixture";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
-const original = await committedDefinitions();
+const original = await fixtureDefinitions();
 const definitions = original.map((definition) => ({ ...definition, evaluators: [] }));
 const changed = definitions.map((definition) => ({ ...definition, question: { ...definition.question, text: "Changed question" } }));
 function snapshot(selected: GradingDefinitions, version: number | null = null) {

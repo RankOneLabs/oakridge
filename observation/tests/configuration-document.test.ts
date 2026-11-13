@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { canonicalDigest } from "canonical-json";
 import { configurationHash, parseConfigurationDocument, parseGradingDefinitions } from "../src/grading/configuration";
-import { committedDefinitions, oakridgeGradingRegistry } from "./grading-fixture";
+import { fixtureDefinitions, oakridgeGradingRegistry } from "./grading-fixture";
 
-const definitions = await committedDefinitions();
+const definitions = await fixtureDefinitions();
 const hash = configurationHash(definitions);
 if (!hash.ok) throw new Error(hash.error.detail);
 const published = { status: "published", version: 1, hash: hash.value, published_at: "2026-11-01T00:00:00Z", definitions } as const;

@@ -4,11 +4,12 @@
  *
  *   provider-env.ts names                                  every setting a runner reads
  *   provider-env.ts live-port --env-file <path>            the port the live service binds
- *   provider-env.ts select --env-file <path> --graders <path>
+ *   provider-env.ts select --env-file <path> --store-dir <path>
  *
  * `select` prints NAME=VALUE lines for the configured runners only. Failure
  * prints `<kind>:<entity>` on stderr, which names settings but never a value.
  */
+import { createGradingConfigStore } from "../src/grading/configuration-store";
 import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { parseArgs } from "node:util";
 import { allProviderCredentialNames, configuredRunnerNames, credentialsForRunners, parseEnvFile,
@@ -22,16 +23,15 @@ async function readEntries(path: string): Promise<ReadonlyMap<string, string>> {
   return parseEnvFile(await file.exists() ? await file.text() : "");
 }
 
-/** No grading-definitions.json means no grader is configured, not that one failed. */
-async function readRunners(path: string): Promise<Result<readonly string[], ProviderCredentialError>> {
-  const file = Bun.file(path);
-  if (!await file.exists()) return ok([]);
-  try { return configuredRunnerNames(await file.json(), oakridgeGradingRegistry); }
-  catch { return err({ operation: "provider_credentials", kind: "invalid_definitions", entity_id: "grading-definitions.json", detail: "not JSON" }); }
+/** Provider selection follows precisely the published version startup loads. */
+async function readRunners(directory: string): Promise<Result<readonly string[], ProviderCredentialError>> {
+  const latest = await createGradingConfigStore(directory).latestVersion();
+  if (!latest.ok) return err({ operation: "provider_credentials", kind: "invalid_definitions", entity_id: latest.error.entity_id, detail: latest.error.detail });
+  return latest.value ? configuredRunnerNames(latest.value.definitions, oakridgeGradingRegistry) : ok([]);
 }
 
-async function selectLines(env_file: string, graders: string): Promise<Result<readonly string[], ProviderCredentialError>> {
-  const runners = await readRunners(graders);
+async function selectLines(env_file: string, store_dir: string): Promise<Result<readonly string[], ProviderCredentialError>> {
+  const runners = await readRunners(store_dir);
   if (!runners.ok) return runners;
   const credentials = credentialsForRunners(runners.value);
   if (!credentials.ok) return credentials;
@@ -40,14 +40,14 @@ async function selectLines(env_file: string, graders: string): Promise<Result<re
 }
 
 const { values, positionals } = parseArgs({ allowPositionals: true,
-  options: { "env-file": { type: "string" }, graders: { type: "string" } } });
+  options: { "env-file": { type: "string" }, "store-dir": { type: "string" } } });
 const [command] = positionals;
 const env_file = values["env-file"];
 
 if (command === "names") console.log(allProviderCredentialNames().join("\n"));
 else if (command === "live-port" && env_file) console.log((await readEntries(env_file)).get("OBSERVATION_PORT") || DEFAULT_LIVE_PORT);
-else if (command === "select" && env_file && values.graders) {
-  const lines = await selectLines(env_file, values.graders);
+else if (command === "select" && env_file && values["store-dir"]) {
+  const lines = await selectLines(env_file, values["store-dir"]);
   if (!lines.ok) { console.error(`${lines.error.kind}:${lines.error.entity_id}`); process.exit(1); }
   if (lines.value.length > 0) console.log(lines.value.join("\n"));
-} else { console.error("usage: provider-env.ts names | live-port --env-file <path> | select --env-file <path> --graders <path>"); process.exit(2); }
+} else { console.error("usage: provider-env.ts names | live-port --env-file <path> | select --env-file <path> --store-dir <path>"); process.exit(2); }

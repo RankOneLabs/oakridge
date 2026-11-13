@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { KbblHealth, ObservationHealth } from "../../kbbl/core/server/handlers/observation-health";
 import { err, ok } from "../src/domain/primitives";
-import { machineGraders, parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
+import { configurationHash, machineGraders, parseGradingDefinitions, planRegistration, type GradingDefinitions, type PublishedConfiguration } from "../src/grading/configuration";
 import { isPinTarget } from "../src/grading/evidence";
 import { oakridgeGradingRegistry } from "./grading-fixture";
 import { ASSESSMENT_FINDING_KIND, FINDING_KIND } from "../src/producers/oakridge/catalogue";
@@ -34,10 +34,16 @@ function fakeIo(overrides: Partial<ProofIo> = {}): ProofIo {
   return { state, startStack: async () => ok(undefined), stopStack: async () => {}, stackAnswers: async () => false,
     observationStatus: async () => status("running", "pid_42"), kbblHealth: async () => kbblHealth({ state: "no_configured_graders" }),
     dbosHealthy: async () => true,
-    tokens: async () => ok({ capabilities: { ingest: "i", read: "r", grade: "g" }, private_files: true }),
+    tokens: async () => ok({ capabilities: { ingest: "i", read: "r", grade: "g", configure: "c" }, private_files: true }),
     shadowQuery: async () => ok("1"), killObservation: () => {}, dbos: async () => ok({}), observationGet: async () => ok({}),
-    publisherFailures: async () => [], readGraders: async () => "{}", writeGraders: async () => {},
+    publisherFailures: async () => [], readGradingConfiguration: async () => publishedFixture("[]"), publishGradingConfiguration: async () => {},
     now: () => clock, sleep: async (ms) => { clock += ms; }, ...overrides };
+}
+function publishedFixture(text: string): PublishedConfiguration {
+  const definitions = JSON.parse(text) as GradingDefinitions;
+  const hash = configurationHash(definitions);
+  if (!hash.ok) throw new Error(hash.error.detail);
+  return { status: "published", version: 1, hash: hash.value, published_at: "2026-11-01T00:00:00Z", definitions };
 }
 const failing = (report: ScenarioReport) => report.checks.filter((check) => !check.passed).map((check) => check.name);
 
@@ -219,9 +225,9 @@ describe("a run's capture", () => {
 });
 
 test("a relations run that gave the proof none of its steps cannot read as a pass", async () => {
-  const graders = await Bun.file(resolve(import.meta.dir, "../grading-definitions.json")).text();
+  const graders = await Bun.file(resolve(import.meta.dir, "./fixtures/grading-definitions.json")).text();
   const run = { run_id: "run-1", definition_id: "definition-1" };
-  const report = await relationsScenario(fakeIo({ readGraders: async () => graders }), { shared_input: {} as SourceRunInput,
+  const report = await relationsScenario(fakeIo({ readGradingConfiguration: async () => publishedFixture(graders) }), { shared_input: {} as SourceRunInput,
     run: async () => ({ report: { id: "source-run", status: "passed", checks: [], evidence: NO_EVIDENCE }, run }),
     openObservation: async () => ok({ db: {} as never, tenant: { producer: "oakridge", namespace: "n" }, close: async () => {} }) }, "matrix");
   expect([report.status, failing(report)]).toEqual(["failed", ["the links run gave the proof its findings and tasks"]]);
@@ -574,7 +580,7 @@ describe("the registration scenario", () => {
     expect(checks.map((check) => [check.passed, check.detail])).toEqual([[true, "2 pinned question(s) on 3 item(s)"], [true, "all match"]]);
   });
 
-  const committedText = readFileSync(resolve(repository, "observation/grading-definitions.json"), "utf8");
+  const committedText = readFileSync(resolve(repository, "observation/tests/fixtures/grading-definitions.json"), "utf8");
   const plan = (text: string) => {
     const parsed = parseGradingDefinitions(JSON.parse(text), oakridgeGradingRegistry);
     if (!parsed.ok) throw new Error(parsed.error.detail);
@@ -590,7 +596,7 @@ describe("the registration scenario", () => {
     readonly never_arrives?: boolean; readonly unstable_evidence?: boolean; readonly drops_correctness?: boolean;
     readonly wrong_commit?: boolean; readonly forgets_evidence?: boolean }
 
-  /** A shadow whose observation registers whatever grading-definitions.json held when it last started, pins
+  /** A shadow whose observation registers the latest published configuration, pins
    * each captured item with the selection running at its capture, and reads a cited file only
    * while the launch repository is in place. */
   function shadow(options: ShadowOptions = {}) {
@@ -626,8 +632,8 @@ describe("the registration scenario", () => {
     const io = fakeIo({
       now: () => clock,
       sleep: async (ms) => { clock += ms; await tick(); },
-      readGraders: async () => graders,
-      writeGraders: async (text) => { graders = text; },
+      readGradingConfiguration: async () => publishedFixture(graders),
+      publishGradingConfiguration: async (definitions) => { const text = JSON.stringify(definitions, null, 2) + "\n"; graders = text; running = text; for (const evaluator of plan(text).evaluators) stored.add(evaluator.evaluator_definition_id); occurrences.forEach(collect); },
       startStack: async () => {
         running = graders; killed = false;
         for (const evaluator of plan(graders).evaluators) stored.add(evaluator.evaluator_definition_id);
@@ -635,6 +641,7 @@ describe("the registration scenario", () => {
         occurrences.forEach(collect);
         return ok(undefined);
       },
+      stackAnswers: async () => running !== null && !killed,
       stopStack: async () => { running = null; },
       killObservation: () => { killed = true; },
       kbblHealth: async () => kbblHealth(running && !killed ? { state: "configured", graders: plan(running).graders.map((grader) =>
@@ -683,7 +690,7 @@ describe("the registration scenario", () => {
       repository_key: "oakridge",
       readCited: async (commit_sha, path) => ok(commit_sha === "abc" && path === "core/a.ts" ? "one\ntwo\nthree\nfour" : null),
       withholdRepository: async () => { withheld = true; return ok("withheld"); },
-      supplyRepository: async () => { withheld = false; return ok("supplied"); },
+      supplyRepository: async () => { withheld = false; occurrences.forEach(collect); return ok("supplied"); },
     };
     return { io, source, graders: () => graders, withheld: () => withheld };
   }
@@ -759,7 +766,7 @@ describe("the registration scenario", () => {
     expect(stack.withheld()).toBe(false);
   });
 
-  test("the edit changes only grading-definitions.json and keeps every runner and model", () => {
+  test("the edit changes only published definitions and keeps every runner and model", () => {
     const committed = parseGradingDefinitions(JSON.parse(committedText), oakridgeGradingRegistry);
     if (!committed.ok) throw new Error(committed.error.detail);
     const edited = editedGraders(committed.value);

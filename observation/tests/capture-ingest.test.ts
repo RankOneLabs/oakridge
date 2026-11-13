@@ -5,7 +5,7 @@ import { createApp } from "../src/http/app";
 import { decodeCapture } from "../src/ingest/capture";
 import type { SourceEventDelivery } from "../src/ingest/cursor";
 import { startObservation } from "../src/main";
-import { oakridgeProfile, committedDefinitions, createFeed, credentialEnv, databaseUrl, fixtureBody, integration, revisionOutcome, scratchDatabase, tenant } from "./grading-fixture";
+import { oakridgeProfile, fixtureDefinitions, createFeed, credentialEnv, databaseUrl, fixtureBody, integration, revisionOutcome, scratchDatabase, tenant } from "./grading-fixture";
 import { withTenant, type Database } from "../src/storage/database";
 import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
 import { readCapturedRunInput } from "../src/storage/run-capture-store";
@@ -81,7 +81,7 @@ integration("the captured launch input is the durable run input", async () => sc
 }));
 
 integration("the service starts on a fresh database and stops cleanly", async () => scratchDatabase(async (db) => {
-  const service = await startObservation({ ...credentialEnv(await committedDefinitions()), OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0",
+  const service = await startObservation({ ...credentialEnv(await fixtureDefinitions()), OBSERVATION_DATABASE_URL: await databaseUrl(db), OBSERVATION_PORT: "0", OBSERVATION_GRADING_CONFIG_DIR: `/tmp/observation-empty-${crypto.randomUUID()}`,
     OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest), OBSERVATION_READ_CREDENTIALS: JSON.stringify(credentials.read) });
   try {
     const cursor = await fetch(`http://127.0.0.1:${service.port}/v1/sources/oakridge/cursor`, { headers: { authorization: "Bearer ingest-secret" } });

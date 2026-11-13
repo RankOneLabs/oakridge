@@ -4,10 +4,10 @@ import { allProviderCredentialNames, configuredRunnerNames, credentialsForRunner
 import { runnerRegistry } from "../src/grading/runner";
 
 import { machineGraders } from "../src/grading/configuration";
-import { committedDefinitions, oakridgeGradingRegistry } from "./grading-fixture";
+import { fixtureDefinitions, oakridgeGradingRegistry } from "./grading-fixture";
 
 const graders = async (...runners: string[]) => {
-  const [definition] = await committedDefinitions();
+  const [definition] = await fixtureDefinitions();
   const grader = machineGraders(definition!)[0]!;
   return [{ ...definition!, evaluators: runners.map((runner, index) =>
     runner === "human" ? { runner: "human" as const } : { ...grader, runner, model: `model-${index}` }) }];
@@ -30,7 +30,7 @@ test("human-only definitions select no provider settings", async () => {
 });
 
 test("a grader without its model, instructions or cost is refused before selecting settings", async () => {
-  const [definition] = await committedDefinitions();
+  const [definition] = await fixtureDefinitions();
   expect(configured([{ ...definition, evaluators: [{ runner: "jev_direct" }] }]))
     .toMatchObject({ ok: false, error: { kind: "invalid_definitions" } });
 });
@@ -40,7 +40,7 @@ test("invalid definitions fail before selecting provider settings", () => {
 });
 
 test("an unknown capability fails before selecting provider settings", async () => {
-  const [definition] = await committedDefinitions();
+  const [definition] = await fixtureDefinitions();
   expect(configured([{ ...definition!, id: "finding.relevnce", evidence: ["absent_capability"] }]))
     .toMatchObject({ ok: false, error: { operation: "provider_credentials", kind: "invalid_definitions",
       entity_id: "finding.relevnce", detail: expect.stringContaining("absent_capability") } });

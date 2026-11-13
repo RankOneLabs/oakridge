@@ -4,6 +4,7 @@
  * and restarts. See README.md for the invocations.
  *
  *   bun observation/verification/proof.ts runtime
+ *   bun observation/verification/proof.ts runtime-refresh --input <file>
  *   bun observation/verification/proof.ts live
  *   bun observation/verification/proof.ts source-run --input <file> [--through plan|brief|assessment]
  *   bun observation/verification/proof.ts registration --input <file>
@@ -20,6 +21,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, type LauncherState, type ProofReport,
   type ScenarioId, type ScenarioReport, type SourceIdentity } from "./proof-contract";
+import { runtimeRefreshScenario } from "./runtime-refresh";
 import { registrationScenario, type RegistrationSource } from "./registration";
 import { err, ok } from "../src/domain/primitives";
 import { gradingControls } from "../src/grading/budget";
@@ -147,8 +149,8 @@ function relationsSource(io: ProofIo, grading: GradingSource, shared_input: Sour
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { input: { type: "string" }, "shared-input": { type: "string" }, through: { type: "string" } } });
   const [command] = positionals;
-  if (command !== "runtime" && command !== "live" && command !== "source-run" && command !== "registration" && command !== "grading" && command !== "relations" && command !== "workspace") {
-    console.error("usage: proof.ts runtime | live | source-run --input <file> [--through analysis|plan|brief|assessment] | registration --input <file> | grading --input <file> | relations --input <file> --shared-input <file> | workspace --input <file>");
+  if (command !== "runtime" && command !== "runtime-refresh" && command !== "live" && command !== "source-run" && command !== "registration" && command !== "grading" && command !== "relations" && command !== "workspace") {
+    console.error("usage: proof.ts runtime | runtime-refresh --input <file> | live | source-run --input <file> [--through analysis|plan|brief|assessment] | registration --input <file> | grading --input <file> | relations --input <file> --shared-input <file> | workspace --input <file>");
     return 2;
   }
   const proof_id = `${command}-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
@@ -170,6 +172,7 @@ async function main(): Promise<number> {
     if (command === "live") return liveScenario(io);
     if (!values.input) throw new Error(`${command} needs --input`);
     const input = sourceRunInputSchema.parse(await Bun.file(values.input).json());
+    if (command === "runtime-refresh") return runtimeRefreshScenario(io, await gradingSource(io, input, directory, proof_id));
     if (command === "registration") return registrationScenario(io, await registrationSource(io, input, directory, proof_id));
     if (command === "grading") return gradingScenario(io, await gradingSource(io, input, directory, proof_id));
     if (command === "workspace") return workspaceScenario(io, { ...await gradingSource(io, input, directory, proof_id), directory });

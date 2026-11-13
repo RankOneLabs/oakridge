@@ -167,7 +167,7 @@ export function oakridgeCatalogue(artifact_kind: string, schema_version: string)
   return allDefinitions(schema_version).filter((entry) => entry.artifact_kind === artifact_kind);
 }
 
-/** Registered extractor addresses; question bindings belong to grading-definitions.json. */
+/** Registered extractor addresses; question bindings belong to published grading configuration. */
 export const OAKRIDGE_SELECTORS: readonly RegisteredSelector[] = allDefinitions(VERSION).map(({ artifact_kind, item_selector, item_kind }) =>
   ({ artifact_kind, item_selector, item_kind, item_fields: fieldsForItem(item_kind) }));
 

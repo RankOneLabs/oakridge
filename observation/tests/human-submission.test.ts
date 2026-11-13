@@ -252,12 +252,12 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
 }));
 
 integration("empty task_ids pins one task-less subject; unresolved ids wait and later gain tasked subjects", async () => scratchDatabase(async (db) => {
-  const { committedDefinitions, oakridgeGradingRegistry, oakridgeEvidence } = await import("./grading-fixture");
+  const { fixtureDefinitions, oakridgeGradingRegistry, oakridgeEvidence } = await import("./grading-fixture");
   const { planRegistration } = await import("../src/grading/configuration");
   const { registerDefinitions } = await import("../src/storage/grading-store");
   const { collectPinnedQuestion } = await import("../src/storage/captured-evidence-store");
   const { CaptureArtifactSource } = await import("../src/storage/capture-artifact-source");
-  const registration = planRegistration(await committedDefinitions(), oakridgeGradingRegistry);
+  const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   await registerDefinitions(db, tenant, registration.value);
   const feed = createFeed(db, tenant, registration.value.capture);

@@ -82,7 +82,7 @@ test("no retired module, entrypoint or credential remains to dispatch outside HT
     "src/storage/coverage-store.ts", "src/storage/export-store.ts", "src/http/exports.ts", "src/runners/human-intake.ts",
     "scripts/jev-live-walkthrough.ts", "scripts/live-grade-subject.ts", "scripts/regenerate-live-fixtures.ts", "src/producers/oakridge/classification.ts"])
     expect({ path, exists: existsSync(resolve(root, path)) }).toEqual({ path, exists: false });
-  expect(credentialsFromEnv({} as NodeJS.ProcessEnv)).toEqual({ ingest: [], read: [], grade: [] });
+  expect(credentialsFromEnv({} as NodeJS.ProcessEnv)).toEqual({ ingest: [], read: [], grade: [], configure: [] });
 });
 
 // A reviewer's submission writing its execution already completed is checked by behavior in human-submission.test.ts.

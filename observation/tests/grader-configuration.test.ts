@@ -7,7 +7,7 @@ import { machineGraders, parseGradingDefinitions, planRegistration, questionDefi
 import { runnerRegistry } from "../src/grading/runner";
 import { prepareGrading } from "../src/main";
 import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
-import { committedDefinitions, credentialEnv } from "./grading-fixture";
+import { fixtureDefinitions, credentialEnv } from "./grading-fixture";
 
 const parse = (raw: unknown) => parseGradingDefinitions(raw, oakridgeGradingRegistry);
 const plan = (definitions: GradingDefinitions) => {
@@ -19,7 +19,7 @@ const editFirst = (definitions: GradingDefinitions, edit: (definition: GradingDe
   definitions.map((definition, index) => index === 0 ? edit(definition) : definition);
 
 test("committed definitions select six targets under five question keys", async () => {
-  const definitions = await committedDefinitions();
+  const definitions = await fixtureDefinitions();
   expect(parse(definitions).ok).toBe(true);
   expect(plan(definitions).capture.pins.map(({ question_id, item_kind, artifact_kind, item_selector }) =>
     [question_id, item_kind, artifact_kind, item_selector])).toEqual([
@@ -37,7 +37,7 @@ test("committed definitions select six targets under five question keys", async 
 
 test("derived questions preserve the previous wording, values and semantics verbatim", async () => {
   const previous: unknown = LEGACY_QUESTIONS;
-  const derived: unknown = plan(await committedDefinitions()).questions.map(({ question_version, ...question }) => question);
+  const derived: unknown = plan(await fixtureDefinitions()).questions.map(({ question_version, ...question }) => question);
   expect(derived).toEqual(previous);
 });
 
@@ -67,35 +67,35 @@ const refusals: readonly Refusal[] = [
   { name: "non-pointer task_ids", kind: "invalid_task_ids", field: "task_ids", edit: (d) => ({ ...d, scope: "per_task", task_ids: "task_ids" }) },
 ];
 for (const refusal of refusals) test(`the loader refuses ${refusal.name} with definition context`, async () => {
-  const result = parse(editFirst(await committedDefinitions(), refusal.edit));
+  const result = parse(editFirst(await fixtureDefinitions(), refusal.edit));
   expect(result).toMatchObject({ ok: false, error: { operation: "grader_configuration", kind: refusal.kind,
     entity_id: refusal.entity_id ?? "finding.relevance", detail: refusal.field ? expect.stringContaining(refusal.field) : expect.any(String) } });
 });
 
 test("duplicate definition ids are refused", async () => {
-  const definitions = await committedDefinitions();
+  const definitions = await fixtureDefinitions();
   expect(parse([...definitions, definitions[0]])).toMatchObject({ ok: false, error: { kind: "duplicate_definition", entity_id: definitions[0]!.id } });
 });
 
 test("new question ids use existing selectors and capabilities without code registration", async () => {
-  const [definition] = await committedDefinitions();
+  const [definition] = await fixtureDefinitions();
   expect(parse([{ ...definition!, id: "another_producer.relevance" }]).ok).toBe(true);
 });
 
 test("malformed definitions and missing evaluator fields are refused", async () => {
-  const definitions = await committedDefinitions();
+  const definitions = await fixtureDefinitions();
   for (const raw of [{ questions: [] }, [], editFirst(definitions, (d) => ({ ...d, evaluators: [{ runner: "jev_direct" }] }))])
     expect(parse(raw)).toMatchObject({ ok: false, error: { kind: "invalid_definitions" } });
 });
 
 test("System One criteria must name exactly the question's answers", async () => {
-  const definitions = await committedDefinitions();
+  const definitions = await fixtureDefinitions();
   expect(parse(editFirst(definitions, (d) => ({ ...d, question: { ...d.question, values: ["different"] } }))))
     .toMatchObject({ ok: false, error: { kind: "invalid_instructions", detail: expect.stringContaining("criteria must name exactly") } });
 });
 
 test("every target must support a capability's subject fields", async () => {
-  const definitions = await committedDefinitions();
+  const definitions = await fixtureDefinitions();
   const registry = { ...oakridgeGradingRegistry, selectors: [...oakridgeGradingRegistry.selectors,
     { artifact_kind: "another", item_selector: "/findings/*", item_kind: "finding", item_fields: [] }] };
   const first = { ...definitions[0]!, targets: [...definitions[0]!.targets, { artifact: "another", selector: "/findings/*" }],
@@ -104,7 +104,7 @@ test("every target must support a capability's subject fields", async () => {
 });
 
 test("question versions digest only the question block and complete target", async () => {
-  const definitions = await committedDefinitions();
+  const definitions = await fixtureDefinitions();
   const first = definitions[0]!;
   const version = (definition: GradingDefinition) => {
     const question = questionDefinition(definition, "finding");
@@ -133,7 +133,7 @@ test("question versions digest only the question block and complete target", asy
 });
 
 test("registration pins exactly the configured graders plus the single implicit human", async () => {
-  const definitions = await committedDefinitions();
+  const definitions = await fixtureDefinitions();
   const registration = plan(definitions);
   expect(registration.evaluators.filter((e) => e.kind === "human")).toHaveLength(1);
   for (const pin of registration.capture.pins) {
@@ -142,7 +142,7 @@ test("registration pins exactly the configured graders plus the single implicit 
     for (const grader of graders) expect(registration.evaluators).toContainEqual(expect.objectContaining({ backend_kind: grader.runner, model: grader.model,
       cost_metadata: { estimated_cost_per_call: grader.estimated_cost_per_call }, instruction_text: expect.any(String) }));
   }
-  expect(plan(definitions).capture).toEqual(plan(await committedDefinitions()).capture);
+  expect(plan(definitions).capture).toEqual(plan(await fixtureDefinitions()).capture);
   const explicitHuman = definitions.map((d) => ({ ...d, evaluators: [...d.evaluators, { runner: "human" as const }] }));
   expect(plan(explicitHuman).capture).toEqual(registration.capture);
   expect(selectedRunners(explicitHuman)).toEqual(selectedRunners(definitions));
@@ -152,7 +152,7 @@ test("registration pins exactly the configured graders plus the single implicit 
 });
 
 test("several different graders may be configured for a question and all are pinned", async () => {
-  const definitions = await committedDefinitions();
+  const definitions = await fixtureDefinitions();
   const first = definitions[0]!;
   const grader = machineGraders(first)[0]!;
   const registration = plan([{ ...first, evaluators: [...first.evaluators, { ...grader, model: `${grader.model}-second` }] }]);
@@ -160,7 +160,7 @@ test("several different graders may be configured for a question and all are pin
 });
 
 test("startup refuses missing credentials without disclosing unrelated values", async () => {
-  const definitions = await committedDefinitions();
+  const definitions = await fixtureDefinitions();
   const env = credentialEnv(definitions);
   expect(prepareGrading(definitions, oakridgeGradingRegistry, env).ok).toBe(true);
   for (const name of Object.keys(env)) {
@@ -176,8 +176,8 @@ const RUNNER_SOURCES = [resolve(SOURCE_ROOT, "grading/runner.ts"), resolve(SOURC
 function files(directory: string): readonly string[] {
   return readdirSync(directory).flatMap((name) => { const path = resolve(directory, name); return statSync(path).isDirectory() ? files(path) : [path]; });
 }
-test("runner and model selection lives only in grading-definitions.json", async () => {
-  const models = [...new Set((await committedDefinitions()).flatMap((d) => machineGraders(d).map((g) => g.model)))];
+test("runtime source files contain no selected runner or model", async () => {
+  const models = [...new Set((await fixtureDefinitions()).flatMap((d) => machineGraders(d).map((g) => g.model)))];
   const runnerLiteral = new RegExp(`["'\`](${Object.keys(runnerRegistry).join("|")})["'\`]`);
   const roots = [SOURCE_ROOT, resolve(import.meta.dir, "../fixtures"), resolve(import.meta.dir, "../../workflow-config/prompts")];
   const offending = roots.flatMap(files).filter((path) => !RUNNER_SOURCES.some((source) => path === source || path.startsWith(`${source}/`))).flatMap((path) => {
@@ -271,7 +271,7 @@ const LEGACY_QUESTIONS = [
 
 test("the shared output validator derives response types and enumerated values from a question", async () => {
   const { questionAnswerProblem } = await import("../src/grading/question");
-  const definition = plan(await committedDefinitions()).questions[0]!;
+  const definition = plan(await fixtureDefinitions()).questions[0]!;
   const numeric = { ...definition, response_kind: "numeric" as const, allowed_values: [1, 2] };
   expect(questionAnswerProblem(numeric, { state: "answered", kind: "numeric", value: 1 })).toBeNull();
   expect(questionAnswerProblem(numeric, { state: "answered", kind: "numeric", value: 3 })).toContain("not an allowed value");

@@ -37,7 +37,7 @@ export type RunnerResult = Result<EvaluationOutcome, GradingError>;
 /** The environment names a runner reads: what must be set, and what it may also use. */
 export interface RunnerCredentials { readonly required: readonly string[]; readonly optional: readonly string[] }
 /** One retained runner implementation. Which runner grades which question is chosen only by
- * grading-definitions.json; an entry here is a capability, never a selection. */
+ * published grading configuration; an entry here is a capability, never a selection. */
 export interface RunnerRegistryEntry {
   readonly kind: "code" | "model";
   /** Who serves the requests, recorded on every evaluator definition this runner backs. */

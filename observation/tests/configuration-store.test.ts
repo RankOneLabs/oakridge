@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canonicalDigest } from "canonical-json";
 import { createGradingConfigStore } from "../src/grading/configuration-store";
-import { committedDefinitions } from "./grading-fixture";
+import { fixtureDefinitions } from "./grading-fixture";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -13,7 +13,7 @@ async function fixture() {
   roots.push(root);
   return { root, store: createGradingConfigStore(root) };
 }
-const definitions = await committedDefinitions();
+const definitions = await fixtureDefinitions();
 const input = { definitions, published_at: "2026-11-01T00:00:00Z" };
 
 test("read-only calls leave a missing root absent", async () => {

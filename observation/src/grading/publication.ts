@@ -15,7 +15,9 @@ export function producerTenants(credentials: Credentials, producer: string): rea
   return [...new Map(all.map((credential) => [JSON.stringify([credential.producer, credential.namespace]),
     { producer: credential.producer, namespace: credential.namespace }])).values()];
 }
-export interface PublishRequest { readonly expected_draft_digest: string | null; readonly expected_latest_version: number | null }
+export interface PublishRequest { readonly expected_draft_digest: string | null; readonly expected_latest_version: number | null;
+  /** Offline recovery always appends history, even when restoring the latest content. */
+  readonly force_new_version?: boolean }
 interface PublicationMetadata {
   readonly version: number;
   readonly hash: string;
@@ -75,9 +77,9 @@ export function createGradingPublication(deps: PublicationDependencies): Grading
       const current_digest = draft.value?.digest ?? null;
       if (request.expected_draft_digest !== current_digest) return err({ operation: "grading_publication", kind: "draft_conflict",
         entity_id: "draft", detail: "draft changed since it was read", current_digest });
-      const latest = await store.latestVersion();
-      if (!latest.ok) return storeFailure(latest.error);
-      const current_latest_version = latest.value?.version ?? null;
+      const listed = await store.listVersions();
+      if (!listed.ok) return storeFailure(listed.error);
+      const current_latest_version = listed.value.at(-1) ?? null;
       if (request.expected_latest_version !== current_latest_version) return err({ operation: "grading_publication", kind: "version_conflict",
         entity_id: "versions", detail: "latest version changed since it was read", current_latest_version });
       if (!draft.value) return err({ operation: "grading_publication", kind: "invalid_configuration", entity_id: "draft",
@@ -94,7 +96,10 @@ export function createGradingPublication(deps: PublicationDependencies): Grading
       const credentials = requireRunnerCredentials(selectedRunners(definitions.value), deps.env ?? process.env);
       if (!credentials.ok) return err({ operation: "grading_publication", kind: "unconfigured_credential", entity_id: credentials.error.entity_id,
         detail: credentials.error.detail, restart_required: true });
-      const same = latest.value?.hash === hash.value ? latest.value : null;
+      // Corrupt published content blocks startup, but must not block an explicit recovery publication.
+      const latest = current_latest_version === null ? ok(null) : await store.readVersion(current_latest_version);
+      if (!latest.ok && latest.error.kind !== "invalid_document") return storeFailure(latest.error);
+      const same = !request.force_new_version && latest.ok && latest.value?.hash === hash.value ? latest.value : null;
       if (same && deps.runtime.current().hash === hash.value) return ok(outcome("unchanged", same));
       const registration = planned.value;
       const profile = deps.profile(registration);
