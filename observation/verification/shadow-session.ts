@@ -192,9 +192,8 @@ export function createShadowIo(state: LauncherState, log_path: string): ProofIo 
     },
     async readGradingConfiguration() {
       const versions = await configure("versions") as VersionListing;
-      const latest = versions.versions.at(-1);
-      if (!latest) throw new Error("the shadow has no published grading configuration; import one before running verification");
-      const document = configurationDocumentSchema.parse(await configure(`versions/${latest.version}`));
+      if (versions.latest_version === null) throw new Error("the shadow has no published grading configuration; import one before running verification");
+      const document = configurationDocumentSchema.parse(await configure(`versions/${versions.latest_version}`));
       if (document.status !== "published") throw new Error("expected published configuration");
       return document;
     },
@@ -203,7 +202,7 @@ export function createShadowIo(state: LauncherState, log_path: string): ProofIo 
       const draft = await configure("draft") as StoredDraft | null;
       const document = configurationDocumentSchema.parse({ status: "draft", definitions });
       const saved = await configure("draft", "PUT", { expected_draft_digest: draft?.digest ?? null, document }) as StoredDraft;
-      await configure("publish", "POST", { expected_draft_digest: saved.digest, expected_latest_version: versions.versions.at(-1)?.version ?? null });
+      await configure("publish", "POST", { expected_draft_digest: saved.digest, expected_latest_version: versions.latest_version });
     },
     now: () => Date.now(),
     sleep: (ms) => Bun.sleep(ms),

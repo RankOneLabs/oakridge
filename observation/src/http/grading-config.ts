@@ -12,7 +12,13 @@ interface ConfigurationErrorBody extends ErrorBody {
   readonly error: ErrorBody["error"] & (PublicationError | ConfigurationStoreError);
 }
 export interface VersionSummary { readonly version: number; readonly hash: string; readonly published_at: string; readonly definition_count: number }
-export interface VersionListing { readonly versions: readonly VersionSummary[] }
+export interface DamagedVersion { readonly version: number; readonly error: ConfigurationStoreError }
+export interface VersionListing {
+  readonly versions: readonly VersionSummary[];
+  readonly damaged_versions: readonly DamagedVersion[];
+  /** Includes damaged history so clients can publish with the actual latest version precondition. */
+  readonly latest_version: number | null;
+}
 export interface GradingConfigDependencies {
   readonly store: GradingConfigStore;
   readonly publication: GradingPublication;
@@ -64,12 +70,16 @@ export function registerGradingConfigRoutes(app: Hono, deps: GradingConfigDepend
     const listed = await deps.store.listVersions();
     if (!listed.ok) return configurationFailure(c, listed.error);
     const versions: VersionSummary[] = [];
+    const damaged_versions: DamagedVersion[] = [];
     for (const version of listed.value) {
       const read = await deps.store.readVersion(version);
-      if (!read.ok) return configurationFailure(c, read.error);
-      if (read.value) versions.push({ version, hash: read.value.hash, published_at: read.value.published_at, definition_count: read.value.definitions.length });
+      if (!read.ok) damaged_versions.push({ version, error: read.error });
+      else if (read.value) versions.push({ version, hash: read.value.hash, published_at: read.value.published_at, definition_count: read.value.definitions.length });
+      else damaged_versions.push({ version, error: { operation: "grading_config_store", kind: "invalid_document",
+        entity_id: String(version), detail: "published version disappeared", version, hash: null } });
     }
-    return c.json({ versions });
+    const listing: VersionListing = { versions, damaged_versions, latest_version: listed.value.at(-1) ?? null };
+    return c.json(listing);
   });
   app.get("/v1/grading-config/versions/:version", async (c) => {
     const text = c.req.param("version");

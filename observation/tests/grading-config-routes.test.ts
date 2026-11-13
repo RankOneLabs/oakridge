@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok, type JsonValue } from "../src/domain/primitives";
@@ -13,6 +13,9 @@ import { registerGradingConfigRoutes } from "../src/http/grading-config";
 import { credentialsFromEnv } from "../src/http/ingest-auth";
 import type { Database } from "../src/storage/database";
 import { fixtureDefinitions } from "./grading-fixture";
+import { runConfigurationCommand } from "../scripts/grading-config";
+import { createShadowIo } from "../verification/shadow-session";
+import type { LauncherState } from "../verification/proof-contract";
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -38,8 +41,59 @@ async function fixture(publicationOverride?: GradingPublication) {
   const definitions = (await fixtureDefinitions()).map((entry) => ({ ...entry, evaluators: [] }));
   const save = (expected_draft_digest: string | null = null) => request("draft", "PUT", { expected_draft_digest,
     document: { status: "draft", definitions } });
-  return { store, runtime, app, request, definitions, save, registrations: () => registrations };
+  return { root, store, publication, runtime, app, request, definitions, save, registrations: () => registrations };
 }
+
+/** Real HTTP/configure-token IO, bound to this test's store rather than a running shadow. */
+async function shadowClient(h: Awaited<ReturnType<typeof fixture>>, url: string) {
+  for (const [capability, token] of [["ingest", "ingest"], ["read", "read"], ["grade", "grade"], ["configure", "configure"]])
+    await writeFile(join(h.root, `observation-${capability}.token`), token!, { mode: 0o600 });
+  const state: LauncherState = { name: "test", state_dir: h.root,
+    kbbl: { port: 1, url, data_dir: h.root }, dbos: { port: 2, url },
+    postgres: { container: "unused", volume: "unused", port: 3, authority_database: "unused" },
+    observation: { port: Number(new URL(url).port), url, database: "unused", namespace: "n",
+      ingest_token_file: join(h.root, "observation-ingest.token"), read_token_file: join(h.root, "observation-read.token"),
+      grade_token_file: join(h.root, "observation-grade.token"), status_file: join(h.root, "status.json") }, provider_env_file: "unused" };
+  return createShadowIo(state, join(h.root, "launcher.log"));
+}
+
+test("an empty history reports no damaged or latest version", async () => {
+  const h = await fixture();
+  expect(await (await h.request("versions")).json()).toEqual({ versions: [], damaged_versions: [], latest_version: null });
+});
+
+test("offline recovery leaves healthy history readable and publishable through the shadow client", async () => {
+  const h = await fixture();
+  await h.store.allocateAndWritePublished({ definitions: h.definitions, published_at: "2026-11-01T00:00:00Z" });
+  await h.store.allocateAndWritePublished({ definitions: h.definitions, published_at: "2026-11-01T00:00:01Z" });
+  await writeFile(join(h.root, "versions/000002.json"), "corrupt JSON");
+  const recovered = await runConfigurationCommand({ command: "republish", version: 1 }, h.store, h.publication);
+  expect(recovered).toMatchObject({ ok: true, value: { outcome: "published", version: 3 } });
+  const listed = await h.request("versions");
+  expect([listed.status, await listed.json()]).toEqual([200, { latest_version: 3,
+    versions: [expect.objectContaining({ version: 1 }), expect.objectContaining({ version: 3 })],
+    damaged_versions: [{ version: 2, error: expect.objectContaining({ kind: "invalid_document", version: 2 }) }] }]);
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: h.app.fetch });
+  try {
+    const client = await shadowClient(h, server.url.toString());
+    expect(await client.readGradingConfiguration()).toMatchObject({ version: 3, definitions: h.definitions });
+    await client.publishGradingConfiguration(h.definitions.slice(1));
+    expect(await client.readGradingConfiguration()).toMatchObject({ version: 4, definitions: h.definitions.slice(1) });
+  } finally { await server.stop(true); }
+});
+
+test("a damaged latest version never selects older content and still permits an explicit publication", async () => {
+  const h = await fixture();
+  await h.store.allocateAndWritePublished({ definitions: h.definitions, published_at: "2026-11-01T00:00:00Z" });
+  await writeFile(join(h.root, "versions/000001.json"), "corrupt JSON");
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: h.app.fetch });
+  try {
+    const client = await shadowClient(h, server.url.toString());
+    await expect(client.readGradingConfiguration()).rejects.toThrow("HTTP 422");
+    await client.publishGradingConfiguration(h.definitions);
+    expect(await client.readGradingConfiguration()).toMatchObject({ version: 2, definitions: h.definitions });
+  } finally { await server.stop(true); }
+});
 for (const token of ["", "wrong", "ingest", "read", "grade"]) test(`all configuration routes refuse token ${token || "missing"}`, async () => {
   const h = await fixture();
   for (const [path, method] of [["draft", "GET"], ["draft", "PUT"], ["draft/validate", "POST"], ["versions", "GET"], ["versions/1", "GET"], ["publish", "POST"], ["runtime", "GET"]])
