@@ -14,8 +14,10 @@ interface GradingConfigBrowserProps {
   readonly version: number | null;
   readonly onNavigate: (version: number | null) => void;
   readonly onReload: () => void;
+  /** Called after each confirmed draft or publication write, so cached server reads can be refreshed. */
+  readonly onWrite?: () => void;
 }
-export function GradingConfigBrowser({ initial, version, onNavigate, onReload }: GradingConfigBrowserProps) {
+export function GradingConfigBrowser({ initial, version, onNavigate, onReload, onWrite }: GradingConfigBrowserProps) {
   const [read, setRead] = useState(initial);
   const [draft, setDraft] = useState(() => createDraft(initial.draft, initial.versions.latest_version));
   const [feedback, setFeedback] = useState<GradingFeedback | null>(null);
@@ -50,7 +52,7 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload }:
     setIsBusy(true); setFeedback({ kind: "saving" });
     const result = await saveGradingDraft(draft.definitions, draft.baseDigest);
     if (result.ok && result.value?.digest && result.value.document?.status === "draft" && Array.isArray(result.value.document.definitions)) {
-      setDraft((current) => saveSucceeded(current, result.value)); setFeedback({ kind: "saved", digest: result.value.digest });
+      setDraft((current) => saveSucceeded(current, result.value)); setFeedback({ kind: "saved", digest: result.value.digest }); onWrite?.();
     } else {
       setDraft(saveFailed);
       setFeedback(result.ok ? { kind: "transport_error", detail: "Unexpected save response" } : result.feedback);
@@ -66,7 +68,7 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload }:
     const outcome = await publishGradingDraft({ expected_draft_digest: draft.baseDigest, expected_latest_version: draft.latestVersionSeen });
     setFeedback(outcome);
     if (outcome.kind === "published" || outcome.kind === "unchanged" || outcome.kind === "reapplied") {
-      setDraft((current) => ({ ...current, latestVersionSeen: outcome.version }));
+      setDraft((current) => ({ ...current, latestVersionSeen: outcome.version })); onWrite?.();
       const refreshed = await readGradingConfiguration(version);
       if (refreshed.ok) setRead(refreshed.value);
     }
@@ -80,7 +82,7 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload }:
     if (result.ok && result.value?.digest && result.value.document?.status === "draft" && Array.isArray(result.value.document.definitions)) {
       setDraft((current) => saveSucceeded(current, result.value));
       setJsonInputs({}); setRawError(null); setIsRaw(false);
-      setFeedback({ kind: "saved", digest: result.value.digest });
+      setFeedback({ kind: "saved", digest: result.value.digest }); onWrite?.();
     } else setFeedback(result.ok ? { kind: "transport_error", detail: "Unexpected save response" } : result.feedback);
     setIsBusy(false);
   };

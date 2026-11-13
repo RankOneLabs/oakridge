@@ -63,6 +63,18 @@ it("preserves the mounted editor and its base digest during pending and complete
   const request = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "PUT");
   expect(atPath(JSON.parse(String(request?.[1]?.body)) as Json, ["expected_draft_digest"])).toBe("draft-base");
 });
+it("seeds a returning draft editor from a fresh read instead of an earlier cached draft", async () => {
+  client.setQueryData(["oakridge", "grading-config", null], { ok: true, value: { ...configRead(), draft: { ...configRead().draft, digest: "cached-digest" } } });
+  await view(); change("Question text", "Edited after returning");
+  click("Save draft"); await screen.findByText("Draft saved · saved");
+  const request = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "PUT");
+  expect(atPath(JSON.parse(String(request?.[1]?.body)) as Json, ["expected_draft_digest"])).toBe("draft-base");
+});
+it("marks cached reads stale after a draft write", async () => {
+  await view(); change("Question text", "Saved question");
+  click("Save draft"); await screen.findByText("Draft saved · saved");
+  expect(client.getQueryState(["oakridge", "grading-config", null])?.isInvalidated).toBe(true);
+});
 it("preserves malformed raw text and parse blocking when background reads fail", async () => {
   await view(); click("Raw JSON"); change("Whole definitions array (raw JSON)", "[");
   vi.mocked(fetch).mockRejectedValueOnce(new Error("offline"));
