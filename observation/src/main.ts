@@ -1,11 +1,12 @@
 import { createStageSource } from "./producers/oakridge/stage-source";
 import type { RunStageSource } from "./grading/task-stages";
 import { fileURLToPath } from "node:url";
-import { parseGradingDefinitions, planRegistration, selectedRunners, type GradingRegistry, type GradingRegistration } from "./grading/configuration";
+import { configurationHash, parseGradingDefinitions, planRegistration, selectedRunners, type GradingRegistry, type GradingRegistration } from "./grading/configuration";
+import { producerTenants } from "./grading/publication";
 import { requireRunnerCredentials } from "./grading/provider-credentials";
 import { createApp } from "./http/app";
-import { NO_CONFIGURED_GRADERS, type GraderCapability } from "./http/health";
-import { credentialsFromEnv, type Credentials } from "./http/ingest-auth";
+import { RuntimeConfiguration, runtimeSnapshot } from "./grading/runtime-configuration";
+import { credentialsFromEnv } from "./http/ingest-auth";
 import type { RepositoryReader } from "./ports/artifact-source";
 import { oakridgeGradingRegistry, oakridgeProfile } from "./producers/oakridge/profile";
 import { err, ok, type Result } from "./domain/primitives";
@@ -16,6 +17,9 @@ import { registryRunners, startGradingWorker, type RunnerResolver } from "./grad
 import { createGitRepositoryReader } from "./storage/git-repository-reader";
 import { registerDefinitions } from "./storage/grading-store";
 import { migrateEmptyDatabase } from "./storage/migrate";
+
+export { graderCapability } from "./grading/runtime-configuration";
+export { producerTenants } from "./grading/publication";
 
 /** The only grader selection. Swapping a grader is an edit here and a restart. */
 export const GRADING_DEFINITIONS_FILE = fileURLToPath(new URL("../grading-definitions.json", import.meta.url));
@@ -35,17 +39,6 @@ export function prepareGrading(graders: unknown, registry: GradingRegistry, env:
   if (!credentials.ok) return startupError(credentials.error.kind, credentials.error.entity_id, credentials.error.detail);
   return registration;
 }
-
-/** Every tenant a credential can reach for this producer gets the same definitions. */
-export function producerTenants(credentials: Credentials, producer: string): readonly TenantScope[] {
-  const all = [...credentials.ingest, ...credentials.read, ...(credentials.grade ?? [])].filter((credential) => credential.producer === producer);
-  return [...new Map(all.map((credential) => [JSON.stringify([credential.producer, credential.namespace]),
-    { producer: credential.producer, namespace: credential.namespace }])).values()];
-}
-
-export const graderCapability = (registration: GradingRegistration): GraderCapability => registration.graders.length === 0
-  ? NO_CONFIGURED_GRADERS : { state: "configured", graders: registration.graders.map((grader) => ({ runner: grader.runner,
-    evaluator_definition_id: grader.evaluator_definition_id })) };
 
 async function readDefinitions(path: string): Promise<Result<unknown, StartupError>> {
   try { return ok(await Bun.file(path).json()); }
@@ -100,24 +93,27 @@ export async function startObservation(env: NodeJS.ProcessEnv = process.env, opt
   const graders = await readDefinitions(options.grading_definitions_file ?? GRADING_DEFINITIONS_FILE);
   const registration = graders.ok ? prepareGrading(graders.value, oakridgeGradingRegistry, env) : graders;
   if (!registration.ok) throw new Error(`observation cannot start: ${registration.error.kind}: ${registration.error.entity_id}: ${registration.error.detail}`);
-  const profile = oakridgeProfile(registration.value.questions, registration.value.collector);
+  if (!graders.ok || !Array.isArray(graders.value)) throw new Error("observation cannot start: invalid definitions array");
+  const hash = configurationHash(graders.value);
+  if (!hash.ok) throw new Error(`observation cannot start: invalid configuration hash: ${hash.error.detail}`);
+  const runtime = new RuntimeConfiguration(runtimeSnapshot({ version: null, hash: hash.value, registration: registration.value,
+    profile: oakridgeProfile(registration.value.questions, registration.value.collector), applied_at: new Date().toISOString() }));
   const controls = gradingControls(env);
   if (!controls.ok) throw new Error(`observation cannot start: invalid_controls: ${controls.error.entity_id}: ${controls.error.detail}`);
   const db = openDatabase(env.OBSERVATION_DATABASE_URL);
   try {
     await migrateEmptyDatabase(db);
-    const tenants = producerTenants(credentials, profile.producer);
+    const tenants = producerTenants(credentials, runtime.current().profile.producer);
     const registered = await registerAll(db, tenants, registration.value);
     if (!registered.ok) throw new Error(`observation cannot start: ${registered.error.kind}: ${registered.error.entity_id}: ${registered.error.detail}`);
     console.info("[observation] registered grading definitions", { tenants: tenants.length,
       questions: registration.value.questions.map((question) => `${question.question_id}@${question.question_version}`),
       evaluators: registration.value.evaluators.map((evaluator) => `${evaluator.backend_kind}:${evaluator.evaluator_definition_id}`) });
-    const evidence = createEvidenceReconciler({ db, collector: profile.evidence, repository: options.repository ?? createGitRepositoryReader(),
+    const evidence = createEvidenceReconciler({ db, runtime_configuration: runtime, repository: options.repository ?? createGitRepositoryReader(),
       admission: { retry_limit: controls.value.retry_limit } });
-    const capability = graderCapability(registration.value);
-    const app = createApp({ db, credentials, profile,
-      stage_source: options.stage_source ?? createStageSource({ base_url: env.OAKRIDGE_CORE_BASE_URL ?? "http://127.0.0.1:8790", token: env.OAKRIDGE_CORE_CONTROL_TOKEN ?? env.OAKRIDGE_CONTROL_TOKEN }), capture_configuration: registration.value.capture, evidence,
-      grader_capability: () => capability });
+    const app = createApp({ db, credentials, runtime_configuration: runtime,
+      stage_source: options.stage_source ?? createStageSource({ base_url: env.OAKRIDGE_CORE_BASE_URL ?? "http://127.0.0.1:8790", token: env.OAKRIDGE_CORE_CONTROL_TOKEN ?? env.OAKRIDGE_CONTROL_TOKEN }), evidence,
+      grader_capability: () => runtime.current().grader_capability });
     const server = Bun.serve({ fetch: app.fetch, hostname: env.OBSERVATION_HOST ?? "127.0.0.1", port: Number(env.OBSERVATION_PORT ?? 8791) });
     // Work an earlier process left is taken up: waiting questions, ready questions to admit, and
     // executions whose claims expired.

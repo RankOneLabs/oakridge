@@ -1,3 +1,4 @@
+import type { RuntimeConfiguration } from "../grading/runtime-configuration";
 import type { RunAdmission } from "../grading/execution";
 import type { RepositoryReader } from "../ports/artifact-source";
 import type { EvidenceCollector } from "../ports/producer-profile";
@@ -27,14 +28,18 @@ export interface EvidenceReconciler {
   /** Every run with a waiting question or ready questions still to admit, as at startup. */
   reconcileAll(tenant: TenantScope): Promise<readonly RunReconciliation[]>;
 }
-export interface EvidenceReconcilerDependencies {
+interface EvidenceReconcilerBase {
   readonly db: Database;
-  readonly collector: EvidenceCollector;
   readonly repository: RepositoryReader;
   /** Absent means evidence is collected and nothing is admitted. */
   readonly admission?: AdmissionControls;
   readonly log?: (message: string, detail: Readonly<Record<string, unknown>>) => void;
 }
+
+export type EvidenceReconcilerDependencies = EvidenceReconcilerBase & (
+  | { readonly runtime_configuration: RuntimeConfiguration; readonly collector?: never }
+  | { readonly collector: EvidenceCollector; readonly runtime_configuration?: never }
+);
 
 const defaultLog = (message: string, detail: Readonly<Record<string, unknown>>): void => console.info(`[observation] ${message}`, detail);
 export function createEvidenceReconciler(deps: EvidenceReconcilerDependencies): EvidenceReconciler {
@@ -42,7 +47,7 @@ export function createEvidenceReconciler(deps: EvidenceReconcilerDependencies): 
   const running = new Map<string, Promise<RunReconciliation>>();
   const queued = new Map<string, Promise<RunReconciliation>>();
   const pass = async (tenant: TenantScope, run_id: string): Promise<RunReconciliation> => {
-    const source = new CaptureArtifactSource({ db: deps.db, tenant, run_id, collector: deps.collector, repository: deps.repository });
+    const source = new CaptureArtifactSource({ db: deps.db, tenant, run_id, collector: deps.runtime_configuration ? deps.runtime_configuration.current().profile.evidence : deps.collector, repository: deps.repository });
     const collection = await collectWaitingEvidence(deps.db, tenant, source, run_id);
     if (collection.ready.length + collection.waiting.length + collection.failed.length > 0)
       log("evidence collected", { producer: tenant.producer, namespace: tenant.namespace, run_id, ready: collection.ready.length,

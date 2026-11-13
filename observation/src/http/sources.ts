@@ -32,8 +32,7 @@ export const startsReconciliation = (outcome: SourceEventOutcome): boolean =>
 
 /** The one ordered source feed, served under the injected producer's name. */
 export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void {
-  const { producer, extraction } = deps.profile;
-  const context = { extraction, configuration: deps.capture_configuration ?? NO_CAPTURE_PINS };
+  const { producer } = deps.profile;
   app.get(`/v1/sources/${producer}/cursor`, async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
     if (!credential || credential.producer !== producer) return errorResponse(c, 401, "unauthorized", "ingest credential required");
@@ -52,7 +51,7 @@ export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void 
       if (decoded.value.envelope.source.producer !== credential.producer || decoded.value.envelope.source.namespace !== credential.namespace)
         return errorResponse(c, 403, "forbidden", "credential cannot ingest this source");
     }
-    const result = await deliverSourceEvent(deps.db, credential, delivery, context);
+    const result = await deliverSourceEvent(deps.db, credential, delivery, { extraction: deps.profile.extraction, configuration: deps.capture_configuration ?? NO_CAPTURE_PINS });
     // Reconciliation reads repositories, so the acknowledgement does not wait for it; a failed pass
     // leaves its questions waiting for the next event, sweep or restart.
     if (result.status === 200 && startsReconciliation(delivery.outcome)) deps.evidence?.reconcileRun(credential, delivery.outcome.run_id)
