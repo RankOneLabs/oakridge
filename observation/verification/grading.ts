@@ -702,11 +702,14 @@ async function gradingScenarioOwned(io: ProofIo, source: GradingSource): Promise
     checks.push(check("the service holds one claim with its request in flight", held.read.some((measurement) => measurement.detail === "claimed"),
       countBy(held.read)));
     const contestedEvents = await authorityEvents(io, contested.run_id);
-    checks.push(await stopObservation("observation is killed with its claim in flight while DBOS keeps serving"));
+    // Preparing runners reads the configuration API, so it must precede the service's death.
     const worker = await source.secondWorker();
     checks.push(check("a second worker opens the shadow's observation database", worker.ok, worker.ok ? worker.value.tenant.namespace : worker.error.detail));
     if (!worker.ok) return finish();
-    try { second_worker = await secondWorkerPhase(io, worker.value, contested.run_id, CONCURRENT_ESTIMATE_PER_CALL); }
+    try {
+      checks.push(await stopObservation("observation is killed with its claim in flight while DBOS keeps serving"));
+      second_worker = await secondWorkerPhase(io, worker.value, contested.run_id, CONCURRENT_ESTIMATE_PER_CALL);
+    }
     finally { await worker.value.close(); }
     checks.push(...secondWorkerChecks(second_worker));
     await io.stopStack();
@@ -728,10 +731,19 @@ async function gradingScenarioOwned(io: ProofIo, source: GradingSource): Promise
     return finish();
   } finally {
     try {
-      if (!await io.stackAnswers()) { const restored = await io.startStack(); if (!restored.ok) throw new Error(restored.error.detail); }
+      // DBOS/kbbl may answer while observation is dead. A normal restart also restores real provider settings.
+      await io.stopStack();
+      const restored = await io.startStack();
+      if (!restored.ok) throw new Error(restored.error.detail);
+      const ready = await settleObservation(io);
+      if (!observationSettled(ready.health)) throw new Error(`cannot restore grading configuration: ${ready.health}; ${ready.launcher}`);
       await io.publishGradingConfiguration(original.definitions);
-    } finally { await io.stopStack(); }
-    await source.supplyRepository();
-    await rm(directory, { recursive: true, force: true });
+    } finally {
+      try { await io.stopStack(); }
+      finally {
+        try { await source.supplyRepository(); }
+        finally { await rm(directory, { recursive: true, force: true }); }
+      }
+    }
   }
 }

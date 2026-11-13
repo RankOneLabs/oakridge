@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { KbblHealth, ObservationHealth } from "../../kbbl/core/server/handlers/observation-health";
@@ -17,7 +17,7 @@ import { awaitRunCapture, isRunCaptured, readRunCapture } from "../verification/
 import { awaitLaunch, type LaunchedProcess, type ProofIo } from "../verification/shadow-session";
 import { relationsScenario } from "../verification/relations";
 import { runtimeRefreshScenario } from "../verification/runtime-refresh";
-import type { GradingSource } from "../verification/grading";
+import { gradingScenario, type GradingSource, type GradingRunLabel } from "../verification/grading";
 import { sourceRunScenario, type ReviewCheckpoint, type SourceRunInput } from "../verification/source-run";
 
 const repository = resolve(import.meta.dir, "../..");
@@ -75,6 +75,91 @@ const feedIo = (feed: () => Feed): Pick<ProofIo, "shadowQuery" | "observationGet
   },
 });
 const refused = (detail: string) => err({ operation: "observation_request", entity_id: "x", detail });
+
+test.each(["assessment-on", "analysis-concurrent"] as const)("grading restores configuration after observation dies during %s", async (failure_at) => {
+  const directory = mkdtempSync(join(tmpdir(), "grading-cleanup-"));
+  const provider_env_file = join(directory, "provider.env");
+  writeFileSync(provider_env_file, "TYPESAFE_API_KEY=fixture\nJEV_API_KEY=fixture\n");
+  const original = await fixtureDefinitions();
+  let definitions = original;
+  let stack = false;
+  let observation = false;
+  let label: GradingRunLabel = "analysis-on";
+  let provider_refuses = false;
+  let worker_prepared = false;
+  let worker_closed = false;
+  let restored = false;
+  let clock = 0;
+  const feed = caughtUp("assessment");
+  const io = fakeIo({
+    state: { ...state, provider_env_file },
+    now: () => clock, sleep: async (ms) => { clock += ms; },
+    stackAnswers: async () => stack,
+    startStack: async (options) => { stack = observation = true; provider_refuses = options?.provider_env_file?.includes("refused") ?? false; return ok(undefined); },
+    stopStack: async () => { stack = observation = false; },
+    observationStatus: async () => status(observation ? "running" : "exited", observation ? "pid_42" : "killed"),
+    kbblHealth: async () => {
+      const planned = planRegistration(definitions, oakridgeGradingRegistry);
+      if (!planned.ok) throw new Error(planned.error.detail);
+      return kbblHealth(observation ? { state: "configured", graders: planned.value.graders.map((grader) =>
+        ({ runner: grader.runner, evaluatorDefinitionId: grader.evaluator_definition_id })) } : { state: "down", reason: "unreachable" });
+    },
+    readGradingConfiguration: async () => {
+      if (!observation) throw new Error("configuration API is down");
+      return publishedFixture(JSON.stringify(definitions));
+    },
+    publishGradingConfiguration: async (next) => {
+      if (!observation) throw new Error("cannot restore to a dead service");
+      definitions = next;
+      restored = next === original || JSON.stringify(next) === JSON.stringify(original);
+    },
+    killObservation: () => {
+      observation = false;
+      if (label === failure_at) throw new Error("injected failure after observation died");
+    },
+    shadowQuery: async (_database, query) => {
+      if (query.includes("source_event_outcome")) return ok(JSON.stringify(feed.outcomes));
+      if (query.includes("json_agg")) return ok(JSON.stringify(feed.events));
+      if (query.includes("config::text")) return ok(JSON.stringify({ grading_enabled: !query.includes("analysis-off") }));
+      return ok("1");
+    },
+    observationGet: async (path) => {
+      if (path.endsWith("/cursor")) return ok({ cursor: feed.cursor });
+      if (path.includes("/source-revisions/")) return ok({ revision_id: decodeURIComponent(path.split("/").at(-1)!), run_id: "run-assessment-on", artifact_kind: "assessment" });
+      if (path.includes("/grading-spend")) return ok({ is_grading_enabled: !path.includes("analysis-off"), captured_config: { grading_enabled: !path.includes("analysis-off") },
+        committed: 0, requests_sent: 0, attempts: 0, executions: {} });
+      if (path.includes("/runs/")) return ok({ items: [{ occurrence_id: label, revision_id: "analysis", json_pointer: "/findings/0",
+        artifact_kind: "analysis", item_selector: "/findings/*", item_kind: FINDING_KIND }] });
+      if (path.includes("/evidence?")) return ok({ items: [] });
+      const in_flight = !provider_refuses && (label === "analysis-failing" || label === "analysis-concurrent");
+      return ok({ questions: { items: [{ evidence: { evidence_set_id: "evidence", question_id: "q", question_version: "1", readiness: { state: "ready" } },
+        human: { state: "ready" }, machine: { items: [{ evaluator_definition_id: "fixture", model: "fixture", execution_id: "execution",
+          measurement: { state: in_flight ? "pending" : provider_refuses ? "failed" : "answered", code: in_flight ? "claimed" : undefined },
+          attempts: { items: [{ attempt: 1, request_sent: true, outcome: in_flight ? null : "completed" }] } }] } }] } });
+    },
+  });
+  const source: GradingSource = {
+    run: async (next_label, options) => {
+      label = next_label;
+      const run = { run_id: `run-${label}`, definition_id: "development" };
+      await options.after_launch?.(run);
+      return { run, report: { id: "source-run", status: "passed", checks: [], evidence: NO_EVIDENCE } };
+    },
+    withholdRepository: async () => ok("withheld"), supplyRepository: async () => ok("supplied"),
+    secondWorker: async () => {
+      await io.readGradingConfiguration();
+      worker_prepared = true;
+      return ok({ db: {} as never, tenant: { producer: "oakridge", namespace: "n" }, run_spend: 5, lease_ms: 1, runners: () => null,
+        close: async () => { worker_closed = true; } });
+    },
+  };
+  try {
+    const report = await gradingScenario(io, source);
+    expect({ restored, stack, worker_prepared, worker_closed, failure: report.checks.find((entry) => entry.name === "the scenario completes")?.detail })
+      .toEqual({ restored: true, stack: false, worker_prepared: failure_at === "analysis-concurrent", worker_closed: failure_at === "analysis-concurrent",
+        failure: "injected failure after observation died" });
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 
 describe("the live proof's prerequisites", () => {
   test("a missing configured key fails the proof and keeps the launcher's reason", async () => {
