@@ -1,3 +1,4 @@
+import type { EngineInputs, PinnedPrompt } from "../domain/effect-instruction";
 import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
 import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
@@ -9,6 +10,13 @@ import { ROOT_UNIT_KEY, selectCollectionKey, selectUnitKey, selectUnitLabel, sel
 
 /** Artifact bodies, unit inputs and outcomes, and decision payloads are plain JSON. */
 export type BodyValue = JsonValue;
+
+/** The immutable instruction recorded when this attempt was opened. */
+export interface AttemptIntentView {
+  readonly inputs: BodyValue;
+  readonly engine_inputs: EngineInputs;
+  readonly prompt: PinnedPrompt | null;
+}
 
 /** One attempt of a worker on its unit. */
 export interface AttemptView {
@@ -23,6 +31,7 @@ export interface AttemptView {
   readonly mode: Mode["kind"];
   readonly cause: Cause;
   readonly kbbl_session_id: string | null;
+  readonly intent: AttemptIntentView | null;
   readonly created_at: Date;
   /** The worker's latest attempt; earlier ones are superseded. */
   readonly is_current: boolean;
@@ -112,7 +121,7 @@ export interface UnitView {
 }
 
 /** Attempts, oldest first, each numbered among its worker's attempts on its unit. */
-export function selectAttemptViews(attempts: readonly AttemptRecord[]): readonly AttemptView[] {
+export function selectAttemptViews(attempts: readonly AttemptRecord[], intents: RunRead["intents"] = []): readonly AttemptView[] {
   const counts = new Map<string, number>();
   const latest = selectLatestAttempts(attempts);
   const numbered = attempts.map((attempt) => {
@@ -124,7 +133,16 @@ export function selectAttemptViews(attempts: readonly AttemptRecord[]): readonly
     worker: attempt.worker, number, status: attempt.status.kind,
     failure: attempt.status.kind === "failed" ? { code: attempt.status.code, detail: attempt.status.detail } : null,
     mode: attempt.mode.kind, cause: attempt.cause, kbbl_session_id: attempt.kbbl_session_id,
+    intent: selectAttemptIntent(attempt, intents),
     created_at: attempt.created_at, is_current: latest.get(selectAttemptWorkerKey(attempt)) === attempt }));
+}
+
+/** Join only the recorded action and sequence: retries must retain their own instruction. */
+export function selectAttemptIntent(attempt: AttemptRecord, intents: RunRead["intents"]): AttemptIntentView | null {
+  const instruction = intents.find((intent) => intent.action_id === attempt.action_id && intent.seq === attempt.seq)?.payload;
+  if (!instruction) return null;
+  return { inputs: instruction.inputs as BodyValue, engine_inputs: instruction.engine_inputs,
+    prompt: instruction.worker.kind === "agent" ? instruction.worker.prompt : null };
 }
 
 /** One artifact's revisions, oldest first, numbered from 1. */
@@ -210,6 +228,6 @@ export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitA
     attention: selectAttention(attention, read),
     decisions: selectAvailableDecisions(read, unit, attention),
     recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map(selectRevisionDecision),
-    attempts: selectAttemptViews(read.attempts.filter((attempt) => attempt.unit_id === unit.id)),
+    attempts: selectAttemptViews(read.attempts.filter((attempt) => attempt.unit_id === unit.id), read.intents),
     artifacts: selectArtifactViews(read, unit) };
 }

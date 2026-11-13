@@ -20,6 +20,7 @@ import {
   OVERVIEW_PANE,
   arePanesEqual,
   type RunWorkspacePane,
+  type RecordedPaneContext,
   type RunWorkspaceState,
 } from "./run-workspace";
 
@@ -33,6 +34,21 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const nonEmptyString = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;
+
+/** Optional recorded context is retained across refreshes, never reconstructed from labels. */
+const parseRecordedContext = (value: Record<string, unknown>): RecordedPaneContext => {
+  const question = isRecord(value.question) && typeof value.question.question_id === "string" && typeof value.question.question_version === "string"
+    ? value.question as unknown as import("../grading-contracts/grading/question").ObservationQuestionKey : null;
+  return {
+    ...(typeof value.run_id === "string" ? { run_id: value.run_id } : {}),
+    ...(typeof value.unit_id === "string" ? { unit_id: value.unit_id } : {}),
+    ...(typeof value.artifact_id === "string" ? { artifact_id: value.artifact_id as ArtifactId } : {}),
+    ...(typeof value.revision_id === "string" ? { revision_id: value.revision_id } : {}),
+    ...(typeof value.item_path === "string" ? { item_path: value.item_path } : {}),
+    ...(typeof value.subject_occurrence_id === "string" ? { subject_occurrence_id: value.subject_occurrence_id } : {}),
+    ...("question" in value ? { question } : {}),
+  };
+};
 
 /**
  * A stored pane, or null when the stored value is not one. Anything written by
@@ -52,25 +68,29 @@ const parseStoredPane = (value: unknown): RunWorkspacePane | null => {
     case "item": {
       if (!isRecord(value.selection)) return null;
       const source_revision_id = nonEmptyString(value.selection.source_revision_id);
-      const item_path = nonEmptyString(value.selection.item_path);
+      const item_path = typeof value.selection.item_path === "string" ? value.selection.item_path : null;
       if (source_revision_id === null || item_path === null) return null;
       const selection = { source_revision_id: artifactRevisionIdOf(source_revision_id), item_path };
-      if (!("task_id" in value.selection)) return { kind: "item", selection };
-      if (value.selection.task_id === null) return { kind: "item", selection: { ...selection, task_id: null } };
+      if (!("task_id" in value.selection)) return { kind: "item", selection, ...parseRecordedContext(value) };
+      if (value.selection.task_id === null) return { kind: "item", selection: { ...selection, task_id: null }, ...parseRecordedContext(value) };
       const task_id = nonEmptyString(value.selection.task_id);
-      return task_id === null ? null : { kind: "item", selection: { ...selection, task_id: logicalItemIdOf(task_id) } };
+      return task_id === null ? null : { kind: "item", selection: { ...selection, task_id: logicalItemIdOf(task_id) }, ...parseRecordedContext(value) };
     }
     case "task": {
       const taskId = nonEmptyString(value.task_id);
-      return taskId === null ? null : { kind: "task", task_id: taskId };
+      return taskId === null ? null : { kind: "task", task_id: taskId, ...parseRecordedContext(value) };
     }
     case "session": {
       const sessionId = nonEmptyString(value.session_id);
       return sessionId === null ? null : { kind: "session", session_id: sessionId as Sid };
     }
+    case "unit": {
+      const unit_id = nonEmptyString(value.unit_id);
+      return unit_id === null ? null : { kind: "unit", unit_id };
+    }
     case "artifact": {
       const artifactId = nonEmptyString(value.artifact_id);
-      return artifactId === null ? null : { kind: "artifact", artifact_id: artifactId as ArtifactId };
+      return artifactId === null ? null : { kind: "artifact", artifact_id: artifactId as ArtifactId, ...(typeof value.revision_id === "string" ? { revision_id: value.revision_id } : {}), ...(typeof value.run_id === "string" ? { run_id: value.run_id } : {}), ...(typeof value.unit_id === "string" ? { unit_id: value.unit_id } : {}) };
     }
     default:
       return null;

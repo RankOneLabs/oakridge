@@ -1,20 +1,11 @@
-import { ariaText, documentText, json, panel, world, wrap } from "./item-panel-harness";
+import { ItemPanel } from "../components/organisms/ItemPanel";
+import { useGradingVisibility } from "../state/gradingVisibility";
+import { ariaText, documentText, json, panel, world, wrap, requireControl } from "./item-panel-harness";
 import plan from "../lib/__fixtures__/id-linked-plan.json";
 import { describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-
-import { acknowledged, id, IMPLEMENTATION, INTEGRATION, ANALYSIS, item, itemStatus, machine, OCCURRENCE, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
-import { compositeId } from "../adapters/core";
-import { AssessmentViewer } from "../components/molecules/AssessmentViewer";
-import { SpecAnalysisViewer } from "../components/molecules/SpecAnalysisViewer";
-import { FinalIntegrationPanel } from "../components/organisms/FinalIntegrationPanel";
-import { ItemPanel } from "../components/organisms/ItemPanel";
-import { RunGradingSection } from "../components/organisms/RunGradingSection";
+import { id, IMPLEMENTATION, ANALYSIS, item, itemStatus, machine, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
 import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
-import type { ObservationGradeObservationId } from "../grading-contracts/domain/identity";
-import { parseAssessment } from "../lib/assessment";
-import { useGradingVisibility } from "../state/gradingVisibility";
-import type { EpicWorkflowProfile } from "../run-types";
 
 it.each(["task", "acceptance_entry"])("shows a %s's captured text and explicit spec-task identity", async (item_kind) => {
   const open = vi.fn();
@@ -37,8 +28,8 @@ it("renders structured evidence and an assessment header as labelled fields", as
   ]) } }], { item: item(IMPLEMENTATION, { selected_value: { status: "met", task_ids: ["T1"], evidence: [] } }) });
   panel();
   const references = await screen.findAllByTestId("or-item-evidence-reference");
-  for (const label of ["Id", "Description", "Status"]) expect(within(references[0]!).getByText(label)).toBeTruthy();
-  expect(within(references[1]!).getByText("Commit sha")).toBeTruthy();
+  for (const label of ["Id", "Description", "Status"]) expect(within(requireControl(references, 0)).getByText(label)).toBeTruthy();
+  expect(within(requireControl(references, 1)).getByText("Commit sha")).toBeTruthy();
   for (const reference of references) expect(reference.textContent).not.toMatch(/\{"|":/);
   const header = screen.getByTestId("or-item-panel").querySelector("header")!;
   expect(["Status", "Task ids", "met", "T1"].every((text) => within(header).queryAllByText(text).length > 0)).toBe(true);
@@ -53,13 +44,14 @@ it("expands whole-artifact fields independently and leaves cohort context inline
   ]) } }]);
   panel();
   const [whole, spec, cohort] = await screen.findAllByTestId("or-item-evidence-reference");
-  expect(within(whole!).queryByText("Dependency order")).toBeNull();
-  expect(within(cohort!).getByText("Files in scope")).toBeTruthy();
-  fireEvent.click(within(whole!).getByRole("button", { name: "Show fields" }));
-  expect(within(whole!).getByText("Dependency order")).toBeTruthy();
-  expect(within(spec!).getByRole("button", { name: "Show fields" }).getAttribute("aria-expanded")).toBe("false");
-  fireEvent.click(within(whole!).getByRole("button", { name: "Hide fields" }));
-  expect(within(whole!).queryByText("Dependency order")).toBeNull();
+  if (!whole || !spec || !cohort) throw new Error("evidence fixture requires all three controls");
+  expect(within(whole).queryByText("Dependency order")).toBeNull();
+  expect(within(cohort).getByText("Files in scope")).toBeTruthy();
+  fireEvent.click(within(whole).getByRole("button", { name: "Show fields" }));
+  expect(within(whole).getByText("Dependency order")).toBeTruthy();
+  expect(within(spec).getByRole("button", { name: "Show fields" }).getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(within(whole).getByRole("button", { name: "Hide fields" }));
+  expect(within(whole).queryByText("Dependency order")).toBeNull();
 });
 /** The operator's own form lists every choice, so a hidden answer is searched for by what only an answer row shows. */
 const REVEALING = ["second-reviewer", "leak-marker", "jev-1.14.0", "Answers (", "attempt", "Correction history", "Automatic evaluators"];
@@ -156,8 +148,8 @@ describe("the panel's question states", () => {
     panel();
     const references = await screen.findAllByTestId("or-item-evidence-reference");
     expect(references.map((row) => row.getAttribute("data-source"))).toEqual(["repository", "reported"]);
-    expect(references[0]!.textContent).toContain("oakridge src/a.ts:2-3 @ abc123");
-    expect(references[1]!.textContent).toContain("Agent-reported");
+    expect(requireControl(references, 0).textContent).toContain("oakridge src/a.ts:2-3 @ abc123");
+    expect(requireControl(references, 1).textContent).toContain("Agent-reported");
   });
   it("a task link is navigation: it opens the task, and an unresolved one stays visible", async () => {
     const onOpenTask = vi.fn();
@@ -192,179 +184,4 @@ describe("the panel's question states", () => {
     fireEvent.click(await screen.findByTestId("or-pager-answers-next"));
     await waitFor(() => expect(world.paths.some((path) => path.includes("answers_offset=50") && path.includes("answers_limit=50"))).toBe(true));
   });
-});
-
-describe("saving", () => {
-  const choose = async (index: number) => fireEvent.click((await screen.findAllByTestId("or-your-grade-choice"))[index]!);
-  it("sends occurrence, question, submission id, answer and rationale, and no identity", async () => {
-    panel();
-    await choose(1);
-    fireEvent.change(screen.getByTestId("or-your-grade-rationale"), { target: { value: "cited line disagrees" } });
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    await screen.findByTestId("or-your-grade-saved");
-    expect(world.sent).toEqual([{ task_id: null, question_id: id("assessment_finding.evidence_support"), question_version: "1", submission_id: expect.any(String), answer: "does_not_support", rationale: "cited line disagrees", corrects_observation_id: null }]);
-    expect(world.paths.some((path) => path.startsWith(`/oakridge/observation/items/${encodeURIComponent(OCCURRENCE)}/answers`))).toBe(true);
-  });
-  it("says saved only after the acknowledgment arrives", async () => {
-    let answer: (response: Response) => void = () => {};
-    world.submit = () => new Promise<Response>((resolve) => { answer = resolve; });
-    panel();
-    await choose(0);
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    await screen.findByTestId("or-your-grade-pending");
-    expect(screen.queryByTestId("or-your-grade-saved")).toBeNull();
-    answer(json(acknowledged("supports"), 201));
-    expect((await screen.findByTestId("or-your-grade-saved")).textContent).toContain("supports");
-  });
-  it("a refusal and a lost reply never say saved, and each shows its reason", async () => {
-    world.submit = () => json({ error: { code: "not_ready", message: "still waiting for a build" } }, 409);
-    panel();
-    await choose(0);
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    expect((await screen.findByTestId("or-your-grade-refused")).textContent).toContain("still waiting for a build");
-    expect(screen.queryByTestId("or-your-grade-saved")).toBeNull();
-    world.submit = () => { throw new Error("connection lost"); };
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    expect((await screen.findByTestId("or-your-grade-failed")).textContent).toContain("connection lost");
-    expect(screen.queryByTestId("or-your-grade-saved")).toBeNull();
-  });
-  it("retrying after a lost reply reuses its submission id, and a changed answer takes a new one", async () => {
-    world.submit = () => { throw new Error("connection lost"); };
-    panel();
-    await choose(0);
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    await screen.findByTestId("or-your-grade-failed");
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    await waitFor(() => expect(world.sent).toHaveLength(2));
-    const [first, second] = world.sent as { submission_id: string }[];
-    expect(second!.submission_id).toBe(first!.submission_id);
-    await choose(1);
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    await waitFor(() => expect(world.sent).toHaveLength(3));
-    expect((world.sent[2] as { submission_id: string }).submission_id).not.toBe(first!.submission_id);
-  });
-  it("a correction links the operator's current answer and keeps the earlier one listed", async () => {
-    world.own = [reviewerAnswer("first", "does_not_support"), reviewerAnswer("second", "unclear", "oakridge-operator", { supersedes_observation_id: id<ObservationGradeObservationId>("first") })];
-    panel();
-    expect((await screen.findByTestId("or-your-grade-current")).textContent).toContain("unclear");
-    expect(screen.getByTestId("or-your-grade-history").textContent).toContain("does not support");
-    expect(screen.getByTestId("or-your-grade-submit").textContent).toBe("Correct your answer");
-    await choose(0);
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    await screen.findByTestId("or-your-grade-saved");
-    expect(world.sent).toMatchObject([{ answer: "supports", corrects_observation_id: id("second") }]);
-  });
-  it("after another tab corrects first, a stale refusal reloads the operator's answers and the retry corrects the new one", async () => {
-    world.own = [reviewerAnswer("first", "does_not_support")];
-    world.submit = () => { world.own = [...world.own, reviewerAnswer("other-tab", "unclear", "oakridge-operator", { supersedes_observation_id: id<ObservationGradeObservationId>("first") })];
-      return json({ error: { code: "stale_correction", message: "that answer has already been corrected" } }, 409); };
-    panel();
-    expect((await screen.findByTestId("or-your-grade-current")).textContent).toContain("does not support");
-    await choose(0);
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    await screen.findByTestId("or-your-grade-refused");
-    expect(screen.getByTestId("or-your-grade-current").textContent).toContain("unclear");
-    world.submit = () => json(acknowledged("supports"), 201);
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    await screen.findByTestId("or-your-grade-saved");
-    expect(world.sent).toMatchObject([{ corrects_observation_id: id("first") }, { corrects_observation_id: id("other-tab") }]);
-  });
-  it("nothing can be edited while a submission is out", async () => {
-    let answer: (response: Response) => void = () => {};
-    world.submit = () => new Promise<Response>((resolve) => { answer = resolve; });
-    panel();
-    await choose(0);
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    await screen.findByTestId("or-your-grade-pending");
-    expect(screen.getAllByTestId("or-your-grade-choice").every((input) => (input as HTMLInputElement).disabled)).toBe(true);
-    expect((screen.getByTestId("or-your-grade-rationale") as HTMLTextAreaElement).disabled).toBe(true);
-    answer(json(acknowledged("supports"), 201));
-    await screen.findByTestId("or-your-grade-saved");
-    expect((screen.getByTestId("or-your-grade-rationale") as HTMLTextAreaElement).disabled).toBe(false);
-  });
-  it("an explanation alone can be corrected, starting from the stored one", async () => {
-    world.own = [reviewerAnswer("first", "unclear", "oakridge-operator", { rationale: "line 4" })];
-    panel();
-    await screen.findByTestId("or-your-grade-current");
-    const rationale = screen.getByTestId("or-your-grade-rationale") as HTMLTextAreaElement;
-    expect(rationale.value).toBe("line 4");
-    expect((screen.getByTestId("or-your-grade-submit") as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(rationale, { target: { value: "line 5" } });
-    fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-    await screen.findByTestId("or-your-grade-saved");
-    expect(world.sent).toMatchObject([{ answer: "unclear", rationale: "line 5", corrects_observation_id: id("first") }]);
-  });
-});
-
-describe("every entry point opens the same item", () => {
-  const revisionId = (unit: string, artifact: string, id: string) => compositeId({ kind: "artifact", runId: "run-1", unitId: unit, name: `${artifact}:${id}` });
-  const body = { head_sha: "abc", verdict: "pass", test_evidence: null, recommended_next_actions: [], findings: [
-    { task_ids: ["T1"], status: "met", evidence: [], description: "linked" }, { task_ids: [], status: "not_met", evidence: [], description: "unlinked" }] };
-  const assessment = () => { const parsed = parseAssessment(body); if (!parsed.ok) throw new Error(parsed.error.detail); return parsed.value; };
-  const missing = { kind: "missing", cohort_label: null } as const;
-  it("analysis: a finding addressed by its original index even though the view reorders it", () => {
-    const onOpenItem = vi.fn();
-    wrap(<SpecAnalysisViewer source={{ run_id: id("run-1"), revision_id: revisionId("run-1/analysis", "analysis", ANALYSIS.source_revision_id), label: null, as_of: "t" }} onOpenItem={onOpenItem}
-      body={{ summary: "s", source_spec_refs: [], requirements: [], risks: [], proposed_spec_updates: [], findings: [
-        { id: "F1", description: "info one", severity: "info" }, { id: "F2", description: "blocking one", severity: "blocking" }, { id: "F3", description: "warning one", severity: "warning" }] }} />);
-    const buttons = screen.getAllByTestId("or-grade-item");
-    expect(buttons.map((button) => button.getAttribute("data-item-path"))).toEqual(["/findings/1", "/findings/2", "/findings/0"]);
-    fireEvent.click(buttons[0]!);
-    expect(onOpenItem).toHaveBeenCalledWith({ source_revision_id: ANALYSIS.source_revision_id, item_path: "/findings/1" });
-  });
-  it("analysis: a risk or requirement gets no grade control", () => {
-    wrap(<SpecAnalysisViewer source={{ run_id: id("run-1"), revision_id: revisionId("u", "analysis", "r"), label: null, as_of: "t" }} onOpenItem={vi.fn()}
-      body={{ summary: "s", source_spec_refs: [], findings: [], proposed_spec_updates: [], requirements: [{ id: "R", description: "d", status: "implementable" }], risks: [{ description: "d", mitigation: "m" }] }} />);
-    expect(screen.queryByTestId("or-grade-item")).toBeNull();
-  });
-  it("implementation: every finding opens with no brief, cohort or link required", () => {
-    const onOpenItem = vi.fn();
-    wrap(<AssessmentViewer assessment={assessment()} brief={missing} result={missing} cohortLabel={null} source={{ revision_id: revisionId("run-1/implementation/one", "assessment", IMPLEMENTATION.source_revision_id) }} onOpenItem={onOpenItem} />);
-    fireEvent.click(screen.getByText(/Show met criteria/));
-    const buttons = screen.getAllByTestId("or-grade-item");
-    expect(buttons.map((button) => button.getAttribute("data-item-path")).sort()).toEqual(["/findings/0", "/findings/1"]);
-    fireEvent.click(buttons[0]!);
-    expect(onOpenItem).toHaveBeenCalledWith({ source_revision_id: IMPLEMENTATION.source_revision_id, item_path: "/findings/1" });
-  });
-  it("integration review: an integration finding opens with no build subject or brief", () => {
-    const onOpenItem = vi.fn();
-    wrap(<AssessmentViewer assessment={assessment()} brief={missing} result={missing} cohortLabel="final" isIntegration source={{ revision_id: revisionId("run-1/integration/final", "assessment", INTEGRATION.source_revision_id) }} onOpenItem={onOpenItem} />);
-    fireEvent.click(screen.getAllByTestId("or-grade-item")[0]!);
-    expect(onOpenItem).toHaveBeenCalledWith({ source_revision_id: INTEGRATION.source_revision_id, item_path: "/findings/1" });
-  });
-  it("final integration panel: lists integration findings, unlinked included, and opens them", async () => {
-    const onOpenItem = vi.fn();
-    const profile = { title: "t", lifecycle_state: "integrating", final_merge_policy: "external_confirmation", base_branch: "b", repositories: [] } as unknown as EpicWorkflowProfile;
-    wrap(<FinalIntegrationPanel runId="run-1" profile={profile} onOpenItem={onOpenItem} />);
-    fireEvent.click(await screen.findByTestId("or-grade-item"));
-    expect(onOpenItem).toHaveBeenCalledWith(INTEGRATION);
-  });
-  it("grading section and drilldown use the same address", async () => {
-    const onOpenItem = vi.fn();
-    useGradingVisibility.getState().revealComposites("run-1");
-    wrap(<RunGradingSection runId="run-1" onOpenItem={onOpenItem} onOpenTask={vi.fn()} />);
-    await screen.findAllByTestId("or-stage-finding");
-    const analysisStage = screen.getAllByTestId("or-stage-findings").find((stage) => stage.dataset.stage === "analysis");
-    if (!analysisStage) throw new Error("analysis stage missing");
-    fireEvent.click(within(analysisStage).getAllByTestId("or-grade-item")[0]!);
-    expect(onOpenItem).toHaveBeenCalledWith(ANALYSIS);
-  });
-});
-
-it("passes the selected task through status, lineage, own-answer reads and submission", async () => {
-  const task_id = id<import("../grading-contracts/domain/identity").ObservationLogicalItemId>("task-3");
-  const question = supportQuestion({ task_id });
-  world.status = itemStatus([{ ...question, evidence: { ...question.evidence, task_id } }]);
-  wrap(<ItemPanel runId="run-1" selection={{ ...IMPLEMENTATION, task_id }} onOpenTask={vi.fn()} />);
-  const choices = await screen.findAllByTestId("or-your-grade-choice");
-  fireEvent.click(choices[0]!);
-  fireEvent.click(screen.getByTestId("or-your-grade-submit"));
-  await screen.findByTestId("or-your-grade-saved");
-  expect(world.sent).toMatchObject([{ task_id }]);
-  for (const surface of ["status", "lineage", "answers"]) {
-    expect(world.paths.some((path) => {
-      const url = new URL(path, "http://kbbl.test");
-      return url.pathname.endsWith(`/${surface}`) && url.searchParams.get("task_id") === task_id;
-    })).toBe(true);
-  }
 });

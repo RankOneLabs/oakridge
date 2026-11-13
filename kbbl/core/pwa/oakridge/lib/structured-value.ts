@@ -1,3 +1,5 @@
+import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
+
 /** A presentation tree for arbitrary captured JSON, independent of React. */
 export type StructuredNode =
   | { kind: "text"; text: string }
@@ -17,4 +19,31 @@ export function toStructuredNode(value: unknown): StructuredNode {
   if (Array.isArray(value)) return { kind: "list", items: value.map(toStructuredNode) };
   if (typeof value === "object") return { kind: "section", fields: Object.entries(value).map(([key, entry]) => ({ label: humaniseKey(key), node: toStructuredNode(entry) })) };
   return { kind: "text", text: String(value) };
+}
+
+/** JSON pointer paths are addresses, including escaped keys and the root's empty pointer. */
+export interface StructuredPathNode {
+  readonly item_path: string;
+  readonly label: string;
+  readonly value: unknown;
+  readonly children: readonly StructuredPathNode[];
+}
+export function selectStructuredPaths(value: unknown, item_path = "", label = "Body"): StructuredPathNode {
+  const entries = value !== null && typeof value === "object" ? Object.entries(value) : [];
+  return { item_path, label, value, children: entries.map(([key, child]) =>
+    selectStructuredPaths(child, `${item_path}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`, key)) };
+}
+
+/** Join grading addresses to the field tree by their exact recorded JSON pointer. */
+export interface GradedStructuredPathNode extends Omit<StructuredPathNode, "children"> {
+  readonly selections: readonly ObservationItemAddress[];
+  readonly children: readonly GradedStructuredPathNode[];
+}
+export function selectGradedStructuredPaths(value: unknown, selections: readonly ObservationItemAddress[]): GradedStructuredPathNode {
+  const byPath = new Map<string, ObservationItemAddress[]>();
+  for (const selection of selections) byPath.set(selection.item_path, [...(byPath.get(selection.item_path) ?? []), selection]);
+  const joinSelections = (node: StructuredPathNode): GradedStructuredPathNode => ({
+    ...node, selections: byPath.get(node.item_path) ?? [], children: node.children.map(joinSelections),
+  });
+  return joinSelections(selectStructuredPaths(value));
 }

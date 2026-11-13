@@ -1,3 +1,8 @@
+import { useOperatorUnits } from "../../hooks/useOperatorUnits";
+import { selectStageRead } from "../../hooks/useStageOverview";
+import type { StageRead } from "../../lib/stage-overview";
+import type { OperatorUnitView } from "../../operator-contracts/projections/unit-view";
+import { StageOverview } from "./StageOverview";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -57,6 +62,7 @@ interface RunWorkspaceProps {
  */
 export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   const runQuery = useRun(runId);
+  const unitsQuery = useOperatorUnits(runId);
   const gatesQuery = useRunGates(runId);
   const sessionsQuery = useRunSessions(runId);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -151,6 +157,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
           onRunDeleted={onBack}
           onOpenPane={(next) => workspace.openPane(next, slot)}
           onOpenBeside={(next) => workspace.openPane(next, otherSlot(slot))}
+          units={selectStageRead(unitsQuery)}
           overview={overview}
           activity={activity}
         />
@@ -196,6 +203,7 @@ interface PaneBodyProps {
   pane: RunWorkspacePane;
   runId: string;
   overview: RunOverview;
+  units: StageRead<readonly OperatorUnitView[]>;
   activity: RunActivityRead;
   /** Leave the run because it was deleted from inside the list pane. */
   onRunDeleted: () => void;
@@ -215,12 +223,12 @@ interface PaneBodyProps {
  * would give one renderer two fetching paths, which is the duplication reuse
  * was meant to avoid.
  */
-function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane, onOpenBeside }: PaneBodyProps) {
+function PaneBody({ pane, runId, overview, units, activity, onRunDeleted, onOpenPane, onOpenBeside }: PaneBodyProps) {
   const openItem = (selection: ObservationItemAddress) => onOpenBeside({ kind: "item", selection });
   const openTask = (task_id: string) => onOpenBeside({ kind: "task", task_id });
   switch (pane.kind) {
     case "overview":
-      return <RunOverviewPane overview={overview} activity={activity} onOpenPane={onOpenPane} />;
+      return <RunOverviewPane units={units} overview={overview} activity={activity} onOpenPane={onOpenPane} />;
     case "list":
       return (
         <RunDetail
@@ -232,12 +240,14 @@ function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane, o
           onOpenItem={openItem}
         />
       );
+    case "unit":
+      return <StageOverview runId={runId} unitId={pane.unit_id} onOpenBeside={onOpenBeside} />;
     case "artifact":
-      return <ArtifactReview artifactId={pane.artifact_id} onOpenItem={openItem} onOpenTask={openTask} />;
+      return <ArtifactReview key={`${pane.artifact_id}:${pane.revision_id ?? "latest"}`} artifactId={pane.artifact_id} revisionId={pane.revision_id} onOpenItem={openItem} onOpenTask={openTask} />;
     case "grading":
       return <RunGradingSection runId={runId} onOpenItem={openItem} onOpenTask={openTask} />;
     case "item":
-      return <ItemPanel key={itemSelectionKey(pane.selection)} runId={runId} selection={pane.selection} onOpenTask={openTask} />;
+      return <ItemPanel key={`${itemSelectionKey(pane.selection)}:${pane.subject_occurrence_id ?? ""}:${pane.question?.question_id ?? ""}:${pane.question?.question_version ?? ""}`} runId={runId} selection={pane.selection} questionTarget={pane.question} subjectOccurrenceId={pane.subject_occurrence_id} onOpenTask={openTask} />;
     case "task":
       return <TaskPanel key={pane.task_id} runId={runId} taskId={pane.task_id} onOpenItem={openItem} />;
     case "session":

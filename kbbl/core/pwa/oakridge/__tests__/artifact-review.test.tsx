@@ -236,3 +236,54 @@ describe("task edit refusal", () => {
     expect(screen.getByDisplayValue("Build the revised viewer.")).toBeTruthy();
   });
 });
+
+describe("artifact presentation", () => {
+  it("defaults to rendered and uses the same pinned revision in the structured tree and raw formats", async () => {
+    const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "dev-pr-summary-viewer",
+      revisions: [{ ...ARTIFACT_FIXTURE.revisions[0]!, body: { summary: "Earlier content" } },
+        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", body: { summary: "Latest content" } }] };
+    wrap(<ArtifactReview artifactId="art-1" revisionId="rev-1" />, artifact);
+    expect(screen.getByRole("tab", { name: "rendered" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: "structured" }));
+    expect(screen.getByTestId("or-revision-panel").getAttribute("data-revision-id")).toBe("rev-1");
+    expect(screen.getByTestId("or-revision-body").textContent).toContain("Earlier content");
+    expect(screen.getByTestId("or-revision-yaml").textContent).toContain("Earlier content");
+    expect(screen.queryByRole("button", { name: /edit/i })).toBeNull();
+  });
+  it("reports an unavailable pinned revision instead of falling forward to latest", () => {
+    wrap(<ArtifactReview artifactId="art-1" revisionId="absent" />);
+    expect(screen.getByText("Recorded revision absent is unavailable.")).toBeTruthy();
+  });
+});
+
+import { compositeId } from "../adapters/core";
+import { itemStatus, supportQuestion } from "../__fixtures__/grading";
+import { useGradingVisibility } from "../state/gradingVisibility";
+
+it("keeps grade controls and blind state across presentation switches without granting structured edit access", async () => {
+  useGradingVisibility.setState({ revealed_item_keys: new Set() });
+  const revisionId = compositeId({ kind: "artifact", runId: "run-1", unitId: "u", name: "tasks:raw-revision" });
+  const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "dev-tasks-viewer", capabilities: { atom_editable: true, commentable: false, reviewable: false, review_items: false },
+    revisions: [{ ...ARTIFACT_FIXTURE.revisions[0]!, id: revisionId, body: { tasks: [{ id: "T1", description: "Recorded task", requirement_ids: [] }] } }] };
+  const status = itemStatus([supportQuestion()]);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.includes("/items/at")) return json(status.item);
+    if (path.includes("/status")) return json(status);
+    if (path.includes("/reviewer")) return json({ reviewer_id: "operator" });
+    return json({});
+  });
+  wrap(<ArtifactReview artifactId="art-1" onOpenItem={() => {}} />, artifact);
+  expect(screen.getByRole("button", { name: "Edit tasks" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("tab", { name: "structured" }));
+  expect(screen.queryByRole("button", { name: "Edit tasks" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Open grading at /tasks/0" })).toBeTruthy();
+  expect(screen.queryAllByTestId("or-automatic-grades")).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Show automatic grades" }));
+  await waitFor(() => expect(useGradingVisibility.getState().revealed_item_keys.size).toBe(1));
+  fireEvent.click(screen.getByRole("tab", { name: "rendered" }));
+  expect(screen.getByRole("button", { name: "Hide automatic grades" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Hide automatic grades" }));
+  fireEvent.click(screen.getByRole("tab", { name: "structured" }));
+  expect(screen.queryAllByTestId("or-automatic-grades")).toHaveLength(0);
+});

@@ -4,6 +4,7 @@ import { id } from "../__fixtures__/grading";
 import type { ArtifactId, Sid } from "../../lib/ids";
 import type { ObservationLogicalItemId } from "../grading-contracts/domain/identity";
 import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
+import type { RunWorkspaceState } from "./run-workspace";
 import { DEFAULT_RUN_WORKSPACE_STATE, LIST_PANE, OVERVIEW_PANE } from "./run-workspace";
 import {
   pruneStoredRunWorkspace,
@@ -200,4 +201,15 @@ describe("the grading panes", () => {
       expect(readStoredRunWorkspace("run-g").primary).toEqual({ kind: "overview" });
     }
   });
+});
+
+it("retains the unit pane and exact artifact revision across refresh", () => {
+  const state: RunWorkspaceState = { primary: { kind: "unit", unit_id: "run/stage" }, secondary: { kind: "artifact", artifact_id: "a" as ArtifactId, revision_id: "old", run_id: "run", unit_id: "run/stage" } };
+  writeStoredRunWorkspace("run", state);
+  expect(readStoredRunWorkspace("run")).toEqual(state);
+});
+it("retains recorded grading question and subject context on an item pane", () => {
+  const state: RunWorkspaceState = { primary: { kind: "item", selection: { source_revision_id: id("revision"), item_path: "" }, run_id: "run", unit_id: "unit", artifact_id: "artifact" as ArtifactId, subject_occurrence_id: "occurrence", question: { question_id: id("correctness"), question_version: "2" } }, secondary: null };
+  writeStoredRunWorkspace("run", state);
+  expect(readStoredRunWorkspace("run")).toEqual(state);
 });

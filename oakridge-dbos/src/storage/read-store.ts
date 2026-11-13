@@ -103,6 +103,7 @@ export interface RunRead extends RunSummaryRead {
   readonly dependencies: readonly UnitDependencyRecord[];
   readonly revisions: readonly ArtifactRevisionRecord[];
   readonly decisions: readonly ReviewDecisionRecord[];
+  readonly intents: readonly Pick<EffectIntentRecord, "action_id" | "seq" | "payload">[];
 }
 
 const RUN_SUMMARY_COLUMNS = ["run.id", "run.definition_id", "run.project_id", "run.root_unit_id",
@@ -162,14 +163,15 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
 async function runRead(trx: DatabaseTransaction, run_id: string): Promise<RunRead | null> {
   const [summary] = await runSummaryReads(trx, [run_id]);
   if (!summary) return null;
-  const [run, units, dependencies, revisions, decisions] = await Promise.all([
+  const [run, units, dependencies, revisions, decisions, intents] = await Promise.all([
     trx.selectFrom("authority.run").selectAll().where("id", "=", run_id).executeTakeFirstOrThrow(),
     trx.selectFrom("authority.unit").selectAll().where("run_id", "=", run_id).orderBy("id").execute(),
     trx.selectFrom("authority.unit_dependency").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("depends_on_id").execute(),
     trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
+    trx.selectFrom("authority.effect_intent").select(["action_id", "seq", "payload"]).where("run_id", "=", run_id).execute(),
   ]);
-  return { ...summary, run: runRecord(run), units: units.map(unitRecord), dependencies: dependencies.map(dependencyRecord),
+  return { ...summary, intents: intents.map((intent) => ({ ...intent, action_id: intent.action_id as ActionId })), run: runRecord(run), units: units.map(unitRecord), dependencies: dependencies.map(dependencyRecord),
     revisions: revisions.map(revisionRecord), decisions: decisions.map(decisionRecord) };
 }
 

@@ -1,7 +1,10 @@
+import type { OperatorEngineInputs, OperatorPinnedPrompt } from "../operator-contracts/domain/effect-instruction";
+import type { OperatorFeedbackEntry, OperatorRevisionState } from "../operator-contracts/core-client/core-types";
+import type { OperatorJsonValue } from "../operator-contracts/domain/primitives";
 import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
 import type { OperatorRunInboxBatch } from "../operator-contracts/projections/inbox";
 import type { OperatorRunView } from "../operator-contracts/projections/run-view";
-import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
+import type { OperatorAttemptIntentView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { fail, ok, type AdapterResult } from "./core";
 
 const record = (value: unknown): value is { readonly [key: string]: unknown } =>
@@ -9,6 +12,23 @@ const record = (value: unknown): value is { readonly [key: string]: unknown } =>
 const string = (value: unknown): value is string => typeof value === "string";
 const nullableString = (value: unknown): value is string | null => value === null || string(value);
 const array = (value: unknown): value is readonly unknown[] => Array.isArray(value);
+/** Validate the recorded instruction projection before selectors can consume it. */
+const jsonValue = (value: unknown): value is OperatorJsonValue => value === null || string(value) || typeof value === "boolean"
+  || typeof value === "number" && Number.isFinite(value)
+  || array(value) && value.every(jsonValue) || record(value) && Object.values(value).every(jsonValue);
+const pinnedPrompt = (value: unknown): value is OperatorPinnedPrompt => record(value) && string(value.path) && string(value.digest);
+const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const instructionRevision = (value: unknown): value is OperatorRevisionState => record(value) && string(value.id)
+  && string(value.unit) && string(value.artifact) && count(value.seq) && "body" in value
+  && (value.by === undefined || nullableString(value.by)) && (value.predecessor === undefined || nullableString(value.predecessor))
+  && (value.subject === undefined || nullableString(value.subject)) && (value.decision_cursor === undefined || count(value.decision_cursor));
+const nullableInstructionRevision = (value: unknown): value is OperatorRevisionState | null => value === null || instructionRevision(value);
+const feedbackEntry = (value: unknown): value is OperatorFeedbackEntry => record(value) && string(value.id) && string(value.review)
+  && string(value.decision) && string(value.target) && "payload" in value;
+const engineInputs = (value: unknown): value is OperatorEngineInputs => record(value) && nullableInstructionRevision(value.previous)
+  && nullableInstructionRevision(value.subject) && array(value.feedback) && value.feedback.every(feedbackEntry);
+const attemptIntent = (value: unknown): value is OperatorAttemptIntentView | null => value === null || record(value)
+  && jsonValue(value.inputs) && engineInputs(value.engine_inputs) && (value.prompt === null || pinnedPrompt(value.prompt));
 const status = (value: unknown): boolean => record(value) && ["not_started", "active", "done", "cancelled"].includes(String(value.kind));
 const revision = (value: unknown): boolean => record(value) && string(value.id) && string(value.run_id) && string(value.unit_id)
   && string(value.artifact_key) && string(value.created_at) && typeof value.number === "number";
@@ -21,7 +41,7 @@ const attempt = (value: unknown): boolean => record(value) && string(value.id) &
   && ["initial", "revise", "review"].includes(String(value.mode)) && record(value.cause)
   && ["missing", "changes_requested", "review_of", "retry", "periodic"].includes(String(value.cause.kind))
   && (value.failure === null || record(value.failure) && string(value.failure.code) && string(value.failure.detail))
-  && nullableString(value.kbbl_session_id) && string(value.created_at) && typeof value.is_current === "boolean";
+  && nullableString(value.kbbl_session_id) && attemptIntent(value.intent) && string(value.created_at) && typeof value.is_current === "boolean";
 const submit = (value: unknown): boolean => record(value) && (
   value.kind === "cancel" || value.kind === "retry" && string(value.worker)
   || value.kind === "review" && string(value.review) && string(value.decision) && string(value.target_revision_id)
