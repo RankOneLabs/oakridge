@@ -11,6 +11,7 @@ export interface ObservationServerConfig {
   namespace: string;
   readToken: string | null;
   gradeToken: string | null;
+  configureToken: string | null;
 }
 
 export function observationServerConfigFromEnv(env: Readonly<Record<string, string | undefined>>): ObservationServerConfig | null {
@@ -21,6 +22,7 @@ export function observationServerConfigFromEnv(env: Readonly<Record<string, stri
     namespace: env.OAKRIDGE_OBSERVATION_NAMESPACE?.trim() || "default",
     readToken: env.OAKRIDGE_OBSERVATION_READ_TOKEN?.trim() || null,
     gradeToken: env.OAKRIDGE_OBSERVATION_GRADE_TOKEN?.trim() || null,
+    configureToken: env.OAKRIDGE_OBSERVATION_CONFIGURE_TOKEN?.trim() || null,
   };
 }
 
@@ -91,13 +93,13 @@ export interface KbblHealth {
   status: "ok";
   observation: ObservationHealth;
   /** Whether this server holds each capability, never its value. */
-  capabilities: { read: boolean; grade: boolean };
+  capabilities: { read: boolean; grade: boolean; configure: boolean };
 }
 
 export function mountHealthRoutes(app: Hono, check: ObservationHealthCheck): void {
   app.get("/health", async (c) => c.json({
     status: "ok",
     observation: await checkObservationHealth(check),
-    capabilities: { read: Boolean(check.config?.readToken), grade: Boolean(check.config?.gradeToken) },
+    capabilities: { read: Boolean(check.config?.readToken), grade: Boolean(check.config?.gradeToken), configure: Boolean(check.config?.configureToken) },
   } satisfies KbblHealth));
 }
