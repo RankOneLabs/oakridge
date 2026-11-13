@@ -21,7 +21,10 @@ const CONTRACT_FIELDS = {
   RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
   UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "is_terminal", "label", "outcome",
     "recorded_decisions", "run_id", "stage", "status", "unit_id", "unit_key"],
-  AttemptView: ["cause", "created_at", "failure", "id", "is_current", "kbbl_session_id", "mode", "number", "status", "unit_id", "worker"],
+  AttemptView: ["cause", "created_at", "failure", "id", "intent", "is_current", "kbbl_session_id", "mode", "number", "status", "unit_id", "worker"],
+  AttemptIntentView: ["engine_inputs", "inputs", "prompt"],
+  EngineInputs: ["feedback", "previous", "subject"],
+  PinnedPrompt: ["digest", "path"],
   ArtifactView: ["artifact_key", "is_editable", "is_reviewable", "latest_revision", "revision_count", "run_id", "schema", "unit_id"],
   ArtifactRevisionView: ["artifact_key", "attempt_id", "body", "created_at", "id", "number", "predecessor_id", "run_id", "subject_id", "unit_id"],
   DecisionDefinition: ["fields", "key", "label", "payload_schema", "submit"],
@@ -178,9 +181,25 @@ describe("each read model carries exactly its contract's fields", () => {
     expect(batch.find((candidate) => candidate.unit_id === unit)).toEqual(view);
     holds("UnitView", view);
     holds("AttemptView", view.attempts[0]);
+    const intent = view.attempts[0]?.intent;
+    if (!intent?.prompt) throw new Error("the drafted agent attempt requires a recorded intent and pinned prompt");
+    holds("AttemptIntentView", intent);
+    holds("EngineInputs", intent.engine_inputs);
+    holds("PinnedPrompt", intent.prompt);
     holds("ArtifactView", view.artifacts[0]);
     holds("ArtifactRevisionView", view.artifacts.find((artifact) => artifact.latest_revision)?.latest_revision);
     holds("DecisionDefinition", view.decisions[0]);
+  });
+
+  test("an attempt exposes the inputs and prompt pin recorded for its instruction", async () => {
+    const { run_id, unit, writer } = await drafted();
+    const view = await get<UnitView>(unitPath(run_id, unit));
+    const recorded = await authority.db.selectFrom("authority.effect_intent").select("payload")
+      .where("run_id", "=", run_id).where("action_id", "=", writer).orderBy("seq").executeTakeFirstOrThrow();
+    expect(view.attempts.find((attempt) => attempt.worker === "writer")?.intent as unknown).toEqual({
+      inputs: recorded.payload.inputs, engine_inputs: recorded.payload.engine_inputs,
+      prompt: recorded.payload.worker.kind === "agent" ? recorded.payload.worker.prompt : null,
+    });
   });
 
   test("the unit list narrows each input to the fields the caller names", async () => {
