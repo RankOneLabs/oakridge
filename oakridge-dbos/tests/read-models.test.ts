@@ -41,7 +41,7 @@ const CONTRACT_FIELDS = {
   ArtifactDetail: ["artifact_key", "decisions", "is_editable", "is_reviewable", "original_spec", "revisions", "run_id", "schema", "status", "unit_id"],
   DefinitionSummary: ["bundle", "definition_id"],
   PinnedDefinition: ["bundle", "definition_id"],
-  DefinitionDetail: ["bundle", "definition_id", "graph", "workflow"],
+  DefinitionDetail: ["bundle", "definition_id", "effective_workflow", "graph", "workflow"],
   DefinitionBundle: ["key", "root", "schemas", "stages", "units"],
   UnitDefinition: ["artifacts", "input_schema", "key", "label", "stage"],
   ArtifactDefinition: ["key", "schema"],
