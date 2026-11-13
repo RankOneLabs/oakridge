@@ -26,7 +26,8 @@ export interface RunInputEvidence extends ReferenceFields {
   readonly run_id: RunId;
   readonly input_path: string;
 }
-/** A file read at an exact commit. A file missing at that commit is evidence, not a failed read. */
+/** A file read at an exact commit. A file missing at that commit is evidence, not a failed read. A binary
+ * file is present at that commit with null content: its bytes are not copied, only its size. */
 export interface RepositoryEvidence extends ReferenceFields {
   readonly source: "repository";
   readonly repository_key: string;
@@ -34,6 +35,9 @@ export interface RepositoryEvidence extends ReferenceFields {
   readonly path: string;
   readonly line_range: LineRange | null;
   readonly is_absent: boolean;
+  readonly is_binary: boolean;
+  /** The size in bytes of a binary file; null for a text or absent file. */
+  readonly byte_size: number | null;
 }
 /** Text the producer's agent reported, at the exact revision and item path it was reported in.
  * It is passed through and never independently verified. */
@@ -47,8 +51,8 @@ export type EvidenceReference = RevisionEvidence | RunInputEvidence | Repository
 
 type JsonObject = { readonly [key: string]: JsonValue };
 /** One reference as every provider is shown it, under its `ref`: the content together with its
- * source and exact provenance. A file missing at its commit says `is_absent: true` rather than
- * arriving as a bare null. */
+ * source and exact provenance. A file missing at its commit says `is_absent: true`, and a binary
+ * file `is_binary: true` with its size, rather than either arriving as a bare null. */
 export function providerEvidence(reference: EvidenceReference): JsonObject {
   switch (reference.source) {
     case "revision": return { source: reference.source, revision_id: reference.revision_id, item_path: reference.item_path,
@@ -57,7 +61,7 @@ export function providerEvidence(reference: EvidenceReference): JsonObject {
       content: reference.content };
     case "repository": return { source: reference.source, repository_key: reference.repository_key, commit_sha: reference.commit_sha,
       path: reference.path, line_range: reference.line_range ? { start: reference.line_range.start, end: reference.line_range.end } : null,
-      is_absent: reference.is_absent, content: reference.content };
+      is_absent: reference.is_absent, is_binary: reference.is_binary, byte_size: reference.byte_size, content: reference.content };
     case "reported": return { source: reference.source, reported_by: reference.reported_by, revision_id: reference.revision_id,
       item_path: reference.item_path, content: reference.content };
   }

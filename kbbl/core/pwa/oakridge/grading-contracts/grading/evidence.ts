@@ -36,6 +36,9 @@ export interface ObservationRepositoryEvidence extends ObservationReferenceField
   readonly path: string;
   readonly line_range: ObservationLineRange | null;
   readonly is_absent: boolean;
+  readonly is_binary: boolean;
+  /** The size in bytes of a binary file; null for a text or absent file. */
+  readonly byte_size: number | null;
 }
 
 export interface ObservationReportedEvidence extends ObservationReferenceFields {

@@ -52,6 +52,7 @@ export function FrozenEvidenceList({ evidence, onWindow }: FrozenEvidenceListPro
                 <code className="or-code">{reference.ref}</code>
                 <span className="break-all font-mono text-xs text-[var(--text-muted)]">{display.location}</span>
                 {display.is_absent && <Chip tone="neutral">Absent at this commit</Chip>}
+                {display.binary_size !== null && <Chip tone="neutral">Binary file, {display.binary_size}, not shown</Chip>}
               </div>
               {!display.is_absent && reference.content !== null && <div aria-label={`Evidence content: ${reference.ref}`}><FrozenReferenceContent key={`${reference.ref}:${display.location}`} content={detail.inspection.content} /></div>}
               {reference.content === null && <p className="m-0 text-xs">Evidence content was not captured.</p>}
