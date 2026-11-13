@@ -16,6 +16,40 @@ async function fixture() {
 const definitions = await committedDefinitions();
 const input = { definitions, published_at: "2026-11-01T00:00:00Z" };
 
+test("read-only calls leave a missing root absent", async () => {
+  const { root } = await fixture();
+  const store = createGradingConfigStore(join(root, "not-created"));
+  expect(await store.readDraft()).toEqual({ ok: true, value: null });
+  expect(await store.readVersion(1)).toEqual({ ok: true, value: null });
+  expect(await store.listVersions()).toEqual({ ok: true, value: [] });
+  expect(await store.latestVersion()).toEqual({ ok: true, value: null });
+  expect(await readdir(root)).toEqual([]);
+});
+test("read-only calls leave a missing versions directory absent", async () => {
+  const { root, store } = await fixture();
+  const saved = await store.saveDraft(null, { status: "draft", definitions: [] });
+  expect(await store.readDraft()).toEqual(saved);
+  expect(await store.readVersion(1)).toEqual({ ok: true, value: null });
+  expect(await store.listVersions()).toEqual({ ok: true, value: [] });
+  expect(await store.latestVersion()).toEqual({ ok: true, value: null });
+  expect(await readdir(root)).toEqual(["draft.json"]);
+});
+test("a symbolic-link root is rejected without reading or writing its target", async () => {
+  const { root } = await fixture();
+  const outside = await mkdtemp(join(tmpdir(), "grading-outside-")); roots.push(outside);
+  const target = createGradingConfigStore(outside);
+  const saved = await target.saveDraft(null, { status: "draft", definitions: [] });
+  if (!saved.ok) throw new Error(saved.error.detail);
+  await symlink(outside, join(root, "linked-root"));
+  const store = createGradingConfigStore(join(root, "linked-root"));
+  for (const result of [await store.readDraft(), await store.readVersion(1), await store.listVersions(),
+    await store.latestVersion(), await store.saveDraft(null, { status: "draft", definitions: ["changed"] }),
+    await store.allocateAndWritePublished(input)])
+    expect(result).toMatchObject({ ok: false, error: { kind: "io" } });
+  expect(await target.readDraft()).toEqual(saved);
+  expect(await readdir(outside)).toEqual(["draft.json"]);
+});
+
 test("repeated draft saves return document digests and create no published versions", async () => {
   const { root, store } = await fixture();
   expect(await store.readDraft()).toEqual({ ok: true, value: null });

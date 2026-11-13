@@ -32,7 +32,13 @@ const codeOf = (cause: unknown): string | undefined => cause instanceof Error &&
 const detailOf = (cause: unknown): string => cause instanceof Error ? cause.message : String(cause);
 const validVersion = (version: number): boolean => Number.isInteger(version) && version > 0 && version <= 999999;
 
-/** One confined directory with immutable history, atomic writes, and an in-process transaction mutex. */
+/**
+ * One confined directory with immutable history, atomic writes, and an in-process transaction mutex.
+ * The root and its versions directory must be real directories, not symbolic links.
+ * Callers binding an environment-provided root must pass a non-symlink directory (or use realpath first).
+ * Reads never create directories: missing roots/history return absent documents or an empty version list.
+ * Writes create the directories they need; saving a draft never creates the versions directory.
+ */
 export function createGradingConfigStore(root: string): GradingConfigStore {
   const directory = resolve(root);
   const versions = join(directory, "versions");
@@ -46,9 +52,16 @@ export function createGradingConfigStore(root: string): GradingConfigStore {
     await previous;
     try { return await work(transaction); } finally { release(); }
   };
+  const checkDirectory = async (path: string): Promise<void> => {
+    if (!(await lstat(path)).isDirectory()) throw new Error("configuration directory must not be a symbolic link");
+  };
   const ensureDirectory = async (path: string): Promise<void> => {
     await mkdir(path, { recursive: true });
-    if (!(await lstat(path)).isDirectory()) throw new Error("configuration directory must not be a symbolic link");
+    await checkDirectory(path);
+  };
+  const checkDirectories = async (is_version: boolean): Promise<void> => {
+    await checkDirectory(directory);
+    if (is_version) await checkDirectory(versions);
   };
   const prepare = async (is_version: boolean): Promise<void> => {
     await ensureDirectory(directory);
@@ -56,7 +69,7 @@ export function createGradingConfigStore(root: string): GradingConfigStore {
   };
   const read = async (path: string, is_version = false): Promise<Result<StoredJsonDocument | null, ConfigurationStoreError>> => {
     try {
-      await prepare(is_version);
+      await checkDirectories(is_version);
       const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
       try { return ok({ document: JSON.parse(await file.readFile("utf8")) as unknown }); } finally { await file.close(); }
     } catch (cause) { return codeOf(cause) === "ENOENT" ? ok(null) : failure("io", path, detailOf(cause)); }
@@ -87,9 +100,7 @@ export function createGradingConfigStore(root: string): GradingConfigStore {
   };
   const listVersions: ConfigurationStoreTransaction["listVersions"] = async () => {
     try {
-      await ensureDirectory(directory);
-      const metadata = await lstat(versions);
-      if (!metadata.isDirectory()) return failure("io", "versions", "configuration directory must not be a symbolic link");
+      await checkDirectories(true);
       return ok((await readdir(versions)).filter((name) => /^\d{6}\.json$/.test(name))
         .map((name) => Number(name.slice(0, 6))).filter(validVersion).sort((left, right) => left - right));
     } catch (cause) { return codeOf(cause) === "ENOENT" ? ok([]) : failure("io", "versions", detailOf(cause)); }
