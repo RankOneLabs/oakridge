@@ -13,7 +13,7 @@ import type { OperationRunner } from "../operations/runner";
 import type { Database } from "../storage/database";
 import { abandonIntent, claimStart, isStartOwed, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, readLatestAttempt, recordTryFailure,
   settleIntent, settleStartIntent, type EffectStatus, type LatestAttempt, type SettledStatus, type StartClaim, type StopOrigin } from "../storage/executor-store";
-import { listRunsNeedingWork, readLatestRevisionId, readRunStanding, readRunDefinitionId, readSessionHistory } from "../storage/read-store";
+import { listRunsNeedingWork, readLatestRevisionId, readRunStanding, readRunDefinitionId, readSessionHistory, readCommittedRunConfig, selectCommittedPrIntegration } from "../storage/read-store";
 import { resolveDefinition } from "../runtime/definition-store";
 import { reportWorker, type ExecutorReport } from "./executor-ingress";
 
@@ -219,9 +219,11 @@ const prepareSessionStep = DBOS.registerStep(async (instruction: EffectInstructi
 
 const operationStep = DBOS.registerStep(async (instruction: EffectInstruction): Promise<OperationOutcome> => {
   if (instruction.worker.kind !== "code") return { kind: "failed", code: PROVIDER_ERROR_CODES.invalid_instruction, detail: "not a code attempt" };
+  const pr_integration = selectCommittedPrIntegration(await readCommittedRunConfig(current().db, instruction.run_id));
+  if (pr_integration === null) return { kind: "failed", code: PROVIDER_ERROR_CODES.invalid_instruction, detail: "recorded run config is malformed" };
   const call = { operation: instruction.worker.operation, inputs: instruction.inputs };
   const outcome = await callProvider(instruction.deadline_ms, async (signal) =>
-    ({ kind: "acknowledged", value: await current().operations.run(call, { signal }) }));
+    ({ kind: "acknowledged", value: await current().operations.run(call, { signal, pr_integration }) }));
   return outcome.kind === "acknowledged" ? outcome.value : { kind: "unavailable", detail: outcome.detail };
 }, { name: "oakridgeRunOperation" });
 /** The artifact's latest revision, resolved once so a re-sent `published` report is the same event (R2). */

@@ -4,6 +4,7 @@ import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysel
 import type { ParsedWorkflow, UnitStatus } from "../core-client/core-types";
 import type { ActionId, Brand, DecisionId, DefinitionId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
 import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
+import type { PrIntegration } from "../domain/pr-integration";
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
 import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
@@ -23,7 +24,7 @@ type Row<Table extends keyof DB> = Selectable<DB[Table]>;
 const runRecord = (row: Row<"authority.run">): RunRecord => ({ ...row, id: row.id as RunId,
   definition_id: row.definition_id as DefinitionId, project_id: row.project_id as ProjectId | null,
   root_unit_id: row.root_unit_id as UnitId | null });
-const summaryRun = (row: Omit<Row<"authority.run">, "config">): RunSummaryRecord => ({ ...row, id: row.id as RunId,
+const summaryRun = (row: Row<"authority.run">): RunSummaryRecord => ({ ...row, id: row.id as RunId,
   definition_id: row.definition_id as DefinitionId, project_id: row.project_id as ProjectId | null,
   root_unit_id: row.root_unit_id as UnitId | null });
 const unitRecord = (row: Row<"authority.unit">): UnitRecord => ({ ...row, id: row.id as UnitId,
@@ -69,7 +70,7 @@ export interface RecordedFault { readonly notice: CommitFaultNotice; readonly re
 /** The latest event committed on one unit of a run; `unit_id` null for the events that address the run (launch, cancel). */
 export interface LatestUnitEvent { readonly unit_id: string | null; readonly event_id: string; readonly created_at: Date }
 /** A run as lists read it: launch input and identity, without config. */
-export type RunSummaryRecord = Omit<RunRecord, "config">;
+export type RunSummaryRecord = RunRecord;
 /** A unit as lists read it: everything but its resolved input. */
 export type UnitSummaryRecord = Omit<UnitRecord, "input" | "input_provenance">;
 /** A revision as lists read it: where it is and when, never its body. */
@@ -106,7 +107,7 @@ export interface RunRead extends RunSummaryRead {
   readonly intents: readonly Pick<EffectIntentRecord, "action_id" | "seq" | "payload">[];
 }
 
-const RUN_SUMMARY_COLUMNS = ["run.id", "run.definition_id", "run.project_id", "run.root_unit_id",
+const RUN_SUMMARY_COLUMNS = ["run.config", "run.id", "run.definition_id", "run.project_id", "run.root_unit_id",
   "run.created_at", "run.archived_at", "run.input"] as const;
 const UNIT_SUMMARY_COLUMNS = ["id", "run_id", "parent_id", "declaration", "stage", "collection_key", "pool", "status", "blocked_reason", "review_prompts"] as const;
 const REVISION_REF_COLUMNS = ["id", "run_id", "unit_id", "artifact", "seq", "created_at"] as const;
@@ -472,6 +473,12 @@ export type CommittedRunConfig =
   | { readonly state: "none" }
   | { readonly state: "committed"; readonly config: RunConfig }
   | { readonly state: "malformed" };
+/** Resolve legacy absence without treating malformed settings as another provider. */
+export function selectCommittedPrIntegration(config: CommittedRunConfig): PrIntegration | null {
+  if (config.state === "malformed") return null;
+  if (config.state === "none") return "gated-review";
+  return config.config.pr_integration;
+}
 export async function readCommittedRunConfig(db: Reader, run_id: string): Promise<CommittedRunConfig> {
   const run = await db.selectFrom("authority.run").select("config").where("id", "=", run_id).executeTakeFirst();
   if (!run || run.config === null) return { state: "none" };

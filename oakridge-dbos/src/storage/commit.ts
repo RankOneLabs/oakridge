@@ -4,7 +4,8 @@ import { compileDefinition, selectWanted, type WantedForUnit } from "../core-cli
 import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer } from "../core-client/core-types";
 import { ANALYSIS_LINKS_DECLARED, selectDeclarationRefusal, type AnalysisLinkDeclaration, type AnalysisLinkEntry, type AnalysisLinksDeclared } from "../domain/analysis-link-declaration";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
-import type { RunConfig } from "../domain/run-config";
+import type { PrIntegration } from "../domain/pr-integration";
+import { parseRunConfig, type RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
 import { renderTemplate } from "../domain/prompt-template";
 import type { ActionId, DefinitionId, IngressId, ProjectId, RunId, TracedError, UnitId, Result } from "../domain/primitives";
@@ -16,6 +17,13 @@ import type { CommitReceipt, ReviewPrompt, ReviewPrompts, StallRecord, WantedWor
 import { START_OWED_STATUSES } from "./executor-store";
 import { readStepSnapshot } from "./snapshot-store";
 
+/** Parsed client launch settings, excluding the integration and skill pin resolved by the server. */
+export interface LaunchRequestContent {
+  readonly definition_id: DefinitionId;
+  readonly project_id: ProjectId | null;
+  readonly config: Pick<RunConfig, "sessions" | "grading_enabled"> | null;
+  readonly pr_integration?: PrIntegration;
+}
 /** An event as ingress hands it over: the writer is resolved from the credential, never the body. */
 export interface CommitRequest {
   readonly run_id: RunId;
@@ -30,6 +38,8 @@ export interface CommitRequest {
    * resolves its writer from it (part 1 §7.2).
    */
   readonly publication_secret_hash?: string | null;
+  /** HTTP launch identity before server defaults, skill pinning and health checks. */
+  readonly launch_request?: LaunchRequestContent;
 }
 export type CommitOutcome =
   | { readonly kind: "committed"; readonly event_id: string }
@@ -126,9 +136,14 @@ function canonical(value: unknown): string {
     .map((key) => `${JSON.stringify(key)}:${canonical((value as { readonly [key: string]: unknown })[key])}`).join(",")}}`;
   return JSON.stringify(value) ?? "null";
 }
-/** A launch's definition, project and config are part of what it asks for: a replay naming another is other content. */
-export function requestDigest(request: Pick<CommitRequest, "writer" | "publication_secret_hash" | "launch"> & { readonly event: Event | AnalysisLinksDeclared }): string {
-  const { event, writer, publication_secret_hash, launch } = request;
+export interface RequestDigestInput extends Pick<CommitRequest, "writer" | "publication_secret_hash" | "launch_request"> {
+  readonly event: Event | AnalysisLinksDeclared;
+  readonly launch?: CommitRequest["launch"] | LaunchRequestContent;
+}
+/** HTTP launches hash client content; internal commits retain their full launch identity. */
+export function requestDigest(request: RequestDigestInput): string {
+  const { event, writer, publication_secret_hash } = request;
+  const launch = request.launch_request ?? request.launch;
   return createHash("sha256").update(canonical({ event, writer, ...(publication_secret_hash ? { publication_secret_hash } : {}),
     ...(launch ? { launch } : {}) })).digest("hex");
 }
@@ -264,6 +279,37 @@ async function readReceipt(db: Database | DatabaseTransaction, request: Pick<Com
   if (request.ingress_id === null) return null;
   return await db.selectFrom("authority.ingress_receipt").select(["ingress_id", "request_digest", "result"])
     .where("run_id", "=", request.run_id).where("ingress_id", "=", request.ingress_id).executeTakeFirst() ?? null;
+}
+
+export interface LaunchReplayRequest {
+  readonly run_id: RunId;
+  readonly ingress_id: string;
+  readonly writer: Writer;
+  readonly event: Extract<Event, { readonly kind: "launched" }>;
+  readonly launch_request: LaunchRequestContent;
+}
+/** A receipt is authoritative before consulting today's launchable catalog, defaults or health. */
+export async function replayLaunch(db: Database, request: LaunchReplayRequest): Promise<CommitResult | null> {
+  const receipt = await readReceipt(db, { ...request, ingress_id: scopeIngressId(request.writer, request.ingress_id) });
+  if (!receipt) return null;
+  const replayed: CommitResult = { ok: true, value: { kind: "replayed", receipt: receipt.result } };
+  if (receipt.request_digest === requestDigest(request)) return replayed;
+  // Compatibility for receipts written before HTTP client identity was separated from server pins.
+  const run = await db.selectFrom("authority.run").select("config").where("id", "=", request.run_id).executeTakeFirst();
+  const recorded = run ? parseRunConfig(run.config ?? {}) : null;
+  const client = request.launch_request;
+  if (run && recorded && (client.pr_integration === undefined || client.pr_integration === recorded.pr_integration)) {
+    const settings = parseRunConfig(client.config ?? {})!;
+    const config = run.config === null ? client.config : {
+      sessions: settings.sessions, grading_enabled: settings.grading_enabled,
+      ...("pr_integration" in run.config ? { pr_integration: recorded.pr_integration } : {}),
+      ...("pr_skill_digest" in run.config ? { pr_skill_digest: recorded.pr_skill_digest } : {}),
+    };
+    const legacy = { event: request.event, writer: request.writer,
+      launch: { definition_id: client.definition_id, project_id: client.project_id, config } };
+    if (receipt.request_digest === requestDigest(legacy)) return replayed;
+  }
+  return { ok: true, value: { kind: "conflict", detail: "ingress id reused with different content" } };
 }
 
 /**

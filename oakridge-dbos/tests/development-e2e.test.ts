@@ -1,6 +1,6 @@
 import { commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { Workflow } from "../src/core-client/core-types";
@@ -204,10 +204,10 @@ beforeAll(async () => {
   let handler: (request: Request) => Response | Promise<Response> = () => new Response("starting", { status: 503 });
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => handler(request) });
   base_url = `http://127.0.0.1:${server.port}`;
-  composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1",
+  composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1", pr_integration_default: "gated-review",
     // The whole development path completes while the configured observation service refuses connections.
     observation: { url: "http://127.0.0.1:1", namespace: "unreachable", token: "ingest-test", poll_ms: 100, log: () => undefined },
-    executor: { kbbl_base_url: stub.url, publication_key: "development-e2e-key", publish_base_url: base_url, agent_workdir: workdir, gated_review_url: null },
+    executor: { kbbl_base_url: stub.url, publication_key: "development-e2e-key", publish_base_url: base_url, agent_workdir: workdir, gated_review_url: base_url },
     operation_runner: createOperationRunner(operationServices),
     timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, max_observe_unavailable_attempts: 5, wake_timeout_seconds: 0.5 } });
   handler = composition.app.fetch;
@@ -479,15 +479,27 @@ test("analysis, spec, and tasks need approval after joint republication", async 
   await api("POST", `/api/runs/${segment(run_id)}/cancel`, { request_id: crypto.randomUUID() });
 }, 90_000);
 
-test("manual confirmation completes the development run with no PR reader", async () => {
+for (const pr_integration of ["gated-review", "github-cli"] as const)
+test(`manual confirmation completes the development run for ${pr_integration}`, async () => {
   forge.pulls.clear();
-  operationServices.pull_requests = null;
+  let reader_calls = 0;
+  const configuredReader: PullRequestReader = { async get(ref, options) { reader_calls++; return forge.reader.get(ref, options); } };
+  operationServices.pull_requests = pr_integration === "github-cli" ? configuredReader : null;
   const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
-  const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
+  const auth_bin = mkdtempSync(resolve(tmpdir(), "oakridge-test-gh-"));
+  writeFileSync(resolve(auth_bin, "gh"), '#!/bin/sh\n[ "$1" = auth ] && [ "$2" = status ]\n', { mode: 0o755 });
+  const previous_path = process.env.PATH;
+  process.env.PATH = `${auth_bin}:${previous_path ?? ""}`;
+  let launched: Response;
+  try { launched = await api("POST", "/api/runs", { request_id, definition_id, pr_integration, input: {
     title: "Confirm PRs", spec: "Confirm both PR stages.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+  } finally {
+    if (previous_path === undefined) delete process.env.PATH; else process.env.PATH = previous_path;
+    rmSync(auth_bin, { recursive: true, force: true });
+  }
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
@@ -514,17 +526,22 @@ test("manual confirmation completes the development run with no PR reader", asyn
 
   const live_status = await api("GET", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}/merge-status`);
   const status_body = await live_status.json() as { readonly kind: string; readonly detail?: string };
-  expect({ status: live_status.status, kind: status_body.kind, reader_unavailable: status_body.detail?.includes("no pull request reader") })
+  expect({ status: live_status.status, kind: status_body.kind, reader_unavailable: status_body.detail?.includes(pr_integration === "github-cli" ? "confirm the merge manually" : "no pull request reader") })
     .toEqual({ status: 200, kind: "unavailable", reader_unavailable: true });
 
   operationServices.pull_requests = forge.reader;
   try {
     const open_status = await api("GET", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}/merge-status`);
-    expect({ status: open_status.status, body: await open_status.json() }).toEqual({ status: 200,
-      body: { kind: "not_merged", pr_url: pullUrl(3), state: "open" } });
-  } finally { operationServices.pull_requests = null; }
+    if (pr_integration === "github-cli") {
+      expect({ status: open_status.status, body: await open_status.json() }).toEqual({ status: 200,
+        body: { kind: "unavailable", detail: "automatic pull request observation is off for github-cli runs; confirm the merge manually" } });
+    } else {
+      expect({ status: open_status.status, body: await open_status.json() }).toEqual({ status: 200,
+        body: { kind: "not_merged", pr_url: pullUrl(3), state: "open" } });
+    }
+  } finally { operationServices.pull_requests = pr_integration === "github-cli" ? configuredReader : null; }
 
-  forge.merge("integration");
+  if (pr_integration === "gated-review") forge.merge("integration");
 
   const completed = await eventually("the confirmed run to finish", async () => {
     await operate(run_id, decided, "all");
@@ -544,6 +561,7 @@ test("manual confirmation completes the development run with no PR reader", asyn
     integrations: outcome.integrations })
     .toEqual({ confirmations: 3, cohort_done: true, integration_done: "done", confirmation_offered: false, integration_target: true,
       integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }] });
+  if (pr_integration === "github-cli") expect(reader_calls).toBe(0);
 }, 150_000);
 
 test("a replacement cohort PR ignores the previous PR's closed observation", async () => {

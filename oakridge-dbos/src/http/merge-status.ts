@@ -4,7 +4,7 @@ import { selectDevelopmentMergeQuery } from "../operations/pull-request-observe"
 import { OPERATION_KEYS } from "../operations/registry";
 import type { OperationRunner } from "../operations/runner";
 import type { Database } from "../storage/database";
-import { readMergeStatusSource } from "../storage/read-store";
+import { readCommittedRunConfig, readMergeStatusSource, selectCommittedPrIntegration } from "../storage/read-store";
 import { errorResponse, MissingEntityError } from "./errors";
 
 /** The live PR status shown before an operator confirms a merge. */
@@ -29,8 +29,10 @@ export function installMergeStatus(app: Hono, deps: { readonly db: Database; rea
       const query = selectDevelopmentMergeQuery(source.stage ?? "", source.input, source.pr_body);
       if (!query.ok) return c.json({ kind: "unavailable", detail: query.error } satisfies MergeStatusView);
       if (!deps.operations) return c.json({ kind: "unavailable", detail: "PR status reader is not configured" } satisfies MergeStatusView);
+      const pr_integration = selectCommittedPrIntegration(await readCommittedRunConfig(deps.db, run_id));
+      if (pr_integration === null) return c.json({ kind: "unavailable", detail: "recorded run config is malformed" } satisfies MergeStatusView);
       const result = await deps.operations.run({ operation: OPERATION_KEYS.pull_request_observe, inputs: { query: query.value } },
-        { signal: c.req.raw.signal });
+        { signal: c.req.raw.signal, pr_integration });
       if (result.kind !== "succeeded") return c.json({ kind: "unavailable", detail: result.detail } satisfies MergeStatusView);
       if (!isObservation(result.body) || result.body.url !== query.value.pr_url)
         return c.json({ kind: "unavailable", detail: "PR status did not match the current pull request" } satisfies MergeStatusView);

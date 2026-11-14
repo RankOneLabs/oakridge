@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { freePorts, isAlive, LauncherFixture } from "./launcher-fixture";
 
@@ -392,3 +392,35 @@ describe("supervision", () => {
     await stack.until(() => !isAlive(observation), "observation to stop");
   }, TIMEOUT_MS);
 });
+
+describe("PR integration install default", () => {
+  test("configured gated-review becomes the default in both services", async () => {
+    const stack = await startedStack();
+    expect([stack.record("dbos").env.OAKRIDGE_PR_INTEGRATION, stack.record("kbbl").env.OAKRIDGE_PR_INTEGRATION])
+      .toEqual(["gated-review", "gated-review"]);
+    expect(stack.logText()).toContain("PR integration default: gated-review (gated-review server in .mcp.json)");
+  }, TIMEOUT_MS);
+  test("an explicit github-cli choice wins", async () => {
+    const stack = fixture();
+    stack.start({ script: "oakridge-start", args: [`--port=${stack.ports.kbbl}`], env: { OAKRIDGE_PR_INTEGRATION: "github-cli", OAKRIDGE_DBOS_PORT: String(stack.ports.dbos), DBOS_SYSTEM_DATABASE_URL: "postgres://unused/unused", OAKRIDGE_OBSERVATION_URL: "" } });
+    await stack.stackServing();
+    expect(stack.record("dbos").env.OAKRIDGE_PR_INTEGRATION).toBe("github-cli");
+    expect(stack.logText()).toContain("PR integration default: github-cli (OAKRIDGE_PR_INTEGRATION)");
+  }, TIMEOUT_MS);
+  test("an invalid integration refuses startup", async () => {
+    const stack = fixture();
+    stack.start({ script: "oakridge-start", args: [], env: { OAKRIDGE_PR_INTEGRATION: "bogus" } });
+    await stack.until(() => !stack.launcherRunning(), "invalid integration to refuse startup");
+    expect(stack.hasRecord("dbos")).toBe(false);
+    expect(stack.logText()).toContain("oakridge: OAKRIDGE_PR_INTEGRATION must be gated-review, github-cli or none (got bogus)");
+  }, TIMEOUT_MS);
+});
+
+test("no MCP configuration defaults new runs to none", async () => {
+  const stack = fixture();
+  rmSync(join(stack.checkout, ".mcp.json"));
+  stack.start();
+  await stack.stackServing();
+  expect(stack.record("dbos").env.OAKRIDGE_PR_INTEGRATION).toBe("none");
+  expect(stack.logText()).toContain("PR integration default: none (no gated-review server in .mcp.json; set OAKRIDGE_PR_INTEGRATION to choose)");
+}, TIMEOUT_MS);

@@ -1,9 +1,12 @@
+import type { PrIntegration } from "../domain/pr-integration";
+import type { PrIntegrationHealth } from "./pr-launch-preflight";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Hono } from "hono";
 import { CoreClient } from "../core-client/client";
 import type { RunId } from "../domain/primitives";
 import { selectControlPlaneAccess } from "../http/control-auth";
 import { configuredBrowserWritePolicy } from "../http/browser-write-policy";
+import type { PrLaunchDependencies } from "../http/ingress";
 import { createHttpApp } from "../http/app";
 import { openDatabase } from "../storage/database";
 import { KbblClient } from "../adapters/kbbl";
@@ -33,6 +36,7 @@ export interface ExecutorOptions {
   readonly gated_review_url: string | null;
 }
 export interface ProductionOptions {
+  readonly pr_integration_default?: PrIntegration;
   readonly database_url: string; readonly host: string; readonly control_token?: string;
   readonly executor?: ExecutorOptions;
   /** Overrides for tests; production builds them from `executor`. */
@@ -74,7 +78,9 @@ export async function createProductionComposition(options: ProductionOptions): P
     await DBOS.launch();
     await resumeActiveRuns(db);
     const wake = (run_id: RunId): void => { void wakeRun(run_id); };
-    const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
+    const pr_launch: PrLaunchDependencies = { pr_integration_default: options.pr_integration_default ?? "none",
+      probe_pr_integration: (integration) => probePrIntegration(integration, executor?.gated_review_url ?? null) };
+    const app = createHttpApp({ ...pr_launch, db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
     const sweep = startRunSweep(() => sweepRunsNeedingWork(db));
     const observation = options.observation ? startObservationPublisher(db, options.observation) : null;
     return { app, application_version, async close() {
@@ -86,4 +92,23 @@ export async function createProductionComposition(options: ProductionOptions): P
     finally { core.close(); await db.destroy(); }
     throw cause;
   }
+}
+
+/** IO boundary: any HTTP response proves reachability; authentication remains the tool's concern. */
+export async function probePrIntegration(integration: PrIntegration, gated_review_url: string | null): Promise<PrIntegrationHealth> {
+  if (integration === "none") return { kind: "unconfigured", detail: "selected integration is none" };
+  if (integration === "gated-review") {
+    if (!gated_review_url) return { kind: "unconfigured", detail: "OAKRIDGE_GATED_REVIEW_URL is unset" };
+    try {
+      const response = await fetch(gated_review_url, { signal: AbortSignal.timeout(3000) });
+      void response.body?.cancel().catch(() => {});
+      return { kind: "healthy" };
+    } catch (cause) { return { kind: "unreachable", detail: String(cause) }; }
+  }
+  const executable = Bun.which("gh", { PATH: process.env.PATH });
+  if (!executable) return { kind: "unconfigured", detail: "gh is absent from PATH" };
+  try {
+    const process = Bun.spawn([executable, "auth", "status"], { stdout: "ignore", stderr: "ignore" });
+    return await process.exited === 0 ? { kind: "healthy" } : { kind: "unconfigured", detail: "gh auth status failed" };
+  } catch (cause) { return { kind: "unconfigured", detail: String(cause) }; }
 }

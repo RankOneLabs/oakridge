@@ -16,3 +16,5 @@ export type { RunEvent } from "../projections/run-event";
 export type { StreamFrameData, StreamInvalidation } from "../projections/operator-event";
 export type { SessionHold, SessionHoldResponse, SessionRunLocation } from "../projections/session-hold";
 export type { IngressRequest, LaunchRequest, DecideRequest, PublishRequest, IngressResponse, IngressCommitted } from "./ingress";
+
+export type { PrIntegration, PrLaunchPreflightError } from "../domain/pr-integration";

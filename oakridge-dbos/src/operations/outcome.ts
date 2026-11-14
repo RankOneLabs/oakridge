@@ -1,3 +1,5 @@
+import type { PrIntegration } from "../domain/pr-integration";
+
 /**
  * What one call of a code operation produced. `succeeded` carries the body
  * the executor publishes as the revision of the worker's artifact; `failed`
@@ -9,7 +11,11 @@ export type OperationOutcome =
   | { readonly kind: "failed"; readonly code: string; readonly detail: string }
   | { readonly kind: "unavailable"; readonly detail: string };
 
-export interface OperationCallOptions { readonly signal?: AbortSignal }
+export interface OperationCallOptions {
+  readonly signal?: AbortSignal;
+  /** Recorded launch setting; omitted only by legacy/direct callers. */
+  readonly pr_integration?: PrIntegration;
+}
 
 type Fields = { readonly [key: string]: unknown };
 export const isFields = (value: unknown): value is Fields => typeof value === "object" && value !== null && !Array.isArray(value);

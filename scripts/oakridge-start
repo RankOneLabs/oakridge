@@ -168,6 +168,19 @@ if [ ! -f "$MCP_CONFIG" ]; then
 elif [ -z "$GATED_REVIEW_URL" ]; then
   echo "oakridge: $MCP_CONFIG names no gated-review server; pull_request.observe will fail with discovery_unsupported" >&2
 fi
+if [ "${OAKRIDGE_PR_INTEGRATION+x}" = x ]; then
+  case "$OAKRIDGE_PR_INTEGRATION" in
+    gated-review|github-cli|none) PR_INTEGRATION_DEFAULT="$OAKRIDGE_PR_INTEGRATION" ;;
+    *) echo "oakridge: OAKRIDGE_PR_INTEGRATION must be gated-review, github-cli or none (got $OAKRIDGE_PR_INTEGRATION)" >&2; exit 1 ;;
+  esac
+  echo "oakridge: PR integration default: $PR_INTEGRATION_DEFAULT (OAKRIDGE_PR_INTEGRATION)"
+elif [ -n "$GATED_REVIEW_URL" ]; then
+  PR_INTEGRATION_DEFAULT=gated-review
+  echo "oakridge: PR integration default: gated-review (gated-review server in .mcp.json)"
+else
+  PR_INTEGRATION_DEFAULT=none
+  echo "oakridge: PR integration default: none (no gated-review server in .mcp.json; set OAKRIDGE_PR_INTEGRATION to choose)"
+fi
 # The default install keeps its publication key, agent workdir and observation
 # tokens here; oakridge-shadow passes its own resolved directory.
 STATE_DIR="${OAKRIDGE_STATE_DIR:-$HOME/.local/state/oakridge}"
@@ -522,6 +535,7 @@ echo "oakridge: starting DBOS backend at $DBOS_URL"
     KBBL_BASE_URL="${KBBL_BASE_URL:-$KBBL_URL}" \
     OAKRIDGE_DBOS_HOST="$DBOS_HOST" \
     OAKRIDGE_CORE_WASM="$CORE_WASM" \
+    OAKRIDGE_PR_INTEGRATION="$PR_INTEGRATION_DEFAULT" \
     OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
     OAKRIDGE_PUBLICATION_KEY="$OAKRIDGE_PUBLICATION_KEY" \
     OAKRIDGE_AGENT_WORKDIR="$AGENT_WORKDIR" \
@@ -539,7 +553,8 @@ for name in "${provider_names[@]}"; do kbbl_unset+=(-u "$name"); done
 echo "oakridge: starting kbbl (the PWA rebuild may take a moment)"
 env "${kbbl_unset[@]}" \
   OAKRIDGE_CORE_BASE_URL="$DBOS_URL" \
-  OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
+  OAKRIDGE_PR_INTEGRATION="$PR_INTEGRATION_DEFAULT" \
+    OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
   OAKRIDGE_OBSERVATION_URL="$OBSERVATION_URL" \
   OAKRIDGE_OBSERVATION_NAMESPACE="$OBSERVATION_NAMESPACE" \
   OAKRIDGE_OBSERVATION_READ_TOKEN="$OBSERVATION_READ_TOKEN" \

@@ -71,7 +71,7 @@ test("a launch commits the run, its units, the event with its writer, the receip
 test("a launch's worker settings reach that worker's agent instruction", async () => {
   const settings = { harness: "codex", model: "gpt-6-sol", effort: "high" };
   const { run_id, result } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" },
-    config: { sessions: { document: { writer: settings } }, grading_enabled: false } });
+    config: { sessions: { document: { writer: settings } }, pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: false } });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   const [intent] = await intents(run_id);
   const instruction = decodeEffectInstruction(intent?.payload);
@@ -427,9 +427,9 @@ test("a launch's request digest changes with its project or config", () => {
   const launch = { definition_id: definition_id, project_id: null, config: null };
   const digest = requestDigest({ ...request, launch });
   expect({ other_project: requestDigest({ ...request, launch: { ...launch, project_id: "project-b" as ProjectId } }) === digest,
-    other_config: requestDigest({ ...request, launch: { ...launch, config: { sessions: {}, grading_enabled: false } } }) === digest,
-    other_grading: requestDigest({ ...request, launch: { ...launch, config: { sessions: {}, grading_enabled: true } } })
-      === requestDigest({ ...request, launch: { ...launch, config: { sessions: {}, grading_enabled: false } } }) })
+    other_config: requestDigest({ ...request, launch: { ...launch, config: { sessions: {}, pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: false } } }) === digest,
+    other_grading: requestDigest({ ...request, launch: { ...launch, config: { sessions: {}, pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: true } } })
+      === requestDigest({ ...request, launch: { ...launch, config: { sessions: {}, pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: false } } }) })
     .toEqual({ other_project: false, other_config: false, other_grading: false });
 });
 

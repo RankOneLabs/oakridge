@@ -8,7 +8,7 @@ import YAML from "yaml";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type DefinitionOrder, type OperationRegistry } from "./definition-objects";
-import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, isCommittedDefinition, type DefinitionStoreFailure } from "./definition-store";
+import { DEFINITION_STORE_ROOT, readSkillIndex, readSkillBundle, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, isCommittedDefinition, type DefinitionStoreFailure } from "./definition-store";
 import { WORKFLOW_SOURCES } from "./workflow-sources";
 
 function unwrap<Value, Failure>(result: Result<Value, Failure>): Value {
@@ -306,7 +306,7 @@ function generatorFixture(): string {
   const root = mkdtempSync(resolve(tmpdir(), "oakridge-generator-"));
   temporary_stores.push(root);
   for (const path of [
-    "workflow-config/src", "workflow-config/prompts", "workflow-config/samples", "workflow-config/development.yaml",
+    "workflow-config/src", "workflow-config/skills", "workflow-config/prompts", "workflow-config/samples", "workflow-config/development.yaml",
     "workflow-core/fixtures/bundles", "oakridge-dbos/src/operations/registry.ts", "oakridge-dbos/src/effects/provider-catalog.ts",
     "oakridge-dbos/src/core-client/source-types.ts",
   ]) {
@@ -597,4 +597,36 @@ for (const name of ["assess", "assess-revise"]) {
 
 test("development pins the build-item contract after the prior task-contract definition", () => {
   expect(unwrap(readLaunchableCatalog()).development).not.toBe("478dfc8194eb060c438c916adbe9b80b9b5010ad2d339b629448ddbde376fc34");
+});
+
+test("skill bundle index pins verified bundles with the shared operation contract", () => {
+  const index = unwrap(readSkillIndex());
+  const headings = ["Publish branch", "Create or update PR", "Set draft state", "Inspect status", "Recover a closed PR"];
+  for (const integration of ["gated-review", "github-cli"] as const) {
+    const bundle = unwrap(readSkillBundle(index[integration]));
+    const skill = new TextDecoder().decode(bundle.files["SKILL.md"]);
+    expect(skill).toMatch(/^---\nname: pr-operations\n/);
+    for (const heading of headings) expect(skill).toContain(`## ${heading}`);
+    expect(skill).toContain("draft");
+    expect(skill).toContain("ready");
+    if (integration === "gated-review") {
+      for (const tool of ["git.push", "open_pr", "set_pr_draft", "pr_status"]) expect(skill).toContain(tool);
+      expect(skill).toContain("Do not use shell git push, git pull, git fetch or the gh CLI");
+    } else {
+      expect(skill).toContain("Gating is instruction-level only: Oakridge does not enforce it");
+      expect(skill.match(/gh pr merge/g)?.length).toBe(1);
+      expect(skill).toContain("Never run gh pr merge");
+    }
+  }
+});
+test("skill source byte drift fails generator check and retains old pins on generation", () => {
+  const root = generatorFixture();
+  expect(runGenerator(root).exitCode).toBe(0);
+  const before = readFileSync(resolve(root, "workflow-config/definitions/skills.json"), "utf8");
+  const path = resolve(root, "workflow-config/skills/pr-operations/github-cli/SKILL.md");
+  writeFileSync(path, readFileSync(path, "utf8") + "\nchanged byte\n");
+  expect(runGenerator(root, true).exitCode).not.toBe(0);
+  expect(runGenerator(root).exitCode).toBe(0);
+  const old = JSON.parse(before) as { "github-cli": string };
+  expect(existsSync(resolve(root, "workflow-config/definitions/skills", old["github-cli"], "SKILL.md"))).toBe(true);
 });

@@ -64,11 +64,12 @@ const launched = (run_config: CommittedRunConfig) => mapObservationEvent({ row: 
   definition: definition({ kind: "text" }), namespace: "test", stage: null, revision_sequence: null, run_config });
 
 test("a launch carries its exact committed config beside its input", () => {
-  const config = { sessions: { writing: { author: { harness: "codex", model: "gpt-5.5", effort: null } } }, grading_enabled: true };
+  const config = { sessions: { writing: { author: { harness: "codex", model: "gpt-5.5", effort: null } } }, pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: true };
   const on = launched({ state: "committed", config });
-  const off = launched({ state: "committed", config: { sessions: {}, grading_enabled: false } });
+  const offConfig = { sessions: {}, pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: false };
+  const off = launched({ state: "committed", config: offConfig });
   expect([on.kind === "run_input" ? [on.input, on.config] : on.kind, off.kind === "run_input" ? off.config : off.kind]).toEqual([
-    [{ topic: "t" }, config], { sessions: {}, grading_enabled: false }]);
+    [{ topic: "t" }, config], offConfig]);
 });
 
 test("a launch that committed no config carries none, and a malformed one is unmapped", () => {

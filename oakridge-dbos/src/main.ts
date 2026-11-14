@@ -1,3 +1,4 @@
+import { parsePrIntegration } from "./domain/pr-integration";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { prepareAgentWorkdir } from "./runtime/agent-workdir";
@@ -26,6 +27,8 @@ if (kbbl_base_url) {
   if (!workdir.ok) throw new Error(`agent workdir: ${workdir.error.detail}`);
   agent_workdir = workdir.value;
 }
+const pr_integration_default = process.env.OAKRIDGE_PR_INTEGRATION === undefined ? "none" : parsePrIntegration(process.env.OAKRIDGE_PR_INTEGRATION);
+if (pr_integration_default === null) throw new Error("OAKRIDGE_PR_INTEGRATION must be gated-review, github-cli or none");
 const gated_review_url = optional("OAKRIDGE_GATED_REVIEW_URL");
 const observation_url = optional("OAKRIDGE_OBSERVATION_URL");
 const observation = observation_url ? { url: observation_url,
@@ -39,7 +42,7 @@ if (!gated_review_url) console.warn("OAKRIDGE_GATED_REVIEW_URL is unset: pull_re
 const migration_db = openDatabase(database_url);
 try { await migrateEmptyDatabase(migration_db); }
 finally { await migration_db.destroy(); }
-const composition = await createProductionComposition({ database_url, host, control_token: process.env.OAKRIDGE_CONTROL_TOKEN,
+const composition = await createProductionComposition({ pr_integration_default, database_url, host, control_token: process.env.OAKRIDGE_CONTROL_TOKEN,
   observation,
   executor: { kbbl_base_url, kbbl_control_token, publication_key: optional("OAKRIDGE_PUBLICATION_KEY"), publish_base_url, agent_workdir, gated_review_url } });
 let server: ReturnType<typeof Bun.serve>;
