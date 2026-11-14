@@ -19,6 +19,7 @@ const stylesheet = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
 const SURFACES = ["bg-app", "bg-surface", "bg-elevated", "bg-code", "bg-input-bar", "bg-input-bar-desktop"];
 const TEXT_TIERS = ["text-primary", "text-secondary", "text-tertiary", "text-muted", "text-session", "text-faint", "text-fainter", "text-faintest"];
 const TONES = ["info", "success", "warning", "danger", "muted"];
+const BADGE_TONES = ["success", "warning", "danger", "info", "muted", "neutral"];
 const LEGACY_FAMILIES = ["status-connecting", "status-connected", "status-disconnected", "status-stale", "amber", "permission", "danger"];
 
 function readBlock(theme: ThemeName): ThemeTokens {
@@ -102,7 +103,7 @@ const PAIRS: readonly ContrastPair[] = [
   ...LEGACY_FAMILIES.flatMap((family) => [...SURFACES, `${family}-bg`].map((background) => textPair(`${family}-fg`, background))),
   ...["border-subtle", "border-muted", "border-hover", "accent-primary", "amber-border", "permission-border", "danger-card-border"]
     .flatMap((foreground) => SURFACES.map((background) => borderPair(foreground, background))),
-  ...TONES.flatMap((tone) => [
+  ...BADGE_TONES.flatMap((tone) => [
     textPair(`badge-${tone}-fg`, `badge-${tone}-bg`),
     ...["bg-app", "bg-surface", "bg-elevated"].map((background) => borderPair(`badge-${tone}-border`, background)),
   ]),
@@ -180,11 +181,12 @@ describe("theme token contract", () => {
 
   it("inherits the exact shared badge palette and elevation in both themes", () => {
     const palette: readonly (readonly [string, string, string, string])[] = [
-      ["success", "#173E34", "#9AE3B4", "#398366"],
-      ["warning", "#4A371E", "#F3CE8E", "#A57B42"],
-      ["danger", "#472930", "#F2AFB9", "#A86476"],
-      ["info", "#213C4A", "#A8DCEB", "#568BA3"],
-      ["muted", "#343E42", "#DCE3E5", "#7C9299"],
+      ["success", "#064A39", "#A4F3C6", "#238865"],
+      ["warning", "#786143", "#FFF0DA", "#A37D46"],
+      ["danger", "#680C22", "#FFD0DB", "#B35D71"],
+      ["info", "#496574", "#E1F2F8", "#528CA6"],
+      ["muted", "#D2D9DC", "#39454A", "#7B919A"],
+      ["neutral", "#343E42", "#DCE3E5", "#7C9299"],
     ];
     for (const [tone, bg, fg, border] of palette) {
       for (const [role, value] of [["bg", bg], ["fg", fg], ["border", border]]) {
@@ -195,6 +197,28 @@ describe("theme token contract", () => {
     expect(dark.get("--badge-elevation")).toBeTruthy();
     expect(light.get("--badge-elevation")).toBe(dark.get("--badge-elevation"));
     expect([...stylesheet.matchAll(/--badge-elevation\s*:/g)]).toHaveLength(1);
+  });
+
+  it("raises badge saturation and deepens luminance with completion while retaining hue", () => {
+    const steps = [["muted"], ["info", "warning"], ["success", "danger"]] as const;
+    for (const [lower, higher] of [[steps[0], steps[1]], [steps[1], steps[2]]] as const) {
+      for (const lowerTone of lower) {
+        for (const higherTone of higher) {
+          const lowerBg = resolveColor(dark, `badge-${lowerTone}-bg`);
+          const higherBg = resolveColor(dark, `badge-${higherTone}-bg`);
+          expect(colorHsl(lowerBg).saturation).toBeLessThan(colorHsl(higherBg).saturation);
+          expect(luminance(lowerBg)).toBeGreaterThan(luminance(higherBg));
+          expect(contrast(lowerBg, higherBg)).toBeGreaterThanOrEqual(1.2);
+        }
+      }
+    }
+    const originalHues = [["success", 165], ["warning", 34], ["danger", 346], ["info", 200], ["muted", 197]] as const;
+    for (const [tone, originalHue] of originalHues) {
+      for (const role of ["bg", "border"]) {
+        const distance = Math.abs(colorHsl(resolveColor(dark, `badge-${tone}-${role}`)).hue - originalHue);
+        expect(Math.min(distance, 360 - distance)).toBeLessThanOrEqual(15);
+      }
+    }
   });
 
   it("never overrides badge properties in a theme selector", () => {
@@ -219,7 +243,8 @@ describe("theme token contract", () => {
     }
     for (const name of ["accent-primary", "accent-secondary", "border-decorative",
       ...TONES.flatMap((tone) => ["fg", "bg", "border"].flatMap((role) =>
-        [`tone-${tone}-${role}`, `badge-${tone}-${role}`]))]) {
+        [`tone-${tone}-${role}`])),
+      ...BADGE_TONES.flatMap((tone) => ["fg", "bg", "border"].map((role) => `badge-${tone}-${role}`))]) {
       expect(dark.has(`--${name}`) && light.has(`--${name}`), name).toBe(true);
     }
   });

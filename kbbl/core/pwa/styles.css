@@ -32,22 +32,27 @@
   --accent-muted: #23383C;
   --accent-secondary: #DB806B;
   --accent-contrast-fg: #14191B;
+  /* Shared completion ramp: muted < info/warning < success/danger saturation. */
+  --badge-success-bg: #064A39;
+  --badge-success-fg: #A4F3C6;
+  --badge-success-border: #238865;
+  --badge-warning-bg: #786143;
+  --badge-warning-fg: #FFF0DA;
+  --badge-warning-border: #A37D46;
+  --badge-danger-bg: #680C22;
+  --badge-danger-fg: #FFD0DB;
+  --badge-danger-border: #B35D71;
+  --badge-info-bg: #496574;
+  --badge-info-fg: #E1F2F8;
+  --badge-info-border: #528CA6;
+  --badge-muted-bg: #D2D9DC;
+  --badge-muted-fg: #39454A;
+  --badge-muted-border: #7B919A;
+  /* Neutral retains the pre-ramp muted palette. */
+  --badge-neutral-bg: #343E42;
+  --badge-neutral-fg: #DCE3E5;
+  --badge-neutral-border: #7C9299;
   /* Shared inset highlight and single drop-shadow level for every badge. */
-  --badge-success-bg: #173E34;
-  --badge-success-fg: #9AE3B4;
-  --badge-success-border: #398366;
-  --badge-warning-bg: #4A371E;
-  --badge-warning-fg: #F3CE8E;
-  --badge-warning-border: #A57B42;
-  --badge-danger-bg: #472930;
-  --badge-danger-fg: #F2AFB9;
-  --badge-danger-border: #A86476;
-  --badge-info-bg: #213C4A;
-  --badge-info-fg: #A8DCEB;
-  --badge-info-border: #568BA3;
-  --badge-muted-bg: #343E42;
-  --badge-muted-fg: #DCE3E5;
-  --badge-muted-border: #7C9299;
   --badge-elevation: inset 0 1px 0 rgb(255 255 255 / 10%), 0 1px 2px rgb(0 0 0 / 22%);
   --tone-info-fg: #A8DCEB;
   --tone-info-bg: #213438;

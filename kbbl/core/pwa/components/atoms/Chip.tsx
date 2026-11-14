@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 export type ChipTone = "neutral" | "muted" | "info" | "success" | "warning" | "danger" | "accent";
 
 const TONE_CLASS: Record<ChipTone, string> = {
-  neutral: "border-[var(--badge-muted-border)] bg-[var(--badge-muted-bg)] text-[var(--badge-muted-fg)]",
+  neutral: "border-[var(--badge-neutral-border)] bg-[var(--badge-neutral-bg)] text-[var(--badge-neutral-fg)]",
   muted: "border-[var(--badge-muted-border)] bg-[var(--badge-muted-bg)] text-[var(--badge-muted-fg)]",
   info: "border-[var(--badge-info-border)] bg-[var(--badge-info-bg)] text-[var(--badge-info-fg)]",
   success: "border-[var(--badge-success-border)] bg-[var(--badge-success-bg)] text-[var(--badge-success-fg)]",
