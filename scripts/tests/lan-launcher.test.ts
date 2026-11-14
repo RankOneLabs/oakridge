@@ -16,6 +16,7 @@ test("authenticated network logs mode without revealing token", async () => {
   await fixture.stackServing();
   expect(fixture.logText()).toContain("oakridge: access mode: authenticated network (kbbl bound to 0.0.0.0; OAKRIDGE_CONTROL_TOKEN is set)");
   expect(fixture.logText()).not.toContain("s3cret-test-value");
+  expect(fixture.record("dbos").env.OAKRIDGE_OPERATOR_BIND_HOST).toBe("0.0.0.0");
 });
 
 for (const script of ["oakridge-start", "oakridge-lan"] as const) {

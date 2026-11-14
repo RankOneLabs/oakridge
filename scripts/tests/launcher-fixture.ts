@@ -121,7 +121,7 @@ export class LauncherFixture {
     const { checkout } = this;
     for (const path of ["scripts", "observation/src", "oakridge-dbos/src", "kbbl/scripts", "kbbl/core", "workflow-core"])
       mkdirSync(join(checkout, path), { recursive: true });
-    for (const script of ["oakridge-shadow", "oakridge-start", "oakridge-lan"]) cpSync(join(REPOSITORY, "scripts", script), join(checkout, "scripts", script));
+    for (const script of ["oakridge-shadow", "oakridge-start", "oakridge-lan", "oakridge-preflight.sh", "oakridge-doctor"]) cpSync(join(REPOSITORY, "scripts", script), join(checkout, "scripts", script));
     cpSync(join(REPOSITORY, "kbbl/scripts/kbbl-start"), join(checkout, "kbbl/scripts/kbbl-start"));
     // The provider selection is real code: the launchers run the repository's own.
     symlinkSync(join(REPOSITORY, "observation/scripts"), join(checkout, "observation/scripts"));

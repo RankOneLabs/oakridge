@@ -1,3 +1,4 @@
+import type { AgentProfileReadiness } from "../acp/profile-readiness";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { compress } from "hono/compress";
@@ -28,6 +29,7 @@ import {
 } from "../runtime";
 
 export interface CreateAppDeps {
+  readonly readAgentProfiles?: () => Promise<readonly AgentProfileReadiness[]>;
   /** ACP session service — the production session backend. */
   acp: AcpSessionService;
   /** Optional server default workdir (from --workdir CLI arg). */
@@ -113,6 +115,8 @@ export function createApp(deps: CreateAppDeps): Hono {
   // ---- per-session skills (app-owned sources over the ACP backend;
   // agent slash commands reach the PWA via `commands` UI events) ----
   mountSkillsRoutes(app, { acp, config });
+
+  app.get("/agent-profiles/readiness", async (c) => deps.readAgentProfiles ? c.json(await deps.readAgentProfiles()) : c.json({ error: "Profile readiness reader is not configured" }, 503));
 
   // ---- server config ----
   //

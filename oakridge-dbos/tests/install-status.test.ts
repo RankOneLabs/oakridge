@@ -37,3 +37,69 @@ test("assembled model carries presence only, never the token", () => {
   expect(status.installation_failed).toBe(false);
   expect(JSON.stringify(status)).not.toContain(token);
 });
+
+import { Hono } from "hono";
+import { installStatusRoute, readInstallStatus, type InstallStatusDependencies } from "../src/http/install-status";
+import { readLaunchableCatalog, resolveDefinition, type ResolvedDefinition } from "../src/runtime/definition-store";
+function definitions(): readonly ResolvedDefinition[] {
+  const catalog = readLaunchableCatalog();
+  if (!catalog.ok) throw new Error("catalog unavailable");
+  return ["development", "review-loop", "fan-out"].map((name) => {
+    const definition = resolveDefinition(catalog.value[name]!);
+    if (!definition.ok) throw new Error("fixture unavailable");
+    return definition.value;
+  });
+}
+function sources(): InstallStatusDependencies {
+  return { access: { bind_host: "localhost", has_control_token: false, allow_insecure_non_loopback: false }, integration: "none", probe_integration: async () => ({ kind: "unconfigured", detail: "none" }), kbbl: { profileReadiness: async () => ({ kind: "acknowledged", value: [] }) }, observation_url: null, core_ready: true, definitions };
+}
+test("status endpoint returns typed PR blocks while optional services do not fail installation", async () => {
+  const app = new Hono();
+  installStatusRoute(app, () => readInstallStatus(sources()));
+  const response = await app.request("/api/install-status");
+  const status = await response.json();
+  expect(response.status).toBe(200);
+  expect(status.launch_blocks.map((block: { definition_name: string; error: { kind: string } }) => [block.definition_name, block.error.kind])).toEqual([["development", "integration_none"]]);
+  expect(status.observation.availability.kind).toBe("unavailable_optional");
+  expect(status.installation_failed).toBe(false);
+});
+test("unreachable kbbl becomes a required failure with an empty profile list and HTTP 200", async () => {
+  const app = new Hono();
+  installStatusRoute(app, () => readInstallStatus({ ...sources(), kbbl: { profileReadiness: async () => { throw new Error("connection refused"); } } }));
+  const response = await app.request("/api/install-status");
+  expect(response.status).toBe(200);
+  const status = await response.json();
+  expect(status).toMatchObject({ installation_failed: true, agent_profiles: [] });
+  expect(status.checks).toContainEqual(expect.objectContaining({ id: "kbbl", kind: "failed", required: true }));
+});
+test("configured but unreachable optional services and unauthenticated agents stay non-blocking", async () => {
+  const status = await readInstallStatus({ ...sources(), integration: "gated-review", probe_integration: async () => ({ kind: "unreachable", detail: "https://secret-token@private.example" }), observation_url: "http://observation.example", fetch: async () => { throw new Error("unreachable secret-token"); }, kbbl: { profileReadiness: async () => ({ kind: "acknowledged", value: [{ profile_id: "codex", label: "Codex", enabled: true, readiness: { kind: "failed", detail: "Login expired", fix: "Run codex login" } }] }) } });
+  expect(status.installation_failed).toBe(false);
+  expect(status.observation.availability).toMatchObject({ kind: "failed", required: false });
+  expect(JSON.stringify(status)).not.toContain("secret-token");
+});
+test("nested non-PR workers do not acquire launch blocks", async () => {
+  const original = definitions()[0]!;
+  const source: ResolvedDefinition["source"] = { workflow: "nested local", input: "string", run: { units: { child: { group: { units: { local: { stage: "local" } }, outcome: {} } } }, outcome: {} }, stages: { local: { input: "string", workers: { local: { kind: "code", operation: "repository.prepare", inputs: {}, produces: [] } }, artifacts: {}, outcome: {} } } };
+  expect((await readInstallStatus({ ...sources(), definitions: () => [{ ...original, source }] })).launch_blocks).toEqual([]);
+});
+test("served status excludes the configured control token even in failed remote probes", async () => {
+  const previous = process.env.OAKRIDGE_CONTROL_TOKEN;
+  const token = "route-control-secret-for-install-status";
+  process.env.OAKRIDGE_CONTROL_TOKEN = token;
+  try {
+    const app = new Hono();
+    installStatusRoute(app, () => readInstallStatus({ ...sources(),
+      access: { bind_host: "0.0.0.0", has_control_token: Boolean(process.env.OAKRIDGE_CONTROL_TOKEN), allow_insecure_non_loopback: false },
+      integration: "gated-review", probe_integration: async () => { throw new Error(`Unreachable https://${token}@gateway.example`); },
+    }));
+    const response = await app.request("/api/install-status", { headers: { authorization: `Bearer ${token}` } });
+    expect(response.status).toBe(200);
+    const serialized = await response.text();
+    expect(serialized).toContain("authenticated_network");
+    expect(serialized).not.toContain(token);
+  } finally {
+    if (previous === undefined) delete process.env.OAKRIDGE_CONTROL_TOKEN;
+    else process.env.OAKRIDGE_CONTROL_TOKEN = previous;
+  }
+});

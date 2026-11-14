@@ -1,3 +1,5 @@
+import { readInstallStatus } from "../http/install-status";
+import { selectAccessMode, type AccessModeInput } from "../projections/install-status-view";
 import { readCommittedRunConfig, selectCommittedPrIntegration } from "../storage/read-store";
 import type { PrIntegration } from "../domain/pr-integration";
 import type { PrIntegrationHealth } from "./pr-launch-preflight";
@@ -37,6 +39,7 @@ export interface ExecutorOptions {
   readonly gated_review_url: string | null;
 }
 export interface ProductionOptions {
+  readonly operator_access?: AccessModeInput;
   readonly pr_integration_default?: PrIntegration;
   readonly database_url: string; readonly host: string; readonly control_token?: string;
   readonly executor?: ExecutorOptions;
@@ -59,6 +62,10 @@ export interface ProductionComposition { readonly app: Hono; readonly applicatio
 export async function createProductionComposition(options: ProductionOptions): Promise<ProductionComposition> {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });
   if (access.kind === "refused") throw new Error(access.detail);
+  if (options.operator_access) {
+    const operator_access = selectAccessMode(options.operator_access);
+    if (operator_access.kind === "failed") throw new Error(operator_access.detail);
+  }
   const executor = options.executor;
   if (executor?.kbbl_base_url && !executor.publication_key) throw new Error("OAKRIDGE_PUBLICATION_KEY is required when KBBL_BASE_URL is set");
   const db = openDatabase(options.database_url);
@@ -87,7 +94,13 @@ export async function createProductionComposition(options: ProductionOptions): P
     const wake = (run_id: RunId): void => { void wakeRun(run_id); };
     const pr_launch: PrLaunchDependencies = { pr_integration_default: options.pr_integration_default ?? "none",
       probe_pr_integration: (integration) => probePrIntegration(integration, executor?.gated_review_url ?? null) };
-    const app = createHttpApp({ ...pr_launch, db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
+    const app = createHttpApp({ read_install_status: () => readInstallStatus({
+      access: options.operator_access ?? { bind_host: options.host, has_control_token: Boolean(options.control_token?.trim()), allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" },
+      integration: pr_launch.pr_integration_default ?? "none",
+      probe_integration: () => probePrIntegration(pr_launch.pr_integration_default ?? "none", executor?.gated_review_url ?? null),
+      kbbl: executor?.kbbl_base_url ? new KbblClient({ base_url: executor.kbbl_base_url, control_token: executor.kbbl_control_token ?? null }) : null,
+      observation_url: options.observation?.url ?? null, core_ready: true,
+    }), ...pr_launch, db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
     const sweep = startRunSweep(() => sweepRunsNeedingWork(db));
     const observation = options.observation ? startObservationPublisher(db, options.observation) : null;
     return { app, application_version, async close() {

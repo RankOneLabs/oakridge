@@ -1,4 +1,4 @@
-import { isLoopbackHost } from "../http/control-auth";
+import { isLoopbackHost } from "../http/loopback-host";
 import type { PrIntegration, PrLaunchPreflightError } from "../domain/pr-integration";
 import type { DefinitionId } from "../runtime/definition-store";
 

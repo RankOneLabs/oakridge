@@ -8,6 +8,7 @@
   "scripts": {
     "oakridge": "./scripts/oakridge-start",
     "test:scripts": "bun test ./scripts",
-    "typecheck": "bunx tsc --noEmit -p canonical-json/tsconfig.json && bunx tsc --noEmit -p workflow-config/tsconfig.json && bunx tsc --noEmit -p kbbl/tsconfig.json && bunx tsc --noEmit -p oakridge-dbos/tsconfig.json && bunx tsc --noEmit -p observation/tsconfig.json && bunx tsc --noEmit -p scripts/tsconfig.json"
+    "typecheck": "bunx tsc --noEmit -p canonical-json/tsconfig.json && bunx tsc --noEmit -p workflow-config/tsconfig.json && bunx tsc --noEmit -p kbbl/tsconfig.json && bunx tsc --noEmit -p oakridge-dbos/tsconfig.json && bunx tsc --noEmit -p observation/tsconfig.json && bunx tsc --noEmit -p scripts/tsconfig.json",
+    "doctor": "./scripts/oakridge-doctor"
   }
 }

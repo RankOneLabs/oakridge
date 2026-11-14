@@ -15,6 +15,7 @@ export interface HttpRoute {
 }
 
 export const HTTP_ROUTES: readonly HttpRoute[] = [
+  { method: "GET", path: "/api/install-status", authority: "operator" },
   { method: "GET", path: "/health", authority: "open" },
   { method: "GET", path: "/events", authority: "operator" },
   { method: "POST", path: "/api/runs", authority: "operator" },
