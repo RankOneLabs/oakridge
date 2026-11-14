@@ -1,35 +1,28 @@
+import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import {
-  selectDefinitionSelection,
+  selectAbbreviatedDefinitionId,
   selectDefinitionSchemaParts,
   type DefinitionOverview as Overview,
 } from "../../lib/definition-overview";
 import {
+  definitionSelectionHref,
   definitionSchemaElementId,
-  definitionStageHref,
   definitionUnitHref,
 } from "../../lib/definition-selection";
 
 interface DefinitionOverviewProps {
   overview: Overview;
+  selection?: import("../../../lib/hash").DefinitionSelection | null;
 }
-function SchemaType({ text, overview }: { text: string; overview: Overview }) {
+function SchemaType({ text, overview, selection }: { text: string; overview: Overview; selection?: import("../../../lib/hash").DefinitionSelection | null }) {
   return (
     <>
       {selectDefinitionSchemaParts(text, overview.schemas).map((part, index) =>
         part.kind === "schema" ? (
-          <Button
-            variant="link"
-            className="or-definition-link"
-            key={index}
-            onClick={() => {
-              const entry = document.getElementById(definitionSchemaElementId(part.text));
-              entry?.scrollIntoView({ block: "nearest" });
-              entry?.focus();
-            }}
-          >
+          <a key={index} href={`${definitionSelectionHref(overview.id, selection ?? null)}#${definitionSchemaElementId(part.text)}`}>
             {part.text}
-          </Button>
+          </a>
         ) : (
           part.text
         ),
@@ -37,17 +30,38 @@ function SchemaType({ text, overview }: { text: string; overview: Overview }) {
     </>
   );
 }
-export function DefinitionOverview({ overview }: DefinitionOverviewProps) {
+export function DefinitionOverview({ overview, selection }: DefinitionOverviewProps) {
+  const [shouldShowFullId, setShouldShowFullId] = useState(false);
+  async function onCopyDefinitionId(): Promise<void> {
+    if (!navigator.clipboard?.writeText) {
+      setShouldShowFullId(true);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(overview.id);
+    } catch {
+      setShouldShowFullId(true);
+    }
+  }
   return (
     <section aria-label="Workflow overview" className="or-definition-overview">
       <h2>{overview.name}</h2>
       <p>
-        Definition ID: <code>{overview.id}</code>
+        Definition ID: <code title={overview.id}>{selectAbbreviatedDefinitionId(overview.id)}</code>
+        <Button variant="secondary" onClick={onCopyDefinitionId}>Copy definition ID</Button>
       </p>
+      {shouldShowFullId && (
+        <div>
+          <p role="status">Copy unavailable. Select and copy the full definition ID.</p>
+          <input aria-label="Full definition ID" value={overview.id} readOnly autoFocus onFocus={(event) => event.currentTarget.select()} className="w-full" />
+        </div>
+      )}
+      <p>{overview.stages.length} stages · {overview.units.length} units · {overview.collections.length} collections · {overview.pools.length} pools</p>
+      <details><summary>Workflow inputs, outputs and schemas</summary>
       <h3>Root input</h3>
       {typeof overview.input === "string" ? (
         <p>
-          <SchemaType text={overview.input} overview={overview} />
+          <SchemaType text={overview.input} overview={overview} selection={selection} />
         </p>
       ) : (
         <dl>
@@ -58,7 +72,7 @@ export function DefinitionOverview({ overview }: DefinitionOverviewProps) {
                 <code>
                   <SchemaType
                     text={typeof type === "string" ? type : JSON.stringify(type)}
-                    overview={overview}
+                    overview={overview} selection={selection}
                   />
                 </code>
               </dd>
@@ -77,41 +91,6 @@ export function DefinitionOverview({ overview }: DefinitionOverviewProps) {
           </div>
         ))}
       </dl>
-      <h3>Units</h3>
-      <ul>
-        {overview.units.map((unit) => (
-          <li key={unit.path}>
-            <a href={definitionUnitHref(overview.id, unit.path)}>{unit.path}</a>
-            {" · "}
-            {unit.is_group ? (
-              <>
-                group:{" "}
-                {unit.children.map((path) => (
-                  <a key={path} href={definitionUnitHref(overview.id, path)}>
-                    {path}{" "}
-                  </a>
-                ))}
-              </>
-            ) : unit.stage ? (
-              <a href={definitionStageHref(overview.id, unit.stage)}>{unit.stage}</a>
-            ) : (
-              "No stage"
-            )}
-            {unit.pool !== null && <span> · pool: {unit.pool}</span>}
-            {unit.for_each !== null && <code> · for_each: {unit.for_each}</code>}
-            {unit.key_expression !== null && <code> · key: {unit.key_expression}</code>}
-            {unit.after_text !== null && <code> · after: {unit.after_text}</code>}
-          </li>
-        ))}
-      </ul>
-      <h3>Stages</h3>
-      <ol>
-        {overview.stages.map((stage) => (
-          <li key={stage}>
-            <a href={definitionStageHref(overview.id, stage)}>{stage}</a>
-          </li>
-        ))}
-      </ol>
       <h3>Pools</h3>
       <ul>
         {overview.pools.map((pool) => (
@@ -126,30 +105,6 @@ export function DefinitionOverview({ overview }: DefinitionOverviewProps) {
           </li>
         ))}
       </ul>
-      <h3>Collections</h3>
-      <ul>
-        {overview.collections.map((unit) => (
-          <li key={unit.path}>
-            <a href={definitionUnitHref(overview.id, unit.path)}>{unit.path}</a>:{" "}
-            <code>
-              for_each: {unit.for_each} · key: {unit.key_expression ?? "not present"}
-            </code>
-          </li>
-        ))}
-      </ul>
-      <h3>Nested groups</h3>
-      <ul>
-        {overview.groups.map((unit) => (
-          <li key={unit.path}>
-            <a href={definitionUnitHref(overview.id, unit.path)}>{unit.path}</a> →{" "}
-            {unit.children.map((path) => (
-              <a key={path} href={definitionUnitHref(overview.id, path)}>
-                {path}{" "}
-              </a>
-            ))}
-          </li>
-        ))}
-      </ul>
       <h3>Schemas</h3>
       {overview.schemas.map((schema) => (
         <section key={schema.key} id={definitionSchemaElementId(schema.key)} tabIndex={-1}>
@@ -157,78 +112,7 @@ export function DefinitionOverview({ overview }: DefinitionOverviewProps) {
           <pre>{JSON.stringify(schema.shape, null, 2)}</pre>
         </section>
       ))}
+      </details>
     </section>
-  );
-}
-
-export function DefinitionSelectionSummary({
-  overview,
-  selection,
-}: DefinitionOverviewProps & { selection: import("../../../lib/hash").DefinitionSelection | null }) {
-  const summary = selectDefinitionSelection({ overview, selection });
-  if (summary.kind === "none") return <p>Select a stage or unit to inspect its declaration.</p>;
-  if (summary.kind === "missing") {
-    return summary.selection.kind === "stage" ? (
-      <p>Stage {summary.selection.stage} is not in this definition.</p>
-    ) : (
-      <p>Unit {summary.selection.path} is not in this definition.</p>
-    );
-  }
-  if (summary.kind === "stage") {
-    return (
-      <>
-        <h3>Stage: {summary.stage}</h3>
-        <p>Invoked by:</p>
-        <ul>
-          {summary.callers.map((unit) => (
-            <li key={unit.path}>
-              <a href={definitionUnitHref(overview.id, unit.path)}>{unit.path}</a>
-            </li>
-          ))}
-        </ul>
-      </>
-    );
-  }
-  const { unit } = summary;
-  return (
-    <>
-      <h3>Unit: {unit.path}</h3>
-      {unit.is_group ? (
-        <p>
-          group:{" "}
-          {unit.children.map((path) => (
-            <a key={path} href={definitionUnitHref(overview.id, path)}>
-              {path}{" "}
-            </a>
-          ))}
-        </p>
-      ) : (
-        unit.stage && (
-          <p>
-            Stage: <a href={definitionStageHref(overview.id, unit.stage)}>{unit.stage}</a>
-          </p>
-        )
-      )}
-      <dl>
-        {(
-          [
-            ["pool", unit.pool],
-            ["for_each", unit.for_each],
-            ["key", unit.key_expression],
-            ["after", unit.after_text],
-          ] as const
-        ).map(
-          ([name, value]) =>
-            value !== null && (
-              <div key={name}>
-                <dt>{name}</dt>
-                <dd>
-                  <code>{value}</code>
-                </dd>
-              </div>
-            ),
-        )}
-      </dl>
-    </>
   );
 }

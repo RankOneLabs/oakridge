@@ -55,13 +55,8 @@ export function selectDefinitionGraph({
   const layout = selectGraphLayout({
     nodes: units.map((unit) => ({
       id: unit.path,
-      width: Math.max(
-        330,
-        ...[unit.for_each, unit.key_expression, unit.after_text, unit.pool].map(
-          (text) => (text?.length ?? 0) * 7 + 100,
-        ),
-      ),
-      height: 150,
+      width: DEFINITION_NODE_WIDTH,
+      height: DEFINITION_NODE_HEIGHT,
     })),
     edges,
   });
@@ -70,4 +65,14 @@ export function selectDefinitionGraph({
     path: parts.slice(0, index + 1).join("/"),
   }));
   return { units, edges, layout, breadcrumbs };
+}
+
+
+export const DEFINITION_NODE_WIDTH = 240;
+export const DEFINITION_NODE_HEIGHT = 100;
+export function selectDefinitionNodeLabel(text: string): string {
+  return text.length > 28 ? text.slice(0, 27) + "…" : text;
+}
+export function selectDefinitionNodeSelected(unit: DefinitionUnitOverview, selection: DefinitionSelection | null): boolean {
+  return selection?.kind === "unit" ? selection.path === unit.path : selection?.kind === "stage" && selection.stage === unit.stage;
 }

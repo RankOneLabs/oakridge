@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import fixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
-import { selectStageInspector, selectStageNavigation } from "./stage-inspector";
+import { stageElementHref, selectStageInputUnits, selectStageInspector, selectStageNavigation } from "./stage-inspector";
 const detail = fixture.definition as unknown as OperatorDefinitionDetail;
 test("unit selection resolves implementation to cohort", () => {
   expect(selectStageInspector(detail, { kind: "unit", path: "implementation" })?.name).toBe(
@@ -112,4 +112,26 @@ test("provenance contains each shared worker and review template only once", () 
       .filter((source) => source.kind === "template-review")
       .map((source) => source.name),
   ).toEqual(["pr_closed"]);
+});
+
+test("unit model retains authored bindings and anchors keep its route", () => {
+  const model = selectStageInspector(detail, { kind: "unit", path: "implementation" });
+  expect(model?.selected_unit?.input).toEqual(detail.workflow.run.units.implementation?.input);
+  if (!model) throw new Error("Missing implementation model");
+  expect(stageElementHref(model, { kind: "artifact", name: "build_result" })).toContain("/units/implementation#stage-cohort-artifact-build_result");
+});
+
+test("development cohort summary counts effective declarations and retains invoking units", async () => {
+  const { selectStageSummary } = await import("./stage-inspector");
+  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  if (!model) throw new Error("Missing cohort");
+  expect(selectStageSummary(model)).toEqual({ name: "cohort", invoking_units: model.units,
+    worker_count: 4, artifact_count: 5, review_count: 3, done_when: model.stage.done_when });
+});
+test("inputs list only the selected unit, else every invoking unit", () => {
+  const unitModel = selectStageInspector(detail, { kind: "unit", path: "implementation" });
+  const stageModel = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  if (!unitModel || !stageModel) throw new Error("Missing cohort models");
+  expect(selectStageInputUnits(unitModel).map((unit) => unit.path)).toEqual(["implementation"]);
+  expect(selectStageInputUnits(stageModel)).toEqual(stageModel.units);
 });

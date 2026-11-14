@@ -18,6 +18,8 @@ export interface DefinitionUnitOverview {
   key_expression: string | null;
   after: NonNullable<OperatorUnit["after"]> | null;
   after_text: string | null;
+  has_per_member_after: boolean;
+  input: OperatorUnit["input"];
 }
 export interface DefinitionPoolOverview {
   name: string;
@@ -37,6 +39,11 @@ export interface DefinitionOverview {
   groups: DefinitionUnitOverview[];
   schemas: OperatorDefinitionDetail["bundle"]["schemas"];
 }
+const ABBREVIATED_DEFINITION_ID_LENGTH = 12;
+/** Compact header form of a definition id; the full id stays available through copy and title. */
+export function selectAbbreviatedDefinitionId(id: string): string {
+  return `${id.slice(0, ABBREVIATED_DEFINITION_ID_LENGTH)}…`;
+}
 export function selectDefinitionOverview(detail: OperatorDefinitionDetail): DefinitionOverview {
   const units: DefinitionUnitOverview[] = [];
   const pools: DefinitionPoolOverview[] = [];
@@ -54,6 +61,8 @@ export function selectDefinitionOverview(detail: OperatorDefinitionDetail): Defi
     for (const [key, unit] of Object.entries(group.units)) {
       const path = parent ? `${parent}/${key}` : key;
       units.push({
+        has_per_member_after: typeof unit.after === "string",
+        input: unit.input,
         path,
         key,
         parent,
@@ -91,7 +100,7 @@ export function selectDefinitionAfterText(after: DefinitionUnitOverview["after"]
   return typeof after === "string" ? after : JSON.stringify(after);
 }
 
-export type DefinitionSelectionSummary =
+export type DefinitionSelectionDetailState =
   | { kind: "none" }
   | { kind: "missing"; selection: DefinitionSelection }
   | { kind: "stage"; stage: string; callers: DefinitionUnitOverview[] }
@@ -105,7 +114,7 @@ interface DefinitionSelectionInput {
 export function selectDefinitionSelection({
   overview,
   selection,
-}: DefinitionSelectionInput): DefinitionSelectionSummary {
+}: DefinitionSelectionInput): DefinitionSelectionDetailState {
   if (selection === null) return { kind: "none" };
   if (selection.kind === "stage") {
     if (!overview.stages.includes(selection.stage)) return { kind: "missing", selection };

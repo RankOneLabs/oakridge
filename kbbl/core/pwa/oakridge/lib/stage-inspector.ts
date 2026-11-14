@@ -7,10 +7,11 @@ import type {
 import { selectEffectiveWorkers, selectEffectiveReviews } from "./effective-declarations";
 import { selectDefinitionOverview } from "./definition-overview";
 import { selectDefinitionDependencies, type DependencyReference } from "./definition-dependencies";
-import { definitionStageHref } from "./definition-selection";
+import { definitionStageHref, definitionUnitHref } from "./definition-selection";
 
 export interface StageInspectorModel {
   definition: OperatorDefinitionDetail;
+  selected_unit: ReturnType<typeof selectDefinitionOverview>["units"][number] | null;
   name: string;
   stage: OperatorParsedStage;
   units: ReturnType<typeof selectDefinitionOverview>["units"];
@@ -75,7 +76,7 @@ export function stageElementHref(
   model: StageInspectorModel,
   target: StageElementReference,
 ): string {
-  return `${definitionStageHref(model.definition.definition_id, model.name)}#${stageElementId({ stage: model.name, ...target })}`;
+  return `${stageSelectionHref(model)}#${stageElementId({ stage: model.name, ...target })}`;
 }
 export function selectStageNavigation(
   definition: OperatorDefinitionDetail,
@@ -157,7 +158,7 @@ export function selectStageInspector(
       ? selection.stage
       : selection?.kind === "unit"
         ? overview.units.find((unit) => unit.path === selection.path)?.stage
-        : overview.stages[0];
+        : null;
   if (!name) return null;
   const stage = definition.effective_workflow.stages[name];
   if (!stage) return null;
@@ -169,6 +170,7 @@ export function selectStageInspector(
   );
   return {
     definition,
+    selected_unit: selection?.kind === "unit" ? overview.units.find((unit) => unit.path === selection.path) ?? null : null,
     name,
     stage,
     units,
@@ -191,4 +193,35 @@ export function selectStageInspector(
       consumers: reviews.filter((entry) => entry.review.of === name).map((entry) => entry.key),
     })),
   };
+}
+
+
+export function stageSelectionHref(model: StageInspectorModel): string {
+  return model.selected_unit
+    ? definitionUnitHref(model.definition.definition_id, model.selected_unit.path)
+    : definitionStageHref(model.definition.definition_id, model.name);
+}
+
+/** Summary of the effective stage and its authored invoking units. */
+export interface StageSummary {
+  name: string;
+  invoking_units: StageInspectorModel["units"];
+  worker_count: number;
+  artifact_count: number;
+  review_count: number;
+  done_when: StageInspectorModel["stage"]["done_when"];
+}
+export function selectStageSummary(model: StageInspectorModel): StageSummary {
+  return {
+    name: model.name,
+    invoking_units: model.units,
+    worker_count: model.workers.length,
+    artifact_count: model.artifacts.length,
+    review_count: model.reviews.length,
+    done_when: model.stage.done_when,
+  };
+}
+/** Units whose input bindings the inputs section lists: the selected unit alone, else every invoking unit. */
+export function selectStageInputUnits(model: StageInspectorModel): StageInspectorModel["units"] {
+  return model.selected_unit ? [model.selected_unit] : model.units;
 }

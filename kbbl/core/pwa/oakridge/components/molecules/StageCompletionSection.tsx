@@ -5,11 +5,20 @@ export function StageCompletionSection({ model }: StageSectionProps) {
   return (
     <section aria-label="Completion" className="rounded border border-[var(--border-muted)] p-3">
       <h3>Completion</h3>
-      {model.stage.done_when && (
+      <h4>done_when</h4>
+      {model.stage.done_when ? (
         <p>
           done_when: <LetExpression model={model} expression={model.stage.done_when} />
         </p>
-      )}
+      ) : <p>Not declared</p>}
+      <h4>Stage outcome fields</h4>
+      {model.outcomes.map(({ name, expression }) => (
+        <div key={name} id={stageElementId({ stage: model.name, kind: "outcome", name: name })}>
+          <h4>outcome.{name}</h4>
+          <LetExpression model={model} expression={expression} />
+        </div>
+      ))}
+      <h4>Downstream consumers</h4>
       {model.wholeOutcomeReaders.length > 0 && (
         <div>
           <h4>Whole-outcome readers</h4>
@@ -31,11 +40,7 @@ export function StageCompletionSection({ model }: StageSectionProps) {
           </ul>
         </div>
       )}
-      {model.outcomes.map(({ name, expression, readers }) => (
-        <div key={name} id={stageElementId({ stage: model.name, kind: "outcome", name: name })}>
-          <h4>outcome.{name}</h4>
-          <LetExpression model={model} expression={expression} />
-          <h5>Downstream readers</h5>
+      {model.outcomes.map(({ name, readers }) => <div key={name}>
           <ul>
             {readers.map((reader, index) => {
               const binding =
@@ -56,8 +61,7 @@ export function StageCompletionSection({ model }: StageSectionProps) {
               );
             })}
           </ul>
-        </div>
-      ))}
+</div>)}
     </section>
   );
 }

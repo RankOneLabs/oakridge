@@ -1,10 +1,11 @@
+import { selectEffectiveDefinitionSelection } from "../../lib/definition-selection";
 import { useDefinitionAnchors } from "../../hooks/useDefinitionAnchors";
 import { StageInspector } from "./StageInspector";
 import { useWorkflowDef } from "../../hooks/useWorkflowDef";
 import { Button } from "../../../components/atoms/Button";
 import type { DefinitionSelection } from "../../../lib/hash";
 import { selectDefinitionOverview } from "../../lib/definition-overview";
-import { DefinitionOverview, DefinitionSelectionSummary } from "../molecules/DefinitionOverview";
+import { DefinitionOverview } from "../molecules/DefinitionOverview";
 import { DefinitionGraph } from "../molecules/DefinitionGraph";
 import { DefinitionRawView } from "../molecules/DefinitionRawView";
 
@@ -21,7 +22,7 @@ export function WorkflowDefDetail({
   onBack,
 }: WorkflowDefDetailProps) {
   const query = useWorkflowDef(definitionId);
-  const { selection, onClick } = useDefinitionAnchors({
+  const { selection: normalizedSelection, onClick } = useDefinitionAnchors({
     selection: routeSelection,
     isReady: Boolean(query.data),
     onNavigate,
@@ -34,6 +35,7 @@ export function WorkflowDefDetail({
       </div>
     );
   const definition = query.data;
+  const selection = selectEffectiveDefinitionSelection(definition, normalizedSelection);
   const overview = selectDefinitionOverview(definition);
   return (
     <div className="or-page or-page--wide" data-testid="or-def-detail" onClick={onClick}>
@@ -41,11 +43,8 @@ export function WorkflowDefDetail({
         ← Workflows
       </Button>
       <h1>Workflow definition</h1>
-      <DefinitionOverview overview={overview} />
+      <DefinitionOverview overview={overview} selection={selection} />
       <DefinitionGraph overview={overview} definition={definition} selection={selection} />
-      <section data-testid="or-def-selection" aria-label="Selected declaration">
-        <DefinitionSelectionSummary overview={overview} selection={selection} />
-      </section>
       <StageInspector definition={definition} selection={selection} />
       <DefinitionRawView
         key={JSON.stringify(selection)}

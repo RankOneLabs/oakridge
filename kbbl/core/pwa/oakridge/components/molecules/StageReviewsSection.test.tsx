@@ -28,3 +28,13 @@ test("an engine review labels its guard as the decision condition", () => {
   expect(screen.getByText(/Decision condition/).textContent).toContain("published(plan)");
   expect(screen.queryByText(/Awaited-decision window/)).toBeNull();
 });
+
+test("operator gates emphasise intervention and retain decisions, subjects and feedback", () => {
+  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  if (!model) throw new Error("Missing cohort");
+  const { container } = render(<StageReviewsSection model={model} />);
+  expect(screen.getAllByText("operator review").length).toBeGreaterThan(0);
+  expect(container.querySelectorAll(".or-stage-review").length).toBe(model.reviews.length);
+  expect(container.textContent).toContain("effect:");
+  expect(container.textContent).toContain("feedback");
+});
