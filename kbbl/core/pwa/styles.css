@@ -8,6 +8,8 @@
   --bg-code: #181E20;
   --bg-input-bar: #161C1E;
   --bg-input-bar-desktop: #20282A;
+  --input-send-disabled-bg: #343A3D;
+  --input-send-disabled-fg: #C5CDCF;
   --border-decorative: #3A484A;
   --border-subtle: #809294;
   --border-muted: #8A9C9E;
@@ -93,6 +95,8 @@
   --bg-code: #F1F4F4;
   --bg-input-bar: #F4F6F6;
   --bg-input-bar-desktop: #FFFFFF;
+  --input-send-disabled-bg: #DFE3E5;
+  --input-send-disabled-fg: #495256;
   --border-decorative: #D3DCDB;
   --border-subtle: #748383;
   --border-muted: #6B7C7C;
@@ -1173,8 +1177,8 @@ body {
   cursor: pointer;
 }
 .input-bar-row > button:disabled {
-  background: var(--border-muted);
-  color: var(--text-fainter);
+  background: var(--input-send-disabled-bg);
+  color: var(--input-send-disabled-fg);
   cursor: not-allowed;
 }
 

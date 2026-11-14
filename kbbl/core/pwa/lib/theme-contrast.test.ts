@@ -10,6 +10,10 @@ interface ContrastPair {
   readonly background: string;
   readonly minimum: number;
 }
+interface ColorHsl {
+  readonly hue: number;
+  readonly saturation: number;
+}
 
 const stylesheet = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
 const SURFACES = ["bg-app", "bg-surface", "bg-elevated", "bg-code", "bg-input-bar", "bg-input-bar-desktop"];
@@ -58,6 +62,17 @@ function contrast(first: string, second: string): number {
   return (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05);
 }
 
+function colorHsl(color: string): ColorHsl {
+  const [red = 0, green = 0, blue = 0] = [1, 3, 5].map((offset) => Number.parseInt(color.slice(offset, offset + 2), 16) / 255);
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  const range = maximum - minimum;
+  if (range === 0) return { hue: 0, saturation: 0 };
+  const sector = maximum === red ? (green - blue) / range
+    : maximum === green ? (blue - red) / range + 2 : (red - green) / range + 4;
+  return { hue: (sector * 60 + 360) % 360, saturation: range / (1 - Math.abs(maximum + minimum - 1)) };
+}
+
 function textPair(foreground: string, background: string): ContrastPair {
   return { foreground, background, minimum: 4.5 };
 }
@@ -74,6 +89,7 @@ const PAIRS: readonly ContrastPair[] = [
   ...["accent-primary", "accent-name", "accent-secondary", "success-fg"].flatMap((foreground) => SURFACES.map((background) => textPair(foreground, background))),
   textPair("accent-primary", "accent-muted"),
   textPair("accent-contrast-fg", "accent-primary"),
+  textPair("input-send-disabled-fg", "input-send-disabled-bg"),
   textPair("bubble-user-fg", "bubble-user-bg"),
   textPair("bubble-assistant-fg", "bubble-assistant-bg"),
   textPair("text-secondary", "tone-muted-bg"),
@@ -98,6 +114,23 @@ const PAIRS: readonly ContrastPair[] = [
 for (const theme of ["dark", "light"] as const) {
   describe(`${theme} theme WCAG AA`, () => {
     const tokens = readTokens(theme);
+    it("disabled input Send uses a readable neutral pair distinct from enabled", () => {
+      const rule = /\.input-bar-row > button:disabled\s*\{([^}]+)\}/.exec(stylesheet)?.[1] ?? "";
+      const foreground = /(?:^|;)\s*color:\s*var\(--([\w-]+)\)/.exec(rule)?.[1] ?? "";
+      const background = /(?:^|;)\s*background:\s*var\(--([\w-]+)\)/.exec(rule)?.[1] ?? "";
+      expect(foreground).toBe("input-send-disabled-fg");
+      expect(background).toBe("input-send-disabled-bg");
+      for (const name of [foreground, background]) {
+        expect(readBlock(theme).get(`--${name}`)).toMatch(/^#[\da-f]{6}$/i);
+      }
+      const fg = resolveColor(tokens, foreground);
+      const bg = resolveColor(tokens, background);
+      const accent = resolveColor(tokens, "accent-primary");
+      expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5);
+      expect(bg).not.toBe(accent);
+      expect(colorHsl(bg).saturation).toBeLessThan(colorHsl(accent).saturation);
+      expect(fg).not.toBe(resolveColor(tokens, "accent-contrast-fg"));
+    });
     it("skill-group count text meets 4.5:1 on its declared background", () => {
       const rule = /\.skill-rail__group-count\s*\{([^}]+)\}/.exec(stylesheet)?.[1] ?? "";
       const foreground = /(?:^|;)\s*color:\s*var\(--([\w-]+)\)/.exec(rule)?.[1] ?? "";
