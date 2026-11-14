@@ -1,10 +1,11 @@
+import type { ViewerProps } from "../../artifactRegistry";
 import { BuildItemList } from "./BuildItemList";
 import type { StageUnit } from "../../run-types";
 import { selectCohortBrief } from "../../lib/stage-unit-params";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { PlanCriterion } from "../../lib/plan";
 
-interface CohortBriefProps {
+interface CohortBriefProps extends Pick<ViewerProps, "source" | "onOpenTask" | "onOpenItem" | "itemGrading"> {
   unit: StageUnit;
 }
 
@@ -75,7 +76,7 @@ function CriterionList({ criteria }: { criteria: PlanCriterion[] }) {
   );
 }
 
-export function CohortBrief({ unit }: CohortBriefProps) {
+export function CohortBrief({ unit, ...review }: CohortBriefProps) {
   const brief = selectCohortBrief(unit);
   if (!brief) return null;
 
@@ -93,7 +94,7 @@ export function CohortBrief({ unit }: CohortBriefProps) {
         <TextList label="Files in scope" values={brief.files_in_scope} />
         <DecisionList decisions={brief.decisions_made} />
         <RejectedList approaches={brief.approaches_rejected} />
-        {brief.shape === "legacy" ? <CriterionList criteria={brief.acceptance_criteria} /> : <BuildItemList brief={brief} />}
+        {brief.shape === "legacy" ? <CriterionList criteria={brief.acceptance_criteria} /> : <BuildItemList brief={brief} {...review} />}
         <TextList label="Depends on" values={brief.depends_on} />
       </div>
     </article>

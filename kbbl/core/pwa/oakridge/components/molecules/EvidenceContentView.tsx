@@ -1,10 +1,12 @@
+import { BuildItemList } from "./BuildItemList";
+import type { ViewerProps } from "../../artifactRegistry";
 import type { EvidenceContent } from "../../lib/evidence-content";
 import { ExpandableText } from "./ExpandableText";
 import { StructuredValue } from "./StructuredValue";
 import { TestEvidenceBlock } from "./TestEvidenceBlock";
 
 interface FieldProps { label: string; value: unknown }
-interface EvidenceContentViewProps { content: EvidenceContent }
+interface EvidenceContentViewProps extends Pick<ViewerProps, "source" | "onOpenTask" | "onOpenItem" | "itemGrading"> { content: EvidenceContent }
 
 function Field({ label, value }: FieldProps) {
   return <div className="min-w-0"><dt className="text-xs font-medium text-[var(--text-muted)]">{label}</dt><dd className="m-0 text-xs text-[var(--text-secondary)]">
@@ -13,7 +15,7 @@ function Field({ label, value }: FieldProps) {
 }
 
 /** Compact read-only fields from the same validated models as the artifact viewers. */
-export function EvidenceContentView({ content }: EvidenceContentViewProps) {
+export function EvidenceContentView({ content, ...review }: EvidenceContentViewProps) {
   const { value } = content;
   switch (content.kind) {
     case "unknown": return <StructuredValue value={value} />;
@@ -80,7 +82,7 @@ export function EvidenceContentView({ content }: EvidenceContentViewProps) {
       <Field label="Files in scope" value={content.value.files_in_scope} />
       <Field label="Decisions made" value={content.value.decisions_made} />
       <Field label="Approaches rejected" value={content.value.approaches_rejected} />
-      {content.value.shape === "legacy" ? <Field label="Acceptance criteria" value={content.value.acceptance_criteria} /> : <Field label="Build items" value={content.value.build_items} />}
+      {content.value.shape === "legacy" ? <Field label="Acceptance criteria" value={content.value.acceptance_criteria} /> : <div><BuildItemList brief={content.value} {...review} /></div>}
       <Field label="Next action" value={content.value.next_action} />
     </dl>;
     case "build_result": return <dl className="m-0 space-y-1">
