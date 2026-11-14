@@ -1,4 +1,4 @@
-import type { AgentProfileReadiness } from "../acp/profile-readiness";
+import { sharedProfileReadiness, type AgentProfileReadiness } from "../acp/profile-readiness";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { compress } from "hono/compress";
@@ -77,6 +77,7 @@ export function createApp(deps: CreateAppDeps): Hono {
     observation = null,
   } = deps;
   const app = new Hono();
+  const readAgentProfiles = deps.readAgentProfiles ? sharedProfileReadiness({ read: deps.readAgentProfiles }) : null;
 
   // ---- response compression ----
   //
@@ -90,7 +91,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   // than /hook/* adapter routes requires authentication when the server is
   // configured with a control token, on any bind. Without one (loopback or
   // insecure mode) this is a no-op pass-through.
-  app.use("/*", makeControlAuthMiddleware(authPolicy));
+  app.use("/*", makeControlAuthMiddleware(authPolicy, { protectedReadPaths: ["/agent-profiles/readiness"] }));
 
   // ---- cookie establishment endpoint ----
   //
@@ -116,7 +117,11 @@ export function createApp(deps: CreateAppDeps): Hono {
   // agent slash commands reach the PWA via `commands` UI events) ----
   mountSkillsRoutes(app, { acp, config });
 
-  app.get("/agent-profiles/readiness", async (c) => deps.readAgentProfiles ? c.json(await deps.readAgentProfiles()) : c.json({ error: "Profile readiness reader is not configured" }, 503));
+  app.get("/agent-profiles/readiness", async (c) => {
+    if (!readAgentProfiles) return c.json({ error: "Profile readiness reader is not configured" }, 503);
+    try { return c.json(await readAgentProfiles()); }
+    catch { return c.json({ error: "Profile readiness probe failed" }, 503); }
+  });
 
   // ---- server config ----
   //

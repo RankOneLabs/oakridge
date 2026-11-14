@@ -31,3 +31,25 @@ export async function readProfileReadiness(profile: AgentProfile, probe: AuthPro
   if (!await probe(command, env)) return result({ kind: "failed", detail: "Agent CLI authentication is unavailable or expired", fix: profile.id === "codex" ? "Run codex login" : "Run claude auth login" });
   return result({ kind: "ok", detail: "ACP adapter and skill discovery configured; CLI authentication is ready" });
 }
+
+export type ProfileReadinessReader = () => Promise<readonly AgentProfileReadiness[]>;
+interface ReadinessSnapshot { readonly profiles: readonly AgentProfileReadiness[]; readonly expires_at: number }
+export interface SharedReadinessOptions {
+  readonly read: ProfileReadinessReader;
+  readonly now?: () => number;
+  readonly cache_ms?: number;
+}
+/** Share work across concurrent polls and retain results briefly to bound process creation. */
+export function sharedProfileReadiness({ read, now = Date.now, cache_ms = 10_000 }: SharedReadinessOptions): ProfileReadinessReader {
+  let snapshot: ReadinessSnapshot | null = null;
+  let in_flight: Promise<readonly AgentProfileReadiness[]> | null = null;
+  return () => {
+    if (snapshot && now() < snapshot.expires_at) return Promise.resolve(snapshot.profiles);
+    if (in_flight) return in_flight;
+    in_flight = Promise.resolve().then(read).then((profiles) => {
+      snapshot = { profiles, expires_at: now() + cache_ms };
+      return profiles;
+    }).finally(() => { in_flight = null; });
+    return in_flight;
+  };
+}
