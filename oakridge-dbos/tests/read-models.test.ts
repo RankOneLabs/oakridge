@@ -46,7 +46,7 @@ const CONTRACT_FIELDS = {
   EffectDiagnostic: ["action_id", "id", "last_error", "next_try_at", "seq", "status", "tries", "updated_at"],
   ArtifactDetail: ["artifact_key", "decisions", "is_editable", "is_reviewable", "original_spec", "revisions", "run_id", "schema", "status", "unit_id"],
   DefinitionSummary: ["bundle", "definition_id"],
-  PinnedDefinition: ["bundle", "definition_id"],
+  PinnedDefinition: ["bundle", "definition_id", "effective_workflow"],
   DefinitionDetail: ["bundle", "definition_id", "effective_workflow", "graph", "workflow"],
   DefinitionBundle: ["key", "root", "schemas", "stages", "units"],
   UnitDefinition: ["artifacts", "input_schema", "key", "label", "stage"],

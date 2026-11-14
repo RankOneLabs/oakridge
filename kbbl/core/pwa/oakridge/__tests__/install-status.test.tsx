@@ -30,7 +30,8 @@ it("launch blocks render definition name and the typed error detail", () => {
   expect(screen.getByText("Needs pull request integration")).toBeTruthy();
 });
 it("merge stage units show the exact persistent badge without interaction", () => {
-  const unit = sampleRun.units.find((unit) => unit.stage === "cohort")!;
+  const unit = sampleRun.units.find((unit) => unit.stage === "cohort");
+  if (!unit) throw new Error("fixture has no cohort unit");
   render(<ManualMergeBadges run={{ ...sampleRun, pr_integration: "github-cli", units: [{ ...unit, unit_id: "cohort", stage: "cohort", label: "Cohort" }, { ...unit, unit_id: "integration", stage: "integration", label: "Integration" }] }} definition={definition} />);
   expect(screen.getAllByTestId("manual-merge-indication").map((node) => node.textContent)).toEqual([`Cohort: ${MANUAL_MERGE_INDICATION}`, `Integration: ${MANUAL_MERGE_INDICATION}`]);
 });
@@ -43,7 +44,24 @@ it("RunDetailView shows the badge before any operator interaction", async () => 
   const run = { ...sampleRun, definition_id: definition.definition_id, pr_integration: "github-cli" as const };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(["oakridge", "operator-run", run.run_id], run);
-  client.setQueryData(["oakridge", "operator_definition", run.definition_id], definition);
+  client.setQueryData(["oakridge", "pinned-run-definition", run.run_id], definition);
   render(<QueryClientProvider client={client}><RunDetailView runId={run.run_id} routePane={null} onBack={() => {}} /></QueryClientProvider>);
-  expect((await screen.findAllByTestId("manual-merge-indication"))[0]!.textContent).toContain(MANUAL_MERGE_INDICATION);
+  expect((await screen.findAllByTestId("manual-merge-indication"))[0]?.textContent).toContain(MANUAL_MERGE_INDICATION);
+});
+it("an older github-cli run loads pinned review metadata without consulting the current catalog", async () => {
+  const run = { ...sampleRun, pr_integration: "github-cli" as const };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  client.setQueryData(["oakridge", "operator-run", run.run_id], run);
+  const requests: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    requests.push(String(input));
+    return String(input).endsWith("/definition") ? Response.json(definition) : new Response("not in current catalog", { status: 404 });
+  }));
+  try {
+    render(<QueryClientProvider client={client}><RunDetailView runId={run.run_id} routePane={null} onBack={() => {}} /></QueryClientProvider>);
+    const badges = await screen.findAllByTestId("manual-merge-indication");
+    expect(badges[0]?.textContent).toContain(MANUAL_MERGE_INDICATION);
+    expect(requests.some((path) => path.includes("/runs/") && path.endsWith("/definition"))).toBe(true);
+    expect(requests.some((path) => path.includes("/definitions/"))).toBe(false);
+  } finally { vi.unstubAllGlobals(); client.clear(); }
 });

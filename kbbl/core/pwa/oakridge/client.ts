@@ -292,3 +292,5 @@ export async function fetchOperatorRun(id: string): Promise<OperatorRunView> {
   const path = runPath(id);
   return unwrapAdapter(path, parseRunView(await oakridgeGet<unknown>(path)));
 }
+
+export const fetchPinnedRunDefinition = (id: string) => oakridgeGet<import("./operator-contracts/projections/definition-view").OperatorPinnedDefinition>(`${runPath(id)}/definition`);

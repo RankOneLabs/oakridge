@@ -1,13 +1,15 @@
 import { useInstallStatus } from "../hooks/useInstallStatus";
 import type { OperatorInstallCheck, OperatorInstallStatus } from "../operator-contracts/projections/install-status-view";
 import { selectAccessModeLabel, selectCheckTone } from "../state/install-status";
-export function InstallCheckView({ check }: { check: OperatorInstallCheck }) {
+interface InstallCheckViewProps { readonly check: OperatorInstallCheck }
+export function InstallCheckView({ check }: InstallCheckViewProps) {
   return <div data-tone={selectCheckTone(check)} className={selectCheckTone(check) === "danger" ? "text-[var(--tone-danger-fg)]" : "text-[var(--text-muted)]"}>
     <strong>{check.label}</strong>: {check.kind} · {check.detail}
     {check.kind !== "ok" && <p>Fix: {check.fix}</p>}
   </div>;
 }
-export function InstallStatusContent({ status }: { status: OperatorInstallStatus }) {
+interface InstallStatusContentProps { readonly status: OperatorInstallStatus }
+export function InstallStatusContent({ status }: InstallStatusContentProps) {
   return <article className="flex flex-col gap-4 p-3">
     <h2>Installation status</h2>
     {status.installation_failed ? <p role="alert">Installation failure: a required check failed.</p> : <p>Installation checks passed.</p>}

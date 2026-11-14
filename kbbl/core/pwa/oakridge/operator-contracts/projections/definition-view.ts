@@ -11,7 +11,7 @@ export interface OperatorDefinitionSummary { readonly definition_id: OperatorDef
 
 export interface OperatorDefinitionDetail extends OperatorDefinitionSummary { readonly workflow: OperatorWorkflow | OperatorAuthoredWorkflow; readonly effective_workflow: OperatorParsedWorkflow; readonly graph: OperatorDefinitionGraph }
 
-export type OperatorPinnedDefinition = OperatorDefinitionSummary;
+export interface OperatorPinnedDefinition extends OperatorDefinitionSummary { readonly effective_workflow: OperatorParsedWorkflow }
 
 export interface OperatorDefinitionBundle {
   readonly key: string;

@@ -1,4 +1,4 @@
-import { ManualMergeIndications } from "../components/molecules/ManualMergeIndications";
+import { ManualMergeIndications } from "../components/organisms/ManualMergeIndications";
 import { RunWorkspace } from "../components/organisms/RunWorkspace";
 import type { RoutePaneTarget } from "../lib/run-workspace";
 
