@@ -14,7 +14,7 @@ export function StageWorkersSection({ model }: StageSectionProps) {
         return (
           <article
             key={key}
-            className="or-stage-worker"
+            className="or-stage-worker my-[.65rem] rounded-[.35rem] border border-[var(--border-muted)] p-[.65rem]"
             id={stageElementId({ stage: model.name, kind: "worker", name: key })}
             tabIndex={-1}
           >
@@ -56,7 +56,7 @@ export function StageWorkersSection({ model }: StageSectionProps) {
                 </a>
               ))}
             </p>
-            <dl className="or-stage-bindings">
+            <dl className="or-stage-bindings mt-2 font-mono text-[.85rem] text-[var(--text-secondary)]">
               {Object.entries(worker.inputs).map(([name, expression]) => (
                 <div
                   key={name}

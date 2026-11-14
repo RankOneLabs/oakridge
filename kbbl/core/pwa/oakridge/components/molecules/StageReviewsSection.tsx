@@ -11,12 +11,12 @@ export function StageReviewsSection({ model }: StageSectionProps) {
       {model.reviews.map(({ key, review, source, decisions }) => (
         <article
           key={key}
-          className="or-stage-review"
+          className="or-stage-review my-3 rounded-[.35rem] border border-[var(--border-muted)] border-l-4 border-l-[var(--accent-primary)] bg-[var(--bg-elevated)] p-[.8rem]"
           id={stageElementId({ stage: model.name, kind: "review", name: key })}
           tabIndex={-1}
         >
           <p className="font-bold">{review.by} review</p>
-          <h4>{key}</h4>
+          <h4 className="text-[1.1rem]">{key}</h4>
           <p>
             of:{" "}
             <a href={stageElementHref(model, { kind: "artifact", name: review.of })}>{review.of}</a>{" "}

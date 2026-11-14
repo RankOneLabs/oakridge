@@ -11,13 +11,13 @@ export function StageArtifactsSection({ model }: StageSectionProps) {
       {model.artifacts.map(({ name, artifact, producers, consumers }) => (
         <article
           key={name}
-          className="or-stage-artifact"
+          className="or-stage-artifact border-t border-[var(--border-muted)] py-2"
           id={stageElementId({ stage: model.name, kind: "artifact", name: name })}
           tabIndex={-1}
         >
           <h4 aria-label={artifact.validate?.length ? `${name} · Validated artifact` : name}>
             {name}
-            {Boolean(artifact.validate?.length) && <small className="or-stage-validated">validated</small>}
+            {Boolean(artifact.validate?.length) && <small className="or-stage-validated ml-2 text-xs font-normal">validated</small>}
           </h4>
           <p>kind: {artifact.kind}</p>
           <StageType model={model} value={artifact.schema} />

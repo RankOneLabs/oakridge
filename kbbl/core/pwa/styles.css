@@ -3196,26 +3196,15 @@ a:focus-visible {
 /* Definition inspector hierarchy and contained overflow. */
 .or-definition-inspector :is(section, article, dl, dd, pre) { min-width: 0; }
 .or-definition-inspector { overflow-wrap: anywhere; }
-.or-definition-inspector h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: .6rem; }
-.or-definition-inspector h4 { font-weight: 650; margin-block: .6rem .25rem; }
-.or-definition-inspector dd { margin-left: .75rem; }
 .or-definition-inspector pre { max-width: 100%; overflow: auto; }
 .or-definition-inspector code { white-space: pre-wrap; overflow-wrap: anywhere; }
-.or-definition-inspector .or-stage-worker { border: 1px solid var(--border-muted); border-radius: .35rem; padding: .65rem; margin-block: .65rem; }
-.or-definition-inspector .or-stage-bindings { color: var(--text-secondary); font-family: monospace; font-size: .85rem; margin-top: .5rem; }
-.or-definition-inspector .or-stage-artifact { border-top: 1px solid var(--border-muted); padding-block: .5rem; }
-.or-definition-inspector .or-stage-validated { font-size: .75rem; font-weight: 400; margin-left: .5rem; }
-.or-definition-inspector .or-stage-review { border: 1px solid var(--border-muted); border-left: 4px solid var(--accent-primary); background: var(--bg-elevated); padding: .8rem; margin-block: .75rem; border-radius: .35rem; }
-.or-definition-inspector .or-stage-review h4 { font-size: 1.1rem; }
-.or-definition-inspector .or-stage-summary { border-top: 3px solid var(--accent-primary); }
 .or-definition-overview { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .or-definition-graph { min-width: 0; box-sizing: border-box; }
 @media (max-width: 1024px) {
   .or-definition-inspector { grid-template-columns: minmax(0, 23fr) minmax(0, 77fr); gap: .75rem; }
-  .or-definition-navigation { font-size: .9rem; }
 }
 @media (max-width: 640px) {
   .or-definition-inspector { grid-template-columns: minmax(0, 1fr); }
-  .or-definition-navigation { max-height: 14rem; border: 1px solid var(--border-muted); padding: .5rem; }
+  .or-definition-navigation { max-height: 14rem; }
   .or-definition-graph { max-height: 22rem; overflow-x: auto; }
 }
