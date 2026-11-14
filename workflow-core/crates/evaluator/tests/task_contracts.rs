@@ -1351,20 +1351,42 @@ fn cohort_assessment_rules_retain_incomplete_revision_and_refuse_approval() {
         if messages.is_empty() {
             run.accept(review).unwrap();
         } else {
-            // Existing validation auto-return closes this review. Keeping request
-            // changes available requires an evaluator scheduling change outside this cohort.
+            let offered = run
+                .last
+                .reviews
+                .iter()
+                .find(|candidate| {
+                    candidate.unit.0 == unit && candidate.review.0 == "assessment_review"
+                })
+                .expect("failed assessment stays available to the operator");
+            assert!(offered
+                .decisions
+                .iter()
+                .any(|decision| decision.decision.0 == "request_assessment_changes"));
+            assert!(!offered
+                .decisions
+                .iter()
+                .any(|decision| decision.decision.0 == "accept"));
             let refusal = run.accept(review);
             assert!(
-                matches!(&refusal, Err(StepError::Rejected { reason, .. }) if reason == "review is not open"),
+                matches!(&refusal, Err(StepError::Rejected { reason, .. }) if reason == REFUSED),
                 "{refusal:?}"
             );
-            assert!(run
-                .decide(Decision {
-                    review,
-                    decision: "request_assessment_changes",
-                    payload: json!({"feedback":"address missing items"}),
-                })
-                .is_err());
+            run.decide(Decision {
+                review,
+                decision: "request_assessment_changes",
+                payload: json!({"feedback":"address missing items"}),
+            })
+            .unwrap();
+            let revise = run.last.wanted.iter().find(|wanted| {
+                matches!(&wanted.action, Action::RunWorker { unit: owner, worker, mode: Mode::Revise, .. }
+                    if owner.0 == unit && worker.0 == "assessor")
+            }).expect("operator request starts an assessment revision");
+            assert!(revise
+                .resolved
+                .feedback
+                .iter()
+                .any(|entry| entry.review.0 == "assessment_review"));
         }
     }
 }
@@ -1415,5 +1437,24 @@ fn integration_validates_task_and_qualified_build_item_subjects() {
             run.validation_messages(unit, "assessment"),
             message.into_iter().collect::<Vec<_>>()
         );
+        if let Some(message) = message {
+            run.publish(Publication {
+                output: WorkerOutput {
+                    unit,
+                    worker: "integrator",
+                    artifact: "pr",
+                },
+                body: pr("alpha", "integration"),
+                subject: None,
+            });
+            run.end(unit, "integrator");
+            let revise = run.last.wanted.iter().find(|wanted| {
+                matches!(&wanted.action, Action::RunWorker { unit: owner, worker, mode: Mode::Revise, .. }
+                    if owner.0 == unit && worker.0 == "integrator")
+            }).expect("invalid integration assessment still auto-returns");
+            assert!(revise.resolved.feedback.iter().any(|entry| {
+                entry.review.0 == VALIDATION_REVIEW && entry.payload["feedback"] == message
+            }));
+        }
     }
 }
