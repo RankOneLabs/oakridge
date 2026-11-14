@@ -1,3 +1,5 @@
+import { useInstallStatus } from "../../hooks/useInstallStatus";
+import { selectLaunchBlock } from "../../state/install-status";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultRuntimeIdForConfig,
@@ -60,6 +62,8 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const [projectId, setProjectId] = useState<string>("");
   const [isGradingEnabled, setIsGradingEnabled] = useState(false);
   const [workflowDefId, setWorkflowDefId] = useState<string>("");
+  const installStatus = useInstallStatus();
+  const launchBlock = selectLaunchBlock(installStatus.data, workflowDefId);
   const definitionQuery = useOperatorDefinition(workflowDefId);
   const sessionTargets = useMemo(() => definitionQuery.data ? selectAgentSessionTargets(definitionQuery.data.workflow) : [], [definitionQuery.data]);
   const sessionChoices = useAgentSessionSelections(sessionTargets, runtimeDescriptors, defaultRuntimeId);
@@ -138,6 +142,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (launchBlock) { setError(launchBlock.error.detail); return; }
     if (!workflowDefId) { setError("Select a workflow definition."); return; }
     if (!definitionQuery.data || definitionQuery.data.definition_id !== workflowDefId) { setError("Wait for the workflow's agent sessions to load."); return; }
     const sessionSettings = selectLaunchSessionSettings(sessionTargets, modelMode === "by_role"
@@ -262,11 +267,12 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
 
         <AutomaticGradingField is_enabled={isGradingEnabled} onChange={setIsGradingEnabled} disabled={pending} />
 
+        {launchBlock && <FeedbackMessage tone="danger">{launchBlock.error.detail} Fix: {launchBlock.error.fix}</FeedbackMessage>}
         {error && <FeedbackMessage tone="danger">{error}</FeedbackMessage>}
 
         <div className="flex justify-end gap-3">
           <Button onClick={onBack} disabled={pending}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={pending || !workflowDefId || !definitionQuery.data || sessionTargets.length === 0}>
+          <Button type="submit" variant="primary" disabled={Boolean(launchBlock) || pending || !workflowDefId || !definitionQuery.data || sessionTargets.length === 0}>
             {pending ? "Starting…" : "Start Run"}
           </Button>
         </div>

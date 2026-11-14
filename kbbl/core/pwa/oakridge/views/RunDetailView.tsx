@@ -1,3 +1,4 @@
+import { ManualMergeIndications } from "../components/molecules/ManualMergeIndications";
 import { RunWorkspace } from "../components/organisms/RunWorkspace";
 import type { RoutePaneTarget } from "../lib/run-workspace";
 
@@ -15,5 +16,5 @@ interface RunDetailViewProps {
  * than the previous run's leaking across the navigation.
  */
 export function RunDetailView({ runId, routePane, onBack }: RunDetailViewProps) {
-  return <RunWorkspace key={runId} runId={runId} routePane={routePane} onBack={onBack} />;
+  return <><ManualMergeIndications runId={runId} /><RunWorkspace key={runId} runId={runId} routePane={routePane} onBack={onBack} /></>;
 }
