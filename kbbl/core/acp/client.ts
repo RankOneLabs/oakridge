@@ -31,14 +31,12 @@ export interface AcpClientHandlers {
   ): Promise<schema.RequestPermissionResponse>;
 }
 
-/**
- * The MCP server every agent session receives, using ACP's session setup
- * contract. The configured URL is supplied exactly as given: gated-review's
- * endpoint decides the agent tool list, so no session attribute selects it.
- */
-export function selectMcpServers(gatedReviewUrl: string | undefined): schema.McpServer[] {
-  if (!gatedReviewUrl) return [];
-  return [{ type: "http", name: "gated-review", url: gatedReviewUrl, headers: [] }];
+/** Select only the integration pinned for this session. */
+export function selectMcpServers(integration: import("./types").PrIntegration, gatedReviewUrl: string | null): Result<schema.McpServer[], AcpError> {
+  if (integration !== "gated-review") return ok([]);
+  if (!gatedReviewUrl) return err(acpError("pr_integration_unconfigured", "selectMcpServers",
+    "gated-review is the selected PR integration but no gated-review URL is configured; set the gated-review server in .mcp.json"));
+  return ok([{ type: "http", name: "gated-review", url: gatedReviewUrl, headers: [] }]);
 }
 
 export class AcpClient {
@@ -50,11 +48,9 @@ export class AcpClient {
     private readonly sid: KbblSessionId,
     child: AcpChildProcess,
     handlers: AcpClientHandlers,
+    mcpServers: schema.McpServer[] = [],
   ) {
-    this.mcpServers = selectMcpServers(process.env.OAKRIDGE_GATED_REVIEW_URL);
-    if (this.mcpServers.length === 0) {
-      console.warn(`[acp] sid=${sid} OAKRIDGE_GATED_REVIEW_URL is unset: gated-review is unavailable to this session`);
-    }
+    this.mcpServers = mcpServers;
     this.connection = client({ name: `kbbl:${sid}` })
       .onNotification("session/update", (ctx) => {
         handlers.onSessionUpdate(ctx.params);

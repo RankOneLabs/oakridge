@@ -1,4 +1,4 @@
-import type { AcpSessionRow, AcpSessionStatus, AcpSessionWorkflowIdentity, KbblSessionId, ResumableKey } from "./types";
+import type { AcpSessionRow, AcpSessionStatus, AcpSessionWorkflowIdentity, KbblSessionId, ResumableKey, SessionPrIntegration } from "./types";
 
 export function nowIso(): string {
   return new Date().toISOString();
@@ -6,11 +6,11 @@ export function nowIso(): string {
 
 /**
  * `acp_sessions`' actual column shape: the workflow identity is three flat
- * nullable TEXT columns, not the nested object `AcpSessionRow` exposes.
+ * nullable TEXT columns plus the persisted PR integration and skill digest.
  * Every `SELECT *`/`RETURNING *` reads this shape; `toAcpSessionRow`
  * assembles the nested `workflow` member consumers see.
  */
-export interface RawAcpSessionRow {
+export interface RawAcpSessionRow extends SessionPrIntegration {
   sid: KbblSessionId;
   resumable_key: ResumableKey | null;
   start_spec_hash: string | null;
@@ -42,6 +42,6 @@ export interface RawAcpSessionRow {
 export function toAcpSessionRow(raw: RawAcpSessionRow): AcpSessionRow {
   const { run_id, unit_id, worker, ...rest } = raw;
   const workflow: AcpSessionWorkflowIdentity | null =
-    run_id !== null && unit_id !== null && worker !== null ? { run_id, unit_id, worker } : null;
+    run_id !== null && unit_id !== null && worker !== null ? { run_id, unit_id, worker, pr_integration: raw.pr_integration, pr_skill_digest: raw.pr_skill_digest } : null;
   return { ...rest, workflow } as AcpSessionRow;
 }

@@ -218,7 +218,11 @@ export function parseWorkflowIdentity(
     if (typeof field !== "string" || field.trim() === "") return { error: `workflow.${name} must be a non-empty string` };
     if (field.trim().length > 200) return { error: `workflow.${name} must be at most 200 characters` };
   }
-  return { value: { run_id: (fields.run_id as string).trim(), unit_id: (fields.unit_id as string).trim(), worker: (fields.worker as string).trim() } };
+  const integration = value.pr_integration ?? "gated-review";
+  if (integration !== "gated-review" && integration !== "github-cli" && integration !== "none") return { error: "workflow.pr_integration is invalid" };
+  const digest = value.pr_skill_digest ?? null;
+  if (digest !== null && (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest))) return { error: "workflow.pr_skill_digest is invalid" };
+  return { value: { run_id: (fields.run_id as string).trim(), unit_id: (fields.unit_id as string).trim(), worker: (fields.worker as string).trim(), pr_integration: integration, pr_skill_digest: digest } };
 }
 
 /** A service-layer AcpError as an HTTP status, with the ACP code carried in the body. */
@@ -240,6 +244,8 @@ function errorResponse(error: AcpError): {
         status: 422,
         body: { ...body, error: "worktree could not be created", code: "worktree_create_failed" },
       };
+    case "pr_integration_unconfigured":
+    case "skill_unavailable":
     case "agent_profile_unavailable":
     case "requested_model_unsupported":
     case "requested_effort_unsupported":

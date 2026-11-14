@@ -1,3 +1,4 @@
+import { loadPrIntegrationConfig } from "./config";
 import { parseArgs } from "node:util";
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -173,6 +174,10 @@ const acpWorktrees = new GitWorktreeProvider({
   store: acpStore,
 });
 const acpService = new AcpSessionService({
+  integration: { ...loadPrIntegrationConfig(process.env),
+    skill_store_root: join(kbblRoot, "../workflow-config/definitions/skills"),
+    session_skills_root: join(dataDir, "session-skills"),
+  },
   store: acpStore,
   controllers: acpControllers,
   profiles: acpProfiles,

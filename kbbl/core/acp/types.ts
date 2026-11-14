@@ -107,13 +107,19 @@ export type AcpSessionStatus =
  * The Oakridge attempt a delegated session serves: its run, unit and worker.
  * Absence is the nullable: a hand-started POST /sessions session carries none.
  */
-export interface AcpSessionWorkflowIdentity {
+export type PrIntegration = "gated-review" | "github-cli" | "none";
+export interface SessionPrIntegration {
+  pr_integration: PrIntegration;
+  pr_skill_digest: string | null;
+}
+
+export interface AcpSessionWorkflowIdentity extends SessionPrIntegration {
   run_id: string;
   unit_id: string;
   worker: string;
 }
 
-export interface AcpSessionRow {
+export interface AcpSessionRow extends SessionPrIntegration {
   sid: KbblSessionId;
   resumable_key: ResumableKey | null;
   start_spec_hash: string | null;

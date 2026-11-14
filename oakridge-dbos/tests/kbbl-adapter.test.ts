@@ -294,5 +294,17 @@ test("the session start identity carries exactly the run, unit and worker", () =
   const instruction = instructionFor();
   const options = { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" };
   expect(selectSessionStart(instruction, options, "s").workflow).toEqual({
-    run_id: instruction.run_id, unit_id: instruction.action.unit, worker: instruction.action.worker });
+    run_id: instruction.run_id, unit_id: instruction.action.unit, worker: instruction.action.worker, pr_integration: "gated-review", pr_skill_digest: null });
+});
+
+
+test("start and retry send the recorded integration and byte-identical workflow identity", async () => {
+  const { calls, fetch } = recording(() => Response.json({ kind: "attached", session: snapshot() }));
+  const provider = createAgentProvider(config(fetch, { read_pr_integration: async () => ({ pr_integration: "github-cli", pr_skill_digest: "a".repeat(64) }) }));
+  const instruction = instructionFor();
+  await provider.start(instruction);
+  await provider.start(instruction);
+  const workflows = calls.map(call => (call.body as { workflow: unknown }).workflow);
+  expect(JSON.stringify(workflows[0])).toBe(JSON.stringify(workflows[1]));
+  expect(workflows[0]).toMatchObject({ pr_integration: "github-cli", pr_skill_digest: "a".repeat(64) });
 });

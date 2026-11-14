@@ -2,7 +2,7 @@
 // the fake ACP agent over stdio, real SQLite, the full
 // service -> registry -> controller -> client -> supervisor path.
 
-import { afterEach, expect, test, spyOn } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +33,7 @@ interface Harness {
 }
 
 interface HarnessOptions {
+  integration?: import("./session-integration").SessionIntegrationConfig;
   behavior?: string;
   stateDir: string;
   delayMs?: number;
@@ -60,6 +61,7 @@ function makeHarness(options: HarnessOptions): Harness {
     hard_kill_ms: 1000,
   });
   const profile: AgentProfile = {
+    skillDiscovery: { kind: "additionalDirectories" },
     id: "fake",
     label: "Fake agent",
     command: options.command ?? process.execPath,
@@ -90,6 +92,7 @@ function makeHarness(options: HarnessOptions): Harness {
   };
   const service = new AcpSessionService({
     store,
+    integration: options.integration,
     controllers: registry,
     profiles,
     supervisor,
@@ -116,72 +119,64 @@ async function makeDirs(): Promise<{ stateDir: string; workdir: string }> {
 const GATED_REVIEW_URL = "http://127.0.0.1:3555/mcp/";
 const GATED_REVIEW_SERVERS = [{ type: "http", name: "gated-review", url: GATED_REVIEW_URL, headers: [] }];
 
-async function withGatedReviewUrl(url: string | undefined, run: () => Promise<void>): Promise<void> {
-  const previous = process.env.OAKRIDGE_GATED_REVIEW_URL;
-  if (url === undefined) delete process.env.OAKRIDGE_GATED_REVIEW_URL;
-  else process.env.OAKRIDGE_GATED_REVIEW_URL = url;
-  try { await run(); } finally {
-    if (previous === undefined) delete process.env.OAKRIDGE_GATED_REVIEW_URL;
-    else process.env.OAKRIDGE_GATED_REVIEW_URL = previous;
-  }
-}
-
 async function readRecordedServers(stateDir: string, agentSessionId: string, setup: "mcp-servers" | "load-mcp-servers"): Promise<unknown> {
   return JSON.parse(await readFile(join(stateDir, `${agentSessionId}.${setup}.json`), "utf8"));
 }
 
-test("a hand-started session receives the configured gated-review URL unchanged", async () => {
-  await withGatedReviewUrl(GATED_REVIEW_URL, async () => {
-    const { stateDir, workdir } = await makeDirs();
-    const { service, store } = makeHarness({ stateDir });
-    const ensured = await service.ensureResumableSession("hand-wiring", spec(workdir));
-    if (!ensured.ok) throw new Error("ensure failed");
-    const sid = ensured.value.session.sid;
-    await service.observeInitialTurn(sid, 8000);
-    const agentSessionId = store.getSession(sid as KbblSessionId)?.acp_session_id;
-    if (!agentSessionId) throw new Error("agent session missing");
-    expect(await readRecordedServers(stateDir, agentSessionId, "mcp-servers")).toEqual(GATED_REVIEW_SERVERS);
-  });
-}, 15000);
-
-test("a resumed session loads with the configured gated-review URL unchanged", async () => {
-  await withGatedReviewUrl(GATED_REVIEW_URL, async () => {
-    const { stateDir, workdir } = await makeDirs();
-    const first = makeHarness({ stateDir });
-    const ensured = await first.service.ensureResumableSession("resume-wiring", spec(workdir),
-      { run_id: "run-1", unit_id: "run-1/planning", worker: "planner" });
-    if (!ensured.ok) throw new Error("ensure failed");
-    const sid = ensured.value.session.sid;
-    await first.service.observeInitialTurn(sid, 8000);
-    await first.service.shutdown();
-    const second = makeHarness({ stateDir, db: first.db });
-    second.service.recoverOnBoot();
-    const history = await second.service.loadHistory(sid);
-    expect(history.ok).toBe(true);
-    const agentSessionId = second.store.getSession(sid as KbblSessionId)?.acp_session_id;
-    if (!agentSessionId) throw new Error("agent session missing");
-    expect(await readRecordedServers(stateDir, agentSessionId, "load-mcp-servers")).toEqual(GATED_REVIEW_SERVERS);
-  });
+function integrationConfig(stateDir: string, integration: import("./types").PrIntegration = "none") {
+  return { default_integration: integration, gated_review_url: GATED_REVIEW_URL,
+    skill_store_root: join(import.meta.dir, "../../../workflow-config/definitions/skills"), session_skills_root: join(stateDir, "session-skills") };
+}
+test("a gated-review session resumes with its recorded MCP server and skill", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const integration = integrationConfig(stateDir);
+  const first = makeHarness({ stateDir, integration });
+  const identity = { run_id: "run-1", unit_id: "run-1/planning", worker: "planner", pr_integration: "gated-review" as const, pr_skill_digest: "8199a2589e1e69ded71370f990e7ac3e9ac48d6dc2137bad004d507de0b7280c" };
+  const ensured = await first.service.ensureResumableSession("resume-wiring", spec(workdir), identity);
+  if (!ensured.ok) throw new Error(ensured.error.detail);
+  const sid = ensured.value.session.sid;
+  await first.service.observeInitialTurn(sid, 8000);
+  await first.service.shutdown();
+  const second = makeHarness({ stateDir, db: first.db, integration });
+  second.service.recoverOnBoot();
+  expect((await second.service.loadHistory(sid)).ok).toBe(true);
+  const agentSessionId = second.store.getSession(sid)?.acp_session_id;
+  if (!agentSessionId) throw new Error("agent session missing");
+  expect(await readRecordedServers(stateDir, agentSessionId, "load-mcp-servers")).toEqual(GATED_REVIEW_SERVERS);
+  const roots = JSON.parse(await readFile(join(stateDir, `${agentSessionId}.additional-directories.json`), "utf8"));
+  expect(roots).toContain(join(stateDir, "session-skills", sid));
+  expect(second.store.getSession(sid)?.workflow).toEqual(identity);
 }, 20000);
 
-test("an unset endpoint supplies no server and logs its unavailability", async () => {
-  await withGatedReviewUrl(undefined, async () => {
-    const warn = spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      const { stateDir, workdir } = await makeDirs();
-      const { service, store } = makeHarness({ stateDir });
-      const ensured = await service.ensureResumableSession("unset-wiring", spec(workdir));
-      if (!ensured.ok) throw new Error("ensure failed");
-      const sid = ensured.value.session.sid;
-      await service.observeInitialTurn(sid, 8000);
-      const agentSessionId = store.getSession(sid as KbblSessionId)?.acp_session_id;
-      if (!agentSessionId) throw new Error("agent session missing");
-      expect(await readRecordedServers(stateDir, agentSessionId, "mcp-servers")).toEqual([]);
-      expect(warn.mock.calls.map(([message]) => String(message)))
-        .toContainEqual(`[acp] sid=${sid} OAKRIDGE_GATED_REVIEW_URL is unset: gated-review is unavailable to this session`);
-    } finally { warn.mockRestore(); }
-  });
-}, 15000);
+test("direct github-cli uses the current pinned skill and no MCP server", async () => {
+  const previousMarker = process.env.KBBL_TEST_AUTH_MARKER;
+  process.env.KBBL_TEST_AUTH_MARKER = "inherited-login-environment";
+  try {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, store } = makeHarness({ stateDir, integration: integrationConfig(stateDir, "github-cli") });
+  const created = await service.createSession(spec(workdir));
+  if (!created.ok) throw new Error(created.error.detail);
+  const row = store.getSession(created.value.sid)!;
+  expect(await readRecordedServers(stateDir, row.acp_session_id!, "mcp-servers")).toEqual([]);
+  const skill = await readFile(join(stateDir, "session-skills", row.sid, ".agents/skills/pr-operations/SKILL.md"), "utf8");
+  expect(skill).toContain("gh pr create");
+  expect(row.pr_skill_digest).toBe(JSON.parse(await readFile(join(import.meta.dir, "../../../workflow-config/definitions/skills.json"), "utf8"))["github-cli"]);
+  expect(JSON.parse(await readFile(join(stateDir, `${row.acp_session_id}.auth-marker.json`), "utf8"))).toBe("inherited-login-environment");
+  } finally {
+    if (previousMarker === undefined) delete process.env.KBBL_TEST_AUTH_MARKER;
+    else process.env.KBBL_TEST_AUTH_MARKER = previousMarker;
+  }
+});
+
+test("direct none gets neither a skill directory nor an MCP server", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, store } = makeHarness({ stateDir, integration: integrationConfig(stateDir) });
+  const created = await service.createSession(spec(workdir));
+  if (!created.ok) throw new Error(created.error.detail);
+  const row = store.getSession(created.value.sid)!;
+  expect(await readRecordedServers(stateDir, row.acp_session_id!, "mcp-servers")).toEqual([]);
+  expect(await Bun.file(join(stateDir, "session-skills", row.sid, ".agents/skills/pr-operations/SKILL.md")).exists()).toBe(false);
+});
 
 function spec(workdir: string, prompt = "build the thing"): AcpSessionStartSpec {
   return { initial_prompt: prompt, workdir, runtime: "fake" };
@@ -1295,3 +1290,9 @@ test("sessions change feed fires on session writes and stops after unsubscribe",
   await service.ensureResumableSession("key-feed-2", spec(workdir));
   expect(ticks).toBe(afterUnsubscribe);
 }, 20000);
+
+test("start spec hash changes when only the pinned skill digest changes", async () => {
+  const { startSpecHash } = await import("./start-spec-hash");
+  expect(startSpecHash(spec("/work"), { pr_integration: "github-cli", pr_skill_digest: "a".repeat(64) }))
+    .not.toBe(startSpecHash(spec("/work"), { pr_integration: "github-cli", pr_skill_digest: "b".repeat(64) }));
+});

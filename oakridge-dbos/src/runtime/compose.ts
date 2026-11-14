@@ -1,3 +1,4 @@
+import { readCommittedRunConfig, selectCommittedPrIntegration } from "../storage/read-store";
 import type { PrIntegration } from "../domain/pr-integration";
 import type { PrIntegrationHealth } from "./pr-launch-preflight";
 import { DBOS } from "@dbos-inc/dbos-sdk";
@@ -60,14 +61,20 @@ export async function createProductionComposition(options: ProductionOptions): P
   if (access.kind === "refused") throw new Error(access.detail);
   const executor = options.executor;
   if (executor?.kbbl_base_url && !executor.publication_key) throw new Error("OAKRIDGE_PUBLICATION_KEY is required when KBBL_BASE_URL is set");
-  const provider = options.effect_provider ?? createAgentProvider({ kbbl: executor?.kbbl_base_url ? new KbblClient({ base_url: executor.kbbl_base_url, control_token: executor.kbbl_control_token ?? null }) : null,
+  const db = openDatabase(options.database_url);
+  const provider = options.effect_provider ?? createAgentProvider({
+    read_pr_integration: async (run_id) => {
+      const recorded = await readCommittedRunConfig(db, run_id);
+      const integration = selectCommittedPrIntegration(recorded);
+      return integration === null ? null : { pr_integration: integration,
+        pr_skill_digest: recorded.state === "committed" ? recorded.config.pr_skill_digest : null };
+    }, kbbl: executor?.kbbl_base_url ? new KbblClient({ base_url: executor.kbbl_base_url, control_token: executor.kbbl_control_token ?? null }) : null,
     publication_key: executor?.publication_key ?? null, publish_base_url: executor?.publish_base_url ?? "", default_workdir: executor?.agent_workdir ?? "" });
   const operations = options.operation_runner ?? createOperationRunner({ git: new BunGitCommandRunner(),
     pull_requests: executor?.gated_review_url ? new GatedReviewPullRequestReader(executor.gated_review_url) : null });
   const started = CoreClient.start();
   if (!started.ok) throw new Error(`workflow WASM could not load: ${started.error.detail.detail}`);
   const core = started.value;
-  const db = openDatabase(options.database_url);
   let launch_attempted = false;
   try {
     const application_version = options.application_version ?? selectApplicationVersion();

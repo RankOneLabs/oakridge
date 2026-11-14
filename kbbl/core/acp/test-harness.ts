@@ -24,6 +24,8 @@ export const FAKE_AGENT_FIXTURE = join(
 export interface AcpTestHarnessOptions {
   /** Fake agent transcript dir (session/load replay across restarts). */
   stateDir: string;
+  integration?: import("./session-integration").SessionIntegrationConfig;
+  skillDiscovery?: import("./agent-profile").SkillDiscovery | null;
   /** When set, sessions get real git worktrees rooted here. */
   worktreesRoot?: string;
   db?: Database;
@@ -58,6 +60,7 @@ export function makeAcpTestService(
   for (const id of profileIds) {
     profiles.set(id, {
       id,
+      skillDiscovery: options.skillDiscovery ?? null,
       label: `Fake agent (${id})`,
       command: process.execPath,
       args: [FAKE_AGENT_FIXTURE],
@@ -89,6 +92,7 @@ export function makeAcpTestService(
       };
   const service = new AcpSessionService({
     store,
+    integration: options.integration ?? { default_integration: "none", gated_review_url: "http://127.0.0.1:3555/mcp/", skill_store_root: join(import.meta.dir, "../../../workflow-config/definitions/skills"), session_skills_root: join(options.stateDir, "session-skills") },
     controllers: registry,
     profiles,
     supervisor,

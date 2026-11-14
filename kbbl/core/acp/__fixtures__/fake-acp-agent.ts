@@ -147,6 +147,7 @@ const app = agent({ name: `fake-acp-${behavior}` })
     if (behavior !== "persist_on_prompt") appendFileSync(transcriptPath(sessionId), "");
     configState.set(sessionId, new Map());
     recordAdditionalDirectories(sessionId, ctx.params.additionalDirectories);
+    writeFileSync(join(stateDir, `${sessionId}.auth-marker.json`), JSON.stringify(process.env.KBBL_TEST_AUTH_MARKER ?? null));
     writeFileSync(join(stateDir, `${sessionId}.mcp-servers.json`), JSON.stringify(ctx.params.mcpServers));
     return { sessionId, configOptions: CONFIG_OPTIONS };
   })
