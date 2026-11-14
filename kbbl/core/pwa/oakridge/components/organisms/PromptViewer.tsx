@@ -1,3 +1,4 @@
+import { HandoffProvenance } from "./HandoffProvenance";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { useOperatorUnits } from "../../hooks/useOperatorUnits";
 import { useExecutedPrompt } from "../../hooks/useExecutedPrompt";
@@ -12,7 +13,7 @@ export function PromptViewer({ runId, unitId, attemptId }: Props) {
   if (units.isError) return <FeedbackMessage tone="danger">Prompt provenance unavailable.</FeedbackMessage>;
   if (!units.data) return <FeedbackMessage>Loading prompt provenance…</FeedbackMessage>;
   if (!view) return <FeedbackMessage>Recorded attempt unresolved: {attemptId}</FeedbackMessage>;
-  return <PromptViewerContent view={view} executed={view.session_id === null ? { state: "not_retained" } : executed.data ?? null} isExecutedError={executed.isError} />;
+  return <><HandoffProvenance runId={runId} unitId={unitId} attemptId={attemptId} /><PromptViewerContent view={view} executed={view.session_id === null ? { state: "not_retained" } : executed.data ?? null} isExecutedError={executed.isError} /></>;
 }
 interface ContentProps { view: PromptView; executed: ExecutedPromptRead | null; isExecutedError?: boolean }
 /** Read-only. A catalog entry at the same path is never a historical template source. */

@@ -1,6 +1,6 @@
 import { json, world, wrap } from "./item-panel-harness";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, waitFor, cleanup, fireEvent, screen } from "@testing-library/react";
 import { acknowledged, ANALYSIS, correctnessQuestion, id, IMPLEMENTATION, item, itemStatus, paged, supportQuestion } from "../__fixtures__/grading";
 import { CompositeDrilldown } from "../components/organisms/CompositeDrilldown";
 import { ItemPanel } from "../components/organisms/ItemPanel";
@@ -76,7 +76,8 @@ it.each<EntryPoint>(["task panel", "composite drilldown"])("an analysis finding 
   navigationReads();
   const open = vi.fn<(selection: ObservationItemAddress) => void>();
   wrap(entryPoint(source, open));
-  fireEvent.click(await screen.findByTestId("or-grade-item"));
+  await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(source === "task panel" ? 2 : 1));
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
   expect(open).toHaveBeenCalledWith(ANALYSIS);
   const selection = open.mock.calls[0]?.[0];
   if (!selection) throw new Error("the finding did not open");
@@ -104,7 +105,8 @@ it.each<{ source: EntryPoint; item_kind: string }>([
   navigationReads();
   const open = vi.fn();
   wrap(entryPoint(source, open));
-  fireEvent.click(await screen.findByTestId("or-grade-item"));
+  await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(source === "task panel" ? 2 : 1));
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
   expect(open).toHaveBeenCalledWith({ ...IMPLEMENTATION, task_id });
 });
 
@@ -119,7 +121,8 @@ it("the task panel keeps the enclosing task's subject when other tasks' subjects
   navigationReads();
   const open = vi.fn();
   wrap(entryPoint("task panel", open));
-  fireEvent.click(await screen.findByTestId("or-grade-item"));
+  await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(2));
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
   expect(open).toHaveBeenCalledWith({ ...IMPLEMENTATION, task_id });
 });
 
@@ -144,7 +147,8 @@ it("an assessment finding with no pinned subject for the enclosing task opens wi
   navigationReads();
   const open = vi.fn();
   wrap(entryPoint("task panel", open));
-  fireEvent.click(await screen.findByTestId("or-grade-item"));
+  await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(2));
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
   expect(open).toHaveBeenCalledWith(IMPLEMENTATION);
 });
 
@@ -166,10 +170,51 @@ it("a 50-row task lineage reads each contribution's status once while lineage ke
   });
   wrap(<TaskPanel runId="run-1" taskId="T1" onOpenItem={vi.fn()} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-  expect(screen.getAllByTestId("or-grade-item")).toHaveLength(50);
+  expect(screen.getAllByTestId("or-grade-item")).toHaveLength(100);
   const statusReads = () => world.paths.filter((path) => new URL(path, "http://kbbl.test").pathname.endsWith("/status"));
   expect(statusReads()).toHaveLength(50);
   await act(async () => { await vi.advanceTimersByTimeAsync(30_001); });
   expect(world.paths.filter((path) => path.includes("/tasks/T1/lineage")).length).toBeGreaterThan(1);
   expect(statusReads()).toHaveLength(50);
+});
+
+it("a finding reaching a task through a build item shows its revision, each hop and independent grades per scope", async () => {
+  const { reviewerAnswer } = await import("../__fixtures__/grading");
+  const perItem = supportQuestion({ answers: paged([reviewerAnswer("item-grade", "item-value")]), machine: paged([]) });
+  const perTask = correctnessQuestion({ task_id, answers: paged([reviewerAnswer("task-grade", "task-value")]), machine: paged([]) });
+  world.status = itemStatus([perItem, perTask]);
+  navigationReads();
+  const boundary = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!boundary) throw new Error("missing boundary");
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    if (String(input).includes("/tasks/T1/lineage")) return json({ ...paged([{ kind: "contribution", item: world.status.item, provenance: { kind: "relation", hops: [
+      { relation_id: "assessment-build", type: "assesses", evidence_ref: "/findings/1/subjects/0", asserted_by: "producer_explicit" },
+      { relation_id: "build-task", type: "addresses", evidence_ref: "/build_items/0/task_ids/0", asserted_by: "producer_explicit" },
+    ] } }]), run_id: "run-1", producer_local_id: "T1", is_captured: true });
+    return boundary(input, init);
+  });
+  wrap(<TaskPanel runId="run-1" taskId="T1" onOpenItem={vi.fn()} />);
+  const row = await screen.findByTestId("or-task-linked-item");
+  expect(row.textContent).toContain(IMPLEMENTATION.source_revision_id);
+  expect(row.textContent).toContain("/findings/1");
+  expect(row.textContent).toContain("assesses · /findings/1/subjects/0");
+  expect(row.textContent).toContain("addresses · /build_items/0/task_ids/0");
+  expect(screen.queryByText("item-value")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Reveal composites" }));
+  const { within } = await import("@testing-library/react");
+  expect(await within(await screen.findByRole("region", { name: "per_item grades" })).findByText("item-value")).toBeTruthy();
+  expect(await within(screen.getByRole("region", { name: "per_task grades" })).findByText("task-value")).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "per_item grades" })).queryByText("task-value")).toBeNull();
+});
+
+it("item task association link rows display the recorded relation type and evidence reference", async () => {
+  const boundary = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!boundary) throw new Error("missing boundary");
+  world.status = itemStatus([], { links: paged([{ state: "resolved", producer_local_id: "T1", logical_item_id: task_id, relation_id: id("rel-1"), evidence_ref: "/subjects/0" }]) });
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    if (String(input).includes("/items/") && String(input).includes("/lineage")) return json({ ...paged([]), occurrence_id: world.status.item.occurrence_id, republication: null, relations: [{ relation_id: "rel-1", type: "assesses", evidence_ref: "/subjects/0" }] });
+    return boundary(input, init);
+  });
+  wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={vi.fn()} />);
+  expect(await screen.findByText("assesses · rel-1 · /subjects/0")).toBeTruthy();
 });

@@ -22,7 +22,8 @@ export interface AssessmentFinding {
 }
 
 /** Mirrors `assessment_body` in workflow-config/development.yaml, for current revisions. */
-export interface Assessment {
+export interface LegacyAssessment {
+  shape?: "legacy";
   head_sha: string;
   verdict: AssessmentVerdict;
   findings: AssessmentFinding[];
@@ -79,7 +80,7 @@ function parseTaskIds(value: unknown, field: string): Parsed<PlanTraceId[]> {
   return { ok: true, value: value as PlanTraceId[] };
 }
 
-export function parseAssessmentFinding(value: unknown, field: string, item_path: string): Parsed<AssessmentFinding> {
+function parseLegacyFinding(value: unknown, field: string, item_path: string): Parsed<AssessmentFinding> {
   if (!isRecord(value)) return fail(field, "expected an object");
   const taskIds = parseTaskIds(value.task_ids, `${field}.task_ids`);
   if (!taskIds.ok) return taskIds;
@@ -94,7 +95,7 @@ export function parseAssessmentFinding(value: unknown, field: string, item_path:
   return { ok: true, value: { item_path, task_ids: taskIds.value, status, evidence: evidence.value, description: description.value } };
 }
 
-export function parseAssessment(body: unknown): Parsed<Assessment> {
+function parseLegacyAssessment(body: unknown): Parsed<LegacyAssessment> {
   if (!isRecord(body)) return fail("body", "expected an object");
   const verdict = VERDICTS.find((candidate) => candidate === body.verdict);
   if (!verdict) return fail("verdict", "expected pass, pass_with_notes or fail");
@@ -102,7 +103,7 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
   if (!Array.isArray(body.findings)) return fail("findings", "expected an array");
   const findings: AssessmentFinding[] = [];
   for (const [index, entry] of body.findings.entries()) {
-    const finding = parseAssessmentFinding(entry, `findings[${index}]`, `/findings/${index}`);
+    const finding = parseLegacyFinding(entry, `findings[${index}]`, `/findings/${index}`);
     if (!finding.ok) return finding;
     findings.push(finding.value);
   }
@@ -184,7 +185,7 @@ export function selectCheckText(check: CriterionCheck): string {
 const ATTENTION_ORDER: readonly (CriterionStatus | null)[] = ["not_met", "partial", null];
 
 /** Lays the assessment over the brief's tasks by explicit task id. A null brief (integration) has no comparison to make. */
-export function selectCriterionReport(briefCriteria: PlanCriterion[] | null, findings: AssessmentFinding[]): CriterionReport {
+function selectLegacyCriterionReport(briefCriteria: PlanCriterion[] | null, findings: AssessmentFinding[]): CriterionReport {
   const briefTasks = new Map((briefCriteria ?? []).map((criterion, index) => [criterion.id, { number: index + 1, text: criterion.text }]));
   const named = new Set(findings.flatMap((finding) => finding.task_ids));
   const findingChecks = findings.map((finding): CriterionCheck => ({ kind: "finding", finding,
@@ -203,4 +204,73 @@ export function selectCriterionReport(briefCriteria: PlanCriterion[] | null, fin
       unassessed: statuses.filter((status) => status === null).length,
     },
   };
+}
+
+/** Mirrors assessment_subject in development.yaml. */
+export type AssessmentSubject = { kind: "task"; id: string; cohort_id?: string } | { kind: "build_item"; id: string; cohort_id?: string };
+export interface BuildItemFinding extends Omit<AssessmentFinding, "task_ids"> { subjects: AssessmentSubject[] }
+export interface BuildItemAssessment extends Omit<LegacyAssessment, "shape" | "findings"> { shape: "build_items"; findings: BuildItemFinding[] }
+export type Assessment = LegacyAssessment | BuildItemAssessment;
+function parseSubjects(value: unknown): Parsed<AssessmentSubject[]> {
+  if (!Array.isArray(value)) return fail("subjects", "expected subjects");
+  const subjects: AssessmentSubject[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry) || (entry.kind !== "task" && entry.kind !== "build_item") || typeof entry.id !== "string" || !entry.id.trim()
+      || (entry.cohort_id !== undefined && typeof entry.cohort_id !== "string")) return fail("subjects", "invalid subject");
+    subjects.push({ kind: entry.kind, id: entry.id, ...(typeof entry.cohort_id === "string" ? { cohort_id: entry.cohort_id } : {}) });
+  }
+  return { ok: true, value: subjects };
+}
+export function parseAssessmentFinding(value: unknown, field: string, item_path: string): Parsed<AssessmentFinding | BuildItemFinding> {
+  if (!isRecord(value) || !("subjects" in value)) return parseLegacyFinding(value, field, item_path);
+  const subjects = parseSubjects(value.subjects);
+  if (!subjects.ok) return subjects;
+  // Share validation of the common fields without turning subjects into legacy task links.
+  const common = parseLegacyFinding({ ...value, task_ids: [] }, field, item_path);
+  if (!common.ok) return common;
+  const { task_ids, ...fields } = common.value;
+  return { ok: true, value: { ...fields, subjects: subjects.value } };
+}
+export function parseAssessment(body: unknown): Parsed<Assessment> {
+  if (!isRecord(body) || !Array.isArray(body.findings) || !body.findings.some((finding) => isRecord(finding) && "subjects" in finding)) {
+    const legacy = parseLegacyAssessment(body);
+    return legacy.ok ? { ok: true, value: { ...legacy.value, shape: "legacy" } } : legacy;
+  }
+  const findings: BuildItemFinding[] = [];
+  for (const [index, entry] of body.findings.entries()) {
+    const parsed = parseAssessmentFinding(entry, `findings[${index}]`, `/findings/${index}`);
+    if (!parsed.ok) return parsed;
+    if (!("subjects" in parsed.value)) return fail("findings", "mixed finding shapes");
+    findings.push(parsed.value);
+  }
+  const common = parseLegacyAssessment({ ...body, findings: [] });
+  return common.ok ? { ok: true, value: { ...common.value, shape: "build_items", findings } } : common;
+}
+
+export interface BuildItemReportRow { item: import("./build-brief").BuildItem | null; findings: BuildItemFinding[]; unresolved_subjects?: AssessmentSubject[] }
+export interface BuildItemReportGroup { label: string; rows: BuildItemReportRow[] }
+export function selectBuildItemReport(brief: Extract<import("./build-brief").BuildBrief, { shape: "build_items" }> | null, findings: BuildItemFinding[]): BuildItemReportGroup[] {
+  if (brief === null) return [{ label: "Findings", rows: findings.map((finding) => ({ item: null, findings: [finding] })) }];
+  const matches = (subject: AssessmentSubject, id: string) => subject.kind === "build_item" && subject.id === id && (subject.cohort_id === undefined || subject.cohort_id === brief.cohort_id);
+  const rows = brief.build_items.map((item) => ({ item, findings: findings.filter((finding) => finding.subjects.some((subject) => matches(subject, item.id))) }));
+  const isMet = (row: BuildItemReportRow) => row.findings.length > 0 && row.findings.every((finding) => finding.status === "met");
+  return [
+    { label: "Needs attention", rows: rows.filter((row) => row.findings.length > 0 && !isMet(row)) },
+    { label: "Not assessed", rows: rows.filter((row) => row.findings.length === 0) },
+    { label: "Met (assessor's judgment)", rows: rows.filter(isMet) },
+    { label: "Cross-cutting findings", rows: findings.filter((finding) => finding.subjects.length === 0).map((finding) => ({ item: null, findings: [finding] })) },
+    { label: "Task findings", rows: findings.filter((finding) => finding.subjects.some((subject) => subject.kind === "task")).map((finding) => ({ item: null, findings: [finding] })) },
+    { label: "Unresolved item references", rows: findings.flatMap((finding) => {
+      const unresolved_subjects = finding.subjects.filter((subject) => subject.kind === "build_item" && !brief.build_items.some((item) => matches(subject, item.id)));
+      return unresolved_subjects.length === 0 ? [] : [{ item: null, findings: [finding], unresolved_subjects }];
+    }) },
+  ];
+}
+
+type ItemBrief = Extract<import("./build-brief").BuildBrief, { shape: "build_items" }>;
+export function selectCriterionReport(brief: ItemBrief, findings: BuildItemFinding[]): BuildItemReportGroup[];
+export function selectCriterionReport(brief: PlanCriterion[] | null, findings: AssessmentFinding[]): CriterionReport;
+export function selectCriterionReport(brief: ItemBrief | PlanCriterion[] | null, findings: AssessmentFinding[] | BuildItemFinding[]): CriterionReport | BuildItemReportGroup[] {
+  if (brief !== null && !Array.isArray(brief)) return selectBuildItemReport(brief, findings.filter((finding): finding is BuildItemFinding => "subjects" in finding));
+  return selectLegacyCriterionReport(brief, findings.filter((finding): finding is AssessmentFinding => "task_ids" in finding));
 }

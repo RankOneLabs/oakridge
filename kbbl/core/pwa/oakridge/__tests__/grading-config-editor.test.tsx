@@ -184,3 +184,37 @@ it.each(feedbackCases)("renders distinct operation feedback $kind", (feedback) =
   expect(screen.getByRole("status").getAttribute("data-kind")).toBe(feedback.kind);
   expect(screen.getByRole("status").textContent?.length).toBeGreaterThan(5);
 });
+
+it("authors and round-trips resolved_assesses drafts through the task-source select", async () => {
+  browser();
+  change("Scope", "per_task");
+  expect((screen.getByLabelText("Task source") as HTMLSelectElement).value).toBe("task_ids");
+  change("Task pointer (task_ids JSON pointer)", "/task_ids");
+  change("Task source", "resolved_assesses");
+  expect(screen.queryByLabelText("Task pointer (task_ids JSON pointer)")).toBeNull();
+  expect(screen.getAllByTestId("grading-definition-summary")[0]?.textContent).toContain("per_task (resolved_assesses)");
+  click("Save draft"); await screen.findByText("Draft saved · draft-saved");
+  const definitions = atPath(sent.find((request) => request.method === "PUT")?.body, ["document", "definitions"]);
+  expect(atPath(definitions, [0, "task_source"])).toBe("resolved_assesses");
+  expect(atPath(definitions, [0, "task_ids"])).toBeUndefined();
+  cleanup();
+  const initial = configRead();
+  if (!Array.isArray(definitions) || !initial.draft) throw new Error("saved draft missing");
+  render(<GradingConfigBrowser initial={{ ...initial, draft: { ...initial.draft, document: { status: "draft", definitions } } }} version={null} onNavigate={vi.fn()} onReload={vi.fn()} />);
+  expect((screen.getByLabelText("Task source") as HTMLSelectElement).value).toBe("resolved_assesses");
+  change("Task source", "task_ids");
+  expect((screen.getByLabelText("Task pointer (task_ids JSON pointer)") as HTMLInputElement).value).toBe("");
+  click("Save draft"); await screen.findByText("Draft saved · draft-saved");
+  const last = sent.filter((request) => request.method === "PUT").at(-1)?.body;
+  expect(atPath(last, ["document", "definitions", 0, "task_source"])).toBeUndefined();
+  expect(atPath(last, ["document", "definitions", 0, "task_ids"])).toBe("");
+});
+it("places task_source validation issues beside the Targets scope fields", async () => {
+  browser();
+  change("Scope", "per_task"); change("Task source", "resolved_assesses");
+  click("Save draft"); await screen.findByText("Draft saved · draft-saved");
+  vi.mocked(fetch).mockResolvedValueOnce(failure("invalid_configuration", { issues: [{ definition_index: 0, path: [0, "task_source"], detail: "Resolved relation source is unavailable" }] }));
+  click("Validate saved draft"); await screen.findByText("Validation failed. Review the issues below.");
+  expect(within(screen.getByRole("region", { name: "Targets" })).getByRole("alert").textContent).toBe("Resolved relation source is unavailable");
+  expect(within(screen.getByRole("region", { name: "Question" })).queryByRole("alert")).toBeNull();
+});

@@ -67,7 +67,7 @@ describe("parseAssessment", () => {
 
   test("accepts a finding linked to no task", () => {
     const parsed = parseAssessment({ ...body, findings: [{ ...validFinding, task_ids: [] }] });
-    expect(parsed.ok && parsed.value.findings[0]?.task_ids).toEqual([]);
+    expect(parsed.ok && (parsed.value.shape === "build_items" ? null : parsed.value.findings[0]?.task_ids)).toEqual([]);
   });
 
   test("refuses a finding with no task_ids", () => {
@@ -189,7 +189,7 @@ describe("selectCriterionReport", () => {
   test("links by id across reordering and rewording of the brief", () => {
     const brief = readBuildBrief(linkedBrief);
     const parsed = parseAssessment(linkedAssessment);
-    if (brief === null || !parsed.ok) throw new Error("fixture failed to parse");
+    if (brief === null || brief.shape !== "legacy" || !parsed.ok || parsed.value.shape === "build_items") throw new Error("fixture failed to parse");
     const reworded = [...brief.acceptance_criteria].reverse().map((entry) => ({ ...entry, text: `Reworded: ${entry.text}` }));
     expect(selectCriterionReport(reworded, parsed.value.findings).met).toMatchObject([
       { tasks: [{ id: "criterion-brief", number: 2, text: "Reworded: The brief remains readable." }], unresolved_task_ids: [] },
@@ -205,7 +205,7 @@ describe("selectCriterionReport", () => {
   test("reports an unknown fixture id as unresolved and leaves the brief's tasks unassessed", () => {
     const brief = readBuildBrief(linkedBrief);
     const parsed = parseAssessment(unresolvedAssessment);
-    if (brief === null || !parsed.ok) throw new Error("fixture failed to parse");
+    if (brief === null || brief.shape !== "legacy" || !parsed.ok || parsed.value.shape === "build_items") throw new Error("fixture failed to parse");
     const unresolved = selectCriterionReport(brief.acceptance_criteria, parsed.value.findings);
     expect(unresolved.needs_attention.map((check) => check.kind === "unassessed" ? `#${check.number}` : check.unresolved_task_ids)).toEqual([
       ["criterion-missing"], "#1", "#2",

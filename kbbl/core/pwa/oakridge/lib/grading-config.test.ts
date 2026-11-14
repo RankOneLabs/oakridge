@@ -95,3 +95,23 @@ describe("the shared grading draft", () => {
     expect(publicationFailure({ ...error, operation: "grading_publication", entity_id: "draft", detail: "detail" } as ObservationPublicationError)).toEqual(expected);
   });
 });
+
+describe("per_task source variants", () => {
+  it("preserves resolved relation drafts through save and reload", () => {
+    const values: readonly ObservationJsonValue[] = [{ id: "quality", scope: "per_task", task_source: "resolved_assesses" }];
+    const draft = createDraft({ digest: "before", document: { status: "draft", definitions: values } }, 1);
+    const stored = { digest: "saved", document: { status: "draft" as const, definitions: values } };
+    const saved = saveSucceeded(draft, stored);
+    expect(createDraft({ ...stored, document: { ...stored.document, definitions: saved.definitions } }, 1).definitions).toEqual(values);
+  });
+  it("uses an exclusive scope union when switching task source", async () => {
+    const { definitionWithTaskSource } = await import("./grading-config");
+    const resolved = definitionWithTaskSource({ id: "q", scope: "per_task", task_ids: "/tasks" }, "resolved_assesses");
+    expect(resolved).toEqual({ id: "q", scope: "per_task", task_source: "resolved_assesses" });
+    expect(definitionWithTaskSource(resolved, "task_ids")).toEqual({ id: "q", scope: "per_task", task_ids: "" });
+    expect(definitionWithScope(resolved, "per_item")).toEqual({ id: "q", scope: "per_item" });
+  });
+  it("summaries distinguish both task-source variants and per_item", () => {
+    expect(definitionSummaries([{ scope: "per_task", task_ids: "/task_ids" }, { scope: "per_task", task_source: "resolved_assesses" }, { scope: "per_item" }]).map((summary) => summary.scope)).toEqual(["per_task (task_ids pointer)", "per_task (resolved_assesses)", "per_item"]);
+  });
+});
