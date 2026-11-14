@@ -16,6 +16,6 @@ Review the assessment of this cohort's build. Accept it once you are satisfied w
 
 {{assessment}}
 
-Each finding's `subjects` names the brief's build items it addresses. A task may have several findings, a finding may address several tasks, and `subjects: []` marks a finding about something else.
+Each finding's `subjects` names the brief's build items it addresses. A build item may have several findings, a finding may address several build items, and `subjects: []` marks a finding about something else.
 
 Findings name explicit subjects: cohort assessments use build_item ids from the brief; integration assessments use task ids or cohort-qualified build_item ids from applicable briefs. Review their evidence against the build items.
