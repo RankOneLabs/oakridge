@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 
-import { mountSessionsRoutes, parseWorkflowIdentity } from "./sessions";
+import { mountSessionsRoutes } from "./sessions";
+import { parseWorkflowIdentity } from "./workflow-identity";
 import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
 import type { PwaSessionSnapshot } from "../../acp/pwa-wire";
 import type { KbblSessionId } from "../../acp/types";

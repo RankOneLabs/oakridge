@@ -1,3 +1,4 @@
+import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
 // Thin wrapper around @agentclientprotocol/sdk (§8.3). This is the IO
 // boundary for the protocol: every fallible operation catches at the SDK
 // edge and returns a Result. It forwards session/update notifications and
@@ -32,7 +33,7 @@ export interface AcpClientHandlers {
 }
 
 /** Select only the integration pinned for this session. */
-export function selectMcpServers(integration: import("./types").PrIntegration, gatedReviewUrl: string | null): Result<schema.McpServer[], AcpError> {
+export function selectMcpServers(integration: PrIntegration, gatedReviewUrl: string | null): Result<schema.McpServer[], AcpError> {
   if (integration !== "gated-review") return ok([]);
   if (!gatedReviewUrl) return err(acpError("pr_integration_unconfigured", "selectMcpServers",
     "gated-review is the selected PR integration but no gated-review URL is configured; set the gated-review server in .mcp.json"));

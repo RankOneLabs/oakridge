@@ -12,7 +12,8 @@ import { randomUUID } from "node:crypto";
 
 import type { AgentProfile, AgentProfileId } from "./agent-profile";
 import { resolveProfile } from "./agent-profile";
-import { configOptionCategory, type AcpSessionController } from "./controller";
+import type { AcpSessionController } from "./controller";
+import { configOptionCategory } from "./config-option-resolver";
 import type { AcpControllerRegistry } from "./controller-registry";
 import type { AcpProcessSupervisor } from "./process-supervisor";
 import {
@@ -106,7 +107,10 @@ export class AcpSessionService {
     identity: AcpSessionWorkflowIdentity | null = null,
   ): Promise<Result<EnsureResult, AcpError>> {
     const resumableKey = key as ResumableKey;
-    const selected = identity ? ok(identity) : selectDirectIntegration(this.deps.integration);
+    const existing = identity === null ? this.deps.store.getByResumableKey(resumableKey) : null;
+    const selected = identity ? ok(identity) : existing
+      ? ok({ pr_integration: existing.pr_integration, pr_skill_digest: existing.pr_skill_digest })
+      : selectDirectIntegration(this.deps.integration);
     if (!selected.ok) return selected;
     const specHash = startSpecHash(spec, selected.value);
     const sid = randomUUID() as KbblSessionId;

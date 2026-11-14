@@ -1,3 +1,4 @@
+import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
 import { AcpTurnStore, type AcceptTurnInput, type AcceptTurnOutcome, type OpenTurnRow, type RetainedPromptTurn, type BootSweepResult } from "./store-turns";
 import { AcpWorktreeStore, type ReusableWorktreeClaimInput, type ReusableWorktreeClaim, type WorktreeAssignment } from "./store-worktrees";
 import { nowIso, toAcpSessionRow, type RawAcpSessionRow } from "./store-records";
@@ -23,7 +24,7 @@ import type {
 } from "./types";
 
 export interface ClaimInput {
-  pr_integration?: import("./types").PrIntegration;
+  pr_integration?: PrIntegration;
   pr_skill_digest?: string | null;
   sid: KbblSessionId;
   resumable_key: ResumableKey | null;

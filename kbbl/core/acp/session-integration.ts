@@ -1,10 +1,11 @@
+import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type * as schema from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "./agent-profile";
 import { selectMcpServers } from "./client";
 import { materializeSessionSkill } from "./skill-materialize";
-import { acpError, err, ok, type AcpError, type AcpSessionRow, type PrIntegration, type Result, type SessionPrIntegration } from "./types";
+import { acpError, err, ok, type AcpError, type AcpSessionRow, type Result, type SessionPrIntegration } from "./types";
 
 export interface SessionIntegrationConfig {
   readonly default_integration: PrIntegration;
@@ -18,10 +19,10 @@ export interface SessionIntegrationLaunch {
 }
 interface SkillIndex { readonly "gated-review": string; readonly "github-cli": string }
 export function selectDirectIntegration(config?: SessionIntegrationConfig): Result<SessionPrIntegration, AcpError> {
-  const integration = config?.default_integration ?? "none";
-  if (integration === "none") return ok({ pr_integration: integration, pr_skill_digest: null });
+  if (!config || config.default_integration === "none") return ok({ pr_integration: "none", pr_skill_digest: null });
+  const integration = config.default_integration;
   try {
-    const index: SkillIndex = JSON.parse(readFileSync(join(config!.skill_store_root, "../skills.json"), "utf8"));
+    const index: SkillIndex = JSON.parse(readFileSync(join(config.skill_store_root, "../skills.json"), "utf8"));
     const digest = index[integration];
     if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest)) throw new Error("invalid skill index");
     return ok({ pr_integration: integration, pr_skill_digest: digest });

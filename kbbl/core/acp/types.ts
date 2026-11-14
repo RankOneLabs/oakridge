@@ -1,3 +1,4 @@
+import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
 // Domain model for the ACP session substrate (migration spec §8–§13, §18).
 // Row shapes mirror migration 027_acp_sessions.sql; the start-spec shape
 // mirrors the DBOS-facing HTTP contract (§11.1). Everything here is
@@ -107,7 +108,6 @@ export type AcpSessionStatus =
  * The Oakridge attempt a delegated session serves: its run, unit and worker.
  * Absence is the nullable: a hand-started POST /sessions session carries none.
  */
-export type PrIntegration = "gated-review" | "github-cli" | "none";
 export interface SessionPrIntegration {
   pr_integration: PrIntegration;
   pr_skill_digest: string | null;

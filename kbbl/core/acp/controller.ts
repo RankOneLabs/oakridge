@@ -7,8 +7,6 @@
 import type * as schema from "@agentclientprotocol/sdk";
 
 import { matchRequestedOption, resolveRequestedOption } from "./config-option-resolver";
-export { configOptionCategory, matchRequestedOption, resolveRequestedOption } from "./config-option-resolver";
-export type { OptionMatchKind, RequestedOptionCategory, ResolvedOption } from "./config-option-resolver";
 import { resolveExternalGitDir } from "../session/worktree";
 import type { AgentProfile } from "./agent-profile";
 import { AcpClient } from "./client";

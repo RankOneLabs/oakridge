@@ -32,9 +32,10 @@ test("tampered bundle writes nothing", () => {
   expect(existsSync(join(spec.sessionSkillsRoot, spec.sid))).toBe(false);
 });
 test("unknown bundle returns a typed error naming the digest", () => {
-  const spec = input("0".repeat(64));
+  const digest = "0".repeat(64);
+  const spec = input(digest);
   const result = materializeSessionSkill(spec);
-  expect(result.ok ? null : result.error.detail).toContain(spec.digest!);
+  expect(result.ok ? null : result.error.detail).toContain(digest);
   expect(existsSync(join(spec.sessionSkillsRoot, spec.sid))).toBe(false);
 });
 test("legacy null digest creates no directory", () => {

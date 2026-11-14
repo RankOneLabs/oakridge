@@ -30,7 +30,7 @@ import {
   withoutContextHint,
   type RuntimeId,
 } from "../runtime";
-import { resolveRequestedOption } from "./controller";
+import { resolveRequestedOption } from "./config-option-resolver";
 import {
   ADVERTISED_AGENT_VOCABULARY,
   type AdvertisedAgentVocabulary,
