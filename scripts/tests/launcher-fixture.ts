@@ -116,16 +116,16 @@ export class LauncherFixture {
   private readonly bin = join(this.root, "bin");
   private process: ReturnType<typeof Bun.spawn> | null = null;
 
-  constructor(readonly ports: LauncherPorts) {
+  constructor(readonly ports: LauncherPorts, options: { readonly omit_mcp?: boolean } = {}) {
     for (const directory of [this.home, this.records, this.docker_state, this.bin]) mkdirSync(directory, { recursive: true });
     const { checkout } = this;
     for (const path of ["scripts", "observation/src", "oakridge-dbos/src", "kbbl/scripts", "kbbl/core", "workflow-core"])
       mkdirSync(join(checkout, path), { recursive: true });
-    for (const script of ["oakridge-shadow", "oakridge-start"]) cpSync(join(REPOSITORY, "scripts", script), join(checkout, "scripts", script));
+    for (const script of ["oakridge-shadow", "oakridge-start", "oakridge-lan"]) cpSync(join(REPOSITORY, "scripts", script), join(checkout, "scripts", script));
     cpSync(join(REPOSITORY, "kbbl/scripts/kbbl-start"), join(checkout, "kbbl/scripts/kbbl-start"));
     // The provider selection is real code: the launchers run the repository's own.
     symlinkSync(join(REPOSITORY, "observation/scripts"), join(checkout, "observation/scripts"));
-    writeFileSync(join(checkout, ".mcp.json"), JSON.stringify({ mcpServers: { "gated-review": { type: "http", url: "http://review.test:3555/mcp" } } }));
+    if (!options.omit_mcp) writeFileSync(join(checkout, ".mcp.json"), JSON.stringify({ mcpServers: { "gated-review": { type: "http", url: "http://review.test:3555/mcp" } } }));
     writeFileSync(join(checkout, "observation/.env"), LIVE_ENV_FILE);
     writeFileSync(join(checkout, "observation/package.json"), JSON.stringify({ scripts: { start: "bun src/main.ts" } }));
     writeFileSync(join(checkout, "observation/src/main.ts"), serviceSource("observation", this.records, "process.env.OBSERVATION_PORT"));
@@ -136,7 +136,15 @@ export class LauncherFixture {
       `process.argv.findLast((arg) => arg.startsWith("--port="))?.slice(7)`));
     writeFileSync(join(this.bin, "docker"), DOCKER_SHIM(this.docker_state));
     writeFileSync(join(this.bin, "cargo"), `#!/usr/bin/env bash\nmkdir -p ${JSON.stringify(join(checkout, "workflow-core/target/wasm32-unknown-unknown/debug"))}\ntouch ${JSON.stringify(join(checkout, "workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm"))}\n`);
-    for (const shim of ["docker", "cargo"]) chmodSync(join(this.bin, shim), 0o755);
+    cpSync(join(REPOSITORY, "workflow-core/rust-toolchain.toml"), join(checkout, "workflow-core/rust-toolchain.toml"));
+    writeFileSync(join(this.bin, "rustup"), "#!/bin/sh\necho wasm32-unknown-unknown\n");
+    mkdirSync(join(checkout, "kbbl/node_modules/.bin"), { recursive: true });
+    for (const adapter of ["claude-agent-acp", "codex-acp"]) {
+      const path = join(checkout, "kbbl/node_modules/.bin", adapter);
+      writeFileSync(path, "#!/bin/sh\nexit 0\n");
+      chmodSync(path, 0o755);
+    }
+    for (const shim of ["docker", "cargo", "rustup"]) chmodSync(join(this.bin, shim), 0o755);
   }
 
   /** The environment a shell with a live profile would hand the launcher. */
@@ -168,7 +176,7 @@ export class LauncherFixture {
     return existsSync(path) ? readFileSync(path, "utf8") : "";
   }
 
-  start(options: { readonly script?: "oakridge-shadow" | "oakridge-start"; readonly args?: readonly string[]; readonly cwd?: string;
+  start(options: { readonly script?: "oakridge-shadow" | "oakridge-start" | "oakridge-lan"; readonly args?: readonly string[]; readonly cwd?: string;
     readonly env?: LauncherEnvironment } = {}): void {
     const script = join(this.checkout, "scripts", options.script ?? "oakridge-shadow");
     const log = openSync(this.log, "a");

@@ -40,7 +40,3 @@ For a reset of the Oakridge database, perform these steps in order:
 The kbbl SQLite ACP ledger is separate and is not part of this reset.
 
 @./standards/core.md
-
-## Environment
-
-@./standards/gated-review.md
