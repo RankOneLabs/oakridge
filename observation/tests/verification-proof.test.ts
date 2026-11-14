@@ -671,9 +671,9 @@ describe("one program, one launcher", () => {
       expect({ path, exists: existsSync(resolve(repository, path)) }).toEqual({ path, exists: false });
   });
 
-  test("the launcher pair is the only one", () => {
+  test("the supported installation scripts are the only ones", () => {
     expect(readdirSync(resolve(repository, "scripts")).filter((name) => name.startsWith("oakridge-")).toSorted())
-      .toEqual(["oakridge-lan", "oakridge-shadow", "oakridge-start"]);
+      .toEqual(["oakridge-doctor", "oakridge-lan", "oakridge-preflight.sh", "oakridge-shadow", "oakridge-start"]);
   });
 
   test("no verification module creates a database or starts a service itself", async () => {
