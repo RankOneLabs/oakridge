@@ -9,7 +9,7 @@ const upstream = withUnitFields(sampleCohort, { run_id: "run", unit_id: "upstrea
 const recordedAttempt = sampleCohort.attempts[0];
 if (!recordedAttempt) throw new Error("captured cohort requires an attempt");
 const unit = withUnitFields(sampleCohort, { run_id: "run", unit_id: "downstream", depends_on: ["upstream", "missing"], attempts: [{ ...recordedAttempt, id: "attempt", worker: "author", number: 1,
-  intent: { inputs: { source: { revision_id: revision.id } }, engine_inputs: { previous: null, feedback: [], subject: null }, prompt: null } }] });
+  intent: { input_provenance: { status: "unresolved" as const }, inputs: { source: { revision_id: revision.id } }, engine_inputs: { previous: null, feedback: [], subject: null }, prompt: null } }] });
 const index: RelationshipIndex = { run_id: "run", units: [unit, upstream], revisions: [revision] };
 test("dependencies resolve only by recorded unit ids", () => {
   expect(selectDependencyLinks(index, unit).map((link) => link.resolution.state)).toEqual(["resolved", "unresolved"]);

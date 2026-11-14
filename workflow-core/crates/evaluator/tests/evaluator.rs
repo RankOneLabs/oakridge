@@ -457,6 +457,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
             "assessment_body": schemas["assessment_body"],
             "next_action": schemas["next_action"],
             "assessment_finding": schemas["assessment_finding"],
+            "assessment_subject": schemas["assessment_subject"],
             "evidence_ref": schemas["evidence_ref"],
             "test_evidence": schemas["test_evidence"]
         },
@@ -468,7 +469,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
     let body = serde_json::json!({
         "head_sha": "abc123",
         "verdict": "pass_with_notes",
-        "findings": [{"task_ids": [], "description": "One non-blocking follow-up", "evidence": []}],
+        "findings": [{"subjects": [], "description": "One non-blocking follow-up", "evidence": []}],
         "recommended_next_actions": []
     });
 
@@ -484,7 +485,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
     ));
     assert!(!check_type(
         &program.input,
-        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"task_ids": [], "status": "unknown", "evidence": []}],
+        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"subjects": [], "status": "unknown", "evidence": []}],
             "recommended_next_actions": []})
     ));
     assert!(!check_type(
@@ -2790,6 +2791,7 @@ fn w6_projection(result: &StepResult) -> Value {
         let id = unit["id"].as_str().unwrap().to_owned();
         let kind = unit.as_object_mut().unwrap().remove("kind").unwrap();
         unit.as_object_mut().unwrap().remove("collection_key");
+        unit.as_object_mut().unwrap().remove("input_provenance");
         unit["stage"] = kind.get("stage").cloned().unwrap_or(Value::Null);
         if let Some(reason) = blocked.get(&id) {
             unit["status"] = serde_json::json!({"kind": "blocked", "reason": reason});
@@ -2837,6 +2839,10 @@ fn w6_projection(result: &StepResult) -> Value {
     }
     value.as_object_mut().unwrap().remove("blocked");
     for wanted in value["wanted"].as_array_mut().unwrap() {
+        wanted["resolved"]
+            .as_object_mut()
+            .unwrap()
+            .remove("input_provenance");
         wanted["action"]["cause"]
             .as_object_mut()
             .unwrap()
@@ -2969,6 +2975,7 @@ fn flatten_keeps_every_item_of_every_list_in_order() {
         collection_key: None,
         status: UnitStatus::Active,
         input: None,
+        input_provenance: None,
         after: vec![],
         pool: None,
     };
@@ -3052,4 +3059,106 @@ fn a_revision_that_failed_validation_offers_only_request_changes() {
         .map(|decision| decision.decision.0.as_str())
         .collect();
     assert_eq!(offered, ["request_changes"]);
+}
+
+fn failed_critique_with_operator_review(
+    source: Value,
+    has_notes: bool,
+) -> (CheckedWorkflow, StepResult) {
+    let program = compile_critique_check(source);
+    let mut events = vec![
+        serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+        serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+        serde_json::json!({"op":"publish","unit":"run/document","worker":"writer","artifact":"draft","body":{"title":"First","body":"Long"}}),
+        serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
+        serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
+        serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"critique","body":{"notes":[]},"subject":"run/document:draft:1"}),
+    ];
+    if has_notes {
+        events.push(serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"notes","body":"notes","subject":"run/document:draft:1"}));
+    }
+    events.push(serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"succeeded"}));
+    let result = step_specs(&program, &snapshot(), &events);
+    (program, result)
+}
+
+fn invalid_critique_source() -> Value {
+    let mut source = critique_check_source();
+    source["stages"]["document"]["artifacts"]["critique"]["validate"] =
+        serde_json::json!([{"check":"len(critique.notes) > 0","message":"notes required"}]);
+    source
+}
+
+#[test]
+fn failed_reviewer_output_auto_returns_when_operator_guard_is_closed() {
+    let mut source = invalid_critique_source();
+    source["stages"]["document"]["reviews"]["critique_check"]["when"] = serde_json::json!("false");
+    let (_, result) = failed_critique_with_operator_review(source, false);
+    assert!(result.wanted.iter().any(|wanted| matches!(&wanted.action,
+        Action::RunWorker {worker, mode:Mode::Revise, ..} if worker.0 == "critic")));
+}
+
+#[test]
+fn failed_reviewer_output_auto_returns_without_operator_request_changes() {
+    let mut source = invalid_critique_source();
+    source["stages"]["document"]["reviews"]["critique_check"]["decisions"] =
+        serde_json::json!({"accept":{"effect":"approve","label":"Accept"}});
+    let (_, result) = failed_critique_with_operator_review(source, false);
+    assert!(result.wanted.iter().any(|wanted| matches!(&wanted.action,
+        Action::RunWorker {worker, mode:Mode::Revise, ..} if worker.0 == "critic")));
+}
+
+#[test]
+fn deferred_validation_does_not_hide_request_changes_on_another_output() {
+    let mut source = invalid_critique_source();
+    source["stages"]["document"]["artifacts"]["notes"] =
+        serde_json::json!({"kind":"document","schema":"text"});
+    source["stages"]["document"]["workers"]["critic"]["produces"] =
+        serde_json::json!(["critique", "notes"]);
+    source["stages"]["document"]["reviews"]["notes_check"] = serde_json::json!({
+        "of":"notes","by":"operator","prompt":"check.md","decisions":{
+            "request_changes":{"effect":"request_changes","label":"Revise notes","fields":{"feedback":"What?"}}
+        }
+    });
+    let (program, result) = failed_critique_with_operator_review(source, true);
+    let revised = step_specs(
+        &program,
+        &result.snapshot,
+        &[
+            serde_json::json!({"op":"decide","unit":"run/document","review":"notes_check","decision":"request_changes","target":"run/document:notes:1","payload":{"feedback":"Fix notes"}}),
+        ],
+    );
+    let critic = resolved_for(&revised, "critic");
+    assert!(critic
+        .feedback
+        .iter()
+        .any(|entry| entry.review.0 == "notes_check"));
+    let expected_previous = critic.previous.clone();
+    let expected_feedback = critic.feedback.clone();
+    let mut retried = revised;
+    for retry_index in 0..2 {
+        retried = step_specs(
+            &program,
+            &retried.snapshot,
+            &[
+                serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
+                serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"failed","code":"test","detail":"before publication"}),
+            ],
+        );
+        retried = step(
+            &program,
+            &retried.snapshot,
+            &incoming(
+                Event::RetryRequested {
+                    unit: UnitId::from("run/document"),
+                    worker: WorkerKey::from("critic"),
+                },
+                &format!("notes-retry-{retry_index}"),
+            ),
+        )
+        .unwrap();
+        let critic = resolved_for(&retried, "critic");
+        assert_eq!(critic.previous, expected_previous);
+        assert_eq!(critic.feedback, expected_feedback);
+    }
 }

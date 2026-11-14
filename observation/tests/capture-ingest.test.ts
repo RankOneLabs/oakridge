@@ -8,6 +8,7 @@ import { startObservation } from "../src/main";
 import { oakridgeProfile, fixtureDefinitions, createFeed, credentialEnv, databaseUrl, fixtureBody, integration, revisionOutcome, scratchDatabase, tenant } from "./grading-fixture";
 import { withTenant, type Database } from "../src/storage/database";
 import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
+import { recordedRevisionIds } from "../src/storage/projection-store";
 import { readCapturedRunInput } from "../src/storage/run-capture-store";
 
 const credentials = { ingest: [{ ...tenant, token: "ingest-secret" }], read: [{ ...tenant, token: "read-secret" }] };
@@ -113,4 +114,34 @@ integration("captured revision readers retain the publishing stage and reject a 
     .toMatchObject({ stage: "custom-stage" });
   await expect(feed.send(revisionOutcome({ revision_id: "rev-1", artifact_kind: "build_result", stage: "different", body }, tenant, "event:changed-stage")))
     .rejects.toThrow("cursor_conflict");
+}));
+
+test("v4 validates recorded revision references while v3 always reads null provenance", () => {
+  const outcome = revisionOutcome({ revision_id: "assessment", artifact_kind: "assessment", body: { findings: [] } });
+  if (outcome.kind !== "artifact_revision") throw new Error("fixture");
+  const source = { ...outcome.revision.source, brief_revision_ids: ["oakridge:grading-test:brief-1"] };
+  const current = decodeCapture({ ...outcome.revision, format: "observation.artifact-revision/v4", source });
+  expect(current.ok && current.value.envelope.source.brief_revision_ids).toEqual(source.brief_revision_ids);
+  const legacy = decodeCapture({ ...outcome.revision, source });
+  expect(legacy.ok && legacy.value.envelope.source.brief_revision_ids).toBeNull();
+  expect(decodeCapture({ ...outcome.revision, format: "observation.artifact-revision/v4", source: { ...source, brief_revision_ids: ["oakridge:other:brief"] } }).ok).toBe(false);
+  const absent = decodeCapture({ ...outcome.revision, format: "observation.artifact-revision/v4", source: { ...source, brief_revision_ids: null } });
+  expect(absent.ok && absent.value.envelope.source.brief_revision_ids).toBeNull();
+});
+
+integration("v3 journal metadata cannot supply recorded brief provenance downstream", async () => scratchDatabase(async (db) => {
+  const feed = createFeed(db);
+  const outcome = revisionOutcome({ revision_id: "legacy-provenance", artifact_kind: "assessment", body: { findings: [] }, brief_revision_ids: ["brief-1"] });
+  if (outcome.kind !== "artifact_revision") throw new Error("fixture is a revision");
+  await feed.send({ ...outcome, revision: { ...outcome.revision, format: "observation.artifact-revision/v3" } });
+  expect(await withTenant(db, tenant, (trx) => recordedRevisionIds(trx, tenant, "legacy-provenance", "brief_revision_ids"))).toBeNull();
+}));
+
+integration("short brief references are normalized before journaling and identical replay", async () => scratchDatabase(async (db) => {
+  const feed = createFeed(db);
+  const outcome = revisionOutcome({ revision_id: "short-provenance", artifact_kind: "assessment", body: { findings: [] }, brief_revision_ids: ["brief-1"] });
+  if (outcome.kind !== "artifact_revision") throw new Error("fixture is a revision");
+  await feed.send({ ...outcome, revision: { ...outcome.revision, source: { ...outcome.revision.source, brief_revision_ids: ["brief-1"] } } });
+  expect(await withTenant(db, tenant, (trx) => recordedRevisionIds(trx, tenant, "short-provenance", "brief_revision_ids"))).toEqual(["brief-1"]);
+  await feed.send({ ...outcome, event_id: "repeat-normalized" });
 }));

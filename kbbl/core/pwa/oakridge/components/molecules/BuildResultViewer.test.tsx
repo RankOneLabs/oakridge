@@ -20,6 +20,7 @@ const result: BuildResult = {
 };
 
 const brief: BuildBrief = {
+  shape: "legacy",
   cohort_id: "cm-api" as CohortId,
   repository_key: "assay" as RepositoryKey,
   title: "Assemble the API",

@@ -1,3 +1,4 @@
+import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
 import type { EngineInputs, PinnedPrompt } from "../domain/effect-instruction";
 import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
@@ -13,6 +14,7 @@ export type BodyValue = JsonValue;
 
 /** The immutable instruction recorded when this attempt was opened. */
 export interface AttemptIntentView {
+  readonly input_provenance: InputProvenanceView;
   readonly inputs: BodyValue;
   readonly engine_inputs: EngineInputs;
   readonly prompt: PinnedPrompt | null;
@@ -101,6 +103,7 @@ export const selectRevisionDecision = (decision: ReviewDecisionRecord): Revision
   target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue, created_at: decision.created_at });
 
 export interface UnitView {
+  readonly input_provenance: InputProvenanceView;
   readonly unit_id: UnitId;
   readonly run_id: RunId;
   readonly unit_key: string;
@@ -141,7 +144,7 @@ export function selectAttemptViews(attempts: readonly AttemptRecord[], intents: 
 export function selectAttemptIntent(attempt: AttemptRecord, intents: RunRead["intents"]): AttemptIntentView | null {
   const instruction = intents.find((intent) => intent.action_id === attempt.action_id && intent.seq === attempt.seq)?.payload;
   if (!instruction) return null;
-  return { inputs: instruction.inputs as BodyValue, engine_inputs: instruction.engine_inputs,
+  return { input_provenance: instruction.input_provenance ?? { status: "unresolved" }, inputs: instruction.inputs as BodyValue, engine_inputs: instruction.engine_inputs,
     prompt: instruction.worker.kind === "agent" ? instruction.worker.prompt : null };
 }
 
@@ -222,6 +225,7 @@ export function selectUnitInputFields(unit: UnitView, fields: readonly string[])
 export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitAttention): UnitView {
   const tree = selectUnitTree(read.units, read.definition.workflow);
   return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
+    input_provenance: selectInputProvenance(unit.input_provenance),
     stage: unit.stage, collection_key: selectCollectionKey(unit), input: unit.input as BodyValue,
     depends_on: read.dependencies.filter((edge) => edge.unit_id === unit.id).map((edge) => edge.depends_on_id),
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),

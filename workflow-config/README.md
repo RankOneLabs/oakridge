@@ -23,37 +23,13 @@ compiles it against these prompts and pins it.
 
 ## Task contracts in the development workflow
 
-The revised specification contains the canonical **Spec tasks** section, with stable ids, descriptions and explicit requirement links. The separate tasks artifact mirrors it exactly; task edits revise that section and republish both artifacts. The spec editor publishes the spec before tasks. The approved task list is the one source of identity for the work. A plan cohort
-and a brief share the `task_acceptance` entry, exactly `{ id, text, decision_ids }`.
-`id` is an approved task's id. No other id is allocated for an entry, and a task
-spanning cohorts keeps the same id in each, so `T7` is `T7` in cohorts A and B.
-Tests, typechecks and process milestones are verification, not entries.
+Plan cohorts retain `task_acceptance { id, text, decision_ids }`, allocating approved tasks. Briefs carry `build_items { id, description, task_ids, decision_ids, verification }` as the standalone implementation contract. Items can split a task or span several tasks.
 
-Declared `validate` checks enforce this on publication:
+Separate brief validate checks enforce unique item ids, coverage of every allocated task, no task outside that allocation, nonempty descriptions, at least one task per item, and decision links resolving in the brief's decisions_made. Cohort identity, repository and dependency checks remain. Structural checks do not establish semantic completeness.
 
-- A plan's entries name only approved tasks, every task appears in at least one
-  cohort, and no id repeats within a cohort. Repeating an id across cohorts is valid.
-- A brief's ids equal its plan cohort's ids in the same order, beside its
-  `cohort_id`, `repository_key` and `depends_on` checks. Its text may change;
-  prompts and review enforce that the obligation survives.
+Assessment findings carry `subjects { kind: build_item | task, id, cohort_id? }`, optional status, evidence and description. Cohort checks require build_item subjects resolved in the brief, every brief item addressed, and head_sha matching the latest build result. Findings with `subjects: []` are valid for cross-cutting concerns. A failed check retains the revision and feedback, refuses approval and leaves request changes available; no synthetic finding is created.
 
-The checks use the generic `flatten(list_of_lists)` and `unique(list)` expressions.
-A failed check keeps the revision and its feedback, and the Rust authority then
-refuses any approve decision on that revision and stops offering one. Request
-changes stays available, and a corrected revision is judged on its own publication.
-Record types are open, so an undeclared field on a body is ignored rather than
-refused; the checks read only declared fields.
-
-An `assessment_finding` carries a required `task_ids` list, with a narrow
-`description`, `status` (`met`, `not_met`, `partial`) and cited `evidence` (`file`,
-`test`, `output`). One task may have several findings, one finding may list several
-tasks, and `task_ids: []` marks an unlinked finding. Verdicts and statuses are
-workflow assessment values, not grades, and no task link gates grading.
-
-Integration's `briefs` input is every brief whose `repository_key` equals the
-integration repository's `key`. The integrator groups entries by id, reads every
-cohort's contribution to a shared task and assesses each distinct task on the
-integration branch. An integration assessment has no build result subject.
+Integration receives only the repository's applicable briefs. Task subjects must resolve in their build items' task_ids; build_item subjects must name a cohort and an item in that cohort's brief. Repeated task ids across cohorts represent one task. Integration has no every-item-addressed rule; validation failures auto-return feedback to the integrator. Verdict, test evidence and recommended next actions remain unchanged.
 
 ## Definition store
 

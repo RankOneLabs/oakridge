@@ -31,3 +31,25 @@ test("a finding keeps its producer id without using it as its address", async ()
   const finding = pass.items.find(({ item }) => item.item_kind === "finding")?.item;
   expect(finding).toMatchObject({ item_id_or_path: "/findings/0", item_scope: null, producer_local_id: "finding-a" });
 });
+
+test("build items retain exact path and cohort identity with explicit task and decision links", () => {
+  const body = { cohort_id: "alpha", build_items: [{ id: "B1", description: "Implement it", task_ids: ["T1", "T2"], decision_ids: ["D1"], verification: "test" }] };
+  const definition = oakridgeCatalogue("brief", "v4").find((entry) => entry.extractor_id === "brief.build_items")!;
+  const result = definition.select(body);
+  expect(result).toMatchObject({ ok: true, value: [{ item_kind: "build_item", item_scope: "cohort/alpha/build_item", producer_local_id: "B1", item_id_or_path: "/build_items/0", path: "/build_items/0", links: [
+    { type: "addresses", target: "logical_item", target_local_id: "T1" }, { type: "addresses", target_local_id: "T2" }, { type: "derived_from", target_local_id: "D1" }
+  ] }] });
+  expect(definition.select({ cohort_id: "alpha", acceptance_criteria: [] })).toEqual({ ok: true, value: [] });
+  const legacy = oakridgeCatalogue("brief", "v4").find((entry) => entry.extractor_id === "brief.acceptance_entries")!;
+  expect(legacy.select(body)).toEqual({ ok: true, value: [] });
+});
+
+test("finding shapes keep their original paths and never reinterpret each other", () => {
+  const body: import("../src/domain/primitives").JsonValue = { findings: [{ task_ids: ["T1"], evidence: [] }, { subjects: [{ kind: "build_item", id: "B1", cohort_id: "alpha" }, { kind: "task", id: "T2" }], evidence: [] }] };
+  const pass = selectRevision(body, "assessment", oakridgeCatalogue("assessment", "v4"));
+  expect(pass.items.map(({ item }) => [item.path, item.links.map((link) => [link.type, link.target, link.target_local_id])]).sort()).toEqual([
+    ["/findings/0", [["assesses", "logical_item", "T1"]]],
+    ["/findings/1", [["assesses", "occurrence", "B1"], ["assesses", "logical_item", "T2"]]],
+  ]);
+  expect(pass.issues).toEqual([]);
+});

@@ -13,8 +13,7 @@ const UNKNOWN_TASK: &str =
 const MISSING_TASK: &str =
     "Every task in the approved task list must appear in at least one cohort's acceptance_criteria.";
 const REPEATED_TASK: &str = "A task id may appear only once within a cohort's acceptance_criteria; repeating it in another cohort is valid.";
-const BRIEF_IDS: &str =
-    "The brief's acceptance_criteria ids must be its plan cohort's, in the same order.";
+const BRIEF_IDS: &str = "Every assigned task must appear in a build item.";
 const REFUSED: &str = "target revision failed validation";
 
 fn development() -> CheckedWorkflow {
@@ -93,12 +92,16 @@ fn plan(cohorts: &[Value]) -> Value {
     })
 }
 
+fn items(ids: &[&str]) -> Vec<Value> {
+    ids.iter().map(|id| json!({"id": id, "description": format!("Deliver {id}"), "task_ids": [id], "decision_ids": [], "verification": ["tests"]})).collect()
+}
+
 fn brief_of(cohort: &Value) -> Value {
     json!({
         "cohort_id": cohort["id"], "repository_key": cohort["repository_key"],
         "title": cohort["title"], "depends_on": cohort["depends_on"], "goal": "goal",
         "files_in_scope": [], "decisions_made": [], "approaches_rejected": [],
-        "acceptance_criteria": cohort["acceptance_criteria"], "next_action": "start"
+        "build_items": cohort["acceptance_criteria"].as_array().unwrap().iter().map(|e| items(&[e["id"].as_str().unwrap()])[0].clone()).collect::<Vec<_>>(), "next_action": "start"
     })
 }
 
@@ -413,14 +416,18 @@ impl Run {
     }
 
     fn accepted_brief(&mut self, cohort: &Value) {
-        let unit = format!("run/briefs/{}", cohort["id"].as_str().unwrap());
+        self.accepted_brief_body(brief_of(cohort));
+    }
+
+    fn accepted_brief_body(&mut self, brief: Value) {
+        let unit = format!("run/briefs/{}", brief["cohort_id"].as_str().unwrap());
         self.write(
             WorkerOutput {
                 unit: &unit,
                 worker: "writer",
                 artifact: "brief",
             },
-            brief_of(cohort),
+            brief,
         );
         self.accept(ReviewOf {
             unit: &unit,
@@ -449,6 +456,14 @@ impl Run {
             },
             build("build-sha"),
         );
+        let brief_unit = UnitId::from(format!("run/briefs/{id}").as_str());
+        let brief = latest(self.state(), &brief_unit, &SymbolKey::from("brief")).unwrap();
+        let subjects: Vec<Value> = brief.body["build_items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| json!({"kind":"build_item", "id":item["id"]}))
+            .collect();
         let subject = self.latest_id(&unit, "build_result");
         self.publish(Publication {
             output: WorkerOutput {
@@ -456,7 +471,10 @@ impl Run {
                 worker: "assessor",
                 artifact: "assessment",
             },
-            body: assessment("build-sha", json!([])),
+            body: assessment(
+                "build-sha",
+                json!([{ "subjects": subjects, "evidence": [] }]),
+            ),
             subject,
         });
         self.end(&unit, "assessor");
@@ -783,7 +801,7 @@ fn brief_failures(ids: &[&str]) -> Vec<String> {
     });
     let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
     let mut brief = brief_of(&planned);
-    brief["acceptance_criteria"] = json!(entries(ids));
+    brief["build_items"] = json!(items(ids));
     run.publish(Publication {
         output: WorkerOutput {
             unit: "run/briefs/a",
@@ -806,8 +824,7 @@ fn a_brief_with_its_cohort_ids_in_order_passes_with_rewritten_text() {
     });
     let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
     let mut brief = brief_of(&planned);
-    brief["acceptance_criteria"][0]["text"] =
-        json!("Self-contained wording of the same obligation");
+    brief["build_items"][0]["description"] = json!("Self-contained wording of the same obligation");
     run.publish(Publication {
         output: WorkerOutput {
             unit: "run/briefs/a",
@@ -827,17 +844,26 @@ fn a_brief_missing_a_cohort_id_fails() {
 
 #[test]
 fn a_brief_adding_an_id_fails() {
-    assert_eq!(brief_failures(&["T1", "T2", "T3"]), [BRIEF_IDS]);
+    assert_eq!(
+        brief_failures(&["T1", "T2", "T3"]),
+        ["Build-item task ids must belong to the cohort allocation."]
+    );
 }
 
 #[test]
 fn a_brief_replacing_an_id_fails() {
-    assert_eq!(brief_failures(&["T1", "AC2"]), [BRIEF_IDS]);
+    assert_eq!(
+        brief_failures(&["T1", "AC2"]),
+        [
+            BRIEF_IDS,
+            "Build-item task ids must belong to the cohort allocation."
+        ]
+    );
 }
 
 #[test]
-fn a_brief_reordering_its_ids_fails() {
-    assert_eq!(brief_failures(&["T2", "T1"]), [BRIEF_IDS]);
+fn a_brief_reordering_its_build_items_passes() {
+    assert_eq!(brief_failures(&["T2", "T1"]), Vec::<String>::new());
 }
 
 #[test]
@@ -883,7 +909,7 @@ fn an_operator_cannot_accept_a_failed_brief_or_release_its_builder_until_correct
     let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
     let unit = "run/briefs/a";
     let mut reordered = brief_of(&planned);
-    reordered["acceptance_criteria"] = json!(entries(&["T2", "T1"]));
+    reordered["build_items"] = json!(items(&["T1"]));
     run.write(
         WorkerOutput {
             unit,
@@ -961,7 +987,22 @@ fn at_integration() -> Run {
     run.prepare_and_analyze(&repositories, &task_ids);
     run.accepted_plan(&cohorts);
     for planned in &cohorts {
-        run.accepted_brief(planned);
+        let mut brief = brief_of(planned);
+        // T1 is split within a1 and shared across cohorts; other items combine tasks.
+        brief["build_items"] = match planned["id"].as_str().unwrap() {
+            "a1" => json!([
+                {"id":"api", "description":"API contribution", "task_ids":["T1"], "decision_ids":[], "verification":["API tests"]},
+                {"id":"storage", "description":"Storage contribution", "task_ids":["T1","T2"], "decision_ids":[], "verification":["Storage tests"]}
+            ]),
+            "a2" => json!([
+                {"id":"ui", "description":"UI contribution", "task_ids":["T1","T3"], "decision_ids":[], "verification":["UI tests"]}
+            ]),
+            "b1" => json!([
+                {"id":"adapter", "description":"Adapter contribution", "task_ids":["T4"], "decision_ids":[], "verification":["Adapter tests"]}
+            ]),
+            _ => unreachable!("known integration cohort"),
+        };
+        run.accepted_brief_body(brief);
     }
     run.completed_cohort("a1", "alpha");
     run.completed_cohort("a2", "alpha");
@@ -1007,22 +1048,35 @@ fn integration_receives_exactly_its_repositorys_briefs() {
 fn a_shared_task_reaches_integration_with_every_cohorts_contribution() {
     let run = at_integration();
     let briefs = integrator_briefs(&run, "run/integration/alpha");
-    let entries: Vec<(&str, &str)> = briefs
+    let contributions: Vec<(&str, &str, &str)> = briefs
         .as_array()
         .unwrap()
         .iter()
         .flat_map(|brief| {
             let cohort = brief["cohort_id"].as_str().unwrap();
-            brief["acceptance_criteria"]
+            brief["build_items"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(move |entry| (entry["id"].as_str().unwrap(), cohort))
+                .flat_map(move |item| {
+                    let item_id = item["id"].as_str().unwrap();
+                    item["task_ids"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(move |task| (task.as_str().unwrap(), item_id, cohort))
+                })
         })
         .collect();
     assert_eq!(
-        entries,
-        [("T1", "a1"), ("T2", "a1"), ("T1", "a2"), ("T3", "a2")]
+        contributions,
+        [
+            ("T1", "api", "a1"),
+            ("T1", "storage", "a1"),
+            ("T2", "storage", "a1"),
+            ("T1", "ui", "a2"),
+            ("T3", "ui", "a2")
+        ]
     );
 }
 
@@ -1032,13 +1086,13 @@ fn integration_findings_link_tasks_many_to_many_without_a_build_subject() {
     let unit = "run/integration/alpha";
     let head = "integration-sha";
     let findings = json!([
-        {"task_ids": ["T1"], "description": "First half", "status": "met",
+        {"subjects": [{"kind":"task","id":"T1"}], "description": "First half", "status": "met",
          "evidence": [{"kind": "file", "ref": "src/a.rs:1-9"}]},
-        {"task_ids": ["T1"], "description": "Second half", "status": "partial",
+        {"subjects": [{"kind":"task","id":"T1"}], "description": "Second half", "status": "partial",
          "evidence": [{"kind": "test", "ref": "suite::case"}]},
-        {"task_ids": ["T2", "T3"], "description": "Shared", "status": "not_met",
+        {"subjects": [{"kind":"task","id":"T2"},{"kind":"task","id":"T3"}], "description": "Shared", "status": "not_met",
          "evidence": [{"kind": "output", "ref": "cargo test", "detail": "1 failed"}]},
-        {"task_ids": [], "description": "Unlinked note", "evidence": []}
+        {"subjects": [], "description": "Unlinked note", "evidence": []}
     ]);
     run.publish(Publication {
         output: WorkerOutput {
@@ -1120,7 +1174,7 @@ fn finding_links_are_a_required_list_of_ids() {
     let action = run.action(unit, "integrator");
     for findings in [
         json!([{"evidence": []}]),
-        json!([{"task_ids": "T1", "evidence": []}]),
+        json!([{"subjects": "T1", "evidence": []}]),
     ] {
         let refusal = run.apply(
             Event::RevisionPublished {
@@ -1164,7 +1218,7 @@ fn acceptance_entries_declare_exactly_id_text_and_decision_ids() {
 fn assessment_findings_declare_task_links_and_no_criterion_fields() {
     assert_eq!(
         declared_fields("assessment_finding"),
-        ["description", "evidence", "status", "task_ids"]
+        ["description", "evidence", "status", "subjects"]
     );
 }
 
@@ -1192,4 +1246,501 @@ fn an_acceptance_entry_without_its_decision_links_fails_schema() {
     assert!(
         matches!(refusal, Err(StepError::Rejected { reason, .. }) if reason == "artifact body fails schema")
     );
+}
+
+#[test]
+fn build_item_rules_accept_split_and_combined_tasks_and_name_each_failure() {
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1", "T2"],
+    });
+    let mut valid = brief_of(&planned);
+    valid["build_items"] = json!(items(&["T1", "T2", "extra"]));
+    valid["build_items"][2]["task_ids"] = json!(["T1", "T2"]);
+    for (field, value, message) in [
+        ("id", json!("T1"), "Build-item ids must be unique."),
+        (
+            "task_ids",
+            json!(["T9"]),
+            "Build-item task ids must belong to the cohort allocation.",
+        ),
+        (
+            "description",
+            json!(""),
+            "Every build item must have a nonempty description.",
+        ),
+        (
+            "task_ids",
+            json!([]),
+            "Every build item must reference at least one task.",
+        ),
+        (
+            "decision_ids",
+            json!(["D9"]),
+            "Build-item decision ids must name brief decisions.",
+        ),
+    ] {
+        let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
+        let mut invalid = valid.clone();
+        invalid["build_items"][2][field] = value;
+        run.publish(Publication {
+            output: WorkerOutput {
+                unit: "run/briefs/a",
+                worker: "writer",
+                artifact: "brief",
+            },
+            body: invalid,
+            subject: None,
+        });
+        assert_eq!(run.validation_messages("run/briefs/a", "brief"), [message]);
+    }
+    let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
+    run.publish(Publication {
+        output: WorkerOutput {
+            unit: "run/briefs/a",
+            worker: "writer",
+            artifact: "brief",
+        },
+        body: valid,
+        subject: None,
+    });
+    assert!(run.validation_messages("run/briefs/a", "brief").is_empty());
+}
+
+#[test]
+fn cohort_assessment_rules_retain_incomplete_revision_and_refuse_approval() {
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1", "T2"],
+    });
+    for (subjects, head, messages) in [
+        (
+            json!([{"kind":"build_item","id":"T1"}]),
+            "sha",
+            vec!["Every brief build item must be assessed."],
+        ),
+        (
+            json!([{"kind":"task","id":"T1"},{"kind":"build_item","id":"T2"}]),
+            "sha",
+            vec!["Cohort assessment subjects must be build items."],
+        ),
+        (
+            json!([{"kind":"build_item","id":"T1"},{"kind":"build_item","id":"T2"},{"kind":"build_item","id":"unknown"}]),
+            "sha",
+            vec!["Cohort assessment subjects must name brief build items."],
+        ),
+        (
+            json!([{"kind":"build_item","id":"T1"},{"kind":"build_item","id":"T2"}]),
+            "stale",
+            vec!["Assessment head_sha must match the latest build result."],
+        ),
+        (
+            json!([{"kind":"build_item","id":"T1"},{"kind":"build_item","id":"T2"}]),
+            "sha",
+            vec![],
+        ),
+    ] {
+        let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
+        run.accepted_brief(&planned);
+        let unit = "run/implementation/a";
+        run.publish(Publication {
+            output: WorkerOutput {
+                unit,
+                worker: "builder",
+                artifact: "pr",
+            },
+            body: pr("oakridge", "a"),
+            subject: None,
+        });
+        run.write(
+            WorkerOutput {
+                unit,
+                worker: "builder",
+                artifact: "build_result",
+            },
+            build("sha"),
+        );
+        let findings = json!([{"subjects":subjects,"evidence":[]},{"subjects":[],"evidence":[]}]);
+        run.publish(Publication {
+            output: WorkerOutput {
+                unit,
+                worker: "assessor",
+                artifact: "assessment",
+            },
+            body: assessment(head, findings.clone()),
+            subject: run.latest_id(unit, "build_result"),
+        });
+        run.end(unit, "assessor");
+        assert_eq!(run.validation_messages(unit, "assessment"), messages);
+        assert_eq!(
+            latest(
+                run.state(),
+                &UnitId::from(unit),
+                &SymbolKey::from("assessment")
+            )
+            .unwrap()
+            .body["findings"],
+            findings
+        );
+        let review = ReviewOf {
+            unit,
+            review: "assessment_review",
+            artifact: "assessment",
+        };
+        if messages.is_empty() {
+            run.accept(review).unwrap();
+        } else {
+            let offered = run
+                .last
+                .reviews
+                .iter()
+                .find(|candidate| {
+                    candidate.unit.0 == unit && candidate.review.0 == "assessment_review"
+                })
+                .expect("failed assessment stays available to the operator");
+            assert!(offered
+                .decisions
+                .iter()
+                .any(|decision| decision.decision.0 == "request_assessment_changes"));
+            assert!(!offered
+                .decisions
+                .iter()
+                .any(|decision| decision.decision.0 == "accept"));
+            let refusal = run.accept(review);
+            assert!(
+                matches!(&refusal, Err(StepError::Rejected { reason, .. }) if reason == REFUSED),
+                "{refusal:?}"
+            );
+            run.decide(Decision {
+                review,
+                decision: "request_assessment_changes",
+                payload: json!({"feedback":"address missing items"}),
+            })
+            .unwrap();
+            let revise = run.last.wanted.iter().find(|wanted| {
+                matches!(&wanted.action, Action::RunWorker { unit: owner, worker, mode: Mode::Revise, .. }
+                    if owner.0 == unit && worker.0 == "assessor")
+            }).expect("operator request starts an assessment revision");
+            assert!(revise
+                .resolved
+                .feedback
+                .iter()
+                .any(|entry| entry.review.0 == "assessment_review"));
+        }
+    }
+}
+
+#[test]
+fn integration_validates_task_and_qualified_build_item_subjects() {
+    for (subject, message) in [
+        (json!({"kind":"task","id":"T1"}), None),
+        (json!({"kind":"task","id":"T2"}), None),
+        (json!({"kind":"task","id":"T3"}), None),
+        (
+            json!({"kind":"build_item","id":"api","cohort_id":"a1"}),
+            None,
+        ),
+        (
+            json!({"kind":"build_item","id":"storage","cohort_id":"a1"}),
+            None,
+        ),
+        (
+            json!({"kind":"task","id":"api"}),
+            Some("Integration task subjects must name tasks in applicable briefs."),
+        ),
+        (
+            json!({"kind":"build_item","id":"T1","cohort_id":"a1"}),
+            Some(
+                "Integration build-item subjects must name an item in the qualified cohort brief.",
+            ),
+        ),
+        (
+            json!({"kind":"build_item","id":"ui","cohort_id":"a2"}),
+            None,
+        ),
+        (
+            json!({"kind":"task","id":"T4"}),
+            Some("Integration task subjects must name tasks in applicable briefs."),
+        ),
+        (
+            json!({"kind":"build_item","id":"api"}),
+            Some(
+                "Integration build-item subjects must name an item in the qualified cohort brief.",
+            ),
+        ),
+        (
+            json!({"kind":"build_item","id":"api","cohort_id":"missing"}),
+            Some(
+                "Integration build-item subjects must name an item in the qualified cohort brief.",
+            ),
+        ),
+        (
+            json!({"kind":"build_item","id":"ui","cohort_id":"a1"}),
+            Some(
+                "Integration build-item subjects must name an item in the qualified cohort brief.",
+            ),
+        ),
+    ] {
+        let mut run = at_integration();
+        let unit = "run/integration/alpha";
+        run.publish(Publication {
+            output: WorkerOutput {
+                unit,
+                worker: "integrator",
+                artifact: "assessment",
+            },
+            body: assessment("sha", json!([{"subjects":[subject],"evidence":[]}])),
+            subject: None,
+        });
+        assert_eq!(
+            run.validation_messages(unit, "assessment"),
+            message.into_iter().collect::<Vec<_>>()
+        );
+        if let Some(message) = message {
+            run.publish(Publication {
+                output: WorkerOutput {
+                    unit,
+                    worker: "integrator",
+                    artifact: "pr",
+                },
+                body: pr("alpha", "integration"),
+                subject: None,
+            });
+            run.end(unit, "integrator");
+            let revise = run.last.wanted.iter().find(|wanted| {
+                matches!(&wanted.action, Action::RunWorker { unit: owner, worker, mode: Mode::Revise, .. }
+                    if owner.0 == unit && worker.0 == "integrator")
+            }).expect("invalid integration assessment still auto-returns");
+            assert!(revise.resolved.feedback.iter().any(|entry| {
+                entry.review.0 == VALIDATION_REVIEW && entry.payload["feedback"] == message
+            }));
+        }
+    }
+}
+
+#[test]
+fn implementation_and_integration_pin_accepted_brief_identities() {
+    let run = at_integration();
+    for (unit_id, input, cohorts) in [
+        ("run/implementation/a1", "brief", vec!["a1"]),
+        ("run/implementation/a2", "brief", vec!["a2"]),
+        ("run/integration/alpha", "briefs", vec!["a1", "a2"]),
+        ("run/integration/beta", "briefs", vec!["b1"]),
+    ] {
+        let unit = run
+            .state()
+            .units
+            .iter()
+            .find(|unit| unit.id.0 == unit_id)
+            .unwrap();
+        let expected: Vec<_> = cohorts
+            .into_iter()
+            .map(|cohort| {
+                let source = UnitId(format!("run/briefs/{cohort}"));
+                let decision = run
+                    .state()
+                    .decisions
+                    .iter()
+                    .find(|decision| {
+                        decision.unit() == &source
+                            && decision.review() == Some(&SymbolKey::from("brief_review"))
+                            && decision.effect() == Some(DecisionEffect::Approve)
+                    })
+                    .unwrap();
+                InputProvenance {
+                    input: SymbolKey::from(input),
+                    unit: source,
+                    revision_id: decision.target().clone(),
+                }
+            })
+            .collect();
+        assert_eq!(unit.input_provenance.as_ref(), Some(&expected));
+    }
+}
+
+#[test]
+fn later_revision_and_reads_do_not_replace_frozen_provenance() {
+    let mut run = at_integration();
+    let recorded = run
+        .state()
+        .units
+        .iter()
+        .find(|u| u.id.0 == "run/implementation/a1")
+        .unwrap()
+        .input_provenance
+        .clone();
+    let mut snapshot = run.state().clone();
+    let mut later = snapshot
+        .revisions
+        .iter()
+        .find(|r| r.unit.0 == "run/briefs/a1" && r.artifact.0 == "brief")
+        .unwrap()
+        .clone();
+    later.id = RevisionId::from("later-brief");
+    later.seq += 100;
+    snapshot.revisions.push(later);
+    run.last.snapshot = snapshot;
+    run.apply(Event::Launched { input: json!({}) }, Writer::Engine)
+        .unwrap();
+    assert_eq!(
+        run.state()
+            .units
+            .iter()
+            .find(|u| u.id.0 == "run/implementation/a1")
+            .unwrap()
+            .input_provenance,
+        recorded
+    );
+}
+
+#[test]
+fn unrelated_inputs_record_no_entries_and_legacy_records_stay_unresolved() {
+    let mut run = at_integration();
+    let root = run
+        .state()
+        .units
+        .iter()
+        .find(|unit| unit.id.0 == "run")
+        .unwrap();
+    assert_eq!(root.input_provenance, Some(vec![]));
+    for unit in &mut run.last.snapshot.units {
+        unit.input_provenance = None;
+    }
+    run.apply(Event::Launched { input: json!({}) }, Writer::Engine)
+        .unwrap();
+    assert!(run
+        .state()
+        .units
+        .iter()
+        .all(|unit| unit.input_provenance.is_none()));
+}
+
+#[test]
+fn revised_brief_provenance_uses_accept_target_after_request_changes() {
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1"],
+    });
+    let mut run = at_briefs(std::slice::from_ref(&planned), &["T1"]);
+    let output = WorkerOutput {
+        unit: "run/briefs/a",
+        worker: "writer",
+        artifact: "brief",
+    };
+    let review = ReviewOf {
+        unit: output.unit,
+        review: "brief_review",
+        artifact: output.artifact,
+    };
+    run.write(output, brief_of(&planned));
+    let rejected = run.latest_id(output.unit, output.artifact).unwrap();
+    run.request_changes(review);
+    let mut revised = brief_of(&planned);
+    revised["goal"] = json!("corrected goal");
+    run.write(output, revised);
+    run.accept(review).unwrap();
+    let accepted = run
+        .state()
+        .decisions
+        .iter()
+        .find(|decision| {
+            decision.unit().0 == output.unit
+                && decision.review() == Some(&SymbolKey::from("brief_review"))
+                && decision.effect() == Some(DecisionEffect::Approve)
+        })
+        .unwrap()
+        .target()
+        .clone();
+    assert_ne!(accepted, rejected);
+
+    // A later revision exists before integration materializes, but is not the
+    // accepted source outcome's revision. Snapshot injection models Scenario F.
+    let mut later = run
+        .state()
+        .revisions
+        .iter()
+        .find(|r| r.id == accepted)
+        .unwrap()
+        .clone();
+    later.id = RevisionId::from("later-unaccepted-brief");
+    later.seq += 100;
+    let later_id = later.id.clone();
+    run.last.snapshot.revisions.push(later);
+    run.completed_cohort("a", "oakridge");
+    for (unit_id, input) in [
+        ("run/implementation/a", "brief"),
+        ("run/integration/oakridge", "briefs"),
+    ] {
+        let entries = run
+            .state()
+            .units
+            .iter()
+            .find(|unit| unit.id.0 == unit_id)
+            .unwrap()
+            .input_provenance
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            entries,
+            &vec![InputProvenance {
+                input: SymbolKey::from(input),
+                unit: UnitId::from(output.unit),
+                revision_id: accepted.clone(),
+            }]
+        );
+        assert!(entries
+            .iter()
+            .all(|entry| entry.revision_id != rejected && entry.revision_id != later_id));
+    }
+}
+
+#[test]
+fn missing_approval_never_uses_latest_or_shifts_other_members_provenance() {
+    let mut run = at_integration();
+    // Model an old completed source with no retained approval. Rematerialize
+    // collection members from their source outcomes to test sparse lineage.
+    run.last.snapshot.decisions.retain(|decision| {
+        !(decision.unit().0 == "run/briefs/a1"
+            && decision.effect() == Some(DecisionEffect::Approve))
+    });
+    run.last
+        .snapshot
+        .units
+        .retain(|unit| !unit.id.0.starts_with("run/implementation/"));
+    run.last
+        .snapshot
+        .attempts
+        .retain(|attempt| !attempt.unit.0.starts_with("run/implementation/"));
+    run.apply(Event::Launched { input: json!({}) }, Writer::Engine)
+        .unwrap();
+    for cohort in ["a1", "a2", "b1"] {
+        let source = UnitId(format!("run/briefs/{cohort}"));
+        let expected = run
+            .state()
+            .decisions
+            .iter()
+            .find(|decision| {
+                decision.unit() == &source && decision.effect() == Some(DecisionEffect::Approve)
+            })
+            .map(|decision| InputProvenance {
+                input: SymbolKey::from("brief"),
+                unit: source.clone(),
+                revision_id: decision.target().clone(),
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        let member = run
+            .state()
+            .units
+            .iter()
+            .find(|unit| unit.id.0 == format!("run/implementation/{cohort}"))
+            .unwrap();
+        assert_eq!(member.input_provenance.as_ref(), Some(&expected));
+    }
 }

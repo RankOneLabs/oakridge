@@ -1,4 +1,4 @@
-import type { ArtifactDetail, ArtifactRevision } from "../artifact-types";
+import type { ArtifactDetail, ArtifactRevision, ArtifactSource } from "../artifact-types";
 import type { RunDetail } from "../run-types";
 
 /** Whether a sibling artifact for the same cohort could be read, and why not when it could not. */
@@ -6,7 +6,7 @@ export type CohortArtifactLookup<T> =
   | { kind: "loading" }
   | { kind: "missing"; cohort_label: string | null }
   | { kind: "error"; cohort_label: string | null }
-  | { kind: "found"; value: T };
+  | { kind: "found"; value: T; source?: ArtifactSource };
 
 /** The latest artifact of a type the run published for a cohort, or null when it has none. */
 export function selectCohortArtifactId(run: RunDetail, typeId: string, cohortLabel: string): string | null {
@@ -59,5 +59,5 @@ export function selectCohortArtifactLookup<T>(sources: CohortArtifactSources, re
   if (!sources.detail.data) return selectPending(sources.detail, sources.cohort_label);
   const revision = selectRevisionAsOf(sources.detail.data.revisions, sources.as_of);
   const value = revision ? read(revision.body) : null;
-  return value === null ? missing : { kind: "found", value };
+  return value === null || revision === null ? missing : { kind: "found", value, source: { run_id: sources.detail.data.run_id, revision_id: revision.id, label: sources.detail.data.label ?? sources.cohort_label, as_of: revision.created_at } };
 }

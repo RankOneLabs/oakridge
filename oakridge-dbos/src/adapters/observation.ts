@@ -1,6 +1,6 @@
 import type { Kysely } from "kysely";
 import type { DB } from "../storage/db-types";
-import { readCommittedEventsAfter, readCommittedRunConfig, readEventRevisionSequence, readEventUnitStage, readPinnedDefinition,
+import { readUnitInputProvenance, readCommittedEventsAfter, readCommittedRunConfig, readEventRevisionSequence, readEventUnitStage, readPinnedDefinition,
   type CommittedEventRow } from "../storage/read-store";
 import type { CoreEvent } from "../storage/json-column-types";
 import { mapObservationEvent } from "./observation-mapping";
@@ -16,7 +16,9 @@ async function deliveryFor(db: Kysely<DB>, row: CommittedEventRow<CoreEvent>, na
   const stage = event.kind === "revision_published" ? await readEventUnitStage(db, row.run_id ?? "", event.unit) : null;
   const sequence = event.kind === "revision_published" ? await readEventRevisionSequence(db, row, event.artifact) : null;
   const run_config = event.kind === "launched" ? await readCommittedRunConfig(db, row.run_id ?? "") : null;
-  const outcome = mapObservationEvent({ row, definition, namespace, stage, revision_sequence: sequence, run_config });
+  const input_provenance = event.kind === "revision_published"
+    ? await readUnitInputProvenance(db, { run_id: row.run_id ?? "", unit_id: event.unit }) : undefined;
+  const outcome = mapObservationEvent({ row, definition, input_provenance, namespace, stage, revision_sequence: sequence, run_config });
   return { previous, cursor: { commit_txid: row.commit_txid, id: row.id }, outcome };
 }
 

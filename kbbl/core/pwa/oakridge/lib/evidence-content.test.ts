@@ -36,7 +36,7 @@ describe("frozen evidence decoding", () => {
   });
   test("whole plan", () => expect(decodeEvidenceContent(revision("plan", plan))).toEqual({ kind: "plan", value: plan }));
   test("contribution cohort", () => expect(decodeEvidenceContent(revision("contribution_context", plan.cohorts[0]!, "/cohorts/0"))).toEqual({ kind: "plan_cohort", value: plan.cohorts[0] }));
-  test("contribution brief", () => expect(decodeEvidenceContent(revision("contribution_context", brief))).toEqual({ kind: "brief", value: brief }));
+  test("contribution brief", () => expect(decodeEvidenceContent(revision("contribution_context", brief))).toEqual({ kind: "brief", value: { ...brief, shape: "legacy" } }));
   test("build result uses parser defaults", () => expect(decodeEvidenceContent(revision("build_result", build))).toMatchObject({ kind: "build_result", value: { ...build, repository_key: null, delegated_session_metadata: null } }));
   test("reported test evidence uses parser defaults", () => expect(decodeEvidenceContent(reported("test_evidence", tests))).toEqual({ kind: "test_evidence", value: { ...tests, cargo_test_output: null } }));
   test("reported citation mirrors the producer", () => {

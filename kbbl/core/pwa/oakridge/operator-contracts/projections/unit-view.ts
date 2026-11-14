@@ -4,9 +4,11 @@
 import type { OperatorAttemptStatus, OperatorCause, OperatorDeclaredDecisionEffect, OperatorMode, OperatorUnitStatus } from "../core-client/core-types";
 import type { OperatorEngineInputs, OperatorPinnedPrompt } from "../domain/effect-instruction";
 import type { OperatorJsonValue } from "../domain/primitives";
+import type { OperatorInputProvenanceView } from "../domain/unit-status";
 import type { OperatorAttention } from "./attention";
 
 export interface OperatorUnitView {
+  readonly input_provenance: OperatorInputProvenanceView;
   readonly unit_id: string;
   readonly run_id: string;
   readonly unit_key: string;
@@ -106,6 +108,7 @@ export type OperatorAttemptStatusKind = OperatorAttemptStatus["kind"];
 export interface OperatorAttemptFailure { readonly code: string; readonly detail: string }
 
 export interface OperatorAttemptIntentView {
+  readonly input_provenance: OperatorInputProvenanceView;
   readonly inputs: OperatorBodyValue;
   readonly engine_inputs: OperatorEngineInputs;
   readonly prompt: OperatorPinnedPrompt | null;

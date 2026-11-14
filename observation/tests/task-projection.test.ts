@@ -78,7 +78,7 @@ test("the catalogue allocates no separate acceptance identity and reads no plan-
 test("a malformed task_ids field is an extraction failure, never an inferred link", () => {
   const pass = selectRevision({ findings: [{ task_ids: "T7", evidence: [] }] }, "assessment-1", oakridgeCatalogue("assessment", "v1"));
   expect(pass.items).toEqual([]);
-  expect(pass.issues.map((issue) => issue.kind)).toEqual(["extraction_failed"]);
+  expect(pass.issues.filter((issue) => issue.kind !== "no_matching_items").map((issue) => issue.kind)).toEqual(["extraction_failed"]);
 });
 
 integration("one task stays one logical item through plan and brief revisions, cohorts, assessments and integration", async () => scratchDatabase(async (db) => {

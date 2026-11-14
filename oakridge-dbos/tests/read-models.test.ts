@@ -19,10 +19,10 @@ import { actionOf, executor, launch, openAuthority, submitter, unitOf, type Auth
 const CONTRACT_FIELDS = {
   RunView: ["archived_at", "created_at", "definition_id", "repository_keys", "run_id", "status", "title", "units", "updated_at"],
   RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
-  UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "is_terminal", "label", "outcome",
+  UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "input_provenance", "is_terminal", "label", "outcome",
     "recorded_decisions", "run_id", "stage", "status", "unit_id", "unit_key"],
   AttemptView: ["cause", "created_at", "failure", "id", "intent", "is_current", "kbbl_session_id", "mode", "number", "status", "unit_id", "worker"],
-  AttemptIntentView: ["engine_inputs", "inputs", "prompt"],
+  AttemptIntentView: ["engine_inputs", "input_provenance", "inputs", "prompt"],
   EngineInputs: ["feedback", "previous", "subject"],
   PinnedPrompt: ["digest", "path"],
   ArtifactView: ["artifact_key", "is_editable", "is_reviewable", "latest_revision", "revision_count", "run_id", "schema", "unit_id"],
@@ -198,6 +198,7 @@ describe("each read model carries exactly its contract's fields", () => {
       .where("run_id", "=", run_id).where("action_id", "=", writer).orderBy("seq").executeTakeFirstOrThrow();
     expect(view.attempts.find((attempt) => attempt.worker === "writer")?.intent as unknown).toEqual({
       inputs: recorded.payload.inputs, engine_inputs: recorded.payload.engine_inputs,
+      input_provenance: recorded.payload.input_provenance,
       prompt: recorded.payload.worker.kind === "agent" ? recorded.payload.worker.prompt : null,
     });
   });

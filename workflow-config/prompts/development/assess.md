@@ -27,19 +27,19 @@ When the previous assessment is `none`, this is the first assessment of this coh
 ## Scope boundary
 
 - Assess only the cohort identified by the brief's `cohort_id`.
-- Use only the supplied cohort build brief's acceptance entries. Do not assess plan-level acceptance criteria or any other cohort. A task shared with another cohort is assessed here only for this brief's contribution to it.
+- Use only the supplied cohort build brief's build items. Do not assess plan-level acceptance criteria or any other cohort. A task shared with another cohort is assessed here only for this brief's contribution to it.
 - Work belonging to dependent or later cohorts is intentionally absent and must not count as a gap.
 - Read the current cohort worktree to verify the implementation and tests against that brief.
 
 ## Your tasks
 
 1. Read the current cohort worktree to ground the assessment in actual code, not only the build result summary.
-2. Evaluate every task acceptance entry in the supplied cohort build brief.
+2. Evaluate every build item in the supplied cohort build brief.
 3. Review the build result's `known_issues` for severity and downstream impact within this cohort.
 4. Produce a verdict: `pass`, `pass_with_notes`, or `fail`.
-   - `pass` — all cohort task obligations are met and there are no blocking known issues.
-   - `pass_with_notes` — cohort task obligations are met but there are warnings or minor gaps.
-   - `fail` — one or more cohort task obligations are not met, or a blocking known issue exists.
+   - `pass` — all cohort build-item obligations are met and there are no blocking known issues.
+   - `pass_with_notes` — cohort build-item obligations are met but there are warnings or minor gaps.
+   - `fail` — one or more cohort build-item obligations are not met, or a blocking known issue exists.
 5. Publish the artifact.
 6. Set the pull request's draft state from your verdict, then stop. Call `mcp__gated-review__set_pr_draft` with the `repository` (`owner/name`) and `pullRequestNumber` from the pull request URL above:
    - `pass` or `pass_with_notes`: `draft: false`, marking it ready for review.
@@ -47,7 +47,7 @@ When the previous assessment is `none`, this is the first assessment of this coh
 
    The call succeeds without change when the pull request is already in that state. It does not merge anything: merging stays with the operator.
 
-Set the required `assessment.head_sha` to the reviewed `build_result.head_sha` supplied as `{{subject}}`. Each brief acceptance entry's `id` is a task id. Write narrow findings, each stating one thing in `description` and setting the required `task_ids` list to the ids of the tasks it addresses. A task may have several findings, a finding may address several tasks, and a finding about something else has `task_ids: []`. Never infer a link from prose or invent an id.
+Set the required `assessment.head_sha` to the reviewed `build_result.head_sha` supplied as `{{subject}}`. Independently evaluate every build item the builder received against repository evidence and tests, not the builder's self-report. Findings carry `subjects` with `{ kind: "build_item", id: "<build item id>" }`. A finding may name several items, an item may have several findings, and cross-cutting concerns may use `subjects: []`. Never invent an id. Every item must be addressed; head_sha must match the latest build result.
 
 ## Emit the artifact
 
@@ -58,7 +58,7 @@ Publish the `assessment` artifact with this body:
   "head_sha": "<reviewed build_result.head_sha>",
   "verdict": "pass|pass_with_notes|fail",
   "findings": [
-    { "task_ids": ["<brief acceptance entry id>"], "description": "<one narrow finding>", "status": "met|not_met|partial", "evidence": [{ "kind": "file|test|output", "ref": "<path, test id, or command>", "detail": "<optional explanation>" }] }
+    { "subjects": [{ "kind": "build_item", "id": "<build item id>" }], "description": "<one narrow finding>", "status": "met|not_met|partial", "evidence": [{ "kind": "file|test|output", "ref": "<path, test id, or command>", "detail": "<optional explanation>" }] }
   ],
   "test_evidence": {
     "passed": <number>,

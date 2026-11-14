@@ -28,7 +28,7 @@ test("a unit with no output artifacts needs no history reads", () => {
 });
 test("an earlier external input resolves from its recorded snapshot without reading external histories", () => {
   const snapshot = { id: "recorded-earlier-input", unit: upstream.unit_id, artifact: upstreamArtifact.artifact_key, seq: 1, body: {} };
-  const withInput = withUnitFields(selected, { attempts: [{ ...attempt, intent: { inputs: { source: { revision_id: snapshot.id } },
+  const withInput = withUnitFields(selected, { attempts: [{ ...attempt, intent: { input_provenance: { status: "unresolved" as const }, inputs: { source: { revision_id: snapshot.id } },
     engine_inputs: { previous: snapshot, subject: null, feedback: [] }, prompt: null } }] });
   const index = selectStageRevisionIndex({ unit: withInput, units: sampleUnits, histories: [history] });
   const link = selectIntentLinks(index, withInput).find((link) => link.raw_reference === snapshot.id);
@@ -38,7 +38,7 @@ test("an earlier external input resolves from its recorded snapshot without read
   });
 });
 test("snapshot names cannot resolve an unrecorded unit", () => {
-  const withInput = withUnitFields(selected, { attempts: [{ ...attempt, intent: { inputs: {}, engine_inputs: {
+  const withInput = withUnitFields(selected, { attempts: [{ ...attempt, intent: { input_provenance: { status: "unresolved" as const }, inputs: {}, engine_inputs: {
     previous: { id: "unknown-revision", unit: "unknown-unit", artifact: upstreamArtifact.artifact_key, seq: 1, body: {} }, feedback: [], subject: null }, prompt: null } }] });
   const index = selectStageRevisionIndex({ unit: withInput, units: sampleUnits, histories: [history] });
   expect(selectIntentLinks(index, withInput).map((link) => link.resolution.state)).toEqual(["unresolved"]);

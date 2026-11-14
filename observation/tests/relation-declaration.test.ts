@@ -111,3 +111,53 @@ integration("a declaration the profile cannot read is unmapped, visible, and doe
   await feed.send(declared([{ source_revision_id: "analysis-1", item_path: "/findings/0", task_ids: ["T7"] }]));
   expect(await edges(db)).toHaveLength(1);
 }));
+
+integration("recorded brief targets never substitute later revisions and resolve when the exact capture arrives", async () => scratchDatabase(async (db) => {
+  const feed = createFeed(db);
+  const brief = (description: string) => ({ cohort_id: "alpha", decisions_made: [], approaches_rejected: [], build_items: [
+    { id: "B1", description, task_ids: ["T1", "T2"], decision_ids: [], verification: "test" }
+  ] });
+  const finding = { findings: [{ subjects: [{ kind: "build_item", id: "B1", cohort_id: "alpha" }], evidence: [] }] };
+  await feed.revision({ revision_id: "later-brief", artifact_kind: "brief", body: brief("Later instructions") });
+  await feed.revision({ revision_id: "assessment", artifact_kind: "assessment", body: finding, brief_revision_ids: ["recorded-brief"] });
+  await feed.revision({ revision_id: "unresolved-assessment", artifact_kind: "assessment", body: finding, brief_revision_ids: null });
+  const relations = () => withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_relation as edge")
+    .innerJoin("observation.item_occurrence as item", (join) => join.onRef("item.producer", "=", "edge.producer")
+      .onRef("item.namespace", "=", "edge.namespace").onRef("item.occurrence_id", "=", "edge.source_occurrence_id"))
+    .select(["item.revision_id", "edge.target_occurrence_id", "edge.unresolved_target_ref"])
+    .where("edge.producer", "=", tenant.producer).where("edge.namespace", "=", tenant.namespace).where("edge.type", "=", "assesses").orderBy("item.revision_id").execute());
+  expect((await relations()).every((edge) => edge.unresolved_target_ref !== null)).toBe(true);
+  await feed.revision({ revision_id: "recorded-brief", artifact_kind: "brief", body: brief("Original instructions") });
+  const resolved = await relations();
+  expect(resolved[0]?.unresolved_target_ref).toBeNull();
+  expect(resolved[1]?.unresolved_target_ref).not.toBeNull();
+  const target = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select("revision_id")
+    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).where("occurrence_id", "=", resolved[0]!.target_occurrence_id!).executeTakeFirstOrThrow());
+  expect(target.revision_id).toBe("recorded-brief");
+}));
+
+integration("late build-item and task resolution pins each newly reached subject once under the current configuration", async () => scratchDatabase(async (db) => {
+  const { planRegistration, parseGradingDefinitions } = await import("../src/grading/configuration");
+  const { oakridgeGradingRegistry } = await import("./grading-fixture");
+  const { readOccurrenceEvidence } = await import("../src/storage/captured-evidence-store");
+  const raw = await Bun.file(new URL("./fixtures/grading-definitions.json", import.meta.url)).json();
+  const parsed = parseGradingDefinitions(raw, oakridgeGradingRegistry);
+  if (!parsed.ok) throw new Error(parsed.error.detail);
+  const original = parsed.value.filter((d) => d.id === "assessment_finding.correctness").map((d) => ({ ...d, evaluators: [] }));
+  const first = planRegistration(original, oakridgeGradingRegistry);
+  const second = planRegistration(original.map((d) => ({ ...d, question: { ...d.question, text: "Changed question" } })), oakridgeGradingRegistry);
+  if (!first.ok || !second.ok) throw new Error("registration failed");
+  const { registerDefinitions } = await import("../src/storage/grading-store");
+  await registerDefinitions(db, tenant, first.value);
+  await registerDefinitions(db, tenant, second.value);
+  const feed = createFeed(db, tenant, first.value.capture);
+  await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: { tasks: [{ id: "T1", description: "One", requirement_ids: [] }] } });
+  await feed.revision({ revision_id: "assessment", artifact_kind: "assessment", brief_revision_ids: ["brief"], body: { findings: [{ subjects: [{ kind: "build_item", id: "B1" }], evidence: [] }] } });
+  const occurrence = (await listRunItems(db, tenant, "run-1", everything)).items.find((item) => item.item_kind === "assessment_finding")!;
+  expect(await readOccurrenceEvidence(db, tenant, occurrence.occurrence_id as import("../src/domain/identity").ItemOccurrenceId)).toEqual([]);
+  await feed.revision({ revision_id: "brief", artifact_kind: "brief", body: { cohort_id: "alpha", decisions_made: [], approaches_rejected: [], build_items: [{ id: "B1", description: "Both tasks", task_ids: ["T1", "T2"], decision_ids: [], verification: "test" }] } }, second.value.capture);
+  const read = () => readOccurrenceEvidence(db, tenant, occurrence.occurrence_id as import("../src/domain/identity").ItemOccurrenceId);
+  expect((await read()).map((set) => [set.task_id?.split(":").at(-1), set.question_version])).toEqual([["T1", second.value.questions[0]!.question_version]]);
+  await feed.revision({ revision_id: "tasks-2", artifact_kind: "tasks", body: { tasks: [{ id: "T2", description: "Two", requirement_ids: [] }] } });
+  expect((await read()).map((set) => [set.task_id?.split(":").at(-1), set.question_version])).toEqual([["T1", second.value.questions[0]!.question_version], ["T2", first.value.questions[0]!.question_version]]);
+}));

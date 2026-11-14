@@ -63,7 +63,14 @@ test("prompt and grading detail browser handoff", async () => {
     await page.getByText("Authorization: Bearer [redacted]", { exact: false }).waitFor();
     expect(await page.getByRole("heading", { name: "Session context" }).count()).toBe(1);
     expect(await page.getByText("Shared sessions can include other attempts and later tasks.", { exact: false }).count()).toBe(1);
-    expect(await page.getByRole("region").count()).toBe(3);
+    for (const name of ["Template", "Inputs", "Executed content"]) {
+      expect(await page.getByRole("region", { name, exact: true }).count()).toBe(1);
+    }
+    const provenance = page.getByRole("region", { name: "Handoff provenance", exact: true });
+    for (const label of ["Builder brief revision", "Build items in builder brief", "Assessor brief revision", "Build result revision"]) {
+      const field = provenance.locator("dt").filter({ hasText: label });
+      expect(await field.locator("+ dd").innerText()).toBe("Unresolved");
+    }
     expect(await page.getByRole("textbox").count()).toBe(0);
     if (screenshots) { mkdirSync(screenshots, { recursive: true }); await page.screenshot({ path: join(screenshots, "prompt-viewer.png"), fullPage: true }); }
     await page.goto(server.url.href);

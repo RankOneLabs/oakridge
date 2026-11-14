@@ -280,3 +280,21 @@ test("the shared output validator derives response types and enumerated values f
   expect(questionAnswerProblem(structured, { state: "answered", kind: "structured", value: { passed: true } })).toBeNull();
   expect(questionAnswerProblem(structured, { state: "answered", kind: "structured", value: { passed: false } })).toContain("not an allowed value");
 });
+
+test("resolved_assesses is a strict alternative to the legacy task pointer", async () => {
+  const definitions = await fixtureDefinitions();
+  const finding = definitions.find((definition) => definition.id === "assessment_finding.correctness")!;
+  const { task_ids: _pointer, ...fields } = finding as GradingDefinition & { task_ids: string };
+  expect(parse([{ ...fields, task_source: "resolved_assesses" }]).ok).toBe(true);
+  expect(parse([{ ...finding, task_source: "resolved_assesses" }])).toMatchObject({ ok: false, error: { kind: "invalid_task_ids" } });
+});
+
+test("current fixture registers build-item grading and exact assessed-item evidence", async () => {
+  const raw = await Bun.file(new URL("./fixtures/grading-definitions.json", import.meta.url)).json();
+  const parsed = parse(raw);
+  if (!parsed.ok) throw new Error(parsed.error.detail);
+  const registration = plan(parsed.value);
+  expect(registration.capture.pins.find((pin) => pin.question_id === "build_item.task_support")).toMatchObject({ item_selector: "/build_items/*", scope: "per_task", task_ids: "/task_ids" });
+  expect(parsed.value.filter((d) => d.id.startsWith("assessment_finding.")).every((d) => d.evidence.includes("assessed_build_items"))).toBe(true);
+  expect(parsed.value.find((d) => d.id === "acceptance_entry.task_coverage")!.targets).toEqual([{ artifact: "plan", selector: "/cohorts/*/acceptance_criteria/*" }]);
+});
