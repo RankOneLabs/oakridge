@@ -77,7 +77,7 @@ it.each<EntryPoint>(["task panel", "composite drilldown"])("an analysis finding 
   const open = vi.fn<(selection: ObservationItemAddress) => void>();
   wrap(entryPoint(source, open));
   await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(source === "task panel" ? 2 : 1));
-  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)! /* Each scenario above waits for its grade controls. */);
   expect(open).toHaveBeenCalledWith(ANALYSIS);
   const selection = open.mock.calls[0]?.[0];
   if (!selection) throw new Error("the finding did not open");
@@ -106,7 +106,7 @@ it.each<{ source: EntryPoint; item_kind: string }>([
   const open = vi.fn();
   wrap(entryPoint(source, open));
   await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(source === "task panel" ? 2 : 1));
-  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)! /* Each scenario above waits for its grade controls. */);
   expect(open).toHaveBeenCalledWith({ ...IMPLEMENTATION, task_id });
 });
 
@@ -122,7 +122,7 @@ it("the task panel keeps the enclosing task's subject when other tasks' subjects
   const open = vi.fn();
   wrap(entryPoint("task panel", open));
   await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(2));
-  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)! /* Each scenario above waits for its grade controls. */);
   expect(open).toHaveBeenCalledWith({ ...IMPLEMENTATION, task_id });
 });
 
@@ -148,7 +148,7 @@ it("an assessment finding with no pinned subject for the enclosing task opens wi
   const open = vi.fn();
   wrap(entryPoint("task panel", open));
   await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(2));
-  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)! /* Each scenario above waits for its grade controls. */);
   expect(open).toHaveBeenCalledWith(IMPLEMENTATION);
 });
 
@@ -217,4 +217,33 @@ it("item task association link rows display the recorded relation type and evide
   });
   wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={vi.fn()} />);
   expect(await screen.findByText("assesses · rel-1 · /subjects/0")).toBeTruthy();
+});
+
+it("relationship paging renders the returned relations and preserves recorded types", async () => {
+  const boundary = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!boundary) throw new Error("missing boundary");
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const url = new URL(String(input), "http://localhost");
+    if (url.pathname.includes("/items/") && url.pathname.endsWith("/lineage")) {
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      return json({ ...paged([], 201, 200, offset), occurrence_id: world.status.item.occurrence_id, republication: null, relations: [{ relation_id: `rel-${offset}`, type: offset === 0 ? "assesses" : "addresses", evidence_ref: `/subjects/${offset}` }] });
+    }
+    return boundary(input, init);
+  });
+  wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={vi.fn()} />);
+  expect(await screen.findByText("assesses · rel-0 · /subjects/0")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "More association-relations" }));
+  expect(await screen.findByText("addresses · rel-200 · /subjects/200")).toBeTruthy();
+  expect(screen.queryByText("Unresolved relation type")).toBeNull();
+});
+
+it("revealed association grades refresh after an evaluator or reviewer updates them", async () => {
+  const { TaskAssociationGrades } = await import("../components/organisms/TaskAssociationGrades");
+  const { reviewerAnswer } = await import("../__fixtures__/grading");
+  vi.useFakeTimers();
+  wrap(<TaskAssociationGrades occurrenceId={world.status.item.occurrence_id} taskId={task_id} />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+  world.status = itemStatus([supportQuestion({ answers: paged([reviewerAnswer("new", "updated-grade")]) })]);
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_100); });
+  expect(screen.getByText("updated-grade")).toBeTruthy();
 });

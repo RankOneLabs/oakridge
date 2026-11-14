@@ -33,7 +33,7 @@ test.each(["brief", "cohort", "result", "evidence"])("%s displays build-item det
 test("historical brief task links and acceptance grade addresses remain intact", () => {
   const onOpenTask = vi.fn(), onOpenItem = vi.fn();
   render(<BuildBriefViewer body={legacy} source={source} onOpenTask={onOpenTask} onOpenItem={onOpenItem} />);
-  fireEvent.click(screen.getAllByTestId("or-task-link")[0]!);
+  fireEvent.click(screen.getAllByTestId("or-task-link")[0]! /* The rendered fixture contains task links. */);
   expect(onOpenTask).toHaveBeenCalledWith("criterion-brief");
   fireEvent.click(screen.getByRole("button", { name: "Open grading at /acceptance_criteria/0" }));
   expect(onOpenItem).toHaveBeenCalledWith({ source_revision_id: "exact-brief", item_path: "/acceptance_criteria/0" });

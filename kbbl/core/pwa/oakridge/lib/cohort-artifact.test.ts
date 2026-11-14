@@ -103,3 +103,12 @@ describe("selectCohortArtifactLookup", () => {
     expect(selectCohortArtifactLookup({ ...sources, cohort_label: null }, readBuildBrief).kind).toBe("missing");
   });
 });
+
+test("lookup carries the selected brief revision identity, never the build result or later brief", () => {
+  const detail = { run_id: "run", label: "cohort", revisions: [
+    { id: "brief-original", created_at: "2026-10-01T00:00:00Z", body: brief },
+    { id: "brief-later", created_at: "2026-10-03T00:00:00Z", body: brief },
+  ] } as ArtifactDetail;
+  const found = selectCohortArtifactLookup({ cohort_label: "cohort", as_of: "2026-10-02T00:00:00Z", artifact_id: "brief", run: { data: {} as RunDetail, is_loading: false, is_error: false }, detail: { data: detail, is_loading: false, is_error: false } }, readBuildBrief);
+  expect(found.kind === "found" ? found.source?.revision_id : null).toBe("brief-original");
+});

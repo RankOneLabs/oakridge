@@ -1,3 +1,4 @@
+import type { CohortId } from "../run-types";
 import type { Result } from "../../lib/result";
 import type { AssessmentVerdict, CriterionStatus } from "../artifact-types";
 import { parseTestEvidence, type TestEvidence } from "./build-result";
@@ -207,7 +208,7 @@ function selectLegacyCriterionReport(briefCriteria: PlanCriterion[] | null, find
 }
 
 /** Mirrors assessment_subject in development.yaml. */
-export type AssessmentSubject = { kind: "task"; id: string; cohort_id?: string } | { kind: "build_item"; id: string; cohort_id?: string };
+export type AssessmentSubject = { kind: "task"; id: PlanTraceId; cohort_id?: CohortId } | { kind: "build_item"; id: PlanTraceId; cohort_id?: CohortId };
 export interface BuildItemFinding extends Omit<AssessmentFinding, "task_ids"> { subjects: AssessmentSubject[] }
 export interface BuildItemAssessment extends Omit<LegacyAssessment, "shape" | "findings"> { shape: "build_items"; findings: BuildItemFinding[] }
 export type Assessment = LegacyAssessment | BuildItemAssessment;
@@ -216,8 +217,8 @@ function parseSubjects(value: unknown): Parsed<AssessmentSubject[]> {
   const subjects: AssessmentSubject[] = [];
   for (const entry of value) {
     if (!isRecord(entry) || (entry.kind !== "task" && entry.kind !== "build_item") || typeof entry.id !== "string" || !entry.id.trim()
-      || (entry.cohort_id !== undefined && typeof entry.cohort_id !== "string")) return fail("subjects", "invalid subject");
-    subjects.push({ kind: entry.kind, id: entry.id, ...(typeof entry.cohort_id === "string" ? { cohort_id: entry.cohort_id } : {}) });
+      || (entry.cohort_id !== undefined && (typeof entry.cohort_id !== "string" || !entry.cohort_id.trim()))) return fail("subjects", "invalid subject");
+    subjects.push({ kind: entry.kind, id: entry.id as PlanTraceId, ...(typeof entry.cohort_id === "string" ? { cohort_id: entry.cohort_id as CohortId } : {}) });
   }
   return { ok: true, value: subjects };
 }

@@ -100,3 +100,8 @@ export function parseBuildBrief(body: unknown): BuildBrief | null {
 export const readBuildBrief = parseBuildBrief;
 /** Shape guard for raw artifact callers; parsed consumers use parseBuildBrief. */
 export function isBuildBrief(body: unknown): boolean { return parseBuildBrief(body) !== null; }
+
+/** Resolve only decisions recorded in this brief; missing ids stay literal. */
+export function selectBuildItemDecisions(brief: BuildBrief, item: BuildItem) {
+  return item.decision_ids.map((id) => ({ id, decision: brief.decisions_made.find((decision) => decision.id === id)?.decision ?? null }));
+}

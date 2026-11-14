@@ -11,3 +11,33 @@ test("missing original content never falls back to a later revision", () => {
 test("missing provenance stays unresolved", () => {
   expect(selectHandoffBrief(null, [])).toEqual({ revision_id: null, build_item_ids: null });
 });
+
+import { selectHandoffContext, selectHandoffRevisionId, selectHandoffUnit, selectHandoffBriefUnit } from "./handoff-provenance";
+import { sampleUnits } from "../__fixtures__/read-models";
+import captured from "../__fixtures__/v2-adapter-sample.json";
+import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
+const history = captured.artifact as unknown as OperatorArtifactDetail;
+const owner = sampleUnits.find((unit) => unit.unit_id === history.unit_id);
+const revision = history.revisions[0];
+const template = owner?.attempts[0];
+if (!owner || !revision || !template) throw new Error("captured handoff needs a revision and attempt");
+const builder = { ...template, id: "builder", worker: "builder", intent: attempt.intent };
+const assessor = { ...template, id: "assessor", worker: "assessor", intent: attempt.intent };
+const unit = { ...owner, attempts: [builder, assessor] };
+const revisions = [{ ...revision, id: "assessment", attempt_id: assessor.id, subject_id: "result" }, { ...revision, id: "result", attempt_id: builder.id }];
+test("composite assessment identity finds the recorded assessor and builder through its subject", () => {
+  expect(selectHandoffContext({ unit, revisions, revisionId: `v2|artifact|${unit.run_id}|${unit.unit_id}|assessment:assessment` })).toEqual({ builder, assessor, resultId: "result" });
+});
+test("unknown revisions never select a current attempt", () => {
+  expect(selectHandoffContext({ unit, revisions, revisionId: "unknown" })).toEqual({ builder: null, assessor: null, resultId: null });
+});
+test("attempt inspection selects its exact recorded brief unit", () => {
+  const context = selectHandoffContext({ unit, revisions, attemptId: "builder" });
+  expect(selectHandoffBriefUnit(context.builder)).toBe("briefs/cohort");
+});
+test("raw revision ids and absent ids keep their identity", () => {
+  expect([selectHandoffRevisionId("raw"), selectHandoffRevisionId(undefined)]).toEqual(["raw", null]);
+});
+test("unit lookup keeps missing provenance unresolved", () => {
+  expect(selectHandoffUnit(sampleUnits, null)).toBeNull();
+});

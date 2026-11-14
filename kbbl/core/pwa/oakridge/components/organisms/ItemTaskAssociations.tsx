@@ -34,7 +34,8 @@ export function ItemTaskAssociations({ runId, item, links, onOpenTask, onWindow 
         : <span key={link.relation_id} data-testid="or-item-task-link" data-link-state={link.state}>{taskLinkLabel(link)}</span>)}
       <ListPager name="links" page={links} onWindow={onWindow} />
     </div>
-    {links.items.map((link) => <div key={link.relation_id}>{lineage.data?.relations.find((relation) => relation.relation_id === link.relation_id)?.type ?? item.provenance?.hops.find((hop) => hop.relation_id === link.relation_id)?.type ?? "Unresolved relation type"} · {link.relation_id} · {link.evidence_ref}</div>)}
+    <h4>Recorded relationships</h4>
+    {lineage.data?.relations.map((relation) => <div key={relation.relation_id}>{relation.type} · {relation.relation_id} · {relation.evidence_ref}</div>)}
     {lineage.data && <ListPager name="association-relations" page={lineage.data} onWindow={setRelationPage} />}
     <h4 className="m-0 text-xs font-medium">Unresolved task references</h4>
     {read.isError && <p className="m-0">Unresolved task references unavailable.</p>}

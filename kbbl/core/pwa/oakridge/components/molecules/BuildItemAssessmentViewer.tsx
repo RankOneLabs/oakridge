@@ -1,11 +1,11 @@
 import type { BuildItemAssessment } from "../../lib/assessment";
-import { selectFindingSelections, selectItemSelection } from "../../lib/grading";
+import { selectFindingSelections } from "../../lib/grading";
 import { selectBuildItemReport } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
 import type { ViewerProps } from "../../artifactRegistry";
 import { ArtifactSection } from "./ArtifactSection";
-import { GradeItemButton } from "./GradeItemButton";
+import { ArtifactItemGrade } from "./ArtifactItemGrade";
 import { EvidenceContentView } from "./EvidenceContentView";
 import { TestEvidenceBlock } from "./TestEvidenceBlock";
 
@@ -29,7 +29,7 @@ export function BuildItemAssessmentViewer({ assessment, brief, isIntegration, so
         {row.findings.map((finding) => <div key={finding.item_path}>
           <p>{finding.status === "met" ? "Met (assessor's judgment)" : finding.status ?? "No status"}</p>
           <EvidenceContentView content={{ kind: "assessment_finding", value: finding }} onOpenTask={onOpenTask} />
-          {source && itemGrading ? itemGrading.renderItemAction(selectFindingSelections(source, [finding.item_path])[0]!) : <GradeItemButton selection={selectItemSelection(source, finding.item_path)} onOpenItem={onOpenItem} />}
+          <ArtifactItemGrade source={source} itemPath={finding.item_path} onOpenItem={onOpenItem} itemGrading={itemGrading} />
         </div>)}
       </li>)}</ul>
     </ArtifactSection>)}

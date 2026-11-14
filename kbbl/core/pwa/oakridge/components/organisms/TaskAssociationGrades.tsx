@@ -1,3 +1,4 @@
+import { selectAssociationGradeGroups, selectSharedGradePage } from "../../lib/task-association-grades";
 import { useState } from "react";
 import type { ObservationItemOccurrenceId, ObservationLogicalItemId } from "../../grading-contracts/domain/identity";
 import type { ObservationPageRequest } from "../../grading-contracts/grading/composite";
@@ -16,23 +17,24 @@ const FIRST: ObservationPageRequest = { limit: 50, offset: 0 };
 export function TaskAssociationGrades({ occurrenceId, taskId }: Props) {
   const [page, setPage] = useState(FIRST);
   const [nested, setNested] = useState<WindowQuery>({});
-  const status = useItemStatus({ occurrence_id: occurrenceId, top: page, nested }, { refetchInterval: false });
+  const status = useItemStatus({ occurrence_id: occurrenceId, top: page, nested });
   const setWindow = (name: string, window: ObservationPageRequest) => setNested((current) => ({ ...current, [name]: window }));
   return <section aria-label="Independent grades" className="basis-full text-xs">
     {status.isPending && <p>Loading independent grades…</p>}
     {status.isError && <p>Independent grades unavailable.</p>}
     {status.data && <>
-      {(["per_item", "per_task"] as const).map((scope) => <section key={scope} aria-label={`${scope} grades`}>
+      {selectAssociationGradeGroups(status.data.questions.items, taskId).map(({ scope, questions }) => <section key={scope} aria-label={`${scope} grades`}>
         <h5>{scope}</h5>
-        <ul>{status.data.questions.items.filter((question) => scope === "per_item" ? question.task_id === null : taskId !== null && question.task_id === taskId).map((question) => <li key={question.evidence.evidence_set_id}>
+        <ul>{questions.map((question) => <li key={question.evidence.evidence_set_id}>
           <p>{questionLabel(question.question)}</p>
           {question.answers.total === 0 && <p>No independent answers recorded.</p>}
           <ul>{question.answers.items.map((answer) => <AnswerRow key={answer.observation_id} answer={answer} />)}</ul>
-          <ListPager name={`${scope}-answers`} page={question.answers} onWindow={(window) => setWindow("answers", window)} />
           <ul>{question.machine.items.map((machine) => <li key={machine.evaluator_definition_id}>{machine.backend_kind}: {measurementDisplay(machine.measurement).label}</li>)}</ul>
-          <ListPager name={`${scope}-machine`} page={question.machine} onWindow={(window) => setWindow("machine", window)} />
         </li>)}</ul>
       </section>)}
+      <p>Answer and machine pages apply to all displayed questions.</p>
+      <ListPager name="all-question-answers" page={selectSharedGradePage(status.data.questions.items, "answers", nested.answers)} onWindow={(window) => setWindow("answers", window)} />
+      <ListPager name="all-question-machine" page={selectSharedGradePage(status.data.questions.items, "machine", nested.machine)} onWindow={(window) => setWindow("machine", window)} />
       <ListPager name="association-questions" page={status.data.questions} onWindow={(window) => { setPage(window); setNested({}); }} />
     </>}
   </section>;
