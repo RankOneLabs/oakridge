@@ -336,10 +336,37 @@ pub(super) fn changes_requested<'a>(
     unit: &UnitId,
     artifacts: &[SymbolKey],
 ) -> Option<&'a DecisionState> {
+    changes_requested_except(ChangeRequestSearch {
+        state,
+        unit,
+        artifacts,
+        deferred_validation: &[],
+    })
+}
+
+/// Skip deferred validation per artifact, without hiding requests on other outputs.
+pub(super) struct ChangeRequestSearch<'a, 'b> {
+    pub state: &'a StepSnapshot,
+    pub unit: &'b UnitId,
+    pub artifacts: &'b [SymbolKey],
+    pub deferred_validation: &'b [SymbolKey],
+}
+
+pub(super) fn changes_requested_except<'a>(
+    search: ChangeRequestSearch<'a, '_>,
+) -> Option<&'a DecisionState> {
+    let ChangeRequestSearch {
+        state,
+        unit,
+        artifacts,
+        deferred_validation,
+    } = search;
     artifacts.iter().find_map(|artifact| {
         let latest = latest(state, unit, artifact)?;
         state.decisions.iter().rev().find(|decision| {
             decision.unit() == unit
+                && !(deferred_validation.contains(artifact)
+                    && matches!(decision, DecisionState::Validation { .. }))
                 && decision.target() == &latest.id
                 && matches!(
                     decision.effect(),
