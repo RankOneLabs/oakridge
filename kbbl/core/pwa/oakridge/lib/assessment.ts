@@ -247,7 +247,7 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
   return common.ok ? { ok: true, value: { ...common.value, shape: "build_items", findings } } : common;
 }
 
-export interface BuildItemReportRow { item: import("./build-brief").BuildItem | null; findings: BuildItemFinding[] }
+export interface BuildItemReportRow { item: import("./build-brief").BuildItem | null; findings: BuildItemFinding[]; unresolved_subjects?: AssessmentSubject[] }
 export interface BuildItemReportGroup { label: string; rows: BuildItemReportRow[] }
 export function selectBuildItemReport(brief: Extract<import("./build-brief").BuildBrief, { shape: "build_items" }> | null, findings: BuildItemFinding[]): BuildItemReportGroup[] {
   if (brief === null) return [{ label: "Findings", rows: findings.map((finding) => ({ item: null, findings: [finding] })) }];
@@ -259,7 +259,11 @@ export function selectBuildItemReport(brief: Extract<import("./build-brief").Bui
     { label: "Not assessed", rows: rows.filter((row) => row.findings.length === 0) },
     { label: "Met (assessor's judgment)", rows: rows.filter(isMet) },
     { label: "Cross-cutting findings", rows: findings.filter((finding) => finding.subjects.length === 0).map((finding) => ({ item: null, findings: [finding] })) },
-    { label: "Unresolved item references", rows: findings.filter((finding) => finding.subjects.some((subject) => !brief.build_items.some((item) => matches(subject, item.id)))).map((finding) => ({ item: null, findings: [finding] })) },
+    { label: "Task findings", rows: findings.filter((finding) => finding.subjects.some((subject) => subject.kind === "task")).map((finding) => ({ item: null, findings: [finding] })) },
+    { label: "Unresolved item references", rows: findings.flatMap((finding) => {
+      const unresolved_subjects = finding.subjects.filter((subject) => subject.kind === "build_item" && !brief.build_items.some((item) => matches(subject, item.id)));
+      return unresolved_subjects.length === 0 ? [] : [{ item: null, findings: [finding], unresolved_subjects }];
+    }) },
   ];
 }
 

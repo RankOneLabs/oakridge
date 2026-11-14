@@ -23,6 +23,7 @@ export function BuildItemAssessmentViewer({ assessment, brief, isIntegration, so
     {source && itemGrading?.renderShowAll(selectFindingSelections(source, assessment.findings.map((finding) => finding.item_path)))}
     {report.map((group) => <ArtifactSection key={group.label} title={group.label} testId={`or-build-item-${group.label}`}>
       <ul>{group.rows.map((row, index) => <li key={index}>
+        {row.unresolved_subjects?.map((subject) => <p key={`${subject.cohort_id}/${subject.id}`}>Unresolved build item: <code>{subject.cohort_id ? `${subject.cohort_id}/` : ""}{subject.id}</code></p>)}
         {row.item && <p><code>{row.item.id}</code> {row.item.description}</p>}
         {row.findings.length === 0 && <p>Not assessed</p>}
         {row.findings.map((finding) => <div key={finding.item_path}>

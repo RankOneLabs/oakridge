@@ -14,7 +14,7 @@ test("subjects remain subjects, and items without findings are not assessed", ()
   const parsed = parseAssessment({ ...assessmentBody, findings: [{ subjects: [{ kind: "build_item", id: "B1" }], status: "met", evidence: [], description: "Judgment" }, { subjects: [], status: "partial", evidence: [], description: "Cross cutting" }] });
   if (brief?.shape !== "build_items" || !parsed.ok || parsed.value.shape !== "build_items") throw new Error("fixture invalid");
   const report = selectBuildItemReport({ ...brief, build_items: [...brief.build_items, { ...brief.build_items[0]!, id: "B2" as typeof brief.build_items[0]["id"] }] }, parsed.value.findings);
-  expect(report.map((group) => [group.label, group.rows.length])).toEqual([["Needs attention", 0], ["Not assessed", 1], ["Met (assessor's judgment)", 1], ["Cross-cutting findings", 1], ["Unresolved item references", 0]]);
+  expect(report.map((group) => [group.label, group.rows.length])).toEqual([["Needs attention", 0], ["Not assessed", 1], ["Met (assessor's judgment)", 1], ["Cross-cutting findings", 1], ["Task findings", 0], ["Unresolved item references", 0]]);
 });
 test("switching task scope drops incompatible fields and summaries name the source", () => {
   const resolved = definitionWithTaskSource({ scope: "per_task", task_ids: "/task_ids" }, "resolved_assesses");
