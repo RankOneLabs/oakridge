@@ -59,3 +59,5 @@ export interface CollaborationMessageBody { readonly text: string; readonly auth
 export interface ReviewItemBody { readonly title: string; readonly detail: string; readonly status: string }
 /** The GitHub repository a project's checkout pushes to. */
 export interface ForgeRepository { readonly provider: "github"; readonly owner: string; readonly name: string }
+
+export type InputProvenanceEntries = readonly import("../core-client/core-types").InputProvenance[];

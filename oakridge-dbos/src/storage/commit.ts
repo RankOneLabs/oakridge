@@ -408,9 +408,10 @@ export function selectDeltaViolation(before: StepSnapshot, after: StepSnapshot):
   for (const old of before.units) {
     const unit = units.get(old.id);
     if (!unit) return `unit ${old.id} was removed`;
-    const { status: _old_status, input: old_input, ...old_fixed } = old;
-    const { status: _status, input, ...fixed } = unit;
+    const { status: _old_status, input: old_input, input_provenance: old_provenance, ...old_fixed } = old;
+    const { status: _status, input, input_provenance: provenance, ...fixed } = unit;
     if (canonical(old_fixed) !== canonical(fixed)) return `unit ${old.id} changed its declaration, parent, stage, pool or dependencies`;
+    if (old_input != null && canonical(old_provenance ?? null) !== canonical(provenance ?? null)) return `unit ${old.id} changed frozen input provenance`;
     if (old_input !== null && canonical(old_input) !== canonical(input)) return `unit ${old.id} changed an input it had already resolved`;
   }
   const attempts = new Map(after.attempts.map((attempt) => [`${attempt.action_id}#${attempt.seq}`, attempt]));
@@ -468,10 +469,12 @@ async function writeDelta(trx: DatabaseTransaction, run_id: string, plan: DeltaP
   for (const unit of plan.created_units) await trx.insertInto("authority.unit").values({ id: unit.id, run_id, parent_id: unit.parent ?? null,
     declaration: unit.declaration, stage: unit.kind.kind === "stage" ? unit.kind.stage : null,
     collection_key: unit.collection_key ?? null, pool: unit.pool ?? null,
+    input_provenance: unit.input_provenance == null ? null : jsonText(unit.input_provenance),
     input: unit.input === null ? null : jsonText(unit.input), status: jsonText(unit.status) }).execute();
   for (const unit of plan.created_units) for (const depends_on_id of unit.after)
     await trx.insertInto("authority.unit_dependency").values({ run_id, unit_id: unit.id, depends_on_id }).execute();
   for (const unit of plan.changed_units) await trx.updateTable("authority.unit").set({ status: jsonText(unit.status),
+    input_provenance: unit.input_provenance == null ? null : jsonText(unit.input_provenance),
     input: unit.input === null ? null : jsonText(unit.input) })
     .where("run_id", "=", run_id).where("id", "=", unit.id).execute();
   for (const attempt of plan.created_attempts) await trx.insertInto("authority.attempt").values({ action_id: attempt.action_id, seq: attempt.seq, run_id,

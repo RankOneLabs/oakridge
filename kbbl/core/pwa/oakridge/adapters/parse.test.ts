@@ -12,13 +12,13 @@ if (!capturedAttempt) throw new Error("captured cohort requires an attempt");
 const withIntent = (intent: unknown): UnitIntentPayload => ({ ...sampleCohort, attempts: [{ ...capturedAttempt, intent }] });
 const previous: OperatorRevisionState = { id: "revision-before", unit: sampleCohort.unit_id, artifact: "document", seq: 1, body: { summary: "Earlier" },
   by: null, predecessor: null, subject: null, decision_cursor: 0 };
-const intent: OperatorAttemptIntentView = { inputs: { source: { revision_id: previous.id } },
+const intent: OperatorAttemptIntentView = { input_provenance: { status: "unresolved" }, inputs: { source: { revision_id: previous.id } },
   engine_inputs: { previous, feedback: [{ id: "decision-1", review: "review-1", decision: "request_changes", target: previous.id, payload: { feedback: "Revise" } }], subject: previous },
   prompt: { path: "prompts/agent.md", digest: "sha256:recorded" } };
 
 const acceptedIntents: readonly (OperatorAttemptIntentView | null)[] = [null, intent,
-  { inputs: null, engine_inputs: { previous: null, feedback: [], subject: null }, prompt: null },
-  { inputs: [false, 2, "text", {}], engine_inputs: { previous: { id: "minimal", unit: "unit", artifact: "artifact", seq: 1, body: null }, feedback: [], subject: null }, prompt: null }];
+  { input_provenance: { status: "unresolved" }, inputs: null, engine_inputs: { previous: null, feedback: [], subject: null }, prompt: null },
+  { input_provenance: { status: "unresolved" }, inputs: [false, 2, "text", {}], engine_inputs: { previous: { id: "minimal", unit: "unit", artifact: "artifact", seq: 1, body: null }, feedback: [], subject: null }, prompt: null }];
 test.each(acceptedIntents)("accepts valid recorded or absent intent %# without replacing its values", (value) => {
   const payload = withIntent(value);
   const single = parseUnitView(payload);

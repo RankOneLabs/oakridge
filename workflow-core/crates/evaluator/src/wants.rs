@@ -431,6 +431,7 @@ pub(super) fn resolve_run_worker(
         _ => (None, Vec::new()),
     };
     Ok(ResolvedRunWorker {
+        input_provenance: unit.input_provenance.clone(),
         action_id: action_id(&unit.id, action.worker, action.mode, action.cause),
         inputs: Value::Object(inputs),
         previous,

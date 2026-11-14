@@ -53,6 +53,7 @@ CREATE TABLE authority.unit (
   -- decides on and its prompt rendered with its resolved inputs. Commit
   -- rewrites it on every event that steps the unit; nothing is asked or stored
   -- beyond what state already derives.
+  input_provenance jsonb,
   review_prompts jsonb NOT NULL DEFAULT '{}'::jsonb,
   PRIMARY KEY (run_id, id),
   FOREIGN KEY (run_id, parent_id) REFERENCES authority.unit(run_id, id)
@@ -284,3 +285,5 @@ COMMENT ON COLUMN authority.collaboration_thread.context IS '@type {Collaboratio
 COMMENT ON COLUMN authority.collaboration_message.body IS '@type {CollaborationMessageBody}';
 COMMENT ON COLUMN authority.review_item.body IS '@type {ReviewItemBody}';
 COMMENT ON COLUMN authority.operator_event.payload IS '@type {OperatorEventPayload}';
+
+COMMENT ON COLUMN authority.unit.input_provenance IS '@type {InputProvenanceEntries}';

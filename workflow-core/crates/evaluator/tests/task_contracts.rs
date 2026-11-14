@@ -1193,3 +1193,100 @@ fn an_acceptance_entry_without_its_decision_links_fails_schema() {
         matches!(refusal, Err(StepError::Rejected { reason, .. }) if reason == "artifact body fails schema")
     );
 }
+
+#[test]
+fn implementation_and_integration_pin_accepted_brief_identities() {
+    let run = at_integration();
+    for (unit_id, input, cohorts) in [
+        ("run/implementation/a1", "brief", vec!["a1"]),
+        ("run/implementation/a2", "brief", vec!["a2"]),
+        ("run/integration/alpha", "briefs", vec!["a1", "a2"]),
+        ("run/integration/beta", "briefs", vec!["b1"]),
+    ] {
+        let unit = run
+            .state()
+            .units
+            .iter()
+            .find(|unit| unit.id.0 == unit_id)
+            .unwrap();
+        let expected: Vec<_> = cohorts
+            .into_iter()
+            .map(|cohort| {
+                let source = UnitId(format!("run/briefs/{cohort}"));
+                let decision = run
+                    .state()
+                    .decisions
+                    .iter()
+                    .find(|decision| {
+                        decision.unit() == &source
+                            && decision.review() == Some(&SymbolKey::from("brief_review"))
+                            && decision.effect() == Some(DecisionEffect::Approve)
+                    })
+                    .unwrap();
+                InputProvenance {
+                    input: SymbolKey::from(input),
+                    unit: source,
+                    revision_id: decision.target().clone(),
+                }
+            })
+            .collect();
+        assert_eq!(unit.input_provenance.as_ref(), Some(&expected));
+    }
+}
+
+#[test]
+fn later_revision_and_reads_do_not_replace_frozen_provenance() {
+    let mut run = at_integration();
+    let recorded = run
+        .state()
+        .units
+        .iter()
+        .find(|u| u.id.0 == "run/implementation/a1")
+        .unwrap()
+        .input_provenance
+        .clone();
+    let mut snapshot = run.state().clone();
+    let mut later = snapshot
+        .revisions
+        .iter()
+        .find(|r| r.unit.0 == "run/briefs/a1" && r.artifact.0 == "brief")
+        .unwrap()
+        .clone();
+    later.id = RevisionId::from("later-brief");
+    later.seq += 100;
+    snapshot.revisions.push(later);
+    run.last.snapshot = snapshot;
+    run.apply(Event::Launched { input: json!({}) }, Writer::Engine)
+        .unwrap();
+    assert_eq!(
+        run.state()
+            .units
+            .iter()
+            .find(|u| u.id.0 == "run/implementation/a1")
+            .unwrap()
+            .input_provenance,
+        recorded
+    );
+}
+
+#[test]
+fn unrelated_inputs_record_no_entries_and_legacy_records_stay_unresolved() {
+    let mut run = at_integration();
+    let root = run
+        .state()
+        .units
+        .iter()
+        .find(|unit| unit.id.0 == "run")
+        .unwrap();
+    assert_eq!(root.input_provenance, Some(vec![]));
+    for unit in &mut run.last.snapshot.units {
+        unit.input_provenance = None;
+    }
+    run.apply(Event::Launched { input: json!({}) }, Writer::Engine)
+        .unwrap();
+    assert!(run
+        .state()
+        .units
+        .iter()
+        .all(|unit| unit.input_provenance.is_none()));
+}

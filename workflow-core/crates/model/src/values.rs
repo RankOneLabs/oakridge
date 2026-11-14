@@ -260,6 +260,14 @@ impl DecisionState {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct InputProvenance {
+    pub input: SymbolKey,
+    pub unit: UnitId,
+    pub revision_id: RevisionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UnitState {
     pub id: UnitId,
     pub parent: Option<UnitId>,
@@ -270,6 +278,8 @@ pub struct UnitState {
     #[serde(with = "crate::wire_numbers::optional_json")]
     #[schemars(with = "Option<Value>")]
     pub input: Option<Value>,
+    #[serde(default)]
+    pub input_provenance: Option<Vec<InputProvenance>>,
     pub after: Vec<UnitId>,
     pub pool: Option<SymbolKey>,
 }
@@ -388,6 +398,8 @@ pub struct FeedbackEntry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedRunWorker {
+    #[serde(default)]
+    pub input_provenance: Option<Vec<InputProvenance>>,
     pub action_id: ActionKey,
     #[serde(with = "crate::wire_numbers::json")]
     #[schemars(with = "Value")]
@@ -425,7 +437,17 @@ pub enum StepEntity {
 
 #[cfg(test)]
 mod tests {
-    use super::Event;
+    use super::*;
+
+    #[test]
+    fn legacy_unit_has_unrecorded_provenance() {
+        let unit: UnitState = serde_json::from_value(serde_json::json!({
+            "id":"run", "declaration":"run", "kind":{"kind":"group"},
+            "status":{"kind":"active"}, "input":null, "after":[]
+        }))
+        .unwrap();
+        assert_eq!(unit.input_provenance, None);
+    }
 
     #[test]
     fn event_contract_has_the_seven_kinds_swept_by_evaluator_invariants() {

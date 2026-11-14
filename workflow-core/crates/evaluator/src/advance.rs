@@ -151,7 +151,7 @@ pub(super) fn materialize_group(
             return Err(rejected("max_list_items exceeded"));
         }
         let mut keys = BTreeSet::new();
-        for each in &each_values {
+        for (each_index, each) in each_values.iter().enumerate() {
             let member = if let Some(collection) = &collection {
                 eval_expression(
                     &collection.key.expression,
@@ -229,6 +229,19 @@ pub(super) fn materialize_group(
             } else {
                 None
             };
+            let input_provenance = if input.is_some() {
+                Some(input_lineage(
+                    program,
+                    &state,
+                    &parent,
+                    unit,
+                    Some(each),
+                    Some(each_index),
+                    context,
+                )?)
+            } else {
+                None
+            };
             let delta = Delta::PushUnit(UnitState {
                 id: UnitId(member_id),
                 parent: Some(group_id.clone()),
@@ -240,6 +253,7 @@ pub(super) fn materialize_group(
                 collection_key: collection.as_ref().map(|_| member.clone()),
                 status: UnitStatus::NotStarted,
                 input,
+                input_provenance,
                 after: dependencies,
                 pool: unit.pool.clone(),
             });
@@ -524,7 +538,13 @@ pub(super) fn next_move(
                     checked_unit(group_for(program, state, parent)?, &unit.declaration.0)?;
                 let input = eval_fields(&declared.input, parent, state, None, context)?
                     .ok_or_else(|| invalid("unit input unresolved"))?;
-                deltas.push(Delta::UnitInput { index, input });
+                let provenance =
+                    input_lineage(program, state, parent, declared, None, None, context)?;
+                deltas.push(Delta::UnitInput {
+                    index,
+                    input,
+                    provenance,
+                });
             }
             deltas.push(Delta::UnitStatus {
                 index,
@@ -600,4 +620,153 @@ pub(super) fn blocked_units(
         })
         .collect::<Result<Vec<_>, _>>()
         .map(|blocks| blocks.into_iter().flatten().collect())
+}
+
+/// Follow only collection outcome projections, preserving member identity through
+/// filtering. Values are used to evaluate predicates, never to infer identity.
+fn outcome_lineage(
+    program: &CheckedWorkflow,
+    state: &StepSnapshot,
+    parent: &UnitState,
+    expression: &Expression,
+    each: Option<&Value>,
+    context: &mut EvaluationContext<'_>,
+) -> Result<Vec<(Value, UnitId, RevisionId)>, StepError> {
+    match expression {
+        Expression::Filter { source, predicate } => {
+            let mut selected = Vec::new();
+            for entry in outcome_lineage(program, state, parent, source, each, context)? {
+                if expression::eval_expression_inner(
+                    predicate,
+                    parent,
+                    state,
+                    expression::Bindings {
+                        each,
+                        item: Some(&entry.0),
+                        body: None,
+                    },
+                    context,
+                )? == Some(Value::Bool(true))
+                {
+                    selected.push(entry);
+                }
+            }
+            Ok(selected)
+        }
+        Expression::Map { source, value } => {
+            let Expression::Reference {
+                root: ReferenceRoot::MemberOutcomes { unit },
+                path: source_path,
+            } = source.as_ref()
+            else {
+                return Ok(vec![]);
+            };
+            let Expression::Reference {
+                root: ReferenceRoot::Item,
+                path: fields,
+            } = value.as_ref()
+            else {
+                return Ok(vec![]);
+            };
+            if !source_path.is_empty() || fields.len() != 1 {
+                return Ok(vec![]);
+            }
+            let mut children: Vec<_> = state
+                .units
+                .iter()
+                .filter(|child| {
+                    child.parent.as_ref() == Some(&parent.id) && child.declaration == *unit
+                })
+                .collect();
+            children.sort_by(|a, b| a.id.cmp(&b.id));
+            let mut entries = Vec::new();
+            for child in children {
+                let UnitStatus::Done { outcome } = &child.status else {
+                    continue;
+                };
+                if child.kind.stage().is_none() {
+                    continue;
+                }
+                let stage = checked_stage(program, child)?;
+                let Some(field) = stage.outcome.iter().find(|field| field.key == fields[0]) else {
+                    continue;
+                };
+                let Expression::Reference {
+                    root: ReferenceRoot::Latest { artifact },
+                    path,
+                } = &field.value.expression
+                else {
+                    continue;
+                };
+                if !path.is_empty() {
+                    continue;
+                }
+                let revision = state
+                    .decisions
+                    .iter()
+                    .rev()
+                    .find(|decision| {
+                        decision.unit() == &child.id
+                            && decision.effect() == Some(DecisionEffect::Approve)
+                            && state.revisions.iter().any(|revision| {
+                                revision.id == *decision.target() && revision.artifact == *artifact
+                            })
+                    })
+                    .map(|decision| decision.target().clone())
+                    .or_else(|| {
+                        latest(state, &child.id, artifact).map(|revision| revision.id.clone())
+                    });
+                if let (Some(body), Some(revision)) = (outcome.get(&fields[0]), revision) {
+                    entries.push((body.clone(), child.id.clone(), revision));
+                }
+            }
+            Ok(entries)
+        }
+        _ => Ok(vec![]),
+    }
+}
+
+fn input_lineage(
+    program: &CheckedWorkflow,
+    state: &StepSnapshot,
+    parent: &UnitState,
+    declaration: &CheckedUnit,
+    each: Option<&Value>,
+    each_index: Option<usize>,
+    context: &mut EvaluationContext<'_>,
+) -> Result<Vec<InputProvenance>, StepError> {
+    let mut entries = Vec::new();
+    for field in &declaration.input {
+        let lineage = match &field.value.expression {
+            Expression::Reference {
+                root: ReferenceRoot::EachMember,
+                path,
+            } if path.is_empty() => match (&declaration.collection, each_index) {
+                (Some(collection), Some(index)) => outcome_lineage(
+                    program,
+                    state,
+                    parent,
+                    &collection.source.expression,
+                    each,
+                    context,
+                )?
+                .into_iter()
+                .nth(index)
+                .into_iter()
+                .collect(),
+                _ => vec![],
+            },
+            expression => outcome_lineage(program, state, parent, expression, each, context)?,
+        };
+        entries.extend(
+            lineage
+                .into_iter()
+                .map(|(_, unit, revision_id)| InputProvenance {
+                    input: SymbolKey::from(field.key.as_str()),
+                    unit,
+                    revision_id,
+                }),
+        );
+    }
+    Ok(entries)
 }
