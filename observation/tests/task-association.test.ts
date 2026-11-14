@@ -42,3 +42,10 @@ test("resolved_assesses derives only resolved direct and two-hop task subjects",
   expect(gradingSubjects({ occurrence: { ...subject, selected_value: { subjects: [] } }, scope: { scope: "per_task", task_source: "resolved_assesses" }, relations: [] })).toEqual([{ subject_occurrence_id: subject.occurrence_id, task_id: null }]);
   expect(gradingSubjects({ occurrence: { ...subject, occurrence_id: "B1" as ItemOccurrenceId, json_pointer: "/build_items/0", selected_value: { task_ids: ["task", "other"] } }, scope: { scope: "per_task", task_ids: "/task_ids" }, relations: relations.map((relation) => ({ ...relation, evidence_ref: relation.target_logical_item_id === "task" ? "/build_items/0/task_ids/0" : "/build_items/0/task_ids/1" })) }).map((subject) => String(subject.task_id))).toEqual(["other", "task"]);
 });
+
+test("resolved_assesses keeps a legacy cross-cutting finding task-less", async () => {
+  const { gradingSubjects } = await import("../src/grading/evidence");
+  const subject = { occurrence_id: "legacy-finding" as ItemOccurrenceId, json_pointer: "/findings/0", selected_value: { task_ids: [] } };
+  expect(gradingSubjects({ occurrence: subject, scope: { scope: "per_task", task_source: "resolved_assesses" }, relations: [] }))
+    .toEqual([{ subject_occurrence_id: subject.occurrence_id, task_id: null }]);
+});

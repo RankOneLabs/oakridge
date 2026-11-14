@@ -16,6 +16,11 @@ import { pinOccurrenceInTransaction } from "./captured-evidence-store";
 import { jsonText, withTenant, withTenantSnapshot, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationItemOccurrence, ObservationSourceRevision } from "./db-types";
 
+interface PendingSourceSelection {
+  readonly source: Selectable<ObservationSourceRevision>;
+  readonly pass: ReturnType<typeof selectRevision>;
+}
+
 export interface ProjectionSummary { readonly occurrences: number; readonly issues: number; readonly relations: number }
 export interface Page { readonly limit: number; readonly offset: number }
 export interface ItemsPage { readonly items: readonly Selectable<ObservationItemOccurrence>[];
@@ -287,11 +292,18 @@ export async function projectRevisionInTransaction(trx: DatabaseTransaction, ten
     .select(["item.revision_id", "item.occurrence_id", "item.json_pointer", "edge.evidence_ref"])
     .where("edge.producer", "=", tenant.producer).where("edge.namespace", "=", tenant.namespace)
     .where("item.run_id", "=", revision.run_id).where("edge.unresolved_target_ref", "is not", null).execute();
+  const sourceSelections = new Map<string, PendingSourceSelection>();
   for (const row of pending) {
-    const source = await trx.selectFrom("observation.source_revision").selectAll()
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("revision_id", "=", row.revision_id).executeTakeFirstOrThrow();
-    const pass = selectRevision(source.body, source.revision_id, context.extraction.definitions(source.artifact_kind, source.artifact_schema_version));
+    let selection = sourceSelections.get(row.revision_id);
+    if (!selection) {
+      const source = await trx.selectFrom("observation.source_revision").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("revision_id", "=", row.revision_id).executeTakeFirstOrThrow();
+      const pass = selectRevision(source.body, source.revision_id, context.extraction.definitions(source.artifact_kind, source.artifact_schema_version));
+      selection = { source, pass };
+      sourceSelections.set(row.revision_id, selection);
+    }
+    const { source, pass } = selection;
     const link = pass.items.find(({ item }) => item.path === row.json_pointer)?.item.links.find((link) => link.evidence_ref === row.evidence_ref);
     if (!link || link.target !== "occurrence" || !link.recorded_revisions_field) continue;
     const target = await targetOccurrence(trx, tenant, source, link);
@@ -414,7 +426,8 @@ export async function recordedRevisionIds(trx: DatabaseTransaction, tenant: Tena
   const prefix = `${tenant.producer}:${tenant.namespace}:`;
   const rows = await sql<{ ids: JsonValue }>`SELECT detail #> ARRAY['revision','source',${field}] AS ids
     FROM observation.source_event_outcome WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}
-      AND outcome_kind = 'artifact_revision' AND detail #>> '{revision,source,revision_id}' = ${prefix + revision_id}
+      AND outcome_kind = 'artifact_revision' AND detail #>> '{revision,format}' = 'observation.artifact-revision/v4'
+      AND detail #>> '{revision,source,revision_id}' = ${prefix + revision_id}
     ORDER BY commit_txid, event_id LIMIT 1`.execute(trx);
   const ids = rows.rows[0]?.ids;
   return Array.isArray(ids) && ids.every((id) => typeof id === "string" && id.startsWith(prefix))

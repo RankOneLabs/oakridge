@@ -144,7 +144,8 @@ export function gradingSubjects({ occurrence, scope, relations }: SubjectGenerat
   const subject_occurrence_id = occurrence.occurrence_id;
   if (scope.scope === "per_item") return [{ subject_occurrence_id, task_id: null }];
   if ("task_source" in scope) {
-    const subjects = valueAtPointer(occurrence.selected_value, "/subjects");
+    const declaredSubjects = valueAtPointer(occurrence.selected_value, "/subjects");
+    const subjects = declaredSubjects === undefined ? valueAtPointer(occurrence.selected_value, "/task_ids") : declaredSubjects;
     if (Array.isArray(subjects) && subjects.length === 0) return [{ subject_occurrence_id, task_id: null }];
     const direct = relations.filter((edge) => (edge.source_occurrence_id === undefined || edge.source_occurrence_id === subject_occurrence_id)
       && edge.type === "assesses" && edge.unresolved_target_ref === null);
