@@ -239,7 +239,7 @@ export function referenceDisplay(reference: ObservationEvidenceReference): Refer
 }
 
 /** The fields an assessment finding without prose shows in its header. */
-export interface AssessmentFindingHeaderFields { status: AssessmentFinding["status"]; task_ids: AssessmentFinding["task_ids"] }
+export interface AssessmentFindingHeaderFields { status: AssessmentFinding["status"]; task_ids?: AssessmentFinding["task_ids"]; subjects?: import("./assessment").AssessmentSubject[] }
 
 /** Every non-text variant carries the exact value its structured view renders. */
 export type ItemHeader =
@@ -260,7 +260,7 @@ export function selectItemHeader(value: ObservationJsonValue): ItemHeader {
   if (text !== null) return { kind: "text", text };
   const content = decodeSubjectContent(value, "");
   return content.kind === "assessment_finding"
-    ? { kind: "assessment_finding", value: { status: content.value.status, task_ids: content.value.task_ids } }
+    ? { kind: "assessment_finding", value: { status: content.value.status, ...("subjects" in content.value ? { subjects: content.value.subjects } : { task_ids: content.value.task_ids }) } }
     : { kind: "fields", value };
 }
 

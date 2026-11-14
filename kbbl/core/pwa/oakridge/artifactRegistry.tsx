@@ -1,7 +1,7 @@
 import { parseAssessment } from "./lib/assessment";
 import { parsePlan } from "./lib/plan";
 import { parseTasks } from "./lib/tasks";
-import { isBuildBrief } from "./lib/build-brief";
+import { readBuildBrief } from "./lib/build-brief";
 import { isSpecAnalysis } from "./lib/spec-analysis";
 import type { ComponentType, ReactNode } from "react";
 import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./artifact-types";
@@ -67,7 +67,10 @@ export function resolveViewer(componentId: string | null | undefined): Component
 /** The same contract-defined gradeable collections used by the registered viewers. */
 export function selectViewerItemPaths(Viewer: ComponentType<ViewerProps>, body: unknown): readonly string[] {
   if (Viewer === SpecAnalysisViewer && isSpecAnalysis(body)) return body.findings.map((_, index) => `/findings/${index}`);
-  if (Viewer === BuildBriefViewer && isBuildBrief(body)) return body.acceptance_criteria.map((_, index) => `/acceptance_criteria/${index}`);
+  if (Viewer === BuildBriefViewer) {
+    const brief = readBuildBrief(body);
+    return brief ? brief.shape === "legacy" ? brief.acceptance_criteria.map((_, index) => `/acceptance_criteria/${index}`) : brief.build_items.map((_, index) => `/build_items/${index}`) : [];
+  }
   if (Viewer === AssessmentReview) {
     const parsed = parseAssessment(body);
     return parsed.ok ? parsed.value.findings.map((finding) => finding.item_path) : [];

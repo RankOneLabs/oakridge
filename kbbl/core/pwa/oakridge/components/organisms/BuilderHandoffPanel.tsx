@@ -1,3 +1,4 @@
+import { HandoffProvenance } from "./HandoffProvenance";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "../../../components/atoms/Button";
@@ -62,6 +63,7 @@ export function BuilderHandoffPanel({ runId, unitLabel, revisionId, assessment, 
 
   return (
     <ArtifactSection title={`Recommended next actions (${assessment.recommended_next_actions.length})`} testId="or-assessment-next-actions">
+      <HandoffProvenance runId={runId} unitId={unitLabel} revisionId={revisionId} />
       <div className="flex flex-col gap-3" data-testid="or-assessment-handoff">
         <p className="m-0 text-sm text-[var(--text-secondary)]">Add, edit or remove an action to publish a new assessment revision. Untick it to exclude it from this send only.</p>
         {items.length > 0 ? <ol className="m-0 flex list-decimal flex-col gap-2 pl-6">
