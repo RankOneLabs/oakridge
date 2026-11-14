@@ -4,6 +4,7 @@ import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysel
 import type { ParsedWorkflow, UnitStatus } from "../core-client/core-types";
 import type { ActionId, Brand, DecisionId, DefinitionId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
 import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
+import type { PrIntegration } from "../domain/pr-integration";
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
 import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
@@ -472,6 +473,12 @@ export type CommittedRunConfig =
   | { readonly state: "none" }
   | { readonly state: "committed"; readonly config: RunConfig }
   | { readonly state: "malformed" };
+/** Resolve legacy absence without treating malformed settings as another provider. */
+export function selectCommittedPrIntegration(config: CommittedRunConfig): PrIntegration | null {
+  if (config.state === "malformed") return null;
+  if (config.state === "none") return "gated-review";
+  return config.config.pr_integration;
+}
 export async function readCommittedRunConfig(db: Reader, run_id: string): Promise<CommittedRunConfig> {
   const run = await db.selectFrom("authority.run").select("config").where("id", "=", run_id).executeTakeFirst();
   if (!run || run.config === null) return { state: "none" };

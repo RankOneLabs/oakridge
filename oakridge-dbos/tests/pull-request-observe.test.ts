@@ -124,7 +124,17 @@ test("reader selection disables every reader outside gated-review", () => {
 });
 test("github-cli observation never calls a reader and requests manual confirmation", async () => {
   const { reader, calls } = forgeReturning(githubPayload());
-  const outcome = await observePullRequest(reader, { query }, {}, "github-cli");
+  const outcome = await observePullRequest(reader, { query }, { pr_integration: "github-cli" });
   expect({ outcome, calls }).toEqual({ calls: [], outcome: { kind: "failed", code: PROVIDER_ERROR_CODES.discovery_unsupported,
+    detail: "automatic pull request observation is off for github-cli runs; confirm the merge manually" } });
+});
+
+import { createOperationRunner } from "../src/operations/runner";
+import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
+test("the operation runner honors recorded integration options before consulting any reader", async () => {
+  const { reader, calls } = forgeReturning(githubPayload());
+  const runner = createOperationRunner({ git: new BunGitCommandRunner(), pull_requests: reader });
+  const result = await runner.run({ operation: "pull_request.observe", inputs: { query } }, { pr_integration: "github-cli" });
+  expect({ result, calls }).toEqual({ calls: [], result: { kind: "failed", code: PROVIDER_ERROR_CODES.discovery_unsupported,
     detail: "automatic pull request observation is off for github-cli runs; confirm the merge manually" } });
 });

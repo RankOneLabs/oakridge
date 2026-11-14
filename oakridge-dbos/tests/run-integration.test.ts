@@ -52,3 +52,13 @@ test("recorded integration and digest survive config parsing unchanged", () => {
 test("malformed digests are rejected", () => {
   expect(parseRunConfig({ pr_integration: "github-cli", pr_skill_digest: 42 })).toBeNull();
 });
+
+import { selectCommittedPrIntegration } from "../src/storage/read-store";
+test("recorded integration selection keeps legacy absence distinct from malformed settings", () => {
+  expect([
+    selectCommittedPrIntegration({ state: "none" }),
+    selectCommittedPrIntegration({ state: "malformed" }),
+    selectCommittedPrIntegration({ state: "committed", config: parseRunConfig({ pr_integration: "github-cli" })! }),
+    selectCommittedPrIntegration({ state: "committed", config: parseRunConfig({ pr_integration: "none" })! }),
+  ]).toEqual(["gated-review", null, "github-cli", "none"]);
+});

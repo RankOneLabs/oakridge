@@ -107,7 +107,8 @@ export const selectObserveReader = (integration: PrIntegration, reader: PullRequ
   integration === "gated-review" ? reader : null;
 
 export async function observePullRequest(reader: PullRequestReader | null, input: PullRequestObserveInput,
-  options: OperationCallOptions = {}, integration: PrIntegration = "gated-review"): Promise<OperationOutcome> {
+  options: OperationCallOptions = {}): Promise<OperationOutcome> {
+  const integration = options.pr_integration ?? "gated-review";
   reader = selectObserveReader(integration, reader);
   if (!reader) return { kind: "failed", code: PROVIDER_ERROR_CODES.discovery_unsupported,
     detail: integration === "github-cli" ? "automatic pull request observation is off for github-cli runs; confirm the merge manually" : "no pull request reader is configured" };
