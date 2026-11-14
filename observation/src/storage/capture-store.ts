@@ -1,6 +1,6 @@
 import { sql, type Selectable } from "kysely";
 import type { JsonValue } from "../domain/primitives";
-import type { CaptureDelivery, CaptureEnvelope } from "../ingest/capture";
+import { decodeCapture, type CaptureDelivery, type CaptureEnvelope } from "../ingest/capture";
 import type { SourceEventAck, SourceEventCursor, SourceEventDelivery, SourceEventOutcome } from "../ingest/cursor";
 import { INITIAL_SOURCE_CURSOR } from "../ingest/cursor";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
@@ -127,6 +127,9 @@ export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: 
     let outcome: SourceEventOutcome | StoredRelationDeclaration = delivery.outcome;
     if (outcome.kind === "relation_declaration") outcome = await applyDeclaration(trx, tenant, outcome, context);
     else if (outcome.kind === "artifact_revision") {
+      const decoded = decodeCapture(outcome.revision);
+      if (!decoded.ok) return conflict;
+      outcome = { ...outcome, revision: decoded.value.envelope };
       const source = outcome.revision.source;
       if (source.producer !== tenant.producer || source.namespace !== tenant.namespace || source.run_id !== outcome.run_id) return conflict;
       const local_revision_id = source.revision_id.slice(`${tenant.producer}:${tenant.namespace}:`.length);

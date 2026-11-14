@@ -239,3 +239,16 @@ test("build-item context includes the containing brief, canonical task and match
   const result = await oakridgeCapabilities.build_item_context!.resolve({ artifact, question: key(CORRECTNESS_ID), sources: source }, {});
   expect(result).toMatchObject({ state: "ready", references: [{ ref: "subject", revision_id: "brief-original" }, { ref: "task_context:0", item_path: "/tasks/0" }, { ref: "brief", revision_id: "brief-original" }, { ref: "cohort", item_path: "/cohorts/1", content: { id: "alpha" } }, { ref: "spec" }] });
 });
+
+test("build-item context anchors the approved specification to its canonical task revision", async () => {
+  const { oakridgeCapabilities } = await import("../src/producers/oakridge/evidence");
+  const artifact = { ...finding([]), revision_id: "brief" as ArtifactRevisionId, item_kind: "build_item", item_path: "/build_items/0", selected_value: { id: "B1", task_ids: ["T7"] } };
+  const source: CapturedSources = { ...sources(),
+    readRevision: async () => ({ revision_id: artifact.revision_id, stage: "brief", artifact_kind: "brief", subject_id: null, body: { cohort_id: "alpha" } }),
+    readRevisionAt: async (kind, anchor): Promise<CapturedRevision> => {
+      if (kind === "spec") expect(String(anchor)).toBe("tasks-1");
+      return { revision_id: kind as ArtifactRevisionId, stage: kind, artifact_kind: kind, subject_id: null, body: kind === "plan" ? { cohorts: [{ id: "alpha" }] } : { approved: true } };
+    } };
+  expect(await oakridgeCapabilities.build_item_context!.resolve({ artifact, question: key(CORRECTNESS_ID), sources: source }, {}))
+    .toMatchObject({ state: "ready", references: expect.arrayContaining([{ source: "revision", ref: "spec", revision_id: "spec", item_path: null, content: { approved: true } }]) });
+});

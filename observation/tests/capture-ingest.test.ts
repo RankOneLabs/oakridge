@@ -136,3 +136,12 @@ integration("v3 journal metadata cannot supply recorded brief provenance downstr
   await feed.send({ ...outcome, revision: { ...outcome.revision, format: "observation.artifact-revision/v3" } });
   expect(await withTenant(db, tenant, (trx) => recordedRevisionIds(trx, tenant, "legacy-provenance", "brief_revision_ids"))).toBeNull();
 }));
+
+integration("short brief references are normalized before journaling and identical replay", async () => scratchDatabase(async (db) => {
+  const feed = createFeed(db);
+  const outcome = revisionOutcome({ revision_id: "short-provenance", artifact_kind: "assessment", body: { findings: [] }, brief_revision_ids: ["brief-1"] });
+  if (outcome.kind !== "artifact_revision") throw new Error("fixture is a revision");
+  await feed.send({ ...outcome, revision: { ...outcome.revision, source: { ...outcome.revision.source, brief_revision_ids: ["brief-1"] } } });
+  expect(await withTenant(db, tenant, (trx) => recordedRevisionIds(trx, tenant, "short-provenance", "brief_revision_ids"))).toEqual(["brief-1"]);
+  await feed.send({ ...outcome, event_id: "repeat-normalized" });
+}));

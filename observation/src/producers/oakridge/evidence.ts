@@ -171,7 +171,7 @@ export const oakridgeCapabilities: EvidenceCapabilities = {
     const cohorts = plan && objectOf(plan.body)?.cohorts;
     const index = Array.isArray(cohorts) ? cohorts.findIndex((entry) => objectOf(entry)?.id === cohort_id) : -1;
     if (!plan || !Array.isArray(cohorts) || index < 0) return notReady("cohort_unavailable", "plan cohort is not captured");
-    const spec = await oakridgeCapabilities.spec!.resolve({ artifact, question, sources }, {});
+    const spec = await oakridgeCapabilities.spec!.resolve({ artifact: { ...artifact, revision_id: task.revision_id }, question, sources }, { artifact: "spec" });
     if (spec.state === "not_ready") return spec;
     const references: EvidenceReference[] = [subjectReference(artifact), contextReference(task, 0),
       revisionReference("brief", brief, null, brief.body), revisionReference("cohort", plan, `/cohorts/${index}`, cohorts[index]!), ...spec.references];

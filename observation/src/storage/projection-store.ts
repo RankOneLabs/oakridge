@@ -291,7 +291,8 @@ export async function projectRevisionInTransaction(trx: DatabaseTransaction, ten
       .onRef("item.namespace", "=", "edge.namespace").onRef("item.occurrence_id", "=", "edge.source_occurrence_id"))
     .select(["item.revision_id", "item.occurrence_id", "item.json_pointer", "edge.evidence_ref"])
     .where("edge.producer", "=", tenant.producer).where("edge.namespace", "=", tenant.namespace)
-    .where("item.run_id", "=", revision.run_id).where("edge.unresolved_target_ref", "is not", null).execute();
+    .where("item.run_id", "=", revision.run_id).where("edge.unresolved_target_ref", "is not", null)
+    .where("edge.unresolved_target_ref", "not like", "logical_item:%").execute();
   const sourceSelections = new Map<string, PendingSourceSelection>();
   for (const row of pending) {
     let selection = sourceSelections.get(row.revision_id);
@@ -306,6 +307,8 @@ export async function projectRevisionInTransaction(trx: DatabaseTransaction, ten
     const { source, pass } = selection;
     const link = pass.items.find(({ item }) => item.path === row.json_pointer)?.item.links.find((link) => link.evidence_ref === row.evidence_ref);
     if (!link || link.target !== "occurrence" || !link.recorded_revisions_field) continue;
+    const recorded = await recordedRevisionIds(trx, tenant, source.revision_id, link.recorded_revisions_field);
+    if (!recorded?.includes(revision_id)) continue;
     const target = await targetOccurrence(trx, tenant, source, link);
     if (!target) continue;
     await saveRelation(trx, tenant, occurrenceRelation(row.occurrence_id, link, target));
