@@ -64,6 +64,15 @@ const generated: GeneratedFile[] = [
   { path: resolve(storeRoot, "operations", `${registryId}.json`), bytes: canonicalBytes(OPERATION_REGISTRY) },
   ...prompts.map((prompt) => ({ path: resolve(storeRoot, "prompts", `${prompt.id}.md`), bytes: prompt.bytes })),
 ];
+const skillRoot = resolve(root, "workflow-config/skills/pr-operations");
+const skillEntries = readdirSync(skillRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
+  const directory = resolve(skillRoot, entry.name);
+  const files = filesUnder(directory).map((path) => ({ path: relative(directory, path).split(sep).join("/"), bytes: readFileSync(path) }));
+  const digest = required(jsonIdentity<DefinitionId>({ files: Object.fromEntries(files.map((file) => [file.path, bytesIdentity(file.bytes)])) }));
+  generated.push(...files.map((file) => ({ path: resolve(storeRoot, "skills", digest, file.path), bytes: file.bytes })));
+  return [entry.name, digest];
+});
+generated.push({ path: resolve(storeRoot, "skills.json"), bytes: canonicalBytes(Object.fromEntries(skillEntries)) });
 const launchableEntries: [string, DefinitionId][] = [];
 for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
   const sourcePath = resolve(root, path);
