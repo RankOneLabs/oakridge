@@ -18,3 +18,4 @@ export type { SessionHold, SessionHoldResponse, SessionRunLocation } from "../pr
 export type { IngressRequest, LaunchRequest, DecideRequest, PublishRequest, IngressResponse, IngressCommitted } from "./ingress";
 
 export type { PrIntegration, PrLaunchPreflightError } from "../domain/pr-integration";
+export type { InstallStatus, InstallCheck, AccessMode, AgentProfileStatus, PrIntegrationStatus, ObservationStatus, LaunchBlock } from "../projections/install-status-view";
