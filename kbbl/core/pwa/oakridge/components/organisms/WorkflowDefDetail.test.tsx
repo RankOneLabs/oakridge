@@ -197,6 +197,7 @@ test("compact header copies the full id and shared default drives every pane wit
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
   const navigate = vi.fn();
   render(<WorkflowDefDetail definitionId="d1" selection={null} onNavigate={navigate} onBack={() => {}} />);
+  expect(within(screen.getByRole("region", { name: "Workflow overview" })).getByText("6 stages · 6 units · 4 collections · 2 pools")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Copy definition ID" }));
   expect(writeText).toHaveBeenCalledWith(detail.definition_id);
   const first = detail.bundle.stages[0] as string;
