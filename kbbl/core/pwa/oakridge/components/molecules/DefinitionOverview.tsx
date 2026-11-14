@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import {
+  selectAbbreviatedDefinitionId,
   selectDefinitionSchemaParts,
   type DefinitionOverview as Overview,
 } from "../../lib/definition-overview";
@@ -46,7 +47,7 @@ export function DefinitionOverview({ overview, selection }: DefinitionOverviewPr
     <section aria-label="Workflow overview" className="or-definition-overview">
       <h2>{overview.name}</h2>
       <p>
-        Definition ID: <code title={overview.id}>{overview.id.slice(0, 12)}…</code>
+        Definition ID: <code title={overview.id}>{selectAbbreviatedDefinitionId(overview.id)}</code>
         <Button variant="secondary" onClick={onCopyDefinitionId}>Copy definition ID</Button>
       </p>
       {shouldShowFullId && (

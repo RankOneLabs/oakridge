@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { chromium, type Browser } from "@playwright/test";
 import capturedRun from "../../core/pwa/oakridge/__fixtures__/v2-adapter-sample.json";
 import definitionFixture from "../../core/pwa/oakridge/__fixtures__/v2-definition-detail.json";
+import { selectAbbreviatedDefinitionId } from "../../core/pwa/oakridge/lib/definition-overview";
 
 async function browserScript(): Promise<string> {
   const directory = mkdtempSync(join(tmpdir(), "oakridge-v1-browser-"));
@@ -136,7 +137,7 @@ test("browser navigates the committed definition list and detail", async () => {
     await page.getByTestId("or-def-detail").waitFor();
     const overview = page.getByRole("region", { name: "Workflow overview" });
     const definitionId = overview.locator("code[title]");
-    expect(await definitionId.textContent()).toBe(`${definition.definition_id.slice(0, 12)}…`);
+    expect(await definitionId.textContent()).toBe(selectAbbreviatedDefinitionId(definition.definition_id));
     expect(await definitionId.getAttribute("title")).toBe(definition.definition_id);
     const stages = page.getByLabel("Stages in authored order");
     expect(await stages.locator(".or-definition-navigation-entry > a").allTextContents()).toEqual(definition.bundle.stages);

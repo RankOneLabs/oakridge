@@ -4,6 +4,7 @@ import { expect, test } from "vitest";
 import snapshot from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import {
+  selectAbbreviatedDefinitionId,
   selectDefinitionOverview,
   selectDefinitionSelection,
   selectDefinitionSchemaParts,
@@ -146,4 +147,7 @@ test("schema matching preserves text when no schemas are declared", () => {
       .join(""),
   ).toBe("list(repository)");
   expect(selectDefinitionSchemaParts("", [])).toEqual([]);
+});
+test("abbreviated definition id keeps a twelve-character prefix with an ellipsis", () => {
+  expect(selectAbbreviatedDefinitionId("0123456789abcdef")).toBe("0123456789ab…");
 });

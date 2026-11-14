@@ -39,6 +39,11 @@ export interface DefinitionOverview {
   groups: DefinitionUnitOverview[];
   schemas: OperatorDefinitionDetail["bundle"]["schemas"];
 }
+const ABBREVIATED_DEFINITION_ID_LENGTH = 12;
+/** Compact header form of a definition id; the full id stays available through copy and title. */
+export function selectAbbreviatedDefinitionId(id: string): string {
+  return `${id.slice(0, ABBREVIATED_DEFINITION_ID_LENGTH)}…`;
+}
 export function selectDefinitionOverview(detail: OperatorDefinitionDetail): DefinitionOverview {
   const units: DefinitionUnitOverview[] = [];
   const pools: DefinitionPoolOverview[] = [];

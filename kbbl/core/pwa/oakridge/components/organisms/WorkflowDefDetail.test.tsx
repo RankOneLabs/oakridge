@@ -197,6 +197,17 @@ test("following the current declaration link again reveals its target without na
   expect(details.scrollIntoView).toHaveBeenCalled();
 });
 
+test("schema href on a definition without stages reveals its target from the bare route", () => {
+  state.data = { ...detail, bundle: { ...detail.bundle, stages: [] } };
+  const navigate = vi.fn();
+  render(<WorkflowDefDetail definitionId="d1" selection={null} onNavigate={navigate} onBack={() => {}} />);
+  const schema = document.getElementById("definition-schema-final_merge_policy") as HTMLElement;
+  fireEvent.click(screen.getByRole("link", { name: "final_merge_policy", hidden: true }));
+  expect(navigate).toHaveBeenCalledWith(`#oakridge/defs/${encodeURIComponent(detail.definition_id)}#definition-schema-final_merge_policy`);
+  expect((schema.closest("details") as HTMLDetailsElement).open).toBe(true);
+  expect(document.activeElement).toBe(schema);
+});
+
 test("compact header copies the full id and shared default drives every pane without navigation", () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });

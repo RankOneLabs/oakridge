@@ -221,3 +221,7 @@ export function selectStageSummary(model: StageInspectorModel): StageSummary {
     done_when: model.stage.done_when,
   };
 }
+/** Units whose input bindings the inputs section lists: the selected unit alone, else every invoking unit. */
+export function selectStageInputUnits(model: StageInspectorModel): StageInspectorModel["units"] {
+  return model.selected_unit ? [model.selected_unit] : model.units;
+}

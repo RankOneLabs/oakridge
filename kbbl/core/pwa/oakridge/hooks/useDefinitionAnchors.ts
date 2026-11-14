@@ -51,6 +51,9 @@ export function useDefinitionAnchors({
       return;
     }
     onNavigate(href);
+    // A bare definition route has no selection to carry its anchor, so reveal the target here.
+    const [, route, target] = href.split("#");
+    if (target && route?.split("/").length === 3) revealDefinitionAnchor(target);
   }
 
   return { selection, onClick };

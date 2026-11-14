@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import fixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
-import { stageElementHref, selectStageInspector, selectStageNavigation } from "./stage-inspector";
+import { stageElementHref, selectStageInputUnits, selectStageInspector, selectStageNavigation } from "./stage-inspector";
 const detail = fixture.definition as unknown as OperatorDefinitionDetail;
 test("unit selection resolves implementation to cohort", () => {
   expect(selectStageInspector(detail, { kind: "unit", path: "implementation" })?.name).toBe(
@@ -127,4 +127,11 @@ test("development cohort summary counts effective declarations and retains invok
   if (!model) throw new Error("Missing cohort");
   expect(selectStageSummary(model)).toEqual({ name: "cohort", invoking_units: model.units,
     worker_count: 4, artifact_count: 5, review_count: 3, done_when: model.stage.done_when });
+});
+test("inputs list only the selected unit, else every invoking unit", () => {
+  const unitModel = selectStageInspector(detail, { kind: "unit", path: "implementation" });
+  const stageModel = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  if (!unitModel || !stageModel) throw new Error("Missing cohort models");
+  expect(selectStageInputUnits(unitModel).map((unit) => unit.path)).toEqual(["implementation"]);
+  expect(selectStageInputUnits(stageModel)).toEqual(stageModel.units);
 });

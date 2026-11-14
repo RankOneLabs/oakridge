@@ -1,4 +1,4 @@
-import { stageSelectionHref, type StageSectionProps } from "../../lib/stage-inspector";
+import { selectStageInputUnits, stageSelectionHref, type StageSectionProps } from "../../lib/stage-inspector";
 import {
   definitionStageHref,
   definitionUnitHref,
@@ -58,7 +58,7 @@ export function StageInputsSection({ model }: StageSectionProps) {
     <section aria-label="Inputs" className="rounded border border-[var(--border-muted)] p-3">
       <h3>Inputs</h3>
       <StageType model={model} value={model.stage.input} />
-      {(model.selected_unit ? [model.selected_unit] : model.units).map((unit) => (
+      {selectStageInputUnits(model).map((unit) => (
         <div key={unit.path}>
           <h4>
             <a href={definitionUnitHref(model.definition.definition_id, unit.path)}>{unit.path}</a>{" "}
