@@ -1,3 +1,4 @@
+import { StatusView } from "./views/StatusView";
 import { definitionHref } from "./lib/definition-selection";
 import { Button } from "../components/atoms/Button";
 import { GradingConfigView } from "./views/GradingConfigView";
@@ -57,6 +58,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
 
   let content: React.ReactNode;
   switch (route.sub) {
+    case "status": content = <StatusView />; break;
     case "runs":
       content = (
         <RunListView
@@ -137,6 +139,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
     <div className="or-shell" data-testid="or-shell">
       <nav aria-label="Oakridge" className="flex flex-wrap gap-2 p-3">
         <Button onClick={navigateToRuns}>Runs</Button>
+        <Button onClick={() => onNavigate("oakridge/status")}>Status</Button>
         <Button onClick={navigateToDefs}>Workflows</Button>
         <Button onClick={() => onNavigate("/oakridge/grading-config")}>Grading configuration</Button>
       </nav>

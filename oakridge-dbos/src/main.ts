@@ -43,6 +43,7 @@ const migration_db = openDatabase(database_url);
 try { await migrateEmptyDatabase(migration_db); }
 finally { await migration_db.destroy(); }
 const composition = await createProductionComposition({ pr_integration_default, database_url, host, control_token: process.env.OAKRIDGE_CONTROL_TOKEN,
+  operator_access: { bind_host: process.env.OAKRIDGE_OPERATOR_BIND_HOST ?? host, has_control_token: Boolean(process.env.OAKRIDGE_CONTROL_TOKEN?.trim()), allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" },
   observation,
   executor: { kbbl_base_url, kbbl_control_token, publication_key: optional("OAKRIDGE_PUBLICATION_KEY"), publish_base_url, agent_workdir, gated_review_url } });
 let server: ReturnType<typeof Bun.serve>;

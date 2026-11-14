@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+OAKRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$OAKRIDGE_ROOT/scripts/oakridge-preflight.sh"
+OAKRIDGE_CHECK_FORMAT=json
+failed=0
+oakridge_check_bash || failed=1
+for tool in bun git openssl; do
+  oakridge_check_command "$tool" "Install $tool with the system package manager (bun: https://bun.sh)" || failed=1
+done
+oakridge_check_wasm || failed=1
+oakridge_check_database || failed=1
+oakridge_check_agents || failed=1
+host="${OAKRIDGE_OPERATOR_BIND_HOST:-127.0.0.1}"
+for arg in "$@"; do
+  if [ "${next_is_host:-0}" = 1 ]; then host="$arg"; next_is_host=0; continue; fi
+  case "$arg" in --host) next_is_host=1 ;; --host=*) host="${arg#--host=}" ;; esac
+done
+oakridge_check_access "$host" || failed=1
+if command -v bun >/dev/null 2>&1; then
+  oakridge_check_mcp
+  if ! bun --no-env-file -e '
+    let host = process.env.OAKRIDGE_DBOS_HOST ?? "127.0.0.1";
+    if (host.includes(":") && !host.startsWith("[")) host = `[${host}]`;
+    const url = `http://${host}:${process.env.OAKRIDGE_DBOS_PORT ?? "8790"}/api/install-status`;
+    let response;
+    try {
+      response = await fetch(url, { signal: AbortSignal.timeout(7000), headers: process.env.OAKRIDGE_CONTROL_TOKEN ? { Authorization: `Bearer ${process.env.OAKRIDGE_CONTROL_TOKEN}` } : {} });
+    } catch {
+      console.log(`Oakridge stack is not running at ${url}; start ./scripts/oakridge-start`);
+      process.exit(0);
+    }
+    if (!response.ok) {
+      console.log(`Install status unavailable at ${url} (HTTP ${response.status}); check OAKRIDGE_CONTROL_TOKEN and restart ./scripts/oakridge-start`);
+      process.exit(0);
+    }
+    const status = await response.json();
+    for (const [label, value] of [["Access mode", status.access_mode], ["Required checks", status.checks], ["Agent profiles", status.agent_profiles], ["PR integration", status.pr_integration], ["Observation/grading", status.observation], ["Launch blocks", status.launch_blocks], ["Installation failed", status.installation_failed]]) {
+      console.log(`${label}: ${JSON.stringify(value)}`);
+    }
+    process.exit(status.installation_failed ? 1 : 0);
+  '; then failed=1; fi
+fi
+exit "$failed"

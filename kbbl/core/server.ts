@@ -1,3 +1,4 @@
+import { readProfileReadiness } from "./acp/profile-readiness";
 import { loadPrIntegrationConfig } from "./config";
 import { parseArgs } from "node:util";
 import { mkdir } from "node:fs/promises";
@@ -211,6 +212,7 @@ if (coreControlToken && authPolicy.mode !== "token") {
 }
 
 const app = createApp({
+  readAgentProfiles: () => Promise.all([...acpProfiles.values()].map((profile) => readProfileReadiness(profile))),
   acp: acpService,
   defaultWorkdir: workdir,
   pwaDistDir,

@@ -220,3 +220,17 @@ describe("GET /directories", () => {
     expect(((await res.json()) as { path: string }).path).toBe(tmpRoot);
   });
 });
+
+test("profile readiness requires credentials on GET and HEAD and shares authorized probes", async () => {
+  let probes = 0;
+  const app = createApp({ acp: makeStubAcp([]), defaultWorkdir: null, pwaDistDir: tmpRoot,
+    getBunServer: () => null, config: KbblConfigSchema.parse({}), authPolicy: { mode: "token", token: "control-test-token" },
+    readAgentProfiles: async () => { probes++; await Bun.sleep(10); return []; } });
+  for (const method of ["GET", "HEAD"]) {
+    expect((await app.request("/agent-profiles/readiness", { method })).status).toBe(401);
+  }
+  expect(probes).toBe(0);
+  const responses = await Promise.all(Array.from({ length: 10 }, () => app.request("/agent-profiles/readiness", { headers: { authorization: "Bearer control-test-token" } })));
+  expect(responses.every((response) => response.status === 200)).toBe(true);
+  expect(probes).toBe(1);
+});

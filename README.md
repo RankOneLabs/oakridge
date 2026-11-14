@@ -20,6 +20,87 @@ The evaluator has no workflow-specific branch. A successful decision or
 publication response is the committed event: `{kind: "committed", run_id,
 event_id}`.
 
+## Install and start
+
+Linux is supported. Install Bash 4.3+, Bun, Git, openssl, the Rust toolchain
+pinned in `workflow-core/rust-toolchain.toml` and its `wasm32-unknown-unknown`
+target. Install Docker, or provide an external PostgreSQL database through
+`DBOS_SYSTEM_DATABASE_URL`. Install the Claude Code (`claude`) or Codex
+(`codex`) CLI for the ACP agent profiles you want to operate; `bun install`
+installs their ACP adapters.
+
+```bash
+git clone https://github.com/RankOneLabs/oakridge.git
+cd oakridge
+bun install --frozen-lockfile
+./scripts/oakridge-start
+```
+
+No gated-review configuration is needed for this path. The launcher initializes
+database state, builds the evaluator and PWA, starts DBOS and kbbl, and prints
+the local PWA URL. In another terminal, run:
+
+```bash
+bun run doctor
+```
+
+Doctor always runs the launcher's shared static checks, even with the stack
+stopped. It then renders DBOS's `/api/install-status` model, also available in
+the PWA's **Status** view: access mode, required stack checks, all ACP agent
+profiles and their authentication/skill readiness, selected PR integration,
+observation/grading availability, and per-definition launch blocks. A stopped
+stack is reported with its URL and startup command. Only required check
+failures cause an installation failure or a nonzero doctor exit. Missing or
+broken optional integrations and unauthenticated agents carry details and fixes
+without failing the installation. The launch form disables definitions listed
+in the same model's launch blocks and shows the preflight reason and remedy.
+
+Starting Oakridge needs no agent or GitHub credentials. Operating an ACP agent
+needs an authenticated Claude Code or Codex CLI. Each CLI manages its own model
+credentials: use `claude auth login` or `codex login`. Missing credentials surface
+as an agent-auth error while the core stays running; doctor and Status report
+per-profile readiness. Disabled profiles remain visible. Custom profiles without
+a supported authentication probe report that introspection is unavailable.
+
+The full GitHub development workflow needs a GitHub remote, a PR integration,
+and the PR lifecycle; offline development is not supported in this release.
+Choose `OAKRIDGE_PR_INTEGRATION=gated-review`, `github-cli`, or `none` before
+starting. Without an explicit choice, the launcher selects gated-review when
+configured, otherwise none. Each run keeps its recorded integration on resume
+and retry. With github-cli, the operator's own git/gh authentication is used
+(`gh auth login`); automatic merge observation is off, and merges complete
+through the manual **Confirm merged** action. The run page persistently states
+this on every merge-stage unit. With gated-review, GitHub App credentials stay
+in the gateway. With none, no GitHub credentials are needed; PR-dependent
+workflows are blocked before launch, while other definitions can launch.
+Gating is instruction-level: Oakridge does not enforce git/gh use at runtime.
+A target repository's agent permissions must allow the commands used by the
+selected integration skill.
+
+To enable gated-review, copy `.mcp.example.json` to the gitignored `.mcp.json`
+and set the `gated-review` HTTP server's nonempty URL. Its absence is harmless.
+Tailscale and remote services are optional. Observation/grading is optional:
+start with `./scripts/oakridge-start --observation` to enable it; see
+[observation operations](docs/observation-operations.md).
+
+Loopback binds need no control token. A non-loopback bind requires
+`OAKRIDGE_CONTROL_TOKEN` (any nonempty value), or the explicit override
+`ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1`. Status labels these modes **Local**,
+**Authenticated network**, and **Insecure network**, and shows the bind host.
+`0.0.0.0` exposes every network interface, not only Tailscale. The status model
+never includes the token value.
+
+`./scripts/oakridge-lan` binds to `0.0.0.0` and no longer unsets the token.
+Set `OAKRIDGE_CONTROL_TOKEN` in the environment before the next oakridge-lan
+restart; the token is env-only and is not read from a file in the state
+directory. The wrapper preserves authenticated access, uses a loopback-only
+Bun inspector, and appends output to `~/.local/state/oakridge/run-<date>.log`.
+Other arguments, including `--observation`, pass through. Unless
+`OAKRIDGE_ALLOWED_ORIGINS` is set, the launcher allows browser writes from
+loopback and the addresses selected for the bind, and prints the list.
+The backend publication key is separate: it is generated on first start at
+`~/.local/state/oakridge/publication.key`, beside the agent workdir.
+
 ## Development
 
 ```bash
@@ -41,28 +122,7 @@ shipped bundles through provider operations. The real-agent ACP smoke
 test requires `KBBL_ACP_REAL_AGENT` and is reported as skipped by the normal
 kbbl test command when no real agent is configured.
 
-For local startup, run `./scripts/oakridge-start` from the repository root. It
-rebuilds the Rust WASM module (a no-op when it is current; it stops if cargo is
-missing, and an explicit `OAKRIDGE_CORE_WASM` is used as given), starts PostgreSQL through Docker when
-`DBOS_SYSTEM_DATABASE_URL` is unset, applies the authority baseline, and starts
-the DBOS backend and kbbl PWA; `--observation` also starts the observation
-service from `observation/.env` and connects DBOS to it (see
-[observation operations](docs/observation-operations.md)). It keeps the backend's publication key in
-`~/.local/state/oakridge/publication.key`, generated on first start, and the
-agent workdir beside it. Unless `OAKRIDGE_ALLOWED_ORIGINS` is set, it allows
-browser writes from loopback and, with `--host=0.0.0.0`, from this machine's
-hostname, addresses and tailnet name, and prints the list. `./scripts/oakridge-lan`
-wraps it for the LAN: `--host 0.0.0.0` with no control token
-(`ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1`), a loopback-only Bun inspector, and
-output appended to `~/.local/state/oakridge/run-<date>.log`; other arguments,
-such as `--observation`, pass through. The baseline can be applied again when its
-recorded digest matches; a changed baseline file stops startup and reports both
-digests. Startup verifies the encryption key and existing intents, registers
-the provider and workflow services, launches DBOS, resumes active runs and
-parked effects, and only then binds HTTP. Set `OAKRIDGE_PROMPT_ROOT` to the repository root when launching the
-backend separately so it can read prompt files under `workflow-config/prompts/`
-when a definition is first pinned; runs render from the stored copy.
-The gated-review endpoint is the `gated-review` server in a local, gitignored `.mcp.json`, created by copying `.mcp.example.json` and setting its URL; the launcher reads it and hands it to DBOS, for pull request observation, and to kbbl, for agent sessions. Without it, gated-review is not configured and startup continues. The endpoint must provide the expanded `pr_status` fields. The DBOS application version defaults to a 16-character SHA-256
+The DBOS application version defaults to a 16-character SHA-256
 digest combining the sorted `ENGINE_SOURCE_MANIFEST` source digest, the
 `0001_core.sql` baseline digest and the digest of the core WASM module it
 loads (see `oakridge-dbos/README.md`).

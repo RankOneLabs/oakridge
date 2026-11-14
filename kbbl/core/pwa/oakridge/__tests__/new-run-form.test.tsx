@@ -1,3 +1,5 @@
+import { installStatus } from "../__fixtures__/install-status";
+import type { OperatorInstallStatus } from "../operator-contracts/projections/install-status-view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -8,11 +10,13 @@ import type { CreateRunRequest } from "../run-types";
 import { developmentLaunch } from "../adapters/launch";
 
 const definition = definitionFixture.definition as unknown as OperatorDefinitionDetail;
+let servedStatus: OperatorInstallStatus = installStatus;
 const launches: OperatorLaunchRequest[] = [];
 
 vi.mock("../client-projects", () => ({ fetchProjects: async () => [] }));
 
 vi.mock("../client", () => ({
+  fetchInstallStatus: async () => servedStatus,
   fetchOakridgeConfig: async () => ({ available: true, core_url: "http://oakridge.test" }),
   fetchWorkflowDefs: async () => [{ id: definition.definition_id, name: "development" }],
   fetchOperatorDefinition: async () => definition,
@@ -29,6 +33,7 @@ const { NewRunForm } = await import("../components/organisms/NewRunForm");
 
 beforeEach(() => {
   launches.length = 0;
+  servedStatus = installStatus;
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 404 })));
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -74,4 +79,16 @@ describe("NewRunForm automatic grading", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("run-1"));
     expect(launches.map((launch) => launch.config?.grading_enabled)).toEqual([true]);
   });
+});
+
+it("disables launch with the selected definition's served preflight reason", async () => {
+  servedStatus = { ...installStatus, launch_blocks: [{ definition_id: definition.definition_id, definition_name: "development", error: { kind: "integration_none", integration: "none", definition_id: definition.definition_id, detail: "Selected integration cannot launch this definition", fix: "Choose github-cli" } }] };
+  renderForm();
+  await screen.findByText(/Selected integration cannot launch this definition/);
+  expect((screen.getByRole("button", { name: "Start Run" }) as HTMLButtonElement).disabled).toBe(true);
+});
+it("leaves launch enabled for definitions absent from the served launch blocks", async () => {
+  renderForm();
+  await waitFor(() => expect((screen.getByRole("button", { name: "Start Run" }) as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByText(/Selected integration cannot launch/)).toBeNull();
 });
