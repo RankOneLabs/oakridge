@@ -3133,4 +3133,32 @@ fn deferred_validation_does_not_hide_request_changes_on_another_output() {
         .feedback
         .iter()
         .any(|entry| entry.review.0 == "notes_check"));
+    let expected_previous = critic.previous.clone();
+    let expected_feedback = critic.feedback.clone();
+    let mut retried = revised;
+    for retry_index in 0..2 {
+        retried = step_specs(
+            &program,
+            &retried.snapshot,
+            &[
+                serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
+                serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"failed","code":"test","detail":"before publication"}),
+            ],
+        );
+        retried = step(
+            &program,
+            &retried.snapshot,
+            &incoming(
+                Event::RetryRequested {
+                    unit: UnitId::from("run/document"),
+                    worker: WorkerKey::from("critic"),
+                },
+                &format!("notes-retry-{retry_index}"),
+            ),
+        )
+        .unwrap();
+        let critic = resolved_for(&retried, "critic");
+        assert_eq!(critic.previous, expected_previous);
+        assert_eq!(critic.feedback, expected_feedback);
+    }
 }

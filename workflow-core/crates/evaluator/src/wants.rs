@@ -140,51 +140,23 @@ pub fn stage_actions(
                         },
                     ))
                 } else {
-                    let mut deferred_validation = Vec::new();
-                    for review in &checked.reviews {
-                        let CheckedReview::Operator {
-                            key,
-                            of,
-                            when,
-                            decisions,
-                            ..
-                        } = review
-                        else {
-                            continue;
-                        };
-                        if !creates.contains(of)
-                            || !operator_review_is_open(
-                                program,
-                                state,
-                                unit,
-                                when.as_ref(),
-                                context,
-                            )?
-                        {
-                            continue;
-                        }
-                        let can_request_changes =
-                            open_decisions(state, &unit.id, key, of, decisions)
-                                .iter()
-                                .any(|offered| {
-                                    let decision = &decisions[&offered.decision.0];
-                                    decision.effect == DeclaredDecisionEffect::RequestChanges
-                                        && decided_artifact(of, &decision.on) == of
-                                });
-                        if can_request_changes {
-                            deferred_validation.push(of.clone());
-                        }
-                    }
-                    changes_requested_except(state, &unit.id, creates, &deferred_validation).map(
-                        |decision| {
-                            (
-                                Mode::Revise,
-                                Cause::ChangesRequested {
-                                    decision: decision.id().clone(),
-                                },
-                            )
+                    reviewer_changes_requested(
+                        ReviewerChangeSearch {
+                            program,
+                            state,
+                            unit,
+                            creates,
                         },
-                    )
+                        context,
+                    )?
+                    .map(|decision| {
+                        (
+                            Mode::Revise,
+                            Cause::ChangesRequested {
+                                decision: decision.id().clone(),
+                            },
+                        )
+                    })
                 }
             }
             CheckedWorker::Agent {
@@ -449,7 +421,33 @@ pub(super) fn resolve_run_worker(
         _ => None,
     };
     let (previous, feedback) = match action.mode {
-        Mode::Revise => match answered_decision(state, &unit.id, checked.creates(), action.cause) {
+        Mode::Revise => match if matches!(action.cause, Cause::Retry { .. })
+            && matches!(
+                checked,
+                CheckedWorker::Agent {
+                    reviews: Some(_),
+                    ..
+                }
+            ) {
+            reviewer_changes_requested(
+                ReviewerChangeSearch {
+                    program,
+                    state,
+                    unit,
+                    creates: checked.creates(),
+                },
+                context,
+            )?
+            .and_then(|decision| {
+                state
+                    .revisions
+                    .iter()
+                    .find(|revision| &revision.id == decision.target())
+                    .map(|revision| (revision, decision))
+            })
+        } else {
+            answered_decision(state, &unit.id, checked.creates(), action.cause)
+        } {
             Some((revision, _decision)) => (
                 Some(revision.clone()),
                 feedback_on(state, &unit.id, &revision.id, revision.decision_cursor),
@@ -561,4 +559,58 @@ pub(super) fn stage_wants(
         reviews,
         pending,
     })
+}
+
+struct ReviewerChangeSearch<'a> {
+    program: &'a CheckedWorkflow,
+    state: &'a StepSnapshot,
+    unit: &'a UnitState,
+    creates: &'a [SymbolKey],
+}
+
+fn reviewer_changes_requested<'a>(
+    search: ReviewerChangeSearch<'a>,
+    context: &mut EvaluationContext<'_>,
+) -> Result<Option<&'a DecisionState>, StepError> {
+    let ReviewerChangeSearch {
+        program,
+        state,
+        unit,
+        creates,
+    } = search;
+    let checked = checked_stage(program, unit)?;
+    let mut deferred_validation = Vec::new();
+    for review in &checked.reviews {
+        let CheckedReview::Operator {
+            key,
+            of,
+            when,
+            decisions,
+            ..
+        } = review
+        else {
+            continue;
+        };
+        if !creates.contains(of)
+            || !operator_review_is_open(program, state, unit, when.as_ref(), context)?
+        {
+            continue;
+        }
+        let can_request_changes = open_decisions(state, &unit.id, key, of, decisions)
+            .iter()
+            .any(|offered| {
+                let decision = &decisions[&offered.decision.0];
+                decision.effect == DeclaredDecisionEffect::RequestChanges
+                    && decided_artifact(of, &decision.on) == of
+            });
+        if can_request_changes {
+            deferred_validation.push(of.clone());
+        }
+    }
+    Ok(changes_requested_except(ChangeRequestSearch {
+        state,
+        unit: &unit.id,
+        artifacts: creates,
+        deferred_validation: &deferred_validation,
+    }))
 }
