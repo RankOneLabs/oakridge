@@ -52,7 +52,7 @@ export type ObservationEvidenceReadiness =
   | { readonly state: "not_ready"; readonly reason: ObservationNotReadyReason }
   | { readonly state: "ready"; readonly references: readonly ObservationEvidenceReference[]; readonly ready_at: string };
 
-export type ObservationQuestionScope = { readonly scope: "per_item" } | { readonly scope: "per_task"; readonly task_ids: string };
+export type ObservationQuestionScope = { readonly scope: "per_item" } | { readonly scope: "per_task"; readonly task_ids: string } | { readonly scope: "per_task"; readonly task_source: "resolved_assesses" };
 
 export interface ObservationReferenceFields {
   /** The label a grader sees this content under; unique within one evidence set. */

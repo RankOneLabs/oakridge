@@ -581,3 +581,10 @@ export async function readRunDefinitionId(db: Reader, run_id: string): Promise<D
   const run = await db.selectFrom("authority.run").select("definition_id").where("id", "=", run_id).executeTakeFirst();
   return run?.definition_id as DefinitionId | undefined ?? null;
 }
+
+/** Frozen provenance of the producing unit; never reconstructed from current briefs. */
+export async function readUnitInputProvenance(db: Kysely<DB>, location: UnitLocation): Promise<import("../domain/unit-status").InputProvenanceView> {
+  const row = await db.selectFrom("authority.unit").select("input_provenance")
+    .where("run_id", "=", location.run_id).where("id", "=", location.unit_id).executeTakeFirst();
+  return row?.input_provenance == null ? { status: "unresolved" } : { status: "recorded", entries: row.input_provenance };
+}

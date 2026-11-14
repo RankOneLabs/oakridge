@@ -1,3 +1,4 @@
+import { recordedRevisionIds } from "./projection-store";
 import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import { decodeEvidencePlan, type SubjectQuestion } from "../grading/evidence";
@@ -67,7 +68,9 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
       .select(["revision_id", "stage", "artifact_kind", "subject_id", "body"])
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("run_id", "=", run_id).where("revision_id", "=", revision_id).executeTakeFirst());
-    return row ? { ...row, revision_id: row.revision_id as ArtifactRevisionId } : null;
+    if (!row) return null;
+    const recorded = await withTenant(db, tenant, (trx) => recordedRevisionIds(trx, tenant, row.revision_id, "brief_revision_ids"));
+    return { ...row, revision_id: row.revision_id as ArtifactRevisionId, brief_revision_ids: recorded };
   }
 
   async readRevisionAt(artifact_kind: string, subject_revision_id: ArtifactRevisionId): Promise<CapturedRevision | null> {
@@ -124,7 +127,9 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
     const { db, tenant, run_id } = this.dependencies;
     const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_relation as relation")
       .innerJoin("observation.item_occurrence as item", (join) => join.onRef("item.producer", "=", "relation.producer")
-        .onRef("item.namespace", "=", "relation.namespace").onRef("item.logical_item_id", "=", "relation.target_logical_item_id"))
+        .onRef("item.namespace", "=", "relation.namespace").on((eb) => eb.or([
+          eb("item.logical_item_id", "=", eb.ref("relation.target_logical_item_id")),
+          eb("item.occurrence_id", "=", eb.ref("relation.target_occurrence_id"))])) )
       .select(["item.revision_id", "item.json_pointer", "item.item_kind", "item.selected_value"]).distinct()
       .where("relation.producer", "=", tenant.producer).where("relation.namespace", "=", tenant.namespace)
       .where("relation.source_occurrence_id", "=", occurrence_id).where("item.run_id", "=", run_id)

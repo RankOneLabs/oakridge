@@ -114,3 +114,16 @@ integration("captured revision readers retain the publishing stage and reject a 
   await expect(feed.send(revisionOutcome({ revision_id: "rev-1", artifact_kind: "build_result", stage: "different", body }, tenant, "event:changed-stage")))
     .rejects.toThrow("cursor_conflict");
 }));
+
+test("v4 validates recorded revision references while v3 always reads null provenance", () => {
+  const outcome = revisionOutcome({ revision_id: "assessment", artifact_kind: "assessment", body: { findings: [] } });
+  if (outcome.kind !== "artifact_revision") throw new Error("fixture");
+  const source = { ...outcome.revision.source, brief_revision_ids: ["oakridge:grading-test:brief-1"] };
+  const current = decodeCapture({ ...outcome.revision, format: "observation.artifact-revision/v4", source });
+  expect(current.ok && current.value.envelope.source.brief_revision_ids).toEqual(source.brief_revision_ids);
+  const legacy = decodeCapture({ ...outcome.revision, source });
+  expect(legacy.ok && legacy.value.envelope.source.brief_revision_ids).toBeNull();
+  expect(decodeCapture({ ...outcome.revision, format: "observation.artifact-revision/v4", source: { ...source, brief_revision_ids: ["oakridge:other:brief"] } }).ok).toBe(false);
+  const absent = decodeCapture({ ...outcome.revision, format: "observation.artifact-revision/v4", source: { ...source, brief_revision_ids: null } });
+  expect(absent.ok && absent.value.envelope.source.brief_revision_ids).toBeNull();
+});

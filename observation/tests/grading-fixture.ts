@@ -5,7 +5,8 @@ import { canonicalDigest } from "canonical-json";
 import { Client } from "pg";
 import { sql } from "kysely";
 import { configuredRunnerNames, credentialsForRunners } from "../src/grading/provider-credentials";
-const GRADING_FIXTURE = new URL("./fixtures/grading-definitions.json", import.meta.url);
+// Historical definitions keep legacy capture and pinning regressions independent of new configuration.
+const GRADING_FIXTURE = new URL("./fixtures/grading-definitions-legacy.json", import.meta.url);
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest, type EvaluatorDefinition } from "../src/grading/evaluator";
@@ -65,6 +66,7 @@ export interface FixtureRevision {
   readonly run_id?: string;
   readonly unit_id?: string;
   readonly subject_id?: string;
+  readonly brief_revision_ids?: readonly string[] | null;
   readonly predecessor_id?: string;
   readonly recorded_at?: string;
 }
@@ -80,10 +82,11 @@ export function revisionOutcome(input: FixtureRevision, scope: TenantScope = ten
   const prefix = `${scope.producer}:${scope.namespace}:`;
   const run_id = input.run_id ?? "run-1";
   return { ...provenance, kind: "artifact_revision", event_kind: "revision_published", run_id, event_id,
-    revision: { format: "observation.artifact-revision/v3", source: { ...scope, revision_id: `${prefix}${input.revision_id}`, run_id,
+    revision: { format: input.brief_revision_ids === undefined ? "observation.artifact-revision/v3" : "observation.artifact-revision/v4", source: { ...scope, revision_id: `${prefix}${input.revision_id}`, run_id,
       unit_id: input.unit_id ?? input.artifact_kind, stage: input.stage ?? (input.artifact_kind === "assessment" ? (input.unit_id?.split("/")[1] === "integration" ? "integration" : "implementation") : input.artifact_kind), artifact_kind: input.artifact_kind, artifact_schema_version: SCHEMA_VERSION,
       definition_id: DEFINITION_ID, predecessor_id: input.predecessor_id ? `${prefix}${input.predecessor_id}` : null,
-      subject_id: input.subject_id ? `${prefix}${input.subject_id}` : null },
+      subject_id: input.subject_id ? `${prefix}${input.subject_id}` : null,
+      brief_revision_ids: input.brief_revision_ids?.map((id) => `${prefix}${id}`) ?? null },
     recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z", body: input.body,
     body_digest: digest.value as `canonical-json/v1:${string}` & { readonly __brand: "CanonicalDigest" } } };
 }
@@ -164,7 +167,8 @@ export function scopeOf(question_id: string): import("../src/grading/evidence").
   if (!committedRegistration.ok) throw new Error(committedRegistration.error.detail);
   const pin = committedRegistration.value.capture.pins.find((pin) => pin.question_id === question_id);
   if (!pin) throw new Error(`no scope for ${question_id}`);
-  return pin.scope === "per_task" ? { scope: pin.scope, task_ids: pin.task_ids } : { scope: pin.scope };
+  return pin.scope === "per_item" ? { scope: pin.scope } : "task_source" in pin
+    ? { scope: pin.scope, task_source: pin.task_source } : { scope: pin.scope, task_ids: pin.task_ids };
 }
 /** The artifact, selector and item kind the committed definition targets for a question. */
 export function targetOf(question_id: string): import("../src/grading/evidence").CaptureTarget {

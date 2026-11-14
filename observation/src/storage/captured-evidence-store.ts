@@ -20,7 +20,9 @@ export async function pinOccurrenceInTransaction(trx: DatabaseTransaction, tenan
     .where("occurrence_id", "=", occurrence_id).executeTakeFirstOrThrow();
   const relations = await trx.selectFrom("observation.item_relation").selectAll()
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-    .where("source_occurrence_id", "=", occurrence_id).execute();
+    .where((eb) => eb.or([eb("source_occurrence_id", "=", occurrence_id), eb("source_occurrence_id", "in",
+      trx.selectFrom("observation.item_relation").select("target_occurrence_id").where("producer", "=", tenant.producer)
+        .where("namespace", "=", tenant.namespace).where("source_occurrence_id", "=", occurrence_id))])).execute();
   for (const pin of configuration.pins.filter((candidate) => isPinTarget(candidate, occurrence))) {
     const subjects = gradingSubjects({ occurrence: { ...occurrence, occurrence_id }, scope: pin, relations });
     for (const subject of subjects.filter((subject) => resolved_task_id === undefined || subject.task_id === resolved_task_id)) {
@@ -49,7 +51,9 @@ export async function pinSubjectInTransaction(trx: DatabaseTransaction, tenant: 
     detail: `question ${pin.question_id} targets ${pin.artifact_kind} ${pin.item_selector}, not ${occurrence.artifact_kind} ${occurrence.item_selector}` });
   const relations = await trx.selectFrom("observation.item_relation").selectAll()
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-    .where("source_occurrence_id", "=", subject.subject_occurrence_id).execute();
+    .where((eb) => eb.or([eb("source_occurrence_id", "=", subject.subject_occurrence_id), eb("source_occurrence_id", "in",
+      trx.selectFrom("observation.item_relation").select("target_occurrence_id").where("producer", "=", tenant.producer)
+        .where("namespace", "=", tenant.namespace).where("source_occurrence_id", "=", subject.subject_occurrence_id))])).execute();
   const permitted = occurrence && gradingSubjects({ occurrence: { ...occurrence, occurrence_id: subject.subject_occurrence_id },
     scope: pin, relations }).some((candidate) => candidate.task_id === subject.task_id);
   if (!permitted) return err({ operation: "evidence_store", entity_id: subject.subject_occurrence_id,

@@ -82,11 +82,27 @@ test("artifact revisions capture the publishing stage independently of unit decl
   const outcome = mapObservationEvent({ row: row({ kind: "revision_published", unit: "run-1/implementation/cohort", artifact: "draft", body: "text" }),
     definition: definition({ kind: "text" }), namespace: "test", stage: "writing", revision_sequence: 1, run_config: null });
   expect(outcome).toMatchObject({ format: "observation.source-event/v1", kind: "artifact_revision",
-    revision: { format: "observation.artifact-revision/v3", source: { stage: "writing" } } });
+    revision: { format: "observation.artifact-revision/v4", source: { stage: "writing" } } });
 });
 
 test("a revision with no resolved stage remains unmapped", () => {
   expect(mapObservationEvent({ row: row({ kind: "revision_published", unit: "run-1/writing", artifact: "draft", body: "text" }),
     definition: definition({ kind: "text" }), namespace: "test", stage: null, revision_sequence: 1, run_config: null }))
     .toMatchObject({ kind: "unmapped", reason: "unit run-1/writing has no stage" });
+});
+
+test("v4 carries only recorded brief inputs on build and assessment revisions", () => {
+  const original = definition({ kind: "text" });
+  const writing = original.checked_program.workflow.stages.writing!;
+  const pinned = { ...original, checked_program: { ...original.checked_program, workflow: { ...original.checked_program.workflow,
+    stages: { writing: { ...writing, artifacts: { build_result: { kind: "document" as const, schema: { kind: "text" as const } }, assessment: { kind: "document" as const, schema: { kind: "text" as const } }, draft: writing.artifacts.draft! } } } } } };
+  for (const artifact of ["build_result", "assessment", "draft"]) {
+    for (const recorded of [true, false]) {
+      const result = mapObservationEvent({ row: row({ kind: "revision_published", unit: "run-1/writing", artifact, body: "text" }), definition: pinned, namespace: "test", stage: "writing", revision_sequence: 1, run_config: null,
+        input_provenance: recorded ? { status: "recorded", entries: [{ input: "briefs", unit: "brief-a", revision_id: "brief-a:brief:1" }, { input: "briefs", unit: "brief-b", revision_id: "brief-b:brief:2" }] } : { status: "unresolved" } });
+      expect(result).toMatchObject({ kind: "artifact_revision", revision: { format: "observation.artifact-revision/v4", source: {
+        brief_revision_ids: recorded && artifact !== "draft" ? ["oakridge:test:brief-a:brief:1", "oakridge:test:brief-b:brief:2"] : null
+      } } });
+    }
+  }
 });

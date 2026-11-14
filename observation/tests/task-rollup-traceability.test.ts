@@ -41,7 +41,7 @@ test("task, acceptance and linked findings retain independent scoped results and
   expect(JSON.stringify(snapshot)).toBe(before);
   expect("verdict" in rollup).toBe(false);
   const lineage = selectLineage(snapshot, path, "T1", all);
-  expect(lineage.items.filter((entry) => entry.kind === "contribution")).toHaveLength(2);
+  expect(lineage.items.filter((entry) => entry.kind === "contribution")).toHaveLength(3);
 });
 test("missing grades remain explicit missing states, never passing answers", () => {
   const source = revision("finding", "inspect");
