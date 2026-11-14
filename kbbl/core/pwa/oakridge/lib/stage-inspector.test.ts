@@ -120,3 +120,11 @@ test("unit model retains authored bindings and anchors keep its route", () => {
   if (!model) throw new Error("Missing implementation model");
   expect(stageElementHref(model, { kind: "artifact", name: "build_result" })).toContain("/units/implementation#stage-cohort-artifact-build_result");
 });
+
+test("development cohort summary counts effective declarations and retains invoking units", async () => {
+  const { selectStageSummary } = await import("./stage-inspector");
+  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  if (!model) throw new Error("Missing cohort");
+  expect(selectStageSummary(model)).toEqual({ name: "cohort", invoking_units: model.units,
+    worker_count: 4, artifact_count: 5, review_count: 3, done_when: model.stage.done_when });
+});

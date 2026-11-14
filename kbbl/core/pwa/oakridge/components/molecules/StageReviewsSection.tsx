@@ -11,9 +11,11 @@ export function StageReviewsSection({ model }: StageSectionProps) {
       {model.reviews.map(({ key, review, source, decisions }) => (
         <article
           key={key}
+          className="or-stage-review"
           id={stageElementId({ stage: model.name, kind: "review", name: key })}
           tabIndex={-1}
         >
+          <p className="font-bold">{review.by} review</p>
           <h4>{key}</h4>
           <p>
             of:{" "}

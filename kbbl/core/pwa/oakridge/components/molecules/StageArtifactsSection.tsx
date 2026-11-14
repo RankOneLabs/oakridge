@@ -11,12 +11,13 @@ export function StageArtifactsSection({ model }: StageSectionProps) {
       {model.artifacts.map(({ name, artifact, producers, consumers }) => (
         <article
           key={name}
+          className="or-stage-artifact"
           id={stageElementId({ stage: model.name, kind: "artifact", name: name })}
           tabIndex={-1}
         >
-          <h4>
+          <h4 aria-label={artifact.validate?.length ? `${name} · Validated artifact` : name}>
             {name}
-            {Boolean(artifact.validate?.length) && " · Validated artifact"}
+            {Boolean(artifact.validate?.length) && <small className="or-stage-validated">validated</small>}
           </h4>
           <p>kind: {artifact.kind}</p>
           <StageType model={model} value={artifact.schema} />

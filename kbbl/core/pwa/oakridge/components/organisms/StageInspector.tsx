@@ -10,6 +10,7 @@ import { StagePromptsSection } from "../molecules/StagePromptsSection";
 import { StageArtifactsSection } from "../molecules/StageArtifactsSection";
 import { StageReviewsSection } from "../molecules/StageReviewsSection";
 import { StageCompletionSection } from "../molecules/StageCompletionSection";
+import { StageSummarySection } from "../molecules/StageSummarySection";
 interface StageInspectorProps {
   definition: OperatorDefinitionDetail;
   selection: DefinitionSelection | null;
@@ -54,9 +55,10 @@ export function StageInspector({ definition, selection }: StageInspectorProps) {
         {overview.groups.map((unit) => <a key={unit.path} href={definitionUnitHref(definition.definition_id, unit.path)} aria-current={selection?.kind === "unit" && selection.path === unit.path ? "page" : undefined}>{unit.path} (group)</a>)}
       </aside>
       <div className="min-w-0 grid content-start gap-3">
-        <div data-testid="or-def-selection"><DefinitionSelectionDetail overview={overview} selection={selection} /></div>
+        <div data-testid="or-def-selection">{(selection?.kind !== "stage" || !model) && <DefinitionSelectionDetail overview={overview} selection={selection} />}</div>
         {model && (
           <>
+            <StageSummarySection model={model} />
             <StageInputsSection model={model} />
             <StageBindingsSection model={model} />
             <StageWorkersSection model={model} />

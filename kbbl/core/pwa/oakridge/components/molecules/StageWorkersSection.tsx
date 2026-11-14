@@ -14,6 +14,7 @@ export function StageWorkersSection({ model }: StageSectionProps) {
         return (
           <article
             key={key}
+            className="or-stage-worker"
             id={stageElementId({ stage: model.name, kind: "worker", name: key })}
             tabIndex={-1}
           >
@@ -43,7 +44,19 @@ export function StageWorkersSection({ model }: StageSectionProps) {
             )}
             <p>modes: {trigger.modes.join(", ") || "none"}</p>
             {worker.kind === "agent" && <p>session: {worker.session ?? "default"}</p>}
-            <dl>
+            <p>
+              produces:{" "}
+              {worker.produces.map((name) => (
+                <a
+                  key={name}
+                  className="mr-2"
+                  href={stageElementHref(model, { kind: "artifact", name: name })}
+                >
+                  {name}
+                </a>
+              ))}
+            </p>
+            <dl className="or-stage-bindings">
               {Object.entries(worker.inputs).map(([name, expression]) => (
                 <div
                   key={name}
@@ -69,18 +82,7 @@ export function StageWorkersSection({ model }: StageSectionProps) {
                 </div>
               ))}
             </dl>
-            <p>
-              produces:{" "}
-              {worker.produces.map((name) => (
-                <a
-                  key={name}
-                  className="mr-2"
-                  href={stageElementHref(model, { kind: "artifact", name: name })}
-                >
-                  {name}
-                </a>
-              ))}
-            </p>
+
           </article>
         );
       })}
