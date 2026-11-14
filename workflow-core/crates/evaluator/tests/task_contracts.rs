@@ -416,14 +416,18 @@ impl Run {
     }
 
     fn accepted_brief(&mut self, cohort: &Value) {
-        let unit = format!("run/briefs/{}", cohort["id"].as_str().unwrap());
+        self.accepted_brief_body(brief_of(cohort));
+    }
+
+    fn accepted_brief_body(&mut self, brief: Value) {
+        let unit = format!("run/briefs/{}", brief["cohort_id"].as_str().unwrap());
         self.write(
             WorkerOutput {
                 unit: &unit,
                 worker: "writer",
                 artifact: "brief",
             },
-            brief_of(cohort),
+            brief,
         );
         self.accept(ReviewOf {
             unit: &unit,
@@ -452,6 +456,14 @@ impl Run {
             },
             build("build-sha"),
         );
+        let brief_unit = UnitId::from(format!("run/briefs/{id}").as_str());
+        let brief = latest(self.state(), &brief_unit, &SymbolKey::from("brief")).unwrap();
+        let subjects: Vec<Value> = brief.body["build_items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| json!({"kind":"build_item", "id":item["id"]}))
+            .collect();
         let subject = self.latest_id(&unit, "build_result");
         self.publish(Publication {
             output: WorkerOutput {
@@ -459,7 +471,10 @@ impl Run {
                 worker: "assessor",
                 artifact: "assessment",
             },
-            body: assessment("build-sha", json!([{ "subjects": if id == "a1" { json!([{"kind":"build_item","id":"T1"},{"kind":"build_item","id":"T2"}]) } else if id == "a2" { json!([{"kind":"build_item","id":"T1"},{"kind":"build_item","id":"T3"}]) } else { json!([{"kind":"build_item","id":"T4"}]) }, "evidence": [] }])),
+            body: assessment(
+                "build-sha",
+                json!([{ "subjects": subjects, "evidence": [] }]),
+            ),
             subject,
         });
         self.end(&unit, "assessor");
@@ -847,7 +862,7 @@ fn a_brief_replacing_an_id_fails() {
 }
 
 #[test]
-fn a_brief_reordering_its_ids_fails() {
+fn a_brief_reordering_its_build_items_passes() {
     assert_eq!(brief_failures(&["T2", "T1"]), Vec::<String>::new());
 }
 
@@ -972,7 +987,22 @@ fn at_integration() -> Run {
     run.prepare_and_analyze(&repositories, &task_ids);
     run.accepted_plan(&cohorts);
     for planned in &cohorts {
-        run.accepted_brief(planned);
+        let mut brief = brief_of(planned);
+        // T1 is split within a1 and shared across cohorts; other items combine tasks.
+        brief["build_items"] = match planned["id"].as_str().unwrap() {
+            "a1" => json!([
+                {"id":"api", "description":"API contribution", "task_ids":["T1"], "decision_ids":[], "verification":["API tests"]},
+                {"id":"storage", "description":"Storage contribution", "task_ids":["T1","T2"], "decision_ids":[], "verification":["Storage tests"]}
+            ]),
+            "a2" => json!([
+                {"id":"ui", "description":"UI contribution", "task_ids":["T1","T3"], "decision_ids":[], "verification":["UI tests"]}
+            ]),
+            "b1" => json!([
+                {"id":"adapter", "description":"Adapter contribution", "task_ids":["T4"], "decision_ids":[], "verification":["Adapter tests"]}
+            ]),
+            _ => unreachable!("known integration cohort"),
+        };
+        run.accepted_brief_body(brief);
     }
     run.completed_cohort("a1", "alpha");
     run.completed_cohort("a2", "alpha");
@@ -1018,7 +1048,7 @@ fn integration_receives_exactly_its_repositorys_briefs() {
 fn a_shared_task_reaches_integration_with_every_cohorts_contribution() {
     let run = at_integration();
     let briefs = integrator_briefs(&run, "run/integration/alpha");
-    let entries: Vec<(&str, &str)> = briefs
+    let contributions: Vec<(&str, &str, &str)> = briefs
         .as_array()
         .unwrap()
         .iter()
@@ -1028,12 +1058,25 @@ fn a_shared_task_reaches_integration_with_every_cohorts_contribution() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(move |entry| (entry["id"].as_str().unwrap(), cohort))
+                .flat_map(move |item| {
+                    let item_id = item["id"].as_str().unwrap();
+                    item["task_ids"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(move |task| (task.as_str().unwrap(), item_id, cohort))
+                })
         })
         .collect();
     assert_eq!(
-        entries,
-        [("T1", "a1"), ("T2", "a1"), ("T1", "a2"), ("T3", "a2")]
+        contributions,
+        [
+            ("T1", "api", "a1"),
+            ("T1", "storage", "a1"),
+            ("T2", "storage", "a1"),
+            ("T1", "ui", "a2"),
+            ("T3", "ui", "a2")
+        ]
     );
 }
 
@@ -1395,8 +1438,28 @@ fn cohort_assessment_rules_retain_incomplete_revision_and_refuse_approval() {
 fn integration_validates_task_and_qualified_build_item_subjects() {
     for (subject, message) in [
         (json!({"kind":"task","id":"T1"}), None),
+        (json!({"kind":"task","id":"T2"}), None),
+        (json!({"kind":"task","id":"T3"}), None),
         (
-            json!({"kind":"build_item","id":"T1","cohort_id":"a2"}),
+            json!({"kind":"build_item","id":"api","cohort_id":"a1"}),
+            None,
+        ),
+        (
+            json!({"kind":"build_item","id":"storage","cohort_id":"a1"}),
+            None,
+        ),
+        (
+            json!({"kind":"task","id":"api"}),
+            Some("Integration task subjects must name tasks in applicable briefs."),
+        ),
+        (
+            json!({"kind":"build_item","id":"T1","cohort_id":"a1"}),
+            Some(
+                "Integration build-item subjects must name an item in the qualified cohort brief.",
+            ),
+        ),
+        (
+            json!({"kind":"build_item","id":"ui","cohort_id":"a2"}),
             None,
         ),
         (
@@ -1404,19 +1467,19 @@ fn integration_validates_task_and_qualified_build_item_subjects() {
             Some("Integration task subjects must name tasks in applicable briefs."),
         ),
         (
-            json!({"kind":"build_item","id":"T1"}),
+            json!({"kind":"build_item","id":"api"}),
             Some(
                 "Integration build-item subjects must name an item in the qualified cohort brief.",
             ),
         ),
         (
-            json!({"kind":"build_item","id":"T1","cohort_id":"missing"}),
+            json!({"kind":"build_item","id":"api","cohort_id":"missing"}),
             Some(
                 "Integration build-item subjects must name an item in the qualified cohort brief.",
             ),
         ),
         (
-            json!({"kind":"build_item","id":"T3","cohort_id":"a1"}),
+            json!({"kind":"build_item","id":"ui","cohort_id":"a1"}),
             Some(
                 "Integration build-item subjects must name an item in the qualified cohort brief.",
             ),
