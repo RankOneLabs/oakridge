@@ -151,7 +151,7 @@ pub(super) fn materialize_group(
             return Err(rejected("max_list_items exceeded"));
         }
         let mut keys = BTreeSet::new();
-        for (each_index, each) in each_values.iter().enumerate() {
+        for each in &each_values {
             let member = if let Some(collection) = &collection {
                 eval_expression(
                     &collection.key.expression,
@@ -236,7 +236,7 @@ pub(super) fn materialize_group(
                     &parent,
                     unit,
                     Some(each),
-                    Some(each_index),
+                    Some(&member),
                     context,
                 )?)
             } else {
@@ -712,10 +712,7 @@ fn outcome_lineage(
                                 revision.id == *decision.target() && revision.artifact == *artifact
                             })
                     })
-                    .map(|decision| decision.target().clone())
-                    .or_else(|| {
-                        latest(state, &child.id, artifact).map(|revision| revision.id.clone())
-                    });
+                    .map(|decision| decision.target().clone());
                 if let (Some(body), Some(revision)) = (outcome.get(&fields[0]), revision) {
                     entries.push((body.clone(), child.id.clone(), revision));
                 }
@@ -732,7 +729,7 @@ fn input_lineage(
     parent: &UnitState,
     declaration: &CheckedUnit,
     each: Option<&Value>,
-    each_index: Option<usize>,
+    member: Option<&str>,
     context: &mut EvaluationContext<'_>,
 ) -> Result<Vec<InputProvenance>, StepError> {
     let mut entries = Vec::new();
@@ -741,21 +738,29 @@ fn input_lineage(
             Expression::Reference {
                 root: ReferenceRoot::EachMember,
                 path,
-            } if path.is_empty() => match (&declaration.collection, each_index) {
-                (Some(collection), Some(index)) => outcome_lineage(
-                    program,
-                    state,
-                    parent,
-                    &collection.source.expression,
-                    each,
-                    context,
-                )?
-                .into_iter()
-                .nth(index)
-                .into_iter()
-                .collect(),
-                _ => vec![],
-            },
+            } if path.is_empty() => {
+                let mut selected = Vec::new();
+                if let (Some(collection), Some(member)) = (&declaration.collection, member) {
+                    for entry in outcome_lineage(
+                        program,
+                        state,
+                        parent,
+                        &collection.source.expression,
+                        each,
+                        context,
+                    )? {
+                        // Pair by the source member's stored unit identity,
+                        // never by body equality or sparse lineage position.
+                        let source_unit = state.units.iter().find(|source| {
+                            source.id == entry.1 && source.collection_key.as_deref() == Some(member)
+                        });
+                        if source_unit.is_some() {
+                            selected.push(entry);
+                        }
+                    }
+                }
+                selected
+            }
             expression => outcome_lineage(program, state, parent, expression, each, context)?,
         };
         entries.extend(

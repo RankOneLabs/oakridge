@@ -49,11 +49,11 @@ CREATE TABLE authority.unit (
   -- Core emits blocked-ness with each step; commit carries that read onto the
   -- unit row so inbox and attention can read it without stepping the run.
   blocked_reason jsonb,
+  input_provenance jsonb,
   -- Each operator review awaiting a decision, by review key: the revision it
   -- decides on and its prompt rendered with its resolved inputs. Commit
   -- rewrites it on every event that steps the unit; nothing is asked or stored
   -- beyond what state already derives.
-  input_provenance jsonb,
   review_prompts jsonb NOT NULL DEFAULT '{}'::jsonb,
   PRIMARY KEY (run_id, id),
   FOREIGN KEY (run_id, parent_id) REFERENCES authority.unit(run_id, id)
