@@ -1,3 +1,5 @@
+import { RELATION_SEMANTICS } from "../projection/relations";
+import type { RelationType } from "../projection/extractor";
 import { z } from "zod";
 import { canonicalDigest } from "canonical-json";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, LogicalItemId, QuestionId, RunId } from "../domain/identity";
@@ -67,7 +69,7 @@ export function providerEvidence(reference: EvidenceReference): JsonObject {
   }
 }
 
-export type QuestionScope = { readonly scope: "per_item" } | { readonly scope: "per_task"; readonly task_ids: string };
+export type QuestionScope = { readonly scope: "per_item" } | { readonly scope: "per_task"; readonly task_ids: string } | { readonly scope: "per_task"; readonly task_source: "resolved_assesses" };
 /** The identity of a captured item that a question targets. Mirrors the artifact_kind, item_selector
  * and item_kind columns of observation.item_occurrence. */
 export interface CaptureTarget {
@@ -123,6 +125,8 @@ export interface EvidenceIdError { readonly operation: "evidence_set_id"; readon
 export interface SubjectQuestion extends QuestionKey { readonly task_id: LogicalItemId | null }
 /** Resolved relation rows supply task identity; the configured pointer bounds their authority. */
 export interface SubjectRelation {
+  readonly source_occurrence_id?: string | null;
+  readonly target_occurrence_id?: string | null;
   readonly type: string;
   readonly target_logical_item_id: string | null;
   readonly unresolved_target_ref: string | null;
@@ -139,11 +143,24 @@ export interface GradingSubject { readonly subject_occurrence_id: ItemOccurrence
 export function gradingSubjects({ occurrence, scope, relations }: SubjectGeneration): readonly GradingSubject[] {
   const subject_occurrence_id = occurrence.occurrence_id;
   if (scope.scope === "per_item") return [{ subject_occurrence_id, task_id: null }];
+  if ("task_source" in scope) {
+    const declaredSubjects = valueAtPointer(occurrence.selected_value, "/subjects");
+    const subjects = declaredSubjects === undefined ? valueAtPointer(occurrence.selected_value, "/task_ids") : declaredSubjects;
+    if (Array.isArray(subjects) && subjects.length === 0) return [{ subject_occurrence_id, task_id: null }];
+    const direct = relations.filter((edge) => (edge.source_occurrence_id === undefined || edge.source_occurrence_id === subject_occurrence_id)
+      && edge.type === "assesses" && edge.unresolved_target_ref === null);
+    const targets = new Set(direct.flatMap((edge) => edge.target_occurrence_id ? [edge.target_occurrence_id] : []));
+    const tasks = [...direct, ...relations.filter((edge) => edge.source_occurrence_id && targets.has(edge.source_occurrence_id)
+      && edge.type === "addresses" && edge.unresolved_target_ref === null)];
+    return [...new Set(tasks.flatMap((edge) => edge.target_logical_item_id ? [edge.target_logical_item_id as LogicalItemId] : []))]
+      .sort().map((task_id) => ({ subject_occurrence_id, task_id }));
+  }
   const ids = valueAtPointer(occurrence.selected_value, scope.task_ids);
   if (Array.isArray(ids) && ids.length === 0) return [{ subject_occurrence_id, task_id: null }];
   if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) return [];
   const prefix = `${occurrence.json_pointer}${scope.task_ids}/`;
-  const tasks = relations.filter((relation) => relation.type === "assesses" && relation.unresolved_target_ref === null
+  const tasks = relations.filter((relation) => (relation.source_occurrence_id === undefined || relation.source_occurrence_id === subject_occurrence_id)
+    && RELATION_SEMANTICS[relation.type as RelationType]?.establishes_task_association && relation.unresolved_target_ref === null
     && relation.target_logical_item_id !== null && ids.some((_, index) => relation.evidence_ref === `${prefix}${index}`));
   return [...new Set(tasks.map((relation) => relation.target_logical_item_id as LogicalItemId))]
     .sort().map((task_id) => ({ subject_occurrence_id, task_id }));

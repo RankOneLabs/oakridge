@@ -13,6 +13,8 @@ export interface OccurrenceLink {
   readonly evidence_ref: string;
   /** A shared id links revisions only when the prior item actually exists. */
   readonly if_present?: boolean;
+  /** Capture source field naming the only revisions eligible for resolution. */
+  readonly recorded_revisions_field?: string;
 }
 /** A reference to a run-scoped logical item. It stays visible until that item is captured. */
 export interface LogicalItemLink {

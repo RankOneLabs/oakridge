@@ -16,6 +16,11 @@ import { pinOccurrenceInTransaction } from "./captured-evidence-store";
 import { jsonText, withTenant, withTenantSnapshot, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationItemOccurrence, ObservationSourceRevision } from "./db-types";
 
+interface PendingSourceSelection {
+  readonly source: Selectable<ObservationSourceRevision>;
+  readonly pass: ReturnType<typeof selectRevision>;
+}
+
 export interface ProjectionSummary { readonly occurrences: number; readonly issues: number; readonly relations: number }
 export interface Page { readonly limit: number; readonly offset: number }
 export interface ItemsPage { readonly items: readonly Selectable<ObservationItemOccurrence>[];
@@ -115,11 +120,30 @@ async function saveLogicalItem(trx: DatabaseTransaction, tenant: TenantScope, ru
   for (const source of resolved.rows) await pinOccurrenceInTransaction(trx, tenant,
     source.source_occurrence_id as ItemOccurrenceId,
     { pins: configuration.pins.filter((pin) => pin.scope === "per_task") }, logical_item_id as LogicalItemId);
+  for (const source of resolved.rows) {
+    const parents = await trx.selectFrom("observation.item_relation").select("source_occurrence_id")
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("type", "=", "assesses").where("target_occurrence_id", "=", source.source_occurrence_id).execute();
+    for (const parent of parents) if (parent.source_occurrence_id) await pinOccurrenceInTransaction(trx, tenant,
+      parent.source_occurrence_id as ItemOccurrenceId, configuration, logical_item_id as LogicalItemId);
+  }
   return logical_item_id;
 }
 
 async function targetOccurrence(trx: DatabaseTransaction, tenant: TenantScope,
   source: Selectable<ObservationSourceRevision>, link: OccurrenceLink): Promise<string | null | undefined> {
+  if (link.recorded_revisions_field !== undefined) {
+    const ids = await recordedRevisionIds(trx, tenant, source.revision_id, link.recorded_revisions_field);
+    if (ids === null || ids.length === 0) return null;
+    const candidates = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "item_scope"])
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", source.run_id).where("revision_id", "in", ids)
+      .where("artifact_kind", "=", link.target_artifact_kind).where("item_kind", "=", link.target_item_kind)
+      .where("producer_local_id", "=", link.target_local_id).execute();
+    const eligible = link.target_scope === null ? (ids.length === 1 ? candidates : [])
+      : candidates.filter((item) => item.item_scope === link.target_scope);
+    return eligible.length === 1 ? eligible[0]!.occurrence_id : null;
+  }
   const scope = link.target_scope;
   const candidates = await sql<{ occurrence_id: string; item_scope: string | null; revision_id: string }>`
     SELECT i.occurrence_id, i.item_scope, i.revision_id
@@ -261,6 +285,40 @@ export async function projectRevisionInTransaction(trx: DatabaseTransaction, ten
   for (const selection of selections.filter((selection) => selection.is_new))
     await pinOccurrenceInTransaction(trx, tenant, selection.occurrence_id as ItemOccurrenceId, context.configuration);
   if (await saveSubjectRelation(trx, tenant, revision, context.extraction)) relationCount++;
+  // An exact recorded target may arrive after its source. Retry only explicit unresolved links.
+  const pending = await trx.selectFrom("observation.item_relation as edge")
+    .innerJoin("observation.item_occurrence as item", (join) => join.onRef("item.producer", "=", "edge.producer")
+      .onRef("item.namespace", "=", "edge.namespace").onRef("item.occurrence_id", "=", "edge.source_occurrence_id"))
+    .select(["item.revision_id", "item.occurrence_id", "item.json_pointer", "edge.evidence_ref"])
+    .where("edge.producer", "=", tenant.producer).where("edge.namespace", "=", tenant.namespace)
+    .where("item.run_id", "=", revision.run_id).where("edge.unresolved_target_ref", "is not", null)
+    .where("edge.unresolved_target_ref", "not like", "logical_item:%").execute();
+  const sourceSelections = new Map<string, PendingSourceSelection>();
+  for (const row of pending) {
+    let selection = sourceSelections.get(row.revision_id);
+    if (!selection) {
+      const source = await trx.selectFrom("observation.source_revision").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("revision_id", "=", row.revision_id).executeTakeFirstOrThrow();
+      const pass = selectRevision(source.body, source.revision_id, context.extraction.definitions(source.artifact_kind, source.artifact_schema_version));
+      selection = { source, pass };
+      sourceSelections.set(row.revision_id, selection);
+    }
+    const { source, pass } = selection;
+    const link = pass.items.find(({ item }) => item.path === row.json_pointer)?.item.links.find((link) => link.evidence_ref === row.evidence_ref);
+    if (!link || link.target !== "occurrence" || !link.recorded_revisions_field) continue;
+    const recorded = await recordedRevisionIds(trx, tenant, source.revision_id, link.recorded_revisions_field);
+    if (!recorded?.includes(revision_id)) continue;
+    const target = await targetOccurrence(trx, tenant, source, link);
+    if (!target) continue;
+    await saveRelation(trx, tenant, occurrenceRelation(row.occurrence_id, link, target));
+    const tasks = await trx.selectFrom("observation.item_relation").select("target_logical_item_id")
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("source_occurrence_id", "=", target).where("type", "=", "addresses")
+      .where("unresolved_target_ref", "is", null).execute();
+    for (const task of tasks) if (task.target_logical_item_id) await pinOccurrenceInTransaction(trx, tenant,
+      row.occurrence_id as ItemOccurrenceId, context.configuration, task.target_logical_item_id as LogicalItemId);
+  }
   return { occurrences: selections.length, issues: pass.issues.length + collisionCount, relations: relationCount };
 }
 
@@ -364,4 +422,17 @@ export function readLineage(db: Database, tenant: TenantScope, occurrence_id: st
       unresolved: slice.filter((relation) => relation.unresolved_target_ref !== null),
       total: ordered.length, ...page, republication };
   });
+}
+
+/** The journal preserves the original capture envelope without changing the source baseline. */
+export async function recordedRevisionIds(trx: DatabaseTransaction, tenant: TenantScope, revision_id: string, field: string): Promise<readonly string[] | null> {
+  const prefix = `${tenant.producer}:${tenant.namespace}:`;
+  const rows = await sql<{ ids: JsonValue }>`SELECT detail #> ARRAY['revision','source',${field}] AS ids
+    FROM observation.source_event_outcome WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}
+      AND outcome_kind = 'artifact_revision' AND detail #>> '{revision,format}' = 'observation.artifact-revision/v4'
+      AND detail #>> '{revision,source,revision_id}' = ${prefix + revision_id}
+    ORDER BY commit_txid, event_id LIMIT 1`.execute(trx);
+  const ids = rows.rows[0]?.ids;
+  return Array.isArray(ids) && ids.every((id) => typeof id === "string" && id.startsWith(prefix))
+    ? ids.map((id) => (id as string).slice(prefix.length)) : null;
 }

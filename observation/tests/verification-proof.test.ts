@@ -731,11 +731,9 @@ describe("the registration scenario", () => {
       item_path: plan_entry.item_path, item_kind: plan_entry.item_kind, question_id: coverage.question_id, question_version: coverage.question_version,
       evidence_set_id: "set-1", pinned_evaluator_definition_ids: [...coverage.evaluator_definition_ids], readiness: "not_ready" as const,
       not_ready_code: "collection_pending", ready_at: null, references: [] };
-    const brief_pin = { ...pin, occurrence_id: brief_entry.occurrence_id, revision_id: brief_entry.revision_id,
-      item_path: brief_entry.item_path, evidence_set_id: "set-2" };
     const undeclared = entry("other-entry", "brief", "/other/*", "/other/0");
-    const checks = pinChecks({ items: [plan_entry, brief_entry, undeclared], pins: [pin, brief_pin], frozen: [], revision_ids: [] }, registration, "first");
-    expect(checks.map((check) => [check.passed, check.detail])).toEqual([[true, "2 pinned question(s) on 3 item(s)"], [true, "all match"]]);
+    const checks = pinChecks({ items: [plan_entry, brief_entry, undeclared], pins: [pin], frozen: [], revision_ids: [] }, registration, "first");
+    expect(checks.map((check) => [check.passed, check.detail])).toEqual([[true, "1 pinned question(s) on 3 item(s)"], [true, "all match"]]);
   });
 
   const committedText = readFileSync(resolve(repository, "observation/tests/fixtures/grading-definitions.json"), "utf8");

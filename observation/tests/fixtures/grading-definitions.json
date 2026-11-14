@@ -47,7 +47,6 @@
   {
     "id": "assessment_finding.correctness",
     "scope": "per_task",
-    "task_ids": "/task_ids",
     "targets": [
       {
         "artifact": "assessment",
@@ -65,7 +64,8 @@
           "artifact": "tasks",
           "item_kind": "task"
         }
-      }
+      },
+      "assessed_build_items"
     ],
     "question": {
       "text": "Is this assessment finding correct, given its cited evidence and the build it assesses?",
@@ -78,7 +78,7 @@
       "missing_evidence_policy": "abstain",
       "abstain_semantics": "Abstain only when the evidence set is marked incomplete; low confidence alone is not abstention.",
       "unclear_semantics": "Choose unclear when the available evidence cannot establish whether the finding is correct.",
-      "interpretation_caveats": "Judge this one finding. Test and output citations are agent-reported; a file recorded as absent is evidence of absence. Linked task context is optional background."
+      "interpretation_caveats": "Judge this one finding. Test and output citations are agent-reported; a file recorded as absent is evidence of absence. Linked task context is optional background. Evaluate the linked build items from the exact recorded brief as instructions given to the builder."
     },
     "evaluators": [
       {
@@ -97,12 +97,12 @@
           }
         }
       }
-    ]
+    ],
+    "task_source": "resolved_assesses"
   },
   {
     "id": "assessment_finding.evidence_support",
     "scope": "per_task",
-    "task_ids": "/task_ids",
     "targets": [
       {
         "artifact": "assessment",
@@ -119,7 +119,8 @@
           "artifact": "tasks",
           "item_kind": "task"
         }
-      }
+      },
+      "assessed_build_items"
     ],
     "question": {
       "text": "Does this assessment finding's cited evidence support it?",
@@ -132,7 +133,7 @@
       "missing_evidence_policy": "abstain",
       "abstain_semantics": "Abstain only when the evidence set is marked incomplete; low confidence alone is not abstention.",
       "unclear_semantics": "Choose unclear when the citations cannot be judged either way, including when there are none.",
-      "interpretation_caveats": "Judge only the finding and its citations. Test and output citations are agent-reported."
+      "interpretation_caveats": "Judge only the finding and its citations. Test and output citations are agent-reported. Evaluate the linked build items from the exact recorded brief as instructions given to the builder."
     },
     "evaluators": [
       {
@@ -151,7 +152,8 @@
           }
         }
       }
-    ]
+    ],
+    "task_source": "resolved_assesses"
   },
   {
     "id": "task.requirement_coverage",
@@ -234,10 +236,6 @@
       {
         "artifact": "plan",
         "selector": "/cohorts/*/acceptance_criteria/*"
-      },
-      {
-        "artifact": "brief",
-        "selector": "/acceptance_criteria/*"
       }
     ],
     "evidence": [
@@ -309,6 +307,39 @@
             }
           }
         }
+      }
+    ]
+  },
+  {
+    "id": "build_item.task_support",
+    "scope": "per_task",
+    "task_ids": "/task_ids",
+    "targets": [
+      {
+        "artifact": "brief",
+        "selector": "/build_items/*"
+      }
+    ],
+    "evidence": [
+      "build_item_context"
+    ],
+    "question": {
+      "text": "For this item/task relationship, do the build item's instructions meaningfully address the assigned contribution to this task? Judge the instruction, not completed code.",
+      "response": "choice",
+      "values": [
+        "fully_covers",
+        "partially_covers",
+        "does_not_cover",
+        "unclear"
+      ],
+      "missing_evidence_policy": "abstain",
+      "abstain_semantics": "Abstain when the evidence is incomplete.",
+      "unclear_semantics": "Choose unclear when the instructions cannot settle coverage.",
+      "interpretation_caveats": "Assess the assigned contribution in the cohort, not the whole task implementation."
+    },
+    "evaluators": [
+      {
+        "runner": "human"
       }
     ]
   }

@@ -217,3 +217,38 @@ test("capabilities preserve declared order, stop at the first wait, and memoize 
     .toMatchObject({ state: "not_ready", reason: { code: "build_result_unavailable" } });
   expect(reads).toBe(2);
 });
+
+test("assessed build-item evidence requires exact recorded provenance and keeps its source address", async () => {
+  const { oakridgeCapabilities } = await import("../src/producers/oakridge/evidence");
+  const artifact = { ...finding([]), selected_value: { subjects: [{ kind: "build_item", id: "B1" }], evidence: [] } };
+  const item: LinkedItem = { revision_id: "brief-original" as ArtifactRevisionId, item_path: "/build_items/0", item_kind: "build_item", selected_value: { id: "B1", description: "Original instructions" } };
+  const source = sources({ linked: [item] });
+  const context = { artifact, question: key(CORRECTNESS_ID), sources: source };
+  expect(await oakridgeCapabilities.assessed_build_items!.resolve(context, {})).toMatchObject({ state: "not_ready", reason: { code: "brief_provenance_unresolved" } });
+  const captured = await source.readRevision(artifact.revision_id);
+  const exact = { ...source, readRevision: async () => ({ ...captured!, brief_revision_ids: ["brief-original"] }) };
+  expect(await oakridgeCapabilities.assessed_build_items!.resolve({ ...context, sources: exact }, {})).toMatchObject({ state: "ready", references: [{ revision_id: "brief-original", item_path: "/build_items/0", content: item.selected_value }] });
+  expect(await oakridgeCapabilities.assessed_build_items!.resolve({ ...context, sources: { ...exact, readLinkedItems: async () => [{ ...item, revision_id: "brief-later" as ArtifactRevisionId }] } }, {})).toMatchObject({ state: "not_ready", reason: { code: "build_item_unresolved" } });
+});
+
+test("build-item context includes the containing brief, canonical task and matching plan cohort", async () => {
+  const { oakridgeCapabilities } = await import("../src/producers/oakridge/evidence");
+  const artifact = { ...finding([]), revision_id: "brief-original" as ArtifactRevisionId, item_kind: "build_item", item_path: "/build_items/0", selected_value: { id: "B1", task_ids: ["T7"] } };
+  const source: CapturedSources = { ...sources(), readRevision: async () => ({ revision_id: artifact.revision_id, stage: "brief", artifact_kind: "brief", subject_id: null, body: { cohort_id: "alpha", build_items: [artifact.selected_value] } }),
+    readRevisionAt: async (kind) => kind === "plan" ? { revision_id: "plan" as ArtifactRevisionId, stage: "plan", artifact_kind: kind, subject_id: null, body: { cohorts: [{ id: "other" }, { id: "alpha" }] } } : null };
+  const result = await oakridgeCapabilities.build_item_context!.resolve({ artifact, question: key(CORRECTNESS_ID), sources: source }, {});
+  expect(result).toMatchObject({ state: "ready", references: [{ ref: "subject", revision_id: "brief-original" }, { ref: "task_context:0", item_path: "/tasks/0" }, { ref: "brief", revision_id: "brief-original" }, { ref: "cohort", item_path: "/cohorts/1", content: { id: "alpha" } }, { ref: "spec" }] });
+});
+
+test("build-item context anchors the approved specification to its canonical task revision", async () => {
+  const { oakridgeCapabilities } = await import("../src/producers/oakridge/evidence");
+  const artifact = { ...finding([]), revision_id: "brief" as ArtifactRevisionId, item_kind: "build_item", item_path: "/build_items/0", selected_value: { id: "B1", task_ids: ["T7"] } };
+  const source: CapturedSources = { ...sources(),
+    readRevision: async () => ({ revision_id: artifact.revision_id, stage: "brief", artifact_kind: "brief", subject_id: null, body: { cohort_id: "alpha" } }),
+    readRevisionAt: async (kind, anchor): Promise<CapturedRevision> => {
+      if (kind === "spec") expect(String(anchor)).toBe("tasks-1");
+      return { revision_id: kind as ArtifactRevisionId, stage: kind, artifact_kind: kind, subject_id: null, body: kind === "plan" ? { cohorts: [{ id: "alpha" }] } : { approved: true } };
+    } };
+  expect(await oakridgeCapabilities.build_item_context!.resolve({ artifact, question: key(CORRECTNESS_ID), sources: source }, {}))
+    .toMatchObject({ state: "ready", references: expect.arrayContaining([{ source: "revision", ref: "spec", revision_id: "spec", item_path: null, content: { approved: true } }]) });
+});

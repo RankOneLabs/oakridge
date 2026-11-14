@@ -4,8 +4,8 @@ import type { LinkReference, LogicalItemLink, OccurrenceLink, RelationType } fro
 /** Identity semantics belong to the generic vocabulary, independently of any producer. */
 export const RELATION_SEMANTICS: Record<RelationType, { readonly establishes_task_association: boolean; readonly propagates_task_association: boolean }> = {
   derived_from: { establishes_task_association: false, propagates_task_association: false },
-  addresses: { establishes_task_association: false, propagates_task_association: false },
-  assesses: { establishes_task_association: true, propagates_task_association: false },
+  addresses: { establishes_task_association: true, propagates_task_association: false },
+  assesses: { establishes_task_association: true, propagates_task_association: true },
   supersedes: { establishes_task_association: true, propagates_task_association: true },
   split_from: { establishes_task_association: true, propagates_task_association: true },
   merged_from: { establishes_task_association: true, propagates_task_association: true },
