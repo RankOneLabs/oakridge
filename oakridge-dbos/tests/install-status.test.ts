@@ -103,3 +103,16 @@ test("served status excludes the configured control token even in failed remote 
     else process.env.OAKRIDGE_CONTROL_TOKEN = previous;
   }
 });
+for (const state of ["none_configured", "configured"] as const) test(`observation reports ${state} grading capability without failing installation`, async () => {
+  const graders = state === "none_configured" ? { state } : { state, graders: [{ runner: "test", evaluator_definition_id: "test-evaluator" }] };
+  const status = await readInstallStatus({ ...sources(), observation_url: "http://observation.example",
+    fetch: async () => Response.json({ service: "observation", status: "ok", database: "available", graders }) });
+  expect(status.observation.availability.kind).toBe(state === "none_configured" ? "unavailable_optional" : "ok");
+  expect(status.installation_failed).toBe(false);
+  if (status.observation.availability.kind === "unavailable_optional") expect(status.observation.availability.fix).toContain("Grading configuration");
+});
+test("an invalid observation health response is a non-blocking failure", async () => {
+  const status = await readInstallStatus({ ...sources(), observation_url: "http://observation.example", fetch: async () => Response.json({ status: "ok" }) });
+  expect(status.observation.availability).toMatchObject({ kind: "failed", required: false });
+  expect(status.installation_failed).toBe(false);
+});
