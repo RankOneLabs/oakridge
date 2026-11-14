@@ -114,6 +114,13 @@
       "text": "text",
       "decision_ids": "list(ident)"
     },
+    "build_item": {
+      "id": "ident",
+      "description": "text",
+      "task_ids": "list(ident)",
+      "decision_ids": "list(ident)",
+      "verification": "list(text)"
+    },
     "brief_body": {
       "cohort_id": "ident",
       "repository_key": "ident",
@@ -123,7 +130,7 @@
       "files_in_scope": "list(text)",
       "decisions_made": "list(brief_decision)",
       "approaches_rejected": "list(rejected_approach)",
-      "acceptance_criteria": "list(task_acceptance)",
+      "build_items": "list(build_item)",
       "next_action": "text"
     },
     "brief_decision": {
@@ -169,8 +176,13 @@
       "id": "uuid(generated)",
       "text": "text"
     },
+    "assessment_subject": {
+      "kind": "enum(build_item, task)",
+      "id": "ident",
+      "cohort_id": "optional(ident)"
+    },
     "assessment_finding": {
-      "task_ids": "list(ident)",
+      "subjects": "list(assessment_subject)",
       "status": "optional(enum(met, not_met, partial))",
       "evidence": "list(evidence_ref)",
       "description": "optional(text)"
@@ -561,8 +573,28 @@
               "message": "The brief's depends_on must be its plan cohort's, in the same order."
             },
             {
-              "check": "map(brief.acceptance_criteria, item.id) == map(input.cohort.acceptance_criteria, item.id)",
-              "message": "The brief's acceptance_criteria ids must be its plan cohort's, in the same order."
+              "check": "unique(map(brief.build_items, item.id))",
+              "message": "Build-item ids must be unique."
+            },
+            {
+              "check": "every(map(input.cohort.acceptance_criteria, item.id), contains(flatten(map(brief.build_items, item.task_ids)), item))",
+              "message": "Every assigned task must appear in a build item."
+            },
+            {
+              "check": "every(flatten(map(brief.build_items, item.task_ids)), contains(map(input.cohort.acceptance_criteria, item.id), item))",
+              "message": "Build-item task ids must belong to the cohort allocation."
+            },
+            {
+              "check": "every(brief.build_items, len(item.description) > 0)",
+              "message": "Every build item must have a nonempty description."
+            },
+            {
+              "check": "every(brief.build_items, len(item.task_ids) > 0)",
+              "message": "Every build item must reference at least one task."
+            },
+            {
+              "check": "every(flatten(map(brief.build_items, item.decision_ids)), contains(map(brief.decisions_made, item.id), item))",
+              "message": "Build-item decision ids must name brief decisions."
             }
           ]
         }
@@ -641,7 +673,25 @@
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
-          }
+          },
+          "validate": [
+            {
+              "check": "every(flatten(map(assessment.findings, item.subjects)), item.kind == \"build_item\")",
+              "message": "Cohort assessment subjects must be build items."
+            },
+            {
+              "check": "every(flatten(map(assessment.findings, item.subjects)), contains(map(input.brief.build_items, item.id), item.id))",
+              "message": "Cohort assessment subjects must name brief build items."
+            },
+            {
+              "check": "every(map(input.brief.build_items, item.id), contains(map(flatten(map(assessment.findings, item.subjects)), item.id), item))",
+              "message": "Every brief build item must be assessed."
+            },
+            {
+              "check": "published(build_result) and assessment.head_sha == latest(build_result).head_sha",
+              "message": "Assessment head_sha must match the latest build result."
+            }
+          ]
         },
         "pr_state": {
           "kind": "status_record",
@@ -787,7 +837,17 @@
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
-          }
+          },
+          "validate": [
+            {
+              "check": "every(filter(flatten(map(assessment.findings, item.subjects)), item.kind == \"task\"), contains(flatten(map(flatten(map(input.briefs, item.build_items)), item.task_ids)), item.id))",
+              "message": "Integration task subjects must name tasks in applicable briefs."
+            },
+            {
+              "check": "every(filter(flatten(map(assessment.findings, item.subjects)), item.kind == \"build_item\"), contains(map(input.briefs, item.cohort_id), item.cohort_id) and contains(map(require(lookup(input.briefs, cohort_id, require(item.cohort_id))).build_items, item.id), item.id))",
+              "message": "Integration build-item subjects must name an item in the qualified cohort brief."
+            }
+          ]
         },
         "pr": {
           "kind": "external_reference",

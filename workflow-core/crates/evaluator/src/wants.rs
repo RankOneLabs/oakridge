@@ -140,14 +140,25 @@ pub fn stage_actions(
                         },
                     ))
                 } else {
-                    changes_requested(state, &unit.id, creates).map(|decision| {
-                        (
-                            Mode::Revise,
-                            Cause::ChangesRequested {
-                                decision: decision.id().clone(),
-                            },
-                        )
-                    })
+                    changes_requested(state, &unit.id, creates)
+                        // Keep failed review output available to its operator.
+                        // Approval is blocked by validation; an explicit request
+                        // for changes starts the next reviewer attempt. Outputs
+                        // without their own operator review still auto-return.
+                        .filter(|decision| {
+                            !matches!(decision, DecisionState::Validation { artifact, .. }
+                                if checked.reviews.iter().any(|review| {
+                                    matches!(review, CheckedReview::Operator { of, .. } if of == artifact)
+                                }))
+                        })
+                        .map(|decision| {
+                            (
+                                Mode::Revise,
+                                Cause::ChangesRequested {
+                                    decision: decision.id().clone(),
+                                },
+                            )
+                        })
                 }
             }
             CheckedWorker::Agent {
