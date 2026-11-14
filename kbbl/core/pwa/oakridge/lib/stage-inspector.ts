@@ -201,3 +201,23 @@ export function stageSelectionHref(model: StageInspectorModel): string {
     ? definitionUnitHref(model.definition.definition_id, model.selected_unit.path)
     : definitionStageHref(model.definition.definition_id, model.name);
 }
+
+/** Summary of the effective stage and its authored invoking units. */
+export interface StageSummary {
+  name: string;
+  invoking_units: StageInspectorModel["units"];
+  worker_count: number;
+  artifact_count: number;
+  review_count: number;
+  done_when: StageInspectorModel["stage"]["done_when"];
+}
+export function selectStageSummary(model: StageInspectorModel): StageSummary {
+  return {
+    name: model.name,
+    invoking_units: model.units,
+    worker_count: model.workers.length,
+    artifact_count: model.artifacts.length,
+    review_count: model.reviews.length,
+    done_when: model.stage.done_when,
+  };
+}
