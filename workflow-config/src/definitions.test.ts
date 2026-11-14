@@ -594,3 +594,7 @@ for (const name of ["assess", "assess-revise"]) {
     expect(prompt).toContain("Omit its `id`; the server generates it");
   });
 }
+
+test("development pins the build-item contract after the prior task-contract definition", () => {
+  expect(unwrap(readLaunchableCatalog()).development).not.toBe("478dfc8194eb060c438c916adbe9b80b9b5010ad2d339b629448ddbde376fc34");
+});

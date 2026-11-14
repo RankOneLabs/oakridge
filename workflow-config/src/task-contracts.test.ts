@@ -25,7 +25,7 @@ function unwrap<Value, Failure>(result: Result<Value, Failure>): Value {
 const development = YAML.parse(readFileSync(resolve(root, "workflow-config/development.yaml"), "utf8")) as AuthoredDevelopment;
 const readPrompt = (name: string): string => readFileSync(resolve(promptDirectory, `${name}.md`), "utf8");
 const selectPromptNames = (): string[] => readdirSync(promptDirectory).map((file) => file.replace(/\.md$/, ""));
-const planningPrompts = ["plan", "plan-revise", "plan-review", "brief", "brief-revise", "brief-review"];
+const planningPrompts = ["plan", "plan-revise", "plan-review"];
 const assessmentPrompts = ["assess", "assess-revise", "integrate", "integrate-revise"];
 const integrationPrompts = ["integrate", "integrate-revise", "integration-review"];
 
@@ -33,9 +33,12 @@ test("an acceptance entry declares exactly its task id, text and decision links"
   expect(Object.keys(development.schemas.task_acceptance).sort()).toEqual(["decision_ids", "id", "text"]);
 });
 
-test("plan cohorts and briefs share the acceptance entry", () => {
-  expect([development.schemas.plan_cohort.acceptance_criteria, development.schemas.brief_body.acceptance_criteria])
-    .toEqual(["list(task_acceptance)", "list(task_acceptance)"]);
+test("briefs carry build items while plan cohorts retain task acceptance", () => {
+  expect(development.schemas.plan_cohort.acceptance_criteria).toBe("list(task_acceptance)");
+  expect(development.schemas.brief_body.build_items).toBe("list(build_item)");
+  expect(development.schemas.brief_body.acceptance_criteria).toBeUndefined();
+  expect(development.schemas.build_item).toEqual({ id: "ident", description: "text", task_ids: "list(ident)", decision_ids: "list(ident)", verification: "list(text)" });
+  expect(development.schemas.assessment_subject).toEqual({kind: "enum(build_item, task)", id: "ident", cohort_id: "optional(ident)"});
 });
 
 test("the replaced criterion schema is gone", () => {
@@ -44,7 +47,7 @@ test("the replaced criterion schema is gone", () => {
 
 test("a finding declares a required list of task links and no criterion fields", () => {
   expect(development.schemas.assessment_finding).toEqual({
-    task_ids: "list(ident)",
+    subjects: "list(assessment_subject)",
     status: "optional(enum(met, not_met, partial))",
     evidence: "list(evidence_ref)",
     description: "optional(text)",
@@ -85,7 +88,7 @@ for (const name of planningPrompts) {
   });
 }
 
-for (const name of ["plan", "plan-revise", "brief", "brief-revise"]) {
+for (const name of ["plan", "plan-revise"]) {
   test(`${name}.md states the exact acceptance entry shape`, () => {
     expect(readPrompt(name)).toContain("{ id, text, decision_ids }");
   });
@@ -93,7 +96,7 @@ for (const name of ["plan", "plan-revise", "brief", "brief-revise"]) {
 
 for (const name of assessmentPrompts) {
   test(`${name}.md allows several findings, shared findings and unlinked findings`, () => {
-    expect(readPrompt(name)).toContain("`task_ids: []`");
+    expect(readPrompt(name)).toContain("`subjects: []`");
   });
 }
 
@@ -106,7 +109,7 @@ for (const name of integrationPrompts) {
 for (const name of ["integrate", "integrate-revise"]) {
   test(`${name}.md groups shared tasks and requires no build subject`, () => {
     const prompt = readPrompt(name);
-    expect([prompt.includes("Group the entries by `id`"), prompt.includes("no build result subject")]).toEqual([true, true]);
+    expect([prompt.includes("one task across cohorts"), prompt.includes("no build result subject")]).toEqual([true, true]);
   });
 }
 

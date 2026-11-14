@@ -13,8 +13,7 @@ const UNKNOWN_TASK: &str =
 const MISSING_TASK: &str =
     "Every task in the approved task list must appear in at least one cohort's acceptance_criteria.";
 const REPEATED_TASK: &str = "A task id may appear only once within a cohort's acceptance_criteria; repeating it in another cohort is valid.";
-const BRIEF_IDS: &str =
-    "The brief's acceptance_criteria ids must be its plan cohort's, in the same order.";
+const BRIEF_IDS: &str = "Every assigned task must appear in a build item.";
 const REFUSED: &str = "target revision failed validation";
 
 fn development() -> CheckedWorkflow {
@@ -93,12 +92,16 @@ fn plan(cohorts: &[Value]) -> Value {
     })
 }
 
+fn items(ids: &[&str]) -> Vec<Value> {
+    ids.iter().map(|id| json!({"id": id, "description": format!("Deliver {id}"), "task_ids": [id], "decision_ids": [], "verification": ["tests"]})).collect()
+}
+
 fn brief_of(cohort: &Value) -> Value {
     json!({
         "cohort_id": cohort["id"], "repository_key": cohort["repository_key"],
         "title": cohort["title"], "depends_on": cohort["depends_on"], "goal": "goal",
         "files_in_scope": [], "decisions_made": [], "approaches_rejected": [],
-        "acceptance_criteria": cohort["acceptance_criteria"], "next_action": "start"
+        "build_items": cohort["acceptance_criteria"].as_array().unwrap().iter().map(|e| items(&[e["id"].as_str().unwrap()])[0].clone()).collect::<Vec<_>>(), "next_action": "start"
     })
 }
 
@@ -456,7 +459,7 @@ impl Run {
                 worker: "assessor",
                 artifact: "assessment",
             },
-            body: assessment("build-sha", json!([])),
+            body: assessment("build-sha", json!([{ "subjects": if id == "a1" { json!([{"kind":"build_item","id":"T1"},{"kind":"build_item","id":"T2"}]) } else if id == "a2" { json!([{"kind":"build_item","id":"T1"},{"kind":"build_item","id":"T3"}]) } else { json!([{"kind":"build_item","id":"T4"}]) }, "evidence": [] }])),
             subject,
         });
         self.end(&unit, "assessor");
@@ -783,7 +786,7 @@ fn brief_failures(ids: &[&str]) -> Vec<String> {
     });
     let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
     let mut brief = brief_of(&planned);
-    brief["acceptance_criteria"] = json!(entries(ids));
+    brief["build_items"] = json!(items(ids));
     run.publish(Publication {
         output: WorkerOutput {
             unit: "run/briefs/a",
@@ -806,8 +809,7 @@ fn a_brief_with_its_cohort_ids_in_order_passes_with_rewritten_text() {
     });
     let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
     let mut brief = brief_of(&planned);
-    brief["acceptance_criteria"][0]["text"] =
-        json!("Self-contained wording of the same obligation");
+    brief["build_items"][0]["description"] = json!("Self-contained wording of the same obligation");
     run.publish(Publication {
         output: WorkerOutput {
             unit: "run/briefs/a",
@@ -827,17 +829,26 @@ fn a_brief_missing_a_cohort_id_fails() {
 
 #[test]
 fn a_brief_adding_an_id_fails() {
-    assert_eq!(brief_failures(&["T1", "T2", "T3"]), [BRIEF_IDS]);
+    assert_eq!(
+        brief_failures(&["T1", "T2", "T3"]),
+        ["Build-item task ids must belong to the cohort allocation."]
+    );
 }
 
 #[test]
 fn a_brief_replacing_an_id_fails() {
-    assert_eq!(brief_failures(&["T1", "AC2"]), [BRIEF_IDS]);
+    assert_eq!(
+        brief_failures(&["T1", "AC2"]),
+        [
+            BRIEF_IDS,
+            "Build-item task ids must belong to the cohort allocation."
+        ]
+    );
 }
 
 #[test]
 fn a_brief_reordering_its_ids_fails() {
-    assert_eq!(brief_failures(&["T2", "T1"]), [BRIEF_IDS]);
+    assert_eq!(brief_failures(&["T2", "T1"]), Vec::<String>::new());
 }
 
 #[test]
@@ -883,7 +894,7 @@ fn an_operator_cannot_accept_a_failed_brief_or_release_its_builder_until_correct
     let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
     let unit = "run/briefs/a";
     let mut reordered = brief_of(&planned);
-    reordered["acceptance_criteria"] = json!(entries(&["T2", "T1"]));
+    reordered["build_items"] = json!(items(&["T1"]));
     run.write(
         WorkerOutput {
             unit,
@@ -1013,7 +1024,7 @@ fn a_shared_task_reaches_integration_with_every_cohorts_contribution() {
         .iter()
         .flat_map(|brief| {
             let cohort = brief["cohort_id"].as_str().unwrap();
-            brief["acceptance_criteria"]
+            brief["build_items"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -1032,13 +1043,13 @@ fn integration_findings_link_tasks_many_to_many_without_a_build_subject() {
     let unit = "run/integration/alpha";
     let head = "integration-sha";
     let findings = json!([
-        {"task_ids": ["T1"], "description": "First half", "status": "met",
+        {"subjects": [{"kind":"task","id":"T1"}], "description": "First half", "status": "met",
          "evidence": [{"kind": "file", "ref": "src/a.rs:1-9"}]},
-        {"task_ids": ["T1"], "description": "Second half", "status": "partial",
+        {"subjects": [{"kind":"task","id":"T1"}], "description": "Second half", "status": "partial",
          "evidence": [{"kind": "test", "ref": "suite::case"}]},
-        {"task_ids": ["T2", "T3"], "description": "Shared", "status": "not_met",
+        {"subjects": [{"kind":"task","id":"T2"},{"kind":"task","id":"T3"}], "description": "Shared", "status": "not_met",
          "evidence": [{"kind": "output", "ref": "cargo test", "detail": "1 failed"}]},
-        {"task_ids": [], "description": "Unlinked note", "evidence": []}
+        {"subjects": [], "description": "Unlinked note", "evidence": []}
     ]);
     run.publish(Publication {
         output: WorkerOutput {
@@ -1120,7 +1131,7 @@ fn finding_links_are_a_required_list_of_ids() {
     let action = run.action(unit, "integrator");
     for findings in [
         json!([{"evidence": []}]),
-        json!([{"task_ids": "T1", "evidence": []}]),
+        json!([{"subjects": "T1", "evidence": []}]),
     ] {
         let refusal = run.apply(
             Event::RevisionPublished {
@@ -1164,7 +1175,7 @@ fn acceptance_entries_declare_exactly_id_text_and_decision_ids() {
 fn assessment_findings_declare_task_links_and_no_criterion_fields() {
     assert_eq!(
         declared_fields("assessment_finding"),
-        ["description", "evidence", "status", "task_ids"]
+        ["description", "evidence", "status", "subjects"]
     );
 }
 
@@ -1192,4 +1203,217 @@ fn an_acceptance_entry_without_its_decision_links_fails_schema() {
     assert!(
         matches!(refusal, Err(StepError::Rejected { reason, .. }) if reason == "artifact body fails schema")
     );
+}
+
+#[test]
+fn build_item_rules_accept_split_and_combined_tasks_and_name_each_failure() {
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1", "T2"],
+    });
+    let mut valid = brief_of(&planned);
+    valid["build_items"] = json!(items(&["T1", "T2", "extra"]));
+    valid["build_items"][2]["task_ids"] = json!(["T1", "T2"]);
+    for (field, value, message) in [
+        ("id", json!("T1"), "Build-item ids must be unique."),
+        (
+            "task_ids",
+            json!(["T9"]),
+            "Build-item task ids must belong to the cohort allocation.",
+        ),
+        (
+            "description",
+            json!(""),
+            "Every build item must have a nonempty description.",
+        ),
+        (
+            "task_ids",
+            json!([]),
+            "Every build item must reference at least one task.",
+        ),
+        (
+            "decision_ids",
+            json!(["D9"]),
+            "Build-item decision ids must name brief decisions.",
+        ),
+    ] {
+        let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
+        let mut invalid = valid.clone();
+        invalid["build_items"][2][field] = value;
+        run.publish(Publication {
+            output: WorkerOutput {
+                unit: "run/briefs/a",
+                worker: "writer",
+                artifact: "brief",
+            },
+            body: invalid,
+            subject: None,
+        });
+        assert_eq!(run.validation_messages("run/briefs/a", "brief"), [message]);
+    }
+    let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
+    run.publish(Publication {
+        output: WorkerOutput {
+            unit: "run/briefs/a",
+            worker: "writer",
+            artifact: "brief",
+        },
+        body: valid,
+        subject: None,
+    });
+    assert!(run.validation_messages("run/briefs/a", "brief").is_empty());
+}
+
+#[test]
+fn cohort_assessment_rules_retain_incomplete_revision_and_refuse_approval() {
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1", "T2"],
+    });
+    for (subjects, head, messages) in [
+        (
+            json!([{"kind":"build_item","id":"T1"}]),
+            "sha",
+            vec!["Every brief build item must be assessed."],
+        ),
+        (
+            json!([{"kind":"task","id":"T1"},{"kind":"build_item","id":"T2"}]),
+            "sha",
+            vec!["Cohort assessment subjects must be build items."],
+        ),
+        (
+            json!([{"kind":"build_item","id":"T1"},{"kind":"build_item","id":"T2"},{"kind":"build_item","id":"unknown"}]),
+            "sha",
+            vec!["Cohort assessment subjects must name brief build items."],
+        ),
+        (
+            json!([{"kind":"build_item","id":"T1"},{"kind":"build_item","id":"T2"}]),
+            "stale",
+            vec!["Assessment head_sha must match the latest build result."],
+        ),
+        (
+            json!([{"kind":"build_item","id":"T1"},{"kind":"build_item","id":"T2"}]),
+            "sha",
+            vec![],
+        ),
+    ] {
+        let mut run = at_briefs(std::slice::from_ref(&planned), &["T1", "T2"]);
+        run.accepted_brief(&planned);
+        let unit = "run/implementation/a";
+        run.publish(Publication {
+            output: WorkerOutput {
+                unit,
+                worker: "builder",
+                artifact: "pr",
+            },
+            body: pr("oakridge", "a"),
+            subject: None,
+        });
+        run.write(
+            WorkerOutput {
+                unit,
+                worker: "builder",
+                artifact: "build_result",
+            },
+            build("sha"),
+        );
+        let findings = json!([{"subjects":subjects,"evidence":[]},{"subjects":[],"evidence":[]}]);
+        run.publish(Publication {
+            output: WorkerOutput {
+                unit,
+                worker: "assessor",
+                artifact: "assessment",
+            },
+            body: assessment(head, findings.clone()),
+            subject: run.latest_id(unit, "build_result"),
+        });
+        run.end(unit, "assessor");
+        assert_eq!(run.validation_messages(unit, "assessment"), messages);
+        assert_eq!(
+            latest(
+                run.state(),
+                &UnitId::from(unit),
+                &SymbolKey::from("assessment")
+            )
+            .unwrap()
+            .body["findings"],
+            findings
+        );
+        let review = ReviewOf {
+            unit,
+            review: "assessment_review",
+            artifact: "assessment",
+        };
+        if messages.is_empty() {
+            run.accept(review).unwrap();
+        } else {
+            // Existing validation auto-return closes this review. Keeping request
+            // changes available requires an evaluator scheduling change outside this cohort.
+            let refusal = run.accept(review);
+            assert!(
+                matches!(&refusal, Err(StepError::Rejected { reason, .. }) if reason == "review is not open"),
+                "{refusal:?}"
+            );
+            assert!(run
+                .decide(Decision {
+                    review,
+                    decision: "request_assessment_changes",
+                    payload: json!({"feedback":"address missing items"}),
+                })
+                .is_err());
+        }
+    }
+}
+
+#[test]
+fn integration_validates_task_and_qualified_build_item_subjects() {
+    for (subject, message) in [
+        (json!({"kind":"task","id":"T1"}), None),
+        (
+            json!({"kind":"build_item","id":"T1","cohort_id":"a2"}),
+            None,
+        ),
+        (
+            json!({"kind":"task","id":"T4"}),
+            Some("Integration task subjects must name tasks in applicable briefs."),
+        ),
+        (
+            json!({"kind":"build_item","id":"T1"}),
+            Some(
+                "Integration build-item subjects must name an item in the qualified cohort brief.",
+            ),
+        ),
+        (
+            json!({"kind":"build_item","id":"T1","cohort_id":"missing"}),
+            Some(
+                "Integration build-item subjects must name an item in the qualified cohort brief.",
+            ),
+        ),
+        (
+            json!({"kind":"build_item","id":"T3","cohort_id":"a1"}),
+            Some(
+                "Integration build-item subjects must name an item in the qualified cohort brief.",
+            ),
+        ),
+    ] {
+        let mut run = at_integration();
+        let unit = "run/integration/alpha";
+        run.publish(Publication {
+            output: WorkerOutput {
+                unit,
+                worker: "integrator",
+                artifact: "assessment",
+            },
+            body: assessment("sha", json!([{"subjects":[subject],"evidence":[]}])),
+            subject: None,
+        });
+        assert_eq!(
+            run.validation_messages(unit, "assessment"),
+            message.into_iter().collect::<Vec<_>>()
+        );
+    }
 }

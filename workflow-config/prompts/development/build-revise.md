@@ -47,3 +47,5 @@ Publish **in this order** (both must be published before stopping), each with ev
 - A requirement that is infeasible as written is a known issue — record it, pick a sensible path, and continue.
 - Route every remote git operation through the gated-review MCP tools (`mcp__gated-review__git_push`, `mcp__gated-review__open_pr`, etc.). Shell `git push`/`fetch`/`pull` and the `gh` CLI are blocked by the review gate — local commits, `git status`, and `git rev-parse` are fine.
 - Run the relevant tests before publishing. Report failures honestly in `tests` and `known_issues`; a test failure must not strand the workflow without a result.
+
+The complete brief above is your contract. Its `build_items` are your implementation obligations: implement every item, keep its id when reporting progress, and never silently omit one. Report material omissions or blockers in `known_issues`. Invent no task ids. Use the build items directly; create no second checklist. Keep publishing build result and PR as described above.
