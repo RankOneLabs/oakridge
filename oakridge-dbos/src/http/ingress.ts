@@ -7,7 +7,7 @@ import type { Event, Writer } from "../core-client/core-types";
 import { selectApplicableEntries, type AnalysisLinkEntry } from "../domain/analysis-link-declaration";
 import { err, ok, type ProjectId, type Result, type RunId } from "../domain/primitives";
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
-import { commitAnalysisLinkDeclaration, commitDecisionWithLinks, commitEvent, launchRunId, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
+import { commitAnalysisLinkDeclaration, commitDecisionWithLinks, commitEvent, launchRunId, replayLaunch, type LaunchRequestContent, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
 import { readSessionAttempt } from "../storage/read-store";
 import { hasProject } from "../storage/operator-store";
 import { operatorWriterFromCredential } from "./control-auth";
@@ -153,6 +153,14 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
     if (!parsed.ok) return errorResponse(parsed.error);
     const request = parsed.value;
     try {
+      const run_id = launchRunId(request.request_id);
+      const writer = operatorWriterFromCredential(c.req.raw);
+      const event = { kind: "launched" as const, input: request.input };
+      const project_id = request.project_id ? request.project_id as ProjectId : null;
+      const launch_request: LaunchRequestContent = { definition_id: request.definition_id, project_id, config: request.config ?? null,
+        ...(request.pr_integration === undefined ? {} : { pr_integration: request.pr_integration }) };
+      const replay = await replayLaunch(deps.db, { run_id, ingress_id: request.request_id, writer, event, launch_request });
+      if (replay) return ingressResponse(run_id, replay);
       const resolved = resolveLaunchableDefinition(request.definition_id);
       if (!resolved.ok) return Response.json(resolved.error, { status: resolved.error.kind === "definition_not_launchable" ? 404 : 422 });
       const integration = request.pr_integration ?? deps.pr_integration_default ?? "none";
@@ -166,11 +174,9 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
       const config: RunConfig = { ...parseRunConfig({})!, ...request.config, pr_integration: integration,
         pr_skill_digest: index?.ok && integration !== "none" ? index.value[integration] : null };
       const definition_id = resolved.value.definition_id;
-      const project_id = request.project_id ? request.project_id as ProjectId : null;
       if (project_id && !await hasProject(deps.db, project_id)) return errorResponse(new MissingEntityError("project not found"));
-      const run_id = launchRunId(request.request_id);
-      return ingressResponse(run_id, await commit({ run_id, ingress_id: request.request_id, event: { kind: "launched", input: request.input },
-        writer: operatorWriterFromCredential(c.req.raw), launch: { definition_id, project_id, config } }));
+      return ingressResponse(run_id, await commit({ run_id, ingress_id: request.request_id, event, writer, launch_request,
+        launch: { definition_id, project_id, config } }));
     } catch (cause) { return fault(cause); }
   });
 

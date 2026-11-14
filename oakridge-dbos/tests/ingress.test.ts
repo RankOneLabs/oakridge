@@ -358,3 +358,103 @@ test("a PR-dependent launch commits when its gated-review URL answers an HTTP er
     expect((await authority.db.selectFrom("authority.run").select("id").where("id", "=", run_id).executeTakeFirst())?.id).toBe(run_id);
   } finally { await server.stop(true); }
 });
+
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { sql } from "kysely";
+import { commitEvent } from "../src/storage/commit";
+import { parseRunConfig } from "../src/domain/run-config";
+
+test("launch retries replay before defaults, skill pins and health, and reject changed client content", async () => {
+  const { definition_id } = await sampleDefinition("development");
+  const request_id = crypto.randomUUID();
+  const body = { request_id, definition_id, input: {
+    title: "Replay launch", spec: "test", final_merge_policy: "require_merge", primary_repository_key: "app",
+    repositories: [{ key: "app", preparation: { repository_path: "/tmp", expected_head: null },
+      forge: { owner: "oakridge-test", name: "app", build_base: "develop", final_base: "main" } }] } };
+  const sendTo = (app: IntegrationApp, content: unknown) => app.request("/api/runs", { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify(content) });
+  const original = await sendTo(integrationApp("gated-review"), body);
+  expect(original.status).toBe(201);
+  const receipt = await original.json();
+  const run_id = launchRunId(request_id);
+  const config = await readCommittedRunConfig(authority.db, run_id);
+  const retryApp = new IntegrationApp();
+  let probes = 0;
+  installIngress(retryApp, { db: authority.db, core: authority.core, wake: () => undefined, is_operator_request: () => true,
+    pr_integration_default: "none", probe_pr_integration: async () => { probes++; return { kind: "unreachable", detail: "offline" }; } });
+  const unhealthyApp = new IntegrationApp();
+  installIngress(unhealthyApp, { db: authority.db, core: authority.core, wake: () => undefined, is_operator_request: () => true,
+    pr_integration_default: "gated-review", probe_pr_integration: async () => { probes++; return { kind: "unreachable", detail: "offline" }; } });
+  const indexPath = resolve(process.env.OAKRIDGE_DEFINITION_ROOT!, "skills.json");
+  const index = readFileSync(indexPath);
+  try {
+    writeFileSync(indexPath, "changed and unreadable skill index");
+    for (const app of [retryApp, unhealthyApp]) {
+      const retried = await sendTo(app, body);
+      expect({ status: retried.status, body: await retried.json(), probes }).toEqual({ status: 200, body: receipt, probes: 0 });
+    }
+    for (const changed of [
+      { ...body, input: { ...body.input, title: "other content" } },
+      { ...body, config: { grading_enabled: true } },
+      { ...body, pr_integration: "github-cli" },
+      { ...body, pr_integration: "gated-review" },
+      { ...body, definition_id: "0".repeat(64) },
+      { ...body, project_id: "other-project" },
+    ]) expect((await sendTo(retryApp, changed)).status).toBe(409);
+  } finally { writeFileSync(indexPath, index); }
+  expect(await readCommittedRunConfig(authority.db, run_id)).toEqual(config);
+  expect((await authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute()).length).toBe(1);
+});
+
+test("explicit-integration launch retries survive a changed install default", async () => {
+  const { definition_id } = await sampleDefinition();
+  const body = { request_id: crypto.randomUUID(), definition_id, input: { topic: "explicit replay" }, pr_integration: "github-cli" };
+  const sendTo = (app: IntegrationApp) => app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const original = await sendTo(integrationApp("none"));
+  const receipt = await original.json();
+  const retried = await sendTo(integrationApp("gated-review", { kind: "unreachable", detail: "offline" }));
+  expect({ status: retried.status, body: await retried.json() }).toEqual({ status: 200, body: receipt });
+});
+
+test("launch receipts from before client identity separation still replay with their recorded config", async () => {
+  const { definition_id } = await sampleDefinition();
+  const request_id = crypto.randomUUID();
+  const run_id = launchRunId(request_id);
+  const input = { topic: "old receipt" };
+  const launched = await commitEvent({ db: authority.db, core: authority.core, wake: () => undefined }, {
+    run_id, ingress_id: request_id, writer: { kind: "operator", subject: "local-control" }, event: { kind: "launched", input },
+    launch: { definition_id, project_id: null, config: parseRunConfig({ pr_integration: "github-cli", pr_skill_digest: "old-pin" }) } });
+  if (!launched.ok || launched.value.kind !== "committed") throw new Error(JSON.stringify(launched));
+  const app = integrationApp("none");
+  const sendTo = (config?: unknown) => app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ request_id, definition_id, input, ...(config ? { config } : {}) }) });
+  const replay = await sendTo();
+  expect({ status: replay.status, body: await replay.json() }).toEqual({ status: 200,
+    body: { kind: "committed", run_id, event_id: launched.value.event_id } });
+  expect((await sendTo({ grading_enabled: true })).status).toBe(409);
+});
+
+test("malformed recorded settings have no provider and expose their error in run reads", async () => {
+  const app = integrationApp("none");
+  const { response, run_id } = await integrationLaunch(app);
+  expect(response.status).toBe(201);
+  await sql`UPDATE authority.run SET config = '{"pr_integration":"bogus"}'::jsonb WHERE id = ${run_id}`.execute(authority.db);
+  const read = await app.request(`/api/runs/${run_id}`);
+  expect(await read.json()).toMatchObject({ pr_integration: null, pr_skill_digest: null, config_error: "recorded run config is malformed" });
+  const list = await app.request("/api/runs");
+  expect((await list.json()).items.find((run: { readonly run_id: string }) => run.run_id === run_id))
+    .toMatchObject({ pr_integration: null, config_error: "recorded run config is malformed" });
+});
+
+test("concurrent unchanged launches share one receipt even when server defaults differ", async () => {
+  const { definition_id } = await sampleDefinition();
+  const request_id = crypto.randomUUID();
+  const body = { request_id, definition_id, input: { topic: "concurrent replay" } };
+  const responses = await Promise.all(["none", "github-cli"].map((integration) => integrationApp(integration as PrIntegration).request("/api/runs", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })));
+  expect(responses.map((response) => response.status).sort()).toEqual([200, 201]);
+  const receipts = await Promise.all(responses.map((response) => response.json()));
+  expect(receipts[0]).toEqual(receipts[1]);
+  expect((await authority.db.selectFrom("authority.event").select("id").where("run_id", "=", launchRunId(request_id)).execute()).length).toBe(1);
+});

@@ -39,17 +39,18 @@ test("non-PR definitions ignore integration health", () => {
 
 import { Hono } from "hono";
 import { installIngress, type IngressDependencies } from "../src/http/ingress";
-test("a refused PR-dependent launch never reaches the authority database", async () => {
+test("a refused PR-dependent launch reads only its receipt and never creates a run", async () => {
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
   let database_accesses = 0;
   const app = new Hono();
-  const db = new Proxy({}, { get() { database_accesses++; throw new Error("unexpected database access"); } });
+  const lookup = { select: () => lookup, where: () => lookup, executeTakeFirst: async () => undefined };
+  const db = { selectFrom(table: string) { database_accesses++; expect(table).toBe("authority.ingress_receipt"); return lookup; } };
   installIngress(app, { db, is_operator_request: () => true } as unknown as IngressDependencies);
   const response = await app.request("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ request_id: "refused-pr", definition_id: catalog.value.development, input: {}, pr_integration: "none" }) });
   expect({ status: response.status, kind: (await response.json()).kind, database_accesses })
-    .toEqual({ status: 422, kind: "integration_none", database_accesses: 0 });
+    .toEqual({ status: 422, kind: "integration_none", database_accesses: 1 });
 });
 
 import { probePrIntegration } from "../src/runtime/compose";

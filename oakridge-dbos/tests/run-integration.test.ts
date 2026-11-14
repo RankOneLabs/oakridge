@@ -16,7 +16,7 @@ test("unknown recorded integrations are malformed", () => {
 
 import { parseLaunchRequest } from "../src/http/ingress";
 import { readSkillBundle, readSkillIndex } from "../src/runtime/definition-store";
-import { cpSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 test("launch accepts a top-level selection but rejects server-owned config keys", () => {
@@ -40,10 +40,6 @@ test("bundle reader verifies pinned bytes and detects tampering", () => {
     const result = readSkillBundle(digest, root);
     expect(result.ok ? null : result.error.kind).toBe("hash_mismatch");
   } finally { rmSync(root, { recursive: true, force: true }); }
-});
-test("authority config is never updated after launch", () => {
-  const source = readFileSync(resolve(import.meta.dir, "../src/storage/commit.ts"), "utf8");
-  expect(source).not.toMatch(/updateTable\("authority\.run"\)[\s\S]*?\.set\(\{\s*config\s*:/);
 });
 test("recorded integration and digest survive config parsing unchanged", () => {
   const config = { sessions: {}, grading_enabled: false, pr_integration: "github-cli" as const, pr_skill_digest: "pinned" };

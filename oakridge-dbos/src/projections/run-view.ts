@@ -21,7 +21,9 @@ export interface RunUnitSummary {
   readonly asks: readonly string[];
 }
 export interface RunSummary {
-  readonly pr_integration: PrIntegration;
+  /** Null only when recorded launch settings are malformed. */
+  readonly pr_integration: PrIntegration | null;
+  readonly config_error: string | null;
   readonly pr_skill_digest: string | null;
   readonly run_id: RunId; readonly definition_id: DefinitionId;
   readonly created_at: Date; readonly updated_at: Date; readonly archived_at: Date | null;
@@ -55,7 +57,7 @@ export function selectRunView(read: RunSummaryRead): RunView {
   const tree = selectUnitTree(read.units, read.definition.workflow);
   const label = selectRunLaunchLabel(read.run.input);
   const config = parseRunConfig(read.run.config ?? {});
-  return { pr_integration: config?.pr_integration ?? "gated-review", pr_skill_digest: config?.pr_skill_digest ?? null, run_id: read.run.id, definition_id: read.run.definition_id,
+  return { pr_integration: config?.pr_integration ?? null, config_error: config ? null : "recorded run config is malformed", pr_skill_digest: config?.pr_skill_digest ?? null, run_id: read.run.id, definition_id: read.run.definition_id,
     created_at: read.run.created_at, updated_at: selectRunUpdatedAt(read), archived_at: read.run.archived_at,
     ...label, status: selectRootStatus(read.run, read.units),
     units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
