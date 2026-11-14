@@ -3060,3 +3060,77 @@ fn a_revision_that_failed_validation_offers_only_request_changes() {
         .collect();
     assert_eq!(offered, ["request_changes"]);
 }
+
+fn failed_critique_with_operator_review(
+    source: Value,
+    has_notes: bool,
+) -> (CheckedWorkflow, StepResult) {
+    let program = compile_critique_check(source);
+    let mut events = vec![
+        serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+        serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+        serde_json::json!({"op":"publish","unit":"run/document","worker":"writer","artifact":"draft","body":{"title":"First","body":"Long"}}),
+        serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
+        serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
+        serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"critique","body":{"notes":[]},"subject":"run/document:draft:1"}),
+    ];
+    if has_notes {
+        events.push(serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"notes","body":"notes","subject":"run/document:draft:1"}));
+    }
+    events.push(serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"succeeded"}));
+    let result = step_specs(&program, &snapshot(), &events);
+    (program, result)
+}
+
+fn invalid_critique_source() -> Value {
+    let mut source = critique_check_source();
+    source["stages"]["document"]["artifacts"]["critique"]["validate"] =
+        serde_json::json!([{"check":"len(critique.notes) > 0","message":"notes required"}]);
+    source
+}
+
+#[test]
+fn failed_reviewer_output_auto_returns_when_operator_guard_is_closed() {
+    let mut source = invalid_critique_source();
+    source["stages"]["document"]["reviews"]["critique_check"]["when"] = serde_json::json!("false");
+    let (_, result) = failed_critique_with_operator_review(source, false);
+    assert!(result.wanted.iter().any(|wanted| matches!(&wanted.action,
+        Action::RunWorker {worker, mode:Mode::Revise, ..} if worker.0 == "critic")));
+}
+
+#[test]
+fn failed_reviewer_output_auto_returns_without_operator_request_changes() {
+    let mut source = invalid_critique_source();
+    source["stages"]["document"]["reviews"]["critique_check"]["decisions"] =
+        serde_json::json!({"accept":{"effect":"approve","label":"Accept"}});
+    let (_, result) = failed_critique_with_operator_review(source, false);
+    assert!(result.wanted.iter().any(|wanted| matches!(&wanted.action,
+        Action::RunWorker {worker, mode:Mode::Revise, ..} if worker.0 == "critic")));
+}
+
+#[test]
+fn deferred_validation_does_not_hide_request_changes_on_another_output() {
+    let mut source = invalid_critique_source();
+    source["stages"]["document"]["artifacts"]["notes"] =
+        serde_json::json!({"kind":"document","schema":"text"});
+    source["stages"]["document"]["workers"]["critic"]["produces"] =
+        serde_json::json!(["critique", "notes"]);
+    source["stages"]["document"]["reviews"]["notes_check"] = serde_json::json!({
+        "of":"notes","by":"operator","prompt":"check.md","decisions":{
+            "request_changes":{"effect":"request_changes","label":"Revise notes","fields":{"feedback":"What?"}}
+        }
+    });
+    let (program, result) = failed_critique_with_operator_review(source, true);
+    let revised = step_specs(
+        &program,
+        &result.snapshot,
+        &[
+            serde_json::json!({"op":"decide","unit":"run/document","review":"notes_check","decision":"request_changes","target":"run/document:notes:1","payload":{"feedback":"Fix notes"}}),
+        ],
+    );
+    let critic = resolved_for(&revised, "critic");
+    assert!(critic
+        .feedback
+        .iter()
+        .any(|entry| entry.review.0 == "notes_check"));
+}

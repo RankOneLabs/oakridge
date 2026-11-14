@@ -140,25 +140,51 @@ pub fn stage_actions(
                         },
                     ))
                 } else {
-                    changes_requested(state, &unit.id, creates)
-                        // Keep failed review output available to its operator.
-                        // Approval is blocked by validation; an explicit request
-                        // for changes starts the next reviewer attempt. Outputs
-                        // without their own operator review still auto-return.
-                        .filter(|decision| {
-                            !matches!(decision, DecisionState::Validation { artifact, .. }
-                                if checked.reviews.iter().any(|review| {
-                                    matches!(review, CheckedReview::Operator { of, .. } if of == artifact)
-                                }))
-                        })
-                        .map(|decision| {
+                    let mut deferred_validation = Vec::new();
+                    for review in &checked.reviews {
+                        let CheckedReview::Operator {
+                            key,
+                            of,
+                            when,
+                            decisions,
+                            ..
+                        } = review
+                        else {
+                            continue;
+                        };
+                        if !creates.contains(of)
+                            || !operator_review_is_open(
+                                program,
+                                state,
+                                unit,
+                                when.as_ref(),
+                                context,
+                            )?
+                        {
+                            continue;
+                        }
+                        let can_request_changes =
+                            open_decisions(state, &unit.id, key, of, decisions)
+                                .iter()
+                                .any(|offered| {
+                                    let decision = &decisions[&offered.decision.0];
+                                    decision.effect == DeclaredDecisionEffect::RequestChanges
+                                        && decided_artifact(of, &decision.on) == of
+                                });
+                        if can_request_changes {
+                            deferred_validation.push(of.clone());
+                        }
+                    }
+                    changes_requested_except(state, &unit.id, creates, &deferred_validation).map(
+                        |decision| {
                             (
                                 Mode::Revise,
                                 Cause::ChangesRequested {
                                     decision: decision.id().clone(),
                                 },
                             )
-                        })
+                        },
+                    )
                 }
             }
             CheckedWorker::Agent {

@@ -336,10 +336,22 @@ pub(super) fn changes_requested<'a>(
     unit: &UnitId,
     artifacts: &[SymbolKey],
 ) -> Option<&'a DecisionState> {
+    changes_requested_except(state, unit, artifacts, &[])
+}
+
+/// Skip deferred validation per artifact, without hiding requests on other outputs.
+pub(super) fn changes_requested_except<'a>(
+    state: &'a StepSnapshot,
+    unit: &UnitId,
+    artifacts: &[SymbolKey],
+    deferred_validation: &[SymbolKey],
+) -> Option<&'a DecisionState> {
     artifacts.iter().find_map(|artifact| {
         let latest = latest(state, unit, artifact)?;
         state.decisions.iter().rev().find(|decision| {
             decision.unit() == unit
+                && !(deferred_validation.contains(artifact)
+                    && matches!(decision, DecisionState::Validation { .. }))
                 && decision.target() == &latest.id
                 && matches!(
                     decision.effect(),
