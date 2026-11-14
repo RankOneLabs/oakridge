@@ -14,7 +14,7 @@ import type { TurnKey } from "../../../acp/types";
 
 const base = sampleUnits.find((unit) => unit.attempts.length > 0);
 if (!base?.attempts[0]) throw new Error("Prompt fixture requires a recorded attempt");
-const attempt = { ...base.attempts[0], kbbl_session_id: "retained-session", intent: { prompt: { path: "workflow-config/prompts/build.md", digest: "pinned-old-digest" }, inputs: { brief: "recorded brief" }, engine_inputs: { previous: null, subject: null, feedback: [] } } };
+const attempt = { ...base.attempts[0], kbbl_session_id: "retained-session", intent: { input_provenance: { status: "unresolved" as const }, prompt: { path: "workflow-config/prompts/build.md", digest: "pinned-old-digest" }, inputs: { brief: "recorded brief" }, engine_inputs: { previous: null, subject: null, feedback: [] } } };
 const unit = { ...base, attempts: [attempt] };
 afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
 interface PromptFixture { readonly has_session?: boolean; readonly status?: number; readonly turns?: readonly ExecutedPromptTurn[] }

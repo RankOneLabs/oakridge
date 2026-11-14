@@ -55,7 +55,7 @@ test("Inputs exposes an agent's recorded prompt pin and exact input revision lin
   const revision = revisions[0];
   if (!attempt || !revision) throw new Error("captured fixture requires an attempt and revision");
   const prompt = { path: "prompts/recorded-agent.md", digest: "sha256:recorded-prompt" };
-  const recordedUnit = withUnitFields(unit, { attempts: [{ ...attempt, intent: {
+  const recordedUnit = withUnitFields(unit, { attempts: [{ ...attempt, intent: { input_provenance: { status: "unresolved" as const },
     inputs: { source: { revision_id: revision.id } },
     engine_inputs: { previous: null, feedback: [], subject: null }, prompt,
   } }] });

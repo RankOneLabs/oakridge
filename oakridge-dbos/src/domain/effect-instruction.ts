@@ -1,3 +1,4 @@
+import { selectInputProvenance, type InputProvenanceView } from "./unit-status";
 import { createHash } from "node:crypto";
 import type { Action, FeedbackEntry, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression } from "../core-client/core-types";
 import { selectWorkerSessionSettings, type RunConfig, type SessionSettings } from "./run-config";
@@ -40,6 +41,7 @@ export interface EngineInputs {
  * publication secret is minted when a session starts.
  */
 export interface EffectInstruction {
+  readonly input_provenance?: InputProvenanceView;
   readonly version: 1;
   readonly run_id: RunId;
   readonly action: RunWorkerAction;
@@ -168,6 +170,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
   }
   return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id as ActionId, seq: source.seq }, worker,
     inputs: resolved.inputs,
+    input_provenance: selectInputProvenance(resolved.input_provenance),
     engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? [], subject: resolved.subject ?? null },
     workspace: resolved.workspace ?? null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS } };
@@ -247,5 +250,10 @@ export function decodeEffectInstruction(value: unknown): Result<EffectInstructio
   if (!isEngineInputs(value.engine_inputs)) return refuse("engine inputs are malformed");
   if (!isCount(value.deadline_ms) || value.deadline_ms === 0) return refuse("deadline is malformed");
   if (!isCount(value.max_start_attempts) || value.max_start_attempts === 0) return refuse("start budget is malformed");
-  return { ok: true, value: value as unknown as EffectInstruction };
+  const provenance = value.input_provenance;
+  if (provenance !== undefined && (!isFields(provenance) ||
+      !(provenance.status === "unresolved" || provenance.status === "recorded" && Array.isArray(provenance.entries)
+        && provenance.entries.every((entry: unknown) => isFields(entry) && isString(entry.input) && isString(entry.unit) && isString(entry.revision_id)))))
+    return refuse("input provenance is malformed");
+  return { ok: true, value: { ...value, input_provenance: provenance ?? { status: "unresolved" } } as unknown as EffectInstruction };
 }

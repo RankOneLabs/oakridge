@@ -1521,3 +1521,226 @@ fn integration_validates_task_and_qualified_build_item_subjects() {
         }
     }
 }
+
+#[test]
+fn implementation_and_integration_pin_accepted_brief_identities() {
+    let run = at_integration();
+    for (unit_id, input, cohorts) in [
+        ("run/implementation/a1", "brief", vec!["a1"]),
+        ("run/implementation/a2", "brief", vec!["a2"]),
+        ("run/integration/alpha", "briefs", vec!["a1", "a2"]),
+        ("run/integration/beta", "briefs", vec!["b1"]),
+    ] {
+        let unit = run
+            .state()
+            .units
+            .iter()
+            .find(|unit| unit.id.0 == unit_id)
+            .unwrap();
+        let expected: Vec<_> = cohorts
+            .into_iter()
+            .map(|cohort| {
+                let source = UnitId(format!("run/briefs/{cohort}"));
+                let decision = run
+                    .state()
+                    .decisions
+                    .iter()
+                    .find(|decision| {
+                        decision.unit() == &source
+                            && decision.review() == Some(&SymbolKey::from("brief_review"))
+                            && decision.effect() == Some(DecisionEffect::Approve)
+                    })
+                    .unwrap();
+                InputProvenance {
+                    input: SymbolKey::from(input),
+                    unit: source,
+                    revision_id: decision.target().clone(),
+                }
+            })
+            .collect();
+        assert_eq!(unit.input_provenance.as_ref(), Some(&expected));
+    }
+}
+
+#[test]
+fn later_revision_and_reads_do_not_replace_frozen_provenance() {
+    let mut run = at_integration();
+    let recorded = run
+        .state()
+        .units
+        .iter()
+        .find(|u| u.id.0 == "run/implementation/a1")
+        .unwrap()
+        .input_provenance
+        .clone();
+    let mut snapshot = run.state().clone();
+    let mut later = snapshot
+        .revisions
+        .iter()
+        .find(|r| r.unit.0 == "run/briefs/a1" && r.artifact.0 == "brief")
+        .unwrap()
+        .clone();
+    later.id = RevisionId::from("later-brief");
+    later.seq += 100;
+    snapshot.revisions.push(later);
+    run.last.snapshot = snapshot;
+    run.apply(Event::Launched { input: json!({}) }, Writer::Engine)
+        .unwrap();
+    assert_eq!(
+        run.state()
+            .units
+            .iter()
+            .find(|u| u.id.0 == "run/implementation/a1")
+            .unwrap()
+            .input_provenance,
+        recorded
+    );
+}
+
+#[test]
+fn unrelated_inputs_record_no_entries_and_legacy_records_stay_unresolved() {
+    let mut run = at_integration();
+    let root = run
+        .state()
+        .units
+        .iter()
+        .find(|unit| unit.id.0 == "run")
+        .unwrap();
+    assert_eq!(root.input_provenance, Some(vec![]));
+    for unit in &mut run.last.snapshot.units {
+        unit.input_provenance = None;
+    }
+    run.apply(Event::Launched { input: json!({}) }, Writer::Engine)
+        .unwrap();
+    assert!(run
+        .state()
+        .units
+        .iter()
+        .all(|unit| unit.input_provenance.is_none()));
+}
+
+#[test]
+fn revised_brief_provenance_uses_accept_target_after_request_changes() {
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1"],
+    });
+    let mut run = at_briefs(std::slice::from_ref(&planned), &["T1"]);
+    let output = WorkerOutput {
+        unit: "run/briefs/a",
+        worker: "writer",
+        artifact: "brief",
+    };
+    let review = ReviewOf {
+        unit: output.unit,
+        review: "brief_review",
+        artifact: output.artifact,
+    };
+    run.write(output, brief_of(&planned));
+    let rejected = run.latest_id(output.unit, output.artifact).unwrap();
+    run.request_changes(review);
+    let mut revised = brief_of(&planned);
+    revised["goal"] = json!("corrected goal");
+    run.write(output, revised);
+    run.accept(review).unwrap();
+    let accepted = run
+        .state()
+        .decisions
+        .iter()
+        .find(|decision| {
+            decision.unit().0 == output.unit
+                && decision.review() == Some(&SymbolKey::from("brief_review"))
+                && decision.effect() == Some(DecisionEffect::Approve)
+        })
+        .unwrap()
+        .target()
+        .clone();
+    assert_ne!(accepted, rejected);
+
+    // A later revision exists before integration materializes, but is not the
+    // accepted source outcome's revision. Snapshot injection models Scenario F.
+    let mut later = run
+        .state()
+        .revisions
+        .iter()
+        .find(|r| r.id == accepted)
+        .unwrap()
+        .clone();
+    later.id = RevisionId::from("later-unaccepted-brief");
+    later.seq += 100;
+    let later_id = later.id.clone();
+    run.last.snapshot.revisions.push(later);
+    run.completed_cohort("a", "oakridge");
+    for (unit_id, input) in [
+        ("run/implementation/a", "brief"),
+        ("run/integration/oakridge", "briefs"),
+    ] {
+        let entries = run
+            .state()
+            .units
+            .iter()
+            .find(|unit| unit.id.0 == unit_id)
+            .unwrap()
+            .input_provenance
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            entries,
+            &vec![InputProvenance {
+                input: SymbolKey::from(input),
+                unit: UnitId::from(output.unit),
+                revision_id: accepted.clone(),
+            }]
+        );
+        assert!(entries
+            .iter()
+            .all(|entry| entry.revision_id != rejected && entry.revision_id != later_id));
+    }
+}
+
+#[test]
+fn missing_approval_never_uses_latest_or_shifts_other_members_provenance() {
+    let mut run = at_integration();
+    // Model an old completed source with no retained approval. Rematerialize
+    // collection members from their source outcomes to test sparse lineage.
+    run.last.snapshot.decisions.retain(|decision| {
+        !(decision.unit().0 == "run/briefs/a1"
+            && decision.effect() == Some(DecisionEffect::Approve))
+    });
+    run.last
+        .snapshot
+        .units
+        .retain(|unit| !unit.id.0.starts_with("run/implementation/"));
+    run.last
+        .snapshot
+        .attempts
+        .retain(|attempt| !attempt.unit.0.starts_with("run/implementation/"));
+    run.apply(Event::Launched { input: json!({}) }, Writer::Engine)
+        .unwrap();
+    for cohort in ["a1", "a2", "b1"] {
+        let source = UnitId(format!("run/briefs/{cohort}"));
+        let expected = run
+            .state()
+            .decisions
+            .iter()
+            .find(|decision| {
+                decision.unit() == &source && decision.effect() == Some(DecisionEffect::Approve)
+            })
+            .map(|decision| InputProvenance {
+                input: SymbolKey::from("brief"),
+                unit: source.clone(),
+                revision_id: decision.target().clone(),
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        let member = run
+            .state()
+            .units
+            .iter()
+            .find(|unit| unit.id.0 == format!("run/implementation/{cohort}"))
+            .unwrap();
+        assert_eq!(member.input_provenance.as_ref(), Some(&expected));
+    }
+}

@@ -39,7 +39,7 @@ export async function readStepSnapshot(db: Reader, run_id: string, unit_id: stri
     units: units.map((unit) => ({ id: unit.id, parent: unit.parent_id, declaration: unit.declaration,
       kind: unit.stage === null ? { kind: "group" as const } : { kind: "stage" as const, stage: unit.stage },
       collection_key: unit.collection_key,
-      pool: unit.pool, input: unit.input, status: unit.status,
+      input_provenance: unit.input_provenance == null ? null : [...unit.input_provenance], pool: unit.pool, input: unit.input, status: unit.status,
       after: dependencies.filter((item) => item.unit_id === unit.id).map((item) => item.depends_on_id) })),
     attempts: attempts.map((attempt) => ({ action_id: attempt.action_id, seq: attempt.seq, unit: attempt.unit_id,
       worker: attempt.worker, mode: attempt.mode, cause: attempt.cause, status: attempt.status,
@@ -61,6 +61,6 @@ export async function readStepSnapshot(db: Reader, run_id: string, unit_id: stri
 }
 
 async function readStepUnits(db: Reader, run_id: string) {
-  const columns = ["id", "parent_id", "declaration", "stage", "collection_key", "pool", "input", "status"] as const;
+  const columns = ["id", "parent_id", "declaration", "stage", "collection_key", "pool", "input", "input_provenance", "status"] as const;
   return db.selectFrom("authority.unit").select(columns).where("run_id", "=", run_id).orderBy("id").execute();
 }

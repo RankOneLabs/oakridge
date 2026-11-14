@@ -37,6 +37,8 @@ export type OperatorType = { readonly "kind": "text" } | { readonly "generated":
 
 export type OperatorParsedStage = { readonly "artifacts": { readonly [key: string]: OperatorParsedArtifact }; readonly "done_when"?: string | null; readonly "input": OperatorType; readonly "let"?: { readonly [key: string]: string }; readonly "outcome": { readonly [key: string]: string }; readonly "reviews"?: { readonly [key: string]: OperatorParsedReview }; readonly "workers": { readonly [key: string]: OperatorWorker } };
 
+export type OperatorInputProvenance = { readonly "input": string; readonly "revision_id": string; readonly "unit": string };
+
 export type OperatorDeclaredDecisionEffect = "approve" | "request_changes";
 
 export type OperatorAttemptStatus = { readonly "kind": "pending" } | { readonly "kind": "running" } | { readonly "kind": "succeeded" } | { readonly "code": string; readonly "detail": string; readonly "kind": "failed" };
