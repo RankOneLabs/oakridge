@@ -2,6 +2,7 @@
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
 import type { OperatorEvent, OperatorUnitStatus, OperatorWriter } from "../core-client/core-types";
+import type { OperatorPrIntegration } from "../domain/pr-integration";
 import type { OperatorRunStall } from "./attention";
 import type { OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition } from "./unit-view";
 import type { OperatorDefinitionId } from "../runtime/definition-store";
@@ -11,6 +12,8 @@ export interface OperatorRunPage { readonly items: readonly OperatorRunView[]; r
 export interface OperatorRunView extends OperatorRunSummary { readonly units: readonly OperatorRunUnitSummary[] }
 
 export interface OperatorRunSummary {
+  readonly pr_integration: OperatorPrIntegration;
+  readonly pr_skill_digest: string | null;
   readonly run_id: string; readonly definition_id: OperatorDefinitionId;
   readonly created_at: string; readonly updated_at: string; readonly archived_at: string | null;
   readonly title: string | null; readonly repository_keys: readonly string[];

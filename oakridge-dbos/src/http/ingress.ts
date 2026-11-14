@@ -1,4 +1,5 @@
-import { resolveLaunchableDefinition, type DefinitionId } from "../runtime/definition-store";
+import { parsePrIntegration, preflightLaunch, isPrDependent, type PrIntegration, type PrIntegrationHealth } from "../domain/pr-integration";
+import { readSkillIndex, resolveLaunchableDefinition, type DefinitionId } from "../runtime/definition-store";
 import type { Context, Hono } from "hono";
 import { createHash } from "node:crypto";
 import type { Event, Writer } from "../core-client/core-types";
@@ -21,9 +22,10 @@ import { ConflictError, errorResponse, fault, MalformedRequestError, MissingEnti
 /** Every ingress request carries the id that makes it idempotent. */
 export interface IngressRequest { readonly request_id: string }
 export interface LaunchRequest extends IngressRequest {
+  readonly pr_integration?: PrIntegration;
   readonly definition_id: DefinitionId; readonly input: unknown; readonly project_id?: string | null;
   /** Session settings keyed by stage, then by agent worker, and the run's automatic-grading choice. */
-  readonly config?: RunConfig | null;
+  readonly config?: Pick<RunConfig, "sessions" | "grading_enabled"> | null;
 }
 export interface DecideRequest extends IngressRequest {
   readonly decision: string; readonly target: string; readonly payload: unknown;
@@ -58,10 +60,13 @@ export function parseIngressRequest(raw: unknown): Parsed<IngressRequest> {
 export function parseLaunchRequest(raw: unknown): Parsed<LaunchRequest> {
   if (!isFields(raw) || !isRequestId(raw.request_id) || typeof raw.definition_id !== "string" || !/^[0-9a-f]{64}$/.test(raw.definition_id) || !("input" in raw) || !isOptionalId(raw.project_id))
     return malformed("request_id (1 to 200 characters), definition_id and input are required");
+  if ((raw.pr_integration !== undefined && parsePrIntegration(raw.pr_integration) === null)
+    || (isFields(raw.config) && ("pr_integration" in raw.config || "pr_skill_digest" in raw.config)))
+    return malformed("pr_integration is gated-review, github-cli or none; config may not set pr_integration or pr_skill_digest");
   const config = raw.config === undefined || raw.config === null ? null : parseRunConfig(raw.config);
   if (raw.config !== undefined && raw.config !== null && config === null)
     return malformed("config.sessions maps each stage and worker to { harness, model, effort }; config.grading_enabled is a boolean");
-  return ok({ request_id: raw.request_id, definition_id: raw.definition_id as DefinitionId, input: raw.input, project_id: raw.project_id ?? null, config });
+  return ok({ request_id: raw.request_id, definition_id: raw.definition_id as DefinitionId, input: raw.input, ...(raw.pr_integration === undefined ? {} : { pr_integration: parsePrIntegration(raw.pr_integration)! }), project_id: raw.project_id ?? null, config: config ? { sessions: config.sessions, grading_enabled: config.grading_enabled } : null });
 }
 const isTaskIds = (value: unknown): value is readonly string[] => Array.isArray(value) && value.every(isKey);
 const isLinkEntry = (value: unknown): value is AnalysisLinkEntry =>
@@ -128,7 +133,11 @@ export function publicationSecretHash(request: Pick<Request, "headers">): string
 interface Publisher { readonly writer: Writer; readonly by: string | null }
 const refusedSecret = (): Response => errorResponse(new UnauthorizedError("publication secret refused"));
 
-export interface IngressDependencies extends CommitDependencies {
+export interface PrLaunchDependencies {
+  readonly pr_integration_default?: PrIntegration;
+  readonly probe_pr_integration?: (integration: PrIntegration) => Promise<PrIntegrationHealth>;
+}
+export interface IngressDependencies extends CommitDependencies, PrLaunchDependencies {
   /** Whether a request on the publish route carries the operator's credential (see `operatorCredentialCheck`). */
   readonly is_operator_request: (request: Request) => boolean;
 }
@@ -145,12 +154,22 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
     try {
       const resolved = resolveLaunchableDefinition(request.definition_id);
       if (!resolved.ok) return Response.json(resolved.error, { status: resolved.error.kind === "definition_not_launchable" ? 404 : 422 });
+      const integration = request.pr_integration ?? deps.pr_integration_default ?? "none";
+      const health = isPrDependent(resolved.value.source) && integration !== "none"
+        ? await deps.probe_pr_integration?.(integration) ?? { kind: "unconfigured" as const, detail: "PR integration health probe is not configured" }
+        : { kind: "healthy" as const };
+      const preflight = preflightLaunch({ definition: resolved.value, integration, health });
+      if (!preflight.ok) return Response.json(preflight.error, { status: 422 });
+      const index = integration === "none" ? null : readSkillIndex();
+      if (index && !index.ok) return Response.json(index.error, { status: 422 });
+      const config: RunConfig = { ...parseRunConfig({})!, ...request.config, pr_integration: integration,
+        pr_skill_digest: index?.ok && integration !== "none" ? index.value[integration] : null };
       const definition_id = resolved.value.definition_id;
       const project_id = request.project_id ? request.project_id as ProjectId : null;
       if (project_id && !await hasProject(deps.db, project_id)) return errorResponse(new MissingEntityError("project not found"));
       const run_id = launchRunId(request.request_id);
       return ingressResponse(run_id, await commit({ run_id, ingress_id: request.request_id, event: { kind: "launched", input: request.input },
-        writer: operatorWriterFromCredential(c.req.raw), launch: { definition_id, project_id, config: request.config ?? null } }));
+        writer: operatorWriterFromCredential(c.req.raw), launch: { definition_id, project_id, config } }));
     } catch (cause) { return fault(cause); }
   });
 

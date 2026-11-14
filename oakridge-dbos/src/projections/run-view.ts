@@ -1,3 +1,5 @@
+import { parseRunConfig } from "../domain/run-config";
+import type { PrIntegration } from "../domain/pr-integration";
 import type { Event, UnitStatus, Writer } from "../core-client/core-types";
 import type { DefinitionId, RunId, UnitId } from "../domain/primitives";
 import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
@@ -19,6 +21,8 @@ export interface RunUnitSummary {
   readonly asks: readonly string[];
 }
 export interface RunSummary {
+  readonly pr_integration: PrIntegration;
+  readonly pr_skill_digest: string | null;
   readonly run_id: RunId; readonly definition_id: DefinitionId;
   readonly created_at: Date; readonly updated_at: Date; readonly archived_at: Date | null;
   readonly title: string | null; readonly repository_keys: readonly string[];
@@ -50,7 +54,8 @@ export function selectRunView(read: RunSummaryRead): RunView {
   const attention = selectRunAttention(read);
   const tree = selectUnitTree(read.units, read.definition.workflow);
   const label = selectRunLaunchLabel(read.run.input);
-  return { run_id: read.run.id, definition_id: read.run.definition_id,
+  const config = parseRunConfig(read.run.config ?? {});
+  return { pr_integration: config?.pr_integration ?? "gated-review", pr_skill_digest: config?.pr_skill_digest ?? null, run_id: read.run.id, definition_id: read.run.definition_id,
     created_at: read.run.created_at, updated_at: selectRunUpdatedAt(read), archived_at: read.run.archived_at,
     ...label, status: selectRootStatus(read.run, read.units),
     units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),

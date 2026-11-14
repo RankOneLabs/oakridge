@@ -1,3 +1,4 @@
+import { parsePrIntegration, type PrIntegration } from "./pr-integration";
 import type { WorkerRuntime } from "../core-client/core-types";
 
 /** The runtime, model and effort an agent worker starts with. */
@@ -5,6 +6,8 @@ export interface SessionSettings { readonly harness: string; readonly model: str
 /** Launch settings. Sessions are keyed separately by stage and worker; a worker without one
  * uses the runtime its pinned workflow declares. */
 export interface RunConfig {
+  readonly pr_integration: PrIntegration;
+  readonly pr_skill_digest: string | null;
   readonly sessions: { readonly [stage: string]: { readonly [worker: string]: SessionSettings } };
   /** Whether observation may send this run's items to the configured graders. Off unless chosen. */
   readonly grading_enabled: boolean;
@@ -22,6 +25,11 @@ const parseSessionSettings = (value: unknown): SessionSettings | null =>
  * absent grading choice is off; a supplied value of the wrong shape is malformed, never coerced. */
 export function parseRunConfig(value: unknown): RunConfig | null {
   if (!isFields(value)) return null;
+  if (value.pr_skill_digest !== undefined && value.pr_skill_digest !== null && typeof value.pr_skill_digest !== "string") return null;
+  const pr_integration = value.pr_integration === undefined ? "gated-review" : parsePrIntegration(value.pr_integration);
+  if (pr_integration === null) return null;
+  const pr_skill_digest = value.pr_integration === undefined ? null : value.pr_skill_digest ?? null;
+  if (typeof pr_skill_digest !== "string" && pr_skill_digest !== null) return null;
   const grading_enabled = value.grading_enabled === undefined ? false : value.grading_enabled;
   if (typeof grading_enabled !== "boolean") return null;
   const sessions = value.sessions === undefined ? {} : value.sessions;
@@ -38,7 +46,7 @@ export function parseRunConfig(value: unknown): RunConfig | null {
     stages.push([stage, Object.fromEntries(workers)]);
   }
   // fromEntries keeps even names like `__proto__` as own properties.
-  return { sessions: Object.fromEntries(stages), grading_enabled };
+  return { sessions: Object.fromEntries(stages), grading_enabled, pr_integration, pr_skill_digest };
 }
 
 export interface SessionSettingsTarget { readonly stage: string; readonly worker: string }

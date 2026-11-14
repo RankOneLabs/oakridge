@@ -1,3 +1,4 @@
+import type { PrIntegration, PrIntegrationHealth } from "../domain/pr-integration";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Hono } from "hono";
 import { CoreClient } from "../core-client/client";
@@ -33,6 +34,7 @@ export interface ExecutorOptions {
   readonly gated_review_url: string | null;
 }
 export interface ProductionOptions {
+  readonly pr_integration_default?: PrIntegration;
   readonly database_url: string; readonly host: string; readonly control_token?: string;
   readonly executor?: ExecutorOptions;
   /** Overrides for tests; production builds them from `executor`. */
@@ -86,4 +88,23 @@ export async function createProductionComposition(options: ProductionOptions): P
     finally { core.close(); await db.destroy(); }
     throw cause;
   }
+}
+
+/** IO boundary: any HTTP response proves reachability; authentication remains the tool's concern. */
+export async function probePrIntegration(integration: PrIntegration, gated_review_url: string | null): Promise<PrIntegrationHealth> {
+  if (integration === "none") return { kind: "unconfigured", detail: "selected integration is none" };
+  if (integration === "gated-review") {
+    if (!gated_review_url) return { kind: "unconfigured", detail: "OAKRIDGE_GATED_REVIEW_URL is unset" };
+    try {
+      const response = await fetch(gated_review_url, { signal: AbortSignal.timeout(3000) });
+      void response.body?.cancel().catch(() => {});
+      return { kind: "healthy" };
+    } catch (cause) { return { kind: "unreachable", detail: String(cause) }; }
+  }
+  const executable = Bun.which("gh");
+  if (!executable) return { kind: "unconfigured", detail: "gh is absent from PATH" };
+  try {
+    const process = Bun.spawn([executable, "auth", "status"], { stdout: "ignore", stderr: "ignore" });
+    return await process.exited === 0 ? { kind: "healthy" } : { kind: "unconfigured", detail: "gh auth status failed" };
+  } catch (cause) { return { kind: "unconfigured", detail: String(cause) }; }
 }
