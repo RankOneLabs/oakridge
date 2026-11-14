@@ -630,3 +630,22 @@ test("skill source byte drift fails generator check and retains old pins on gene
   const old = JSON.parse(before) as { "github-cli": string };
   expect(existsSync(resolve(root, "workflow-config/definitions/skills", old["github-cli"], "SKILL.md"))).toBe(true);
 });
+
+test("development prompts use the integration-neutral skill while historical pins retain their instructions", () => {
+  const store = DEFINITION_STORE_ROOT;
+  const catalog = unwrap(readLaunchableCatalog(store));
+  expect(catalog.development).not.toBe("46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222");
+  const current = unwrap(resolveLaunchableDefinition("development"));
+  const previous = JSON.parse(readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8")) as CommittedDefinition;
+  for (const name of ["build", "build-revise", "assess", "assess-revise", "integrate", "integrate-revise"]) {
+    const prompt = readFileSync(resolve(import.meta.dir, "../prompts/development", `${name}.md`), "utf8");
+    const pinned = current.prompts[`development/${name}.md`];
+    expect(pinned).toBe(prompt);
+    const historicalPrompt = readFileSync(resolve(store, "prompts", `${previous.prompts[`development/${name}.md`]}.md`), "utf8");
+    expect(historicalPrompt).toContain("gated-review");
+    expect(prompt).toContain("pr-operations");
+    expect(prompt).not.toMatch(/gated-review|mcp__|pr_status|review gate/i);
+  }
+  const historical = readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8");
+  expect(historical).toContain("development");
+});

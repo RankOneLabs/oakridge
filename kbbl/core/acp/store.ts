@@ -1,3 +1,4 @@
+import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
 import { AcpTurnStore, type AcceptTurnInput, type AcceptTurnOutcome, type OpenTurnRow, type RetainedPromptTurn, type BootSweepResult } from "./store-turns";
 import { AcpWorktreeStore, type ReusableWorktreeClaimInput, type ReusableWorktreeClaim, type WorktreeAssignment } from "./store-worktrees";
 import { nowIso, toAcpSessionRow, type RawAcpSessionRow } from "./store-records";
@@ -23,6 +24,8 @@ import type {
 } from "./types";
 
 export interface ClaimInput {
+  pr_integration?: PrIntegration;
+  pr_skill_digest?: string | null;
   sid: KbblSessionId;
   resumable_key: ResumableKey | null;
   start_spec_hash: string | null;
@@ -145,14 +148,16 @@ export class AcpSessionStore {
           string | null,
           string | null,
           string | null,
+          string,
+          string | null,
         ]
       >(
         `INSERT INTO acp_sessions (
            sid, resumable_key, start_spec_hash, agent_profile, name,
            artifact_id, project_workdir, worktree_path, requested_model,
            requested_effort, requested_mode, status, last_activity_at,
-           created_at, updated_at, run_id, unit_id, worker
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)
+           created_at, updated_at, run_id, unit_id, worker, pr_integration, pr_skill_digest
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`,
       )
       .get(
@@ -173,6 +178,8 @@ export class AcpSessionStore {
         input.workflow?.run_id ?? null,
         input.workflow?.unit_id ?? null,
         input.workflow?.worker ?? null,
+        input.pr_integration ?? input.workflow?.pr_integration ?? "none",
+        input.pr_skill_digest ?? input.workflow?.pr_skill_digest ?? null,
       );
     if (!row) throw new Error("ACP session insert returned no row");
     this.notifySessionsChanged();

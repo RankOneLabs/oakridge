@@ -1,3 +1,4 @@
+import { parsePrIntegration, type PrIntegration } from "../../oakridge-dbos/src/domain/pr-integration";
 import { readFileSync } from "node:fs";
 
 import { z } from "zod";
@@ -78,6 +79,7 @@ const AcpEnvPolicySchema = z
 
 const AcpAgentSchema = z
   .object({
+    skill_discovery: z.object({ kind: z.literal("additionalDirectories") }).strict().nullable().optional(),
     enabled: z.boolean().default(true),
     label: z.string().min(1).nullable().optional(),
     command: z.string().min(1),
@@ -170,4 +172,15 @@ export function loadConfig(path: string): KbblConfig {
     );
   }
   return result.data;
+}
+
+/** Installation PR settings are read once at startup, never per session. */
+export interface InstallPrIntegrationConfig {
+  readonly default_integration: PrIntegration;
+  readonly gated_review_url: string | null;
+}
+export function loadPrIntegrationConfig(env: Readonly<Record<string, string | undefined>>): InstallPrIntegrationConfig {
+  const integration = parsePrIntegration(env.OAKRIDGE_PR_INTEGRATION ?? "none");
+  if (integration === null) throw new Error("OAKRIDGE_PR_INTEGRATION must be gated-review, github-cli or none");
+  return { default_integration: integration, gated_review_url: env.OAKRIDGE_GATED_REVIEW_URL ?? null } as const;
 }

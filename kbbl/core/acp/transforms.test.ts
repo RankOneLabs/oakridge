@@ -4,7 +4,7 @@ import type * as schema from "@agentclientprotocol/sdk";
 
 import { buildAgentEnv } from "./agent-profile";
 import { builtinAgentProfiles } from "./default-profiles";
-import { resolveRequestedOption } from "./controller";
+import { resolveRequestedOption } from "./config-option-resolver";
 import { projectSessionUpdate } from "./event-projector";
 
 const OPTIONS: schema.SessionConfigOption[] = [

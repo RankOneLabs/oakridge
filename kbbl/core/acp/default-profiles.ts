@@ -77,6 +77,8 @@ export function builtinAgentProfiles(
   const claudeCli = installedAgentCli("CLAUDE_CODE_EXECUTABLE", "claude");
   const codexCli = installedAgentCli("CODEX_PATH", "codex");
   profiles.set("claude-code", {
+    // Verified against claude-agent-acp 0.76.0 with the existing login.
+    skillDiscovery: { kind: "additionalDirectories" },
     id: "claude-code",
     label: "Claude Code (ACP)",
     command: installedBin(kbblRoot, "claude-agent-acp"),
@@ -91,6 +93,8 @@ export function builtinAgentProfiles(
     sessionMode: "auto",
   });
   profiles.set("codex", {
+    // Verified against codex-acp 1.13.0 with the existing login.
+    skillDiscovery: { kind: "additionalDirectories" },
     id: "codex",
     label: "Codex (ACP)",
     command: installedBin(kbblRoot, "codex-acp"),

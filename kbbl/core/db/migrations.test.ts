@@ -146,7 +146,7 @@ describe("kbbl ledger migrations", () => {
   /** Every retained ledger row, without the column 004 removes. */
   const retainedRows = (ledger: Database): Record<string, unknown[]> => Object.fromEntries(ledgerTables(ledger).map((table) => [table,
     ledger.query<Record<string, unknown>, []>(`SELECT * FROM ${table} ORDER BY rowid`).all()
-      .map(({ gated_review_json: _removed, ...row }) => row)]));
+      .map(({ gated_review_json: _removed, pr_integration: _integration, pr_skill_digest: _digest, ...row }) => row)]));
 
   function ledgerThrough003(): Database {
     const through = join(migrationsDir, "through-003");
@@ -180,7 +180,7 @@ describe("kbbl ledger migrations", () => {
   test("a fresh database applies the complete numbered sequence and has no grant column", () => {
     const ledger = new Database(":memory:");
     const { applied } = applyMigrations(ledger, ledgerMigrations);
-    expect(applied).toEqual(["001_sessions.sql", "002_session_archive.sql", "003_gated_review.sql", dropMigration]);
+    expect(applied).toEqual(["001_sessions.sql", "002_session_archive.sql", "003_gated_review.sql", dropMigration, "005_session_pr_integration.sql"]);
     expect(sessionColumns(ledger)).not.toContain("gated_review_json");
     ledger.close();
   });
@@ -189,8 +189,8 @@ describe("kbbl ledger migrations", () => {
     const ledger = ledgerThrough003();
     const rows = retainedRows(ledger);
     const columns = sessionColumns(ledger);
-    expect(applyMigrations(ledger, ledgerMigrations).applied).toEqual([dropMigration]);
-    expect(sessionColumns(ledger)).toEqual(columns.filter((column) => column !== "gated_review_json"));
+    expect(applyMigrations(ledger, ledgerMigrations).applied).toEqual([dropMigration, "005_session_pr_integration.sql"]);
+    expect(sessionColumns(ledger)).toEqual([...columns.filter((column) => column !== "gated_review_json"), "pr_integration", "pr_skill_digest"]);
     expect(retainedRows(ledger)).toEqual(rows);
     ledger.close();
   });
@@ -210,7 +210,7 @@ describe("kbbl ledger migrations", () => {
     const store = new AcpSessionStore(ledger);
     const claim = { sid: "sid-new" as KbblSessionId, resumable_key: "key-restricted" as ResumableKey, start_spec_hash: "hash", agent_profile: "claude-code", name: "restricted",
       artifact_id: null, project_workdir: "/work", worktree_path: "/work/tree", requested_model: null, requested_effort: null, requested_mode: null,
-      workflow: { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder" } };
+      workflow: { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder", pr_integration: "gated-review" as const, pr_skill_digest: null } };
     const claimed = store.claimResumable("key-restricted" as ResumableKey, claim);
     expect({ kind: claimed.kind, sid: claimed.row.sid, workflow: claimed.row.workflow, acp_session_id: claimed.row.acp_session_id }).toEqual({
       kind: "existing", sid: "sid-restricted" as KbblSessionId, workflow: claim.workflow, acp_session_id: "agent-1" as AcpAgentSessionId });

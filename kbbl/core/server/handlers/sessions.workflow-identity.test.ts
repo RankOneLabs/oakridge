@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 
-import { mountSessionsRoutes, parseWorkflowIdentity } from "./sessions";
+import { mountSessionsRoutes } from "./sessions";
+import { parseWorkflowIdentity } from "./workflow-identity";
 import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
 import type { PwaSessionSnapshot } from "../../acp/pwa-wire";
 import type { KbblSessionId } from "../../acp/types";
@@ -45,7 +46,7 @@ async function getSessions(app: Hono): Promise<PwaSessionSnapshot[]> {
   return body.sessions;
 }
 
-const WORKFLOW = { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder" };
+const WORKFLOW = { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder", pr_integration: "none" as const, pr_skill_digest: null };
 
 beforeEach(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-workflow-identity-test-"));
@@ -74,7 +75,7 @@ describe("PUT /sessions/resumable/:key workflow member", () => {
     try {
       const app = makeApp();
       for (const worker of ["author", "spec_editor", "planner", "writer", "builder", "assessor", "integrator", "renamed-worker"]) {
-        const res = await ensureResumable(app, `agent-${worker}`, { workflow: { ...WORKFLOW, worker } });
+        const res = await ensureResumable(app, `agent-${worker}`, { workflow: { ...WORKFLOW, worker, pr_integration: "gated-review" } });
         expect(res.status).toBe(201);
         const sessions = await getSessions(app);
         const sid = sessions.find((session) => session.workflow?.worker === worker)?.sid as KbblSessionId;
@@ -130,7 +131,7 @@ describe("PUT /sessions/resumable/:key workflow member", () => {
     const app = makeApp();
     await ensureResumable(app, "build-5", { workflow: WORKFLOW });
     const res = await ensureResumable(app, "build-5", {
-      workflow: { ...WORKFLOW, worker: "assessor" },
+      workflow: { ...WORKFLOW, worker: "assessor", pr_integration: "none" as const, pr_skill_digest: null },
     });
     expect(res.status).toBe(200);
     const sessions = await getSessions(app);
@@ -157,9 +158,9 @@ describe("parseWorkflowIdentity", () => {
   });
 
   test("the run, unit and worker are trimmed and required", () => {
-    expect([parseWorkflowIdentity({ run_id: " run-1 ", unit_id: "unit-1", worker: "builder" }),
+    expect([parseWorkflowIdentity({ run_id: " run-1 ", unit_id: "unit-1", worker: "builder", pr_integration: "none" as const, pr_skill_digest: null }),
       parseWorkflowIdentity({ run_id: "run-1", unit_id: "unit-1", worker: "" })]).toEqual([
-      { value: { run_id: "run-1", unit_id: "unit-1", worker: "builder" } }, { error: "workflow.worker must be a non-empty string" }]);
+      { value: { run_id: "run-1", unit_id: "unit-1", worker: "builder", pr_integration: "none" as const, pr_skill_digest: null } }, { error: "workflow.worker must be a non-empty string" }]);
   });
 
   test("a non-object workflow is rejected", () => {
@@ -169,4 +170,30 @@ describe("parseWorkflowIdentity", () => {
   test("a removed grant field on the wire is not part of the identity", () => {
     expect(parseWorkflowIdentity({ ...WORKFLOW, gated_review: { kind: "unscoped" } })).toEqual({ value: WORKFLOW });
   });
+});
+
+test("identical integration attaches while integration and digest changes conflict", async () => {
+  const app = makeApp();
+  const first = await ensureResumable(app, "pinned", { workflow: WORKFLOW });
+  const started = await first.json() as { session: { sid: string } };
+  const repeat = await ensureResumable(app, "pinned", { workflow: WORKFLOW });
+  expect(await repeat.json()).toMatchObject({ kind: "attached", session: { sid: started.session.sid } });
+  for (const identity of [{ ...WORKFLOW, pr_integration: "github-cli" }, { ...WORKFLOW, pr_skill_digest: "a".repeat(64) }]) {
+    const conflict = await ensureResumable(app, "pinned", { workflow: identity });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ code: "session_key_conflict" });
+  }
+});
+
+test("pinned skill materialization leaves the target worktree clean", async () => {
+  await harness.service.shutdown();
+  const state = join(tmpRoot, "state");
+  harness = makeAcpTestService({ stateDir: state, worktreesRoot: join(tmpRoot, "worktrees"), skillDiscovery: { kind: "additionalDirectories" } });
+  const app = makeApp();
+  const response = await ensureResumable(app, "pinned-worktree", { workflow: { ...WORKFLOW, pr_integration: "gated-review", pr_skill_digest: "8199a2589e1e69ded71370f990e7ac3e9ac48d6dc2137bad004d507de0b7280c" } });
+  expect(response.status).toBe(201);
+  const body = await response.json() as { session: { sid: KbblSessionId; worktreePath: string } };
+  await harness.service.observeInitialTurn(body.session.sid, 8000);
+  expect((await Bun.$`git -C ${body.session.worktreePath} status --porcelain`.text()).trim()).toBe("");
+  expect(readFileSync(join(state, "session-skills", body.session.sid, ".agents/skills/pr-operations/SKILL.md"), "utf8")).toContain("name: pr-operations");
 });

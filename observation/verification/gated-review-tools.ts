@@ -4,7 +4,7 @@
  *   OAKRIDGE_GATED_REVIEW_URL=<url> bun observation/verification/gated-review-tools.ts \
  *     [--run-id <id>] [--unit-id <id>] [--report <path>]
  *
- * The endpoint is the one every agent session receives: selectMcpServers takes
+ * The endpoint is the one gated-review sessions receive: selectMcpServers takes
  * it unchanged, with no credential and no client-side tool filter. This client
  * negotiates a real MCP session, follows every tools/list page and only reads:
  * no tool is called, so the human-only tools are never probed by execution.
@@ -85,8 +85,8 @@ export function selectReportEndpoint(endpoint: string | undefined): string | nul
 export function selectAssertions(endpoint: string, tool_names: readonly string[]): readonly ReportAssertion[] {
   const present = HUMAN_ONLY_TOOLS.filter((name) => tool_names.includes(name));
   const missing = AGENT_TOOLS.filter((name) => !tool_names.includes(name));
-  const servers = selectMcpServers(endpoint);
-  const is_unfiltered = servers.length === 1 && servers.every((server) =>
+  const servers = selectMcpServers("gated-review", endpoint);
+  const is_unfiltered = servers.ok && servers.value.length === 1 && servers.value.every((server) =>
     "url" in server && server.url === endpoint && server.headers.length === 0);
   return [
     { name: "human_only_tools_absent", passed: present.length === 0,
