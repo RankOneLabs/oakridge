@@ -1,4 +1,5 @@
-import { parsePrIntegration, preflightLaunch, isPrDependent, type PrIntegration, type PrIntegrationHealth } from "../domain/pr-integration";
+import { parsePrIntegration, type PrIntegration } from "../domain/pr-integration";
+import { preflightLaunch, isPrDependent, type PrIntegrationHealth } from "../runtime/pr-launch-preflight";
 import { readSkillIndex, resolveLaunchableDefinition, type DefinitionId } from "../runtime/definition-store";
 import type { Context, Hono } from "hono";
 import { createHash } from "node:crypto";

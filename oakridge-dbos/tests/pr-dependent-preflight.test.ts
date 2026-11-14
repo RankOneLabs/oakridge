@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isPrDependent, preflightLaunch, prOperationKeys } from "../src/domain/pr-integration";
+import { isPrDependent, preflightLaunch, prOperationKeys } from "../src/runtime/pr-launch-preflight";
 import { readLaunchableCatalog, resolveDefinition, type DefinitionId } from "../src/runtime/definition-store";
 import type { WorkflowDefinitionDescriptor } from "../src/core-client/source-types";
 const definition_id = "0".repeat(64) as DefinitionId;
@@ -50,4 +50,26 @@ test("a refused PR-dependent launch never reaches the authority database", async
     body: JSON.stringify({ request_id: "refused-pr", definition_id: catalog.value.development, input: {}, pr_integration: "none" }) });
   expect({ status: response.status, kind: (await response.json()).kind, database_accesses })
     .toEqual({ status: 422, kind: "integration_none", database_accesses: 0 });
+});
+
+import { probePrIntegration } from "../src/runtime/compose";
+test("gated-review without a URL is unconfigured", async () => {
+  expect((await probePrIntegration("gated-review", null)).kind).toBe("unconfigured");
+});
+test("gated-review on a closed port is unreachable", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const url = server.url.href;
+  await server.stop(true);
+  expect((await probePrIntegration("gated-review", url)).kind).toBe("unreachable");
+});
+test("any gated-review HTTP status proves reachability", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 503 }) });
+  try { expect(await probePrIntegration("gated-review", server.url.href)).toEqual({ kind: "healthy" }); }
+  finally { await server.stop(true); }
+});
+test("github-cli without gh on PATH is unconfigured", async () => {
+  const previous = process.env.PATH;
+  process.env.PATH = "/nonexistent-pr-probe-test";
+  try { expect((await probePrIntegration("github-cli", null)).kind).toBe("unconfigured"); }
+  finally { if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous; }
 });

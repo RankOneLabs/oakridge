@@ -1,10 +1,12 @@
-import type { PrIntegration, PrIntegrationHealth } from "../domain/pr-integration";
+import type { PrIntegration } from "../domain/pr-integration";
+import type { PrIntegrationHealth } from "./pr-launch-preflight";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Hono } from "hono";
 import { CoreClient } from "../core-client/client";
 import type { RunId } from "../domain/primitives";
 import { selectControlPlaneAccess } from "../http/control-auth";
 import { configuredBrowserWritePolicy } from "../http/browser-write-policy";
+import type { PrLaunchDependencies } from "../http/ingress";
 import { createHttpApp } from "../http/app";
 import { openDatabase } from "../storage/database";
 import { KbblClient } from "../adapters/kbbl";
@@ -76,7 +78,9 @@ export async function createProductionComposition(options: ProductionOptions): P
     await DBOS.launch();
     await resumeActiveRuns(db);
     const wake = (run_id: RunId): void => { void wakeRun(run_id); };
-    const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
+    const pr_launch: PrLaunchDependencies = { pr_integration_default: options.pr_integration_default ?? "none",
+      probe_pr_integration: (integration) => probePrIntegration(integration, executor?.gated_review_url ?? null) };
+    const app = createHttpApp({ ...pr_launch, db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
     const sweep = startRunSweep(() => sweepRunsNeedingWork(db));
     const observation = options.observation ? startObservationPublisher(db, options.observation) : null;
     return { app, application_version, async close() {
@@ -101,7 +105,7 @@ export async function probePrIntegration(integration: PrIntegration, gated_revie
       return { kind: "healthy" };
     } catch (cause) { return { kind: "unreachable", detail: String(cause) }; }
   }
-  const executable = Bun.which("gh");
+  const executable = Bun.which("gh", { PATH: process.env.PATH });
   if (!executable) return { kind: "unconfigured", detail: "gh is absent from PATH" };
   try {
     const process = Bun.spawn([executable, "auth", "status"], { stdout: "ignore", stderr: "ignore" });

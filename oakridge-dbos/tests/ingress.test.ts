@@ -243,3 +243,118 @@ test("an operator route refuses a request without the control token", async () =
   const response = await send("POST", "/api/runs", { request_id: crypto.randomUUID(), definition_id, input: { topic: "Oakridge" } }, null);
   expect(response.status).toBe(401);
 });
+
+import { Hono as IntegrationApp } from "hono";
+import { installIngress } from "../src/http/ingress";
+import { installReadModels } from "../src/http/read-models";
+import type { PrIntegration } from "../src/domain/pr-integration";
+import type { PrIntegrationHealth } from "../src/runtime/pr-launch-preflight";
+import { readCommittedRunConfig } from "../src/storage/read-store";
+import { openDatabase } from "../src/storage/database";
+import { launch as launchLegacy } from "./authority-fixture";
+import { readSkillIndex } from "../src/runtime/definition-store";
+
+function integrationApp(integration: PrIntegration, health: PrIntegrationHealth = { kind: "healthy" }) {
+  const app = new IntegrationApp();
+  const deps = { db: authority.db, core: authority.core, wake: () => undefined, is_operator_request: () => true,
+    pr_integration_default: integration, probe_pr_integration: async () => health };
+  installIngress(app, deps);
+  installReadModels(app, deps);
+  return app;
+}
+async function integrationLaunch(app: IntegrationApp, selection?: PrIntegration, config?: unknown, name: "review-loop" | "development" = "review-loop") {
+  const request_id = crypto.randomUUID();
+  const { definition_id } = await sampleDefinition(name);
+  const response = await app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ request_id, definition_id, input: { topic: "integration persistence" },
+      ...(selection === undefined ? {} : { pr_integration: selection }), ...(config === undefined ? {} : { config }) }) });
+  return { response, run_id: launchRunId(request_id) };
+}
+
+test("launch records the explicit integration, install default and none skill pins", async () => {
+  const index = readSkillIndex();
+  if (!index.ok) throw new Error(JSON.stringify(index.error));
+  for (const selection of ["github-cli", undefined, "none"] as const) {
+    const { response, run_id } = await integrationLaunch(integrationApp("gated-review"), selection);
+    expect(response.status).toBe(201);
+    const integration = selection ?? "gated-review";
+    expect(await readCommittedRunConfig(authority.db, run_id)).toEqual({ state: "committed", config: {
+      sessions: {}, grading_enabled: false, pr_integration: integration,
+      pr_skill_digest: integration === "none" ? null : index.value[integration] } });
+  }
+});
+test("client-supplied skill pin creates no authority run", async () => {
+  const { response, run_id } = await integrationLaunch(integrationApp("none"), undefined, { pr_skill_digest: "forged" });
+  expect({ status: response.status, run: await authority.db.selectFrom("authority.run").select("id").where("id", "=", run_id).executeTakeFirst() })
+    .toEqual({ status: 400, run: undefined });
+});
+test("run read model exposes recorded and legacy integration", async () => {
+  const app = integrationApp("none");
+  const { response, run_id } = await integrationLaunch(app, "github-cli");
+  expect(response.status).toBe(201);
+  const result = await app.request(`/api/runs/${run_id}`);
+  const body = await result.json();
+  expect(body.pr_integration).toBe("github-cli");
+  const legacy = await launchLegacy(authority, { definition_id: (await sampleDefinition()).definition_id,
+    request_id: crypto.randomUUID(), input: { topic: "legacy" } });
+  const legacyResponse = await app.request(`/api/runs/${legacy.run_id}`);
+  expect((await legacyResponse.json()).pr_integration).toBe("gated-review");
+});
+test("legacy stored config resolves to gated-review with no skill pin", async () => {
+  const legacy = await launchLegacy(authority, { definition_id: (await sampleDefinition()).definition_id,
+    request_id: crypto.randomUUID(), input: { topic: "legacy settings" },
+    config: { sessions: {}, grading_enabled: false } as import("../src/domain/run-config").RunConfig });
+  expect(await readCommittedRunConfig(authority.db, legacy.run_id)).toEqual({ state: "committed", config: {
+    sessions: {}, grading_enabled: false, pr_integration: "gated-review", pr_skill_digest: null } });
+});
+test("retry and a reopened database retain recorded pins despite a changed install default", async () => {
+  const { response, run_id } = await integrationLaunch(integrationApp("github-cli"));
+  expect(response.status).toBe(201);
+  const before = await readCommittedRunConfig(authority.db, run_id);
+  await report(run_id, { kind: "started", session_id: "integration-retry", publication_secret_hash: null });
+  await report(run_id, { kind: "ended", result: { kind: "failed", code: "test_failure", detail: "retry pin" } });
+  const changedDefaultApp = integrationApp("none");
+  const retry = await changedDefaultApp.request(path("runs", run_id, "units", unitOf(run_id, "document"), "workers", "writer", "retry"), {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: crypto.randomUUID() }) });
+  expect(retry.status).toBe(201);
+  const reopened = openDatabase(authority.url);
+  try { expect(await readCommittedRunConfig(reopened, run_id)).toEqual(before); }
+  finally { await reopened.destroy(); }
+});
+test("PR-dependent refusals leave no run and retain the selected integration", async () => {
+  for (const [integration, health, kind] of [
+    ["none", { kind: "healthy" }, "integration_none"],
+    ["gated-review", { kind: "unconfigured", detail: "URL unset" }, "integration_unconfigured"],
+    ["gated-review", { kind: "unreachable", detail: "closed port" }, "integration_unreachable"],
+    ["github-cli", { kind: "unconfigured", detail: "gh absent" }, "integration_unconfigured"],
+  ] as const) {
+    const { response, run_id } = await integrationLaunch(integrationApp(integration, health), undefined, undefined, "development");
+    expect({ status: response.status, body: await response.json(), run: await authority.db.selectFrom("authority.run").select("id").where("id", "=", run_id).executeTakeFirst() })
+      .toMatchObject({ status: 422, body: { kind, integration }, run: undefined });
+  }
+});
+test("review-loop launches with none and unreachable gated-review", async () => {
+  for (const integration of ["none", "gated-review"] as const) {
+    const { response } = await integrationLaunch(integrationApp(integration, { kind: "unreachable", detail: "offline" }));
+    expect(response.status).toBe(201);
+  }
+});
+
+test("a PR-dependent launch commits when its gated-review URL answers an HTTP error status", async () => {
+  const { probePrIntegration } = await import("../src/runtime/compose");
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 401 }) });
+  try {
+    const app = new IntegrationApp();
+    installIngress(app, { db: authority.db, core: authority.core, wake: () => undefined, is_operator_request: () => true,
+      pr_integration_default: "gated-review", probe_pr_integration: (integration) => probePrIntegration(integration, server.url.href) });
+    const { definition_id } = await sampleDefinition("development");
+    const response = await app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ request_id: crypto.randomUUID(), definition_id, input: {
+        title: "Reachable integration", spec: "test", final_merge_policy: "require_merge", primary_repository_key: "app",
+        repositories: [{ key: "app", preparation: { repository_path: "/tmp", expected_head: null },
+          forge: { owner: "oakridge-test", name: "app", build_base: "develop", final_base: "main" } }] } }) });
+    expect(response.status).toBe(201);
+    const { run_id } = await response.json();
+    expect((await authority.db.selectFrom("authority.run").select("id").where("id", "=", run_id).executeTakeFirst())?.id).toBe(run_id);
+  } finally { await server.stop(true); }
+});

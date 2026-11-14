@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { Subprocess } from "bun";
+import { readCommittedRunConfig } from "../src/storage/read-store";
 import { openDatabase, type Database } from "../src/storage/database";
 import { sampleWorkflow, scratchDatabase } from "./authority-fixture";
 import { eventually, startStubKbbl, type StubKbbl } from "./stub-kbbl";
@@ -47,10 +48,10 @@ afterAll(async () => {
 });
 
 const base_url = (): string => `http://127.0.0.1:${port}`;
-async function startServer(): Promise<Subprocess> {
+async function startServer(integration: "github-cli" | "none" = "github-cli"): Promise<Subprocess> {
   const child = Bun.spawn(["bun", "run", resolve(import.meta.dir, "../src/main.ts")], { stdout: "ignore", stderr: "ignore",
     env: { ...process.env, DBOS_SYSTEM_DATABASE_URL: scratch.url, PORT: String(port), OAKRIDGE_DBOS_HOST: "127.0.0.1",
-      KBBL_BASE_URL: stub.url, OAKRIDGE_PUBLICATION_KEY: "restart-key", OAKRIDGE_PUBLIC_URL: base_url(), OAKRIDGE_AGENT_WORKDIR: workdir,
+      OAKRIDGE_PR_INTEGRATION: integration, KBBL_BASE_URL: stub.url, OAKRIDGE_PUBLICATION_KEY: "restart-key", OAKRIDGE_PUBLIC_URL: base_url(), OAKRIDGE_AGENT_WORKDIR: workdir,
       OAKRIDGE_CONTROL_TOKEN: "", DBOS_APPLICATION_VERSION: "" } });
   await eventually("the server to listen", async () => (await fetch(`${base_url()}/api/runs`).catch(() => null))?.ok, 60_000);
   return child;
@@ -75,11 +76,14 @@ test("I4: a run survives a killed server, with no session started twice", async 
     const launched = await fetch(`${base_url()}/api/runs`, json({ request_id: crypto.randomUUID(), definition_id,
       input: { repository: { repository_path: repo, expected_head: null, base_branch: "epic/restart", integration_branch: "main" }, items } }));
     const { run_id } = await launched.json() as { readonly run_id: string };
+    const pinnedConfig = await readCommittedRunConfig(db, run_id);
+    expect(pinnedConfig.state === "committed" ? pinnedConfig.config.pr_integration : null).toBe("github-cli");
     await eventually("two item sessions working", async () => started.size === 2, 60_000);
 
     server.kill(9);
     await server.exited;
-    server = await startServer();
+    server = await startServer("none");
+    expect(await readCommittedRunConfig(db, run_id)).toEqual(pinnedConfig);
     released = true;
 
     await eventually("the run to finish", async () =>
