@@ -30,3 +30,8 @@ __pycache__/
 /observation/verification/reports/
 /observation/verification/gated-review-tools.json
 /observation/verification/gated-review.json
+
+# Local gated-review configuration copied from .mcp.example.json
+/.mcp.json
+# Local catagents standards checkout
+/.catagents/standards
