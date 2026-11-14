@@ -40,6 +40,8 @@ export type TurnKey = string & { readonly __brand: "TurnKey" };
  * session died before its first turn.
  */
 export const ACP_FAILURE_CODES = [
+  "skill_unavailable",
+  "pr_integration_unconfigured",
   "agent_profile_unavailable",
   "agent_spawn_failed",
   "acp_initialize_failed",
