@@ -1,7 +1,7 @@
 import type { DefinitionSelection } from "../../../lib/hash";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
 import type { DefinitionOverview } from "../../lib/definition-overview";
-import { selectDefinitionGraph, selectDefinitionNodeLabel, selectDefinitionNodeSelected } from "../../lib/definition-graph";
+import { DEFINITION_NODE_HEIGHT, selectDefinitionGraph, selectDefinitionNodeLabel, selectDefinitionNodeSelected } from "../../lib/definition-graph";
 import { selectDefinitionDependencies, type DependencyEdge } from "../../lib/definition-dependencies";
 import { definitionHref, definitionUnitHref } from "../../lib/definition-selection";
 
@@ -68,7 +68,7 @@ export function DefinitionGraph(props: DefinitionGraphProps) {
                 />
                 <text
                   x={((source?.x ?? 0) + (target?.x ?? 0)) / 2 + 10}
-                  y={((source?.y ?? 0) + 150 + (target?.y ?? 0)) / 2 + (edge.kind === "explicit" ? -6 : 12)}
+                  y={((source?.y ?? 0) + DEFINITION_NODE_HEIGHT + (target?.y ?? 0)) / 2 + (edge.kind === "explicit" ? -6 : 12)}
                 >
                   {edgeLabel(edge)}
                 </text>

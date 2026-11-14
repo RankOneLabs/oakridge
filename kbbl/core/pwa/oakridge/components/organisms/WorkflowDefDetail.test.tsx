@@ -19,9 +19,11 @@ test("renders structured facts and navigates a stage through the route callback"
   expect(screen.getByRole("list", { name: "Dependency edges" }).textContent).toContain("planning reads analysis.outcome.spec via input.spec");
 });
 test("invalid selection leaves the graph and overview visible", () => {
-  render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "absent" }} onNavigate={() => {}} onBack={() => {}} />);
+  const view = render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "absent" }} onNavigate={() => {}} onBack={() => {}} />);
   expect(screen.getByText("Unit absent is not in this definition.")).toBeTruthy();
   expect(screen.getByRole("img", { name: "Unit dependency graph" })).toBeTruthy();
+  view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "absent" }} onNavigate={() => {}} onBack={() => {}} />);
+  expect(within(screen.getByTestId("or-def-selection")).getByText("Stage absent is not in this definition.")).toBeTruthy();
 });
 test("raw selection begins authored and switches to effective", () => {
   render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "cohort" }} onNavigate={() => {}} onBack={() => {}} />);
@@ -40,13 +42,25 @@ test("preserves loading and error surfaces", () => {
 });
 test("group selection drills in and exposes a root breadcrumb", () => {
   const item = { stage: "cohort", for_each: "input.items", after: "each.after" };
-  state.data = { ...detail, workflow: { ...detail.workflow, run: { outcome: {}, units: { work: { group: { outcome: {}, units: { item } } } } } } };
+  state.data = { ...detail, workflow: { ...detail.workflow, run: { outcome: {}, units: { work: {
+    for_each: "input.cohorts", key: "each.name", after: "each.depends_on", pool: "builders",
+    group: { outcome: {}, units: { item } },
+  } } } } };
   render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "work" }} onNavigate={() => {}} onBack={() => {}} />);
   const graph = screen.getByRole("region", { name: "Definition dependencies" });
   expect(within(graph).getByRole("link", { name: "item" }).getAttribute("href")).toContain("/units/work/item");
   expect(within(graph).getByRole("link", { name: "Root" }).getAttribute("href")).toBe("#oakridge/defs/" + detail.definition_id);
   expect(within(graph).getByText(/per-member after/)).toBeTruthy();
   expect(within(graph).queryByRole("link", { name: "work (group)" })).toBeNull();
+  const pane = within(screen.getByTestId("or-def-selection"));
+  expect(pane.getByRole("heading", { name: "Unit: work" })).toBeTruthy();
+  expect(pane.getByText(/Choose a child unit/)).toBeTruthy();
+  expect(pane.getByRole("link", { name: "work/item" }).getAttribute("href")).toBe(`#oakridge/defs/${detail.definition_id}/units/work/item`);
+  for (const [name, value] of [["for_each", "input.cohorts"], ["key", "each.name"], ["after", "each.depends_on"], ["pool", "builders"]]) {
+    expect(pane.getByText(name as string).nextElementSibling?.textContent).toBe(value);
+  }
+  expect(screen.queryByRole("region", { name: "Inputs" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Workers" })).toBeNull();
 });
 test("schema href reveals collapsed ancestors after route navigation", () => {
   const navigate = vi.fn();
@@ -204,4 +218,26 @@ test("unit artifact anchors keep unit identity through route changes", () => {
   view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation#stage-cohort-artifact-build_result" }} onNavigate={navigate} onBack={() => {}} />);
   expect(screen.getByRole("heading", { name: "Unit: implementation" })).toBeTruthy();
   expect(screen.getByRole("region", { name: "Inputs" }).textContent).toContain("each.depends_on");
+});
+
+test("Back and Forward route restoration keeps navigation, graph and detail selection aligned", () => {
+  const navigate = vi.fn();
+  const backSelection = { kind: "unit" as const, path: "analysis" };
+  const forwardSelection = { kind: "unit" as const, path: "implementation#stage-cohort-artifact-build_result" };
+  const view = render(<WorkflowDefDetail definitionId="d1" selection={backSelection} onNavigate={navigate} onBack={() => {}} />);
+  fireEvent.click(within(screen.getByLabelText("Stages in authored order")).getByRole("link", { name: "implementation" }));
+  expect(navigate).toHaveBeenLastCalledWith(`#oakridge/defs/${detail.definition_id}/units/implementation`);
+  view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation" }} onNavigate={navigate} onBack={() => {}} />);
+  fireEvent.click(within(screen.getByRole("region", { name: "Workers" })).getAllByRole("link", { name: "build_result" })[0] as HTMLElement);
+  expect(navigate).toHaveBeenLastCalledWith(`#oakridge/defs/${detail.definition_id}/units/${forwardSelection.path}`);
+  // The router supplies the historical selection again on popstate, including anchors.
+  for (const selection of [forwardSelection, backSelection, forwardSelection]) {
+    view.rerender(<WorkflowDefDetail definitionId="d1" selection={selection} onNavigate={navigate} onBack={() => {}} />);
+    const path = selection.path.split("#")[0];
+    expect(screen.getByLabelText("Stages in authored order").querySelector('a[aria-current="page"]')?.textContent).toBe(path);
+    expect(within(screen.getByTestId("or-def-selection")).getByRole("heading", { name: `Unit: ${path}` })).toBeTruthy();
+    const selected = screen.getByRole("img", { name: "Unit dependency graph" }).querySelectorAll(".or-definition-node--selected");
+    expect(selected).toHaveLength(1);
+    expect(selected[0]?.parentElement?.querySelector("title")?.textContent?.split(" · ")[0]).toBe(path);
+  }
 });
