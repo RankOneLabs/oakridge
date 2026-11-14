@@ -1,7 +1,7 @@
 // Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
-import type { AttemptStatus, BlockedReason, Cause, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
+import type { AttemptStatus, BlockedReason, Cause, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ForgeRepository, InputProvenanceEntries, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
 import type { ColumnType } from "kysely";
 
 export type AuthorityDecisionEffect = "approve" | "request_changes";
@@ -211,6 +211,10 @@ export interface AuthorityUnit {
    * @type {RuntimeValue}
    */
   input: NullableJsonColumn<RuntimeValue>;
+  /**
+   * @type {InputProvenanceEntries}
+   */
+  input_provenance: NullableJsonColumn<InputProvenanceEntries>;
   parent_id: string | null;
   pool: string | null;
   /**

@@ -20,7 +20,7 @@ test("an agent instruction carries its pinned prompt, session key, inputs and de
     worker: { kind: "agent", session: "resume", session_key: selectSessionKey(action, resolved.action_id, "resume"),
       prompt: { path: "review-loop/write.md", digest: "a".repeat(64) }, handoff: null, settings: null,
       creates: [{ key: "draft", schema: { title: "text", body: "text" } }], schemas: {} },
-    inputs: { topic: "Oakridge", critique: null }, engine_inputs: { previous: null, feedback: [], subject: null }, workspace: null,
+    input_provenance: { status: "unresolved" }, inputs: { topic: "Oakridge", critique: null }, engine_inputs: { previous: null, feedback: [], subject: null }, workspace: null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS });
 });
 
@@ -171,4 +171,10 @@ test("a same-SHA replacement selects the declared assessor review prompt", () =>
     resolved: { action_id: "revise-assessment", inputs: {}, previous, subject: build, feedback: [] } });
   expect(revised.ok && revised.value.worker.kind === "agent" ? revised.value.worker.prompt.path : "refused")
     .toBe("development/assess-revise.md");
+});
+
+test("effect instructions freeze the core unit provenance", () => {
+  const entries = [{ input: "brief", unit: "run/briefs/a", revision_id: "accepted" }];
+  const instruction = select({ resolved: { ...resolved, input_provenance: entries } });
+  expect(instruction.ok && instruction.value.input_provenance).toEqual({ status: "recorded", entries });
 });

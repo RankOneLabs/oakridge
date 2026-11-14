@@ -50,7 +50,7 @@ const intentFor = (worker: WorkerInstruction): RunRead["intents"] => [{ action_i
   payload: { inputs: { source: "recorded" }, engine_inputs: { previous: null, feedback: [], subject: null }, worker } as unknown as EffectInstruction }];
 test("an agent attempt exposes its recorded inputs, engine inputs and pinned prompt", () => {
   const worker = { kind: "agent", prompt: { path: "prompts/build.md", digest: "sha256-pinned" } } as WorkerInstruction;
-  expect(selectAttemptIntent(attempt, intentFor(worker))).toEqual({ inputs: { source: "recorded" },
+  expect(selectAttemptIntent(attempt, intentFor(worker))).toEqual({ input_provenance: { status: "unresolved" }, inputs: { source: "recorded" },
     engine_inputs: { previous: null, feedback: [], subject: null }, prompt: worker.kind === "agent" ? worker.prompt : null });
 });
 test("a promptless code worker exposes a null prompt", () => {
@@ -60,3 +60,23 @@ test("an attempt without its own recorded intent exposes null", () => {
   const intents = intentFor({ kind: "code", operation: "check", every: null, artifact: "result" });
   expect(selectAttemptIntent({ ...attempt, seq: 1 }, intents)).toBeNull();
 });
+
+test("attempt provenance uses only its recorded instruction", () => {
+  const intents = intentFor({ kind: "code", operation: "check", every: null, artifact: "result" });
+  const entries = [{ input: "brief", unit: "run/briefs/a", revision_id: "approved" }];
+  const recorded = intents.map((intent) => ({ ...intent, payload: { ...intent.payload, input_provenance: { status: "recorded" as const, entries } } }));
+  expect(selectAttemptIntent(attempt, recorded)?.input_provenance).toEqual({ status: "recorded", entries });
+});
+
+import { selectUnitView } from "../src/projections/unit-view";
+import type { UnitRecord } from "../src/storage/schema-records";
+for (const entries of [null, [], [{ input: "brief", unit: "run/briefs/a", revision_id: "approved" }]]) {
+  test(`unit view exposes persisted provenance ${JSON.stringify(entries)}`, () => {
+    const unit = { id: "run/cohort", run_id: "run", parent_id: "run", declaration: "cohort", stage: null,
+      input: {}, status: { kind: "active" }, input_provenance: entries } as UnitRecord;
+    const read = { units: [unit], definition: { workflow: { run: { units: {} } }, parsed_workflow: { stages: {} } },
+      run: { status: { kind: "active" } }, dependencies: [], decisions: [], attempts: [], revisions: [] } as unknown as RunRead;
+    expect(selectUnitView(read, unit, awaiting([])).input_provenance).toEqual(entries === null
+      ? { status: "unresolved" } : { status: "recorded", entries });
+  });
+}

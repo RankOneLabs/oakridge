@@ -2790,6 +2790,7 @@ fn w6_projection(result: &StepResult) -> Value {
         let id = unit["id"].as_str().unwrap().to_owned();
         let kind = unit.as_object_mut().unwrap().remove("kind").unwrap();
         unit.as_object_mut().unwrap().remove("collection_key");
+        unit.as_object_mut().unwrap().remove("input_provenance");
         unit["stage"] = kind.get("stage").cloned().unwrap_or(Value::Null);
         if let Some(reason) = blocked.get(&id) {
             unit["status"] = serde_json::json!({"kind": "blocked", "reason": reason});
@@ -2837,6 +2838,10 @@ fn w6_projection(result: &StepResult) -> Value {
     }
     value.as_object_mut().unwrap().remove("blocked");
     for wanted in value["wanted"].as_array_mut().unwrap() {
+        wanted["resolved"]
+            .as_object_mut()
+            .unwrap()
+            .remove("input_provenance");
         wanted["action"]["cause"]
             .as_object_mut()
             .unwrap()
@@ -2969,6 +2974,7 @@ fn flatten_keeps_every_item_of_every_list_in_order() {
         collection_key: None,
         status: UnitStatus::Active,
         input: None,
+        input_provenance: None,
         after: vec![],
         pool: None,
     };

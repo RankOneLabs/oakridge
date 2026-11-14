@@ -49,6 +49,7 @@ CREATE TABLE authority.unit (
   -- Core emits blocked-ness with each step; commit carries that read onto the
   -- unit row so inbox and attention can read it without stepping the run.
   blocked_reason jsonb,
+  input_provenance jsonb,
   -- Each operator review awaiting a decision, by review key: the revision it
   -- decides on and its prompt rendered with its resolved inputs. Commit
   -- rewrites it on every event that steps the unit; nothing is asked or stored
@@ -284,3 +285,5 @@ COMMENT ON COLUMN authority.collaboration_thread.context IS '@type {Collaboratio
 COMMENT ON COLUMN authority.collaboration_message.body IS '@type {CollaborationMessageBody}';
 COMMENT ON COLUMN authority.review_item.body IS '@type {ReviewItemBody}';
 COMMENT ON COLUMN authority.operator_event.payload IS '@type {OperatorEventPayload}';
+
+COMMENT ON COLUMN authority.unit.input_provenance IS '@type {InputProvenanceEntries}';

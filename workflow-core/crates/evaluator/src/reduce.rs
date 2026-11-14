@@ -47,6 +47,7 @@ fn reduce_event(
                 collection_key: None,
                 status: UnitStatus::Active,
                 input: Some(input.clone()),
+                input_provenance: Some(vec![]),
                 after: vec![],
                 pool: None,
             }));
