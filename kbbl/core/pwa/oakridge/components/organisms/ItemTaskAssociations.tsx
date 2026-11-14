@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { useItemLineage } from "../../hooks/useItemLineage";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ObservationAddressedItem, ObservationLogicalLinkRead } from "../../grading-contracts/grading/item-reads";
@@ -16,6 +18,8 @@ interface Props {
 }
 /** Only resolved recorded ids navigate. Unresolved references remain literal, even if names match. */
 export function ItemTaskAssociations({ runId, item, links, onOpenTask, onWindow }: Props) {
+  const [relationPage, setRelationPage] = useState<ObservationPageRequest>({ limit: 200, offset: 0 });
+  const lineage = useItemLineage(item.occurrence_id, relationPage);
   const read = useItemUnresolvedReferences(runId, item.occurrence_id);
   const unresolved = selectUnresolvedTaskAssociations({ occurrence_id: item.occurrence_id, links: links.items, unresolved: read.data ?? [] });
   const specTaskId = selectSpecTaskId(item);
@@ -30,7 +34,8 @@ export function ItemTaskAssociations({ runId, item, links, onOpenTask, onWindow 
         : <span key={link.relation_id} data-testid="or-item-task-link" data-link-state={link.state}>{taskLinkLabel(link)}</span>)}
       <ListPager name="links" page={links} onWindow={onWindow} />
     </div>
-    {links.items.map((link) => <div key={link.relation_id}>{link.relation_id} · {link.evidence_ref}</div>)}
+    {links.items.map((link) => <div key={link.relation_id}>{lineage.data?.relations.find((relation) => relation.relation_id === link.relation_id)?.type ?? item.provenance?.hops.find((hop) => hop.relation_id === link.relation_id)?.type ?? "Unresolved relation type"} · {link.relation_id} · {link.evidence_ref}</div>)}
+    {lineage.data && <ListPager name="association-relations" page={lineage.data} onWindow={setRelationPage} />}
     <h4 className="m-0 text-xs font-medium">Unresolved task references</h4>
     {read.isError && <p className="m-0">Unresolved task references unavailable.</p>}
     {!read.data && !read.isError && <p className="m-0">Loading unresolved task references…</p>}

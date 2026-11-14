@@ -177,3 +177,44 @@ it("a 50-row task lineage reads each contribution's status once while lineage ke
   expect(world.paths.filter((path) => path.includes("/tasks/T1/lineage")).length).toBeGreaterThan(1);
   expect(statusReads()).toHaveLength(50);
 });
+
+it("a finding reaching a task through a build item shows its revision, each hop and independent grades per scope", async () => {
+  const { reviewerAnswer } = await import("../__fixtures__/grading");
+  const perItem = supportQuestion({ answers: paged([reviewerAnswer("item-grade", "item-value")]), machine: paged([]) });
+  const perTask = correctnessQuestion({ task_id, answers: paged([reviewerAnswer("task-grade", "task-value")]), machine: paged([]) });
+  world.status = itemStatus([perItem, perTask]);
+  navigationReads();
+  const boundary = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!boundary) throw new Error("missing boundary");
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    if (String(input).includes("/tasks/T1/lineage")) return json({ ...paged([{ kind: "contribution", item: world.status.item, provenance: { kind: "relation", hops: [
+      { relation_id: "assessment-build", type: "assesses", evidence_ref: "/findings/1/subjects/0", asserted_by: "producer_explicit" },
+      { relation_id: "build-task", type: "addresses", evidence_ref: "/build_items/0/task_ids/0", asserted_by: "producer_explicit" },
+    ] } }]), run_id: "run-1", producer_local_id: "T1", is_captured: true });
+    return boundary(input, init);
+  });
+  wrap(<TaskPanel runId="run-1" taskId="T1" onOpenItem={vi.fn()} />);
+  const row = await screen.findByTestId("or-task-linked-item");
+  expect(row.textContent).toContain(IMPLEMENTATION.source_revision_id);
+  expect(row.textContent).toContain("/findings/1");
+  expect(row.textContent).toContain("assesses · /findings/1/subjects/0");
+  expect(row.textContent).toContain("addresses · /build_items/0/task_ids/0");
+  expect(screen.queryByText("item-value")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Reveal composites" }));
+  const { within } = await import("@testing-library/react");
+  expect(await within(await screen.findByRole("region", { name: "per_item grades" })).findByText("item-value")).toBeTruthy();
+  expect(await within(screen.getByRole("region", { name: "per_task grades" })).findByText("task-value")).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "per_item grades" })).queryByText("task-value")).toBeNull();
+});
+
+it("item task association link rows display the recorded relation type and evidence reference", async () => {
+  const boundary = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!boundary) throw new Error("missing boundary");
+  world.status = itemStatus([], { links: paged([{ state: "resolved", producer_local_id: "T1", logical_item_id: task_id, relation_id: id("rel-1"), evidence_ref: "/subjects/0" }]) });
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    if (String(input).includes("/items/") && String(input).includes("/lineage")) return json({ ...paged([]), occurrence_id: world.status.item.occurrence_id, republication: null, relations: [{ relation_id: "rel-1", type: "assesses", evidence_ref: "/subjects/0" }] });
+    return boundary(input, init);
+  });
+  wrap(<ItemPanel runId="run-1" selection={IMPLEMENTATION} onOpenTask={vi.fn()} />);
+  expect(await screen.findByText("assesses · rel-1 · /subjects/0")).toBeTruthy();
+});

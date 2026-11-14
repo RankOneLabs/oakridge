@@ -1,3 +1,4 @@
+import { TaskAssociationGrades } from "./TaskAssociationGrades";
 import { selectTaskLineageGroups } from "../../lib/task-lineage";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
@@ -73,12 +74,14 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
             if (entry.kind === "occurrence") return [<li key={`${index}-${entry.occurrence_id}`} className="flex flex-wrap items-center justify-between gap-2 py-1.5 text-xs text-[var(--text-muted)]" data-testid="or-task-definition">
               <span>{entry.item_kind} · {entry.artifact_kind} · {entry.revision_id} · {entry.item_path}{entry.is_current ? "" : " (older revision)"}</span>
               <ItemGradeAction runId={runId} selection={{ source_revision_id: entry.revision_id, item_path: entry.item_path }} onOpenItem={onOpenItem} />
+            {isRevealed && <TaskAssociationGrades occurrenceId={entry.occurrence_id} taskId={composite.data?.logical_item_id ?? null} />}
             </li>];
-            return [<li key={`${index}-${entry.item.occurrence_id}`} className="flex items-start gap-2 py-1.5" data-testid="or-task-linked-item" data-link-state={entry.kind}>
+            return [<li key={`${index}-${entry.item.occurrence_id}`} className="flex flex-wrap items-start gap-2 py-1.5" data-testid="or-task-linked-item" data-link-state={entry.kind}>
               <p className="m-0 min-w-0 flex-1 text-sm text-[var(--text-secondary)]">{entry.item.item_kind} · {selectItemText(entry.item.selected_value)}<br /><code>{entry.item.revision_id} {entry.item.item_path}</code><br />{entry.kind === "contribution" ? entry.provenance.hops.map((hop) => <span key={hop.relation_id}>{hop.type} · {hop.evidence_ref}<br /></span>) : <span>Unresolved: {entry.unresolved_target_ref} · {entry.evidence_ref}</span>}</p>
               {entry.kind === "unresolved" && <Chip tone="warning">Unresolved</Chip>}
               {!entry.item.is_current && <Chip tone="muted">Older revision</Chip>}
               <span>per_item</span><GradeItemButton selection={{ source_revision_id: entry.item.revision_id, item_path: entry.item.item_path }} onOpenItem={onOpenItem} /><span>per_task</span><ContributionGradeButton occurrenceId={entry.item.occurrence_id} selection={{ source_revision_id: entry.item.revision_id, item_path: entry.item.item_path, task_id: composite.data?.logical_item_id ?? null }} onOpenItem={onOpenItem} />
+              {isRevealed && <TaskAssociationGrades occurrenceId={entry.item.occurrence_id} taskId={composite.data?.logical_item_id ?? null} />}
             </li>];
           })}</ul></li>)}
         </ul>
