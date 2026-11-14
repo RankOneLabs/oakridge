@@ -26,6 +26,7 @@ interface Props {
   handoff?: ReactNode;
   /** The revision on screen, which addresses its findings. */
   source?: Pick<ArtifactSource, "revision_id">;
+  onOpenTask?: (taskId: string) => void;
   onOpenItem?: (selection: ObservationItemAddress) => void;
   itemGrading?: ItemGradingSlots;
 }

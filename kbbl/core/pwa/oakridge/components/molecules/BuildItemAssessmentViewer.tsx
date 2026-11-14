@@ -9,14 +9,14 @@ import { GradeItemButton } from "./GradeItemButton";
 import { EvidenceContentView } from "./EvidenceContentView";
 import { TestEvidenceBlock } from "./TestEvidenceBlock";
 
-interface Props extends Pick<ViewerProps, "onOpenItem" | "itemGrading"> {
+interface Props extends Pick<ViewerProps, "onOpenItem" | "onOpenTask" | "itemGrading"> {
   source?: Pick<import("../../artifact-types").ArtifactSource, "revision_id">;
   assessment: BuildItemAssessment;
   brief: CohortArtifactLookup<BuildBrief>;
   isIntegration?: boolean;
   handoff?: React.ReactNode;
 }
-export function BuildItemAssessmentViewer({ assessment, brief, isIntegration, source, onOpenItem, itemGrading, handoff }: Props) {
+export function BuildItemAssessmentViewer({ assessment, brief, isIntegration, source, onOpenItem, onOpenTask, itemGrading, handoff }: Props) {
   const report = selectBuildItemReport(!isIntegration && brief.kind === "found" && brief.value.shape === "build_items" ? brief.value : null, assessment.findings);
   return <article data-testid="or-assessment-viewer" className="flex flex-col gap-5">
     <header><h2>Assessment: {assessment.verdict}</h2><code>{assessment.head_sha}</code></header>
@@ -28,7 +28,7 @@ export function BuildItemAssessmentViewer({ assessment, brief, isIntegration, so
         {row.findings.length === 0 && <p>Not assessed</p>}
         {row.findings.map((finding) => <div key={finding.item_path}>
           <p>{finding.status === "met" ? "Met (assessor's judgment)" : finding.status ?? "No status"}</p>
-          <EvidenceContentView content={{ kind: "assessment_finding", value: finding }} />
+          <EvidenceContentView content={{ kind: "assessment_finding", value: finding }} onOpenTask={onOpenTask} />
           {source && itemGrading ? itemGrading.renderItemAction(selectFindingSelections(source, [finding.item_path])[0]!) : <GradeItemButton selection={selectItemSelection(source, finding.item_path)} onOpenItem={onOpenItem} />}
         </div>)}
       </li>)}</ul>

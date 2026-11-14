@@ -34,3 +34,10 @@ test("integration lists task and cohort-qualified build-item subjects without it
   expect(screen.getByTestId("or-build-item-Findings").textContent).toContain("T1");
   expect(screen.queryByTestId("or-build-item-Not assessed")).toBeNull();
 });
+
+test.each([false, true])("task subjects open task context (integration: %s)", (isIntegration) => {
+  const onOpenTask = vi.fn();
+  render(<BuildItemAssessmentViewer assessment={assessment} brief={{ kind: "found", value: brief }} isIntegration={isIntegration} onOpenTask={onOpenTask} />);
+  fireEvent.click(screen.getByRole("button", { name: "Open task T1" }));
+  expect(onOpenTask).toHaveBeenCalledWith("T1");
+});

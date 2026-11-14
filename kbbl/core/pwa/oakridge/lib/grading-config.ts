@@ -157,8 +157,6 @@ export const evaluatorWithRunner = (entry: Json, runner: Json): Json => {
   return { ...fields, runner, instructions: fields.runner === runner ? fields.instructions ?? {} : {} };
 };
 
-/** Mirrors ObservationQuestionScope; drafts may still contain incomplete pointer text. */
-export type PerTaskScope = Extract<import("../grading-contracts/grading/evidence").ObservationQuestionScope, { scope: "per_task" }>;
 export function definitionWithTaskSource(definition: Json, source: Json): Json {
   const { task_ids, task_source, ...fields } = jsonObject(definition);
   return source === "resolved_assesses" ? { ...fields, scope: "per_task", task_source: "resolved_assesses" }
