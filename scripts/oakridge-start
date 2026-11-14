@@ -129,7 +129,7 @@ if [ -z "${OAKRIDGE_CORE_WASM:-}" ]; then
       exit 1
     fi
     echo "oakridge: building workflow WASM"
-    cargo build --locked --target wasm32-unknown-unknown --manifest-path "$OAKRIDGE_ROOT/workflow-core/Cargo.toml" -p workflow-evaluator
+    cargo +"$CORE_TOOLCHAIN" build --locked --target wasm32-unknown-unknown --manifest-path "$OAKRIDGE_ROOT/workflow-core/Cargo.toml" -p workflow-evaluator
   else
     # Never start the default module unverified: it may predate workflow-core/.
     CORE_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$OAKRIDGE_ROOT/workflow-core/rust-toolchain.toml")"

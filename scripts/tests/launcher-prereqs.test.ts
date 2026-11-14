@@ -37,6 +37,20 @@ test("custom WASM bypasses target prerequisite", async () => {
   start({ OAKRIDGE_CORE_WASM: wasm });
   await fixture.stackServing();
 });
+test("default WASM builds with the same pinned toolchain checked by rustup", async () => {
+  fixture = new LauncherFixture(freePorts());
+  const toolchain = readFileSync(join(fixture.checkout, "workflow-core/rust-toolchain.toml"), "utf8")
+    .match(/^channel = "([^"]+)"$/m)![1]!;
+  const cargo = join(fixture.root, "bin/cargo");
+  const cargoShim = readFileSync(cargo, "utf8");
+  writeFileSync(cargo, cargoShim.replace("#!/usr/bin/env bash\n",
+    `#!/usr/bin/env bash\n[ "$1" = "+${toolchain}" ] && [ "$2" = build ] || exit 1\n`));
+  writeFileSync(join(fixture.root, "bin/rustup"),
+    `#!/bin/sh\n[ "$*" = "target list --installed --toolchain ${toolchain}" ] || exit 1\necho wasm32-unknown-unknown\n`);
+  start();
+  await fixture.stackServing();
+  expect(existsSync(join(fixture.checkout, "workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm"))).toBe(true);
+});
 for (const both of [false, true]) {
   test(both ? "no adapters refuses before services" : "one missing adapter warns and starts", async () => {
     fixture = new LauncherFixture(freePorts());
