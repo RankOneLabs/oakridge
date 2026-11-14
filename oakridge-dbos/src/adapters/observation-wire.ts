@@ -8,10 +8,11 @@ export interface CaptureSource {
   readonly unit_id: string; readonly stage: string; readonly artifact_kind: string; readonly artifact_schema_version: string;
   readonly definition_id: string;
   readonly predecessor_id: string | null; readonly subject_id: string | null;
+  readonly brief_revision_ids?: readonly string[] | null;
   readonly by_id?: string | null;
 }
 export interface CaptureEnvelope {
-  readonly format: "observation.artifact-revision/v3"; readonly source: CaptureSource; readonly recorded_at: string;
+  readonly format: "observation.artifact-revision/v3" | "observation.artifact-revision/v4"; readonly source: CaptureSource; readonly recorded_at: string;
   readonly body: JsonValue;
   readonly body_digest: CanonicalDigest;
 }

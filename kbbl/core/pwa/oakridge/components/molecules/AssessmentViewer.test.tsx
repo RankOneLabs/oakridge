@@ -1,22 +1,24 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "vitest";
-import type { Assessment } from "../../lib/assessment";
+import type { LegacyAssessment as Assessment } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { PlanTraceId } from "../../lib/plan";
 import type { CohortId, RepositoryKey } from "../../run-types";
 import { parseAssessment } from "../../lib/assessment";
-import { readBuildBrief } from "../../lib/build-brief";
+import { parseBuildBrief, readBuildBrief } from "../../lib/build-brief";
 import linkedAssessment from "../../lib/__fixtures__/id-linked-assessment.json";
 import emptyEvidenceAssessment from "../../lib/__fixtures__/empty-evidence-assessment.json";
 import unresolvedAssessment from "../../lib/__fixtures__/unresolved-assessment.json";
 import linkedBrief from "../../lib/__fixtures__/id-linked-brief.json";
+import itemBrief from "../../lib/__fixtures__/build-items-brief.json";
 import { AssessmentViewer } from "./AssessmentViewer";
 
 const task = (id: string): PlanTraceId => id as PlanTraceId;
 
 const brief: BuildBrief = {
+  shape: "legacy",
   cohort_id: "cm-cli" as CohortId,
   repository_key: "assay" as RepositoryKey,
   title: "The CLI",
@@ -182,5 +184,20 @@ describe("AssessmentViewer", () => {
     render(<AssessmentViewer assessment={{ ...assessment, findings: [{ ...assessment.findings[1]!, task_ids: [] }] }} brief={{ kind: "missing", cohort_label: null }}
       result={{ kind: "missing", cohort_label: null }} cohortLabel="assay" isIntegration />);
     expect(screen.queryByText("Linked to no task.")).toBeNull();
+  });
+
+  test("lists every build item as not assessed when an assessment against a build-item brief has no findings", () => {
+    const parsedBrief = parseBuildBrief(itemBrief);
+    if (!parsedBrief) throw new Error("fixture invalid");
+    render(<AssessmentViewer assessment={{ ...assessment, findings: [] }} brief={{ kind: "found", value: parsedBrief }} result={{ kind: "found", value: result }} cohortLabel="pwa" />);
+    expect(within(screen.getByTestId("or-build-item-Not assessed")).getAllByText("Not assessed").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Every finding is met and every task assessed.")).toBeNull();
+  });
+
+  test("says when a build-item assessment's brief could not be loaded", () => {
+    const itemAssessment = parseAssessment({ ...assessment, findings: [{ subjects: [{ kind: "build_item", id: "B1" }], status: "met", evidence: [] }] });
+    if (!itemAssessment.ok) throw new Error("fixture invalid");
+    render(<AssessmentViewer assessment={itemAssessment.value} brief={{ kind: "error", cohort_label: "pwa" }} result={{ kind: "found", value: result }} cohortLabel="pwa" />);
+    expect(screen.getByTestId("or-assessment-brief-note").textContent).toContain("Couldn't load the build brief");
   });
 });

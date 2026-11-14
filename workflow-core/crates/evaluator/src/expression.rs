@@ -11,9 +11,9 @@ pub(super) fn path(value: &Value, parts: &[&str]) -> Option<Value> {
 /// the body a validate check binds to its artifact's key.
 #[derive(Clone, Copy)]
 pub(super) struct Bindings<'a> {
-    each: Option<&'a Value>,
-    item: Option<&'a Value>,
-    body: Option<(&'a str, &'a Value)>,
+    pub(super) each: Option<&'a Value>,
+    pub(super) item: Option<&'a Value>,
+    pub(super) body: Option<(&'a str, &'a Value)>,
 }
 /// Walk a resolved stage expression. The compiler already type-checked it,
 /// so an unresolvable read is None rather than an error.

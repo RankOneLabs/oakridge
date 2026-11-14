@@ -14,6 +14,10 @@ const VERSION = "1";
 export interface Task { readonly id: string; readonly description: string; readonly requirement_ids: readonly string[] }
 /** One task's obligation within a plan cohort or brief; `id` is the task id. */
 export interface AcceptanceEntry { readonly id: string; readonly text: string; readonly decision_ids: readonly string[] }
+export interface BuildItem { readonly id: string; readonly description: string; readonly task_ids: readonly string[];
+  readonly decision_ids: readonly string[]; readonly verification: JsonValue }
+export type FindingSubject = { readonly kind: "build_item"; readonly id: string; readonly cohort_id?: string }
+  | { readonly kind: "task"; readonly id: string };
 export interface AssessmentFinding { readonly task_ids: readonly string[]; readonly evidence: readonly JsonValue[] }
 
 type Mapping = (value: JsonValue, path: string) => Result<SelectedItem, ExtractionFailure>;
@@ -73,6 +77,7 @@ function briefList(field: string, map: (value: JsonValue, path: string, cohortId
   return (body) => {
     const object = objectAt(body, "/");
     if (!object.ok) return object;
+    if ((field === "acceptance_criteria" || field === "build_items") && !(field in object.value)) return ok([]);
     const cohortId = object.value.cohort_id;
     if (typeof cohortId !== "string" || cohortId.length === 0)
       return err({ operation: "select_items", entity_id: "/cohort_id", detail: "missing cohort id" });
@@ -156,8 +161,21 @@ function allDefinitions(schemaVersion: string): readonly ExtractorDefinition[] {
       briefList("acceptance_criteria", (value, path) => { const id = requiredId(value, path);
         return id.ok ? ok(taskItem(ACCEPTANCE_ENTRY_KIND, "/acceptance_criteria/*", path, id.value, value)) : id;
       })),
+    definition("brief", schemaVersion, "brief.build_items", "build_item", "/build_items/*",
+      briefList("build_items", (value, path, cohortId) => {
+        const id = requiredId(value, path);
+        if (!id.ok) return id;
+        const tasks = taskLinks(value, path);
+        if (!tasks.ok) return tasks;
+        const decisions = idsLink(value, "decision_ids", path, "brief", "decision", `cohort/${cohortId}/decision`, "derived_from");
+        return decisions.ok ? ok({ ...pathItem("build_item", "/build_items/*", path, value,
+          [...tasks.value.map((link) => ({ ...link, type: "addresses" as const })), ...decisions.value], id.value),
+          item_scope: `cohort/${cohortId}/build_item` }) : decisions;
+      })),
+    definition("assessment", schemaVersion, "assessment.subject_findings", ASSESSMENT_FINDING_KIND, "/findings/*",
+      shapeFindings("subjects", subjectFinding)),
     definition("assessment", schemaVersion, "assessment.findings", ASSESSMENT_FINDING_KIND, "/findings/*",
-      topList("findings", (value, path) => { const links = taskLinks(value, path);
+      shapeFindings("task_ids", (value, path) => { const links = taskLinks(value, path);
         return links.ok ? ok(pathItem(ASSESSMENT_FINDING_KIND, "/findings/*", path, value, links.value)) : links;
       })),
   ];
@@ -176,8 +194,45 @@ function fieldsForItem(item_kind: string): readonly string[] {
   switch (item_kind) {
     case "task": return ["/id", "/description", "/requirement_ids"];
     case "acceptance_entry": return ["/id", "/text", "/decision_ids"];
-    case "assessment_finding": return ["/task_ids", "/evidence"];
+    case "assessment_finding": return ["/task_ids", "/subjects", "/evidence"];
+    case "build_item": return ["/id", "/description", "/task_ids", "/decision_ids", "/verification"];
     case "finding": return ["/id", "/description", "/severity"];
     default: return [];
   }
+}
+
+function subjectFinding(value: JsonValue, path: string): Result<SelectedItem, ExtractionFailure> {
+  const subjects = listAt(value, ["subjects"]);
+  if (!subjects.ok) return subjects;
+  const links: LinkReference[] = [];
+  for (const [index, subject] of subjects.value.entries()) {
+    const object = objectAt(subject, path);
+    if (!object.ok) return object;
+    const id = requiredId(subject, path);
+    if (!id.ok) return id;
+    const evidence_ref = `${path}/subjects/${index}`;
+    if (object.value.kind === "task") links.push({ target: "logical_item", type: "assesses", target_scope: TASK_SCOPE, target_local_id: id.value, evidence_ref });
+    else if (object.value.kind === "build_item") links.push({ target: "occurrence", type: "assesses", target_artifact_kind: "brief", target_item_kind: "build_item", recorded_revisions_field: "brief_revision_ids",
+      target_scope: typeof object.value.cohort_id === "string" ? `cohort/${object.value.cohort_id}/build_item` : null,
+      target_local_id: id.value, evidence_ref });
+    else return err({ operation: "select_items", entity_id: evidence_ref, detail: "unknown finding subject" });
+  }
+  return ok(pathItem(ASSESSMENT_FINDING_KIND, "/findings/*", path, value, links));
+}
+
+function shapeFindings(field: string, map: Mapping): ExtractorDefinition["select"] {
+  return (body) => {
+    const values = listAt(body, ["findings"]);
+    if (!values.ok) return values;
+    const items: SelectedItem[] = [];
+    for (const [index, value] of values.value.entries()) {
+      const object = objectAt(value, `/findings/${index}`);
+      if (!object.ok) return object;
+      if (!(field in object.value)) continue;
+      const item = map(value, `/findings/${index}`);
+      if (!item.ok) return item;
+      items.push(item.value);
+    }
+    return ok(items);
+  };
 }

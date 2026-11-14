@@ -13,6 +13,7 @@ const allKindsCovered: MissingEventKind extends never ? true : never = true;
 void allKindsCovered;
 
 export interface MappingInput { readonly row: CommittedEventRow<CoreEvent>; readonly definition: PinnedDefinitionRead | null;
+  readonly input_provenance?: import("../domain/unit-status").InputProvenanceView;
   readonly namespace: string; readonly stage: string | null; readonly revision_sequence: number | null;
   /** Read for a launch only: its config travels with its input. */
   readonly run_config: CommittedRunConfig | null }
@@ -32,10 +33,12 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
       const revision_id = `${event.unit}:${event.artifact}:${input.revision_sequence}`;
       const prefix = `oakridge:${input.namespace}:`;
       return { ...provenance, artifact_schema_version: version, kind: "artifact_revision", event_kind: event.kind, ...identity,
-        revision: { format: "observation.artifact-revision/v3", source: {
+        revision: { format: "observation.artifact-revision/v4", source: {
           producer: "oakridge", namespace: input.namespace, revision_id: `${prefix}${revision_id}`,
           run_id: identity.run_id, unit_id: event.unit, stage: input.stage, artifact_kind: event.artifact, artifact_schema_version: version,
           definition_id: definition.definition_id,
+          brief_revision_ids: ["build_result", "assessment"].includes(event.artifact) && input.input_provenance?.status === "recorded"
+            ? input.input_provenance.entries.filter((entry) => entry.input === "brief" || entry.input === "briefs").map((entry) => `${prefix}${entry.revision_id}`) : null,
           predecessor_id: event.predecessor ? `${prefix}${event.predecessor}` : null,
           subject_id: event.subject ? `${prefix}${event.subject}` : null, by_id: event.by ?? null },
           recorded_at: row.created_at.toISOString(), body: event.body as JsonValue, body_digest: bodyDigest(event.body as JsonValue) } };

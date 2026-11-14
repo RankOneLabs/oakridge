@@ -1,5 +1,7 @@
+import type { PlanTraceId } from "./plan";
+import buildItemsBrief from "./__fixtures__/build-items-brief.json";
 import { describe, expect, test } from "vitest";
-import { isBuildBrief, readBuildBrief } from "./build-brief";
+import { isBuildBrief, readBuildBrief, parseBuildBrief, selectBuildItemDecisions } from "./build-brief";
 import linkedBrief from "./__fixtures__/id-linked-brief.json";
 import linkedPlan from "./__fixtures__/id-linked-plan.json";
 
@@ -23,8 +25,8 @@ describe("isBuildBrief", () => {
 
   test("preserves task ids across reordering and rewording", () => {
     const brief = readBuildBrief(linkedBrief);
-    expect(brief?.acceptance_criteria.map((criterion) => criterion.id)).toEqual(["criterion-brief", "criterion-plan"]);
-    expect(brief?.acceptance_criteria[0]).toMatchObject({ id: linkedPlan.cohorts[0].acceptance_criteria[1]?.id, text: "The brief remains readable." });
+    expect(brief?.shape === "legacy" ? brief.acceptance_criteria.map((criterion) => criterion.id) : null).toEqual(["criterion-brief", "criterion-plan"]);
+    expect(brief?.shape === "legacy" ? brief.acceptance_criteria[0] : null).toMatchObject({ id: linkedPlan.cohorts[0].acceptance_criteria[1]?.id, text: "The brief remains readable." });
   });
 
   test("accepts a new brief decision and a rejected approach with no decision links", () => {
@@ -60,4 +62,15 @@ describe("readBuildBrief", () => {
   test("reads a body that breaks the contract as null", () => {
     expect(readBuildBrief({ ...validBrief, acceptance_criteria: ["Operator can approve the artifact."] })).toBeNull();
   });
+});
+
+test("build item decisions resolve only within their own brief", () => {
+  const brief = parseBuildBrief(buildItemsBrief);
+  if (brief?.shape !== "build_items") throw new Error("expected build-items fixture");
+  const item = brief.build_items[0];
+  if (!item) throw new Error("fixture needs a build item");
+  expect(selectBuildItemDecisions(brief, { ...item, decision_ids: ["decision-new", "missing"] as PlanTraceId[] })).toEqual([
+    { id: "decision-new", decision: "Add a compact trace section." },
+    { id: "missing", decision: null },
+  ]);
 });

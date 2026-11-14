@@ -52,9 +52,10 @@ const graderEntrySchema = z.strictObject({ runner: z.string().min(1).refine((run
   model: z.string().min(1), instructions: z.json(), estimated_cost_per_call: z.number().finite().nonnegative() });
 const definitionFields = { id: z.string().min(1), targets: z.array(targetSchema).min(1), evidence: z.array(evidenceSchema),
   question: questionSchema, evaluators: z.array(z.union([z.strictObject({ runner: z.literal("human") }), graderEntrySchema])) };
-const definitionSchema = z.discriminatedUnion("scope", [
+const definitionSchema = z.union([
   z.strictObject({ ...definitionFields, scope: z.literal("per_item") }),
   z.strictObject({ ...definitionFields, scope: z.literal("per_task"), task_ids: pointerSchema }),
+  z.strictObject({ ...definitionFields, scope: z.literal("per_task"), task_source: z.literal("resolved_assesses") }),
 ]);
 interface GradingDefinitionFields {
   readonly id: string;
@@ -111,7 +112,8 @@ export function configurationIssues(raw: unknown, error: GraderConfigurationErro
   const shape = configurationSchema.safeParse(raw);
   if (!shape.success) return shape.error.issues.map((issue) => ({
     definition_index: typeof issue.path[0] === "number" ? issue.path[0] : null,
-    path: issue.path.map((part) => typeof part === "symbol" ? String(part) : part), detail: issue.message,
+    path: [...issue.path.map((part) => typeof part === "symbol" ? String(part) : part),
+      ...(issue.code === "invalid_union" && Array.isArray(raw) && !["per_item", "per_task"].includes(raw[Number(issue.path[0])]?.scope) ? ["scope"] : [])], detail: issue.message,
   }));
   const index = error.kind === "duplicate_definition"
     ? shape.data.findIndex((definition, index) => definition.id === error.entity_id && shape.data.findIndex((entry) => entry.id === definition.id) < index)
@@ -164,13 +166,14 @@ function shapeFailure(raw: unknown, issue: z.core.$ZodIssue | undefined): Result
   const entry: unknown = Array.isArray(raw) && typeof index === "number" ? raw[index] : null;
   const identity = z.object({ id: z.string() }).safeParse(entry);
   const entity_id = identity.success ? identity.data.id : "published grading configuration";
-  const scope = z.object({ scope: z.string(), task_ids: z.unknown().optional() }).safeParse(entry);
+  const scope = z.object({ scope: z.string(), task_ids: z.unknown().optional(), task_source: z.unknown().optional() }).safeParse(entry);
   const detail = issue ? `${issue.path.join(".") || "/"}: ${issue.message}` : "invalid definitions";
   if (scope.success) {
     const value = scope.data;
-    if ((value.scope === "per_item" && Object.hasOwn(value, "task_ids"))
-      || (value.scope === "per_task" && !pointerSchema.safeParse(value.task_ids).success))
-      return failure("invalid_task_ids", entity_id, "task_ids: required JSON pointer for per_task; forbidden on per_item");
+    if ((value.scope === "per_item" && (Object.hasOwn(value, "task_ids") || Object.hasOwn(value, "task_source")))
+      || (value.scope === "per_task" && !(pointerSchema.safeParse(value.task_ids).success && !Object.hasOwn(value, "task_source")
+        || value.task_source === "resolved_assesses" && !Object.hasOwn(value, "task_ids"))))
+      return failure("invalid_task_ids", entity_id, "task_ids: per_task requires exactly one of task_ids (JSON pointer) or task_source (resolved_assesses); both are forbidden on per_item");
   }
   return failure("invalid_definitions", entity_id, detail);
 }
@@ -186,7 +189,8 @@ export function parseGradingDefinitions(raw: unknown, registry: GradingRegistry)
 
 /** Capture needs only the scope fields of the configured definition. */
 export function definitionScope(definition: GradingDefinition): QuestionScope {
-  return definition.scope === "per_task" ? { scope: definition.scope, task_ids: definition.task_ids } : { scope: definition.scope };
+  return definition.scope === "per_item" ? { scope: "per_item" } : "task_source" in definition
+    ? { scope: "per_task", task_source: definition.task_source } : { scope: "per_task", task_ids: definition.task_ids };
 }
 
 /** Every machine runner the definitions select, once each; human needs no provider credentials. */
@@ -300,7 +304,7 @@ function validateEvidence({ definition, registry, selectors }: EvidenceValidatio
     }
   }
   const scope = definitionScope(definition);
-  if (scope.scope === "per_task" && selectors.some((selector) => !selector.item_fields.includes(scope.task_ids)))
+  if (scope.scope === "per_task" && "task_ids" in scope && selectors.some((selector) => !selector.item_fields.includes(scope.task_ids)))
     return failure("unsupported_subject", definition.id, "scope.task_ids: target does not declare this field");
   return ok(undefined);
 }

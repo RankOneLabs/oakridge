@@ -79,7 +79,7 @@ Every question is pinned with its configured graders and the human evaluator. A 
 `evidence_set` has one row per grading subject and question version. For a `per_item` question,
 the subject is the occurrence and `task_id` is null. For a `per_task` question, the subject is
 (occurrence, task): `task_id` is the task's logical_item_id, and the grade belongs to exactly one task.
-Resolved `assesses` relations under the declared `task_ids` pointer create one subject per distinct task.
+Resolved task-establishing relations under the declared `task_ids` pointer create one subject per distinct task.
 Missing or unresolved links create no task subject; resolving a link later creates its subjects then,
 using the capture configuration in force at resolution. Existing pins never change.
 The row *is* the pin: it names the question version and, in `pinned_evaluator_definition_ids`, the
@@ -315,10 +315,10 @@ nothing onto the task and produces no overall verdict. The producer's `Composite
 
 **Association.** A task includes every occurrence whose own logical item is that task, plus source
 occurrences of resolved edges whose target logical item is the task and whose generic
-`RELATION_SEMANTICS` flag establishes task association. `assesses` establishes association;
+`RELATION_SEMANTICS` flag establishes task association. `addresses` establishes association; `assesses` establishes and propagates it;
 `supersedes`, `split_from` and `merged_from` establish and propagate it. Once an occurrence is
 associated, association flows to occurrences that name it through propagating edges. `derived_from`
-and `addresses` never establish or propagate task association. Unresolved edges never associate an
+never establishes or propagates task association. Unresolved edges never associate an
 item. A breadth-first traversal with a visited set returns each occurrence once, retaining a shortest
 provenance path: `own`, or the establishing edge followed by propagating hops. Each hop retains its
 `relation_id`, type, `evidence_ref` and `asserted_by`.
@@ -467,3 +467,21 @@ A **spec requirement** states required behavior. A **spec task** is an overall w
 Both questions offer `fully_covers`, `partially_covers`, `does_not_cover` and `unclear`. An empty requirement list gives no inferred links; the grader is instructed to answer unclear for task coverage. A named requirement or task that is absent makes the question not ready. Context is selected at the graded revision's recorded position within its tenant and run; later spec, task-list or plan revisions are excluded, and ready evidence remains frozen.
 
 The task, plan and brief viewers each open the same item grading panel at an exact revision and path. Partial coverage has a distinct glyph. The relationship-driven task roll-up includes the task definition, plan and brief acceptance occurrences and associated findings in their captured stages. Their own per-item coverage grades stay visible with scope and provenance, separately from task-scoped answer, status and disagreement counts. Missing coverage results remain missing; no result is copied onto the task and no aggregate verdict is manufactured. New questions are pinned on new captures. An explicit operator-requested upgrade may add coverage questions to previously ungraded task/contribution occurrences, using the normal immutable evidence rows and ordinary reconciler; existing question pins, answers and frozen evidence are never changed.
+
+Per-task pointer definitions accept any task-establishing relation under their configured
+`task_ids` pointer, including build-item `addresses` edges. The strict alternative
+`{ scope: "per_task", task_source: "resolved_assesses" }` derives sorted, deduplicated tasks
+from resolved finding → build item → task edges and resolved direct task assesses edges.
+`task_ids` and `task_source` are mutually exclusive. Empty `subjects` yields a task-less
+subject; unresolved references yield no task. Late resolution pins with the configuration
+then in force and preserves existing pins.
+
+`build_item.task_support` judges the item's instructions for each assigned task contribution,
+with responses `fully_covers`, `partially_covers`, `does_not_cover`, `unclear`.
+Its `build_item_context` evidence contains the exact item and brief, canonical task, matching
+plan cohort, specification and requirement context. `assessed_build_items` gives the finding
+correctness and evidence-support questions the exact build items reached by their resolved
+assesses relations. Unresolved brief provenance returns `not_ready`; evidence never substitutes
+a latest brief. The shipped fixture limits acceptance-entry task coverage to plan entries.
+Live configuration remains operator-published through the PWA; frozen evidence and append-only
+grades retain their existing behavior.

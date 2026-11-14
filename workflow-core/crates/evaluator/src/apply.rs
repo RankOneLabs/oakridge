@@ -5,10 +5,20 @@ use super::*;
 #[derive(Clone)]
 pub(super) enum Delta {
     PushUnit(UnitState),
-    UnitInput { index: usize, input: Value },
-    UnitStatus { index: usize, status: UnitStatus },
+    UnitInput {
+        index: usize,
+        input: Value,
+        provenance: Vec<InputProvenance>,
+    },
+    UnitStatus {
+        index: usize,
+        status: UnitStatus,
+    },
     PushAttempt(AttemptState),
-    ReplaceAttempt { index: usize, attempt: AttemptState },
+    ReplaceAttempt {
+        index: usize,
+        attempt: AttemptState,
+    },
     PushRevision(RevisionState),
     PushDecision(DecisionState),
     PushRetry(UnitId, WorkerKey, EventId),
@@ -19,7 +29,14 @@ pub(super) enum Delta {
 pub(super) fn apply(state: &mut StepSnapshot, context: &mut EvaluationContext<'_>, delta: Delta) {
     match delta {
         Delta::PushUnit(unit) => state.units.push(unit),
-        Delta::UnitInput { index, input } => state.units[index].input = Some(input),
+        Delta::UnitInput {
+            index,
+            input,
+            provenance,
+        } => {
+            state.units[index].input = Some(input);
+            state.units[index].input_provenance = Some(provenance);
+        }
         Delta::UnitStatus { index, status } => state.units[index].status = status,
         Delta::PushAttempt(attempt) => state.attempts.push(attempt),
         Delta::ReplaceAttempt { index, attempt } => state.attempts[index] = attempt,

@@ -1,11 +1,11 @@
 import { sql, type Selectable } from "kysely";
 import type { JsonValue } from "../domain/primitives";
-import type { CaptureDelivery, CaptureEnvelope } from "../ingest/capture";
+import { decodeCapture, type CaptureDelivery, type CaptureEnvelope } from "../ingest/capture";
 import type { SourceEventAck, SourceEventCursor, SourceEventDelivery, SourceEventOutcome } from "../ingest/cursor";
 import { INITIAL_SOURCE_CURSOR } from "../ingest/cursor";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationSourceRevision } from "./db-types";
-import { declareRelationInTransaction, lockSourceCursor, projectRevisionInTransaction, type ProjectionContext } from "./projection-store";
+import { recordedRevisionIds, declareRelationInTransaction, lockSourceCursor, projectRevisionInTransaction, type ProjectionContext } from "./projection-store";
 
 export interface SourceRevisionRead {
   readonly id: string;
@@ -54,7 +54,10 @@ export async function captureInTransaction(trx: DatabaseTransaction, delivery: C
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${producer}:${namespace}:revision:${revision_id}`}, 0))`.execute(trx);
   const existing = await trx.selectFrom("observation.source_revision").selectAll()
     .where("producer", "=", producer).where("namespace", "=", namespace).where("revision_id", "=", revision_id).executeTakeFirst();
-  if (existing?.body_digest === body_digest && existing.predecessor_id === predecessor_id && existing.subject_id === subject_id && existing.stage === source.stage)
+  const stored_ids = existing ? await recordedRevisionIds(trx, { producer, namespace }, revision_id, "brief_revision_ids") : null;
+  const incoming_ids = source.brief_revision_ids?.map((id) => id.slice(prefix.length)) ?? null;
+  const same_provenance = JSON.stringify(stored_ids) === JSON.stringify(incoming_ids);
+  if (same_provenance && existing?.body_digest === body_digest && existing.predecessor_id === predecessor_id && existing.subject_id === subject_id && existing.stage === source.stage)
     return { kind: "identical" };
   if (existing) return { kind: "revision_identity_conflict", stored_digest: existing.body_digest, incoming_digest: body_digest };
   await trx.insertInto("observation.source_revision").values({ producer, namespace, revision_id,
@@ -124,17 +127,22 @@ export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: 
     let outcome: SourceEventOutcome | StoredRelationDeclaration = delivery.outcome;
     if (outcome.kind === "relation_declaration") outcome = await applyDeclaration(trx, tenant, outcome, context);
     else if (outcome.kind === "artifact_revision") {
+      const decoded = decodeCapture(outcome.revision);
+      if (!decoded.ok) return conflict;
+      outcome = { ...outcome, revision: decoded.value.envelope };
       const source = outcome.revision.source;
       if (source.producer !== tenant.producer || source.namespace !== tenant.namespace || source.run_id !== outcome.run_id) return conflict;
       const local_revision_id = source.revision_id.slice(`${tenant.producer}:${tenant.namespace}:`.length);
       const captured = await captureInTransaction(trx, { envelope: outcome.revision, local_revision_id });
       if (captured.kind === "revision_identity_conflict") return conflict;
-      await projectRevisionInTransaction(trx, tenant, local_revision_id, context);
+
     }
     await trx.insertInto("observation.source_event_outcome").values({ producer: tenant.producer, namespace: tenant.namespace,
       event_id: outcome.event_id, run_id: outcome.run_id, commit_txid: sql<number>`${delivery.cursor.commit_txid}::bigint`,
       event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: jsonText(outcome as unknown as JsonValue) })
       .onConflict((target) => target.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
+    if (outcome.kind === "artifact_revision") await projectRevisionInTransaction(trx, tenant,
+      outcome.revision.source.revision_id.slice(`${tenant.producer}:${tenant.namespace}:`.length), context);
     await sql`UPDATE observation.source_event_cursor SET commit_txid = ${delivery.cursor.commit_txid}::bigint, event_id = ${delivery.cursor.id}
       WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx);
     return { status: 200, body: { cursor: delivery.cursor } };

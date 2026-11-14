@@ -19,10 +19,10 @@ import { actionOf, executor, launch, openAuthority, submitter, unitOf, type Auth
 const CONTRACT_FIELDS = {
   RunView: ["archived_at", "created_at", "definition_id", "repository_keys", "run_id", "status", "title", "units", "updated_at"],
   RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
-  UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "is_terminal", "label", "outcome",
+  UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "input_provenance", "is_terminal", "label", "outcome",
     "recorded_decisions", "run_id", "stage", "status", "unit_id", "unit_key"],
   AttemptView: ["cause", "created_at", "failure", "id", "intent", "is_current", "kbbl_session_id", "mode", "number", "status", "unit_id", "worker"],
-  AttemptIntentView: ["engine_inputs", "inputs", "prompt"],
+  AttemptIntentView: ["engine_inputs", "input_provenance", "inputs", "prompt"],
   EngineInputs: ["feedback", "previous", "subject"],
   PinnedPrompt: ["digest", "path"],
   ArtifactView: ["artifact_key", "is_editable", "is_reviewable", "latest_revision", "revision_count", "run_id", "schema", "unit_id"],
@@ -198,6 +198,7 @@ describe("each read model carries exactly its contract's fields", () => {
       .where("run_id", "=", run_id).where("action_id", "=", writer).orderBy("seq").executeTakeFirstOrThrow();
     expect(view.attempts.find((attempt) => attempt.worker === "writer")?.intent as unknown).toEqual({
       inputs: recorded.payload.inputs, engine_inputs: recorded.payload.engine_inputs,
+      input_provenance: recorded.payload.input_provenance,
       prompt: recorded.payload.worker.kind === "agent" ? recorded.payload.worker.prompt : null,
     });
   });
@@ -354,9 +355,12 @@ describe("derived fields", () => {
   test("artifacts carry their schema name, reviewability, editability, revision count and latest revision", async () => {
     const { run_id, unit, writer } = await drafted();
     const view = await get<UnitView>(unitPath(run_id, unit));
+    // The latest revision names its publishing attempt exactly as the unit's attempts do.
+    const publisher = view.attempts.find((attempt) => attempt.id.startsWith(`${writer}:`))?.id ?? null;
     expect(view.artifacts.map((artifact) => [artifact.artifact_key, artifact.schema, artifact.is_reviewable, artifact.is_editable, artifact.revision_count,
       artifact.latest_revision?.number ?? null, artifact.latest_revision?.attempt_id ?? null]))
-      .toEqual([["critique", "{notes: list(text)}", false, true, 0, null, null], ["draft", "{body: text, title: text}", true, true, 1, 1, writer]]);
+      .toEqual([["critique", "{notes: list(text)}", false, true, 0, null, null], ["draft", "{body: text, title: text}", true, true, 1, 1, publisher]]);
+    expect(publisher).not.toBeNull();
   });
 
   test("the inbox derives decisions with the review's prompt, each stalled worker, and waits", async () => {

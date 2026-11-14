@@ -159,6 +159,60 @@ const citedSubject = { fields: ["/evidence"], task_subject: false } as const;
 
 /** Names and parameter schemas are the producer's only evidence registrations. */
 export const oakridgeCapabilities: EvidenceCapabilities = {
+  build_item_context: capability({ params: noParams, subject: { fields: ["/task_ids"], task_subject: true }, resolve: async ({ artifact, question, sources }) => {
+    const brief = await sources.readRevision(artifact.revision_id);
+    if (!brief || brief.artifact_kind !== "brief") return notReady("brief_unavailable", "the containing brief is not captured");
+    const cohort_id = objectOf(brief.body)?.cohort_id;
+    if (typeof cohort_id !== "string") return notReady("brief_unavailable", "brief has no cohort id");
+    if (question.task_id === null) return notReady("task_unavailable", "build item needs a linked task");
+    const task = await sources.readLogicalItemAt({ logical_item_id: question.task_id, subject_revision_id: artifact.revision_id, artifact_kind: "tasks", item_kind: "task", allow_late_reference: true });
+    if (!task) return notReady("task_unavailable", "linked canonical task is not captured");
+    const plan = await sources.readRevisionAt("plan", brief.revision_id);
+    const cohorts = plan && objectOf(plan.body)?.cohorts;
+    const index = Array.isArray(cohorts) ? cohorts.findIndex((entry) => objectOf(entry)?.id === cohort_id) : -1;
+    if (!plan || !Array.isArray(cohorts) || index < 0) return notReady("cohort_unavailable", "plan cohort is not captured");
+    const spec = await oakridgeCapabilities.spec!.resolve({ artifact: { ...artifact, revision_id: task.revision_id }, question, sources }, { artifact: "spec" });
+    if (spec.state === "not_ready") return spec;
+    const references: EvidenceReference[] = [subjectReference(artifact), contextReference(task, 0),
+      revisionReference("brief", brief, null, brief.body), revisionReference("cohort", plan, `/cohorts/${index}`, cohorts[index]!), ...spec.references];
+    const ids = objectOf(task.selected_value)?.requirement_ids;
+    if (Array.isArray(ids) && ids.length > 0) {
+      const analysis = await sources.readRevisionAt("analysis", task.revision_id);
+      if (!analysis) return notReady("requirements_unavailable", "task requirement context is not captured");
+      for (const [index, id] of ids.entries()) {
+        if (typeof id !== "string") return notReady("requirements_unavailable", "invalid requirement id");
+        const requirement = definitionAt({ revision: analysis, source: { artifact: "analysis", list: "/requirements" }, id });
+        if (!requirement) return notReady("requirements_unavailable", `requirement ${id} is not captured`);
+        references.push(revisionReference(`requirement:${index}`, analysis, requirement.item_path, requirement.value));
+      }
+    }
+    return ready(references);
+  } }),
+  assessed_build_items: capability({ params: noParams, subject: anySubject, resolve: async ({ artifact, sources }) => {
+    // Legacy findings have no build-item subjects and retain their original evidence.
+    const subjects = objectOf(artifact.selected_value)?.subjects;
+    if (!Array.isArray(subjects)) return ready([]);
+    const expected = subjects.filter((subject) => objectOf(subject)?.kind === "build_item");
+    if (expected.length === 0) return ready([]);
+    const revision = await sources.readRevision(artifact.revision_id);
+    if (revision?.brief_revision_ids == null) return notReady("brief_provenance_unresolved", "recorded brief revisions are unavailable");
+    const items = (await sources.readLinkedItems(artifact.occurrence_id)).filter((item) => item.item_kind === "build_item" && revision.brief_revision_ids!.includes(item.revision_id));
+    for (const subject of expected) {
+      const value = objectOf(subject)!;
+      let matched = false;
+      for (const item of items) {
+        if (objectOf(item.selected_value)?.id !== value.id) continue;
+        if (typeof value.cohort_id === "string") {
+          const brief = await sources.readRevision(item.revision_id);
+          if (objectOf(brief?.body)?.cohort_id !== value.cohort_id) continue;
+        }
+        matched = true;
+      }
+      if (!matched) return notReady("build_item_unresolved", "an assessed build item is unresolved in the recorded brief");
+    }
+    return ready(items.map((item, index) => ({ source: "revision", ref: `assessed_build_item:${index}`,
+      revision_id: item.revision_id, item_path: item.item_path, content: item.selected_value })));
+  } }),
   subject: capability({ params: noParams, subject: anySubject, resolve: async ({ artifact }) => ready([subjectReference(artifact)]) }),
   spec: capability({ params: z.strictObject({ artifact: z.string().min(1).optional(), task_source: sourceSchema.optional() }), subject: anySubject, resolve: async ({ artifact, sources }, params) => {
       let anchor = artifact.revision_id;

@@ -28,7 +28,7 @@ const summaryRun = (row: Omit<Row<"authority.run">, "config">): RunSummaryRecord
   root_unit_id: row.root_unit_id as UnitId | null });
 const unitRecord = (row: Row<"authority.unit">): UnitRecord => ({ ...row, id: row.id as UnitId,
   run_id: row.run_id as RunId, parent_id: row.parent_id as UnitId | null });
-const summaryUnit = (row: Omit<Row<"authority.unit">, "input">): UnitSummaryRecord => ({ ...row, id: row.id as UnitId,
+const summaryUnit = (row: Omit<Row<"authority.unit">, "input" | "input_provenance">): UnitSummaryRecord => ({ ...row, id: row.id as UnitId,
   run_id: row.run_id as RunId, parent_id: row.parent_id as UnitId | null });
 const attemptRecord = (row: Row<"authority.attempt">): AttemptRecord => ({ ...row, action_id: row.action_id as ActionId,
   run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId });
@@ -71,7 +71,7 @@ export interface LatestUnitEvent { readonly unit_id: string | null; readonly eve
 /** A run as lists read it: launch input and identity, without config. */
 export type RunSummaryRecord = Omit<RunRecord, "config">;
 /** A unit as lists read it: everything but its resolved input. */
-export type UnitSummaryRecord = Omit<UnitRecord, "input">;
+export type UnitSummaryRecord = Omit<UnitRecord, "input" | "input_provenance">;
 /** A revision as lists read it: where it is and when, never its body. */
 export type RevisionRef = Pick<ArtifactRevisionRecord, "id" | "run_id" | "unit_id" | "artifact" | "seq" | "created_at">;
 /**
@@ -580,4 +580,11 @@ export async function readAllRunsChangeKey(db: Kysely<DB>): Promise<ReadChangeKe
 export async function readRunDefinitionId(db: Reader, run_id: string): Promise<DefinitionId | null> {
   const run = await db.selectFrom("authority.run").select("definition_id").where("id", "=", run_id).executeTakeFirst();
   return run?.definition_id as DefinitionId | undefined ?? null;
+}
+
+/** Frozen provenance of the producing unit; never reconstructed from current briefs. */
+export async function readUnitInputProvenance(db: Kysely<DB>, location: UnitLocation): Promise<import("../domain/unit-status").InputProvenanceView> {
+  const row = await db.selectFrom("authority.unit").select("input_provenance")
+    .where("run_id", "=", location.run_id).where("id", "=", location.unit_id).executeTakeFirst();
+  return row?.input_provenance == null ? { status: "unresolved" } : { status: "recorded", entries: row.input_provenance };
 }

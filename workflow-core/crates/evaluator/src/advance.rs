@@ -150,6 +150,7 @@ pub(super) fn materialize_group(
         if each_values.len() > context.limits.max_list_items {
             return Err(rejected("max_list_items exceeded"));
         }
+        let mut lineage = None;
         let mut keys = BTreeSet::new();
         for each in &each_values {
             let member = if let Some(collection) = &collection {
@@ -229,6 +230,40 @@ pub(super) fn materialize_group(
             } else {
                 None
             };
+            let input_provenance = if input.is_some() {
+                let lineage = if let Some(ref cached) = lineage {
+                    cached
+                } else {
+                    lineage.insert(match &collection {
+                        Some(collection) => collection_lineage(
+                            &LineageScope {
+                                program,
+                                state: &state,
+                                parent: &parent,
+                            },
+                            &collection.source.expression,
+                            context,
+                        )?,
+                        None => CollectionLineage::new(),
+                    })
+                };
+                Some(input_lineage(
+                    &LineageScope {
+                        program,
+                        state: &state,
+                        parent: &parent,
+                    },
+                    InputLineageRequest {
+                        declaration: unit,
+                        each: Some(each),
+                        member: Some(&member),
+                        collection_lineage: lineage,
+                    },
+                    context,
+                )?)
+            } else {
+                None
+            };
             let delta = Delta::PushUnit(UnitState {
                 id: UnitId(member_id),
                 parent: Some(group_id.clone()),
@@ -240,6 +275,7 @@ pub(super) fn materialize_group(
                 collection_key: collection.as_ref().map(|_| member.clone()),
                 status: UnitStatus::NotStarted,
                 input,
+                input_provenance,
                 after: dependencies,
                 pool: unit.pool.clone(),
             });
@@ -524,7 +560,25 @@ pub(super) fn next_move(
                     checked_unit(group_for(program, state, parent)?, &unit.declaration.0)?;
                 let input = eval_fields(&declared.input, parent, state, None, context)?
                     .ok_or_else(|| invalid("unit input unresolved"))?;
-                deltas.push(Delta::UnitInput { index, input });
+                let provenance = input_lineage(
+                    &LineageScope {
+                        program,
+                        state,
+                        parent,
+                    },
+                    InputLineageRequest {
+                        declaration: declared,
+                        each: None,
+                        member: None,
+                        collection_lineage: &CollectionLineage::new(),
+                    },
+                    context,
+                )?;
+                deltas.push(Delta::UnitInput {
+                    index,
+                    input,
+                    provenance,
+                });
             }
             deltas.push(Delta::UnitStatus {
                 index,
@@ -600,4 +654,206 @@ pub(super) fn blocked_units(
         })
         .collect::<Result<Vec<_>, _>>()
         .map(|blocks| blocks.into_iter().flatten().collect())
+}
+
+/// Shared checked-program and snapshot inputs for provenance evaluation.
+struct LineageScope<'a> {
+    program: &'a CheckedWorkflow,
+    state: &'a StepSnapshot,
+    parent: &'a UnitState,
+}
+
+struct OutcomeLineageRequest<'a> {
+    expression: &'a Expression,
+    each: Option<&'a Value>,
+}
+
+#[derive(Clone)]
+struct OutcomeLineage {
+    body: Value,
+    unit: UnitId,
+    revision_id: RevisionId,
+    member: Option<String>,
+}
+
+type CollectionLineage = BTreeMap<String, Vec<OutcomeLineage>>;
+
+struct InputLineageRequest<'a> {
+    declaration: &'a CheckedUnit,
+    each: Option<&'a Value>,
+    member: Option<&'a str>,
+    collection_lineage: &'a CollectionLineage,
+}
+
+/// Index source identities once for a collection. Member lookup stays correct
+/// when a completed source has no retained approval and therefore no lineage.
+fn collection_lineage(
+    scope: &LineageScope<'_>,
+    source: &Expression,
+    context: &mut EvaluationContext<'_>,
+) -> Result<CollectionLineage, StepError> {
+    let mut members = CollectionLineage::new();
+    for entry in outcome_lineage(
+        scope,
+        OutcomeLineageRequest {
+            expression: source,
+            each: None,
+        },
+        context,
+    )? {
+        if let Some(member) = &entry.member {
+            members.entry(member.clone()).or_default().push(entry);
+        }
+    }
+    Ok(members)
+}
+
+/// Follow only collection outcome projections, preserving member identity through
+/// filtering. Values are used to evaluate predicates, never to infer identity.
+fn outcome_lineage(
+    scope: &LineageScope<'_>,
+    request: OutcomeLineageRequest<'_>,
+    context: &mut EvaluationContext<'_>,
+) -> Result<Vec<OutcomeLineage>, StepError> {
+    let LineageScope {
+        program,
+        state,
+        parent,
+    } = *scope;
+    let OutcomeLineageRequest { expression, each } = request;
+    match expression {
+        Expression::Filter { source, predicate } => {
+            let mut selected = Vec::new();
+            for entry in outcome_lineage(
+                scope,
+                OutcomeLineageRequest {
+                    expression: source,
+                    each,
+                },
+                context,
+            )? {
+                if expression::eval_expression_inner(
+                    predicate,
+                    parent,
+                    state,
+                    expression::Bindings {
+                        each,
+                        item: Some(&entry.body),
+                        body: None,
+                    },
+                    context,
+                )? == Some(Value::Bool(true))
+                {
+                    selected.push(entry);
+                }
+            }
+            Ok(selected)
+        }
+        Expression::Map { source, value } => {
+            let Expression::Reference {
+                root: ReferenceRoot::MemberOutcomes { unit },
+                path: source_path,
+            } = source.as_ref()
+            else {
+                return Ok(vec![]);
+            };
+            let Expression::Reference {
+                root: ReferenceRoot::Item,
+                path: fields,
+            } = value.as_ref()
+            else {
+                return Ok(vec![]);
+            };
+            if !source_path.is_empty() || fields.len() != 1 {
+                return Ok(vec![]);
+            }
+            let mut children: Vec<_> = state
+                .units
+                .iter()
+                .filter(|child| {
+                    child.parent.as_ref() == Some(&parent.id) && child.declaration == *unit
+                })
+                .collect();
+            children.sort_by(|a, b| a.id.cmp(&b.id));
+            let mut entries = Vec::new();
+            for child in children {
+                let UnitStatus::Done { outcome } = &child.status else {
+                    continue;
+                };
+                if child.kind.stage().is_none() {
+                    continue;
+                }
+                let stage = checked_stage(program, child)?;
+                let Some(field) = stage.outcome.iter().find(|field| field.key == fields[0]) else {
+                    continue;
+                };
+                let Expression::Reference {
+                    root: ReferenceRoot::Latest { artifact },
+                    path,
+                } = &field.value.expression
+                else {
+                    continue;
+                };
+                if !path.is_empty() {
+                    continue;
+                }
+                let revision = state
+                    .decisions
+                    .iter()
+                    .rev()
+                    .find(|decision| {
+                        decision.unit() == &child.id
+                            && decision.effect() == Some(DecisionEffect::Approve)
+                            && state.revisions.iter().any(|revision| {
+                                revision.id == *decision.target() && revision.artifact == *artifact
+                            })
+                    })
+                    .map(|decision| decision.target().clone());
+                if let (Some(body), Some(revision)) = (outcome.get(&fields[0]), revision) {
+                    entries.push(OutcomeLineage {
+                        body: body.clone(),
+                        unit: child.id.clone(),
+                        revision_id: revision,
+                        member: child.collection_key.clone(),
+                    });
+                }
+            }
+            Ok(entries)
+        }
+        _ => Ok(vec![]),
+    }
+}
+
+fn input_lineage(
+    scope: &LineageScope<'_>,
+    request: InputLineageRequest<'_>,
+    context: &mut EvaluationContext<'_>,
+) -> Result<Vec<InputProvenance>, StepError> {
+    let mut entries = Vec::new();
+    for field in &request.declaration.input {
+        let lineage = match &field.value.expression {
+            Expression::Reference {
+                root: ReferenceRoot::EachMember,
+                path,
+            } if path.is_empty() => request
+                .member
+                .and_then(|member| request.collection_lineage.get(member))
+                .cloned()
+                .unwrap_or_default(),
+            expression => outcome_lineage(
+                scope,
+                OutcomeLineageRequest {
+                    expression,
+                    each: request.each,
+                },
+                context,
+            )?,
+        };
+        entries.extend(lineage.into_iter().map(|source| InputProvenance {
+            input: SymbolKey::from(field.key.as_str()),
+            unit: source.unit,
+            revision_id: source.revision_id,
+        }));
+    }
+    Ok(entries)
 }

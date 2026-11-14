@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { BuildBriefViewer } from "./BuildBriefViewer";
 import linkedBrief from "../../lib/__fixtures__/id-linked-brief.json";
+import itemBrief from "../../lib/__fixtures__/build-items-brief.json";
 import type { StageUnit } from "../../run-types";
 import { CohortBrief } from "./CohortBrief";
 
@@ -57,6 +58,20 @@ describe("BuildBriefViewer", () => {
       await screen.findByRole("button", { name: `Edit ${name}` });
     }
     expect(onEdit.mock.calls.map((call) => call[0])).toEqual(["/decisions_made/0/decision", "/approaches_rejected/0/reason", "/acceptance_criteria/0/text"]);
+  });
+
+  test("edits a build item's description and verification steps through their JSON pointers", async () => {
+    const onEdit = saved();
+    render(<BuildBriefViewer body={itemBrief} edit={{ enabled: true, isPending: false, onEdit }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit brief" }));
+    for (const name of ["build items/0/description", "build items/0/verification/0"]) {
+      fireEvent.click(screen.getByRole("button", { name: `Edit ${name}` }));
+      const input = screen.getByRole("textbox");
+      fireEvent.change(input, { target: { value: "Changed." } });
+      fireEvent.blur(input);
+      await screen.findByRole("button", { name: `Edit ${name}` });
+    }
+    expect(onEdit.mock.calls.map((call) => call[0])).toEqual(["/build_items/0/description", "/build_items/0/verification/0"]);
   });
 
   test("lists its tasks by id and opens one as the same task the plan opens", () => {

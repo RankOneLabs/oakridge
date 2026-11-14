@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import type { ParsedStage } from "../src/core-client/core-types";
 import type { UnitAttention } from "../src/projections/attention";
-import { selectAvailableDecisions, selectUnitInputFields, type UnitView } from "../src/projections/unit-view";
+import { selectAvailableDecisions, selectPublishingAttemptId, selectUnitInputFields, type UnitView } from "../src/projections/unit-view";
 import type { RunSummaryRead, UnitSummaryRecord } from "../src/storage/read-store";
+import type { ActionId } from "../src/domain/primitives";
 
 /** A cohort stage whose assessment review may instead request changes `on` the build. */
 const stage = {
@@ -50,7 +51,7 @@ const intentFor = (worker: WorkerInstruction): RunRead["intents"] => [{ action_i
   payload: { inputs: { source: "recorded" }, engine_inputs: { previous: null, feedback: [], subject: null }, worker } as unknown as EffectInstruction }];
 test("an agent attempt exposes its recorded inputs, engine inputs and pinned prompt", () => {
   const worker = { kind: "agent", prompt: { path: "prompts/build.md", digest: "sha256-pinned" } } as WorkerInstruction;
-  expect(selectAttemptIntent(attempt, intentFor(worker))).toEqual({ inputs: { source: "recorded" },
+  expect(selectAttemptIntent(attempt, intentFor(worker))).toEqual({ input_provenance: { status: "unresolved" }, inputs: { source: "recorded" },
     engine_inputs: { previous: null, feedback: [], subject: null }, prompt: worker.kind === "agent" ? worker.prompt : null });
 });
 test("a promptless code worker exposes a null prompt", () => {
@@ -59,4 +60,35 @@ test("a promptless code worker exposes a null prompt", () => {
 test("an attempt without its own recorded intent exposes null", () => {
   const intents = intentFor({ kind: "code", operation: "check", every: null, artifact: "result" });
   expect(selectAttemptIntent({ ...attempt, seq: 1 }, intents)).toBeNull();
+});
+
+test("attempt provenance uses only its recorded instruction", () => {
+  const intents = intentFor({ kind: "code", operation: "check", every: null, artifact: "result" });
+  const entries = [{ input: "brief", unit: "run/briefs/a", revision_id: "approved" }];
+  const recorded = intents.map((intent) => ({ ...intent, payload: { ...intent.payload, input_provenance: { status: "recorded" as const, entries } } }));
+  expect(selectAttemptIntent(attempt, recorded)?.input_provenance).toEqual({ status: "recorded", entries });
+});
+
+import { selectUnitView } from "../src/projections/unit-view";
+import type { UnitRecord } from "../src/storage/schema-records";
+for (const entries of [null, [], [{ input: "brief", unit: "run/briefs/a", revision_id: "approved" }]]) {
+  test(`unit view exposes persisted provenance ${JSON.stringify(entries)}`, () => {
+    const unit = { id: "run/cohort", run_id: "run", parent_id: "run", declaration: "cohort", stage: null,
+      input: {}, status: { kind: "active" }, input_provenance: entries } as UnitRecord;
+    const read = { units: [unit], definition: { workflow: { run: { units: {} } }, parsed_workflow: { stages: {} } },
+      run: { status: { kind: "active" } }, dependencies: [], decisions: [], attempts: [], revisions: [] } as unknown as RunRead;
+    expect(selectUnitView(read, unit, awaiting([])).input_provenance).toEqual(entries === null
+      ? { status: "unresolved" } : { status: "recorded", entries });
+  });
+}
+
+const at = (ms: number) => new Date(ms);
+const act = "act" as ActionId, other = "other" as ActionId;
+const attempts = [{ action_id: act, seq: 1, created_at: at(10) }, { action_id: act, seq: 2, created_at: at(30) }, { action_id: other, seq: 1, created_at: at(5) }];
+test("a revision names the attempt of its action that was open when it was written, not a later retry", () => {
+  expect([selectPublishingAttemptId({ by_id: act, created_at: at(20) }, attempts), selectPublishingAttemptId({ by_id: act, created_at: at(40) }, attempts)])
+    .toEqual(["act:1", "act:2"]);
+});
+test("an operator's edit names no attempt", () => {
+  expect(selectPublishingAttemptId({ by_id: null, created_at: at(40) }, attempts)).toBeNull();
 });

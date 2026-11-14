@@ -1,3 +1,4 @@
+import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
 import type { EngineInputs, PinnedPrompt } from "../domain/effect-instruction";
 import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
@@ -13,6 +14,7 @@ export type BodyValue = JsonValue;
 
 /** The immutable instruction recorded when this attempt was opened. */
 export interface AttemptIntentView {
+  readonly input_provenance: InputProvenanceView;
   readonly inputs: BodyValue;
   readonly engine_inputs: EngineInputs;
   readonly prompt: PinnedPrompt | null;
@@ -44,7 +46,7 @@ export interface ArtifactRevisionView {
   readonly run_id: RunId;
   readonly unit_id: UnitId;
   readonly artifact_key: string;
-  /** The attempt that published it; null for an operator's edit. */
+  /** The attempt that published it, as AttemptView.id; null for an operator's edit. */
   readonly attempt_id: string | null;
   readonly body: BodyValue;
   readonly predecessor_id: string | null;
@@ -101,6 +103,7 @@ export const selectRevisionDecision = (decision: ReviewDecisionRecord): Revision
   target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue, created_at: decision.created_at });
 
 export interface UnitView {
+  readonly input_provenance: InputProvenanceView;
   readonly unit_id: UnitId;
   readonly run_id: RunId;
   readonly unit_key: string;
@@ -129,7 +132,7 @@ export function selectAttemptViews(attempts: readonly AttemptRecord[], intents: 
     counts.set(selectAttemptWorkerKey(attempt), number);
     return { attempt, number };
   });
-  return numbered.map(({ attempt, number }) => ({ id: `${attempt.action_id}:${attempt.seq}`, unit_id: attempt.unit_id,
+  return numbered.map(({ attempt, number }) => ({ id: selectAttemptId(attempt), unit_id: attempt.unit_id,
     worker: attempt.worker, number, status: attempt.status.kind,
     failure: attempt.status.kind === "failed" ? { code: attempt.status.code, detail: attempt.status.detail } : null,
     mode: attempt.mode.kind, cause: attempt.cause, kbbl_session_id: attempt.kbbl_session_id,
@@ -141,14 +144,28 @@ export function selectAttemptViews(attempts: readonly AttemptRecord[], intents: 
 export function selectAttemptIntent(attempt: AttemptRecord, intents: RunRead["intents"]): AttemptIntentView | null {
   const instruction = intents.find((intent) => intent.action_id === attempt.action_id && intent.seq === attempt.seq)?.payload;
   if (!instruction) return null;
-  return { inputs: instruction.inputs as BodyValue, engine_inputs: instruction.engine_inputs,
+  return { input_provenance: instruction.input_provenance ?? { status: "unresolved" }, inputs: instruction.inputs as BodyValue, engine_inputs: instruction.engine_inputs,
     prompt: instruction.worker.kind === "agent" ? instruction.worker.prompt : null };
 }
 
+/** An attempt's identity: its action and that action's sequence number. */
+export const selectAttemptId = (attempt: Pick<AttemptRecord, "action_id" | "seq">): string => `${attempt.action_id}:${attempt.seq}`;
+
+/**
+ * The attempt that published a revision. A revision records only its action, so this is the latest attempt of that
+ * action opened by then: commit stamps both under the run lock, and a retry opens after every revision written before it.
+ */
+export function selectPublishingAttemptId(revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">,
+  attempts: readonly Pick<AttemptRecord, "action_id" | "seq" | "created_at">[]): string | null {
+  const publisher = attempts.filter((attempt) => attempt.action_id === revision.by_id && attempt.created_at.getTime() <= revision.created_at.getTime())
+    .reduce<Pick<AttemptRecord, "action_id" | "seq"> | null>((latest, attempt) => latest === null || attempt.seq > latest.seq ? attempt : latest, null);
+  return publisher === null ? null : selectAttemptId(publisher);
+}
+
 /** One artifact's revisions, oldest first, numbered from 1. */
-export function selectRevisionViews(revisions: readonly ArtifactRevisionRecord[]): readonly ArtifactRevisionView[] {
+export function selectRevisionViews(revisions: readonly ArtifactRevisionRecord[], attempts: readonly AttemptRecord[]): readonly ArtifactRevisionView[] {
   return [...revisions].sort((left, right) => left.seq - right.seq).map((revision) => ({ id: revision.id, run_id: revision.run_id, unit_id: revision.unit_id,
-    artifact_key: revision.artifact, attempt_id: revision.by_id, body: revision.body as BodyValue,
+    artifact_key: revision.artifact, attempt_id: selectPublishingAttemptId(revision, attempts), body: revision.body as BodyValue,
     predecessor_id: revision.predecessor_id, subject_id: revision.subject, created_at: revision.created_at, number: revision.seq }));
 }
 const revisionsOf = <Revision extends RevisionRef>(revisions: readonly Revision[], unit_id: string, artifact: string): readonly Revision[] =>
@@ -170,7 +187,7 @@ function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly Artifact
   const stage = unit.stage === null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
   if (!stage) return [];
   return Object.keys(stage.artifacts).sort().map((artifact) => {
-    const revisions = selectRevisionViews(revisionsOf(read.revisions, unit.id, artifact));
+    const revisions = selectRevisionViews(revisionsOf(read.revisions, unit.id, artifact), read.attempts);
     return { run_id: unit.run_id, unit_id: unit.id, artifact_key: artifact, schema: selectArtifactSchema(stage, artifact),
       is_reviewable: isReviewable(stage, artifact), is_editable: isEditable(stage, artifact),
       revision_count: revisions.length, latest_revision: revisions.at(-1) ?? null };
@@ -222,6 +239,7 @@ export function selectUnitInputFields(unit: UnitView, fields: readonly string[])
 export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitAttention): UnitView {
   const tree = selectUnitTree(read.units, read.definition.workflow);
   return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
+    input_provenance: selectInputProvenance(unit.input_provenance),
     stage: unit.stage, collection_key: selectCollectionKey(unit), input: unit.input as BodyValue,
     depends_on: read.dependencies.filter((edge) => edge.unit_id === unit.id).map((edge) => edge.depends_on_id),
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),
