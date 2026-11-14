@@ -4,9 +4,14 @@ import snapshot from "../../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
 import { WorkflowDefDetail } from "./WorkflowDefDetail";
 const detail = snapshot.definition as unknown as OperatorDefinitionDetail;
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 const state = vi.hoisted(() => ({ isPending: false, isError: false, data: null as OperatorDefinitionDetail | null, error: null }));
 vi.mock("../../hooks/useWorkflowDef", () => ({ useWorkflowDef: () => state }));
-afterEach(() => { cleanup(); state.isPending = false; state.isError = false; state.data = detail; });
+afterEach(() => {
+  cleanup(); state.isPending = false; state.isError = false; state.data = detail;
+  if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+  else Reflect.deleteProperty(navigator, "clipboard");
+});
 state.data = detail;
 test("renders structured facts and navigates a stage through the route callback", () => {
   const navigate = vi.fn();
@@ -219,6 +224,27 @@ test("unit artifact anchors keep unit identity through route changes", () => {
   view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation#stage-cohort-artifact-build_result" }} onNavigate={navigate} onBack={() => {}} />);
   expect(screen.getByRole("heading", { name: "Unit: implementation" })).toBeTruthy();
   expect(screen.getByRole("region", { name: "Inputs" }).textContent).toContain("each.depends_on");
+});
+
+test.each(["unavailable", "rejected"])("offers a selected full ID when clipboard access is %s", async (access) => {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: access === "unavailable" ? undefined : { writeText: vi.fn().mockRejectedValue(new Error("Permission denied")) } });
+  render(<WorkflowDefDetail definitionId="d1" selection={null} onNavigate={() => {}} onBack={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Copy definition ID" }));
+  const fullId = await screen.findByRole("textbox", { name: "Full definition ID" }) as HTMLInputElement;
+  expect(fullId.value).toBe(detail.definition_id);
+  expect(fullId.readOnly).toBe(true);
+  expect(document.activeElement).toBe(fullId);
+  expect(fullId.selectionStart).toBe(0);
+  expect(fullId.selectionEnd).toBe(detail.definition_id.length);
+});
+
+test("graph tooltips retain full stage names while visible labels stay compact", () => {
+  const stage = "stage_name_that_exceeds_the_graph_label_limit";
+  state.data = { ...detail, workflow: { ...detail.workflow, run: { outcome: {}, units: { work: { stage } } } } };
+  render(<WorkflowDefDetail definitionId="d1" selection={null} onNavigate={() => {}} onBack={() => {}} />);
+  const graph = screen.getByRole("img", { name: "Unit dependency graph" });
+  expect(graph.querySelector("title")?.textContent).toBe(`work · ${stage}`);
+  expect(within(graph).getByText(`${stage.slice(0, 27)}…`)).toBeTruthy();
 });
 
 test("Back and Forward route restoration keeps navigation, graph and detail selection aligned", () => {

@@ -80,7 +80,7 @@ export function DefinitionGraph(props: DefinitionGraphProps) {
             if (!unit) return null;
             return (
               <g key={node.id} transform={`translate(${node.x},${node.y})`}>
-                <title>{unit.path}{unit.stage ? ` · ${selectDefinitionNodeLabel(unit.stage)}` : ""}</title>
+                <title>{unit.path}{unit.stage ? ` · ${unit.stage}` : ""}</title>
                 <rect width={node.width} height={node.height} rx="6" className={`or-definition-node ${selectDefinitionNodeSelected(unit, props.selection) ? "or-definition-node--selected" : ""}`} />
                 <a href={definitionUnitHref(id, unit.path)}>
                   <text x="12" y="24">

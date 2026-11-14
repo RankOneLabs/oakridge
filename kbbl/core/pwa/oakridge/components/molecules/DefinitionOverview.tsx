@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import {
   selectDefinitionSchemaParts,
@@ -29,13 +30,31 @@ function SchemaType({ text, overview, selection }: { text: string; overview: Ove
   );
 }
 export function DefinitionOverview({ overview, selection }: DefinitionOverviewProps) {
+  const [shouldShowFullId, setShouldShowFullId] = useState(false);
+  async function onCopyDefinitionId(): Promise<void> {
+    if (!navigator.clipboard?.writeText) {
+      setShouldShowFullId(true);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(overview.id);
+    } catch {
+      setShouldShowFullId(true);
+    }
+  }
   return (
     <section aria-label="Workflow overview" className="or-definition-overview">
       <h2>{overview.name}</h2>
       <p>
         Definition ID: <code title={overview.id}>{overview.id.slice(0, 12)}…</code>
-        <Button variant="secondary" onClick={() => navigator.clipboard.writeText(overview.id)}>Copy definition ID</Button>
+        <Button variant="secondary" onClick={onCopyDefinitionId}>Copy definition ID</Button>
       </p>
+      {shouldShowFullId && (
+        <div>
+          <p role="status">Copy unavailable. Select and copy the full definition ID.</p>
+          <input aria-label="Full definition ID" value={overview.id} readOnly autoFocus onFocus={(event) => event.currentTarget.select()} className="w-full" />
+        </div>
+      )}
       <p>{overview.stages.length} stages · {overview.units.length} units · {overview.collections.length} collections · {overview.pools.length} pools</p>
       <details><summary>Workflow inputs, outputs and schemas</summary>
       <h3>Root input</h3>
