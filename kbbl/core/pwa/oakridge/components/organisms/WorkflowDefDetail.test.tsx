@@ -13,7 +13,7 @@ test("renders structured facts and navigates a stage through the route callback"
   render(<WorkflowDefDetail definitionId="d1" selection={null} onNavigate={navigate} onBack={() => {}} />);
   expect(screen.getByRole("heading", { name: "development" })).toBeTruthy();
   expect(screen.getByText("Raw JSON").closest("details")?.open).toBe(false);
-  const overview = screen.getByRole("region", { name: "Workflow overview" });
+  const overview = screen.getByLabelText("Stages in authored order");
   fireEvent.click(within(overview).getAllByRole("link", { name: "cohort" })[0] as HTMLElement);
   expect(navigate).toHaveBeenCalledWith(expect.stringContaining("/stages/cohort"));
   expect(screen.getByRole("list", { name: "Dependency edges" }).textContent).toContain("planning reads analysis.outcome.spec via input.spec");
@@ -45,14 +45,19 @@ test("group selection drills in and exposes a root breadcrumb", () => {
   const graph = screen.getByRole("region", { name: "Definition dependencies" });
   expect(within(graph).getByRole("link", { name: "item" }).getAttribute("href")).toContain("/units/work/item");
   expect(within(graph).getByRole("link", { name: "Root" }).getAttribute("href")).toBe("#oakridge/defs/" + detail.definition_id);
-  expect(within(graph).getByText("after: each.after")).toBeTruthy();
+  expect(within(graph).getByText(/per-member after/)).toBeTruthy();
   expect(within(graph).queryByRole("link", { name: "work (group)" })).toBeNull();
 });
-test("schema references focus the overview entry without changing the route", () => {
-  render(<WorkflowDefDetail definitionId="d1" selection={null} onNavigate={() => {}} onBack={() => {}} />);
-  const schema = screen.getByRole("heading", { name: "final_merge_policy" }).parentElement as HTMLElement;
-  schema.scrollIntoView = vi.fn();
-  fireEvent.click(screen.getByRole("button", { name: "final_merge_policy" }));
+test("schema href reveals collapsed ancestors after route navigation", () => {
+  const navigate = vi.fn();
+  const view = render(<WorkflowDefDetail definitionId="d1" selection={null} onNavigate={navigate} onBack={() => {}} />);
+  const schema = document.getElementById("definition-schema-final_merge_policy") as HTMLElement;
+  expect((schema.closest("details") as HTMLDetailsElement).open).toBe(false);
+  const link = screen.getByRole("link", { name: "final_merge_policy", hidden: true });
+  fireEvent.click(link);
+  expect(navigate).toHaveBeenCalledWith(expect.stringContaining("/stages/prepare#definition-schema-final_merge_policy"));
+  view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "prepare#definition-schema-final_merge_policy" }} onNavigate={navigate} onBack={() => {}} />);
+  expect((schema.closest("details") as HTMLDetailsElement).open).toBe(true);
   expect(document.activeElement).toBe(schema);
 });
 
@@ -98,8 +103,8 @@ test("array prerequisites remain visible and parallel dependency kinds stay sepa
   expect(referenced?.getAttribute("transform")).toBe("translate(6,0)");
   expect(explicit?.querySelector("text")?.textContent).toBe("after");
   expect(referenced?.querySelector("text")?.textContent).toBe("outcome.spec");
-  expect(within(graph).getByText('after: ["first"]')).toBeTruthy();
-  expect(within(screen.getByRole("region", { name: "Workflow overview" })).getByText('· after: ["first"]')).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Inputs" })).getByText('["first"]')).toBeTruthy();
+  expect(graph.querySelector(".or-definition-node--selected")).toBeTruthy();
   expect(within(screen.getByTestId("or-def-selection")).getByText('["first"]')).toBeTruthy();
 });
 
@@ -108,7 +113,7 @@ test("unit routes select their stage and route changes update aria-current", () 
   const inspector = within(screen.getByRole("region", { name: "Stage inspector" }));
   const nav = within(inspector.getByLabelText("Stages in authored order"));
   expect(nav.getByRole("link", { name: "implementation" }).getAttribute("aria-current")).toBe("page");
-  expect(nav.getByRole("link", { name: "cohort" }).getAttribute("aria-current")).toBe("page");
+  expect(nav.getByRole("link", { name: "cohort" }).getAttribute("aria-current")).toBeNull();
   view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "stage", stage: "integration" }} onNavigate={() => {}} onBack={() => {}} />);
   expect(inspector.getByRole("heading", { name: "Stage: integration" })).toBeTruthy();
   expect(nav.getByRole("link", { name: "implementation" }).hasAttribute("aria-current")).toBe(false);
@@ -171,4 +176,32 @@ test("following the current declaration link again reveals its target without na
   expect(navigate).not.toHaveBeenCalled();
   expect(details.open).toBe(true);
   expect(details.scrollIntoView).toHaveBeenCalled();
+});
+
+test("compact header copies the full id and shared default drives every pane without navigation", () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  const navigate = vi.fn();
+  render(<WorkflowDefDetail definitionId="d1" selection={null} onNavigate={navigate} onBack={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Copy definition ID" }));
+  expect(writeText).toHaveBeenCalledWith(detail.definition_id);
+  const first = detail.bundle.stages[0] as string;
+  const nav = screen.getByLabelText("Stages in authored order");
+  expect(nav.querySelector('a[aria-current="page"]')?.textContent).toBe(first);
+  expect(screen.getByRole("heading", { name: "Stage: " + first })).toBeTruthy();
+  expect(screen.getByRole("img", { name: "Unit dependency graph" }).querySelector(".or-definition-node--selected")).toBeTruthy();
+  fireEvent.click(screen.getByText("Raw JSON"));
+  expect(screen.getByRole("tabpanel", { name: "Authored" }).textContent).toBe(JSON.stringify(detail.workflow.stages[first], null, 2));
+  expect(navigate).not.toHaveBeenCalled();
+});
+
+test("unit artifact anchors keep unit identity through route changes", () => {
+  const navigate = vi.fn();
+  const view = render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation" }} onNavigate={navigate} onBack={() => {}} />);
+  const link = within(screen.getByRole("region", { name: "Workers" })).getAllByRole("link", { name: "build_result" })[0] as HTMLElement;
+  fireEvent.click(link);
+  expect(navigate).toHaveBeenLastCalledWith(expect.stringContaining("/units/implementation#stage-cohort-artifact-build_result"));
+  view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation#stage-cohort-artifact-build_result" }} onNavigate={navigate} onBack={() => {}} />);
+  expect(screen.getByRole("heading", { name: "Unit: implementation" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Inputs" }).textContent).toContain("each.depends_on");
 });

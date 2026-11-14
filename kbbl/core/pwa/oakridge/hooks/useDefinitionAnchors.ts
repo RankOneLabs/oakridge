@@ -11,7 +11,9 @@ function revealDefinitionAnchor(target: string | undefined): void {
   if (!target) return;
   const element = document.getElementById(target);
   if (!element) return;
-  if (element instanceof HTMLDetailsElement) element.open = true;
+  for (let ancestor: HTMLElement | null = element; ancestor; ancestor = ancestor.parentElement) {
+    if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+  }
   element.scrollIntoView?.();
   element.focus();
 }

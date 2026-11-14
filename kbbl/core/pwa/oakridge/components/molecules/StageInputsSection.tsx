@@ -1,8 +1,7 @@
-import { type StageSectionProps } from "../../lib/stage-inspector";
+import { stageSelectionHref, type StageSectionProps } from "../../lib/stage-inspector";
 import {
   definitionStageHref,
   definitionUnitHref,
-  selectDefinitionUnit,
   definitionSchemaElementId,
 } from "../../lib/definition-selection";
 import type { OperatorType } from "../../operator-contracts/core-client/core-types";
@@ -13,7 +12,7 @@ export function StageType({ value, model }: StageTypeProps) {
   if (value.kind === "named")
     return (
       <a
-        href={`${definitionStageHref(model.definition.definition_id, model.name)}#${definitionSchemaElementId(value.schema)}`}
+        href={`${stageSelectionHref(model)}#${definitionSchemaElementId(value.schema)}`}
       >
         {value.schema}
       </a>
@@ -59,7 +58,7 @@ export function StageInputsSection({ model }: StageSectionProps) {
     <section aria-label="Inputs" className="rounded border border-[var(--border-muted)] p-3">
       <h3>Inputs</h3>
       <StageType model={model} value={model.stage.input} />
-      {model.units.map((unit) => (
+      {(model.selected_unit ? [model.selected_unit] : model.units).map((unit) => (
         <div key={unit.path}>
           <h4>
             <a href={definitionUnitHref(model.definition.definition_id, unit.path)}>{unit.path}</a>{" "}
@@ -70,7 +69,7 @@ export function StageInputsSection({ model }: StageSectionProps) {
           </h4>
           <dl>
             {Object.entries(
-              selectDefinitionUnit(model.definition.workflow.run, unit.path)?.input ?? {},
+              unit.input ?? {},
             ).map(([field, expression]) => (
               <div key={field}>
                 <dt>{`run.units.${unit.path}.input.${field}`}</dt>

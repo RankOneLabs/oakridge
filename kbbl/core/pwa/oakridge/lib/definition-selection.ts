@@ -21,3 +21,14 @@ export function selectDefinitionSlice(workflow: OperatorDefinitionDetail["workfl
   if (!selection) return null;
   return selection.kind === "stage" ? workflow.stages[selection.stage] ?? null : selectDefinitionUnit(workflow.run, selection.path);
 }
+
+
+export type EffectiveDefinitionSelection = DefinitionSelection | null;
+/** Preserve explicit routes, including missing declarations; default without changing history. */
+export function selectEffectiveDefinitionSelection(
+  definition: OperatorDefinitionDetail,
+  selection: DefinitionSelection | null,
+): EffectiveDefinitionSelection {
+  const first = definition.bundle.stages[0];
+  return selection ?? (first ? { kind: "stage", stage: first } : null);
+}

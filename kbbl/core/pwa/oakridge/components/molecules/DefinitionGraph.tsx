@@ -1,9 +1,9 @@
 import type { DefinitionSelection } from "../../../lib/hash";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
 import type { DefinitionOverview } from "../../lib/definition-overview";
-import { selectDefinitionGraph } from "../../lib/definition-graph";
+import { selectDefinitionGraph, selectDefinitionNodeLabel, selectDefinitionNodeSelected } from "../../lib/definition-graph";
 import { selectDefinitionDependencies, type DependencyEdge } from "../../lib/definition-dependencies";
-import { definitionHref, definitionStageHref, definitionUnitHref } from "../../lib/definition-selection";
+import { definitionHref, definitionUnitHref } from "../../lib/definition-selection";
 
 interface DefinitionGraphProps {
   definition: OperatorDefinitionDetail;
@@ -80,32 +80,22 @@ export function DefinitionGraph(props: DefinitionGraphProps) {
             if (!unit) return null;
             return (
               <g key={node.id} transform={`translate(${node.x},${node.y})`}>
-                <rect width={node.width} height={node.height} rx="6" className="or-definition-node" />
+                <title>{unit.path}{unit.stage ? ` · ${selectDefinitionNodeLabel(unit.stage)}` : ""}</title>
+                <rect width={node.width} height={node.height} rx="6" className={`or-definition-node ${selectDefinitionNodeSelected(unit, props.selection) ? "or-definition-node--selected" : ""}`} />
                 <a href={definitionUnitHref(id, unit.path)}>
                   <text x="12" y="24">
-                    {unit.key}
+                    {selectDefinitionNodeLabel(unit.key)}
                     {unit.is_group ? " (group)" : ""}
                   </text>
                 </a>
                 {unit.stage && (
-                  <a href={definitionStageHref(id, unit.stage)}>
+                  <a href={definitionUnitHref(id, unit.path)}>
                     <text x="12" y="47">
-                      {unit.stage}
+                      {selectDefinitionNodeLabel(unit.stage)}
                     </text>
                   </a>
                 )}
-                <text x="12" y="70">
-                  {unit.for_each !== null ? `for_each: ${unit.for_each}` : ""}
-                </text>
-                <text x="12" y="92">
-                  {unit.key_expression !== null ? `key: ${unit.key_expression}` : ""}
-                </text>
-                <text x="12" y="114">
-                  {unit.pool !== null ? `pool: ${unit.pool}` : ""}
-                </text>
-                <text x="12" y="136">
-                  {unit.after_text !== null ? `after: ${unit.after_text}` : ""}
-                </text>
+                <text x="12" y="70">{unit.for_each !== null ? "collection " : ""}{unit.has_per_member_after ? "per-member after" : ""}</text>
               </g>
             );
           })}

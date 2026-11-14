@@ -3182,3 +3182,13 @@ a:focus-visible {
 .or-definition-edge--referenced path { stroke-dasharray: 6 4; }
 .or-definition-edge text { font-size: 10px; }
 .or-definition-raw { margin-block: 1.5rem; }
+
+/* Definition desktop workspace: contain wide authored content within each pane. */
+.or-definition-inspector { display: grid; grid-template-columns: minmax(0, 27fr) minmax(0, 73fr); gap: 1.25rem; min-width: 0; }
+.or-definition-navigation { max-height: 75vh; overflow: auto; display: grid; align-content: start; gap: .5rem; }
+.or-definition-navigation-entry { padding: .25rem .5rem; }
+.or-definition-navigation a[aria-current="page"] { font-weight: bold; background: var(--bg-elevated); border-left: 3px solid currentColor; }
+.or-definition-graph { max-width: 100%; max-height: 32rem; overflow: auto; }
+.or-definition-node--selected { stroke: var(--text-primary); stroke-width: 4px; }
+.or-definition-raw { min-width: 0; }
+.or-definition-raw pre, .or-definition-overview pre { max-height: 28rem; overflow: auto; }

@@ -131,3 +131,11 @@ test("parallel dependency kinds receive separate routes without changing their r
   ]);
   expect(graph.layout.edges).toHaveLength(1);
 });
+
+test("long expressions keep fixed nodes and expose per-member dependencies", () => {
+  const workflow = { ...detail.workflow, run: { outcome: {}, units: { long: { stage: "cohort", for_each: "input." + "x".repeat(500), after: "each.depends_on" } } } };
+  const overview = selectDefinitionOverview({ ...detail, workflow });
+  const graph = selectDefinitionGraph({ overview, dependencies: selectDefinitionDependencies(workflow), selection: null });
+  expect(graph.layout.nodes.map(({ width, height }) => [width, height])).toEqual([[240, 100]]);
+  expect(overview.units[0]?.has_per_member_after).toBe(true);
+});
