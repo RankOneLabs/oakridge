@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { readHashRoute, type DefinitionSelection } from "../../lib/hash";
-import { definitionHref, definitionStageHref, definitionUnitHref, definitionSelectionHref, selectDefinitionSlice, definitionSchemaElementId } from "./definition-selection";
+import { selectEffectiveDefinitionSelection, definitionHref, definitionStageHref, definitionUnitHref, definitionSelectionHref, selectDefinitionSlice, definitionSchemaElementId } from "./definition-selection";
 import snapshot from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 const detail = snapshot.definition as unknown as OperatorDefinitionDetail;
@@ -22,4 +22,10 @@ test("selects nested units and missing declarations", () => {
 });
 test("schema targets distinguish punctuation", () => {
   expect(definitionSchemaElementId("a/b")).not.toBe(definitionSchemaElementId("a b"));
+});
+
+test("defaults to first authored stage and preserves explicit missing selections", () => {
+  expect(selectEffectiveDefinitionSelection(detail, null)).toEqual({ kind: "stage", stage: detail.bundle.stages[0] });
+  const selection = { kind: "unit" as const, path: "missing" };
+  expect(selectEffectiveDefinitionSelection(detail, selection)).toBe(selection);
 });
