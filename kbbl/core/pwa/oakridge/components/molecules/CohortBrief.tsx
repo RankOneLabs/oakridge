@@ -1,3 +1,4 @@
+import { BuildItemList } from "./BuildItemList";
 import type { StageUnit } from "../../run-types";
 import { selectCohortBrief } from "../../lib/stage-unit-params";
 import type { BuildBrief } from "../../lib/build-brief";
@@ -92,7 +93,7 @@ export function CohortBrief({ unit }: CohortBriefProps) {
         <TextList label="Files in scope" values={brief.files_in_scope} />
         <DecisionList decisions={brief.decisions_made} />
         <RejectedList approaches={brief.approaches_rejected} />
-        <CriterionList criteria={brief.acceptance_criteria} />
+        {brief.shape === "legacy" ? <CriterionList criteria={brief.acceptance_criteria} /> : <BuildItemList brief={brief} />}
         <TextList label="Depends on" values={brief.depends_on} />
       </div>
     </article>

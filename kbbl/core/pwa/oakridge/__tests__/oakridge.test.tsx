@@ -56,8 +56,9 @@ afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); runsSeed
  * `selectCohortBrief`'s `isBuildBrief` guard accepts them the way it accepts
  * a real one.
  */
-function buildBriefParams(overrides: Partial<BuildBrief> = {}): StageUnitParams {
+function buildBriefParams(overrides: Partial<Extract<BuildBrief, { shape: "legacy" }>> = {}): StageUnitParams {
   const artifact: BuildBrief = {
+    shape: "legacy",
     cohort_id: "cohort-a" as CohortId,
     repository_key: "oakridge" as RepositoryKey,
     title: "Untitled cohort",

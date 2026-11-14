@@ -1,6 +1,6 @@
 import { json, world, wrap } from "./item-panel-harness";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, waitFor, cleanup, fireEvent, screen } from "@testing-library/react";
 import { acknowledged, ANALYSIS, correctnessQuestion, id, IMPLEMENTATION, item, itemStatus, paged, supportQuestion } from "../__fixtures__/grading";
 import { CompositeDrilldown } from "../components/organisms/CompositeDrilldown";
 import { ItemPanel } from "../components/organisms/ItemPanel";
@@ -76,7 +76,8 @@ it.each<EntryPoint>(["task panel", "composite drilldown"])("an analysis finding 
   navigationReads();
   const open = vi.fn<(selection: ObservationItemAddress) => void>();
   wrap(entryPoint(source, open));
-  fireEvent.click(await screen.findByTestId("or-grade-item"));
+  await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(source === "task panel" ? 2 : 1));
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
   expect(open).toHaveBeenCalledWith(ANALYSIS);
   const selection = open.mock.calls[0]?.[0];
   if (!selection) throw new Error("the finding did not open");
@@ -104,7 +105,8 @@ it.each<{ source: EntryPoint; item_kind: string }>([
   navigationReads();
   const open = vi.fn();
   wrap(entryPoint(source, open));
-  fireEvent.click(await screen.findByTestId("or-grade-item"));
+  await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(source === "task panel" ? 2 : 1));
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
   expect(open).toHaveBeenCalledWith({ ...IMPLEMENTATION, task_id });
 });
 
@@ -119,7 +121,8 @@ it("the task panel keeps the enclosing task's subject when other tasks' subjects
   navigationReads();
   const open = vi.fn();
   wrap(entryPoint("task panel", open));
-  fireEvent.click(await screen.findByTestId("or-grade-item"));
+  await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(2));
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
   expect(open).toHaveBeenCalledWith({ ...IMPLEMENTATION, task_id });
 });
 
@@ -144,7 +147,8 @@ it("an assessment finding with no pinned subject for the enclosing task opens wi
   navigationReads();
   const open = vi.fn();
   wrap(entryPoint("task panel", open));
-  fireEvent.click(await screen.findByTestId("or-grade-item"));
+  await waitFor(() => expect(screen.getAllByTestId("or-grade-item").length).toBeGreaterThanOrEqual(2));
+  fireEvent.click(screen.getAllByTestId("or-grade-item").at(-1)!);
   expect(open).toHaveBeenCalledWith(IMPLEMENTATION);
 });
 
@@ -166,7 +170,7 @@ it("a 50-row task lineage reads each contribution's status once while lineage ke
   });
   wrap(<TaskPanel runId="run-1" taskId="T1" onOpenItem={vi.fn()} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-  expect(screen.getAllByTestId("or-grade-item")).toHaveLength(50);
+  expect(screen.getAllByTestId("or-grade-item")).toHaveLength(100);
   const statusReads = () => world.paths.filter((path) => new URL(path, "http://kbbl.test").pathname.endsWith("/status"));
   expect(statusReads()).toHaveLength(50);
   await act(async () => { await vi.advanceTimersByTimeAsync(30_001); });

@@ -1,3 +1,4 @@
+import { BuildItemList } from "./BuildItemList";
 import { Chip } from "../../../components/atoms/Chip";
 import { selectFileScopeComparison, selectHasBlockingIssue, selectOrderedIssues, type BuildIssue, type BuildResult } from "../../lib/build-result";
 import type { BuildBrief } from "../../lib/build-brief";
@@ -86,7 +87,7 @@ export function BuildResultViewer({ result, brief, cohortLabel }: Props) {
         )}
       </ArtifactSection>
 
-      {brief.kind === "found" && (
+      {brief.kind === "found" && (brief.value.shape === "build_items" ? <BuildItemList brief={brief.value} /> :
         <ArtifactSection title={`The brief's acceptance criteria (${brief.value.acceptance_criteria.length})`} testId="or-build-acceptance">
           <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
             {brief.value.acceptance_criteria.map((criterion, index) => <li key={index}>{criterion.text}</li>)}

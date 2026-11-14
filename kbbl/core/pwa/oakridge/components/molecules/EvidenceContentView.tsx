@@ -28,9 +28,10 @@ export function EvidenceContentView({ content }: EvidenceContentViewProps) {
     case "assessment_finding": return <dl className="m-0 space-y-1">
       <Field label="Description" value={content.value.description} />
       <Field label="Status" value={content.value.status} />
-      <Field label="Task ids" value={content.value.task_ids} />
+      {"subjects" in content.value ? <Field label="Subjects" value={content.value.subjects} /> : <Field label="Task ids" value={content.value.task_ids} />}
       <Field label="Evidence" value={content.value.evidence} />
     </dl>;
+    case "build_item": return <dl><Field label="Id" value={content.value.id} /><Field label="Description" value={content.value.description} /><Field label="Task ids" value={content.value.task_ids} /><Field label="Decision ids" value={content.value.decision_ids} /><Field label="Verification expectations" value={content.value.verification} /></dl>;
     case "task": return <dl className="m-0 space-y-1">
       <Field label="Id" value={content.value.id} />
       <Field label="Description" value={content.value.description} />
@@ -79,7 +80,7 @@ export function EvidenceContentView({ content }: EvidenceContentViewProps) {
       <Field label="Files in scope" value={content.value.files_in_scope} />
       <Field label="Decisions made" value={content.value.decisions_made} />
       <Field label="Approaches rejected" value={content.value.approaches_rejected} />
-      <Field label="Acceptance criteria" value={content.value.acceptance_criteria} />
+      {content.value.shape === "legacy" ? <Field label="Acceptance criteria" value={content.value.acceptance_criteria} /> : <Field label="Build items" value={content.value.build_items} />}
       <Field label="Next action" value={content.value.next_action} />
     </dl>;
     case "build_result": return <dl className="m-0 space-y-1">

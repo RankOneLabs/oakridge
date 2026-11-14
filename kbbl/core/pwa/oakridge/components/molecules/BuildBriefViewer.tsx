@@ -1,8 +1,9 @@
+import { BuildItemList } from "./BuildItemList";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ViewerProps } from "../../artifactRegistry";
-import { isBuildBrief } from "../../lib/build-brief";
+import { parseBuildBrief } from "../../lib/build-brief";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { EditableBriefText } from "./EditableBriefText";
 import { ExpandableText } from "./ExpandableText";
@@ -53,10 +54,11 @@ function ReasonedItem({ anchor, headline, reason, editor, id, decisionIds }: Rea
   );
 }
 
-export function BuildBriefViewer({ body, edit, onOpenTask, source, onOpenItem, itemGrading }: ViewerProps) {
+export function BuildBriefViewer({ body: rawBody, edit, onOpenTask, source, onOpenItem, itemGrading }: ViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
 
-  if (!isBuildBrief(body)) {
+  const body = parseBuildBrief(rawBody);
+  if (!body) {
     return <div className="or-error" role="alert">This build brief does not match the registered contract.</div>;
   }
   const editor: Editor = isEditing && edit?.enabled ? edit : null;
@@ -80,7 +82,7 @@ export function BuildBriefViewer({ body, edit, onOpenTask, source, onOpenItem, i
         </div>
         <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{body.title}</h2>
       </header>
-      {itemGrading?.renderShowAll(selectFindingSelections(source, body.acceptance_criteria.map((_, index) => `/acceptance_criteria/${index}`)))}
+      {itemGrading?.renderShowAll(selectFindingSelections(source, body.shape === "legacy" ? body.acceptance_criteria.map((_, index) => `/acceptance_criteria/${index}`) : body.build_items.map((_, index) => `/build_items/${index}`)))}
 
       <ArtifactSection title="Goal" testId="or-brief-goal">
         <BriefText anchor="/goal" value={body.goal} editor={editor} isProse lineCount={6} className="text-sm leading-relaxed text-[var(--text-primary)]" />
@@ -139,7 +141,7 @@ export function BuildBriefViewer({ body, edit, onOpenTask, source, onOpenItem, i
         ) : <EmptyNote>No rejected approaches.</EmptyNote>}
       </ArtifactSection>
 
-      <ArtifactSection title={`Contributions to spec tasks (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
+      {body.shape === "build_items" ? <BuildItemList brief={body} source={source} onOpenTask={onOpenTask} onOpenItem={onOpenItem} itemGrading={itemGrading} /> : <ArtifactSection title={`Contributions to spec tasks (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
         {body.acceptance_criteria.length > 0 ? (
           <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
             {body.acceptance_criteria.map((criterion, index) => (
@@ -158,7 +160,7 @@ export function BuildBriefViewer({ body, edit, onOpenTask, source, onOpenItem, i
             ))}
           </ol>
         ) : <EmptyNote>No tasks listed.</EmptyNote>}
-      </ArtifactSection>
+      </ArtifactSection>}
     </article>
   );
 }

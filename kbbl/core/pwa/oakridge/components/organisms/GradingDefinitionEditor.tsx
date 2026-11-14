@@ -24,7 +24,7 @@ export function GradingDefinitionEditor(props: GradingDefinitionEditorProps) {
     {sections.map(({ title, path, component: Section }) => <section key={path} aria-label={title} className="grid gap-3 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-surface)] p-4">
       <h3 className="text-lg font-semibold">{title}</h3>
       {sectionIssues(props.issues, props.index, [path]).map((issue, index) => <p role="alert" key={index}>{issue.path.join(".")}: {issue.detail}</p>)}
-      {path === "targets" && sectionIssues(props.issues, props.index, ["task_ids"]).concat(sectionIssues(props.issues, props.index, ["scope"])).map((issue, index) => <p role="alert" key={index}>{issue.detail}</p>)}
+      {path === "targets" && sectionIssues(props.issues, props.index, ["task_source"]).concat(sectionIssues(props.issues, props.index, ["task_ids"])).concat(sectionIssues(props.issues, props.index, ["scope"])).map((issue, index) => <p role="alert" key={index}>{issue.detail}</p>)}
       <Section {...props} />
     </section>)}
   </div>;

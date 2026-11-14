@@ -1,7 +1,7 @@
 import { Button } from "../../../components/atoms/Button";
 import type { ObservationJsonValue as Json } from "../../grading-contracts/domain/primitives";
 import type { ObservationGradingCatalogue } from "../../grading-contracts/http/grading-config";
-import { atPath, catalogueArtifactKinds, catalogueEvidenceCapability, catalogueEvidenceNames, catalogueItemSelectors, catalogueRunners, definitionWithScope, evaluatorWithRunner, jsonList, jsonObject, jsonText, type GradingPath } from "../../lib/grading-config";
+import { atPath, catalogueArtifactKinds, catalogueEvidenceCapability, catalogueEvidenceNames, catalogueItemSelectors, catalogueRunners, definitionWithScope, definitionWithTaskSource, evaluatorWithRunner, jsonList, jsonObject, jsonText, type GradingPath } from "../../lib/grading-config";
 import { GradingSelect, GradingTextField, type GradingEdit } from "./GradingConfigFields";
 
 export interface GradingSectionProps {
@@ -25,7 +25,8 @@ export function GradingConfigTargets({ definition, catalogue, onEdit, jsonField 
   const object = jsonObject(definition), targets = jsonList(object.targets);
   return <div className="grid gap-3">
     <GradingSelect label="Scope" value={object.scope} options={["per_item", "per_task"]} onChange={(value) => onEdit([], definitionWithScope(definition, value))} />
-    {object.scope === "per_task" && <GradingTextField label="Task pointer (task_ids JSON pointer)" value={object.task_ids} onChange={(value) => onEdit(["task_ids"], value)} />}
+    {object.scope === "per_task" && <GradingSelect label="Task source" value={object.task_source ?? "task_ids"} options={["task_ids", "resolved_assesses"]} onChange={(value) => onEdit([], definitionWithTaskSource(definition, value))} />}
+    {object.scope === "per_task" && object.task_source !== "resolved_assesses" && <GradingTextField label="Task pointer (task_ids JSON pointer)" value={object.task_ids} onChange={(value) => onEdit(["task_ids"], value)} />}
     {targets.map((target, index) => <div key={index} className="grid gap-2 rounded border border-[var(--border-muted)] p-3">
       <GradingSelect label={`Artifact kind ${index + 1}`} value={jsonObject(target).artifact} options={catalogueArtifactKinds(catalogue)} onChange={(value) => onEdit(["targets", index, "artifact"], value)} />
       <GradingSelect label={`Item selector ${index + 1}`} value={jsonObject(target).selector} options={catalogueItemSelectors(catalogue, jsonObject(target).artifact)} onChange={(value) => onEdit(["targets", index, "selector"], value)} />

@@ -1,7 +1,8 @@
+import { BuildItemAssessmentViewer } from "./BuildItemAssessmentViewer";
 import { useState, type ReactNode } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { selectCriterionCounts, selectCriterionReport, type Assessment, type CriterionCheck, type CriterionTally } from "../../lib/assessment";
+import { selectCriterionCounts, selectCriterionReport, type LegacyAssessment, type CriterionCheck, type CriterionTally } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
@@ -17,7 +18,7 @@ import { CRITERION_STATUS_LABEL, CriterionCheckItem } from "./CriterionCheckItem
 import { TestEvidenceBlock } from "./TestEvidenceBlock";
 
 interface Props {
-  assessment: Assessment;
+  assessment: LegacyAssessment;
   brief: CohortArtifactLookup<BuildBrief>;
   result: CohortArtifactLookup<BuildResult>;
   cohortLabel: string | null;
@@ -49,9 +50,9 @@ function VerdictBanner({ verdict, tally }: { verdict: AssessmentVerdict; tally: 
   );
 }
 
-export function AssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false, handoff, source, onOpenItem, itemGrading }: Props) {
+function LegacyAssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false, handoff, source, onOpenItem, itemGrading }: Props) {
   const [isMetOpen, setIsMetOpen] = useState(false);
-  const report = selectCriterionReport(!isIntegration && brief.kind === "found" ? brief.value.acceptance_criteria : null, assessment.findings);
+  const report = selectCriterionReport(!isIntegration && brief.kind === "found" && brief.value.shape === "legacy" ? brief.value.acceptance_criteria : null, assessment.findings);
   const showBriefComparison = !isIntegration && brief.kind === "found";
   const findingSelections = selectFindingSelections(source, assessment.findings.map((finding) => finding.item_path));
   const renderGradeAction = (check: Extract<CriterionCheck, { kind: "finding" }>) => {
@@ -115,4 +116,8 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
       )}
     </article>
   );
+}
+
+export function AssessmentViewer(props: Omit<Props, "assessment"> & { assessment: import("../../lib/assessment").Assessment }) {
+  return props.assessment.shape === "build_items" ? <BuildItemAssessmentViewer {...props} assessment={props.assessment} /> : <LegacyAssessmentViewer {...props} assessment={props.assessment} />;
 }

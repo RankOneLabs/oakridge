@@ -23,8 +23,8 @@ describe("isBuildBrief", () => {
 
   test("preserves task ids across reordering and rewording", () => {
     const brief = readBuildBrief(linkedBrief);
-    expect(brief?.acceptance_criteria.map((criterion) => criterion.id)).toEqual(["criterion-brief", "criterion-plan"]);
-    expect(brief?.acceptance_criteria[0]).toMatchObject({ id: linkedPlan.cohorts[0].acceptance_criteria[1]?.id, text: "The brief remains readable." });
+    expect(brief?.shape === "legacy" ? brief.acceptance_criteria.map((criterion) => criterion.id) : null).toEqual(["criterion-brief", "criterion-plan"]);
+    expect(brief?.shape === "legacy" ? brief.acceptance_criteria[0] : null).toMatchObject({ id: linkedPlan.cohorts[0].acceptance_criteria[1]?.id, text: "The brief remains readable." });
   });
 
   test("accepts a new brief decision and a rejected approach with no decision links", () => {

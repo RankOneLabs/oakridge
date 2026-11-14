@@ -74,7 +74,7 @@ export function definitionSummaries(definitions: readonly Json[]): readonly Defi
     const targets = jsonList(definition.targets).map((target) => ({ artifact: jsonText(jsonObject(target).artifact), selector: jsonText(jsonObject(target).selector) }));
     const evidence = jsonList(definition.evidence).map((reference) => typeof reference === "string" ? reference : jsonText(jsonObject(reference).capability));
     const evaluators = jsonList(definition.evaluators).map((entry) => ({ runner: jsonText(jsonObject(entry).runner), model: jsonText(jsonObject(entry).model) }));
-    return { index, id: jsonText(definition.id) || `Definition ${index + 1}`, scope: jsonText(definition.scope),
+    return { index, id: jsonText(definition.id) || `Definition ${index + 1}`, scope: definition.scope === "per_task" ? `per_task (${definition.task_source === "resolved_assesses" ? "resolved_assesses" : "task_ids pointer"})` : jsonText(definition.scope),
       targets,
       evidence,
       text: jsonText(question.text) || "No question text", allowedValues: JSON.stringify(question.values ?? null),
@@ -148,11 +148,19 @@ export const hasJsonErrors = (inputs: GradingJsonInputs): boolean => Object.valu
 export const validationIssues = (feedback: GradingFeedback | null): readonly ObservationConfigurationIssue[] => feedback?.kind === "validation_failed" ? feedback.issues : [];
 
 export const definitionWithScope = (definition: Json, scope: Json): Json => {
-  const { task_ids, ...fields } = jsonObject(definition);
-  return scope === "per_task" ? { ...fields, scope, task_ids: task_ids ?? "" } : { ...fields, scope };
+  const { task_ids, task_source, ...fields } = jsonObject(definition);
+  return scope === "per_task" ? task_source === "resolved_assesses" ? { ...fields, scope, task_source } : { ...fields, scope, task_ids: task_ids ?? "" } : { ...fields, scope };
 };
 export const evaluatorWithRunner = (entry: Json, runner: Json): Json => {
   if (runner === "human") return { runner };
   const fields = jsonObject(entry);
   return { ...fields, runner, instructions: fields.runner === runner ? fields.instructions ?? {} : {} };
 };
+
+/** Mirrors ObservationQuestionScope; drafts may still contain incomplete pointer text. */
+export type PerTaskScope = Extract<import("../grading-contracts/grading/evidence").ObservationQuestionScope, { scope: "per_task" }>;
+export function definitionWithTaskSource(definition: Json, source: Json): Json {
+  const { task_ids, task_source, ...fields } = jsonObject(definition);
+  return source === "resolved_assesses" ? { ...fields, scope: "per_task", task_source: "resolved_assesses" }
+    : { ...fields, scope: "per_task", task_ids: task_ids ?? "" };
+}

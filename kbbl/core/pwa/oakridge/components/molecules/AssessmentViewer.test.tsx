@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "vitest";
-import type { Assessment } from "../../lib/assessment";
+import type { LegacyAssessment as Assessment } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { PlanTraceId } from "../../lib/plan";
@@ -17,6 +17,7 @@ import { AssessmentViewer } from "./AssessmentViewer";
 const task = (id: string): PlanTraceId => id as PlanTraceId;
 
 const brief: BuildBrief = {
+  shape: "legacy",
   cohort_id: "cm-cli" as CohortId,
   repository_key: "assay" as RepositoryKey,
   title: "The CLI",

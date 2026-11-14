@@ -20,6 +20,8 @@ export function ItemTaskAssociations({ runId, item, links, onOpenTask, onWindow 
   const unresolved = selectUnresolvedTaskAssociations({ occurrence_id: item.occurrence_id, links: links.items, unresolved: read.data ?? [] });
   const specTaskId = selectSpecTaskId(item);
   return <section className="flex flex-col gap-2 text-xs text-[var(--text-muted)]" data-testid="or-item-task-links" aria-label="Task associations">
+    <code>{item.revision_id} {item.item_path}</code>
+    {item.provenance?.hops.map((hop) => <div key={hop.relation_id}>{hop.type} · {hop.evidence_ref}</div>)}
     <div className="flex flex-wrap items-center gap-1.5"><span>{specTaskId === null ? "Linked spec tasks" : "Spec task"}</span>
       {specTaskId !== null && <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(specTaskId)} data-testid="or-item-spec-task">{specTaskId}</Button>}
       {specTaskId === null && links.total === 0 && <Chip tone="muted">None linked</Chip>}
@@ -28,6 +30,7 @@ export function ItemTaskAssociations({ runId, item, links, onOpenTask, onWindow 
         : <span key={link.relation_id} data-testid="or-item-task-link" data-link-state={link.state}>{taskLinkLabel(link)}</span>)}
       <ListPager name="links" page={links} onWindow={onWindow} />
     </div>
+    {links.items.map((link) => <div key={link.relation_id}>{link.relation_id} · {link.evidence_ref}</div>)}
     <h4 className="m-0 text-xs font-medium">Unresolved task references</h4>
     {read.isError && <p className="m-0">Unresolved task references unavailable.</p>}
     {!read.data && !read.isError && <p className="m-0">Loading unresolved task references…</p>}
