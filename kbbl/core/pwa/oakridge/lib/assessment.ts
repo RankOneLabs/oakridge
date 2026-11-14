@@ -217,7 +217,7 @@ function parseSubjects(value: unknown): Parsed<AssessmentSubject[]> {
   const subjects: AssessmentSubject[] = [];
   for (const entry of value) {
     if (!isRecord(entry) || (entry.kind !== "task" && entry.kind !== "build_item") || typeof entry.id !== "string" || !entry.id.trim()
-      || (entry.cohort_id !== undefined && (typeof entry.cohort_id !== "string" || !entry.cohort_id.trim()))) return fail("subjects", "invalid subject");
+      || (entry.cohort_id != null && (typeof entry.cohort_id !== "string" || !entry.cohort_id.trim()))) return fail("subjects", "invalid subject");
     subjects.push({ kind: entry.kind, id: entry.id as PlanTraceId, ...(typeof entry.cohort_id === "string" ? { cohort_id: entry.cohort_id as CohortId } : {}) });
   }
   return { ok: true, value: subjects };
@@ -246,6 +246,12 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
   }
   const common = parseLegacyAssessment({ ...body, findings: [] });
   return common.ok ? { ok: true, value: { ...common.value, shape: "build_items", findings } } : common;
+}
+
+/** An empty findings list has no shape of its own: a build-item brief makes it a build-item assessment with nothing assessed. */
+export function selectAssessmentForBrief(assessment: Assessment, brief: import("./build-brief").BuildBrief | null): Assessment {
+  return assessment.shape !== "build_items" && assessment.findings.length === 0 && brief?.shape === "build_items"
+    ? { ...assessment, shape: "build_items", findings: [] } : assessment;
 }
 
 export interface BuildItemReportRow { item: import("./build-brief").BuildItem | null; findings: BuildItemFinding[]; unresolved_subjects?: AssessmentSubject[] }

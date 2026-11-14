@@ -97,6 +97,9 @@ test("capture accepts only v3 and requires a nonempty publishing stage", () => {
   expect(decodeCapture(outcome.revision).ok).toBe(true);
   expect(decodeCapture({ ...outcome.revision, format: "observation.artifact-revision/v2" }))
     .toMatchObject({ ok: false, error: { entity_id: "envelope" } });
+  // A value that merely stringifies to a supported format would skip v4 provenance validation.
+  expect(decodeCapture({ ...outcome.revision, format: ["observation.artifact-revision/v4"] }))
+    .toMatchObject({ ok: false, error: { entity_id: "envelope" } });
   for (const stage of [undefined, ""]) {
     expect(decodeCapture({ ...outcome.revision, source: { ...outcome.revision.source, stage } }))
       .toMatchObject({ ok: false, error: { entity_id: "source.stage" } });

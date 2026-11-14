@@ -355,9 +355,12 @@ describe("derived fields", () => {
   test("artifacts carry their schema name, reviewability, editability, revision count and latest revision", async () => {
     const { run_id, unit, writer } = await drafted();
     const view = await get<UnitView>(unitPath(run_id, unit));
+    // The latest revision names its publishing attempt exactly as the unit's attempts do.
+    const publisher = view.attempts.find((attempt) => attempt.id.startsWith(`${writer}:`))?.id ?? null;
     expect(view.artifacts.map((artifact) => [artifact.artifact_key, artifact.schema, artifact.is_reviewable, artifact.is_editable, artifact.revision_count,
       artifact.latest_revision?.number ?? null, artifact.latest_revision?.attempt_id ?? null]))
-      .toEqual([["critique", "{notes: list(text)}", false, true, 0, null, null], ["draft", "{body: text, title: text}", true, true, 1, 1, writer]]);
+      .toEqual([["critique", "{notes: list(text)}", false, true, 0, null, null], ["draft", "{body: text, title: text}", true, true, 1, 1, publisher]]);
+    expect(publisher).not.toBeNull();
   });
 
   test("the inbox derives decisions with the review's prompt, each stalled worker, and waits", async () => {

@@ -3,7 +3,7 @@ import briefBody from "./__fixtures__/build-items-brief.json";
 import legacyBody from "./__fixtures__/id-linked-brief.json";
 import assessmentBody from "./__fixtures__/id-linked-assessment.json";
 import { parseBuildBrief } from "./build-brief";
-import { parseAssessment, selectBuildItemReport } from "./assessment";
+import { parseAssessment, selectAssessmentForBrief, selectBuildItemReport } from "./assessment";
 import { definitionWithTaskSource, definitionWithScope, definitionSummaries } from "./grading-config";
 
 test("dispatches brief shapes and rejects neither-shape bodies", () => {
@@ -15,6 +15,16 @@ test("subjects remain subjects, and items without findings are not assessed", ()
   if (brief?.shape !== "build_items" || !parsed.ok || parsed.value.shape !== "build_items") throw new Error("fixture invalid");
   const report = selectBuildItemReport({ ...brief, build_items: [...brief.build_items, { ...brief.build_items[0]! /* The fixture explicitly supplies B1. */, id: "B2" as typeof brief.build_items[0]["id"] }] }, parsed.value.findings);
   expect(report.map((group) => [group.label, group.rows.length])).toEqual([["Needs attention", 0], ["Not assessed", 1], ["Met (assessor's judgment)", 1], ["Cross-cutting findings", 1], ["Task findings", 0], ["Unresolved item references", 0]]);
+});
+test("a null cohort qualifier reads as an omitted one", () => {
+  const parsed = parseAssessment({ ...assessmentBody, findings: [{ subjects: [{ kind: "build_item", id: "B1", cohort_id: null }], status: "met", evidence: [] }] });
+  expect(parsed.ok && parsed.value.shape === "build_items" ? parsed.value.findings[0]?.subjects : parsed).toEqual([{ kind: "build_item", id: "B1" }]);
+});
+test("an assessment with no findings reads against a build-item brief as build items, and against a legacy brief as legacy", () => {
+  const empty = parseAssessment({ ...assessmentBody, findings: [] });
+  if (!empty.ok) throw new Error("fixture invalid");
+  expect([selectAssessmentForBrief(empty.value, parseBuildBrief(briefBody)).shape, selectAssessmentForBrief(empty.value, parseBuildBrief(legacyBody)).shape, selectAssessmentForBrief(empty.value, null).shape])
+    .toEqual(["build_items", "legacy", "legacy"]);
 });
 test("switching task scope drops incompatible fields and summaries name the source", () => {
   const resolved = definitionWithTaskSource({ scope: "per_task", task_ids: "/task_ids" }, "resolved_assesses");

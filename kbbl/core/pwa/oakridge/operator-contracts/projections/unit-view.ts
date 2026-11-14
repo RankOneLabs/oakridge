@@ -92,7 +92,7 @@ export interface OperatorArtifactRevisionView {
   readonly run_id: string;
   readonly unit_id: string;
   readonly artifact_key: string;
-  /** The attempt that published it; null for an operator's edit. */
+  /** The attempt that published it, as AttemptView.id; null for an operator's edit. */
   readonly attempt_id: string | null;
   readonly body: OperatorBodyValue;
   readonly predecessor_id: string | null;

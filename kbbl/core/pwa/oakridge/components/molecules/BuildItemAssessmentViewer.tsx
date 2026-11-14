@@ -6,6 +6,7 @@ import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
 import type { ViewerProps } from "../../artifactRegistry";
 import { ArtifactSection } from "./ArtifactSection";
 import { ArtifactItemGrade } from "./ArtifactItemGrade";
+import { CohortArtifactNote } from "./CohortArtifactNote";
 import { EvidenceContentView } from "./EvidenceContentView";
 import { TestEvidenceBlock } from "./TestEvidenceBlock";
 
@@ -20,6 +21,7 @@ export function BuildItemAssessmentViewer({ assessment, brief, isIntegration, so
   const report = selectBuildItemReport(!isIntegration && brief.kind === "found" && brief.value.shape === "build_items" ? brief.value : null, assessment.findings);
   return <article data-testid="or-assessment-viewer" className="flex flex-col gap-5">
     <header><h2>Assessment: {assessment.verdict}</h2><code>{assessment.head_sha}</code></header>
+    {!isIntegration && brief.kind !== "found" && <CohortArtifactNote lookup={brief} artifactName="build brief" testId="or-assessment-brief-note" />}
     {source && itemGrading?.renderShowAll(selectFindingSelections(source, assessment.findings.map((finding) => finding.item_path)))}
     {report.map((group) => <ArtifactSection key={group.label} title={group.label} testId={`or-build-item-${group.label}`}>
       <ul>{group.rows.map((row, index) => <li key={index}>

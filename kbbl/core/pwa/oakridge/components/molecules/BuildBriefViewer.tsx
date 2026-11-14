@@ -5,28 +5,10 @@ import { Chip } from "../../../components/atoms/Chip";
 import type { ViewerProps } from "../../artifactRegistry";
 import { parseBuildBrief } from "../../lib/build-brief";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
-import { EditableBriefText } from "./EditableBriefText";
-import { ExpandableText } from "./ExpandableText";
+import { BriefText, type Editor } from "./BriefText";
 import { TaskIdLink } from "./TaskIdLink";
 import { ArtifactItemGrade } from "./ArtifactItemGrade";
 import { selectFindingSelections } from "../../lib/grading";
-
-type Editor = NonNullable<ViewerProps["edit"]> | null;
-
-interface BriefTextProps {
-  anchor: string;
-  value: string;
-  editor: Editor;
-  className: string;
-  isProse?: boolean;
-  lineCount?: 3 | 6;
-}
-
-/** An atom read as text, or as an edit trigger while the brief is in edit mode. */
-function BriefText({ anchor, value, editor, className, isProse = false, lineCount = 3 }: BriefTextProps) {
-  if (editor) return <EditableBriefText anchor={anchor} value={value} edit={editor} isMultiline={isProse} />;
-  return isProse ? <ExpandableText text={value} className={className} lineCount={lineCount} /> : <span className={className}>{value}</span>;
-}
 
 function EmptyNote({ children }: { children: string }) {
   return <p className="text-sm text-[var(--text-muted)]">{children}</p>;
@@ -141,7 +123,7 @@ export function BuildBriefViewer({ body: rawBody, edit, onOpenTask, source, onOp
         ) : <EmptyNote>No rejected approaches.</EmptyNote>}
       </ArtifactSection>
 
-      {body.shape === "build_items" ? <BuildItemList brief={body} source={source} onOpenTask={onOpenTask} onOpenItem={onOpenItem} itemGrading={itemGrading} /> : <ArtifactSection title={`Contributions to spec tasks (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
+      {body.shape === "build_items" ? <BuildItemList brief={body} editor={editor} source={source} onOpenTask={onOpenTask} onOpenItem={onOpenItem} itemGrading={itemGrading} /> : <ArtifactSection title={`Contributions to spec tasks (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
         {body.acceptance_criteria.length > 0 ? (
           <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
             {body.acceptance_criteria.map((criterion, index) => (

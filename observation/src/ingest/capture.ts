@@ -46,7 +46,7 @@ function revisionReference(value: unknown, prefix: string, field: string): Resul
 
 /** Decode only fields from the accepted L0 envelope; canonical body hashing is the integrity check. */
 export function decodeCapture(input: unknown): Result<CaptureDelivery, CaptureError> {
-  if (!object(input) || !["observation.artifact-revision/v3", "observation.artifact-revision/v4"].includes(String(input.format))) return failure("envelope", "invalid capture format");
+  if (!object(input) || (input.format !== "observation.artifact-revision/v3" && input.format !== "observation.artifact-revision/v4")) return failure("envelope", "invalid capture format");
   if (!object(input.source)) return failure("source", "source is required");
   const source = input.source;
   for (const field of ["producer", "namespace", "revision_id", "run_id", "unit_id", "stage", "artifact_kind", "artifact_schema_version", "definition_id"] as const)

@@ -12,7 +12,7 @@ test("missing provenance stays unresolved", () => {
   expect(selectHandoffBrief(null, [])).toEqual({ revision_id: null, build_item_ids: null });
 });
 
-import { selectHandoffContext, selectHandoffRevisionId, selectHandoffUnit, selectHandoffBriefUnit } from "./handoff-provenance";
+import { selectHandoffContext, selectHandoffRevisionId, selectHandoffUnit, selectHandoffBriefUnit, selectHandoffUnitId, selectHandoffProvenance } from "./handoff-provenance";
 import { sampleUnits } from "../__fixtures__/read-models";
 import captured from "../__fixtures__/v2-adapter-sample.json";
 import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
@@ -40,4 +40,13 @@ test("raw revision ids and absent ids keep their identity", () => {
 });
 test("unit lookup keeps missing provenance unresolved", () => {
   expect(selectHandoffUnit(sampleUnits, null)).toBeNull();
+});
+test("an assessment pane's revision names its owning unit, not its cohort label", () => {
+  expect([selectHandoffUnitId(`v2|artifact|${unit.run_id}|${encodeURIComponent(unit.unit_id)}|assessment:assessment`), selectHandoffUnitId("raw")]).toEqual([unit.unit_id, null]);
+});
+test("provenance resolves each worker's brief from either brief unit and indexes every revision", () => {
+  const briefRevision = { ...revision, id: "original", unit_id: "briefs/cohort", body: brief };
+  const provenance = selectHandoffProvenance({ run_id: unit.run_id, units: [unit], builder, assessor, unit_revisions: revisions, builder_brief_revisions: [briefRevision], assessor_brief_revisions: [] });
+  expect([provenance.builder_brief, provenance.assessor_brief, provenance.index.revisions.map((candidate) => candidate.id)])
+    .toEqual([{ revision_id: "original", build_item_ids: ["B1"] }, { revision_id: "original", build_item_ids: ["B1"] }, ["original", "assessment", "result"]]);
 });

@@ -24,6 +24,11 @@ export function selectHandoffRevisionId(id: string | undefined): string | null {
   const parsed = parseCompositeId(id, "artifact");
   return parsed.ok ? parsed.value.name.slice(parsed.value.name.indexOf(":") + 1) : id;
 }
+/** The unit that owns an artifact pane's revision; a cohort label is not a unit identity. */
+export function selectHandoffUnitId(revisionId: string): string | null {
+  const parsed = parseCompositeId(revisionId, "artifact");
+  return parsed.ok ? parsed.value.unitId : null;
+}
 export function selectHandoffUnit(units: readonly OperatorUnitView[], id: string | null | undefined): OperatorUnitView | null {
   return id == null ? null : units.find((unit) => unit.unit_id === id || unit.label === id) ?? null;
 }
@@ -42,4 +47,20 @@ export function selectHandoffBriefUnit(attempt: OperatorAttemptView | null): str
 }
 export function selectHandoffRevisions(histories: readonly import("../operator-contracts/projections/artifact-view").OperatorArtifactDetail[] | undefined): OperatorArtifactRevisionView[] {
   return histories?.flatMap((artifact) => artifact.revisions) ?? [];
+}
+
+export interface HandoffProvenanceRequest {
+  run_id: string;
+  units: readonly OperatorUnitView[];
+  builder: OperatorAttemptView | null;
+  assessor: OperatorAttemptView | null;
+  unit_revisions: readonly OperatorArtifactRevisionView[];
+  builder_brief_revisions: readonly OperatorArtifactRevisionView[];
+  assessor_brief_revisions: readonly OperatorArtifactRevisionView[];
+}
+/** Each worker's recorded brief, and the revision index its links resolve against. */
+export function selectHandoffProvenance({ run_id, units, builder, assessor, unit_revisions, builder_brief_revisions, assessor_brief_revisions }: HandoffProvenanceRequest) {
+  const brief_revisions = [...builder_brief_revisions, ...assessor_brief_revisions];
+  return { builder_brief: selectHandoffBrief(builder, brief_revisions), assessor_brief: selectHandoffBrief(assessor, brief_revisions),
+    index: { run_id, units, revisions: [...brief_revisions, ...unit_revisions] } };
 }

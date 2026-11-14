@@ -378,6 +378,9 @@ CREATE TABLE observation.source_event_outcome (
   PRIMARY KEY (producer, namespace, event_id)
 );
 CREATE INDEX source_event_outcome_run ON observation.source_event_outcome(producer, namespace, run_id, outcome_kind);
+-- Recorded revision provenance is read by revision id on every captured revision read.
+CREATE INDEX source_event_outcome_v4_revision ON observation.source_event_outcome(producer, namespace, (detail #>> '{revision,source,revision_id}'), commit_txid, event_id)
+  WHERE outcome_kind = 'artifact_revision' AND detail #>> '{revision,format}' = 'observation.artifact-revision/v4';
 
 -- Transaction-local tenant context is set by the storage adapter for every query.
 DO $$

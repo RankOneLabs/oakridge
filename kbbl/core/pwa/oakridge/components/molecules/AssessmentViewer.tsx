@@ -2,7 +2,7 @@ import { BuildItemAssessmentViewer } from "./BuildItemAssessmentViewer";
 import { useState, type ReactNode } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { selectCriterionCounts, selectCriterionReport, type LegacyAssessment, type CriterionCheck, type CriterionTally } from "../../lib/assessment";
+import { selectAssessmentForBrief, selectCriterionCounts, selectCriterionReport, type LegacyAssessment, type CriterionCheck, type CriterionTally } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
@@ -120,5 +120,6 @@ function LegacyAssessmentViewer({ assessment, brief, result, cohortLabel, isInte
 }
 
 export function AssessmentViewer(props: Omit<Props, "assessment"> & { assessment: import("../../lib/assessment").Assessment }) {
-  return props.assessment.shape === "build_items" ? <BuildItemAssessmentViewer {...props} assessment={props.assessment} /> : <LegacyAssessmentViewer {...props} assessment={props.assessment} />;
+  const assessment = selectAssessmentForBrief(props.assessment, !props.isIntegration && props.brief.kind === "found" ? props.brief.value : null);
+  return assessment.shape === "build_items" ? <BuildItemAssessmentViewer {...props} assessment={assessment} /> : <LegacyAssessmentViewer {...props} assessment={assessment} />;
 }

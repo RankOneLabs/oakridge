@@ -243,4 +243,4 @@ export const TARGET_FUNCTIONS = ["guard_evaluation_execution", "guard_evidence_s
 export const TARGET_SECONDARY_INDEXES = ["evaluation_execution_claim", "evaluation_execution_run", "evaluation_execution_subject",
   "evidence_set_not_ready", "extraction_issue_revision", "grading_provider_attempt_spend", "item_occurrence_logical",
   "item_occurrence_run_page", "item_relation_source_logical", "item_relation_source_occurrence", "item_relation_target_logical",
-  "item_relation_target_occurrence", "item_relation_unresolved", "source_event_outcome_run"] as const;
+  "item_relation_target_occurrence", "item_relation_unresolved", "source_event_outcome_run", "source_event_outcome_v4_revision"] as const;
