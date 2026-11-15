@@ -18,25 +18,26 @@ interface ReasonedItemProps {
   anchor: string;
   headline: { key: string; value: string };
   reason: { key: string; label: string; value: string };
+  renderEditableText?: ViewerProps["renderEditableText"];
   editor: Editor;
   id?: string;
   decisionIds?: string[];
 }
 
 /** A decision with its rationale, or a rejected approach with why it lost. */
-function ReasonedItem({ anchor, headline, reason, editor, id, decisionIds }: ReasonedItemProps) {
+function ReasonedItem({ anchor, headline, reason, editor, renderEditableText, id, decisionIds }: ReasonedItemProps) {
   return (
     <li className="flex flex-col gap-1 py-2.5">
       {id && <code className="or-code self-start">{id}</code>}
-      <BriefText anchor={`${anchor}/${headline.key}`} value={headline.value} editor={editor} className="text-sm font-medium text-[var(--text-primary)]" />
+      <BriefText renderEditableText={renderEditableText} anchor={`${anchor}/${headline.key}`} value={headline.value} editor={editor} className="text-sm font-medium text-[var(--text-primary)]" />
       <div className={artifactLabelClass}>{reason.label}</div>
-      <BriefText anchor={`${anchor}/${reason.key}`} value={reason.value} editor={editor} isProse className="text-sm text-[var(--text-secondary)]" />
+      <BriefText renderEditableText={renderEditableText} anchor={`${anchor}/${reason.key}`} value={reason.value} editor={editor} isProse className="text-sm text-[var(--text-secondary)]" />
       {decisionIds && decisionIds.length > 0 && <span className="text-xs text-[var(--text-muted)]">Decisions: {decisionIds.map((decisionId) => <code key={decisionId} className="or-code mr-1">{decisionId}</code>)}</span>}
     </li>
   );
 }
 
-export function BuildBriefViewer({ body: rawBody, edit, onOpenTask, source, onOpenItem, itemGrading }: ViewerProps) {
+export function BuildBriefViewer({ body: rawBody, edit, renderEditableText, onOpenTask, source, onOpenItem, itemGrading }: ViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
 
   const body = parseBuildBrief(rawBody);
@@ -67,12 +68,12 @@ export function BuildBriefViewer({ body: rawBody, edit, onOpenTask, source, onOp
       {itemGrading?.renderShowAll(selectFindingSelections(source, body.shape === "legacy" ? body.acceptance_criteria.map((_, index) => `/acceptance_criteria/${index}`) : body.build_items.map((_, index) => `/build_items/${index}`)))}
 
       <ArtifactSection title="Goal" testId="or-brief-goal">
-        <BriefText anchor="/goal" value={body.goal} editor={editor} isProse lineCount={6} className="text-sm leading-relaxed text-[var(--text-primary)]" />
+        <BriefText renderEditableText={renderEditableText} anchor="/goal" value={body.goal} editor={editor} isProse lineCount={6} className="text-sm leading-relaxed text-[var(--text-primary)]" />
       </ArtifactSection>
 
       <ArtifactSection title="Next action" testId="or-brief-next-action">
         <div className="rounded-md border-l-4 border-[var(--accent-primary)] bg-[var(--accent-muted)] px-3 py-2">
-          <BriefText anchor="/next_action" value={body.next_action} editor={editor} isProse className="text-sm text-[var(--text-primary)]" />
+          <BriefText renderEditableText={renderEditableText} anchor="/next_action" value={body.next_action} editor={editor} isProse className="text-sm text-[var(--text-primary)]" />
         </div>
       </ArtifactSection>
 
@@ -81,7 +82,7 @@ export function BuildBriefViewer({ body: rawBody, edit, onOpenTask, source, onOp
           <ul className="m-0 flex list-none flex-col gap-1 p-0">
             {body.files_in_scope.map((file, index) => (
               <li key={`${index}-${file}`}>
-                <BriefText anchor={`/files_in_scope/${index}`} value={file} editor={editor} className="font-mono text-xs text-[var(--text-secondary)]" />
+                <BriefText renderEditableText={renderEditableText} anchor={`/files_in_scope/${index}`} value={file} editor={editor} className="font-mono text-xs text-[var(--text-secondary)]" />
               </li>
             ))}
           </ul>
@@ -93,6 +94,7 @@ export function BuildBriefViewer({ body: rawBody, edit, onOpenTask, source, onOp
           <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
             {body.decisions_made.map((item, index) => (
               <ReasonedItem
+                renderEditableText={renderEditableText}
                 key={`${index}-${item.decision}`}
                 anchor={`/decisions_made/${index}`}
                 headline={{ key: "decision", value: item.decision }}
@@ -110,6 +112,7 @@ export function BuildBriefViewer({ body: rawBody, edit, onOpenTask, source, onOp
           <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
             {body.approaches_rejected.map((item, index) => (
               <ReasonedItem
+                renderEditableText={renderEditableText}
                 key={`${index}-${item.approach}`}
                 anchor={`/approaches_rejected/${index}`}
                 headline={{ key: "approach", value: item.approach }}
@@ -123,7 +126,7 @@ export function BuildBriefViewer({ body: rawBody, edit, onOpenTask, source, onOp
         ) : <EmptyNote>No rejected approaches.</EmptyNote>}
       </ArtifactSection>
 
-      {body.shape === "build_items" ? <BuildItemList brief={body} editor={editor} source={source} onOpenTask={onOpenTask} onOpenItem={onOpenItem} itemGrading={itemGrading} /> : <ArtifactSection title={`Contributions to spec tasks (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
+      {body.shape === "build_items" ? <BuildItemList renderEditableText={renderEditableText} brief={body} editor={editor} source={source} onOpenTask={onOpenTask} onOpenItem={onOpenItem} itemGrading={itemGrading} /> : <ArtifactSection title={`Contributions to spec tasks (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
         {body.acceptance_criteria.length > 0 ? (
           <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
             {body.acceptance_criteria.map((criterion, index) => (
@@ -132,7 +135,7 @@ export function BuildBriefViewer({ body: rawBody, edit, onOpenTask, source, onOp
                   <TaskIdLink task_id={criterion.id} text={criterion.text} onOpenTask={onOpenTask} />
                   <ArtifactItemGrade source={source} itemPath={`/acceptance_criteria/${index}`} itemGrading={itemGrading} onOpenItem={onOpenItem} />
                 </div>
-                <BriefText anchor={`/acceptance_criteria/${index}/text`} value={criterion.text} editor={editor} className="text-sm text-[var(--text-secondary)]" />
+                <BriefText renderEditableText={renderEditableText} anchor={`/acceptance_criteria/${index}/text`} value={criterion.text} editor={editor} className="text-sm text-[var(--text-secondary)]" />
                 {criterion.decision_ids.length > 0 && (
                   <span className="block text-xs text-[var(--text-muted)]">
                     Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}

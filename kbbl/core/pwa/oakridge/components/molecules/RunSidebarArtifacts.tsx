@@ -1,3 +1,4 @@
+import { Select } from "../../../components/atoms/Select";
 import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId } from "../../../lib/ids";
 import type { RunWorkspaceSlot } from "../../lib/run-workspace";
@@ -26,11 +27,11 @@ export function RunSidebarArtifacts({ rows, totalCount, filter, onFilterChange, 
   return (
     <section className="or-run-sidebar__section" data-testid="or-sidebar-artifacts">
       <h3 className="or-run-sidebar__heading">Artifacts</h3>
-      <select aria-label="Filter artifacts" data-testid="or-sidebar-artifact-filter" value={filter}
+      <Select aria-label="Filter artifacts" data-testid="or-sidebar-artifact-filter" value={filter}
         onChange={(event) => onFilterChange(RUN_ARTIFACT_FILTERS.find(({ key }) => key === event.target.value)?.key ?? "all")}
-        className="w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-2 py-1 text-xs text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none">
+        className="px-2! py-1! text-xs!">
         {RUN_ARTIFACT_FILTERS.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
-      </select>
+      </Select>
       {totalCount === 0 && (
         <p className="or-run-sidebar__empty" data-testid="or-sidebar-artifacts-empty">
           No artifacts released yet.

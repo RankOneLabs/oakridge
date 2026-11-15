@@ -1,3 +1,6 @@
+import { TextInput } from "../atoms/TextInput";
+import { Select } from "../atoms/Select";
+import { Button } from "../atoms/Button";
 import { useEffect, useState } from "react";
 
 import type { RuntimeId } from "../../../runtime-interface";
@@ -135,7 +138,7 @@ export function NewSessionForm({
         }}
       >
         <div className="new-session-workdir-row">
-          <input
+          <TextInput
             type="text"
             className="new-session-workdir"
             placeholder="/absolute/path/to/workdir"
@@ -161,8 +164,8 @@ export function NewSessionForm({
           />
         </div>
         {runtimes.length > 1 && (
-          <select
-            className="new-session-runtime"
+          <Select
+            className="new-session-runtime w-auto!"
             value={runtimeId}
             onChange={(e) => {
               const nextRuntimeId = e.target.value as RuntimeId;
@@ -181,10 +184,10 @@ export function NewSessionForm({
                 {runtime.label}
               </option>
             ))}
-          </select>
+          </Select>
         )}
-        <select
-          className="new-session-model"
+        <Select
+          className="new-session-model w-auto!"
           value={modelInput}
           onChange={(e) => {
             const nextModel = e.target.value;
@@ -202,10 +205,10 @@ export function NewSessionForm({
               {opt.label}
             </option>
           ))}
-        </select>
+        </Select>
         {(selectedRuntime?.efforts.length ?? 0) > 0 && (
-          <select
-            className="new-session-effort"
+          <Select
+            className="new-session-effort w-auto!"
             value={effortInput}
             onChange={(e) => {
               const nextEffort = e.target.value;
@@ -223,9 +226,9 @@ export function NewSessionForm({
                 {opt.label}
               </option>
             ))}
-          </select>
+          </Select>
         )}
-        <input
+        <TextInput
           type="text"
           className="new-session-name"
           placeholder={namePlaceholder}
@@ -239,13 +242,13 @@ export function NewSessionForm({
           aria-label="Optional session name"
           title="Leave blank to use the generated name shown as placeholder"
         />
-        <button
+        <Button variant="session"
           type="submit"
           className="btn-new-session"
           disabled={pending || workdirInput.trim() === ""}
         >
           {pending ? "starting…" : "+ New"}
-        </button>
+        </Button>
       </form>
     </>
   );

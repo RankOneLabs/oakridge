@@ -1,3 +1,6 @@
+import { EditableBriefText } from "./EditableBriefText";
+import { TaskEditControls } from "./TaskEditControls";
+import { ReviewItemResolution } from "./ReviewItemResolution";
 import { selectArtifactRevision } from "../../lib/review-selection";
 import { ArtifactReviewHeader } from "../molecules/ArtifactReviewHeader";
 import { useEffect, useState } from "react";
@@ -18,13 +21,13 @@ import { resolveViewer, selectViewerItemPaths } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { formatRelative } from "../../../lib/time";
-import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
-import { ThreadView } from "../../../review/shared/ThreadView";
-import type { Thread, Message } from "../../../review/shared/types";
+import { ThreadSidebar } from "../molecules/ThreadSidebar";
+import { ThreadView } from "./ThreadView";
+import type { Thread, Message } from "../../lib/thread-types";
 import { GateDecisionActions } from "./GateDecisionActions";
 import { ArtifactJsonRevisionPanel } from "../molecules/ArtifactJsonRevisionPanel";
 import { ArtifactRevisionNavigation } from "../molecules/ArtifactRevisionNavigation";
-import { ArtifactReviewShell } from "./ArtifactReviewShell";
+import { ArtifactReviewShell } from "../molecules/ArtifactReviewShell";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { selectStatusTone } from "../../lib/status-tone";
@@ -191,6 +194,8 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
 
           {Viewer ? (
             <Viewer
+              renderEditableText={(props) => <EditableBriefText {...props} />}
+              renderTaskEditControls={(props) => <TaskEditControls {...props} />}
               body={revision.body}
               descriptor={artifact.review}
               source={{ run_id: artifact.run_id, revision_id: revision.id, label: artifact.label ?? null, producing_stage: artifact.producing_stage,
@@ -223,8 +228,7 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
         <section className="or-artifact-detail__collab" data-testid="or-review-items-section">
           <ReviewItemsChecklist
             items={reviewItems}
-            onResolve={handleResolveItem}
-            onWaive={handleWaiveItem}
+            renderResolution={(item) => <ReviewItemResolution item={item} onResolve={handleResolveItem} onWaive={handleWaiveItem} />}
           />
         </section>
       ) : undefined;

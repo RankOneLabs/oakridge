@@ -1,3 +1,4 @@
+import { Button } from "../atoms/Button";
 import { useEffect, useRef, useState } from "react";
 
 import type { DirectoryListing } from "../../../directories";
@@ -112,14 +113,14 @@ export function DirectoryPicker({ disabled, initialPath, onSelect }: DirectoryPi
 
   return (
     <>
-      <button
+      <Button variant="session"
         type="button"
         className="btn-directory-picker"
         disabled={disabled}
         onClick={openPicker}
       >
         Browse
-      </button>
+      </Button>
       {isOpen && (
         <div
           className="directory-picker-layer"
@@ -140,7 +141,7 @@ export function DirectoryPicker({ disabled, initialPath, onSelect }: DirectoryPi
               <div className="directory-picker-path" title={listing?.path ?? ""}>
                 {isLoading && listing === null ? "Loading directories" : listing?.path ?? "Choose directory"}
               </div>
-              <button
+              <Button variant="session"
                 type="button"
                 className="directory-picker-close"
                 onClick={() => setIsOpen(false)}
@@ -148,7 +149,7 @@ export function DirectoryPicker({ disabled, initialPath, onSelect }: DirectoryPi
                 title="Close"
               >
                 x
-              </button>
+              </Button>
             </div>
             {error !== null && (
               <div className="directory-picker-error" role="alert">
@@ -157,17 +158,17 @@ export function DirectoryPicker({ disabled, initialPath, onSelect }: DirectoryPi
             )}
             <div className="directory-picker-list">
               {listing !== null && listing.parent !== null && (
-                <button
+                <Button variant="session"
                   type="button"
                   className="directory-picker-row"
                   onClick={() => openAt(listing.parent)}
                 >
                   <span className="directory-picker-name">..</span>
                   <span className="directory-picker-subpath">{listing.parent}</span>
-                </button>
+                </Button>
               )}
               {listing?.entries.map((entry) => (
-                <button
+                <Button variant="session"
                   type="button"
                   key={entry.path}
                   className="directory-picker-row"
@@ -179,18 +180,18 @@ export function DirectoryPicker({ disabled, initialPath, onSelect }: DirectoryPi
                 >
                   <span className="directory-picker-name">{entry.name}</span>
                   <span className="directory-picker-subpath">{entry.path}</span>
-                </button>
+                </Button>
               ))}
             </div>
             <div className="directory-picker-actions">
-              <button
+              <Button variant="session"
                 type="button"
                 className="directory-picker-cancel"
                 onClick={() => setIsOpen(false)}
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button variant="session"
                 type="button"
                 className="directory-picker-select"
                 disabled={listing === null || isLoading}
@@ -201,7 +202,7 @@ export function DirectoryPicker({ disabled, initialPath, onSelect }: DirectoryPi
                 }}
               >
                 Use directory
-              </button>
+              </Button>
             </div>
           </div>
         </div>

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { InstallStatusContent } from "../views/StatusView";
+import { InstallStatusContent } from "../components/molecules/InstallStatusContent";
 import { installStatus } from "../__fixtures__/install-status";
 import { ManualMergeBadges } from "../components/molecules/ManualMergeIndications";
 import { MANUAL_MERGE_INDICATION } from "../state/manual-merge";

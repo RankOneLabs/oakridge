@@ -1,3 +1,4 @@
+import { RunSidebarSessionRow } from "./RunSidebarSessionRow";
 import { PromptViewer } from "./PromptViewer";
 import { useOperatorUnits } from "../../hooks/useOperatorUnits";
 import { selectStageRead } from "../../hooks/useStageOverview";
@@ -41,9 +42,9 @@ import { ArtifactReview } from "./ArtifactReview";
 import { ItemPanel } from "./ItemPanel";
 import { RunGradingSection } from "./RunGradingSection";
 import { TaskPanel } from "./TaskPanel";
-import { RunOverviewPane } from "./RunOverviewPane";
+import { RunOverviewPane } from "../molecules/RunOverviewPane";
 import { RunSessionPane } from "./RunSessionPane";
-import { RunWorkspaceSidebar } from "./RunWorkspaceSidebar";
+import { RunWorkspaceSidebar } from "../molecules/RunWorkspaceSidebar";
 import { RunDetail } from "./RunDetail";
 import { fetchRunEvents, selectRunActivity, type RunActivityRead } from "../../lib/run-activity";
 
@@ -180,6 +181,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
       />
       <div className="or-run-workspace__body">
         <RunWorkspaceSidebar
+          renderRow={(row, isOpen) => <RunSidebarSessionRow key={row.work_order_id} row={row} isOpen={isOpen} onOpen={(sessionId, slot) => workspace.openPane({ kind: "session", session_id: sessionId }, slot)} />}
           isOpen={isSidebarOpen}
           workspace={state}
           sessions={sidebarSessions}

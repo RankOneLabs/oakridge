@@ -1,3 +1,4 @@
+import { Button } from "../atoms/Button";
 import type { Skill } from "../../../runtime-interface";
 
 export type SkillButtonState = "idle" | "disabled" | "collecting" | "confirming" | "dispatching";
@@ -15,7 +16,7 @@ export function SkillButton({
   label?: string;
 }) {
   return (
-    <button
+    <Button variant="session"
       type="button"
       className={`skill-btn skill-btn--${state}`}
       onClick={onTap}
@@ -35,6 +36,6 @@ export function SkillButton({
       {state === "dispatching" && (
         <span className="skill-btn__spinner" aria-label="dispatching" />
       )}
-    </button>
+    </Button>
   );
 }

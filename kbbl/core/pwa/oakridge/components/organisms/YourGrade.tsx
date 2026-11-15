@@ -1,3 +1,5 @@
+import { TextArea } from "../../../components/atoms/TextArea";
+import { Checkbox } from "../../../components/atoms/Checkbox";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
@@ -50,14 +52,14 @@ export function YourGrade({ occurrenceId, question, onAcknowledged }: Props) {
           <div className="flex flex-wrap gap-3" role="radiogroup" aria-label={`Your answer to ${questionLabel(question.question)}`}>
             {form.choices.map((value) => (
               <label key={value} className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
-                <input type="radio" name={`or-your-grade-${key.question_id}`} value={value} checked={editor.choice === value} disabled={submit.isPending} onChange={() => edit({ choice: value })} data-testid="or-your-grade-choice" />
+                <Checkbox type="radio" name={`or-your-grade-${key.question_id}`} value={value} checked={editor.choice === value} disabled={submit.isPending} onChange={() => edit({ choice: value })} data-testid="or-your-grade-choice" />
                 {answerValueLabel(value)}
               </label>
             ))}
           </div>
           <label className="flex flex-col gap-1 text-xs text-[var(--text-muted)]">
             Rationale (optional)
-            <textarea className="rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] p-2 text-sm text-[var(--text-primary)]" rows={2} value={editor.rationale}
+            <TextArea className="rounded-md! border! border-[var(--border-muted)]! bg-[var(--bg-surface)]! p-2! text-sm! text-[var(--text-primary)]!" rows={2} value={editor.rationale}
               disabled={submit.isPending} onChange={(event) => edit({ rationale: event.target.value })} data-testid="or-your-grade-rationale" />
           </label>
           <div className="flex flex-wrap items-center gap-2">

@@ -1,17 +1,14 @@
-import { useState } from "react";
+import type { ReactNode } from "react";
 import type { ReviewItem } from "../../collab-types";
-import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 
 interface ReviewItemRowProps {
   item: ReviewItem;
-  onResolve: (id: string, resolution: string) => void;
-  onWaive: (id: string, resolution: string) => void;
+  renderResolution: (item: ReviewItem) => ReactNode;
 }
 
-function ReviewItemRow({ item, onResolve, onWaive }: ReviewItemRowProps) {
-  const [resolution, setResolution] = useState("");
+function ReviewItemRow({ item, renderResolution }: ReviewItemRowProps) {
   const isOpen = item.status === "open";
 
   return (
@@ -40,30 +37,7 @@ function ReviewItemRow({ item, onResolve, onWaive }: ReviewItemRowProps) {
         <Chip tone="neutral">{item.status}</Chip>
       )}
       {isOpen && (
-        <div className="or-review-item__actions">
-          <input
-            type="text"
-            aria-label="Resolution note"
-            className="or-input or-review-item__resolution-input"
-            placeholder="Resolution note (optional)…"
-            value={resolution}
-            onChange={(e) => setResolution(e.target.value)}
-          />
-          <Button
-            size="small"
-            variant="primary"
-            onClick={() => onResolve(item.id, resolution)}
-          >
-            Resolve
-          </Button>
-          <Button
-            size="small"
-            variant="secondary"
-            onClick={() => onWaive(item.id, resolution)}
-          >
-            Waive
-          </Button>
-        </div>
+        renderResolution(item)
       )}
     </div>
   );
@@ -71,14 +45,12 @@ function ReviewItemRow({ item, onResolve, onWaive }: ReviewItemRowProps) {
 
 interface ReviewItemsChecklistProps {
   items: ReviewItem[];
-  onResolve: (id: string, resolution: string) => void;
-  onWaive: (id: string, resolution: string) => void;
+  renderResolution: (item: ReviewItem) => ReactNode;
 }
 
 export function ReviewItemsChecklist({
   items,
-  onResolve,
-  onWaive,
+  renderResolution,
 }: ReviewItemsChecklistProps) {
   const openCount = items.filter((i) => i.status === "open").length;
 
@@ -100,8 +72,7 @@ export function ReviewItemsChecklist({
         <ReviewItemRow
           key={item.id}
           item={item}
-          onResolve={onResolve}
-          onWaive={onWaive}
+          renderResolution={renderResolution}
         />
       ))}
     </div>

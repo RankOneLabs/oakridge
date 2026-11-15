@@ -1,12 +1,13 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type ButtonVariant = "primary" | "secondary" | "danger" | "armed" | "accent-outline" | "danger-strong" | "link" | "sidebar-row" | "pane-action" | "progress-row";
+type ButtonVariant = "session" | "primary" | "secondary" | "danger" | "armed" | "accent-outline" | "danger-strong" | "link" | "sidebar-row" | "pane-action" | "progress-row";
 type ButtonSize = "xsmall" | "small" | "medium";
 
 const BASE_CLASS =
   "inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] disabled:cursor-not-allowed disabled:opacity-50";
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
+  session: "cursor-pointer disabled:cursor-not-allowed",
   primary: "border border-[var(--accent-primary)] bg-[var(--accent-primary)] font-bold text-[var(--accent-contrast-fg)] hover:brightness-110",
   secondary:
     "border border-[var(--border-muted)] bg-[var(--bg-surface)] font-normal text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]",
@@ -28,7 +29,7 @@ const SIZE_CLASS: Record<ButtonSize, string> = {
 };
 
 // These surfaces own their complete button geometry in the utilities layer.
-const CUSTOM_SURFACE_VARIANTS: ReadonlySet<ButtonVariant> = new Set(["sidebar-row", "pane-action", "progress-row"]);
+const CUSTOM_SURFACE_VARIANTS: ReadonlySet<ButtonVariant> = new Set(["session", "sidebar-row", "pane-action", "progress-row"]);
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;

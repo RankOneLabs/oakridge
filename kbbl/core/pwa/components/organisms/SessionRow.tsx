@@ -58,7 +58,7 @@ export function SessionRow({
           itself, so a refusal rendered underneath doesn't drag them off
           centre. */}
       <div className="session-row-main">
-        <button
+        <Button variant="session"
           type="button"
           className={`session-row session-row-${snapshot.status}`}
           onClick={onOpen}
@@ -107,7 +107,7 @@ export function SessionRow({
           <div className="session-row-workdir" title={snapshot.worktreePath}>
             {snapshot.projectWorkdir}
           </div>
-        </button>
+        </Button>
         {canResume && (
           <Button
             type="button"

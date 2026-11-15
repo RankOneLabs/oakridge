@@ -1,26 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { SessionSnapshot, Status } from "../types";
 import { useAcpSession } from "../hooks/useAcpSession";
 import { usePendingSends } from "../hooks/usePendingSends";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
+import type { TimelineItem } from "../lib/acp-timeline";
 import { projectTimeline } from "../lib/acp-timeline";
 import {
   operatorStateLabel,
   selectOperatorExecutionState,
 } from "../lib/operator-state";
 
-import { SessionTopBar } from "../components/organisms/SessionTopBar";
-import { SessionTimeline } from "../components/organisms/SessionTimeline";
+import { SessionTopBar } from "../components/molecules/SessionTopBar";
+import { SessionTimeline } from "../components/molecules/SessionTimeline";
 import { SessionConfigBar } from "../components/organisms/SessionConfigBar";
 import { InputBox } from "../components/organisms/InputBox";
-import { PendingUserBubble } from "../components/molecules/PendingUserBubble";
+import { PendingUserBubbleEntry } from "../components/organisms/PendingUserBubbleEntry";
 import { AgentMessage } from "../components/molecules/AgentMessage";
 import { EndedBanner } from "../components/organisms/EndedBanner";
 import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
 import { SkillRail } from "../components/organisms/SkillRail";
-import { permissionCardAnchorId } from "../components/organisms/PermissionCard";
+import { PermissionCard, permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import { readHashPermissionTarget, readHashSessionTarget } from "../lib/hash";
 import {
   DOCUMENT_SESSION_SURFACE_LAYOUT,
@@ -94,6 +95,13 @@ export function SessionView({
     sessionStatus === "ended" ||
     sessionStatus === "fenced" ||
     sessionStatus === "failed";
+
+  const renderPermission = useCallback(
+    (item: Extract<TimelineItem, { kind: "permission" }>) => (
+      <PermissionCard key={item.key} sid={sid} requestId={item.requestId} title={item.title} options={item.options} resolution={item.resolution} sessionClosed={sessionClosed} />
+    ),
+    [sid, sessionClosed],
+  );
 
   const {
     pendingSends,
@@ -190,12 +198,13 @@ export function SessionView({
             </div>
           )}
           <SessionTimeline
+            renderPermission={renderPermission}
             sid={sid}
             items={projection.items}
             sessionClosed={sessionClosed}
           />
           {pendingSends.map((m) => (
-            <PendingUserBubble
+            <PendingUserBubbleEntry
               key={m.clientMessageId}
               text={m.text}
               sentAt={m.sentAt}

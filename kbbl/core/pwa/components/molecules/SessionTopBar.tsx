@@ -1,3 +1,4 @@
+import { Button } from "../atoms/Button";
 import type { Ref } from "react";
 
 import type { SessionSnapshot, Status } from "../../types";
@@ -47,7 +48,7 @@ export function SessionTopBar({
   return (
     <header className="top-bar" ref={ref} data-chrome={chrome.kind}>
       {chrome.kind === "route" && (
-        <button
+        <Button variant="session"
           type="button"
           className="back-button"
           onClick={chrome.onBack}
@@ -55,7 +56,7 @@ export function SessionTopBar({
           title="Back to session list"
         >
           ←
-        </button>
+        </Button>
       )}
       <span className={`status status-${shownStatus}`}>{shownStatus}</span>
       {usageText !== null && (

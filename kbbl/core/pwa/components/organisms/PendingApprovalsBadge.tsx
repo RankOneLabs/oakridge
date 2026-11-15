@@ -1,3 +1,4 @@
+import { Button } from "../atoms/Button";
 import { useMemo, useState } from "react";
 
 import { useStore } from "../../state/store";
@@ -34,7 +35,7 @@ function ApprovalRequest({ sid, sessionName, permission }: {
       {error && <div className="card-error" role="alert">error: {error}</div>}
       <div className="pending-approval-toast__actions">
         {permission.options.map((option) => (
-          <button
+          <Button variant="session"
             key={option.optionId}
             type="button"
             className={option.kind?.startsWith("reject") ? "btn-deny" : "btn-approve"}
@@ -42,11 +43,11 @@ function ApprovalRequest({ sid, sessionName, permission }: {
             onClick={() => void choose(option.optionId)}
           >
             {option.name}
-          </button>
+          </Button>
         ))}
-        <button type="button" className="pending-approval-toast__link" onClick={() => writeHashPermissionTarget(sid, permission.requestId)}>
+        <Button variant="session" type="button" className="pending-approval-toast__link" onClick={() => writeHashPermissionTarget(sid, permission.requestId)}>
           Open in session
-        </button>
+        </Button>
       </div>
     </section>
   );
@@ -58,11 +59,11 @@ function SessionApprovals({ waiter }: { waiter: ApprovalWaiter }) {
 
   if (!historyLoaded || openPermissions.length === 0) {
     return (
-      <button type="button" className="pending-approval-toast pending-approval-toast--loading"
+      <Button variant="session" type="button" className="pending-approval-toast pending-approval-toast--loading"
         onClick={() => writeHashSessionTarget(waiter.sid, "pending-permission")}
       >
         {waiter.pendingCount} approval{waiter.pendingCount === 1 ? "" : "s"} pending · {waiter.name}
-      </button>
+      </Button>
     );
   }
 

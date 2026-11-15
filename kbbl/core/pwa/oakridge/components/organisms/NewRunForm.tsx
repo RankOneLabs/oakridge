@@ -1,3 +1,5 @@
+import { TextInput } from "../../../components/atoms/TextInput";
+import { Select } from "../../../components/atoms/Select";
 import { useInstallStatus } from "../../hooks/useInstallStatus";
 import { selectLaunchBlock } from "../../state/install-status";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -31,9 +33,8 @@ import { AutomaticGradingField } from "../molecules/AutomaticGradingField";
 import { readBriefNotesFile, selectMissingBriefNotesDetail, type BriefNotesSource } from "../../lib/brief-notes";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import { FormField, formControlClass } from "../molecules/FormField";
+import { FormField } from "../molecules/FormField";
 import { PageHeader } from "../molecules/PageHeader";
-
 
 interface NewRunFormProps {
   onBack: () => void;
@@ -192,17 +193,17 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
 
       <form className="or-form-card flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
         <FormField label="Epic title">
-          <input type="text" className={formControlClass} value={epicTitle} onChange={(event) => setEpicTitle(event.target.value)} disabled={pending} placeholder="Ship account recovery" required />
+          <TextInput type="text"  value={epicTitle} onChange={(event) => setEpicTitle(event.target.value)} disabled={pending} placeholder="Ship account recovery" required />
         </FormField>
         <FormField label="Final merge policy" hint="Choose guarded for normal GitHub workflows. External confirmation leaves final integration completion to an outside operator or system.">
-          <select className={formControlClass} value={finalMergePolicy} onChange={(event) => setFinalMergePolicy(event.target.value === "external_confirmation" ? "external_confirmation" : "guarded")} disabled={pending}>
+          <Select  value={finalMergePolicy} onChange={(event) => setFinalMergePolicy(event.target.value === "external_confirmation" ? "external_confirmation" : "guarded")} disabled={pending}>
             <option value="guarded">Guarded — Oakridge verifies the final merge</option>
             <option value="external_confirmation">External confirmation — another system confirms it</option>
-          </select>
+          </Select>
         </FormField>
         <FormField label="Workflow Definition">
-          <select
-            className={formControlClass}
+          <Select
+
             value={workflowDefId}
             onChange={(e) => setWorkflowDefId(e.target.value)}
             disabled={pending || defsQuery.isPending}
@@ -217,12 +218,12 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
                 {def.name}
               </option>
             ))}
-          </select>
+          </Select>
         </FormField>
 
         <FormField label="Project (optional)">
-          <select
-            className={formControlClass}
+          <Select
+
             value={projectId}
             onChange={(e) => setProjectId(e.target.value)}
             disabled={pending || projectsQuery.isPending}
@@ -231,7 +232,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
             {projectsQuery.data?.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
-          </select>
+          </Select>
         </FormField>
 
         <RepositoryLaunchFields

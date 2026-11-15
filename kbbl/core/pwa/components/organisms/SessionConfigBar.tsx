@@ -1,3 +1,5 @@
+import { Select } from "../atoms/Select";
+import { Checkbox } from "../atoms/Checkbox";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
@@ -63,7 +65,7 @@ export function SessionConfigBar({
         option.type === "select" ? (
           <label key={option.id} className="session-config-item" title={option.name}>
             <span className="session-config-label">{option.name}</span>
-            <select
+            <Select
               value={typeof option.value === "string" ? option.value : ""}
               disabled={disabled || mutation.isPending}
               onChange={(e) => void apply(option.id, e.target.value)}
@@ -73,12 +75,12 @@ export function SessionConfigBar({
                   {entry.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         ) : (
           <label key={option.id} className="session-config-item" title={option.name}>
             <span className="session-config-label">{option.name}</span>
-            <input
+            <Checkbox
               type="checkbox"
               checked={option.value === true}
               disabled={disabled || mutation.isPending}

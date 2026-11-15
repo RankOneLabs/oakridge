@@ -1,3 +1,4 @@
+import type { Task } from "./lib/tasks";
 import { parseAssessment } from "./lib/assessment";
 import { parsePlan } from "./lib/plan";
 import { parseTasks } from "./lib/tasks";
@@ -17,6 +18,8 @@ import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
 import { TasksViewer } from "./components/molecules/TasksViewer";
 
 export interface ViewerProps {
+  renderEditableText?: (props: { anchor: string; value: string; edit: NonNullable<ViewerProps["edit"]>; isMultiline: boolean }) => ReactNode;
+  renderTaskEditControls?: (props: { task: Task; anchor: string; edit: NonNullable<ViewerProps["edit"]> }) => ReactNode;
   body: unknown;
   descriptor?: ArtifactReviewDescriptor | null;
   source?: ArtifactSource;

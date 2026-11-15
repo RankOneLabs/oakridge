@@ -1,3 +1,5 @@
+import { SessionRowList } from "../components/molecules/SessionRowList";
+import { SessionRunSection } from "../components/organisms/SessionRunSection";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
@@ -11,23 +13,19 @@ import {
   groupSessionsByRun,
   selectNextJustNowExpiryDelay,
 } from "../../acp/pwa-session-order";
-import type { SessionRunGroup } from "../../acp/pwa-session-order";
 
 import { SessionRow } from "../components/organisms/SessionRow";
 import { FeedbackMessage } from "../components/atoms/FeedbackMessage";
 import { Button } from "../components/atoms/Button";
-import { SessionUnitHeading } from "../components/molecules/SessionUnitHeading";
 import {
   NewSessionForm,
   type NewSessionFormValues,
 } from "../components/organisms/NewSessionForm";
 import { useUrlPrefill } from "../hooks/useUrlPrefill";
 import { useHideEndedSessions } from "../hooks/useHideEndedSessions";
-import { useRun } from "../oakridge/hooks/useRun";
 import { useRuns } from "../oakridge/hooks/useRuns";
 import {
   selectSessionRunTitle,
-  selectSessionStageName,
 } from "../lib/session";
 import { selectBulkHideActionLabel, selectBulkHideEligibleSessions, selectBulkHideFailureMessage } from "../lib/session-bulk-hide";
 
@@ -38,69 +36,6 @@ interface StartSessionBody {
   runtime?: RuntimeId;
   model?: string;
   effort?: string;
-}
-
-interface SessionRowListProps {
-  sessions: SessionSnapshot[];
-  onSelect: (sid: string) => void;
-  onResume: (sid: string) => void;
-  resumeDisabled: boolean;
-}
-
-function SessionRowList({ sessions, onSelect, onResume, resumeDisabled }: SessionRowListProps) {
-  return (
-    <ul className="session-list">
-      {sessions.map((s) => (
-        <SessionRow
-          key={s.sid}
-          snapshot={s}
-          onOpen={() => onSelect(s.sid)}
-          onResume={() => onResume(s.sid)}
-          resumeDisabled={resumeDisabled}
-        />
-      ))}
-    </ul>
-  );
-}
-
-interface SessionRunSectionProps {
-  run: SessionRunGroup;
-  title: string | null;
-  onSelect: (sid: string) => void;
-  onResume: (sid: string) => void;
-  resumeDisabled: boolean;
-}
-
-function SessionRunSection({
-  run,
-  title,
-  onSelect,
-  onResume,
-  resumeDisabled,
-}: SessionRunSectionProps) {
-  const runQuery = useRun(run.runId);
-
-  return (
-    <section
-      className="session-run-group"
-      data-testid={`session-run-${run.runId}`}
-    >
-      <h2 className="session-cohort-heading session-cohort-heading--plain">
-        {title ?? run.runId}
-      </h2>
-      {run.units.map((group) => (
-        <section key={group.key} className="session-cohort-group">
-          <SessionUnitHeading title={selectSessionStageName(group.unitId, runQuery.data) ?? group.unitId} />
-          <SessionRowList
-            sessions={group.sessions}
-            onSelect={onSelect}
-            onResume={onResume}
-            resumeDisabled={resumeDisabled}
-          />
-        </section>
-      ))}
-    </section>
-  );
 }
 
 interface SessionListViewProps {
@@ -303,9 +238,7 @@ export function SessionListView({
               </h2>
               <SessionRowList
                 sessions={grouping.unattached}
-                onSelect={onSelect}
-                onResume={(sid) => void startSession(undefined, sid)}
-                resumeDisabled={startMutation.isPending}
+                renderRow={(s) => <SessionRow key={s.sid} snapshot={s} onOpen={() => onSelect(s.sid)} onResume={() => void startSession(undefined, s.sid)} resumeDisabled={startMutation.isPending} />}
               />
             </section>
           )}

@@ -1,12 +1,10 @@
-import { useRelativeTime } from "../../hooks/useRelativeTime";
 import { formatExactTime } from "../../lib/time";
 
-export function MessageTimestamp({ iso }: { iso: string }) {
-  const rel = useRelativeTime(iso);
-  if (!rel) return null;
+export function MessageTimestamp({ iso, relativeText }: { iso: string; relativeText: string }) {
+  if (!relativeText) return null;
   return (
     <span className="bubble-ts" title={formatExactTime(iso)}>
-      {rel}
+      {relativeText}
     </span>
   );
 }

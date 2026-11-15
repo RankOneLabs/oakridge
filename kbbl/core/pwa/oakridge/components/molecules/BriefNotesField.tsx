@@ -1,8 +1,9 @@
+import { TextInput } from "../../../components/atoms/TextInput";
+import { TextArea } from "../../../components/atoms/TextArea";
 import type { ChangeEvent } from "react";
 
 import { TEXT_DOCUMENT_FILE_ACCEPT } from "../../../lib/text-document-accept";
 import type { BriefNotesSource } from "../../lib/brief-notes";
-import { formControlClass } from "./FormField";
 import { Button } from "../../../components/atoms/Button";
 
 interface BriefNotesFieldProps {
@@ -54,8 +55,8 @@ export function BriefNotesField({ notes, setNotes, source, setSource, onFileChan
       </legend>
 
       {source.kind === "typed" ? (
-        <textarea
-          className={`${formControlClass} min-h-24 resize-y`}
+        <TextArea
+          className={`min-h-24 resize-y`}
           value={notes}
           onChange={(event) => setNotes(event.target.value)}
           disabled={disabled}
@@ -66,9 +67,9 @@ export function BriefNotesField({ notes, setNotes, source, setSource, onFileChan
         />
       ) : (
         <div className="flex flex-col gap-2">
-          <input
+          <TextInput
             type="file"
-            className={`${formControlClass} file:mr-3 file:rounded file:border-0 file:bg-[var(--bg-elevated)] file:px-2 file:py-1 file:text-xs file:text-[var(--text-primary)]`}
+            className={`file:mr-3 file:rounded file:border-0 file:bg-[var(--bg-elevated)] file:px-2 file:py-1 file:text-xs file:text-[var(--text-primary)]`}
             accept={TEXT_DOCUMENT_FILE_ACCEPT}
             onChange={onFileChange}
             disabled={disabled}
@@ -84,8 +85,8 @@ export function BriefNotesField({ notes, setNotes, source, setSource, onFileChan
             Read-only rather than absent: an operator about to spend a run on
             this text should be able to see they picked the file they meant.
           */}
-          <textarea
-            className={`${formControlClass} min-h-24 resize-y`}
+          <TextArea
+            className={`min-h-24 resize-y`}
             value={notes}
             readOnly
             placeholder="The file's contents appear here."
