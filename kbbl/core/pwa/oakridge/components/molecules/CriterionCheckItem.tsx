@@ -4,6 +4,7 @@ import { selectCheckStatus, selectCheckText, type CriterionCheck } from "../../l
 import { selectStatusTone } from "../../lib/status-tone";
 import type { CriterionStatus } from "../../artifact-types";
 import { artifactLabelClass } from "./ArtifactSection";
+import { EvidenceRefList } from "./EvidenceRefList";
 import { ExpandableText } from "./ExpandableText";
 
 export const CRITERION_STATUS_LABEL: Record<CriterionStatus, string> = { met: "met", partial: "partial", not_met: "not met" };
@@ -22,14 +23,7 @@ function FindingDetail({ check, showBriefComparison }: { check: Extract<Criterio
       {finding.evidence.length === 0 ? (
         <span className="text-sm text-[var(--text-muted)]">{status === "met" ? "Met with no evidence cited." : "No evidence cited."}</span>
       ) : (
-        <ul className="m-0 flex list-none flex-col gap-1 p-0">
-          {finding.evidence.map((ref, index) => (
-            <li key={`${index}-${ref.kind}-${ref.ref}`} className="text-sm text-[var(--text-secondary)]">
-              <Chip tone="muted">{ref.kind}</Chip> <code className="or-code">{ref.ref}</code>
-              {ref.detail && <span className="ml-2">{ref.detail}</span>}
-            </li>
-          ))}
-        </ul>
+        <EvidenceRefList refs={finding.evidence} />
       )}
       {finding.description !== null && finding.description !== line && <ExpandableText text={finding.description} className="text-sm text-[var(--text-secondary)]" />}
     </div>
