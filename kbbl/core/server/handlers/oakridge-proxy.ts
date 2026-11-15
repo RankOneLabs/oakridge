@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { matchRoute } from "../../../../oakridge-dbos/src/http/routes";
+import { matchRoute, type HttpRoute } from "../../../../oakridge-dbos/src/http/routes";
 import { browserWritePolicy, browserWriteRejection, configuredBrowserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
 import { isValidControlRequest } from "../../../../oakridge-dbos/src/http/control-auth";
 import { parseUnitViews } from "../../pwa/oakridge/adapters/parse";
@@ -101,6 +101,17 @@ async function legacyRunEvents(baseUrl: string, headers: Headers, requestUrl: st
   return Response.json(events.slice(first, first + limit), { headers: { "cache-control": "no-store" } });
 }
 
+/**
+ * Whether the proxy acts for the operator: on an operator route, or on a
+ * session route (artifact publication) the PWA marks as the operator's edit.
+ * The backend accepts that edit only with the core token once one is
+ * configured, so the proxy must present it after checking kbbl's credential.
+ */
+export function actsAsOperator(route: Pick<HttpRoute, "authority"> | undefined, request: Pick<Request, "headers">): boolean {
+  if (route?.authority === "operator") return true;
+  return route?.authority === "session" && request.headers.get("x-oakridge-publisher") === "operator";
+}
+
 export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): void {
   const write_policy = deps.allowedOrigins === undefined ? configuredBrowserWritePolicy() : browserWritePolicy(deps.allowedOrigins);
   // Config: tells the PWA whether the Oakridge backend is configured without
@@ -126,11 +137,12 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     const isLegacyRunEvents = c.req.method === "GET" && subPath === "/run_events";
     const route = matchRoute(c.req.method, subPath) ?? (isLegacyRunEvents
       ? { method: "GET" as const, path: subPath, authority: "operator" as const } : undefined);
+    const is_operator_request = actsAsOperator(route, c.req.raw);
     // The proxy presents the core token on the caller's behalf, so an operator
-    // route needs kbbl's own credential whenever a core token is configured.
+    // request needs kbbl's own credential whenever a core token is configured.
     // Without a browser token there is nothing to check the caller against,
     // and the proxy refuses rather than act as the operator for anyone.
-    if (route?.authority === "operator" && (deps.browserControlToken
+    if (is_operator_request && (deps.browserControlToken
       ? !isValidControlRequest(c.req.raw, deps.browserControlToken, write_policy) : deps.coreControlToken !== undefined))
       return c.json({ error: "unauthorized" }, 401);
     const search = new URL(c.req.url, "http://localhost").search;
@@ -160,7 +172,7 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     // by occupying the header. The PWA cookie likewise stays local to kbbl; a
     // verified browser credential is replaced here by the control token the
     // backend would have accepted directly.
-    if (route?.authority === "operator" && deps.coreControlToken)
+    if (is_operator_request && deps.coreControlToken)
       forwardHeaders.set("authorization", `Bearer ${deps.coreControlToken}`);
 
     let body: ArrayBuffer | undefined;
