@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LauncherFixture, freePorts } from "./launcher-fixture";
 let fixture: LauncherFixture;
@@ -82,4 +82,16 @@ test("LAN wrapper reads the insecure override from the checkout .env", async () 
   fixture.start({ script: "oakridge-lan", args: [`--port=${fixture.ports.kbbl}`], env: lanEnvironment(fixture) });
   await fixture.stackServing();
   expect(fixture.logText()).toContain("oakridge: access mode: insecure network (kbbl bound to 0.0.0.0 with no control token; ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1)");
+});
+test("LAN wrapper without Bun reaches the dependency check and the dated run log", async () => {
+  fixture = new LauncherFixture(freePorts());
+  writeFileSync(join(fixture.checkout, ".env"), "OAKRIDGE_CONTROL_TOKEN=dotenv-token\n");
+  const path_without_bun = (process.env.PATH ?? "").split(":").filter((directory) => !existsSync(join(directory, "bun"))).join(":");
+  fixture.start({ script: "oakridge-lan", args: [], env: { PATH: path_without_bun } });
+  await fixture.until(() => !fixture.launcherRunning(), "missing Bun refusal");
+  expect(fixture.logText()).toContain("oakridge: bun is missing");
+  // bun test runs in UTC, so take the launcher's dated log by listing rather than by today's date.
+  const state = join(fixture.home, ".local/state/oakridge");
+  const run_logs = readdirSync(state).filter((name) => /^run-\d{4}-\d{2}-\d{2}\.log$/.test(name));
+  expect(run_logs.map((name) => readFileSync(join(state, name), "utf8")).join("")).toContain("oakridge: bun is missing");
 });
