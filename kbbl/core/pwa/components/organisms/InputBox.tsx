@@ -19,6 +19,14 @@ class ServerRejection extends Error {
   }
 }
 
+/** Fit the composer to its draft; CSS caps its height and keeps overflow scrollable. */
+function fitToContent(field: HTMLTextAreaElement | null): void {
+  if (!field) return;
+  field.style.height = "auto";
+  const borderHeight = field.offsetHeight - field.clientHeight;
+  field.style.height = `${field.scrollHeight + borderHeight}px`;
+}
+
 export function InputBox({
   ref,
   sid,
@@ -166,6 +174,7 @@ export function InputBox({
           </Button>
         )}
         <TextArea
+          ref={(field) => fitToContent(field)}
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="message agent…"
