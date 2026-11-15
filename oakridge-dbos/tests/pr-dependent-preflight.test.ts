@@ -2,6 +2,9 @@ import { expect, test } from "bun:test";
 import { isPrDependent, preflightLaunch, prOperationKeys } from "../src/runtime/pr-launch-preflight";
 import { readLaunchableCatalog, resolveDefinition, type DefinitionId } from "../src/runtime/definition-store";
 import type { WorkflowDefinitionDescriptor } from "../src/core-client/source-types";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 const definition_id = "0".repeat(64) as DefinitionId;
 function fixture(): WorkflowDefinitionDescriptor {
   return { workflow: "fixture", input: "string", run: { units: { nested: { group: { units: { watch: { stage: "watch" } }, outcome: {} } } }, outcome: {} },
@@ -74,3 +77,20 @@ test("github-cli without gh on PATH is unconfigured", async () => {
   try { expect((await probePrIntegration("github-cli", null)).kind).toBe("unconfigured"); }
   finally { if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous; }
 });
+test("a stalled gh auth status is killed at the deadline and reported unconfigured", async () => {
+  const bin = mkdtempSync(join(tmpdir(), "pr-probe-gh-"));
+  const pid_file = join(bin, "pid");
+  writeFileSync(join(bin, "gh"), `#!/bin/sh\necho $$ > "${pid_file}"\nexec sleep 30\n`, { mode: 0o755 });
+  const previous = process.env.PATH;
+  process.env.PATH = `${bin}:${previous ?? ""}`;
+  try {
+    const health = await probePrIntegration("github-cli", null);
+    const pid = Number(readFileSync(pid_file, "utf8").trim());
+    let is_alive = true;
+    try { process.kill(pid, 0); } catch { is_alive = false; }
+    expect({ kind: health.kind, is_alive }).toEqual({ kind: "unconfigured", is_alive: false });
+  } finally {
+    if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
+    rmSync(bin, { recursive: true, force: true });
+  }
+}, 10_000);

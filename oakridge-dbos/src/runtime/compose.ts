@@ -114,13 +114,16 @@ export async function createProductionComposition(options: ProductionOptions): P
   }
 }
 
+/** Deadline for each integration health probe (health_probe_semantics); a stalled probe is unhealthy, never awaited forever. */
+const PR_PROBE_TIMEOUT_MS = 3000;
+
 /** IO boundary: any HTTP response proves reachability; authentication remains the tool's concern. */
 export async function probePrIntegration(integration: PrIntegration, gated_review_url: string | null): Promise<PrIntegrationHealth> {
   if (integration === "none") return { kind: "unconfigured", detail: "selected integration is none" };
   if (integration === "gated-review") {
     if (!gated_review_url) return { kind: "unconfigured", detail: "OAKRIDGE_GATED_REVIEW_URL is unset" };
     try {
-      const response = await fetch(gated_review_url, { signal: AbortSignal.timeout(3000) });
+      const response = await fetch(gated_review_url, { signal: AbortSignal.timeout(PR_PROBE_TIMEOUT_MS) });
       void response.body?.cancel().catch(() => {});
       return { kind: "healthy" };
     } catch (cause) { return { kind: "unreachable", detail: String(cause) }; }
@@ -128,7 +131,15 @@ export async function probePrIntegration(integration: PrIntegration, gated_revie
   const executable = Bun.which("gh", { PATH: process.env.PATH });
   if (!executable) return { kind: "unconfigured", detail: "gh is absent from PATH" };
   try {
-    const process = Bun.spawn([executable, "auth", "status"], { stdout: "ignore", stderr: "ignore" });
-    return await process.exited === 0 ? { kind: "healthy" } : { kind: "unconfigured", detail: "gh auth status failed" };
+    const child = Bun.spawn([executable, "auth", "status"], { stdout: "ignore", stderr: "ignore" });
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const timed_out = new Promise<"timed_out">(resolve => { deadline = setTimeout(() => resolve("timed_out"), PR_PROBE_TIMEOUT_MS); });
+    const outcome = await Promise.race([child.exited, timed_out]).finally(() => clearTimeout(deadline));
+    if (outcome === "timed_out") {
+      child.kill("SIGKILL");
+      await child.exited;
+      return { kind: "unconfigured", detail: `gh auth status did not finish within ${PR_PROBE_TIMEOUT_MS}ms` };
+    }
+    return outcome === 0 ? { kind: "healthy" } : { kind: "unconfigured", detail: "gh auth status failed" };
   } catch (cause) { return { kind: "unconfigured", detail: String(cause) }; }
 }
