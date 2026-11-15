@@ -16,7 +16,10 @@ export interface AgentProfileEnvPolicy {
   readonly set?: Readonly<Record<string, string>>;
 }
 
+export type SkillDiscovery = { readonly kind: "additionalDirectories" };
+
 export interface AgentProfile {
+  readonly skillDiscovery?: SkillDiscovery | null;
   readonly id: AgentProfileId;
   readonly label: string;
   readonly command: string;
@@ -50,6 +53,7 @@ export function loadAgentProfiles(
   for (const [id, agent] of Object.entries(acp.agents)) {
     profiles.set(id, {
       id,
+      skillDiscovery: agent.skill_discovery ?? null,
       label: agent.label ?? id,
       command: agent.command,
       args: agent.args,

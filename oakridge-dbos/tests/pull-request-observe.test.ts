@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { PROVIDER_ERROR_CODES } from "../src/effects/provider-catalog";
-import { observePullRequest, selectDevelopmentMergeQuery, selectPullRequestRef, type PullRequestWatchQuery } from "../src/operations/pull-request-observe";
+import { observePullRequest, selectObserveReader, selectDevelopmentMergeQuery, selectPullRequestRef, type PullRequestWatchQuery } from "../src/operations/pull-request-observe";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 
 const query: PullRequestWatchQuery = { owner: "RankOneLabs", name: "oakridge", head_owner: "RankOneLabs",
@@ -115,4 +115,26 @@ test("a fork's head owner compares without case, whatever its repository is now 
 test("an unavailable forge is unavailable, to be retried", async () => {
   const http = (async () => new Response("down", { status: 503 })) as unknown as typeof fetch;
   expect((await observePullRequest(new GithubPullRequestReader({ token: "t" }, http), { query })).kind).toBe("unavailable");
+});
+
+test("reader selection disables every reader outside gated-review", () => {
+  const { reader } = forgeReturning(githubPayload());
+  expect([selectObserveReader("github-cli", reader), selectObserveReader("none", reader), selectObserveReader("gated-review", reader)])
+    .toEqual([null, null, reader]);
+});
+test("github-cli observation never calls a reader and requests manual confirmation", async () => {
+  const { reader, calls } = forgeReturning(githubPayload());
+  const outcome = await observePullRequest(reader, { query }, { pr_integration: "github-cli" });
+  expect({ outcome, calls }).toEqual({ calls: [], outcome: { kind: "failed", code: PROVIDER_ERROR_CODES.discovery_unsupported,
+    detail: "automatic pull request observation is off for github-cli runs; confirm the merge manually" } });
+});
+
+import { createOperationRunner } from "../src/operations/runner";
+import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
+test("the operation runner honors recorded integration options before consulting any reader", async () => {
+  const { reader, calls } = forgeReturning(githubPayload());
+  const runner = createOperationRunner({ git: new BunGitCommandRunner(), pull_requests: reader });
+  const result = await runner.run({ operation: "pull_request.observe", inputs: { query } }, { pr_integration: "github-cli" });
+  expect({ result, calls }).toEqual({ calls: [], result: { kind: "failed", code: PROVIDER_ERROR_CODES.discovery_unsupported,
+    detail: "automatic pull request observation is off for github-cli runs; confirm the merge manually" } });
 });

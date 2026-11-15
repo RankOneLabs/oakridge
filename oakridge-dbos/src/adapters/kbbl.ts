@@ -1,3 +1,4 @@
+import type { AgentProfileReadiness } from "../../../kbbl/core/acp/profile-readiness";
 import type { ProviderResult } from "../effects/provider";
 import type { ResumableEnsureRequest, ResumableEnsureResponse, ResumableInputRequest, ResumableSessionStatus } from "../../../kbbl/core/acp/resumable-wire";
 
@@ -115,6 +116,19 @@ export class KbblClient {
     let value: Value | null;
     try { value = await read(response); } catch (error) { return { kind: "uncertain", detail: `kbbl ${operation}: ${String(error)}` }; }
     return value === null ? { kind: "uncertain", detail: `kbbl ${operation} returned an unreadable body` } : { kind: "acknowledged", value };
+  }
+
+  profileReadiness(): Promise<ProviderResult<readonly AgentProfileReadiness[]>> {
+    return this.call("profile_readiness", `${this.base_url}/agent-profiles/readiness`, { headers: this.headers() }, async (response) => {
+      const raw: unknown = await response.json();
+      if (!Array.isArray(raw)) return null;
+      const valid = raw.every((value: unknown) => {
+        if (!isFields(value) || typeof value.profile_id !== "string" || typeof value.label !== "string" || typeof value.enabled !== "boolean" || !isFields(value.readiness)) return false;
+        const check = value.readiness;
+        return typeof check.detail === "string" && (check.kind === "ok" || ((check.kind === "failed" || check.kind === "unavailable_optional") && typeof check.fix === "string"));
+      });
+      return valid ? raw as AgentProfileReadiness[] : null;
+    }, AbortSignal.timeout(5000));
   }
 
   /**

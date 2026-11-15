@@ -1,3 +1,4 @@
+import type { SessionPrIntegration } from "../../../kbbl/core/acp/types";
 import { createHash, createHmac } from "node:crypto";
 import type { EnsureOptions, KbblClient, KbblSession } from "../adapters/kbbl";
 import { DEFAULT_MAX_SILENT_MS } from "../adapters/kbbl";
@@ -33,6 +34,7 @@ export function selectAgentWorkspace(workspace: unknown): AgentWorkspace | null 
 }
 
 export interface AgentProviderConfig {
+  readonly read_pr_integration?: (run_id: string) => Promise<SessionPrIntegration | null>;
   /** Null when no kbbl is configured: every agent start is then refused with `kbbl_unconfigured`. */
   readonly kbbl: KbblClient | null;
   /** HMAC key for publication secrets; required beside kbbl. */
@@ -67,8 +69,13 @@ export function selectWorkspaceBranch(instruction: EffectInstruction): string {
  * from `origin/<base_branch>`, which kbbl fetches before branching, so a
  * cohort starts from its dependencies' merged work (as v1 did).
  */
-export function selectSessionStart(instruction: EffectInstruction, config: Pick<AgentProviderConfig, "publish_base_url" | "default_workdir">,
+interface SessionStartConfig extends Pick<AgentProviderConfig, "publish_base_url" | "default_workdir"> {
+  readonly integration?: SessionPrIntegration;
+}
+
+export function selectSessionStart(instruction: EffectInstruction, config: SessionStartConfig,
   secret: string): ResumableEnsureRequest {
+  const integration = config.integration ?? { pr_integration: "gated-review", pr_skill_digest: null };
   const worker = instruction.worker;
   if (worker.kind !== "agent") throw new Error(`instruction ${instruction.attempt.action_id} is not an agent's`);
   const workspace = selectAgentWorkspace(instruction.workspace);
@@ -84,7 +91,7 @@ export function selectSessionStart(instruction: EffectInstruction, config: Pick<
     ...(worker.settings ? { runtime: worker.settings.harness, model: worker.settings.model,
       ...(worker.settings.effort === null ? {} : { effort: worker.settings.effort }) } : {}),
     ...(workspace ? { worktree: { branch_name: selectWorkspaceBranch(instruction), worktree_subdir: "oakridge", base_ref: `origin/${workspace.base_branch}` } } : {}),
-    workflow: { run_id: instruction.run_id, unit_id: session_unit, worker: instruction.action.worker },
+    workflow: { run_id: instruction.run_id, unit_id: session_unit, worker: instruction.action.worker, ...integration },
   };
 }
 
@@ -101,7 +108,9 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
   async function ensure(instruction: EffectInstruction, options: EnsureOptions) {
     if (!config.kbbl || config.publication_key === null || instruction.worker.kind !== "agent") return null;
     const secret = derivePublicationSecret(config.publication_key, instruction.worker.session_key);
-    const spec = selectSessionStart(instruction, config, secret);
+    const integration = config.read_pr_integration ? await config.read_pr_integration(instruction.run_id) : { pr_integration: "gated-review" as const, pr_skill_digest: null };
+    if (integration === null) return { secret, ensured: { kind: "permanently_rejected" as const, code: "invalid_run_config", detail: "recorded run PR integration is malformed" } };
+    const spec = selectSessionStart(instruction, { ...config, integration }, secret);
     const ensured = await config.kbbl.ensure(instruction.worker.session_key, spec, options);
     return { ensured, secret };
   }

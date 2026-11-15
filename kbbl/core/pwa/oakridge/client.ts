@@ -1,3 +1,4 @@
+import { parseInstallStatus } from "./adapters/install-status";
 import type { ExecutedPromptRead } from "./lib/prompt-view";
 import type { ExecutedPromptTurn } from "../../executed-prompt";
 // API client for the Oakridge backend proxy at /oakridge/api/*.
@@ -282,3 +283,14 @@ export async function readExecutedPrompt(session_id: string): Promise<ExecutedPr
   if (!response.ok) throw new Error(`Executed prompt read failed (${response.status})`);
   return { state: "retained", turns: await response.json() as ExecutedPromptTurn[] };
 }
+
+export async function fetchInstallStatus() {
+  const path = `${OPERATOR}/install-status`;
+  return unwrapAdapter(path, parseInstallStatus(await oakridgeGet<unknown>(path)));
+}
+export async function fetchOperatorRun(id: string): Promise<OperatorRunView> {
+  const path = runPath(id);
+  return unwrapAdapter(path, parseRunView(await oakridgeGet<unknown>(path)));
+}
+
+export const fetchPinnedRunDefinition = (id: string) => oakridgeGet<import("./operator-contracts/projections/definition-view").OperatorPinnedDefinition>(`${runPath(id)}/definition`);

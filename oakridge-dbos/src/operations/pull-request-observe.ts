@@ -1,3 +1,4 @@
+import type { PrIntegration } from "../domain/pr-integration";
 import type { PullRequestObservation } from "../domain/pull-request";
 import { err, ok, type Result } from "../domain/primitives";
 import { PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
@@ -102,10 +103,15 @@ const mismatch = (detail: string): OperationOutcome => ({ kind: "failed", code: 
  * than watching nothing. Without a reader (no forge token) the operation fails
  * rather than guessing.
  */
+export const selectObserveReader = (integration: PrIntegration, reader: PullRequestReader | null): PullRequestReader | null =>
+  integration === "gated-review" ? reader : null;
+
 export async function observePullRequest(reader: PullRequestReader | null, input: PullRequestObserveInput,
   options: OperationCallOptions = {}): Promise<OperationOutcome> {
+  const integration = options.pr_integration ?? "gated-review";
+  reader = selectObserveReader(integration, reader);
   if (!reader) return { kind: "failed", code: PROVIDER_ERROR_CODES.discovery_unsupported,
-    detail: "no pull request reader is configured" };
+    detail: integration === "github-cli" ? "automatic pull request observation is off for github-cli runs; confirm the merge manually" : "no pull request reader is configured" };
   const ref = selectPullRequestRef(input.query);
   if (!ref.ok) return mismatch(ref.error);
   const result = await reader.get(ref.value, options);

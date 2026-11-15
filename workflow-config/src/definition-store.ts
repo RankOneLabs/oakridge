@@ -1,12 +1,12 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import { decodeWorkflowSource, hasSafeWireNumbers, type TypeExpression } from "../../oakridge-dbos/src/core-client/source-types";
-import { bytesIdentity, isIdentity, type DefinitionId } from "./definition-identity";
+import { jsonIdentity, bytesIdentity, isIdentity, type DefinitionId } from "./definition-identity";
 import { referencedPromptPaths, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type ResolvedDefinition } from "./definition-objects";
 
 export const DEFINITION_STORE_ROOT = resolve(import.meta.dir, "../definitions");
-type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable";
+type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable" | "read_skill_index" | "read_skill_bundle";
 interface FailureContext {
   readonly operation: StoreOperation;
   readonly identifier: string;
@@ -147,4 +147,46 @@ export function resolveLaunchableDefinition(name: string, store_root = DEFINITIO
   if (!catalog.ok) return catalog;
   if (!Object.hasOwn(catalog.value, name)) return failure("malformed_object", { operation: "read_launchable", identifier: name }, "authoring name is absent from launchable.json");
   return resolveDefinition(catalog.value[name], store_root);
+}
+
+/** Current PR skill pins, derived from authored bundle directories. */
+export interface SkillIndex { readonly "gated-review": string; readonly "github-cli": string }
+export interface SkillBundle { readonly files: { readonly [path: string]: Uint8Array } }
+export function readSkillIndex(store_root = process.env.OAKRIDGE_DEFINITION_ROOT ?? DEFINITION_STORE_ROOT): Result<SkillIndex, DefinitionStoreFailure> {
+  const context: ReadContext = { operation: "read_skill_index", identifier: "skills.json" };
+  try {
+    const text = readFileSync(resolve(store_root, "skills.json"), "utf8");
+    const value: unknown = JSON.parse(text);
+    if (!isObject(value) || !hasOnlyKeys(value, ["gated-review", "github-cli"]) || !isIdentity(value["gated-review"]) || !isIdentity(value["github-cli"]))
+      return failure("malformed_object", context, "expected gated-review and github-cli skill digests");
+    const canonical = canonicalJson(value);
+    if (!canonical.ok || canonical.value !== text) return failure("malformed_object", context, "skill index is not canonical JSON");
+    return { ok: true, value: { "gated-review": value["gated-review"], "github-cli": value["github-cli"] } };
+  } catch (cause) { return failure("store_io", context, String(cause)); }
+}
+export function readSkillBundle(digest: string, store_root = process.env.OAKRIDGE_DEFINITION_ROOT ?? DEFINITION_STORE_ROOT): Result<SkillBundle, DefinitionStoreFailure> {
+  const context: ReadContext = { operation: "read_skill_bundle", identifier: digest };
+  if (!isIdentity(digest)) return failure("malformed_object", context, "expected lowercase 64-hex skill digest");
+  try {
+    const root = realpathSync(store_root);
+    const directory = resolve(root, "skills", digest);
+    const entries: [string, Uint8Array][] = [];
+    const collect = (directory_path: string, prefix: string): void => {
+      for (const entry of readdirSync(directory_path, { withFileTypes: true })) {
+        const path = resolve(directory_path, entry.name);
+        if (realpathSync(path) !== path || entry.isSymbolicLink()) throw new Error("skill bundles may not contain symlinks");
+        const name = prefix + entry.name;
+        if (entry.isDirectory()) collect(path, name + "/");
+        else if (entry.isFile()) entries.push([name, readFileSync(path)]);
+        else throw new Error("skill bundles contain only regular files");
+      }
+    };
+    if (realpathSync(directory) !== directory || realpathSync(resolve(root, "skills")) !== resolve(root, "skills"))
+      return failure("store_io", context, "skill directory may not be a symlink");
+    collect(directory, "");
+    const identity = jsonIdentity<DefinitionId>({ files: Object.fromEntries(entries.map(([path, bytes]) => [path, bytesIdentity(bytes)])) });
+    if (!identity.ok) return failure("malformed_object", context, identity.error.detail);
+    if (identity.value !== digest) return failure("hash_mismatch", context, "skill manifest SHA-256 differs from bundle identity");
+    return { ok: true, value: { files: Object.fromEntries(entries) } };
+  } catch (cause) { return failure("store_io", context, String(cause)); }
 }

@@ -41,7 +41,7 @@ When the previous assessment is `none`, this is the first assessment of this coh
    - `pass_with_notes` — cohort build-item obligations are met but there are warnings or minor gaps.
    - `fail` — one or more cohort build-item obligations are not met, or a blocking known issue exists.
 5. Publish the artifact.
-6. Set the pull request's draft state from your verdict, then stop. Call `mcp__gated-review__set_pr_draft` with the `repository` (`owner/name`) and `pullRequestNumber` from the pull request URL above:
+6. Set the pull request's draft state from your verdict, then stop. Use the pr-operations skill to set the draft state for the pull request URL above:
    - `pass` or `pass_with_notes`: `draft: false`, marking it ready for review.
    - `fail`: `draft: true`, so a pull request an earlier assessment marked ready goes back to draft.
 

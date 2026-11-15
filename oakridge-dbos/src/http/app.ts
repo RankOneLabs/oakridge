@@ -1,3 +1,5 @@
+import { installStatusRoute } from "./install-status";
+import type { InstallStatus } from "../projections/install-status-view";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { CoreClient } from "../core-client/client";
@@ -26,6 +28,7 @@ export interface DefinitionApiDependencies {
   readonly is_operator_request: (request: Request) => boolean;
 }
 export interface HttpAppDependencies extends Omit<DefinitionApiDependencies, "is_operator_request"> {
+  readonly read_install_status?: () => Promise<InstallStatus>;
   readonly application_version: string;
   /** A token every operator route demands, or none: a loopback bind (open to loopback-addressed requests only) or an explicitly insecure one. */
   readonly access: ServedControlPlaneAccess;
@@ -47,6 +50,7 @@ export function createHttpApp(deps: HttpAppDependencies): Hono {
   installDefinitionApi(app, { ...deps, is_operator_request: operatorCredentialCheck(control_token, deps.write_policy) });
   installMergeStatus(app, { db: deps.db, operations: deps.operations ?? null });
   installEventStream(app, { db: deps.db });
+  installStatusRoute(app, deps.read_install_status);
   app.get("/health", (context) => context.json({ status: "ok", application_version: deps.application_version, core: deps.core.health }));
   app.delete("/runs/:run_id", async (context) => {
     try {

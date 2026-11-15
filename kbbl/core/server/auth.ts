@@ -164,7 +164,7 @@ function verifyControlCredentials(c: Context, token: string): Response | null {
 
 /**
  * Returns a Hono middleware that enforces Bearer/cookie auth on all
- * non-GET/HEAD requests except /hook/* adapter routes (which are
+ * non-GET/HEAD requests and explicitly protected reads, except /hook/* adapter routes (which are
  * loopback-verified by the runtime adapter).
  *
  * In loopback or insecure-non-loopback mode returns a pass-through middleware.
@@ -173,7 +173,8 @@ function verifyControlCredentials(c: Context, token: string): Response | null {
  * - Malformed Authorization header → 401
  * - Well-formed token/cookie that doesn't match → 403
  */
-export function makeControlAuthMiddleware(policy: AuthPolicy): MiddlewareHandler {
+export interface ControlAuthOptions { readonly protectedReadPaths?: readonly string[] }
+export function makeControlAuthMiddleware(policy: AuthPolicy, options: ControlAuthOptions = {}): MiddlewareHandler {
   if (policy.mode === "loopback" || policy.mode === "insecure-non-loopback") {
     return async (_c: Context, next: Next) => { await next(); };
   }
@@ -183,8 +184,8 @@ export function makeControlAuthMiddleware(policy: AuthPolicy): MiddlewareHandler
   return async (c: Context, next: Next) => {
     const method = c.req.method;
 
-    // Safe methods and hook adapter routes pass through without auth.
-    if (method === "GET" || method === "HEAD") {
+    // Ordinary reads stay public; process-starting reads explicitly require credentials.
+    if ((method === "GET" || method === "HEAD") && !options.protectedReadPaths?.includes(c.req.path)) {
       await next();
       return;
     }

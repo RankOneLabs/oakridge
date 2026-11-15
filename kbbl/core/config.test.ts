@@ -81,3 +81,11 @@ describe("acp.default_agent", () => {
     expect(KbblConfigSchema.safeParse({ runtime: { default: "codex" } }).success).toBe(false);
   });
 });
+
+test("PR installation settings are captured from config input, independently of later environment changes", async () => {
+  const { loadPrIntegrationConfig } = await import("./config");
+  const env = { OAKRIDGE_PR_INTEGRATION: "github-cli", OAKRIDGE_GATED_REVIEW_URL: "http://review/mcp" };
+  const config = loadPrIntegrationConfig(env);
+  env.OAKRIDGE_PR_INTEGRATION = "none";
+  expect(config).toEqual({ default_integration: "github-cli", gated_review_url: "http://review/mcp" });
+});

@@ -184,9 +184,9 @@ test("each launch delivers its committed grading choice beside its input, and a 
   try {
     const { definition_id } = await sampleDefinition();
     const launches = await Promise.all([
-      launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "on" }, config: { sessions: {}, grading_enabled: true } }),
+      launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "on" }, config: { sessions: {}, pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: true } }),
       launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "off" },
-        config: { sessions: { document: { writer: { harness: "codex", model: "gpt-5.5", effort: null } } }, grading_enabled: false } }),
+        config: { sessions: { document: { writer: { harness: "codex", model: "gpt-5.5", effort: null } } }, pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: false } }),
       launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "none" } })]);
     const delivered = async (observation: (typeof services)[number]) => {
       await migrateObservation(observation);
@@ -203,9 +203,9 @@ test("each launch delivers its committed grading choice beside its input, and a 
     const replayed = await delivered(services[1]!);
     const [on, off, none] = launches.map((entry) => first[entry.run_id]);
     expect([on, off, none]).toEqual([
-      expect.objectContaining({ input: { topic: "on" }, config: { sessions: {}, grading_enabled: true } }),
+      expect.objectContaining({ input: { topic: "on" }, config: { sessions: {}, pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: true } }),
       expect.objectContaining({ input: { topic: "off" }, config: { sessions: { document: { writer: { harness: "codex", model: "gpt-5.5", effort: null } } },
-        grading_enabled: false } }),
+        pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: false } }),
       expect.objectContaining({ input: { topic: "none" }, config: null })]);
     expect(launches.map((entry) => replayed[entry.run_id])).toEqual([on, off, none]);
   } finally { for (const db of services) await db.destroy(); await scratch.drop(); await replica.drop(); }

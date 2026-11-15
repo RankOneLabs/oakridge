@@ -1,3 +1,4 @@
+import { parseWorkflowIdentity } from "./workflow-identity";
 import type { Hono } from "hono";
 import { isAbsolute, resolve } from "node:path";
 import { stat } from "node:fs/promises";
@@ -8,9 +9,9 @@ import { stat } from "node:fs/promises";
  */
 const MAX_ARTIFACT_ID_LENGTH = 200;
 import type { AcpSessionService } from "../../acp/session-service";
-import { type AcpError, type AcpSessionSnapshot, type AcpSessionStartSpec, type AcpSessionStatus, type AcpSessionWorkflowIdentity, type TerminalObservation } from "../../acp/types";
+import { type AcpError, type AcpSessionSnapshot, type AcpSessionStartSpec, type AcpSessionStatus, type TerminalObservation } from "../../acp/types";
 import { toPwaSessionSnapshot } from "../../acp/pwa-wire";
-import type { ResumableEnd, ResumableEnsureRequest, ResumableEnsureResponse, ResumablePendingBody, ResumableSessionSnapshot, ResumableSessionStatus, ResumableTerminalBody, ResumableWorkflowIdentity } from "../../acp/resumable-wire";
+import type { ResumableEnd, ResumableEnsureRequest, ResumableEnsureResponse, ResumablePendingBody, ResumableSessionSnapshot, ResumableSessionStatus, ResumableTerminalBody } from "../../acp/resumable-wire";
 import { buildResumeContext } from "../../acp/resume-context";
 import { listPwaSessions } from "./acp-inbox";
 import { isValidSid } from "./acp-per-sid";
@@ -200,27 +201,6 @@ export function validateWorktreeSubdir(subdir: string): string | null {
   return null;
 }
 
-/**
- * Parses the optional `workflow` member of a resumable ensure body: the run,
- * unit and worker of the Oakridge attempt the session serves. Absence is not
- * an error (most sessions carry no workflow identity); it maps to null.
- */
-export function parseWorkflowIdentity(
-  raw: unknown,
-): { value: AcpSessionWorkflowIdentity | null } | { error: string } {
-  if (raw === undefined) return { value: null };
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    return { error: "workflow must be an object" };
-  }
-  const value = raw as { readonly [Field in keyof ResumableWorkflowIdentity]?: unknown };
-  const fields = { run_id: value.run_id, unit_id: value.unit_id, worker: value.worker };
-  for (const [name, field] of Object.entries(fields)) {
-    if (typeof field !== "string" || field.trim() === "") return { error: `workflow.${name} must be a non-empty string` };
-    if (field.trim().length > 200) return { error: `workflow.${name} must be at most 200 characters` };
-  }
-  return { value: { run_id: (fields.run_id as string).trim(), unit_id: (fields.unit_id as string).trim(), worker: (fields.worker as string).trim() } };
-}
-
 /** A service-layer AcpError as an HTTP status, with the ACP code carried in the body. */
 function errorResponse(error: AcpError): {
   status: 400 | 404 | 409 | 422 | 503;
@@ -240,6 +220,8 @@ function errorResponse(error: AcpError): {
         status: 422,
         body: { ...body, error: "worktree could not be created", code: "worktree_create_failed" },
       };
+    case "pr_integration_unconfigured":
+    case "skill_unavailable":
     case "agent_profile_unavailable":
     case "requested_model_unsupported":
     case "requested_effort_unsupported":

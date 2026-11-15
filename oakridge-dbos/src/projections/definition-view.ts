@@ -25,7 +25,7 @@ export interface ArtifactDefinition { readonly key: string; readonly schema: str
 /** A pinned definition as the catalog lists it (GET /api/definitions). */
 export interface DefinitionSummary { readonly definition_id: import("../runtime/definition-store").DefinitionId; readonly bundle: DefinitionBundle }
 /** A run's committed definition (GET /api/runs/:run_id/definition). */
-export type PinnedDefinition = DefinitionSummary;
+export interface PinnedDefinition extends DefinitionSummary { readonly effective_workflow: ParsedWorkflow }
 export interface DefinitionPage { readonly items: readonly DefinitionSummary[]; readonly next_cursor: string | null }
 export interface DefinitionGraphNode { readonly key: string; readonly stage: string; readonly depends_on: readonly string[] }
 export interface DefinitionGraph { readonly nodes: readonly DefinitionGraphNode[]; readonly edges: readonly { readonly from: string; readonly to: string }[] }
@@ -59,7 +59,7 @@ export type DefinitionSource = import("../core-client/client").CompiledDefinitio
 export const selectDefinitionSummary = (definition: DefinitionSource): DefinitionSummary => ({ definition_id: definition.definition_id,
   bundle: selectDefinitionBundle(definition.checked_program.workflow, definition.source, definition) });
 export const selectPinnedDefinition = (definition: DefinitionSource): PinnedDefinition =>
-  selectDefinitionSummary(definition);
+  ({ ...selectDefinitionSummary(definition), effective_workflow: definition.checked_program.workflow });
 export const selectDefinitionDetail = (definition: DefinitionSource): DefinitionDetail =>
   ({ ...selectDefinitionSummary(definition), workflow: definition.source, effective_workflow: definition.checked_program.workflow, graph: selectDefinitionGraph(definition.source) });
 

@@ -84,3 +84,21 @@ test("a spawn/initialize failure is a 503 that names its ACP failure code", asyn
   expect(response.status).toBe(503);
   expect(await response.json()).toEqual(expect.objectContaining({ code: "agent_spawn_failed" }));
 });
+
+for (const failure of ["missing-url", "unsupported-runtime"] as const) {
+  test(`${failure} fails ensure before any agent is spawned`, async () => {
+    const { makeAcpTestService } = await import("../../acp/test-harness");
+    const { readdirSync } = await import("node:fs");
+    const state = mkdtempSync(join(tmpdir(), "ensure-preflight-"));
+    const harness = makeAcpTestService({ stateDir: state,
+      integration: { default_integration: "none", gated_review_url: failure === "missing-url" ? null : "http://review/mcp", skill_store_root: join(import.meta.dir, "../../../../workflow-config/definitions/skills"), session_skills_root: join(state, "session-skills") } });
+    try {
+      const app = new Hono();
+      mountSessionsRoutes(app, { acp: harness.service, defaultWorkdir: repoDir });
+      const response = await app.request("/sessions/resumable/preflight", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ initial_prompt: "must not reach agent", workdir: repoDir, workflow: { run_id: "run", unit_id: "unit", worker: "builder", pr_integration: "gated-review", pr_skill_digest: "8199a2589e1e69ded71370f990e7ac3e9ac48d6dc2137bad004d507de0b7280c" } }) });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: failure === "missing-url" ? "pr_integration_unconfigured" : "skill_unavailable" });
+      expect(readdirSync(state)).toEqual([]);
+    } finally { await harness.service.shutdown(); rmSync(state, { recursive: true, force: true }); }
+  });
+}

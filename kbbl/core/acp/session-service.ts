@@ -1,3 +1,5 @@
+import { createSessionController } from "./session-controller";
+import { prepareSessionIntegration, removeSessionSkills, selectDirectIntegration, type SessionIntegrationConfig } from "./session-integration";
 import { sha256Hex, startSpecHash } from "./start-spec-hash";
 import type { RetainedPromptTurn } from "./store-turns";
 import { toSnapshot, turnToReceipt, turnToOpenTurn } from "./pwa-wire";
@@ -10,7 +12,8 @@ import { randomUUID } from "node:crypto";
 
 import type { AgentProfile, AgentProfileId } from "./agent-profile";
 import { resolveProfile } from "./agent-profile";
-import { AcpSessionController, configOptionCategory } from "./controller";
+import type { AcpSessionController } from "./controller";
+import { configOptionCategory } from "./config-option-resolver";
 import type { AcpControllerRegistry } from "./controller-registry";
 import type { AcpProcessSupervisor } from "./process-supervisor";
 import {
@@ -52,6 +55,7 @@ export interface AcpServiceConfig {
 }
 
 export interface AcpSessionServiceDeps {
+  readonly integration?: SessionIntegrationConfig;
   readonly store: AcpSessionStore;
   readonly controllers: AcpControllerRegistry;
   readonly profiles: ReadonlyMap<AgentProfileId, AgentProfile>;
@@ -93,10 +97,9 @@ export class AcpSessionService {
   }
 
   /**
-   * Idempotent DBOS ensure (§10.2). `identity` is not part of the hashed
-   * start spec (folding it in would change `startSpecHash` for
-   * already-claimed keys) — it is written on create, and backfilled by
-   * the store on an attach whose stored identity is still null.
+   * Idempotent DBOS ensure. Integration and digest enter the hash so a retry
+   * cannot silently change PR procedures. run_id/unit_id/worker remain
+   * backfilled metadata outside the hash.
    */
   async ensureResumableSession(
     key: string,
@@ -104,7 +107,12 @@ export class AcpSessionService {
     identity: AcpSessionWorkflowIdentity | null = null,
   ): Promise<Result<EnsureResult, AcpError>> {
     const resumableKey = key as ResumableKey;
-    const specHash = startSpecHash(spec);
+    const existing = identity === null ? this.deps.store.getByResumableKey(resumableKey) : null;
+    const selected = identity ? ok(identity) : existing
+      ? ok({ pr_integration: existing.pr_integration, pr_skill_digest: existing.pr_skill_digest })
+      : selectDirectIntegration(this.deps.integration);
+    if (!selected.ok) return selected;
+    const specHash = startSpecHash(spec, selected.value);
     const sid = randomUUID() as KbblSessionId;
     const profileId = spec.runtime ?? this.deps.config.default_agent;
 
@@ -121,6 +129,7 @@ export class AcpSessionService {
       requested_effort: spec.effort ?? null,
       requested_mode: this.profileSessionMode(profileId),
       workflow: identity,
+      ...selected.value,
     });
 
     if (claimed.kind === "spec_conflict") {
@@ -134,6 +143,10 @@ export class AcpSessionService {
       );
     }
     if (claimed.kind === "existing") {
+      const profile = resolveProfile(this.deps.profiles, claimed.row.agent_profile);
+      if (!profile.ok) return profile;
+      const prepared = prepareSessionIntegration(claimed.row, profile.value, this.deps.integration);
+      if (!prepared.ok) return prepared;
       // Re-touch so retained accepted turns dispatch (§10.7 lazy spawn).
       if (this.hasDispatchableWork(claimed.row)) {
         void this.touchController(claimed.row.sid);
@@ -176,6 +189,8 @@ export class AcpSessionService {
   ): Promise<Result<AcpSessionSnapshot, AcpError>> {
     const sid = randomUUID() as KbblSessionId;
     const profileId = spec.runtime ?? this.deps.config.default_agent;
+    const selected = selectDirectIntegration(this.deps.integration);
+    if (!selected.ok) return selected;
     const row = this.deps.store.insertSession({
       sid,
       resumable_key: null,
@@ -189,6 +204,7 @@ export class AcpSessionService {
       requested_effort: spec.effort ?? null,
       requested_mode: this.profileSessionMode(profileId),
       workflow: null,
+      ...selected.value,
     });
 
     const provisioned = await this.provision(row, spec);
@@ -484,13 +500,15 @@ export class AcpSessionService {
   }
 
   /**
-   * Operator hard delete: fence out any live child, best-effort worktree
-   * removal, then drop the row (turn ledger goes with it).
+   * Operator hard delete: fence out any live child, best-effort removal of
+   * its session skills and worktree, then drop the row (turn ledger goes with it).
    */
   async purgeSession(sid: string): Promise<Result<boolean, AcpError>> {
     const row = this.deps.store.markPurgeStarted(sid as KbblSessionId);
     if (!row) return ok(false);
     await this.closeSession(sid);
+    const skillsRemoved = removeSessionSkills(row.sid, this.deps.integration);
+    if (!skillsRemoved.ok) console.warn(`[acp] sid=${row.sid} purge left session skills: ${skillsRemoved.error}`);
     const hasOtherOwner = row.worktree_branch !== null
       && this.deps.store.hasOtherWorktreeOwner(
         row.sid,
@@ -641,17 +659,7 @@ export class AcpSessionService {
     const profile = resolveProfile(this.deps.profiles, row.agent_profile);
     if (!profile.ok) return ok(fallback("agent_history_unavailable"));
 
-    const controller = new AcpSessionController({
-      sid: kbblSid,
-      profile: profile.value,
-      store: this.deps.store,
-      supervisor: this.deps.supervisor,
-      config: {
-        live_event_buffer: Number.MAX_SAFE_INTEGER,
-        close_grace_ms: this.deps.config.graceful_kill_ms,
-      },
-      onDefunct: () => undefined,
-    });
+    const controller = createSessionController({ row, profile: profile.value, deps: this.deps, historyOnly: true, fullReplay: true });
     try {
       const started = await controller.start(row.worktree_path, {
         kind: "load",
@@ -777,6 +785,8 @@ export class AcpSessionService {
     const profile = resolveProfile(this.deps.profiles, row.agent_profile);
     if (!profile.ok) return this.failProvisioning(row, profile.error);
 
+    const prepared = prepareSessionIntegration(row, profile.value, this.deps.integration);
+    if (!prepared.ok) return this.failProvisioning(row, prepared.error);
     const worktree = await this.deps.worktrees.resolve(row.sid, spec);
     if (!worktree.ok) return this.failProvisioning(row, worktree.error);
     this.deps.store.setWorktree(row.sid, {
@@ -788,17 +798,7 @@ export class AcpSessionService {
     });
 
     const created = await this.deps.controllers.getOrCreate(row.sid, async () => {
-      const controller = new AcpSessionController({
-        sid: row.sid,
-        profile: profile.value,
-        store: this.deps.store,
-        supervisor: this.deps.supervisor,
-        config: {
-          live_event_buffer: this.deps.config.live_event_buffer,
-          close_grace_ms: this.deps.config.graceful_kill_ms,
-        },
-        onDefunct: (sid) => this.deps.controllers.remove(sid),
-      });
+      const controller = createSessionController({ row, profile: profile.value, deps: this.deps });
       const started = await controller.start(worktree.value.worktree_path, {
         kind: "new",
       });
@@ -884,17 +884,7 @@ export class AcpSessionService {
     const profile = resolveProfile(this.deps.profiles, row.agent_profile);
     if (!profile.ok) return fallback("agent_history_unavailable");
 
-    const controller = new AcpSessionController({
-      sid: row.sid,
-      profile: profile.value,
-      store: this.deps.store,
-      supervisor: this.deps.supervisor,
-      config: {
-        live_event_buffer: this.deps.config.live_event_buffer,
-        close_grace_ms: this.deps.config.graceful_kill_ms,
-      },
-      onDefunct: () => undefined,
-    });
+    const controller = createSessionController({ row, profile: profile.value, deps: this.deps, historyOnly: true });
     const started = await controller.start(row.worktree_path, {
       kind: "load",
       acp_session_id: row.acp_session_id,
@@ -964,17 +954,7 @@ export class AcpSessionService {
     if (!profile.ok) return profile;
 
     const created = await this.deps.controllers.getOrCreate(sid, async () => {
-      const controller = new AcpSessionController({
-        sid,
-        profile: profile.value,
-        store: this.deps.store,
-        supervisor: this.deps.supervisor,
-        config: {
-          live_event_buffer: this.deps.config.live_event_buffer,
-          close_grace_ms: this.deps.config.graceful_kill_ms,
-        },
-        onDefunct: (defunctSid) => this.deps.controllers.remove(defunctSid),
-      });
+      const controller = createSessionController({ row, profile: profile.value, deps: this.deps });
       // Some agents do not persist session/new until the first prompt. The
       // durable ledger proves whether any prompt may have reached the agent;
       // only a never-dispatched session can safely start afresh on this same

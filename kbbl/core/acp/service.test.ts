@@ -2,8 +2,8 @@
 // the fake ACP agent over stdio, real SQLite, the full
 // service -> registry -> controller -> client -> supervisor path.
 
-import { afterEach, expect, test, spyOn } from "bun:test";
-import { mkdtemp, readFile, unlink } from "node:fs/promises";
+import { afterEach, expect, test } from "bun:test";
+import { mkdtemp, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -60,6 +60,7 @@ function makeHarness(options: HarnessOptions): Harness {
     hard_kill_ms: 1000,
   });
   const profile: AgentProfile = {
+    skillDiscovery: { kind: "additionalDirectories" },
     id: "fake",
     label: "Fake agent",
     command: options.command ?? process.execPath,
@@ -113,75 +114,6 @@ async function makeDirs(): Promise<{ stateDir: string; workdir: string }> {
   };
 }
 
-const GATED_REVIEW_URL = "http://127.0.0.1:3555/mcp/";
-const GATED_REVIEW_SERVERS = [{ type: "http", name: "gated-review", url: GATED_REVIEW_URL, headers: [] }];
-
-async function withGatedReviewUrl(url: string | undefined, run: () => Promise<void>): Promise<void> {
-  const previous = process.env.OAKRIDGE_GATED_REVIEW_URL;
-  if (url === undefined) delete process.env.OAKRIDGE_GATED_REVIEW_URL;
-  else process.env.OAKRIDGE_GATED_REVIEW_URL = url;
-  try { await run(); } finally {
-    if (previous === undefined) delete process.env.OAKRIDGE_GATED_REVIEW_URL;
-    else process.env.OAKRIDGE_GATED_REVIEW_URL = previous;
-  }
-}
-
-async function readRecordedServers(stateDir: string, agentSessionId: string, setup: "mcp-servers" | "load-mcp-servers"): Promise<unknown> {
-  return JSON.parse(await readFile(join(stateDir, `${agentSessionId}.${setup}.json`), "utf8"));
-}
-
-test("a hand-started session receives the configured gated-review URL unchanged", async () => {
-  await withGatedReviewUrl(GATED_REVIEW_URL, async () => {
-    const { stateDir, workdir } = await makeDirs();
-    const { service, store } = makeHarness({ stateDir });
-    const ensured = await service.ensureResumableSession("hand-wiring", spec(workdir));
-    if (!ensured.ok) throw new Error("ensure failed");
-    const sid = ensured.value.session.sid;
-    await service.observeInitialTurn(sid, 8000);
-    const agentSessionId = store.getSession(sid as KbblSessionId)?.acp_session_id;
-    if (!agentSessionId) throw new Error("agent session missing");
-    expect(await readRecordedServers(stateDir, agentSessionId, "mcp-servers")).toEqual(GATED_REVIEW_SERVERS);
-  });
-}, 15000);
-
-test("a resumed session loads with the configured gated-review URL unchanged", async () => {
-  await withGatedReviewUrl(GATED_REVIEW_URL, async () => {
-    const { stateDir, workdir } = await makeDirs();
-    const first = makeHarness({ stateDir });
-    const ensured = await first.service.ensureResumableSession("resume-wiring", spec(workdir),
-      { run_id: "run-1", unit_id: "run-1/planning", worker: "planner" });
-    if (!ensured.ok) throw new Error("ensure failed");
-    const sid = ensured.value.session.sid;
-    await first.service.observeInitialTurn(sid, 8000);
-    await first.service.shutdown();
-    const second = makeHarness({ stateDir, db: first.db });
-    second.service.recoverOnBoot();
-    const history = await second.service.loadHistory(sid);
-    expect(history.ok).toBe(true);
-    const agentSessionId = second.store.getSession(sid as KbblSessionId)?.acp_session_id;
-    if (!agentSessionId) throw new Error("agent session missing");
-    expect(await readRecordedServers(stateDir, agentSessionId, "load-mcp-servers")).toEqual(GATED_REVIEW_SERVERS);
-  });
-}, 20000);
-
-test("an unset endpoint supplies no server and logs its unavailability", async () => {
-  await withGatedReviewUrl(undefined, async () => {
-    const warn = spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      const { stateDir, workdir } = await makeDirs();
-      const { service, store } = makeHarness({ stateDir });
-      const ensured = await service.ensureResumableSession("unset-wiring", spec(workdir));
-      if (!ensured.ok) throw new Error("ensure failed");
-      const sid = ensured.value.session.sid;
-      await service.observeInitialTurn(sid, 8000);
-      const agentSessionId = store.getSession(sid as KbblSessionId)?.acp_session_id;
-      if (!agentSessionId) throw new Error("agent session missing");
-      expect(await readRecordedServers(stateDir, agentSessionId, "mcp-servers")).toEqual([]);
-      expect(warn.mock.calls.map(([message]) => String(message)))
-        .toContainEqual(`[acp] sid=${sid} OAKRIDGE_GATED_REVIEW_URL is unset: gated-review is unavailable to this session`);
-    } finally { warn.mockRestore(); }
-  });
-}, 15000);
 
 function spec(workdir: string, prompt = "build the thing"): AcpSessionStartSpec {
   return { initial_prompt: prompt, workdir, runtime: "fake" };

@@ -1,22 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { selectMcpServers } from "./client";
-
-const server = (url: string) => [{ type: "http" as const, name: "gated-review", url, headers: [] }];
-
-describe("the configured gated-review endpoint", () => {
-  test("is supplied without a role suffix or credential header", () => {
-    expect(selectMcpServers("http://otto:3555/mcp")).toEqual(server("http://otto:3555/mcp"));
-  });
-
-  test("keeps its configured path and trailing slash", () => {
-    expect(selectMcpServers("http://review.test:9000/custom/path/")).toEqual(server("http://review.test:9000/custom/path/"));
-  });
-
-  test("an unset endpoint supplies no server", () => {
-    expect(selectMcpServers(undefined)).toEqual([]);
-  });
-
-  test("an empty endpoint supplies no server", () => {
-    expect(selectMcpServers("")).toEqual([]);
-  });
+test("gated-review receives exactly the configured HTTP server", () => {
+  expect(selectMcpServers("gated-review", "http://review/mcp/")).toEqual({ ok: true, value: [{ type: "http", name: "gated-review", url: "http://review/mcp/", headers: [] }] });
+});
+test("github-cli and none receive no MCP servers", () => {
+  for (const integration of ["github-cli", "none"] as const) expect(selectMcpServers(integration, "http://review/mcp")).toEqual({ ok: true, value: [] });
+});
+test("missing gated-review configuration is a typed preflight error", () => {
+  const result = selectMcpServers("gated-review", null);
+  expect(result.ok ? null : result.error.code).toBe("pr_integration_unconfigured");
 });

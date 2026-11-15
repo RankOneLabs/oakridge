@@ -2,15 +2,17 @@
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
 import type { OperatorAnalysisLinkEntry } from "../domain/analysis-link-declaration";
+import type { OperatorPrIntegration } from "../domain/pr-integration";
 import type { OperatorRunConfig } from "../domain/run-config";
 import type { OperatorDefinitionId } from "../runtime/definition-store";
 
 export interface OperatorIngressRequest { readonly request_id: string }
 
 export interface OperatorLaunchRequest extends OperatorIngressRequest {
+  readonly pr_integration?: OperatorPrIntegration;
   readonly definition_id: OperatorDefinitionId; readonly input: unknown; readonly project_id?: string | null;
   /** Session settings keyed by stage, then by agent worker, and the run's automatic-grading choice. */
-  readonly config?: OperatorRunConfig | null;
+  readonly config?: Pick<OperatorRunConfig, "sessions" | "grading_enabled"> | null;
 }
 
 export interface OperatorDecideRequest extends OperatorIngressRequest {

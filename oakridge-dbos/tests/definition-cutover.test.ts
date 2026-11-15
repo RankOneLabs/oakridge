@@ -96,3 +96,23 @@ test("HTTP publication, operator edit and decision recover from exact committed 
       .toEqual({ responses: [201, 201, 201, 201, 409, 200], definition_id, same_state: true });
   } finally { restarted.value.close(); }
 });
+
+test("a run's pinned review metadata survives removal from the launch catalog", async () => {
+  const { definition_id } = await commitTestDefinition({ source: { ...sampleWorkflow("review-loop"), workflow: `pinned-${crypto.randomUUID()}` } });
+  const launched = await app().request("/api/runs", json({ request_id: crypto.randomUUID(), definition_id, input: { topic: "pinned" } }));
+  expect(launched.status).toBe(201);
+  const { run_id } = await launched.json() as { run_id: string };
+  const detail = await (await app().request(`/api/definitions/${definition_id}`)).json() as DefinitionDetail;
+  const root = process.env.OAKRIDGE_DEFINITION_ROOT;
+  if (!root) throw new Error("fixture definition root missing");
+  const path = resolve(root, "launchable.json");
+  const saved = readFileSync(path, "utf8");
+  try {
+    const catalog: { [name: string]: string } = JSON.parse(saved);
+    writeFileSync(path, JSON.stringify(Object.fromEntries(Object.entries(catalog).filter(([, id]) => id !== definition_id))));
+    expect((await app().request(`/api/definitions/${definition_id}`)).status).toBe(404);
+    const pinned = await app().request(`/api/runs/${run_id}/definition`);
+    expect(pinned.status).toBe(200);
+    expect((await pinned.json() as import("../src/projections/definition-view").PinnedDefinition).effective_workflow).toEqual(detail.effective_workflow);
+  } finally { writeFileSync(path, saved); }
+});

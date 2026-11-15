@@ -71,6 +71,7 @@ export type DefinitionSelection = { kind: "stage"; stage: string } | { kind: "un
 
 export type OakridgeSubRoute =
   | { sub: "runs" }
+  | { sub: "status" }
   | { sub: "review-inbox" }
   /** `#oakridge/run/:id`, optionally naming the pane to open in `#oakridge/run/:id/session/:sid` form. */
   | { sub: "run"; id: string; pane: RoutePaneTarget | null }
@@ -182,6 +183,7 @@ export function readHashRoute(
     if (rest === "/new-run") {
       return { view: "oakridge", route: { sub: "new-run" } };
     }
+    if (rest === "/status") return { view: "oakridge", route: { sub: "status" } };
     if (rest === "/review-inbox") {
       return { view: "oakridge", route: { sub: "review-inbox" } };
     }

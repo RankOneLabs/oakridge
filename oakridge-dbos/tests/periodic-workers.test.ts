@@ -8,7 +8,7 @@ import { observePullRequest } from "../src/operations/pull-request-observe";
 import { decodePullRequestObserveInput } from "../src/operations/pull-request-observe";
 import type { OperationRunner } from "../src/operations/runner";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
-import { createProductionComposition } from "../src/runtime/compose";
+import { createProductionComposition, type ProductionOptions } from "../src/runtime/compose";
 import { readLatestRevisionId } from "../src/storage/read-store";
 import { reportWorker } from "../src/workflows/executor-ingress";
 import { intentWorkflowId, runWorkflowId, wakeRun } from "../src/workflows/topology";
@@ -23,8 +23,20 @@ import { eventually } from "./stub-kbbl";
  */
 
 let authority: Authority;
-beforeAll(async () => { authority = await openAuthority(); });
-afterAll(async () => { await authority.close(); });
+let integration_health: ReturnType<typeof Bun.serve>;
+beforeAll(async () => {
+  authority = await openAuthority();
+  integration_health = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 503 }) });
+});
+afterAll(async () => { try { await authority.close(); } finally { await integration_health.stop(true); } });
+
+/** Exercise production preflight while the injected operation runner controls watch outcomes. */
+function prIntegrationOptions(): Pick<ProductionOptions, "pr_integration_default" | "executor"> {
+  return { pr_integration_default: "gated-review", executor: {
+    kbbl_base_url: null, publication_key: null, publish_base_url: "", agent_workdir: "",
+    gated_review_url: integration_health.url.href,
+  } };
+}
 
 /** A builder publishing `pr`, and a watch publishing `latest(pr)` once it is published: the shape of `pr_watch`. */
 const WATCH: Workflow = {
@@ -208,7 +220,7 @@ test("a transient pr_watch outage backs off and observes a merge, while a termin
     return { kind: "succeeded", body: { state: "merged", number: 7, url: QUERY.pr_url,
       head_sha: "abc123", merged_at: "2026-10-15T12:00:00Z" } };
   } };
-  const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1", operation_runner,
+  const composition = await createProductionComposition({ ...prIntegrationOptions(), database_url: live.url, host: "127.0.0.1", operation_runner,
     timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, wake_timeout_seconds: 5, carrier_max_iterations: 8 } });
   try {
     const start = async (head_branch: string): Promise<RunId> => {
@@ -248,7 +260,7 @@ test("a watch rolls over during repeated unavailable operations and resumes its 
   const live = await openAuthority();
   const { definition_id } = await commitTestDefinition({ source: PR_WATCH });
   let calls = 0;
-  const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
+  const composition = await createProductionComposition({ ...prIntegrationOptions(), database_url: live.url, host: "127.0.0.1",
     operation_runner: { async run() {
       calls++;
       return calls <= 5 ? { kind: "unavailable", detail: "forge unavailable" } :
@@ -283,7 +295,7 @@ test("a wake sent during carrier dispatch advances the run before its wake timeo
   const { definition_id } = await commitTestDefinition({ source: PR_WATCH });
   let release_operation = (): void => undefined;
   const operation_released = new Promise<void>((resolve) => { release_operation = resolve; });
-  const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
+  const composition = await createProductionComposition({ ...prIntegrationOptions(), database_url: live.url, host: "127.0.0.1",
     operation_runner: { async run() { await operation_released; return { kind: "failed", code: "pull_request_mismatch", detail: "terminal" }; } },
     timing: { wake_timeout_seconds: 20 } });
   const real_start = DBOS.startWorkflow.bind(DBOS);

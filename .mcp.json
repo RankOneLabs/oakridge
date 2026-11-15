@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "gated-review": {
-      "type": "http",
-      "url": "http://otto:3555/mcp"
-    }
-  }
-}

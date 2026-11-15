@@ -16,8 +16,14 @@ import { actionOf, executor, launch, openAuthority, submitter, unitOf, type Auth
  * Each read model carries exactly its contract's fields, and every derived
  * field is tested. Runs go through commit; reads go through the HTTP surface.
  */
+// Keep the runtime field assertion exhaustive at typecheck time as RunView evolves.
+const RUN_VIEW_FIELDS = {
+  archived_at: true, config_error: true, created_at: true, definition_id: true,
+  pr_integration: true, pr_skill_digest: true, repository_keys: true, run_id: true,
+  status: true, title: true, units: true, updated_at: true,
+} satisfies Record<keyof RunView, true>;
 const CONTRACT_FIELDS = {
-  RunView: ["archived_at", "created_at", "definition_id", "repository_keys", "run_id", "status", "title", "units", "updated_at"],
+  RunView: Object.keys(RUN_VIEW_FIELDS).sort(),
   RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
   UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "input_provenance", "is_terminal", "label", "outcome",
     "recorded_decisions", "run_id", "stage", "status", "unit_id", "unit_key"],
@@ -40,7 +46,7 @@ const CONTRACT_FIELDS = {
   EffectDiagnostic: ["action_id", "id", "last_error", "next_try_at", "seq", "status", "tries", "updated_at"],
   ArtifactDetail: ["artifact_key", "decisions", "is_editable", "is_reviewable", "original_spec", "revisions", "run_id", "schema", "status", "unit_id"],
   DefinitionSummary: ["bundle", "definition_id"],
-  PinnedDefinition: ["bundle", "definition_id"],
+  PinnedDefinition: ["bundle", "definition_id", "effective_workflow"],
   DefinitionDetail: ["bundle", "definition_id", "effective_workflow", "graph", "workflow"],
   DefinitionBundle: ["key", "root", "schemas", "stages", "units"],
   UnitDefinition: ["artifacts", "input_schema", "key", "label", "stage"],

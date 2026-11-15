@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3))); then
-  echo "oakridge: Bash 4.3 or newer is required (found $BASH_VERSION)" >&2
-  exit 1
-fi
+OAKRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$OAKRIDGE_ROOT/scripts/oakridge-preflight.sh"
+oakridge_check_bash
+for tool in bun git openssl; do
+  oakridge_check_command "$tool" "install $tool with the system package manager (bun: https://bun.sh)"
+done
 
 # A shadow's state all comes from oakridge-shadow. Checked first, before anything
 # below can create the default install's state on its behalf.
@@ -23,74 +25,6 @@ OAKRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DBOS_ROOT="$OAKRIDGE_ROOT/oakridge-dbos"
 DEFAULT_CORE_WASM="$OAKRIDGE_ROOT/workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm"
 CORE_WASM="${OAKRIDGE_CORE_WASM:-$DEFAULT_CORE_WASM}"
-# Rebuild the default module on start so the engine version matches its source.
-if [ -z "${OAKRIDGE_CORE_WASM:-}" ]; then
-  if command -v cargo >/dev/null 2>&1; then
-    echo "oakridge: building workflow WASM"
-    cargo build --locked --target wasm32-unknown-unknown --manifest-path "$OAKRIDGE_ROOT/workflow-core/Cargo.toml" -p workflow-evaluator
-  else
-    # Never start the default module unverified: it may predate workflow-core/.
-    CORE_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$OAKRIDGE_ROOT/workflow-core/rust-toolchain.toml")"
-    echo "oakridge: Rust toolchain (cargo) is missing; install the pinned toolchain with: rustup toolchain install $CORE_TOOLCHAIN" >&2
-    echo "oakridge: then build workflow WASM with: cargo build --locked --target wasm32-unknown-unknown --manifest-path workflow-core/Cargo.toml -p workflow-evaluator" >&2
-    echo "oakridge: or set OAKRIDGE_CORE_WASM to a module built from this tree" >&2
-    exit 1
-  fi
-fi
-if [ ! -f "$CORE_WASM" ]; then
-  echo "oakridge: workflow WASM is missing at $CORE_WASM" >&2
-  exit 1
-fi
-# .mcp.json is the one place the gated-review endpoint is configured: DBOS
-# observes pull requests through it and kbbl hands it to every agent session.
-MCP_CONFIG="$OAKRIDGE_ROOT/.mcp.json"
-read_gated_review_url() {
-  bun -e '
-    const path = process.argv[1];
-    const file = Bun.file(path);
-    if (!(await file.exists())) process.exit(0);
-    const server = (await file.json()).mcpServers?.["gated-review"];
-    if (server === undefined) process.exit(0);
-    if (server?.type !== "http" || typeof server.url !== "string" || server.url.trim() === "") {
-      console.error(`${path}: gated-review must be an http server with a url`);
-      process.exit(1);
-    }
-    console.log(server.url.trim());' "$MCP_CONFIG"
-}
-if ! GATED_REVIEW_URL="$(read_gated_review_url)"; then
-  echo "oakridge: cannot read the gated-review server from $MCP_CONFIG" >&2
-  exit 1
-fi
-if [ -z "$GATED_REVIEW_URL" ]; then
-  echo "oakridge: $MCP_CONFIG names no gated-review server; pull_request.observe will fail with discovery_unsupported" >&2
-fi
-# The default install keeps its publication key, agent workdir and observation
-# tokens here; oakridge-shadow passes its own resolved directory.
-STATE_DIR="${OAKRIDGE_STATE_DIR:-$HOME/.local/state/oakridge}"
-if [ -z "${OAKRIDGE_PUBLICATION_KEY:-}" ]; then
-  # One key for the install's lifetime: rotating it breaks every resumed agent session.
-  KEY_FILE="$STATE_DIR/publication.key"
-  if [ ! -s "$KEY_FILE" ]; then
-    mkdir -p "$STATE_DIR"
-    (umask 077 && openssl rand -hex 32 > "$KEY_FILE")
-  fi
-  OAKRIDGE_PUBLICATION_KEY="$(cat "$KEY_FILE")"
-fi
-AGENT_WORKDIR="${OAKRIDGE_AGENT_WORKDIR:-$STATE_DIR/agent-workdir}"
-DBOS_HOST="${OAKRIDGE_DBOS_HOST:-127.0.0.1}"
-DBOS_PORT="${OAKRIDGE_DBOS_PORT:-8790}"
-DBOS_URL_HOST="$DBOS_HOST"
-if [[ "$DBOS_URL_HOST" == *:* ]] && [[ "$DBOS_URL_HOST" != \[*\] ]]; then
-  DBOS_URL_HOST="[$DBOS_URL_HOST]"
-fi
-DBOS_URL="http://${DBOS_URL_HOST}:${DBOS_PORT}"
-POSTGRES_CONTAINER="${OAKRIDGE_POSTGRES_CONTAINER:-oakridge-postgres}"
-POSTGRES_PORT="${OAKRIDGE_POSTGRES_PORT:-54329}"
-# The data volume follows the container, so a second container never opens
-# another one's data directory. The default container keeps its historical volume.
-POSTGRES_VOLUME="${OAKRIDGE_POSTGRES_VOLUME:-${POSTGRES_CONTAINER}-data}"
-POSTGRES_IMAGE="${OAKRIDGE_POSTGRES_IMAGE:-postgres:16}"
-
 KBBL_DISPLAY_HOST="127.0.0.1"
 KBBL_DISPLAY_PORT="${KBBL_PORT:-8788}"
 KBBL_INTERNAL_PORT="$KBBL_DISPLAY_PORT"
@@ -136,6 +70,77 @@ elif [[ "$KBBL_DISPLAY_HOST" == *:* ]] && [[ "$KBBL_DISPLAY_HOST" != \[*\] ]]; t
 fi
 KBBL_URL="http://127.0.0.1:${KBBL_INTERNAL_PORT}"
 
+# Resolve operator access before building or creating any local state.
+oakridge_check_access "$KBBL_BIND_HOST"
+case "$KBBL_BIND_HOST" in
+  0.0.0.0|::) echo "oakridge: warning: $KBBL_BIND_HOST listens on every network interface of this machine, not only Tailscale" ;;
+esac
+
+oakridge_check_agents
+oakridge_check_wasm
+
+# Rebuild the default module on start so the engine version matches its source.
+if [ -z "${OAKRIDGE_CORE_WASM:-}" ]; then
+  CORE_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$OAKRIDGE_ROOT/workflow-core/rust-toolchain.toml")"
+  echo "oakridge: building workflow WASM"
+  cargo +"$CORE_TOOLCHAIN" build --locked --target wasm32-unknown-unknown --manifest-path "$OAKRIDGE_ROOT/workflow-core/Cargo.toml" -p workflow-evaluator
+fi
+if [ ! -f "$CORE_WASM" ]; then
+  echo "oakridge: workflow WASM is missing at $CORE_WASM" >&2
+  exit 1
+fi
+# .mcp.json is the one place the gated-review endpoint is configured: DBOS
+# observes pull requests through it and kbbl hands it to every agent session.
+MCP_CONFIG="$OAKRIDGE_ROOT/.mcp.json"
+if ! GATED_REVIEW_URL="$(read_gated_review_url)"; then
+  echo "oakridge: cannot read the gated-review server from $MCP_CONFIG" >&2
+  exit 1
+fi
+if [ ! -f "$MCP_CONFIG" ]; then
+  echo "oakridge: gated-review is not configured (no .mcp.json); copy .mcp.example.json to .mcp.json to enable it"
+elif [ -z "$GATED_REVIEW_URL" ]; then
+  echo "oakridge: $MCP_CONFIG names no gated-review server; pull_request.observe will fail with discovery_unsupported" >&2
+fi
+if [ "${OAKRIDGE_PR_INTEGRATION+x}" = x ]; then
+  case "$OAKRIDGE_PR_INTEGRATION" in
+    gated-review|github-cli|none) PR_INTEGRATION_DEFAULT="$OAKRIDGE_PR_INTEGRATION" ;;
+    *) echo "oakridge: OAKRIDGE_PR_INTEGRATION must be gated-review, github-cli or none (got $OAKRIDGE_PR_INTEGRATION)" >&2; exit 1 ;;
+  esac
+  echo "oakridge: PR integration default: $PR_INTEGRATION_DEFAULT (OAKRIDGE_PR_INTEGRATION)"
+elif [ -n "$GATED_REVIEW_URL" ]; then
+  PR_INTEGRATION_DEFAULT=gated-review
+  echo "oakridge: PR integration default: gated-review (gated-review server in .mcp.json)"
+else
+  PR_INTEGRATION_DEFAULT=none
+  echo "oakridge: PR integration default: none (no gated-review server in .mcp.json; set OAKRIDGE_PR_INTEGRATION to choose)"
+fi
+# The default install keeps its publication key, agent workdir and observation
+# tokens here; oakridge-shadow passes its own resolved directory.
+STATE_DIR="${OAKRIDGE_STATE_DIR:-$HOME/.local/state/oakridge}"
+if [ -z "${OAKRIDGE_PUBLICATION_KEY:-}" ]; then
+  # One key for the install's lifetime: rotating it breaks every resumed agent session.
+  KEY_FILE="$STATE_DIR/publication.key"
+  if [ ! -s "$KEY_FILE" ]; then
+    mkdir -p "$STATE_DIR"
+    (umask 077 && openssl rand -hex 32 > "$KEY_FILE")
+  fi
+  OAKRIDGE_PUBLICATION_KEY="$(cat "$KEY_FILE")"
+fi
+AGENT_WORKDIR="${OAKRIDGE_AGENT_WORKDIR:-$STATE_DIR/agent-workdir}"
+DBOS_HOST="${OAKRIDGE_DBOS_HOST:-127.0.0.1}"
+DBOS_PORT="${OAKRIDGE_DBOS_PORT:-8790}"
+DBOS_URL_HOST="$DBOS_HOST"
+if [[ "$DBOS_URL_HOST" == *:* ]] && [[ "$DBOS_URL_HOST" != \[*\] ]]; then
+  DBOS_URL_HOST="[$DBOS_URL_HOST]"
+fi
+DBOS_URL="http://${DBOS_URL_HOST}:${DBOS_PORT}"
+POSTGRES_CONTAINER="${OAKRIDGE_POSTGRES_CONTAINER:-oakridge-postgres}"
+POSTGRES_PORT="${OAKRIDGE_POSTGRES_PORT:-54329}"
+# The data volume follows the container, so a second container never opens
+# another one's data directory. The default container keeps its historical volume.
+POSTGRES_VOLUME="${OAKRIDGE_POSTGRES_VOLUME:-${POSTGRES_CONTAINER}-data}"
+POSTGRES_IMAGE="${OAKRIDGE_POSTGRES_IMAGE:-postgres:16}"
+
 # Browser writes are refused from any origin not listed. Unless the operator
 # lists them, allow the addresses this bind is reached at: loopback always, and
 # for an all-interfaces bind this machine's hostname, addresses and tailnet name.
@@ -164,16 +169,7 @@ if [ -z "${OAKRIDGE_ALLOWED_ORIGINS:-}" ]; then OAKRIDGE_ALLOWED_ORIGINS="$(defa
 export OAKRIDGE_ALLOWED_ORIGINS
 
 start_managed_postgres() {
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "oakridge: Docker is required when DBOS_SYSTEM_DATABASE_URL is not set" >&2
-    echo "oakridge: start Docker, or export DBOS_SYSTEM_DATABASE_URL for an existing PostgreSQL database" >&2
-    exit 1
-  fi
-  if ! docker info >/dev/null 2>&1; then
-    echo "oakridge: Docker is installed but its daemon is not running" >&2
-    echo "oakridge: start Docker, or export DBOS_SYSTEM_DATABASE_URL for an existing PostgreSQL database" >&2
-    exit 1
-  fi
+  oakridge_check_database
 
   if docker container inspect "$POSTGRES_CONTAINER" >/dev/null 2>&1; then
     if [ "$(docker inspect -f '{{.State.Running}}' "$POSTGRES_CONTAINER")" != "true" ]; then
@@ -209,7 +205,6 @@ fi
 # DBOS_APPLICATION_VERSION is the engine digest unless the operator pins it; a git SHA
 # here would park every in-flight run on each deploy, whatever changed.
 if [ -n "${DBOS_APPLICATION_VERSION:-}" ]; then export DBOS_APPLICATION_VERSION; fi
-if [ -n "${OAKRIDGE_GITHUB_TOKEN:-}" ]; then export OAKRIDGE_GITHUB_TOKEN; fi
 
 # Provider keys belong to the observation child alone. The runners list them, so
 # DBOS and kbbl lose every one whether or not observation runs here.
@@ -416,6 +411,7 @@ exec_isolated_observation() {
 }
 
 exec_default_observation() {
+  export OBSERVATION_HOST=127.0.0.1
   export_observation_credentials
   export OAKRIDGE_CORE_BASE_URL="$DBOS_URL"
   export OAKRIDGE_CORE_CONTROL_TOKEN="${OAKRIDGE_CORE_CONTROL_TOKEN:-${OAKRIDGE_CONTROL_TOKEN:-}}"
@@ -461,8 +457,10 @@ echo "oakridge: starting DBOS backend at $DBOS_URL"
   DBOS_SYSTEM_DATABASE_URL="$DBOS_SYSTEM_DATABASE_URL" \
     OAKRIDGE_PROMPT_ROOT="${OAKRIDGE_PROMPT_ROOT:-$OAKRIDGE_ROOT}" \
     KBBL_BASE_URL="${KBBL_BASE_URL:-$KBBL_URL}" \
+    OAKRIDGE_OPERATOR_BIND_HOST="$KBBL_BIND_HOST" \
     OAKRIDGE_DBOS_HOST="$DBOS_HOST" \
     OAKRIDGE_CORE_WASM="$CORE_WASM" \
+    OAKRIDGE_PR_INTEGRATION="$PR_INTEGRATION_DEFAULT" \
     OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
     OAKRIDGE_PUBLICATION_KEY="$OAKRIDGE_PUBLICATION_KEY" \
     OAKRIDGE_AGENT_WORKDIR="$AGENT_WORKDIR" \
@@ -480,7 +478,8 @@ for name in "${provider_names[@]}"; do kbbl_unset+=(-u "$name"); done
 echo "oakridge: starting kbbl (the PWA rebuild may take a moment)"
 env "${kbbl_unset[@]}" \
   OAKRIDGE_CORE_BASE_URL="$DBOS_URL" \
-  OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
+  OAKRIDGE_PR_INTEGRATION="$PR_INTEGRATION_DEFAULT" \
+    OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
   OAKRIDGE_OBSERVATION_URL="$OBSERVATION_URL" \
   OAKRIDGE_OBSERVATION_NAMESPACE="$OBSERVATION_NAMESPACE" \
   OAKRIDGE_OBSERVATION_READ_TOKEN="$OBSERVATION_READ_TOKEN" \
