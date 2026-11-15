@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { LauncherFixture, freePorts } from "./launcher-fixture";
 let fixture: LauncherFixture;
 afterEach(async () => { await fixture?.dispose(); });
@@ -56,3 +58,28 @@ for (const insecure of [false, true]) {
       : "oakridge: access mode: local (kbbl bound to 127.0.0.1; no control token required)");
   });
 }
+const lanEnvironment = (fixture: LauncherFixture, env: Record<string, string | undefined> = {}) =>
+  ({ OAKRIDGE_DBOS_PORT: String(fixture.ports.dbos), ...env });
+test("LAN wrapper reads the control token from the checkout .env without logging it", async () => {
+  fixture = new LauncherFixture(freePorts());
+  writeFileSync(join(fixture.checkout, ".env"), "# local install\nOAKRIDGE_CONTROL_TOKEN=dotenv-token\n");
+  fixture.start({ script: "oakridge-lan", args: [`--port=${fixture.ports.kbbl}`], env: lanEnvironment(fixture) });
+  await fixture.stackServing();
+  expect(fixture.logText()).toContain("oakridge: access mode: authenticated network (kbbl bound to 0.0.0.0; OAKRIDGE_CONTROL_TOKEN is set)");
+  expect(fixture.logText()).not.toContain("dotenv-token");
+  for (const name of ["kbbl", "dbos"] as const) expect(fixture.record(name).env.OAKRIDGE_CONTROL_TOKEN).toBe("dotenv-token");
+});
+test("LAN wrapper prefers the shell control token over the checkout .env", async () => {
+  fixture = new LauncherFixture(freePorts());
+  writeFileSync(join(fixture.checkout, ".env"), "OAKRIDGE_CONTROL_TOKEN=dotenv-token\n");
+  fixture.start({ script: "oakridge-lan", args: [`--port=${fixture.ports.kbbl}`], env: lanEnvironment(fixture, { OAKRIDGE_CONTROL_TOKEN: "shell-token" }) });
+  await fixture.stackServing();
+  for (const name of ["kbbl", "dbos"] as const) expect(fixture.record(name).env.OAKRIDGE_CONTROL_TOKEN).toBe("shell-token");
+});
+test("LAN wrapper reads the insecure override from the checkout .env", async () => {
+  fixture = new LauncherFixture(freePorts());
+  writeFileSync(join(fixture.checkout, ".env"), "#OAKRIDGE_CONTROL_TOKEN=commented-out\nALLOW_INSECURE_NON_LOOPBACK_CONTROL=1\n");
+  fixture.start({ script: "oakridge-lan", args: [`--port=${fixture.ports.kbbl}`], env: lanEnvironment(fixture) });
+  await fixture.stackServing();
+  expect(fixture.logText()).toContain("oakridge: access mode: insecure network (kbbl bound to 0.0.0.0 with no control token; ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1)");
+});

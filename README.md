@@ -91,10 +91,11 @@ Loopback binds need no control token. A non-loopback bind requires
 never includes the token value.
 
 `./scripts/oakridge-lan` binds to `0.0.0.0` and no longer unsets the token.
-Set `OAKRIDGE_CONTROL_TOKEN` in the environment before the next oakridge-lan
-restart; the token is env-only and is not read from a file in the state
-directory. The wrapper preserves authenticated access, uses a loopback-only
-Bun inspector, and appends output to `~/.local/state/oakridge/run-<date>.log`.
+Set `OAKRIDGE_CONTROL_TOKEN` (or `ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1`) in the
+shell or in the checkout's root `.env` before the next oakridge-lan restart; a
+shell value wins over `.env`. Neither is read from the state directory. The
+wrapper preserves authenticated access, uses a loopback-only Bun inspector,
+and appends output to `~/.local/state/oakridge/run-<date>.log`.
 Other arguments, including `--observation`, pass through. Unless
 `OAKRIDGE_ALLOWED_ORIGINS` is set, the launcher allows browser writes from
 loopback and the addresses selected for the bind, and prints the list.

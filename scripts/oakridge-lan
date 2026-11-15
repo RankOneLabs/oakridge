@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # Starts Oakridge on all interfaces; requires OAKRIDGE_CONTROL_TOKEN, or
 # ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 for a deliberately unauthenticated LAN.
+# Either may come from the shell or the checkout's .env; the shell wins.
 # Keeps a localhost-only inspector and logs to the dated run log.
 # Pass --observation to also start the observation service; other args go to oakridge-start.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
+# Bun parses .env exactly as it will for kbbl, and never overrides a shell value.
+read_access_setting() { bun -e 'process.stdout.write(process.env[process.argv[1]] ?? "")' "$1"; }
+for setting in OAKRIDGE_CONTROL_TOKEN ALLOW_INSECURE_NON_LOOPBACK_CONTROL; do
+  value="$(read_access_setting "$setting")"
+  if [ -n "$value" ]; then export "$setting=$value"; fi
+done
 export BUN_INSPECT=127.0.0.1:0/oakinspect
 mkdir -p ~/.local/state/oakridge
 exec > >(tee -a ~/.local/state/oakridge/run-"$(date +%F)".log) 2>&1
