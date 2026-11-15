@@ -1162,7 +1162,7 @@ fn the_integration_review_and_revise_read_the_same_briefs() {
     run.request_changes(ReviewOf {
         unit,
         review: "integration_review",
-        artifact: "pr",
+        artifact: "assessment",
     });
     assert_eq!(cohort_ids(&integrator_briefs(&run, unit)), ["a1", "a2"]);
 }

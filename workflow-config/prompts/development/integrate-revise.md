@@ -1,6 +1,6 @@
 Revise this repository's integration.
 
-## Your previous integration pull request
+## Your previous integration assessment
 
 {{previous}}
 
