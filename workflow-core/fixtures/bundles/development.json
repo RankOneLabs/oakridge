@@ -914,7 +914,7 @@
       },
       "reviews": {
         "integration_review": {
-          "of": "pr",
+          "of": "assessment",
           "by": "operator",
           "prompt": "development/integration-review.md",
           "inputs": {
@@ -959,7 +959,7 @@
           }
         }
       },
-      "done_when": "published(assessment) and approved(pr) and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
+      "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
       "outcome": {
         "repository_key": "input.repository.key",
         "pr_url": "latest(pr).pr_url",

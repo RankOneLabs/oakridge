@@ -280,6 +280,45 @@ pub(super) fn is_creator_working(
             })
         })
 }
+/// Whether a worker that creates `artifact` is part-way through publishing:
+/// its open attempt has published some of the artifacts it creates but not
+/// all of them. An integrator publishes its assessment before its pull
+/// request, and the assessment must not be approved in between. An attempt
+/// that has published nothing yet leaves the previous attempt's complete
+/// output in place, and a periodic watch publishes only changed values, so
+/// neither holds a review.
+pub(super) fn is_output_in_progress(
+    definition: &CheckedStage,
+    state: &StepSnapshot,
+    unit: &UnitId,
+    artifact: &SymbolKey,
+) -> bool {
+    definition
+        .workers
+        .iter()
+        .filter(|worker| worker.creates().contains(artifact) && !is_periodic(worker))
+        .any(|worker| {
+            let Some(current) = attempt(state, unit, worker.key()).filter(|current| {
+                matches!(
+                    current.status,
+                    AttemptStatus::Pending | AttemptStatus::Running
+                )
+            }) else {
+                return false;
+            };
+            let published_count = worker
+                .creates()
+                .iter()
+                .filter(|created| {
+                    state.revisions.iter().any(|revision| {
+                        revision.by.as_ref() == Some(&current.action_id)
+                            && revision.artifact == **created
+                    })
+                })
+                .count();
+            published_count > 0 && published_count < worker.creates().len()
+        })
+}
 /// The artifacts of a stage's watches that have not observed what they
 /// watch now: a watch whose guard holds and whose inputs resolve, but whose
 /// worker's latest action is not pinned to those inputs, or has never run

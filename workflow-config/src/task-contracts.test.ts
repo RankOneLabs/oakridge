@@ -170,6 +170,6 @@ test("assessment review describes findings against build items", () => {
 test("integration review understands qualified subjects and blocks acceptance after failed validation", () => {
   const prompt = readPrompt("integration-review");
   expect(prompt).toContain("task ids or cohort-qualified build_item ids");
-  expect(prompt).toContain("Do not accept the PR while the latest integration assessment has failed validation.");
+  expect(prompt).toContain("Do not accept the integration assessment while it has failed validation.");
   expect(prompt).not.toContain("task_ids");
 });

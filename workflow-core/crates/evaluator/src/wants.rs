@@ -250,11 +250,12 @@ pub(super) fn operator_review_is_open(
     holds(when, unit, &without_stale_evidence, context)
 }
 
-/// An operator may review a review-worker's output only after the worker has
-/// finished and the output still describes the latest subject revision.
-/// A request for changes on the subject can start its replacement while the
-/// previous assessment remains published; that assessment must not be
-/// approved during the replacement.
+/// An operator may review an artifact only once the attempt producing it has
+/// finished, so a worker that publishes several artifacts cannot have the
+/// first approved before the rest exist. A review-worker's output must also
+/// still describe the latest subject revision: a request for changes on the
+/// subject can start its replacement while the previous assessment remains
+/// published, and that assessment must not be approved during the replacement.
 pub(super) fn reviewed_output_is_current(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
@@ -262,6 +263,9 @@ pub(super) fn reviewed_output_is_current(
     artifact: &SymbolKey,
 ) -> Result<bool, StepError> {
     let stage = checked_stage(program, unit)?;
+    if is_output_in_progress(stage, state, &unit.id, artifact) {
+        return Ok(false);
+    }
     for worker in &stage.workers {
         let CheckedWorker::Agent {
             creates,
