@@ -1,3 +1,5 @@
+import { EditableBriefText } from "../organisms/EditableBriefText";
+import { TaskEditControls } from "../organisms/TaskEditControls";
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -19,7 +21,7 @@ describe("TasksViewer", () => {
   });
 
   test("renders each task and keeps an empty requirement list unlinked", () => {
-    render(<TasksViewer body={body} />);
+    render(<TasksViewer renderEditableText={(props) => <EditableBriefText {...props} />} renderTaskEditControls={(props) => <TaskEditControls {...props} />} body={body} />);
     expect(screen.getByText("task-a")).toBeTruthy();
     expect(screen.getByText("Build the viewer.")).toBeTruthy();
     expect(screen.getByText("req-a")).toBeTruthy();
@@ -29,13 +31,13 @@ describe("TasksViewer", () => {
   });
 
   test("hides the edit toggle when editing is disabled", () => {
-    render(<TasksViewer body={body} edit={{ enabled: false, isPending: false, onEdit: vi.fn() }} />);
+    render(<TasksViewer renderEditableText={(props) => <EditableBriefText {...props} />} renderTaskEditControls={(props) => <TaskEditControls {...props} />} body={body} edit={{ enabled: false, isPending: false, onEdit: vi.fn() }} />);
     expect(screen.queryByRole("button", { name: "Edit tasks" })).toBeNull();
   });
 
   test("edits a task atom through its JSON pointer", () => {
     const onEdit = vi.fn().mockResolvedValue({ ok: true, value: undefined });
-    render(<TasksViewer body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
+    render(<TasksViewer renderEditableText={(props) => <EditableBriefText {...props} />} renderTaskEditControls={(props) => <TaskEditControls {...props} />} body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks/0/description" }));
     const input = screen.getByDisplayValue("Build the viewer.");
@@ -46,7 +48,7 @@ describe("TasksViewer", () => {
 
   test("adds a requirement link to an unlinked task", () => {
     const onEdit = vi.fn().mockResolvedValue({ ok: true, value: undefined });
-    render(<TasksViewer body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
+    render(<TasksViewer renderEditableText={(props) => <EditableBriefText {...props} />} renderTaskEditControls={(props) => <TaskEditControls {...props} />} body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Add link" })[1]!);
     fireEvent.change(screen.getByRole("textbox", { name: "New requirement ID" }), { target: { value: "req-b" } });
@@ -54,8 +56,19 @@ describe("TasksViewer", () => {
     expect(onEdit).toHaveBeenCalledWith("/tasks/1/requirement_ids", [], ["req-b"]);
   });
 
+  test("adds a trimmed requirement link with Enter", () => {
+    const onEdit = vi.fn();
+    render(<TasksViewer renderTaskEditControls={(props) => <TaskEditControls {...props} />} body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Add link" })[1]!);
+    const input = screen.getByRole("textbox", { name: "New requirement ID" });
+    fireEvent.change(input, { target: { value: " req-b " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).toHaveBeenCalledWith("/tasks/1/requirement_ids", [], ["req-b"]);
+  });
+
   test("shows a pending save while editing", () => {
-    render(<TasksViewer body={body} edit={{ enabled: true, isPending: true, onEdit: vi.fn() }} />);
+    render(<TasksViewer renderEditableText={(props) => <EditableBriefText {...props} />} renderTaskEditControls={(props) => <TaskEditControls {...props} />} body={body} edit={{ enabled: true, isPending: true, onEdit: vi.fn() }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
     expect(screen.getByText("Saving…")).toBeTruthy();
   });

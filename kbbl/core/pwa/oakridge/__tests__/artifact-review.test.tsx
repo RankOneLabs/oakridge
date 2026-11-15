@@ -1,3 +1,4 @@
+import { EditableBriefText } from "../components/organisms/EditableBriefText";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -225,7 +226,7 @@ describe("assessment builder handoff inside the review", () => {
 describe("task edit refusal", () => {
   it("shows a refused task draft to the operator", async () => {
     const onEdit = vi.fn().mockResolvedValue({ ok: false, error: "409 task revision changed" });
-    render(<TasksViewer body={{ tasks: [{ id: "task-a", description: "Build the viewer.", requirement_ids: [] }] }}
+    render(<TasksViewer renderEditableText={(props) => <EditableBriefText {...props} />} body={{ tasks: [{ id: "task-a", description: "Build the viewer.", requirement_ids: [] }] }}
       edit={{ enabled: true, isPending: false, onEdit }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks/0/description" }));

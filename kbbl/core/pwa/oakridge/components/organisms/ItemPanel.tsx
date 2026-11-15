@@ -1,3 +1,4 @@
+import { EvaluatorDefinition } from "./EvaluatorDefinition";
 import { ItemTaskAssociations } from "./ItemTaskAssociations";
 import { usePinnedQuestionPage } from "../../hooks/usePinnedQuestionPage";
 import type { ObservationQuestionKey } from "../../grading-contracts/grading/question";
@@ -118,7 +119,7 @@ export function ItemPanel({ runId, selection, questionTarget, subjectOccurrenceI
               : <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => reveal(key)} data-testid="or-item-reveal">Reveal other answers</Button>}
           </div>
           {isRevealed
-            ? <ItemAnswers question={question} onWindow={setWindow} />
+            ? <ItemAnswers renderEvaluator={(id) => <EvaluatorDefinition evaluatorId={id} />} question={question} onWindow={setWindow} />
             : <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-item-answers-hidden">Other answers are hidden.</p>}
           <FrozenEvidenceList evidence={question.evidence} onWindow={(window) => setWindow("references", window)} />
         </>

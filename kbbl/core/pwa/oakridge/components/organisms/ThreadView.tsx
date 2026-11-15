@@ -1,6 +1,6 @@
-import { Button } from "../../components/atoms/Button";
+import { Button } from "../../../components/atoms/Button";
 import { useState } from "react";
-import type { Thread, Message } from "./types";
+import type { Thread, Message } from "../../lib/thread-types";
 
 interface ThreadViewProps {
   thread: Thread;

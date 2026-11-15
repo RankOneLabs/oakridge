@@ -11,9 +11,9 @@ import { composeHandoffText, hasHandoffItem, NO_REVIEW_REASON, selectHandoffItem
 import { useRunSentFeedback } from "../../hooks/useRunSentFeedback";
 import type { EditOutcome } from "../../lib/edit-outcome";
 import type { ParkedGate } from "../../artifact-types";
-import { AddNextAction } from "../molecules/AddNextAction";
+import { AddNextAction } from "./AddNextAction";
 import { ArtifactSection } from "../molecules/ArtifactSection";
-import { EditableBriefText } from "../molecules/EditableBriefText";
+import { EditableBriefText } from "./EditableBriefText";
 import { SendToBuilder } from "./SendToBuilder";
 
 interface Props {

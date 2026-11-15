@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useGradingNavigationGuard } from "../../hooks/useGradingNavigationGuard";
 import { Button } from "../../../components/atoms/Button";
-import { GradingDefinitionEditor } from "./GradingDefinitionEditor";
+import { GradingDefinitionEditor } from "../molecules/GradingDefinitionEditor";
 import { GradingJsonField } from "../molecules/GradingConfigFields";
 import { GradingConfigFeedback } from "../molecules/GradingConfigFeedback";
 import { GradingConfigDiff, GradingConfigSummary } from "../molecules/GradingConfigSummary";

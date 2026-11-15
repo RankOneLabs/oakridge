@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import { Button } from "../../../components/atoms/Button";
-import type { ArtifactId, Sid } from "../../../lib/ids";
+import type { ArtifactId } from "../../../lib/ids";
 import type { RunArtifactRef, RunSidebarSessionsView } from "../../lib/run-overview";
 import { selectFilteredRunArtifacts, type RunArtifactFilter } from "../../lib/artifact-filter";
 import {
@@ -14,10 +14,11 @@ import {
   type RunWorkspaceSlot,
   type RunWorkspaceState,
 } from "../../lib/run-workspace";
-import { RunSidebarArtifacts } from "../molecules/RunSidebarArtifacts";
-import { RunSidebarSessions } from "../molecules/RunSidebarSessions";
+import { RunSidebarArtifacts } from "./RunSidebarArtifacts";
+import { RunSidebarSessions } from "./RunSidebarSessions";
 
 interface RunWorkspaceSidebarProps {
+  renderRow: ComponentProps<typeof RunSidebarSessions>["renderRow"];
   isOpen: boolean;
   workspace: RunWorkspaceState;
   sessions: RunSidebarSessionsView;
@@ -42,12 +43,13 @@ const PANE_SHORTCUTS: readonly PaneShortcut[] = [
  * The run's persistent navigation: the two run-derived panes, then every
  * session and every artifact.
  *
- * Filed under organisms/ as the cohort decided, though it neither fetches nor
+ * Neither fetches nor
  * owns domain state — rows arrive derived and the workspace state is the pane
  * host's. Hiding it below the breakpoint is a CSS concern; `isOpen` only marks
  * which state the toggle is in.
  */
 export function RunWorkspaceSidebar({
+  renderRow,
   isOpen,
   workspace,
   sessions,
@@ -58,8 +60,6 @@ export function RunWorkspaceSidebar({
   const [artifactFilter, setArtifactFilter] = useState<RunArtifactFilter>("all");
   const open = selectOpenEntityIds(workspace);
   const visibleArtifacts = selectFilteredRunArtifacts(artifacts, artifactFilter);
-  const openSession = (sessionId: Sid, slot: RunWorkspaceSlot) =>
-    onOpenPane({ kind: "session", session_id: sessionId }, slot);
   const openArtifact = (artifactId: ArtifactId, slot: RunWorkspaceSlot) =>
     onOpenPane({ kind: "artifact", artifact_id: artifactId }, slot);
 
@@ -116,7 +116,7 @@ export function RunWorkspaceSidebar({
         isActionStateKnown={sessions.is_action_state_known}
         isSessionListKnown={sessions.is_session_list_known}
         openSessionIds={open.session_ids}
-        onOpen={openSession}
+        renderRow={renderRow}
       />
       <RunSidebarArtifacts rows={visibleArtifacts} totalCount={artifacts.length} filter={artifactFilter}
         onFilterChange={setArtifactFilter}

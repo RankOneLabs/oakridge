@@ -11,16 +11,16 @@ import {
   selectOperatorExecutionState,
 } from "../lib/operator-state";
 
-import { SessionTopBar } from "../components/organisms/SessionTopBar";
-import { SessionTimeline } from "../components/organisms/SessionTimeline";
+import { SessionTopBar } from "../components/molecules/SessionTopBar";
+import { SessionTimeline } from "../components/molecules/SessionTimeline";
 import { SessionConfigBar } from "../components/organisms/SessionConfigBar";
 import { InputBox } from "../components/organisms/InputBox";
-import { PendingUserBubble } from "../components/molecules/PendingUserBubble";
+import { PendingUserBubbleEntry } from "../components/organisms/PendingUserBubbleEntry";
 import { AgentMessage } from "../components/molecules/AgentMessage";
 import { EndedBanner } from "../components/organisms/EndedBanner";
 import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
 import { SkillRail } from "../components/organisms/SkillRail";
-import { permissionCardAnchorId } from "../components/organisms/PermissionCard";
+import { PermissionCard, permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import { readHashPermissionTarget, readHashSessionTarget } from "../lib/hash";
 import {
   DOCUMENT_SESSION_SURFACE_LAYOUT,
@@ -190,12 +190,13 @@ export function SessionView({
             </div>
           )}
           <SessionTimeline
+            renderPermission={(item) => <PermissionCard key={item.key} sid={sid} requestId={item.requestId} title={item.title} options={item.options} resolution={item.resolution} sessionClosed={sessionClosed} />}
             sid={sid}
             items={projection.items}
             sessionClosed={sessionClosed}
           />
           {pendingSends.map((m) => (
-            <PendingUserBubble
+            <PendingUserBubbleEntry
               key={m.clientMessageId}
               text={m.text}
               sentAt={m.sentAt}
