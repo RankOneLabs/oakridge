@@ -1,3 +1,4 @@
+import { Button } from "../atoms/Button";
 import { useState } from "react";
 
 import type { UiPermissionOption } from "../../types";
@@ -74,7 +75,7 @@ export function PermissionCard({
       {error && <div className="card-error">error: {error}</div>}
       <div className="card-permission-buttons">
         {options.map((option) => (
-          <button
+          <Button variant="session"
             key={option.optionId}
             type="button"
             className={
@@ -86,7 +87,7 @@ export function PermissionCard({
             onClick={() => void choose(option.optionId)}
           >
             {option.name}
-          </button>
+          </Button>
         ))}
       </div>
     </div>

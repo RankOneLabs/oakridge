@@ -1,3 +1,4 @@
+import { Button } from "./Button";
 import type { Toast } from "../../hooks/useToast";
 
 interface Props {
@@ -13,14 +14,14 @@ export function ToastItem({ toast, onDismiss }: Props) {
       ) : (
         <a className="toast-item__link" href={toast.href}>{toast.message}</a>
       )}
-      <button
+      <Button variant="session"
         type="button"
         className="toast-item__dismiss"
         onClick={() => onDismiss(toast.id)}
         aria-label="Dismiss"
       >
         ✕
-      </button>
+      </Button>
     </div>
   );
 }

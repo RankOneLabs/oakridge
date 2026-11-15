@@ -1,9 +1,9 @@
+import { TextInput } from "../../../components/atoms/TextInput";
+import { TextArea } from "../../../components/atoms/TextArea";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import type { ViewerProps } from "../../artifactRegistry";
-
-const fieldClass = "w-full rounded-md border border-[var(--accent-primary)] bg-[var(--bg-surface)] px-2.5 py-2 text-sm! text-[var(--text-primary)]";
 
 interface Props {
   anchor: string;
@@ -46,10 +46,10 @@ export function EditableBriefText({ anchor, value, edit, isMultiline = false }: 
     else setError(outcome.error);
   };
   const field = isMultiline ? (
-    <textarea ref={fitToContent} className={`${fieldClass} min-h-32 resize-y`} value={draft} disabled={edit.isPending}
+    <TextArea ref={fitToContent} variant="editing" className="min-h-32 resize-y" value={draft} disabled={edit.isPending}
       onChange={(event) => { setDraft(event.target.value); fitToContent(event.target); }} onBlur={() => void commit()} autoFocus />
   ) : (
-    <input className={fieldClass} value={draft} disabled={edit.isPending} onChange={(event) => setDraft(event.target.value)} onBlur={() => void commit()} autoFocus />
+    <TextInput variant="editing" value={draft} disabled={edit.isPending} onChange={(event) => setDraft(event.target.value)} onBlur={() => void commit()} autoFocus />
   );
   return error === null ? field : (
     <div className="flex flex-col gap-1">

@@ -1,3 +1,4 @@
+import { TextInput } from "../../../components/atoms/TextInput";
 import { useState } from "react";
 import type { ReviewItem } from "../../collab-types";
 import { Button } from "../../../components/atoms/Button";
@@ -11,7 +12,7 @@ export function ReviewItemResolution({ item, onResolve, onWaive }: ReviewItemRes
   const [resolution, setResolution] = useState("");
   return (
         <div className="or-review-item__actions">
-          <input
+          <TextInput
             type="text"
             aria-label="Resolution note"
             className="or-input or-review-item__resolution-input"

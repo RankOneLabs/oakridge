@@ -1,9 +1,8 @@
+import { TextArea } from "../../../components/atoms/TextArea";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import type { EditOutcome } from "../../lib/edit-outcome";
-
-const fieldClass = "w-full min-h-24 resize-y rounded-md border border-[var(--accent-primary)] bg-[var(--bg-surface)] px-2.5 py-2 text-sm! text-[var(--text-primary)]";
 
 interface Props {
   isPending: boolean;
@@ -29,7 +28,7 @@ export function AddNextAction({ isPending, onAdd }: Props) {
   };
   return (
     <div className="flex flex-col gap-2">
-      <textarea className={fieldClass} aria-label="New recommended next action" value={draft} disabled={isPending}
+      <TextArea variant="editing" className="min-h-24 resize-y" aria-label="New recommended next action" value={draft} disabled={isPending}
         onChange={(event) => setDraft(event.target.value)} autoFocus />
       {error !== null && <FeedbackMessage tone="danger">Not saved: {error}</FeedbackMessage>}
       <div className="flex gap-2">

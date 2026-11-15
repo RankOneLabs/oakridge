@@ -1,3 +1,5 @@
+import { TextArea } from "../atoms/TextArea";
+import { Button } from "../atoms/Button";
 import { useState, type ReactNode, type Ref } from "react";
 import { useMutation } from "@tanstack/react-query";
 
@@ -15,6 +17,14 @@ class ServerRejection extends Error {
     super(message);
     this.name = "ServerRejection";
   }
+}
+
+/** Fit the composer to its draft; CSS caps its height and keeps overflow scrollable. */
+function fitToContent(field: HTMLTextAreaElement | null): void {
+  if (!field) return;
+  field.style.height = "auto";
+  const borderHeight = field.offsetHeight - field.clientHeight;
+  field.style.height = `${field.scrollHeight + borderHeight}px`;
 }
 
 export function InputBox({
@@ -152,7 +162,7 @@ export function InputBox({
       <div className="input-bar-row">
         {tools}
         {isTurnActive && (
-          <button
+          <Button variant="session"
             type="button"
             className="btn-interrupt"
             onClick={() => void interrupt()}
@@ -161,9 +171,10 @@ export function InputBox({
             title="Interrupt the current turn. The session stays live so you can redirect it with another message."
           >
             {interruptMutation.isPending ? "interrupting…" : "Interrupt"}
-          </button>
+          </Button>
         )}
-        <textarea
+        <TextArea
+          ref={(field) => fitToContent(field)}
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="message agent…"
@@ -176,13 +187,13 @@ export function InputBox({
             }
           }}
         />
-        <button
+        <Button variant="session"
           type="button"
           onClick={() => void send()}
           disabled={sendMutation.isPending || text.trim().length === 0}
         >
           Send
-        </button>
+        </Button>
       </div>
       <span className="input-hint">
         Enter to send · Shift+Enter for newline

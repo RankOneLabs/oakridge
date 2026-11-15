@@ -1,3 +1,6 @@
+import { Checkbox } from "../atoms/Checkbox";
+import { TextInput } from "../atoms/TextInput";
+import { Button } from "../atoms/Button";
 import { useEffect, useState } from "react";
 import type { Skill } from "../../../runtime-interface";
 
@@ -48,14 +51,14 @@ export function ArgSheet({
       >
         <div className="arg-sheet__header">
           <span id={titleId} className="arg-sheet__title">{skill.name}</span>
-          <button
+          <Button variant="session"
             type="button"
             className="arg-sheet__close"
             onClick={onCancel}
             aria-label="Cancel"
           >
             ✕
-          </button>
+          </Button>
         </div>
         <div className="arg-sheet__fields">
           {skill.args.map((spec) => {
@@ -69,7 +72,7 @@ export function ArgSheet({
               >
                 <label className="arg-sheet__label" htmlFor={`arg-${spec.key}`}>
                   {isBoolean && (
-                    <input
+                    <Checkbox
                       id={`arg-${spec.key}`}
                       type="checkbox"
                       className="arg-sheet__checkbox"
@@ -88,9 +91,11 @@ export function ArgSheet({
                   )}
                 </label>
                 {!isBoolean && (
-                  <input
+                  <TextInput
                     id={`arg-${spec.key}`}
-                    type={spec.kind === "integer" ? "number" : "text"}
+                    type="text"
+                    inputMode={spec.kind === "integer" ? "numeric" : undefined}
+                    pattern={spec.kind === "integer" ? "-?[0-9]+" : undefined}
                     step={spec.kind === "integer" ? 1 : undefined}
                     className="arg-sheet__input"
                     value={args[spec.key] ?? ""}
@@ -104,9 +109,9 @@ export function ArgSheet({
             );
           })}
         </div>
-        <button type="submit" className="arg-sheet__submit" disabled={!canSubmit}>
+        <Button variant="session" type="submit" className="arg-sheet__submit" disabled={!canSubmit}>
           Run
-        </button>
+        </Button>
       </form>
     </div>
   );

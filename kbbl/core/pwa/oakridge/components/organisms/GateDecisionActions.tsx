@@ -1,3 +1,4 @@
+import { TextArea } from "../../../components/atoms/TextArea";
 import { useEffect, useRef, useState } from "react";
 
 import { useResumeGate } from "../../hooks/useResumeGate";
@@ -183,7 +184,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
       {feedbackAction && !disabled && (
         <div className="or-decision-feedback" data-testid="or-decision-feedback">
           <label htmlFor={`or-decision-feedback-${gate.id}`}>What needs to change?</label>
-          <textarea
+          <TextArea
             id={`or-decision-feedback-${gate.id}`}
             value={feedback}
             onChange={(event) => setFeedback(event.target.value)}

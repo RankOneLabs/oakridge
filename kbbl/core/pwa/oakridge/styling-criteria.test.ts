@@ -19,10 +19,18 @@ const shellFiles = sourceFiles.filter((file) => {
 });
 
 describe("Oakridge styling criteria", () => {
-  it("renders raw buttons only in the Button atom", () => {
-    const offenders = shellFiles.filter((file) => /<button\b/.test(fs.readFileSync(file, "utf8")));
-    expect(offenders.map((file) => path.relative(PWA_DIR, file))).toEqual([]);
-  });
+  for (const [element, allowed] of [
+    ["button", ["Button"]],
+    ["input", ["TextInput", "Checkbox"]],
+    ["select", ["Select"]],
+    ["textarea", ["TextArea"]],
+  ] as const) {
+    it(`renders raw ${element} only in its atom`, () => {
+      const allowedFiles = allowed.map((name) => path.join(PWA_DIR, "components", "atoms", `${name}.tsx`));
+      const offenders = sourceFiles.filter((file) => !allowedFiles.includes(file) && new RegExp(`<${element}\\b`).test(fs.readFileSync(file, "utf8")));
+      expect(offenders.map((file) => path.relative(PWA_DIR, file))).toEqual([]);
+    });
+  }
 
   it("does not emit retired Oakridge button and chip classes", () => {
     const legacyClass = /(?:className|class)\s*=\s*(?:["'`]|\{)[^\n]*(?:or-btn|or-chip|or-decision-button|or-secondary-button|or-link)\b/;
@@ -37,7 +45,7 @@ describe("Oakridge styling criteria", () => {
   });
 
   it("defines exactly one of each shared atom", () => {
-    for (const name of ["Button", "Chip", "FeedbackMessage", "StatusBadge"]) {
+    for (const name of ["Button", "Chip", "FeedbackMessage", "StatusBadge", "TextInput", "TextArea", "Select", "Checkbox"]) {
       const definition = new RegExp(`export (?:function|const) ${name}\\b`);
       const definitions = sourceFiles.filter((file) => definition.test(fs.readFileSync(file, "utf8")));
       expect(definitions.map((file) => path.relative(PWA_DIR, file))).toHaveLength(1);

@@ -1,3 +1,4 @@
+import { TextArea } from "../../../components/atoms/TextArea";
 import { Button } from "../../../components/atoms/Button";
 import { useState } from "react";
 import type { Thread, Message } from "../../lib/thread-types";
@@ -77,7 +78,7 @@ export function ThreadView({
 
       {isOpen && !frozen && (
         <div className="thread-view__compose">
-          <textarea
+          <TextArea
             value={reply}
             onChange={(e) => setReply(e.target.value)}
             placeholder="Reply…"
