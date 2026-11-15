@@ -1,6 +1,6 @@
 import { selectEffectiveDefinitionSelection } from "../../lib/definition-selection";
 import { useDefinitionAnchors } from "../../hooks/useDefinitionAnchors";
-import { StageInspector } from "./StageInspector";
+import { StageInspector } from "../molecules/StageInspector";
 import { useWorkflowDef } from "../../hooks/useWorkflowDef";
 import { Button } from "../../../components/atoms/Button";
 import type { DefinitionSelection } from "../../../lib/hash";

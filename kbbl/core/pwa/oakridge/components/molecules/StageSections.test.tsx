@@ -2,7 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import fixture from "../../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
-import { StageInspector } from "../organisms/StageInspector";
+import { StageInspector } from "./StageInspector";
 import { selectStageInspector } from "../../lib/stage-inspector";
 import { StageCompletionSection } from "./StageCompletionSection";
 const detail = fixture.definition as unknown as OperatorDefinitionDetail;

@@ -1,8 +1,8 @@
 import type { ObservationJsonValue as Json } from "../../grading-contracts/domain/primitives";
 import type { ObservationConfigurationIssue } from "../../grading-contracts/grading/configuration";
-import type { GradingSectionProps } from "../molecules/GradingConfigSections";
-import { GradingConfigEvidence, GradingConfigEvaluators, GradingConfigQuestion, GradingConfigTargets } from "../molecules/GradingConfigSections";
-import { GradingTextField } from "../molecules/GradingConfigFields";
+import type { GradingSectionProps } from "./GradingConfigSections";
+import { GradingConfigEvidence, GradingConfigEvaluators, GradingConfigQuestion, GradingConfigTargets } from "./GradingConfigSections";
+import { GradingTextField } from "./GradingConfigFields";
 import { definitionIssues, jsonObject, sectionIssues } from "../../lib/grading-config";
 interface GradingDefinitionEditorProps extends GradingSectionProps {
   readonly index: number;

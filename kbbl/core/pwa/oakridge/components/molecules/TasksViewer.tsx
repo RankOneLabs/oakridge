@@ -4,30 +4,21 @@ import { Chip } from "../../../components/atoms/Chip";
 import type { ViewerProps } from "../../artifactRegistry";
 import { parseTasks, type Task } from "../../lib/tasks";
 import { ArtifactSection } from "./ArtifactSection";
-import { EditableBriefText } from "./EditableBriefText";
 import { ExpandableText } from "./ExpandableText";
 import { ArtifactItemGrade } from "./ArtifactItemGrade";
 import { selectFindingSelections } from "../../lib/grading";
 
 type Editor = NonNullable<ViewerProps["edit"]> | null;
 
-function TaskText({ anchor, value, editor, isProse = false }: { anchor: string; value: string; editor: Editor; isProse?: boolean }) {
-  if (editor) return <EditableBriefText anchor={anchor} value={value} edit={editor} isMultiline={isProse} />;
+function TaskText({ anchor, value, editor, renderEditableText, isProse = false }: { anchor: string; value: string; editor: Editor; renderEditableText?: ViewerProps["renderEditableText"]; isProse?: boolean }) {
+  if (editor && renderEditableText) return renderEditableText({ anchor, value, edit: editor, isMultiline: isProse });
   return isProse
     ? <ExpandableText text={value} className="text-sm text-[var(--text-secondary)]" />
     : <code className="or-code">{value}</code>;
 }
 
-function RequirementLinks({ task, anchor, editor }: { task: Task; anchor: string; editor: Editor }) {
-  const [isAdding, setIsAdding] = useState(false);
-  const [draft, setDraft] = useState("");
+function RequirementLinks({ task, anchor, editor, renderEditableText, renderTaskEditControls }: { task: Task; anchor: string; editor: Editor; renderEditableText?: ViewerProps["renderEditableText"]; renderTaskEditControls?: ViewerProps["renderTaskEditControls"] }) {
   const listAnchor = `${anchor}/requirement_ids`;
-  const add = () => {
-    const id = draft.trim();
-    if (id) editor?.onEdit(listAnchor, task.requirement_ids, [...task.requirement_ids, id]);
-    setDraft("");
-    setIsAdding(false);
-  };
 
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="or-task-requirements">
@@ -35,24 +26,17 @@ function RequirementLinks({ task, anchor, editor }: { task: Task; anchor: string
       {task.requirement_ids.length === 0 && <Chip tone="muted">Unlinked</Chip>}
       {task.requirement_ids.map((id, index) => (
         <span key={`${index}-${id}`} className="inline-flex items-center gap-1">
-          <TaskText anchor={`${listAnchor}/${index}`} value={id} editor={editor} />
+          <TaskText renderEditableText={renderEditableText} anchor={`${listAnchor}/${index}`} value={id} editor={editor} />
           {editor && <Button variant="secondary" size="xsmall" aria-label={`Remove requirement ${id}`} disabled={editor.isPending}
             onClick={() => editor.onEdit(listAnchor, task.requirement_ids, task.requirement_ids.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button>}
         </span>
       ))}
-      {editor && (isAdding
-        ? <span className="inline-flex items-center gap-1">
-          <input aria-label="New requirement ID" className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1 text-sm" value={draft}
-            disabled={editor.isPending} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") add(); }} />
-          <Button variant="secondary" size="xsmall" disabled={editor.isPending || !draft.trim()} onClick={add}>Save link</Button>
-          <Button variant="secondary" size="xsmall" onClick={() => setIsAdding(false)}>Cancel</Button>
-        </span>
-        : <Button variant="secondary" size="xsmall" disabled={editor.isPending} onClick={() => setIsAdding(true)}>Add link</Button>)}
+      {editor && renderTaskEditControls?.({ task, anchor, edit: editor })}
     </div>
   );
 }
 
-export function TasksViewer({ body, edit, source, onOpenItem, itemGrading }: ViewerProps) {
+export function TasksViewer({ body, edit, renderEditableText, renderTaskEditControls, source, onOpenItem, itemGrading }: ViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
   const parsed = parseTasks(body);
   if (!parsed.ok) {
@@ -78,11 +62,11 @@ export function TasksViewer({ body, edit, source, onOpenItem, itemGrading }: Vie
           : <ol className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
             {parsed.value.tasks.map((task, index) => <li key={`${index}-${task.id}`} className="flex flex-col gap-2 py-3">
               <div className="flex items-center justify-between gap-2">
-                <TaskText anchor={`/tasks/${index}/id`} value={task.id} editor={editor} />
+                <TaskText renderEditableText={renderEditableText} anchor={`/tasks/${index}/id`} value={task.id} editor={editor} />
                 <ArtifactItemGrade source={source} itemPath={`/tasks/${index}`} itemGrading={itemGrading} onOpenItem={onOpenItem} />
               </div>
-              <TaskText anchor={`/tasks/${index}/description`} value={task.description} editor={editor} isProse />
-              <RequirementLinks task={task} anchor={`/tasks/${index}`} editor={editor} />
+              <TaskText renderEditableText={renderEditableText} anchor={`/tasks/${index}/description`} value={task.description} editor={editor} isProse />
+              <RequirementLinks renderEditableText={renderEditableText} renderTaskEditControls={renderTaskEditControls} task={task} anchor={`/tasks/${index}`} editor={editor} />
             </li>)}
           </ol>}
       </ArtifactSection>

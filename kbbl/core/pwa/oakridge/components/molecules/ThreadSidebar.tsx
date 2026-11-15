@@ -1,5 +1,5 @@
-import { Button } from "../../components/atoms/Button";
-import type { Thread } from "./types";
+import { Button } from "../../../components/atoms/Button";
+import type { Thread } from "../../lib/thread-types";
 
 interface ThreadSidebarProps {
   threads: Thread[];

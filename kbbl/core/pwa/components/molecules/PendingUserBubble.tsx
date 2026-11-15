@@ -3,11 +3,13 @@ import { useState, useEffect } from "react";
 import { MessageTimestamp } from "../atoms/MessageTimestamp";
 
 export function PendingUserBubble({
+  relativeText,
   text,
   sentAt,
   isLatest,
   status,
 }: {
+  relativeText: string;
   text: string;
   sentAt: number;
   isLatest: boolean;
@@ -32,7 +34,7 @@ export function PendingUserBubble({
     <>
       {isLatest && (
         <div className="row row-user">
-          <MessageTimestamp iso={new Date(sentAt).toISOString()} />
+          <MessageTimestamp relativeText={relativeText} iso={new Date(sentAt).toISOString()} />
         </div>
       )}
       <div className="row row-user">
