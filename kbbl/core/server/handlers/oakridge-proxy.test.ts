@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./oakridge-proxy";
 import { HTTP_ROUTES } from "../../../../oakridge-dbos/src/http/routes";
 import { browserWriteMiddleware, browserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
-import { controlTokenMiddleware } from "../../../../oakridge-dbos/src/http/control-auth";
+import { controlTokenMiddleware, operatorCredentialCheck } from "../../../../oakridge-dbos/src/http/control-auth";
 import sample from "../../pwa/oakridge/__fixtures__/v2-adapter-sample.json";
 
 const originalFetch = globalThis.fetch;
@@ -232,6 +232,56 @@ describe("oakridge proxy", () => {
       (await app.request("/oakridge/api/health")).status,
     ];
     expect({ statuses, forwarded }).toEqual({ statuses: [401, 401, 200], forwarded: [null] });
+  });
+
+  // The publish route is session-authority, so the PWA's operator edit used to
+  // reach the backend with no credential and was refused once a token was set.
+  describe("an operator artifact edit through the proxy", () => {
+    const publishPath = "/oakridge/api/api/runs/run-1/units/unit-1/artifacts/assessment";
+    const origin = "https://operator.example";
+    function proxyAcceptedBy(backend: (request: Request) => boolean, deps: { browserControlToken?: string; coreControlToken?: string }) {
+      const accepted: boolean[] = [];
+      globalThis.fetch = (async (input, init) => {
+        accepted.push(backend(new Request(String(input), { method: init?.method, headers: init?.headers })));
+        return Response.json({ ok: true });
+      }) as typeof fetch;
+      const app = new Hono();
+      mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", allowedOrigins: [origin], ...deps });
+      return { app, accepted };
+    }
+    const edit = (headers: Record<string, string>) => ({ method: "PUT", body: "{}",
+      headers: { "content-type": "application/json", origin, ...headers } });
+
+    test("with a control token, a cookie-authenticated edit reaches the backend as the operator", async () => {
+      const { app, accepted } = proxyAcceptedBy(operatorCredentialCheck("core-secret", browserWritePolicy([origin])),
+        { browserControlToken: "kbbl-token", coreControlToken: "core-secret" });
+      const response = await app.request(publishPath, edit({ cookie: "kbbl_ctrl=kbbl-token", "x-oakridge-publisher": "operator" }));
+      expect({ status: response.status, accepted }).toEqual({ status: 200, accepted: [true] });
+    });
+
+    test("with a control token, an operator edit without kbbl's credential is refused before the backend", async () => {
+      const { app, accepted } = proxyAcceptedBy(operatorCredentialCheck("core-secret"), { browserControlToken: "kbbl-token", coreControlToken: "core-secret" });
+      const response = await app.request(publishPath, edit({ "x-oakridge-publisher": "operator" }));
+      expect({ status: response.status, accepted }).toEqual({ status: 401, accepted: [] });
+    });
+
+    test("without a control token, the edit still reaches the loopback backend as the operator", async () => {
+      const { app, accepted } = proxyAcceptedBy(operatorCredentialCheck(null), {});
+      const response = await app.request(publishPath, edit({ "x-oakridge-publisher": "operator" }));
+      expect({ status: response.status, accepted }).toEqual({ status: 200, accepted: [true] });
+    });
+
+    test("a publish that does not claim the operator gets no core token", async () => {
+      const forwarded: (string | null)[] = [];
+      globalThis.fetch = (async (_input, init) => {
+        forwarded.push((init?.headers as Headers).get("authorization"));
+        return Response.json({ ok: true });
+      }) as typeof fetch;
+      const app = new Hono();
+      mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", allowedOrigins: [origin], browserControlToken: "kbbl-token", coreControlToken: "core-secret" });
+      await app.request(publishPath, edit({ cookie: "kbbl_ctrl=kbbl-token" }));
+      expect(forwarded).toEqual([null]);
+    });
   });
 
   test("table operator routes forward the supplied control token", async () => {
