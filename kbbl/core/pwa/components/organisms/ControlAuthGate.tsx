@@ -1,3 +1,4 @@
+import { TextInput } from "../atoms/TextInput";
 import { useState, type ReactNode } from "react";
 import { useControlAuth } from "../../hooks/useControlAuth";
 import { selectIsSignInRequired, selectSignInFailureText } from "../../lib/control-auth";
@@ -33,8 +34,8 @@ export function ControlAuthGate({ children }: ControlAuthGateProps) {
         event.preventDefault();
         if (token.trim() !== "") auth.signIn(token.trim());
       }}>
-        <input type="password" autoComplete="current-password" aria-label="Control token" value={token} disabled={auth.is_signing_in}
-          className="rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)]"
+        <TextInput type="password" autoComplete="current-password" aria-label="Control token" value={token} disabled={auth.is_signing_in}
+          className="rounded-md! border! border-[var(--border-muted)]! bg-[var(--bg-surface)]! px-3! py-2! text-sm! text-[var(--text-primary)]!"
           onChange={(event) => setToken(event.target.value)} />
         <Button type="submit" variant="primary" size="medium" disabled={auth.is_signing_in || token.trim() === ""}>Sign in</Button>
       </form>

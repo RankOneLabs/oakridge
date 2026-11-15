@@ -22,12 +22,12 @@ export function PrimaryNav({ activeSurface, attentionCount, onNavigate, theme, o
   return (
     <nav className="app-surface-nav" aria-label="Primary">
       <span className="app-surface-nav__brand">oakridge</span>
-      <button type="button" className={navItemClass(activeSurface === "runs")} onClick={() => onNavigate("runs")}>Runs</button>
-      <button type="button" className={navItemClass(activeSurface === "sessions")} onClick={() => onNavigate("sessions")}>Sessions</button>
-      <button type="button" className={navItemClass(activeSurface === "attention")} onClick={() => onNavigate("attention")}>
+      <Button variant="session" type="button" className={navItemClass(activeSurface === "runs")} onClick={() => onNavigate("runs")}>Runs</Button>
+      <Button variant="session" type="button" className={navItemClass(activeSurface === "sessions")} onClick={() => onNavigate("sessions")}>Sessions</Button>
+      <Button variant="session" type="button" className={navItemClass(activeSurface === "attention")} onClick={() => onNavigate("attention")}>
         Attention
         {attentionCount > 0 && <span className="app-surface-nav__count">{attentionCount}</span>}
-      </button>
+      </Button>
       <Button
         variant="secondary"
         size="xsmall"

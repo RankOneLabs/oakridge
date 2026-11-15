@@ -1,3 +1,4 @@
+import { Button } from "../atoms/Button";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSnapshot, UiAvailableCommand } from "../../types";
 import type { Skill } from "../../../runtime-interface";
@@ -219,25 +220,25 @@ export function SkillRail({
   return (
     <>
       <div className={`skill-rail skill-rail--${position}`}>
-        <button
+        <Button variant="session"
           type="button"
           className="skill-rail__toggle"
           onClick={() => setCollapsed((c) => !c)}
           aria-expanded={!collapsed}
         >
           Skills
-        </button>
+        </Button>
         {invokeError !== null && (
           <div className="skill-rail__error" role="alert">
             <span className="skill-rail__error-text">{invokeError}</span>
-            <button
+            <Button variant="session"
               type="button"
               className="skill-rail__error-dismiss"
               onClick={() => setInvokeError(null)}
               aria-label="dismiss error"
             >
               ×
-            </button>
+            </Button>
           </div>
         )}
         {!collapsed && (
@@ -246,7 +247,7 @@ export function SkillRail({
               const open = isSectionOpen(section);
               return (
                 <div key={section.key} className="skill-rail__group">
-                  <button
+                  <Button variant="session"
                     type="button"
                     className="skill-rail__group-label"
                     onClick={() => toggleSection(section)}
@@ -259,7 +260,7 @@ export function SkillRail({
                     <span className="skill-rail__group-count">
                       {section.skills.length}
                     </span>
-                  </button>
+                  </Button>
                   {open && (
                     <div className="skill-rail__scope">
                       {section.skills.map((skill) => (

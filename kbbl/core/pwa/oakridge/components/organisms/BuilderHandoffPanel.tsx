@@ -1,3 +1,4 @@
+import { Checkbox } from "../../../components/atoms/Checkbox";
 import { HandoffProvenance } from "./HandoffProvenance";
 import { selectHandoffUnitId } from "../../lib/handoff-provenance";
 import { useEffect, useState } from "react";
@@ -72,7 +73,7 @@ export function BuilderHandoffPanel({ runId, unitLabel, revisionId, assessment, 
             <li key={item.id} className="rounded-md border border-[var(--border-decorative)] bg-[var(--bg-surface)] p-2">
               <div className="flex items-start gap-2">
                 <label className="flex shrink-0 items-center gap-1 text-xs text-[var(--text-secondary)]">
-                  <input type="checkbox" aria-label={`Include action ${index + 1}`} checked={item.is_included}
+                  <Checkbox type="checkbox" aria-label={`Include action ${index + 1}`} checked={item.is_included}
                     onChange={(event) => setItems((current) => current.map((candidate) => candidate.id === item.id
                       ? { ...candidate, is_included: event.target.checked } : candidate))} />
                   Include

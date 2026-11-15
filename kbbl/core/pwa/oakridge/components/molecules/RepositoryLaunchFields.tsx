@@ -1,3 +1,5 @@
+import { TextInput } from "../../../components/atoms/TextInput";
+import { Select } from "../../../components/atoms/Select";
 import { useState, type Dispatch, type SetStateAction } from "react";
 
 import type { RepositoryInputDraft } from "../../run-types";
@@ -12,8 +14,6 @@ interface RepositoryLaunchFieldsProps {
   isLoadingProjects: boolean;
   disabled: boolean;
 }
-
-const inputClass = "or-form-input";
 
 export function RepositoryLaunchFields({ repositories, setRepositories, projects, onAddRepository, isLoadingProjects, disabled }: RepositoryLaunchFieldsProps) {
   const [isChoosingProject, setIsChoosingProject] = useState(false);
@@ -31,8 +31,8 @@ export function RepositoryLaunchFields({ repositories, setRepositories, projects
       </legend>
       {isChoosingProject && (
         <div className="flex items-center gap-3">
-          <select
-            className={inputClass}
+          <Select
+
             value=""
             onChange={(event) => {
               const project = projects.find((candidate) => candidate.id === event.target.value);
@@ -46,17 +46,17 @@ export function RepositoryLaunchFields({ repositories, setRepositories, projects
           >
             <option value="">{projects.length === 0 ? "No projects available" : "Choose a project…"}</option>
             {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-          </select>
+          </Select>
           <Button variant="secondary" disabled={disabled} onClick={() => setIsChoosingProject(false)}>Cancel</Button>
         </div>
       )}
       {repositories.map((repository, index) => (
         <div className="or-repository-fields" key={index}>
-          <input type="text" className={inputClass} value={repository.key} onChange={(event) => update(index, { key: event.target.value })} disabled={disabled} placeholder="Key (api)" aria-label={`Repository ${index + 1} key`} required />
-          <input type="text" className={inputClass} value={repository.forge_owner} onChange={(event) => update(index, { forge_owner: event.target.value })} disabled={disabled} placeholder="GitHub owner" aria-label={`Repository ${index + 1} GitHub owner`} required />
-          <input type="text" className={inputClass} value={repository.forge_name} onChange={(event) => update(index, { forge_name: event.target.value })} disabled={disabled} placeholder="GitHub repository" aria-label={`Repository ${index + 1} GitHub name`} required />
-          <input type="text" className={inputClass} value={repository.integration_branch} onChange={(event) => update(index, { integration_branch: event.target.value })} disabled={disabled} placeholder="Integration branch (main)" aria-label={`Repository ${index + 1} integration branch`} required />
-          <input type="text" className={inputClass} value={repository.path} onChange={(event) => update(index, { path: event.target.value })} disabled={disabled} placeholder="/absolute/path/to/repo" aria-label={`Repository ${index + 1} path`} required />
+          <TextInput type="text"  value={repository.key} onChange={(event) => update(index, { key: event.target.value })} disabled={disabled} placeholder="Key (api)" aria-label={`Repository ${index + 1} key`} required />
+          <TextInput type="text"  value={repository.forge_owner} onChange={(event) => update(index, { forge_owner: event.target.value })} disabled={disabled} placeholder="GitHub owner" aria-label={`Repository ${index + 1} GitHub owner`} required />
+          <TextInput type="text"  value={repository.forge_name} onChange={(event) => update(index, { forge_name: event.target.value })} disabled={disabled} placeholder="GitHub repository" aria-label={`Repository ${index + 1} GitHub name`} required />
+          <TextInput type="text"  value={repository.integration_branch} onChange={(event) => update(index, { integration_branch: event.target.value })} disabled={disabled} placeholder="Integration branch (main)" aria-label={`Repository ${index + 1} integration branch`} required />
+          <TextInput type="text"  value={repository.path} onChange={(event) => update(index, { path: event.target.value })} disabled={disabled} placeholder="/absolute/path/to/repo" aria-label={`Repository ${index + 1} path`} required />
           <Button variant="secondary" className="w-full md:w-auto" disabled={disabled || repositories.length === 1} onClick={() => setRepositories((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove repository ${index + 1}`}>Remove</Button>
         </div>
       ))}

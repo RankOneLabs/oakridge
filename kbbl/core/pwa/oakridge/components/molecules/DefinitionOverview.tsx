@@ -1,3 +1,4 @@
+import { TextInput } from "../../../components/atoms/TextInput";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import {
@@ -53,7 +54,7 @@ export function DefinitionOverview({ overview, selection }: DefinitionOverviewPr
       {shouldShowFullId && (
         <div>
           <p role="status">Copy unavailable. Select and copy the full definition ID.</p>
-          <input aria-label="Full definition ID" value={overview.id} readOnly autoFocus onFocus={(event) => event.currentTarget.select()} className="w-full" />
+          <TextInput aria-label="Full definition ID" value={overview.id} readOnly autoFocus onFocus={(event) => event.currentTarget.select()} className="w-full" />
         </div>
       )}
       <p>{overview.stages.length} stages · {overview.units.length} units · {overview.collections.length} collections · {overview.pools.length} pools</p>

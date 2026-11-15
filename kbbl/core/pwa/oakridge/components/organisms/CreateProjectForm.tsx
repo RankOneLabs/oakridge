@@ -1,3 +1,5 @@
+import { TextInput } from "../../../components/atoms/TextInput";
+import { Select } from "../../../components/atoms/Select";
 import { useState } from "react";
 import { useCreateProject } from "../../hooks/useCreateProject";
 import { useProjects } from "../../hooks/useProjects";
@@ -5,7 +7,7 @@ import { useUpdateProject } from "../../hooks/useUpdateProject";
 import type { ProjectId, ProjectWriteInput } from "../../project-types";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import { FormField, formControlClass } from "../molecules/FormField";
+import { FormField } from "../molecules/FormField";
 import { PageHeader } from "../molecules/PageHeader";
 
 interface CreateProjectFormProps {
@@ -62,15 +64,15 @@ export function CreateProjectForm({ onBack, onCreated }: CreateProjectFormProps)
 
       <form className="or-form-card flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
         <FormField label="Existing project">
-          <select className={formControlClass} value={projectId ?? ""} onChange={(event) => onSelectProject(event.target.value)} disabled={pending || projects.isPending}>
+          <Select  value={projectId ?? ""} onChange={(event) => onSelectProject(event.target.value)} disabled={pending || projects.isPending}>
             <option value="">Create a new project</option>
             {projects.data?.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-          </select>
+          </Select>
         </FormField>
         <FormField label="Name">
-          <input
+          <TextInput
             type="text"
-            className={formControlClass}
+
             value={name}
             onChange={(e) => setName(e.target.value)}
             disabled={pending}
@@ -80,9 +82,9 @@ export function CreateProjectForm({ onBack, onCreated }: CreateProjectFormProps)
         </FormField>
 
         <FormField label="Repository Path">
-          <input
+          <TextInput
             type="text"
-            className={formControlClass}
+
             value={repoDir}
             onChange={(e) => setRepoDir(e.target.value)}
             disabled={pending}

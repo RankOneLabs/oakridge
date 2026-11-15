@@ -1,3 +1,4 @@
+import { Checkbox } from "../../../components/atoms/Checkbox";
 interface AutomaticGradingFieldProps {
   readonly is_enabled: boolean;
   readonly onChange: (is_enabled: boolean) => void;
@@ -8,7 +9,7 @@ interface AutomaticGradingFieldProps {
 export function AutomaticGradingField({ is_enabled, onChange, disabled }: AutomaticGradingFieldProps) {
   return (
     <label className="flex items-start gap-2" data-testid="or-new-run-automatic-grading">
-      <input type="checkbox" className="mt-1" checked={is_enabled} disabled={disabled}
+      <Checkbox type="checkbox" className="mt-1" checked={is_enabled} disabled={disabled}
         data-testid="or-new-run-automatic-grading-input" onChange={(event) => onChange(event.target.checked)} />
       <span className="flex flex-col gap-1">
         <span className="text-sm font-medium text-[var(--text-primary)]">Automatic grading</span>

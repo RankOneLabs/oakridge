@@ -2697,8 +2697,6 @@ a:focus-visible {
 .or-repository-launch { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; border: 1px solid var(--border-decorative); border-radius: 0.375rem; }
 .or-repository-launch__legend { width: 100%; margin-bottom: 0.25rem; color: var(--text-muted); font-size: 0.75rem; font-weight: 500; }
 .or-repository-launch__heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
-.or-form-input { width: 100%; box-sizing: border-box; padding: 0.375rem 0.75rem; border: 1px solid var(--border-muted); border-radius: 0.375rem; background: var(--bg-surface); color: var(--text-primary); font: inherit; font-size: 0.875rem; }
-.or-form-input:focus { border-color: var(--accent-primary); outline: none; }
 .or-repository-fields {
   display: grid;
   grid-template-columns: minmax(7rem, 0.55fr) minmax(14rem, 1.5fr) minmax(8rem, 0.75fr) minmax(9rem, 0.85fr) minmax(7rem, 0.6fr) auto;
