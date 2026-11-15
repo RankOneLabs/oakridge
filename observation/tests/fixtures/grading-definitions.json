@@ -339,6 +339,23 @@
     },
     "evaluators": [
       {
+        "runner": "jev_direct",
+        "model": "jev-1.14.0",
+        "estimated_cost_per_call": 0.01,
+        "instructions": {
+          "system_one": {
+            "type": "choice",
+            "instructions": "Each entry of state is an evidence reference with source, revision_id, item_path and content; judge the referenced content, not the wrapper. Do the instructions of the build item in state.subject meaningfully address its assigned contribution to the spec task in state.task_context:0? state.cohort is the plan cohort the brief implements and declares that cohort's share of the task; state.brief is the full brief containing the build item; state.spec and state.requirement:N give the specification context. A spec task can span cohorts and build items: judge only this item's contribution to the task within this cohort, not whether this one item implements the whole task. Judge the instructions given to the builder, not completed code or test results. fully_covers means the instructions concretely and correctly address the assigned contribution; partially_covers means they address it but omit, weaken or leave a material part too vague to implement; does_not_cover means they do not address the assigned contribution. Choose unclear when the evidence cannot establish the item's assigned contribution or whether its instructions cover it.",
+            "criteria": {
+              "fully_covers": "The instructions concretely address the item's entire assigned contribution to the task",
+              "partially_covers": "The instructions address some of the assigned contribution but omit, weaken or leave a material part too vague to implement",
+              "does_not_cover": "The instructions do not address the assigned contribution to the task",
+              "unclear": "The evidence cannot establish the assigned contribution or whether the instructions cover it"
+            }
+          }
+        }
+      },
+      {
         "runner": "human"
       }
     ]
