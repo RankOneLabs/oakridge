@@ -2,6 +2,7 @@ import { TaskIdLink } from "./TaskIdLink";
 import { BuildItemList } from "./BuildItemList";
 import type { ViewerProps } from "../../artifactRegistry";
 import type { EvidenceContent } from "../../lib/evidence-content";
+import { EvidenceRefList } from "./EvidenceRefList";
 import { ExpandableText } from "./ExpandableText";
 import { StructuredValue } from "./StructuredValue";
 import { TestEvidenceBlock } from "./TestEvidenceBlock";
@@ -32,7 +33,9 @@ export function EvidenceContentView({ content, ...review }: EvidenceContentViewP
       <Field label="Description" value={content.value.description} />
       <Field label="Status" value={content.value.status} />
       {"subjects" in content.value ? <div><dt>Subjects</dt><dd>{content.value.subjects.map((subject, index) => subject.kind === "task" ? <TaskIdLink key={index} task_id={subject.id} text={subject.id} onOpenTask={review.onOpenTask} /> : <code key={index}>{subject.cohort_id ? `${subject.cohort_id}/` : ""}{subject.id}</code>)}</dd></div> : <Field label="Task ids" value={content.value.task_ids} />}
-      <Field label="Evidence" value={content.value.evidence} />
+      <div className="min-w-0"><dt className="text-xs font-medium text-[var(--text-muted)]">Evidence</dt><dd className="m-0">
+        {content.value.evidence.length === 0 ? <span className="text-xs text-[var(--text-muted)]">No evidence cited.</span> : <EvidenceRefList refs={content.value.evidence} />}
+      </dd></div>
     </dl>;
     case "build_item": return <dl><Field label="Id" value={content.value.id} /><Field label="Description" value={content.value.description} /><Field label="Task ids" value={content.value.task_ids} /><Field label="Decision ids" value={content.value.decision_ids} /><Field label="Verification expectations" value={content.value.verification} /></dl>;
     case "task": return <dl className="m-0 space-y-1">
