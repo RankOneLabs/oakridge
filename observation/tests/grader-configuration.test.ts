@@ -298,3 +298,9 @@ test("current fixture registers build-item grading and exact assessed-item evide
   expect(parsed.value.filter((d) => d.id.startsWith("assessment_finding.")).every((d) => d.evidence.includes("assessed_build_items"))).toBe(true);
   expect(parsed.value.find((d) => d.id === "acceptance_entry.task_coverage")!.targets).toEqual([{ artifact: "plan", selector: "/cohorts/*/acceptance_criteria/*" }]);
 });
+
+test("every current fixture definition is graded automatically, brief build items included", async () => {
+  const parsed = parse(await Bun.file(new URL("./fixtures/grading-definitions.json", import.meta.url)).json());
+  if (!parsed.ok) throw new Error(parsed.error.detail);
+  expect(parsed.value.filter((definition) => machineGraders(definition).length === 0).map((definition) => definition.id)).toEqual([]);
+});
