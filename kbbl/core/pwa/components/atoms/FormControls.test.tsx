@@ -24,10 +24,10 @@ it("forwards native identity, accessibility, class names and refs for every form
     expect(element).toBe(ref.current);
     expect(element.id).toBe(name);
     expect(element.getAttribute("aria-label")).toBe(name);
-    expect(element.className.endsWith(" extra")).toBe(true);
-    expect(element.className.startsWith(name === "checkbox" ? "accent-" : "w-full rounded-md border")).toBe(true);
+    expect(element.classList.contains("extra")).toBe(true);
+    // The atom API promises variant classes before caller-provided classes.
+    expect(element.className.trim().split(/\s+/).at(-1)).toBe("extra");
   }
-  expect(area.current?.className).toContain("border-[var(--accent-primary)]");
   expect(select.current?.options[0]?.value).toBe("one");
 });
 

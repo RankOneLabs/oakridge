@@ -165,7 +165,7 @@ export function NewSessionForm({
         </div>
         {runtimes.length > 1 && (
           <Select
-            className="new-session-runtime"
+            className="new-session-runtime w-auto!"
             value={runtimeId}
             onChange={(e) => {
               const nextRuntimeId = e.target.value as RuntimeId;
@@ -187,7 +187,7 @@ export function NewSessionForm({
           </Select>
         )}
         <Select
-          className="new-session-model"
+          className="new-session-model w-auto!"
           value={modelInput}
           onChange={(e) => {
             const nextModel = e.target.value;
@@ -208,7 +208,7 @@ export function NewSessionForm({
         </Select>
         {(selectedRuntime?.efforts.length ?? 0) > 0 && (
           <Select
-            className="new-session-effort"
+            className="new-session-effort w-auto!"
             value={effortInput}
             onChange={(e) => {
               const nextEffort = e.target.value;

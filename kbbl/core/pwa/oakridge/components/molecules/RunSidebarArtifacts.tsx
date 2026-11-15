@@ -29,7 +29,7 @@ export function RunSidebarArtifacts({ rows, totalCount, filter, onFilterChange, 
       <h3 className="or-run-sidebar__heading">Artifacts</h3>
       <Select aria-label="Filter artifacts" data-testid="or-sidebar-artifact-filter" value={filter}
         onChange={(event) => onFilterChange(RUN_ARTIFACT_FILTERS.find(({ key }) => key === event.target.value)?.key ?? "all")}
-        className="w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-2! py-1! text-xs! text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none">
+        className="px-2! py-1! text-xs!">
         {RUN_ARTIFACT_FILTERS.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
       </Select>
       {totalCount === 0 && (
