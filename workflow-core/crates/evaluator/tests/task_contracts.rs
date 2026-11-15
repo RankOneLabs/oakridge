@@ -1168,6 +1168,48 @@ fn the_integration_review_and_revise_read_the_same_briefs() {
 }
 
 #[test]
+fn the_integration_assessment_is_not_reviewable_until_the_integrator_finishes() {
+    let mut run = at_integration();
+    let unit = "run/integration/alpha";
+    let integration_review = ReviewOf {
+        unit,
+        review: "integration_review",
+        artifact: "assessment",
+    };
+    run.publish(Publication {
+        output: WorkerOutput {
+            unit,
+            worker: "integrator",
+            artifact: "assessment",
+        },
+        body: assessment("sha", json!([])),
+        subject: None,
+    });
+    let is_offered = |run: &Run| {
+        run.last
+            .reviews
+            .iter()
+            .any(|review| review.unit.0 == unit && review.review.0 == "integration_review")
+    };
+    assert!(!is_offered(&run));
+    assert!(matches!(
+        run.accept(integration_review),
+        Err(StepError::Rejected { reason, .. }) if reason == "review is not open"
+    ));
+
+    run.write(
+        WorkerOutput {
+            unit,
+            worker: "integrator",
+            artifact: "pr",
+        },
+        pr("alpha", "integration"),
+    );
+    assert!(is_offered(&run));
+    assert!(run.accept(integration_review).is_ok());
+}
+
+#[test]
 fn finding_links_are_a_required_list_of_ids() {
     let mut run = at_integration();
     let unit = "run/integration/alpha";
