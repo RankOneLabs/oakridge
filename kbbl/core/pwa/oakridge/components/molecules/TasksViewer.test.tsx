@@ -1,7 +1,7 @@
 import { EditableBriefText } from "../organisms/EditableBriefText";
 import { TaskEditControls } from "../organisms/TaskEditControls";
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { resolveViewer } from "../../artifactRegistry";
 import { isSpecAnalysis } from "../../lib/spec-analysis";
@@ -50,7 +50,9 @@ describe("TasksViewer", () => {
     const onEdit = vi.fn().mockResolvedValue({ ok: true, value: undefined });
     render(<TasksViewer renderEditableText={(props) => <EditableBriefText {...props} />} renderTaskEditControls={(props) => <TaskEditControls {...props} />} body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
-    fireEvent.click(screen.getAllByRole("button", { name: "Add link" })[1]!);
+    const task = screen.getByText("task-b").closest("li");
+    if (!task) throw new Error("Expected task-b to render in a task row");
+    fireEvent.click(within(task).getByRole("button", { name: "Add link" }));
     fireEvent.change(screen.getByRole("textbox", { name: "New requirement ID" }), { target: { value: "req-b" } });
     fireEvent.click(screen.getByRole("button", { name: "Save link" }));
     expect(onEdit).toHaveBeenCalledWith("/tasks/1/requirement_ids", [], ["req-b"]);
@@ -60,7 +62,9 @@ describe("TasksViewer", () => {
     const onEdit = vi.fn();
     render(<TasksViewer renderTaskEditControls={(props) => <TaskEditControls {...props} />} body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
-    fireEvent.click(screen.getAllByRole("button", { name: "Add link" })[1]!);
+    const task = screen.getByText("task-b").closest("li");
+    if (!task) throw new Error("Expected task-b to render in a task row");
+    fireEvent.click(within(task).getByRole("button", { name: "Add link" }));
     const input = screen.getByRole("textbox", { name: "New requirement ID" });
     fireEvent.change(input, { target: { value: " req-b " } });
     fireEvent.keyDown(input, { key: "Enter" });

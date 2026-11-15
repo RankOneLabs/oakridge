@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import type { ViewerProps } from "../../artifactRegistry";
-type TaskEditControlsProps = Parameters<NonNullable<ViewerProps["renderTaskEditControls"]>>[0];
+type TaskEditControlsSlotProps = Parameters<NonNullable<ViewerProps["renderTaskEditControls"]>>[0];
+interface TaskEditControlsProps extends TaskEditControlsSlotProps {}
 export function TaskEditControls({ task, anchor, edit: editor }: TaskEditControlsProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [draft, setDraft] = useState("");

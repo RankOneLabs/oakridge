@@ -27,11 +27,12 @@ function selectTierFiles(tier: string): string[] {
 }
 function importOffenders(tier: string): string[] {
   return selectTierFiles(tier).flatMap((file) => selectImports(file).filter((entry) =>
+    (tier === "atoms" && /(^|\/)components\/(molecules|organisms)\//.test(entry.target)) ||
     (tier === "molecules" && /(^|\/)organisms\//.test(entry.target)) || (!entry.isType && isDataImport(entry.target)),
   ).map((entry) => `${path.relative(PWA_DIR, file)}: ${entry.specifier}`));
 }
 describe("atomic tier boundaries", () => {
-  it("keeps atoms independent of data and hooks", () => {
+  it("keeps atoms independent of higher tiers, data and hooks", () => {
     const calls = selectTierFiles("atoms").flatMap((file) => [...fs.readFileSync(file, "utf8").matchAll(/\b(use[A-Z]\w*)\(/g)].map((match) => `${path.relative(PWA_DIR, file)}: ${match[1]}`));
     expect([...importOffenders("atoms"), ...calls]).toEqual([]);
   });

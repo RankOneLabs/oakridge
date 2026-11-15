@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { SessionSnapshot, Status } from "../types";
 import { useAcpSession } from "../hooks/useAcpSession";
 import { usePendingSends } from "../hooks/usePendingSends";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
+import type { TimelineItem } from "../lib/acp-timeline";
 import { projectTimeline } from "../lib/acp-timeline";
 import {
   operatorStateLabel,
@@ -94,6 +95,13 @@ export function SessionView({
     sessionStatus === "ended" ||
     sessionStatus === "fenced" ||
     sessionStatus === "failed";
+
+  const renderPermission = useCallback(
+    (item: Extract<TimelineItem, { kind: "permission" }>) => (
+      <PermissionCard key={item.key} sid={sid} requestId={item.requestId} title={item.title} options={item.options} resolution={item.resolution} sessionClosed={sessionClosed} />
+    ),
+    [sid, sessionClosed],
+  );
 
   const {
     pendingSends,
@@ -190,7 +198,7 @@ export function SessionView({
             </div>
           )}
           <SessionTimeline
-            renderPermission={(item) => <PermissionCard key={item.key} sid={sid} requestId={item.requestId} title={item.title} options={item.options} resolution={item.resolution} sessionClosed={sessionClosed} />}
+            renderPermission={renderPermission}
             sid={sid}
             items={projection.items}
             sessionClosed={sessionClosed}

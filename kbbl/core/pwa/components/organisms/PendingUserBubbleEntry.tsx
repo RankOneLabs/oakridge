@@ -1,8 +1,8 @@
 import type { ComponentProps } from "react";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
 import { PendingUserBubble } from "../molecules/PendingUserBubble";
-type PendingUserBubbleEntryProps = Omit<ComponentProps<typeof PendingUserBubble>, "relativeText">;
-export function PendingUserBubbleEntry(props: PendingUserBubbleEntryProps) {
-  const relativeText = useRelativeTime(new Date(props.sentAt).toISOString());
-  return <PendingUserBubble {...props} relativeText={relativeText} />;
+interface PendingUserBubbleEntryProps extends Omit<ComponentProps<typeof PendingUserBubble>, "relativeText"> {}
+export function PendingUserBubbleEntry({ text, sentAt, isLatest, status }: PendingUserBubbleEntryProps) {
+  const relativeText = useRelativeTime(new Date(sentAt).toISOString());
+  return <PendingUserBubble text={text} sentAt={sentAt} isLatest={isLatest} status={status} relativeText={relativeText} />;
 }
