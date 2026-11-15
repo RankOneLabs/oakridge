@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,6 +90,18 @@ test("direct none gets neither a skill directory nor an MCP server", async () =>
   if (!row?.acp_session_id) throw new Error("agent session missing");
   expect(await readRecordedServers(stateDir, row.acp_session_id, "mcp-servers")).toEqual([]);
   expect(await Bun.file(join(stateDir, "session-skills", row.sid, ".agents/skills/pr-operations/SKILL.md")).exists()).toBe(false);
+});
+
+
+test("purging a session removes its materialized skill directory", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service } = makeHarness({ stateDir, integration: integrationConfig(stateDir, "github-cli") });
+  const created = await service.createSession(spec(workdir));
+  if (!created.ok) throw new Error(created.error.detail);
+  const skillDirectory = join(stateDir, "session-skills", created.value.sid);
+  expect(await Bun.file(join(skillDirectory, ".agents/skills/pr-operations/SKILL.md")).exists()).toBe(true);
+  await service.purgeSession(created.value.sid);
+  expect(existsSync(skillDirectory)).toBe(false);
 });
 
 

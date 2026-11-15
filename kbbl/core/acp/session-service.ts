@@ -1,5 +1,5 @@
 import { createSessionController } from "./session-controller";
-import { prepareSessionIntegration, selectDirectIntegration, type SessionIntegrationConfig } from "./session-integration";
+import { prepareSessionIntegration, removeSessionSkills, selectDirectIntegration, type SessionIntegrationConfig } from "./session-integration";
 import { sha256Hex, startSpecHash } from "./start-spec-hash";
 import type { RetainedPromptTurn } from "./store-turns";
 import { toSnapshot, turnToReceipt, turnToOpenTurn } from "./pwa-wire";
@@ -500,13 +500,15 @@ export class AcpSessionService {
   }
 
   /**
-   * Operator hard delete: fence out any live child, best-effort worktree
-   * removal, then drop the row (turn ledger goes with it).
+   * Operator hard delete: fence out any live child, best-effort removal of
+   * its session skills and worktree, then drop the row (turn ledger goes with it).
    */
   async purgeSession(sid: string): Promise<Result<boolean, AcpError>> {
     const row = this.deps.store.markPurgeStarted(sid as KbblSessionId);
     if (!row) return ok(false);
     await this.closeSession(sid);
+    const skillsRemoved = removeSessionSkills(row.sid, this.deps.integration);
+    if (!skillsRemoved.ok) console.warn(`[acp] sid=${row.sid} purge left session skills: ${skillsRemoved.error}`);
     const hasOtherOwner = row.worktree_branch !== null
       && this.deps.store.hasOtherWorktreeOwner(
         row.sid,

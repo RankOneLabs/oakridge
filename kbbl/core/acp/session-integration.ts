@@ -1,6 +1,6 @@
 import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type * as schema from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "./agent-profile";
 import { selectMcpServers } from "./client";
@@ -36,4 +36,12 @@ export function prepareSessionIntegration(row: AcpSessionRow, profile: AgentProf
   if (!config) return err(acpError("skill_unavailable", "prepareSessionIntegration", `skill ${row.pr_skill_digest}: no skill store configured`));
   const skill = materializeSessionSkill({ digest: row.pr_skill_digest, skillStoreRoot: config.skill_store_root, sessionSkillsRoot: config.session_skills_root, sid: row.sid });
   return skill.ok ? ok({ mcpServers: servers.value, skillDirectory: skill.value.directory }) : skill;
+}
+/** IO boundary: remove a purged session's materialized skills; the caller stops the session's children first. */
+export function removeSessionSkills(sid: string, config?: SessionIntegrationConfig): Result<void, string> {
+  if (!config) return ok(undefined);
+  try {
+    rmSync(resolve(config.session_skills_root, sid), { recursive: true, force: true });
+    return ok(undefined);
+  } catch (cause) { return err(String(cause)); }
 }
