@@ -28,3 +28,9 @@ test("assessment finding with no evidence says none was cited", () => {
   render(<EvidenceContentView content={{ kind: "assessment_finding", value: finding([]) }} />);
   expect(screen.getByText("No evidence cited.")).toBeTruthy();
 });
+
+test("long evidence references wrap inside the panel", () => {
+  render(<EvidenceContentView content={{ kind: "assessment_finding", value: finding([{ kind: "file", ref: "a/".repeat(80) + "file.ts", detail: "x".repeat(200) }]) }} />);
+  const line = screen.getByTestId("or-evidence-ref");
+  expect([line.classList.contains("break-words"), line.querySelector("code")?.classList.contains("break-all")]).toEqual([true, true]);
+});
