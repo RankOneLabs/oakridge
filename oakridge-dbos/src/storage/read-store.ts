@@ -1,5 +1,5 @@
 import { CoreClient, compileDefinition } from "../core-client/client";
-import { launchableDefinitionIds, readLaunchableCatalog } from "../runtime/definition-store";
+import { isIdentity, launchableDefinitionIds, readLaunchableCatalog, resolveDefinition } from "../runtime/definition-store";
 import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysely";
 import type { ParsedWorkflow, UnitStatus } from "../core-client/core-types";
 import type { ActionId, Brand, DecisionId, DefinitionId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
@@ -458,10 +458,12 @@ export async function listDefinitions(_db: Reader, query: { readonly after: stri
   const selected = ids.slice(0, query.limit);
   return { items: await Promise.all(selected.map(loadDefinition)), next: ids.length > selected.length ? selected.at(-1) ?? null : null };
 }
+/** Any committed definition reads by id, superseded ones included: the catalog gates launching, not inspection. */
 export async function readDefinition(_db: Reader, definition_id: string): Promise<DefinitionRead | null> {
-  const catalog = readLaunchableCatalog();
-  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  if (!launchableDefinitionIds(catalog.value, null).includes(definition_id as DefinitionId)) return null;
+  if (!isIdentity(definition_id)) return null;
+  const resolved = resolveDefinition(definition_id as DefinitionId);
+  if (!resolved.ok && resolved.error.kind === "missing_definition") return null;
+  if (!resolved.ok) throw new Error(JSON.stringify(resolved.error));
   return loadDefinition(definition_id as DefinitionId);
 }
 export async function readPinnedDefinition(db: Reader, run_id: string): Promise<PinnedDefinitionRead | null> {
