@@ -1,7 +1,8 @@
+import { selectArtifactContracts } from "./artifact-contracts";
+import type { ArtifactContract } from "../artifact-types";
 import type { DefinitionSelection } from "../../lib/hash";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import type {
-  OperatorParsedArtifact,
   OperatorParsedStage,
 } from "../operator-contracts/core-client/core-types";
 import {
@@ -30,7 +31,7 @@ export interface StageInspectorModel {
   units: ReturnType<typeof selectDefinitionOverview>["units"];
   workers: ReturnType<typeof selectEffectiveWorkers>;
   reviews: ReturnType<typeof selectEffectiveReviews>;
-  artifacts: ArtifactRelationship[];
+  artifacts: ArtifactContract[];
   readers: DependencyReference[];
   outcomes: OutcomeRelationship[];
   wholeOutcomeReaders: DependencyReference[];
@@ -41,17 +42,12 @@ export interface OutcomeRelationship {
   expression: string;
   readers: DependencyReference[];
 }
-export interface ArtifactRelationship {
-  name: string;
-  artifact: OperatorParsedArtifact;
-  producers: string[];
-  consumers: string[];
-}
 export interface StageSectionProps {
   model: StageInspectorModel;
 }
 export interface StageElementReference {
   kind:
+    | "prompt"
     | "let"
     | "artifact"
     | "worker"
@@ -146,16 +142,7 @@ function selectStageInspectorEntry(
       expression,
       readers: readers.filter((reader) => reader.outcome_path[0] === name),
     })),
-    artifacts: Object.entries(stage.artifacts).map(([name, artifact]) => ({
-      name,
-      artifact,
-      producers: workers
-        .filter((entry) => entry.worker.produces.includes(name))
-        .map((entry) => entry.key),
-      consumers: reviews
-        .filter((entry) => entry.review.of === name)
-        .map((entry) => entry.key),
-    })),
+    artifacts: selectArtifactContracts({ definition, stage, workers, reviews }),
   };
   return { ...model, sections: selectSections(model) };
 }
@@ -195,12 +182,6 @@ export function selectStageInputUnits(
   return model.selected_unit ? [model.selected_unit] : model.sections.inputs.units;
 }
 
-export interface PromptReference {
-  owner_kind: "worker" | "review";
-  owner_key: string;
-  mode: string;
-  path: string;
-}
 export interface StageInspectorSections {
   overview: StageSummary;
   inputs: {
@@ -216,8 +197,7 @@ export interface StageInspectorSections {
     produces: string[];
     evaluates: string | null;
   })[];
-  prompts: PromptReference[];
-  artifacts: ArtifactRelationship[];
+  artifacts: ArtifactContract[];
   reviews: (StageInspectorModel["reviews"][number] & {
     when: string | null;
     cycle: ReviewCycle | null;
@@ -256,29 +236,6 @@ function selectSections(
       evaluates:
         entry.worker.kind === "agent" ? (entry.worker.evaluates ?? null) : null,
     })),
-    prompts: [
-      ...model.workers.flatMap(({ key, worker }): PromptReference[] =>
-        worker.kind === "agent"
-          ? Object.entries(worker.prompts).flatMap(([mode, path]) =>
-              path
-                ? [{ owner_kind: "worker", owner_key: key, mode, path }]
-                : [],
-            )
-          : [],
-      ),
-      ...model.reviews.flatMap(({ key, review }): PromptReference[] =>
-        review.prompt
-          ? [
-              {
-                owner_kind: "review",
-                owner_key: key,
-                mode: "review",
-                path: review.prompt,
-              },
-            ]
-          : [],
-      ),
-    ],
     artifacts: model.artifacts,
     reviews: model.reviews.map((entry) => ({
       ...entry,

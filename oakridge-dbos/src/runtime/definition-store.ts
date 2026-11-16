@@ -48,6 +48,7 @@ export interface ResolvedDefinition {
   readonly source: AuthoredWorkflow;
   readonly operation_registry_id: OperationRegistryId;
   readonly prompts: PromptTexts;
+  readonly prompt_ids: PromptReferences;
   readonly operations: OperationRegistry;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
@@ -214,6 +215,7 @@ export function resolveDefinition(definition_id: DefinitionId, store_root = proc
     source: committed.source,
     operation_registry_id: committed.operation_registry_id,
     prompts: Object.fromEntries(prompt_entries),
+    prompt_ids: committed.prompts,
     operations: operations.value,
     schema_names: committed.schema_names,
     stage_names: committed.stage_names,

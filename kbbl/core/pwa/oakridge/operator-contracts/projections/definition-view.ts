@@ -3,13 +3,12 @@
 
 import type { OperatorAuthoredWorkflow, OperatorParsedWorkflow, OperatorWorkflow } from "../core-client/core-types";
 import type { OperatorSchema } from "./schema-view";
-import type { OperatorDefinitionId } from "../runtime/definition-store";
 
 export interface OperatorDefinitionPage { readonly items: readonly OperatorDefinitionSummary[]; readonly next_cursor: string | null }
 
-export interface OperatorDefinitionSummary { readonly definition_id: OperatorDefinitionId; readonly bundle: OperatorDefinitionBundle }
+export interface OperatorDefinitionSummary { readonly definition_id: string; readonly bundle: OperatorDefinitionBundle }
 
-export interface OperatorDefinitionDetail extends OperatorDefinitionSummary { readonly workflow: OperatorWorkflow | OperatorAuthoredWorkflow; readonly effective_workflow: OperatorParsedWorkflow; readonly graph: OperatorDefinitionGraph }
+export interface OperatorDefinitionDetail extends OperatorDefinitionSummary { readonly prompts: OperatorDefinitionPrompts; readonly workflow: OperatorWorkflow | OperatorAuthoredWorkflow; readonly effective_workflow: OperatorParsedWorkflow; readonly graph: OperatorDefinitionGraph }
 
 export interface OperatorPinnedDefinition extends OperatorDefinitionSummary { readonly effective_workflow: OperatorParsedWorkflow }
 
@@ -22,6 +21,8 @@ export interface OperatorDefinitionBundle {
   readonly units: readonly OperatorUnitDefinition[];
 }
 
+export interface OperatorDefinitionPrompts { readonly [prompt_path: string]: OperatorDefinitionPrompt }
+
 export interface OperatorDefinitionGraph { readonly nodes: readonly OperatorDefinitionGraphNode[]; readonly edges: readonly { readonly from: string; readonly to: string }[] }
 
 export interface OperatorUnitDefinition {
@@ -32,6 +33,8 @@ export interface OperatorUnitDefinition {
   readonly input_schema: string;
   readonly artifacts: readonly OperatorArtifactDefinition[];
 }
+
+export interface OperatorDefinitionPrompt { readonly body: string; readonly digest: string }
 
 export interface OperatorDefinitionGraphNode { readonly key: string; readonly stage: string; readonly depends_on: readonly string[] }
 
