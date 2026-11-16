@@ -15,7 +15,7 @@ import { useRunGates } from "../../hooks/useRunGates";
 import { useRunSessions } from "../../hooks/useRunSessions";
 import { useRunWorkspaceState } from "../../hooks/useRunWorkspaceState";
 import { selectRunAccentClass } from "../../lib/run-accent";
-import { selectPurgedRunSessionIds, selectRunSessionsRead } from "../../lib/run-sessions";
+import { selectPurgedRunSessionIds, selectRunSessionsRead, selectRunSessionStage } from "../../lib/run-sessions";
 import {
   selectRunArtifacts,
   selectRunGatesRead,
@@ -173,7 +173,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
         }}
       >
         <PaneBody
-          stage={pane.kind === "session" ? sessionsQuery.data?.find((attempt) => attempt.session_id === pane.session_id)?.stage_key ?? null : null}
+          stage={selectRunSessionStage(sessionsQuery.data, pane.kind === "session" ? pane.session_id : null)}
           pane={pane}
           runId={runId}
           onRunDeleted={onBack}
