@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useHashRoute } from "../../core/pwa/hooks/useHashRoute";
+import { definitionHref } from "../../core/pwa/oakridge/lib/definition-selection";
 import { WorkflowDefListView } from "../../core/pwa/oakridge/views/WorkflowDefListView";
 import { WorkflowDefDetailView } from "../../core/pwa/oakridge/views/WorkflowDefDetailView";
 import { createRoot } from "react-dom/client";
@@ -11,9 +12,10 @@ if (!container) throw new Error("Browser fixture container missing");
 const params = new URL(location.href).searchParams;
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 function DefinitionNavigation() {
-  const [selected, setSelected] = useState<string | null>(null);
-  return selected ? <WorkflowDefDetailView definitionId={selected} onBack={() => setSelected(null)} />
-    : <WorkflowDefListView onSelect={(definition) => setSelected(definition.id)} />;
+  const route = useHashRoute();
+  return route?.view === "settings" && route.route.sub === "workflow"
+    ? <WorkflowDefDetailView definitionId={route.route.id} selection={route.route.selection} onBack={() => { location.hash = "#settings/workflows"; }} />
+    : <WorkflowDefListView onSelect={definition => { location.hash = definitionHref(definition.id); }} />;
 }
 createRoot(container).render(<QueryClientProvider client={client}>
   {params.has("definitions") ? <DefinitionNavigation /> : params.has("launch")
