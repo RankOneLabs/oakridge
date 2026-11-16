@@ -1,14 +1,14 @@
-import { useMemo } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import type { DefinitionSelection } from "../../../lib/hash";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
 import type { DefinitionOverview } from "../../lib/definition-overview";
 import {
   DEFINITION_NODE_HEIGHT,
-  selectDefinitionGraphModel,
   selectDefinitionGraph,
   selectDefinitionNodeLabel,
   selectDefinitionNodeSelected,
-} from "../../lib/definition-graph";
+} from "../../lib/graph-layout";
+import { selectDefinitionGraphModel } from "../../lib/definition-graph";
 import {
   selectDefinitionDependencies,
   type DependencyEdge,
@@ -20,7 +20,11 @@ import {
 
 export const DEFINITION_GRAPH_RENDERER: "dagre" | "livid" = "dagre";
 
-import { LividDefinitionGraph } from "./LividDefinitionGraph";
+const LividDefinitionGraphController = lazy(() =>
+  import("../organisms/LividDefinitionGraphController").then((module) => ({
+    default: module.LividDefinitionGraphController,
+  })),
+);
 
 interface DefinitionGraphProps {
   renderer?: "dagre" | "livid";
@@ -51,8 +55,6 @@ export function DefinitionGraph(props: DefinitionGraphProps) {
     selection: props.selection,
     dependencies: selectDefinitionDependencies(definition.workflow),
   });
-  const parent = breadcrumbs.at(-1)?.path ?? null;
-  const scope = useMemo(() => ({ kind: "group" as const, parent }), [parent]);
   const id = definition.definition_id;
   return (
     <section aria-label="Definition dependencies">
@@ -68,11 +70,13 @@ export function DefinitionGraph(props: DefinitionGraphProps) {
       </nav>
       <div className="or-definition-graph">
         {(props.renderer ?? DEFINITION_GRAPH_RENDERER) === "livid" ? (
-          <LividDefinitionGraph
-            model={model}
-            definition_id={id}
-            scope={scope}
-          />
+          <Suspense fallback={<p role="status">Loading definition graph…</p>}>
+            <LividDefinitionGraphController
+              model={model}
+              definition_id={id}
+              selection={props.selection}
+            />
+          </Suspense>
         ) : (
           <svg
             width={layout.width}

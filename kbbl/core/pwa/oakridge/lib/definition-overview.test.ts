@@ -217,7 +217,7 @@ for (const fixture of [fanOut, reviewLoop]) {
     const source = fixture.definition as unknown as OperatorDefinitionDetail;
     const name = source.bundle.stages[0];
     if (!name) throw Error("missing stage");
-    const renamed = renameStage(source, name, "renamed_stage");
+    const renamed = renameStage(source, { old: name, name: "renamed_stage" });
     expect(renamed.bundle.stages).not.toContain(name);
     expect(Object.keys(renamed.workflow.stages)).not.toContain(name);
     expect(Object.keys(renamed.effective_workflow.stages)).not.toContain(name);

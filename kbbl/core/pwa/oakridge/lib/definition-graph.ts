@@ -1,25 +1,20 @@
-export {
-  selectDefinitionGraph,
-  DEFINITION_NODE_WIDTH,
-  DEFINITION_NODE_HEIGHT,
-  selectDefinitionNodeLabel,
-  selectDefinitionNodeSelected,
-} from "./graph-layout";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import type { OperatorArtifactKind } from "../operator-contracts/core-client/core-types";
 import { selectDefinitionOverview } from "./definition-overview";
 import {
   selectDefinitionDependencies,
-  selectExpressionTokens,
+  selectExpressionReadsArtifact,
   type DependencyBinding,
 } from "./definition-dependencies";
 import {
   selectEffectiveWorkers,
   selectEffectiveReviews,
+  selectReviewRevisions,
 } from "./effective-declarations";
 
 export type GraphScope =
-  { kind: "group"; parent: string | null } | { kind: "stage"; stage: string };
+  | { kind: "group"; parent: string | null }
+  | { kind: "stage"; stage: string };
 export interface ReviewCycle {
   review: string;
   of: string;
@@ -95,6 +90,9 @@ export function selectReviewCycles(
   const workers = selectEffectiveWorkers(definition).filter(
     (entry) => entry.stage === stage,
   );
+  const revisions = selectReviewRevisions(definition).filter(
+    (entry) => entry.stage === stage,
+  );
   return selectEffectiveReviews(definition)
     .filter((entry) => entry.stage === stage)
     .map(({ key, review, decisions }) => ({
@@ -103,14 +101,13 @@ export function selectReviewCycles(
       request_changes_decisions: decisions
         .filter((entry) => entry.decision.effect === "request_changes")
         .map((entry) => entry.key),
-      revise_workers: workers
-        .filter(
-          ({ worker }) =>
-            worker.produces.includes(review.of) &&
-            worker.kind === "agent" &&
-            worker.prompts.revise != null,
-        )
-        .map((entry) => entry.key),
+      revise_workers: [
+        ...new Set(
+          revisions
+            .filter((entry) => entry.review === key)
+            .flatMap((entry) => entry.workers),
+        ),
+      ],
       evaluators: workers
         .filter(
           ({ worker }) =>
@@ -192,6 +189,9 @@ export function selectDefinitionGraphModel(
       (entry) => entry.stage === name,
     );
     const cycles = selectReviewCycles(definition, name);
+    const revisions = selectReviewRevisions(definition).filter(
+      (entry) => entry.stage === name,
+    );
     nodes.push({
       kind: "stage",
       id: stage_id,
@@ -236,10 +236,11 @@ export function selectDefinitionGraphModel(
         });
       };
       const references = (expression: string) =>
-        selectExpressionTokens(expression).some(
-          (token, index, tokens) =>
-            token === artifact && tokens[index - 1] !== ".",
-        );
+        selectExpressionReadsArtifact({
+          expression,
+          artifact,
+          bindings: stage.let ?? {},
+        });
       for (const { key, worker } of workers) {
         if (worker.produces.includes(artifact))
           edges.push({
@@ -262,22 +263,27 @@ export function selectDefinitionGraphModel(
           if (references(expression))
             consume({ kind: "review_input", review: key, input });
       }
-      for (const cycle of cycles.filter((cycle) => cycle.of === artifact))
-        for (const decision of cycle.request_changes_decisions)
-          for (const worker of cycle.revise_workers)
-            edges.push({
-              kind: "revise_loop",
-              id: graphElementId("revise_loop", [
-                name,
-                cycle.review,
-                decision,
-                worker,
-              ]),
-              scope,
-              from: id,
-              to: stage_id,
-              label: { review: cycle.review, decision, worker },
-            });
+      for (const revision of revisions.filter(
+        (entry) => entry.artifact === artifact,
+      ))
+        for (const worker of revision.workers)
+          edges.push({
+            kind: "revise_loop",
+            id: graphElementId("revise_loop", [
+              name,
+              revision.review,
+              revision.decision,
+              worker,
+            ]),
+            scope,
+            from: id,
+            to: stage_id,
+            label: {
+              review: revision.review,
+              decision: revision.decision,
+              worker,
+            },
+          });
     }
   }
   return { nodes, edges };

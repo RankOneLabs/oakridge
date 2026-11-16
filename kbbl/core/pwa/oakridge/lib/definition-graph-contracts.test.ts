@@ -44,18 +44,35 @@ for (const fixture of [snapshot, fanOutSnapshot, reviewLoopSnapshot]) {
   if (!unit) throw Error("fixture has no invoking unit");
   const variants = [
     source,
-    mutations.renameStage(source, stage, "renamed_stage"),
+    mutations.renameStage(source, { old: stage, name: "renamed_stage" }),
     mutations.addStage(source, "extra_stage"),
     mutations.removeStage(source, stage),
-    mutations.addWorker(source, stage, "extra_worker", worker[1]),
-    mutations.removeWorker(source, stage, worker[0]),
-    mutations.addPrompt(source, stage, worker[0], "handoff", "extra/prompt.md"),
-    mutations.removePrompt(source, stage, worker[0], "initial"),
-    mutations.addArtifactType(source, stage, "extra_artifact", {
-      kind: "document",
-      schema: { kind: "text" },
+    mutations.addWorker(source, {
+      stage: stage,
+      key: "extra_worker",
+      worker: worker[1],
     }),
-    mutations.changeDependency(source, unit.path, []),
+    mutations.removeWorker(source, { stage: stage, key: worker[0] }),
+    mutations.addPrompt(source, {
+      stage: stage,
+      worker: worker[0],
+      mode: "handoff",
+      path: "extra/prompt.md",
+    }),
+    mutations.removePrompt(source, {
+      stage: stage,
+      worker: worker[0],
+      mode: "initial",
+    }),
+    mutations.addArtifactType(source, {
+      stage: stage,
+      key: "extra_artifact",
+      artifact: {
+        kind: "document",
+        schema: { kind: "text" },
+      },
+    }),
+    mutations.changeDependency(source, { path: unit.path, after: [] }),
   ];
   test(`${source.workflow.workflow}: original and all nine mutations share graph and inspector contracts`, () => {
     for (const definition of variants) {
@@ -123,11 +140,23 @@ for (const fixture of [snapshot, fanOutSnapshot, reviewLoopSnapshot]) {
       ),
     ).toContain("extra_worker");
     const originalPrompts = section(source)?.prompts ?? [];
-    expect(section(variants[4] as OperatorDefinitionDetail)?.prompts.map((entry) => JSON.stringify(entry)).sort()).toEqual([
-      ...originalPrompts,
-      ...originalPrompts.filter((entry) => entry.owner_kind === "worker" && entry.owner_key === worker[0])
-        .map((entry) => ({ ...entry, owner_key: "extra_worker" })),
-    ].map((entry) => JSON.stringify(entry)).sort());
+    expect(
+      section(variants[4] as OperatorDefinitionDetail)
+        ?.prompts.map((entry) => JSON.stringify(entry))
+        .sort(),
+    ).toEqual(
+      [
+        ...originalPrompts,
+        ...originalPrompts
+          .filter(
+            (entry) =>
+              entry.owner_kind === "worker" && entry.owner_key === worker[0],
+          )
+          .map((entry) => ({ ...entry, owner_key: "extra_worker" })),
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .sort(),
+    );
     expect(
       section(variants[5] as OperatorDefinitionDetail)?.workers.map(
         (entry) => entry.key,
@@ -218,14 +247,21 @@ test("review loop graph and inspector derive cycles, conditions and prompt refer
           .map(([key]) => key),
       };
       expect(node.annotations.review_cycles).toContainEqual(cycle);
-      expect(model?.sections.reviews.find((entry) => entry.key === key)?.cycle).toEqual(cycle);
+      expect(
+        model?.sections.reviews.find((entry) => entry.key === key)?.cycle,
+      ).toEqual(cycle);
       for (const decision of decisions)
         for (const worker of workers)
           expect(
             graph.edges.some(
               (edge) =>
                 edge.id ===
-                graphElementId("revise_loop", [name, key, decision, worker]) &&
+                  graphElementId("revise_loop", [
+                    name,
+                    key,
+                    decision,
+                    worker,
+                  ]) &&
                 edge.from === graphElementId("artifact", [name, review.of]) &&
                 edge.to === graphElementId("stage", [name]),
             ),
@@ -255,16 +291,22 @@ test("review loop graph and inspector derive cycles, conditions and prompt refer
     );
     for (const [key, worker] of Object.entries(stage.workers))
       if (worker.kind === "agent") {
-        expect(model?.sections.workers.find((entry) => entry.key === key)?.evaluates).toBe(worker.evaluates ?? null);
+        expect(
+          model?.sections.workers.find((entry) => entry.key === key)?.evaluates,
+        ).toBe(worker.evaluates ?? null);
         for (const [input, expression] of Object.entries(worker.inputs))
           for (const artifact of Object.keys(stage.artifacts))
             if (expression === `latest(${artifact})`)
-              expect(graph.edges).toContainEqual(expect.objectContaining({
-                kind: "consumes",
-                from: graphElementId("artifact", [name, artifact]),
-                to: graphElementId("stage", [name]),
-                label: { consumer: { kind: "worker_input", worker: key, input } },
-              }));
+              expect(graph.edges).toContainEqual(
+                expect.objectContaining({
+                  kind: "consumes",
+                  from: graphElementId("artifact", [name, artifact]),
+                  to: graphElementId("stage", [name]),
+                  label: {
+                    consumer: { kind: "worker_input", worker: key, input },
+                  },
+                }),
+              );
         for (const [mode, path] of Object.entries(worker.prompts))
           if (path)
             expect(model?.sections.prompts).toContainEqual({
@@ -304,39 +346,84 @@ test("projection sources contain no workflow identity literals or renderer types
   }
 });
 
-test.each([snapshot, fanOutSnapshot, reviewLoopSnapshot])("stage additions and removals preserve unrelated element ids: $definition.workflow.workflow", (fixture) => {
-  const definition = fixture.definition as unknown as OperatorDefinitionDetail;
-  const original = selectDefinitionGraphModel(definition);
-  const ids = (model: typeof original) => [...model.nodes, ...model.edges].map((element) => element.id).sort();
-  const addedStage = "extra_stage";
-  const added = selectDefinitionGraphModel(mutations.addStage(definition, addedStage));
-  const addedUnit = graphElementId("unit", [addedStage]);
-  expect(ids({
-    nodes: added.nodes.filter((node) => node.id !== addedUnit && !(node.scope.kind === "stage" && node.scope.stage === addedStage)),
-    edges: added.edges.filter((edge) => !(edge.scope.kind === "stage" && edge.scope.stage === addedStage)),
-  })).toEqual(ids(original));
-  const stage = definition.bundle.stages[0];
-  if (!stage) throw Error("missing stage");
-  const removedUnits = original.nodes.filter((node) => node.kind === "unit" && node.stage === stage).map((node) => node.id);
-  const unaffected = {
-    nodes: original.nodes.filter((node) => !removedUnits.includes(node.id) && !(node.scope.kind === "stage" && node.scope.stage === stage)),
-    edges: original.edges.filter((edge) => !removedUnits.includes(edge.from) && !removedUnits.includes(edge.to) && !(edge.scope.kind === "stage" && edge.scope.stage === stage)),
-  };
-  expect(ids(selectDefinitionGraphModel(mutations.removeStage(definition, stage)))).toEqual(ids(unaffected));
-});
+test.each([snapshot, fanOutSnapshot, reviewLoopSnapshot])(
+  "stage additions and removals preserve unrelated element ids: $definition.workflow.workflow",
+  (fixture) => {
+    const definition =
+      fixture.definition as unknown as OperatorDefinitionDetail;
+    const original = selectDefinitionGraphModel(definition);
+    const ids = (model: typeof original) =>
+      [...model.nodes, ...model.edges].map((element) => element.id).sort();
+    const addedStage = "extra_stage";
+    const added = selectDefinitionGraphModel(
+      mutations.addStage(definition, addedStage),
+    );
+    const addedUnit = graphElementId("unit", [addedStage]);
+    expect(
+      ids({
+        nodes: added.nodes.filter(
+          (node) =>
+            node.id !== addedUnit &&
+            !(node.scope.kind === "stage" && node.scope.stage === addedStage),
+        ),
+        edges: added.edges.filter(
+          (edge) =>
+            !(edge.scope.kind === "stage" && edge.scope.stage === addedStage),
+        ),
+      }),
+    ).toEqual(ids(original));
+    const stage = definition.bundle.stages[0];
+    if (!stage) throw Error("missing stage");
+    const removedUnits = original.nodes
+      .filter((node) => node.kind === "unit" && node.stage === stage)
+      .map((node) => node.id);
+    const unaffected = {
+      nodes: original.nodes.filter(
+        (node) =>
+          !removedUnits.includes(node.id) &&
+          !(node.scope.kind === "stage" && node.scope.stage === stage),
+      ),
+      edges: original.edges.filter(
+        (edge) =>
+          !removedUnits.includes(edge.from) &&
+          !removedUnits.includes(edge.to) &&
+          !(edge.scope.kind === "stage" && edge.scope.stage === stage),
+      ),
+    };
+    expect(
+      ids(selectDefinitionGraphModel(mutations.removeStage(definition, stage))),
+    ).toEqual(ids(unaffected));
+  },
+);
 
 test("changing a fan-out dependency changes only that dependency edge id", () => {
-  const definition = fanOutSnapshot.definition as unknown as OperatorDefinitionDetail;
+  const definition =
+    fanOutSnapshot.definition as unknown as OperatorDefinitionDetail;
   const original = selectDefinitionGraphModel(definition);
   const edge = original.edges.find((edge) => edge.kind === "binding");
   if (!edge) throw Error("missing binding");
   const units = selectDefinitionOverview(definition).units;
-  const from = units.find((unit) => graphElementId("unit", [unit.path]) === edge.from);
-  const to = units.find((unit) => graphElementId("unit", [unit.path]) === edge.to);
+  const from = units.find(
+    (unit) => graphElementId("unit", [unit.path]) === edge.from,
+  );
+  const to = units.find(
+    (unit) => graphElementId("unit", [unit.path]) === edge.to,
+  );
   if (!from || !to) throw Error("missing binding units");
-  const changed = selectDefinitionGraphModel(mutations.changeDependency(definition, to.path, [from.key]));
-  expect(changed.nodes.map((node) => node.id)).toEqual(original.nodes.map((node) => node.id));
+  const changed = selectDefinitionGraphModel(
+    mutations.changeDependency(definition, {
+      path: to.path,
+      after: [from.key],
+    }),
+  );
+  expect(changed.nodes.map((node) => node.id)).toEqual(
+    original.nodes.map((node) => node.id),
+  );
   const addedId = graphElementId("dependency", [from.path, to.path]);
   expect(changed.edges.filter((entry) => entry.id === addedId)).toHaveLength(1);
-  expect(changed.edges.filter((entry) => entry.id !== addedId).map((entry) => entry.id)).toEqual(original.edges.map((entry) => entry.id));
+  expect(
+    changed.edges
+      .filter((entry) => entry.id !== addedId)
+      .map((entry) => entry.id),
+  ).toEqual(original.edges.map((entry) => entry.id));
 });

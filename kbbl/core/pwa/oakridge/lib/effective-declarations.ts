@@ -36,7 +36,10 @@ export interface EffectiveReview {
 
 function selectTemplateSource(
   entry:
-    OperatorWorker | OperatorAuthoredReview | { template: string } | undefined,
+    | OperatorWorker
+    | OperatorAuthoredReview
+    | { template: string }
+    | undefined,
 ): TemplateSource | null {
   return entry && "template" in entry ? { template: entry.template } : null;
 }
@@ -173,4 +176,40 @@ export function selectStageSources({
         : [];
     }),
   ];
+}
+
+/** A request-changes decision may revise a different artifact than the one reviewed. */
+export interface ReviewRevision {
+  stage: string;
+  review: string;
+  decision: string;
+  artifact: string;
+  workers: string[];
+}
+export function selectReviewRevisions(
+  definition: OperatorDefinitionDetail,
+): ReviewRevision[] {
+  const workers = selectEffectiveWorkers(definition);
+  return selectEffectiveReviews(definition).flatMap((review) =>
+    review.decisions
+      .filter(({ decision }) => decision.effect === "request_changes")
+      .map(({ key, decision }) => {
+        const artifact = decision.on ?? review.review.of;
+        return {
+          stage: review.stage,
+          review: review.key,
+          decision: key,
+          artifact,
+          workers: workers
+            .filter(
+              (entry) =>
+                entry.stage === review.stage &&
+                entry.worker.produces.includes(artifact) &&
+                entry.worker.kind === "agent" &&
+                entry.worker.prompts.revise != null,
+            )
+            .map((entry) => entry.key),
+        };
+      }),
+  );
 }

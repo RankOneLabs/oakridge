@@ -85,10 +85,13 @@ function mapUnits(
     if (unit.group) mapUnits(unit.group, transform);
   }
 }
+interface RenameStageInput {
+  old: string;
+  name: string;
+}
 export function renameStage(
   definition: OperatorDefinitionDetail,
-  old: string,
-  name: string,
+  { old, name }: RenameStageInput,
 ): OperatorDefinitionDetail {
   return mutate(definition, (draft) => {
     const authored = draft.workflow.stages[old];
@@ -144,11 +147,14 @@ export function addStage(
       workflow.run.units[name] = { stage: name, input: {} };
   });
 }
+interface AddWorkerInput {
+  stage: string;
+  key: string;
+  worker: OperatorWorker;
+}
 export function addWorker(
   definition: OperatorDefinitionDetail,
-  stage: string,
-  key: string,
-  worker: OperatorWorker,
+  { stage, key, worker }: AddWorkerInput,
 ): OperatorDefinitionDetail {
   return mutate(definition, (draft) => {
     for (const workflow of [draft.workflow, draft.effective_workflow]) {
@@ -157,10 +163,13 @@ export function addWorker(
     }
   });
 }
+interface RemoveWorkerInput {
+  stage: string;
+  key: string;
+}
 export function removeWorker(
   definition: OperatorDefinitionDetail,
-  stage: string,
-  key: string,
+  { stage, key }: RemoveWorkerInput,
 ): OperatorDefinitionDetail {
   return mutate(definition, (draft) => {
     for (const workflow of [draft.workflow, draft.effective_workflow]) {
@@ -169,42 +178,59 @@ export function removeWorker(
     }
   });
 }
+interface AddPromptInput {
+  stage: string;
+  worker: string;
+  mode: keyof OperatorPrompts;
+  path: string;
+}
 export function addPrompt(
   definition: OperatorDefinitionDetail,
-  stage: string,
-  worker: string,
-  mode: keyof OperatorPrompts,
-  path: string,
+  { stage, worker, mode, path }: AddPromptInput,
 ): OperatorDefinitionDetail {
   const declaration =
     definition.effective_workflow.stages[stage]?.workers[worker];
   return declaration?.kind === "agent"
-    ? addWorker(definition, stage, worker, {
-        ...declaration,
-        prompts: { ...declaration.prompts, [mode]: path },
+    ? addWorker(definition, {
+        stage: stage,
+        key: worker,
+        worker: {
+          ...declaration,
+          prompts: { ...declaration.prompts, [mode]: path },
+        },
       })
     : definition;
+}
+interface RemovePromptInput {
+  stage: string;
+  worker: string;
+  mode: keyof OperatorPrompts;
 }
 export function removePrompt(
   definition: OperatorDefinitionDetail,
-  stage: string,
-  worker: string,
-  mode: keyof OperatorPrompts,
+  { stage, worker, mode }: RemovePromptInput,
 ): OperatorDefinitionDetail {
   const declaration =
     definition.effective_workflow.stages[stage]?.workers[worker];
   return declaration?.kind === "agent"
-    ? addWorker(definition, stage, worker, {
-        ...declaration,
-        prompts: { ...declaration.prompts, [mode]: null },
+    ? addWorker(definition, {
+        stage: stage,
+        key: worker,
+        worker: {
+          ...declaration,
+          prompts: { ...declaration.prompts, [mode]: null },
+        },
       })
     : definition;
 }
+interface AddArtifactTypeInput {
+  stage: string;
+  key: string;
+  artifact: OperatorParsedArtifact;
+}
 export function addArtifactType(
   definition: OperatorDefinitionDetail,
-  stage: string,
-  key: string,
-  artifact: OperatorParsedArtifact,
+  { stage, key, artifact }: AddArtifactTypeInput,
 ): OperatorDefinitionDetail {
   return mutate(definition, (draft) => {
     const effective = draft.effective_workflow.stages[stage];
@@ -215,10 +241,13 @@ export function addArtifactType(
     }
   });
 }
+interface ChangeDependencyInput {
+  path: string;
+  after: string[];
+}
 export function changeDependency(
   definition: OperatorDefinitionDetail,
-  path: string,
-  after: string[],
+  { path, after }: ChangeDependencyInput,
 ): OperatorDefinitionDetail {
   return mutate(definition, (draft) => {
     for (const workflow of [draft.workflow, draft.effective_workflow]) {

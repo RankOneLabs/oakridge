@@ -98,3 +98,57 @@ export function validateLividDefinitionDiagram(
     { nodeTypeLimit: 8, edgeTypeLimit: 8 },
   );
 }
+
+import type { DefinitionSelection } from "../../lib/hash";
+import type { GraphNode } from "./definition-graph";
+import {
+  definitionStageHref,
+  definitionUnitHref,
+} from "./definition-selection";
+export interface DefinitionGraphRoute {
+  scope: GraphScope;
+  selected_node: GraphNode | null;
+}
+export function selectDefinitionGraphRoute(
+  model: DefinitionGraphModel,
+  selection: DefinitionSelection | null,
+): DefinitionGraphRoute {
+  const node =
+    model.nodes.find((node) =>
+      selection?.kind === "stage"
+        ? node.kind === "stage" && node.stage === selection.stage
+        : selection?.kind === "unit" &&
+          node.kind === "unit" &&
+          node.path === selection.path,
+    ) ?? null;
+  return {
+    scope:
+      node?.kind === "stage"
+        ? node.scope
+        : node?.kind === "unit" && node.is_group
+          ? { kind: "group", parent: node.path }
+          : (node?.scope ?? { kind: "group", parent: null }),
+    // A group route shows its children, so the group itself is outside the visible scope.
+    selected_node: node?.kind === "unit" && node.is_group ? null : node,
+  };
+}
+interface GraphNodeNavigation {
+  model: DefinitionGraphModel;
+  definition_id: string;
+  node_id: string;
+  descend: boolean;
+}
+export function selectDefinitionGraphNodeHref({
+  model,
+  definition_id,
+  node_id,
+  descend,
+}: GraphNodeNavigation): string | null {
+  const node = model.nodes.find((node) => node.id === node_id);
+  if (node?.kind === "stage")
+    return definitionStageHref(definition_id, node.stage);
+  if (node?.kind !== "unit") return null;
+  return descend && !node.is_group && node.stage
+    ? definitionStageHref(definition_id, node.stage)
+    : definitionUnitHref(definition_id, node.path);
+}

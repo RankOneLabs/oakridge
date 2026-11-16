@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import snapshot from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import { selectDefinitionDependencies } from "./definition-dependencies";
-import { selectDefinitionGraph } from "./definition-graph";
+import { selectDefinitionGraph } from "./graph-layout";
 import { selectDefinitionOverview } from "./definition-overview";
 
 const detail = snapshot.definition as unknown as OperatorDefinitionDetail;

@@ -74,7 +74,10 @@ test("parallel dependency and binding relationships survive validation and layou
   const to = model.nodes.find((node) => node.id === reference.to);
   if (from?.kind !== "unit" || to?.kind !== "unit")
     throw Error("missing units");
-  const altered = changeDependency(definition, to.path, [from.key]);
+  const altered = changeDependency(definition, {
+    path: to.path,
+    after: [from.key],
+  });
   const projected = selectDefinitionGraphModel(altered);
   const scope: GraphScope = {
     kind: "group",
@@ -110,23 +113,42 @@ import {
 } from "@testing-library/react";
 import type { LividDiagramProps } from "@rankonelabs/livid-react";
 import { definitionRegistry } from "./livid-graph-adapter";
-import { definitionUnitHref } from "./definition-selection";
+import {
+  definitionUnitHref,
+  definitionStageHref,
+} from "./definition-selection";
 import { readFileSync } from "node:fs";
 vi.mock("@rankonelabs/livid-react", () => ({
   LividDiagram: (props: LividDiagramProps<typeof definitionRegistry>) =>
     createElement(
       "div",
       { "aria-label": props.ariaLabel },
-      props.diagram.nodes.filter(({ node }) => node.childState.kind === "deferred").map(({ node }) =>
-        createElement("button", { key: `descend:${node.id}`, onClick: () => {
-          if (node.childState.kind === "deferred") props.onDescendRequest?.({ nodeId: node.id, childState: node.childState });
-        } }, `Descend ${node.label}`),
-      ),
+      props.diagram.nodes
+        .filter(({ node }) => node.childState.kind === "deferred")
+        .map(({ node }) =>
+          createElement(
+            "button",
+            {
+              key: `descend:${node.id}`,
+              onClick: () => {
+                if (node.childState.kind === "deferred")
+                  props.onDescendRequest?.({
+                    nodeId: node.id,
+                    childState: node.childState,
+                  });
+              },
+            },
+            `Descend ${node.label}`,
+          ),
+        ),
       props.diagram.nodes.map(({ node }) =>
         createElement(
           "button",
           {
             key: node.id,
+            "aria-pressed":
+              props.selection?.kind === "node" &&
+              props.selection.id === node.id,
             onClick: () =>
               props.onSelectionChange?.({
                 kind: "node",
@@ -139,7 +161,7 @@ vi.mock("@rankonelabs/livid-react", () => ({
       ),
     ),
 }));
-import { LividDefinitionGraph } from "../components/molecules/LividDefinitionGraph";
+import { LividDefinitionGraphController } from "../components/organisms/LividDefinitionGraphController";
 afterEach(cleanup);
 for (const fixture of [development, fanOut, reviewLoop]) {
   test(`${fixture.definition.workflow.workflow}: component renders the asynchronous layout and navigates selected units`, async () => {
@@ -154,9 +176,9 @@ for (const fixture of [development, fanOut, reviewLoop]) {
     );
     if (unit?.kind !== "unit") throw Error("missing root unit");
     render(
-      createElement(LividDefinitionGraph, {
+      createElement(LividDefinitionGraphController, {
         model,
-        scope: { kind: "group", parent: null },
+        selection: null,
         definition_id: definition.definition_id,
       }),
     );
@@ -185,32 +207,128 @@ test("Livid consumer imports both required library stylesheets", () => {
 test("fan-out groups defer descent to their child group scope", () => {
   const definition = fanOut.definition as unknown as OperatorDefinitionDetail;
   const model = selectDefinitionGraphModel(definition);
-  const group = model.nodes.find((node) => node.kind === "unit" && node.is_group);
+  const group = model.nodes.find(
+    (node) => node.kind === "unit" && node.is_group,
+  );
   if (group?.kind !== "unit") throw Error("missing group");
   const spec = selectLividDiagramSpec(model, group.scope);
-  expect(spec.nodes.find((node) => node.id === group.id)?.childState).toEqual({ kind: "deferred", key: group.id });
-  const children = selectLividDiagramSpec(model, { kind: "group", parent: group.path });
-  expect(children.nodes.map((node) => node.id)).toEqual(model.nodes.filter((node) => node.scope.kind === "group" && node.scope.parent === group.path).map((node) => node.id));
+  expect(spec.nodes.find((node) => node.id === group.id)?.childState).toEqual({
+    kind: "deferred",
+    key: group.id,
+  });
+  const children = selectLividDiagramSpec(model, {
+    kind: "group",
+    parent: group.path,
+  });
+  expect(children.nodes.map((node) => node.id)).toEqual(
+    model.nodes
+      .filter(
+        (node) =>
+          node.scope.kind === "group" && node.scope.parent === group.path,
+      )
+      .map((node) => node.id),
+  );
   expect(children.nodes.length).toBeGreaterThan(0);
 });
 
-
 import { DefinitionGraph } from "../components/molecules/DefinitionGraph";
-test("parent rerenders preserve Livid group descent without another layout", async () => {
+test("route changes restore group and stage scopes and selection across rerenders", async () => {
   const definition = fanOut.definition as unknown as OperatorDefinitionDetail;
   const overview = selectDefinitionOverview(definition);
   const group = overview.units.find((unit) => unit.is_group);
   if (!group) throw Error("missing group");
   const child = overview.units.find((unit) => unit.parent === group.path);
-  if (!child) throw Error("missing child");
-  const props = { definition, overview, selection: null, renderer: "livid" as const };
-  const view = render(createElement(DefinitionGraph, props));
-  fireEvent.click(await screen.findByRole("button", { name: `Descend ${group.key}` }, { timeout: 20000 }));
+  if (!child?.stage) throw Error("missing child stage");
+  const props = { definition, overview, renderer: "livid" as const };
+  const view = render(
+    createElement(DefinitionGraph, { ...props, selection: null }),
+  );
+  fireEvent.click(
+    await screen.findByRole(
+      "button",
+      { name: `Descend ${group.key}` },
+      { timeout: 20000 },
+    ),
+  );
+  expect(window.location.hash).toBe(
+    definitionUnitHref(definition.definition_id, group.path),
+  );
+  // The router supplies the new selection after the hash changes.
+  view.rerender(
+    createElement(DefinitionGraph, {
+      ...props,
+      selection: { kind: "unit", path: group.path },
+    }),
+  );
   await screen.findByRole("button", { name: child.key }, { timeout: 20000 });
-  view.rerender(createElement(DefinitionGraph, { ...props }));
+  view.rerender(
+    createElement(DefinitionGraph, {
+      ...props,
+      selection: { kind: "unit", path: group.path },
+    }),
+  );
   expect(screen.queryByRole("status")).toBeNull();
   expect(screen.getByRole("button", { name: child.key })).toBeDefined();
-  expect(screen.queryByRole("button", { name: group.key })).toBeNull();
-  // Flush effects: a recreated root scope would reset descent after this render.
-  await waitFor(() => expect(screen.getByRole("button", { name: child.key })).toBeDefined());
+  fireEvent.click(screen.getByRole("button", { name: `Descend ${child.key}` }));
+  expect(window.location.hash).toBe(
+    definitionStageHref(definition.definition_id, child.stage),
+  );
+  view.rerender(
+    createElement(DefinitionGraph, {
+      ...props,
+      selection: { kind: "stage", stage: child.stage },
+    }),
+  );
+  const stageNode = await screen.findByRole(
+    "button",
+    { name: child.stage, pressed: true },
+    { timeout: 20000 },
+  );
+  expect(stageNode).toBeDefined();
+  // Back/forward route restoration shows the same scopes without local descent state.
+  view.rerender(
+    createElement(DefinitionGraph, {
+      ...props,
+      selection: { kind: "unit", path: group.path },
+    }),
+  );
+  await screen.findByRole("button", { name: child.key }, { timeout: 20000 });
+  view.rerender(
+    createElement(DefinitionGraph, {
+      ...props,
+      selection: { kind: "unit", path: child.path },
+    }),
+  );
+  expect(
+    await screen.findByRole(
+      "button",
+      { name: child.key, pressed: true },
+      { timeout: 20000 },
+    ),
+  ).toBeDefined();
+});
+
+test("dagre renders without requesting the deferred Livid component", () => {
+  const definition =
+    development.definition as unknown as OperatorDefinitionDetail;
+  render(
+    createElement(DefinitionGraph, {
+      definition,
+      overview: selectDefinitionOverview(definition),
+      selection: null,
+      renderer: "dagre",
+    }),
+  );
+  expect(
+    screen.getByRole("img", { name: "Unit dependency graph" }),
+  ).toBeDefined();
+  expect(screen.queryByLabelText("Definition graph")).toBeNull();
+  const source = readFileSync(
+    "oakridge/components/molecules/DefinitionGraph.tsx",
+    "utf8",
+  );
+  expect(source).toContain(
+    'import("../organisms/LividDefinitionGraphController")',
+  );
+  expect(source).not.toMatch(/import \{.*Livid.*\} from/);
 });
