@@ -144,6 +144,31 @@ describe("run and unit status", () => {
         ? { ...attempt, status: "failed", failure: { code: "pull_request_mismatch", detail: "PR branch differs" } }
         : attempt) }).run).toBe("failed");
   });
+  it("keeps a cohort running while its builder works past a failed PR watcher", () => {
+    const template = cohort.attempts[0];
+    if (!template) throw new Error("captured fixture lacks an attempt");
+    const watcherFailed = { ...cohort, attention: { kind: "stalled" as const, detail: "pr_watch failed: inputs do not match" },
+      attempts: [{ ...template, worker: "pr_watch", status: "failed" as const, failure: { code: "invalid_instruction", detail: "inputs do not match" }, is_current: true, kbbl_session_id: null },
+        { ...template, worker: "builder", status: "running" as const, failure: null, is_current: true, kbbl_session_id: "builder-session" }] };
+    const detail = runSnapshot({ ...run, status: { kind: "active" } }, [watcherFailed]);
+    expect(detail.ok && [deriveStatus(statusInputOf(watcherFailed)).run, detail.value.is_stuck]).toEqual(["running", false]);
+  });
+  it("keeps a failed builder stuck while a PR watcher retries through a forge outage", () => {
+    const template = cohort.attempts[0];
+    if (!template) throw new Error("captured fixture lacks an attempt");
+    const builderFailed = { ...cohort, attention: { kind: "stalled" as const, detail: "builder failed: worker ended before publishing" },
+      attempts: [{ ...template, worker: "builder", status: "failed" as const, failure: { code: "no_output", detail: "worker ended before publishing" }, is_current: true, kbbl_session_id: "builder-session" },
+        { ...template, worker: "pr_watch", status: "running" as const, failure: null, is_current: true, kbbl_session_id: null }] };
+    const detail = runSnapshot({ ...run, status: { kind: "active" } }, [builderFailed]);
+    expect(detail.ok && [deriveStatus(statusInputOf(builderFailed)).run, detail.value.is_stuck]).toEqual(["failed", true]);
+  });
+  it("keeps a commit stall failed even while a worker is live", () => {
+    const template = cohort.attempts[0];
+    if (!template) throw new Error("captured fixture lacks an attempt");
+    const commitStalled = { ...cohort, attention: { kind: "stalled" as const, detail: "target revision failed validation (refused operator_decided)" },
+      attempts: [{ ...template, worker: "builder", status: "running" as const, failure: null, is_current: true, kbbl_session_id: "builder-session" }] };
+    expect(deriveStatus(statusInputOf(commitStalled)).run).toBe("failed");
+  });
   it("parks a unit awaiting the operator and leaves a dependency wait pending", () => {
     const blocked = units.find((unit) => unit.attention?.kind === "waiting" && unit.decisions.length === 0);
     if (!blocked) throw new Error("captured fixture lacks a dependency wait");
