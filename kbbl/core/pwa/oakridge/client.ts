@@ -1,3 +1,4 @@
+import { randomUuid } from "../lib/random-uuid";
 import { parseInstallStatus } from "./adapters/install-status";
 import type { ExecutedPromptRead } from "./lib/prompt-view";
 import type { ExecutedPromptTurn } from "../../executed-prompt";
@@ -219,7 +220,7 @@ export async function createRun(body: CreateRunRequest, idempotencyKey: string):
 
 export async function cancelRun(runId: string): Promise<unknown> {
   const path = `${runPath(runId)}/cancel`;
-  const response = await oakridgePost<OperatorIngressResponse>(path, { request_id: crypto.randomUUID() });
+  const response = await oakridgePost<OperatorIngressResponse>(path, { request_id: randomUuid() });
   committed(response, path);
   invalidateCachedRunUnits(runId);
   return response;
@@ -246,7 +247,7 @@ export async function retryRunUnit(stageInstanceId: string, unitId: string): Pro
   const retry = unit.decisions.find((decision) => decision.submit.kind === "retry");
   if (!retry || retry.submit.kind !== "retry") throw new Error(`oakridge ${stageInstanceId}: retry unavailable`);
   const path = `${unitPath(stage.runId, unit.unit_id)}/workers/${encodeURIComponent(retry.submit.worker)}/retry`;
-  const result = await oakridgePost<OperatorIngressResponse>(path, { request_id: crypto.randomUUID() });
+  const result = await oakridgePost<OperatorIngressResponse>(path, { request_id: randomUuid() });
   invalidateCachedRunUnits(stage.runId);
   return committed(result, path);
 }

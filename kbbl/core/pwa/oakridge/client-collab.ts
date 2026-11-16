@@ -1,3 +1,4 @@
+import { randomUuid } from "../lib/random-uuid";
 // Collaboration through v2 revision and thread routes.
 
 import type { CollabThread, ReviewItem, PostThreadRequest, PostMessageRequest, PostAtomEditRequest, PostReviewItemRequest, PatchReviewItemRequest } from "./collab-types";
@@ -56,7 +57,7 @@ export function createCollabClient({ resolveArtifactId, invalidateCachedRunUnits
   async function postThread(artifactId: string, req: PostThreadRequest): Promise<{ thread_id: string; message_id: string }> {
     const location = await revisionLocation(artifactId);
     const thread = await oakridgePost<OperatorCollaborationThreadRow>(threadsPath(location),
-      { request_key: crypto.randomUUID(), title: req.body || "Discussion", anchor: req.anchor ?? null });
+      { request_key: randomUuid(), title: req.body || "Discussion", anchor: req.anchor ?? null });
     threadLocation.set(thread.id, { runId: location.runId, unitId: location.unitId });
     const message = await postMessage(thread.id, { body: req.body, author: req.author });
     return { thread_id: thread.id, message_id: message.message_id };
@@ -67,7 +68,7 @@ export function createCollabClient({ resolveArtifactId, invalidateCachedRunUnits
     if (!location) throw new Error(`oakridge thread ${threadId}: load its artifact before posting`);
     const path = `${unitPath(location.runId, location.unitId)}/threads/${encodeURIComponent(threadId)}/messages`;
     const response = await oakridgePost<{ readonly message: OperatorCollaborationMessageRow }>(path,
-      { request_key: crypto.randomUUID(), text: req.body });
+      { request_key: randomUuid(), text: req.body });
     return { message_id: response.message.id };
   }
 
@@ -96,7 +97,7 @@ export function createCollabClient({ resolveArtifactId, invalidateCachedRunUnits
     const revision = location.detail.revisions.find((candidate) => candidate.id === location.revisionId);
     if (!revision) throw new Error(`oakridge ${location.revisionId}: revision unavailable`);
     const path = `${unitPath(location.runId, location.unitId)}/artifacts/${encodeURIComponent(location.artifactKey)}`;
-    committed(await oakridgePutBody<OperatorIngressResponse>(path, { request_id: crypto.randomUUID(), body,
+    committed(await oakridgePutBody<OperatorIngressResponse>(path, { request_id: randomUuid(), body,
       predecessor: location.revisionId, subject: revision.subject_id }), path);
     invalidateCachedRunUnits(location.runId);
     return { artifact_id: location.revisionId };
@@ -111,10 +112,10 @@ export function createCollabClient({ resolveArtifactId, invalidateCachedRunUnits
   async function postReviewItem(artifactId: string, req: PostReviewItemRequest): Promise<ReviewItem> {
     const location = await revisionLocation(artifactId);
     const thread = await oakridgePost<OperatorCollaborationThreadRow>(threadsPath(location),
-      { request_key: crypto.randomUUID(), title: req.claim, anchor: req.anchor });
+      { request_key: randomUuid(), title: req.claim, anchor: req.anchor });
     const path = `${unitPath(location.runId, location.unitId)}/threads/${encodeURIComponent(thread.id)}/review-items`;
     const item = await oakridgePost<OperatorReviewItemRow>(path,
-      { request_key: crypto.randomUUID(), title: req.claim, detail: req.reality, status: "open" });
+      { request_key: randomUuid(), title: req.claim, detail: req.reality, status: "open" });
     return reviewItemView(item, artifactId, req.anchor);
   }
 
