@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { SchemaContractView } from "./SchemaContractView";
 import { CONTRACT_RENDERERS, resolveContractRenderer } from "../../artifactRegistry";
@@ -28,7 +28,7 @@ test("a newly declared artifact renders a definition contract from its schema", 
   const release_note = {kind: "record", schema: {kind: "record", fields: {title: {kind: "text"}, notes: {kind: "optional", value: {kind: "text"}}}}} as const;
   stage.workers.writer.produces.push("release_note");
   render(<StageInspector definition={{...detail, effective_workflow: {...detail.effective_workflow, stages: {...detail.effective_workflow.stages, brief: {...stage, artifacts: {...stage.artifacts, release_note}}}}}} selection={{kind: "stage", stage: "brief", tab: "artifacts"}} />);
-  const article = screen.getByRole("heading", {name: "release_note"}).closest("article");
+  const article = within(screen.getByRole("region", {name: "Artifacts"})).getByRole("heading", {name: "release_note"}).closest("article");
   expect(article?.textContent).toContain("Definition contract");
   expect(article?.textContent).toContain("title · required");
   expect(article?.textContent).toContain("notes · optional");

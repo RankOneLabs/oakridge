@@ -182,12 +182,6 @@ export function selectStageInputUnits(
   return model.selected_unit ? [model.selected_unit] : model.sections.inputs.units;
 }
 
-export interface PromptReference {
-  owner_kind: "worker" | "review";
-  owner_key: string;
-  mode: string;
-  path: string;
-}
 export interface StageInspectorSections {
   overview: StageSummary;
   inputs: {
@@ -203,7 +197,6 @@ export interface StageInspectorSections {
     produces: string[];
     evaluates: string | null;
   })[];
-  prompts: PromptReference[];
   artifacts: ArtifactContract[];
   reviews: (StageInspectorModel["reviews"][number] & {
     when: string | null;
@@ -243,29 +236,6 @@ function selectSections(
       evaluates:
         entry.worker.kind === "agent" ? (entry.worker.evaluates ?? null) : null,
     })),
-    prompts: [
-      ...model.workers.flatMap(({ key, worker }): PromptReference[] =>
-        worker.kind === "agent"
-          ? Object.entries(worker.prompts).flatMap(([mode, path]) =>
-              path
-                ? [{ owner_kind: "worker", owner_key: key, mode, path }]
-                : [],
-            )
-          : [],
-      ),
-      ...model.reviews.flatMap(({ key, review }): PromptReference[] =>
-        review.prompt
-          ? [
-              {
-                owner_kind: "review",
-                owner_key: key,
-                mode: "review",
-                path: review.prompt,
-              },
-            ]
-          : [],
-      ),
-    ],
     artifacts: model.artifacts,
     reviews: model.reviews.map((entry) => ({
       ...entry,

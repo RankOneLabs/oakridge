@@ -1,3 +1,4 @@
+import { selectPromptRows } from "./prompt-inspector";
 import { expect, test } from "vitest";
 import snapshot from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
@@ -139,48 +140,25 @@ for (const fixture of [snapshot, fanOutSnapshot, reviewLoopSnapshot]) {
         (entry) => entry.key,
       ),
     ).toContain("extra_worker");
-    const originalPrompts = section(source)?.prompts ?? [];
-    expect(
-      section(variants[4] as OperatorDefinitionDetail)
-        ?.prompts.map((entry) => JSON.stringify(entry))
-        .sort(),
-    ).toEqual(
-      [
-        ...originalPrompts,
-        ...originalPrompts
-          .filter(
-            (entry) =>
-              entry.owner_kind === "worker" && entry.owner_key === worker[0],
-          )
-          .map((entry) => ({ ...entry, owner_key: "extra_worker" })),
-      ]
-        .map((entry) => JSON.stringify(entry))
-        .sort(),
-    );
-    expect(
-      section(variants[5] as OperatorDefinitionDetail)?.workers.map(
-        (entry) => entry.key,
-      ),
-    ).not.toContain(worker[0]);
-    expect(
-      section(variants[5] as OperatorDefinitionDetail)?.prompts.some(
-        (entry) =>
-          entry.owner_kind === "worker" && entry.owner_key === worker[0],
-      ),
-    ).toBe(false);
-    expect(
-      section(variants[6] as OperatorDefinitionDetail)?.prompts,
-    ).toContainEqual({
-      owner_kind: "worker",
-      owner_key: worker[0],
+    const prompts = (definition: OperatorDefinitionDetail) => {
+      const model = selectStageInspectorModels(definition).get(stage);
+      if (!model) throw new Error("Missing mutated stage");
+      return selectPromptRows(model);
+    };
+    const originalPrompts = prompts(source);
+    expect(prompts(variants[4] as OperatorDefinitionDetail).map(entry => entry.id).sort()).toEqual([
+      ...originalPrompts.map(entry => entry.id),
+      ...originalPrompts.filter(entry => entry.owner.kind === "worker" && entry.owner.key === worker[0])
+        .map(entry => `worker:extra_worker:${entry.mode}`),
+    ].sort());
+    expect(section(variants[5] as OperatorDefinitionDetail)?.workers.map(entry => entry.key)).not.toContain(worker[0]);
+    expect(prompts(variants[5] as OperatorDefinitionDetail).some(entry => entry.owner.kind === "worker" && entry.owner.key === worker[0])).toBe(false);
+    expect(prompts(variants[6] as OperatorDefinitionDetail)).toContainEqual(expect.objectContaining({
+      owner: expect.objectContaining({kind: "worker", key: worker[0]}),
       mode: "handoff",
       path: "extra/prompt.md",
-    });
-    expect(
-      section(variants[7] as OperatorDefinitionDetail)?.prompts.some(
-        (entry) => entry.owner_key === worker[0] && entry.mode === "initial",
-      ),
-    ).toBe(false);
+    }));
+    expect(prompts(variants[7] as OperatorDefinitionDetail).some(entry => entry.owner.key === worker[0] && entry.mode === "initial")).toBe(false);
     expect(
       section(variants[8] as OperatorDefinitionDetail)?.artifacts.map(
         (entry) => entry.name,
@@ -276,12 +254,11 @@ test("review loop graph and inspector derive cycles, conditions and prompt refer
         ),
       ).toBe(true);
       if (review.prompt)
-        expect(model?.sections.prompts).toContainEqual({
-          owner_kind: "review",
-          owner_key: key,
+        expect(model ? selectPromptRows(model) : []).toContainEqual(expect.objectContaining({
+          owner: expect.objectContaining({kind: "review", key}),
           mode: "review",
           path: review.prompt,
-        });
+        }));
     }
     expect(model?.sections.bindings.lets).toEqual(
       Object.entries(stage.let ?? {}).map(([name, expression]) => ({
@@ -309,12 +286,11 @@ test("review loop graph and inspector derive cycles, conditions and prompt refer
               );
         for (const [mode, path] of Object.entries(worker.prompts))
           if (path)
-            expect(model?.sections.prompts).toContainEqual({
-              owner_kind: "worker",
-              owner_key: key,
+            expect(model ? selectPromptRows(model) : []).toContainEqual(expect.objectContaining({
+              owner: expect.objectContaining({kind: "worker", key}),
               mode,
               path,
-            });
+            }));
       }
   }
 });

@@ -2,9 +2,22 @@ import type { ArtifactContract, ArtifactConsumer } from "../artifact-types";
 import type { StageInspectorModel, StageElementReference } from "./stage-inspector";
 import { selectPromptRows } from "./prompt-inspector";
 
-export function selectExpressionIdentifiers(expression: string): string[] {
+export interface ExpressionToken {
+  text: string;
+  is_identifier: boolean;
+}
+
+/** Preserve quoted strings and field access while recognizing compiler-style words. */
+export function tokenizeExpression(expression: string): ExpressionToken[] {
   const tokens = expression.split(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[A-Za-z_$][A-Za-z0-9_$-]*)/);
-  return [...new Set(tokens.filter((token, index) => /^[A-Za-z_$][A-Za-z0-9_$-]*$/.test(token) && !tokens[index - 1]?.trimEnd().endsWith(".")))];
+  return tokens.map((text, index) => ({
+    text,
+    is_identifier: /^[A-Za-z_$][A-Za-z0-9_$-]*$/.test(text) && !tokens[index - 1]?.trimEnd().endsWith("."),
+  }));
+}
+
+export function selectExpressionIdentifiers(expression: string): string[] {
+  return [...new Set(tokenizeExpression(expression).filter(token => token.is_identifier).map(token => token.text))];
 }
 export function selectConsumerTarget(consumer: ArtifactConsumer): StageElementReference {
   switch (consumer.kind) {

@@ -21,3 +21,22 @@ test("new record contracts derive fields and prompts without presentation change
   const changed = {...model, stage: {...model.stage, artifacts: {...model.stage.artifacts, release_note: {kind: "record" as const, schema: {kind: "record" as const, fields: {title: {kind: "text" as const}, notes: {kind: "optional" as const, value: {kind: "text" as const}}}}}}}, workers: model.workers.map(entry => ({...entry, worker: {...entry.worker, produces: [...entry.worker.produces, "release_note"]}}))};
   expect(selectArtifactContracts(changed).find(contract => contract.name === "release_note")).toMatchObject({required_fields: ["title"], producers: ["writer"], producer_prompts: expect.arrayContaining([expect.objectContaining({id: "worker:writer:initial"})])});
 });
+
+test("cohort contracts join all builder prompts and build-result consumers", () => {
+  const model = selectStageInspector(detail, {kind: "stage", stage: "cohort", tab: null});
+  if (!model) throw new Error("cohort");
+  const contracts = selectArtifactContracts(model);
+  expect(contracts.find(contract => contract.name === "pr")?.producer_prompts.map(row => row.id)).toEqual([
+    "worker:builder:initial", "worker:builder:revise",
+  ]);
+  const build_result = contracts.find(contract => contract.name === "build_result");
+  expect(build_result?.producers).toEqual(["builder"]);
+  expect(build_result?.consumers).toEqual(expect.arrayContaining([
+    {kind: "review_of", review: "pr_closed"},
+    {kind: "evaluates", worker: "assessor"},
+  ]));
+});
+
+test("tokenization preserves quoted words and repeated field references", () => {
+  expect(selectExpressionIdentifiers('brief + value.brief + "brief" + value.goal + brief')).toEqual(["brief", "value"]);
+});

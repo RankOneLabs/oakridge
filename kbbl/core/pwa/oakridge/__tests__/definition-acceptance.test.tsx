@@ -2,12 +2,13 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, expect, test, vi } from "vitest";
 import fixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
+import * as artifactRegistry from "../artifactRegistry";
 import { WorkflowDefDetail } from "../components/organisms/WorkflowDefDetail";
 const detail = fixture.definition as unknown as OperatorDefinitionDetail;
 vi.mock("../hooks/useWorkflowDef", () => ({
   useWorkflowDef: () => ({ data: detail, isPending: false, isError: false }),
 }));
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 function inspect(stage: string, tab: import("../lib/definition-selection").StageTab = "overview") {
   const view = render(
     <WorkflowDefDetail
@@ -121,10 +122,17 @@ test("prompt bodies expose pinned content and artifact links", () => {
   expect(within(article as HTMLElement).getByRole("link", {name: "build_result"}).getAttribute("href")).toContain("artifact-build_result");
   expect(within(article as HTMLElement).getByRole("link", {name: "pr"})).toBeTruthy();
 });
-test("definition contracts link every producing prompt", () => {
+test("definition contracts link every producing prompt and exclude run data", () => {
+  const runViewer = vi.spyOn(artifactRegistry, "resolveViewer").mockReturnValue(() => <p>Run revision body sentinel</p>);
   inspect("cohort", "artifacts");
   const region = screen.getByRole("region", {name: "Artifacts"});
   expect(region.textContent).toContain("Contracts declared by this workflow definition — not artifacts produced by a run.");
+  expect(within(region).getAllByRole("article").map(article => article.id)).toEqual(
+    Object.keys(detail.effective_workflow.stages.cohort.artifacts).map(name => `stage-cohort-artifact-${name}`),
+  );
+  expect(within(region).queryByText("Run revision body sentinel")).toBeNull();
+  expect(runViewer).not.toHaveBeenCalled();
+  expect(within(region).queryByRole("button", {name: /revision|download/i})).toBeNull();
   const article = within(region).getByRole("heading", {name: "pr"}).closest("article");
   if (!article) throw new Error("Missing pr");
   expect(within(article).getByRole("link", {name: "worker:builder:revise"}).getAttribute("href")).toContain("prompt-worker%3Abuilder%3Arevise");
@@ -134,6 +142,12 @@ test("prompt and artifact cross-links open their tabs and preserve stage selecti
   const onNavigate = vi.fn();
   const props = {definitionId: detail.definition_id, onNavigate, onBack: () => {}};
   const view = render(<WorkflowDefDetail {...props} selection={{kind: "stage", stage: "cohort", tab: "artifacts"}} />);
+  const selectedGraphNodes = () => Array.from(
+    screen.getByRole("region", {name: "Definition dependencies"}).querySelectorAll(".or-definition-node--selected"),
+    node => node.parentElement?.querySelector("title")?.textContent,
+  );
+  const initialGraphSelection = selectedGraphNodes();
+  expect(initialGraphSelection.length).toBeGreaterThan(0);
   const artifact = screen.getByRole("region", {name: "Artifacts"});
   const pr = within(artifact).getByRole("heading", {name: "pr"}).closest("article");
   if (!pr) throw new Error("Missing pr");
@@ -144,9 +158,11 @@ test("prompt and artifact cross-links open their tabs and preserve stage selecti
   const row = document.getElementById("stage-cohort-prompt-worker%3Abuilder%3Arevise");
   if (!row) throw new Error("Missing prompt row");
   expect(screen.getByRole("tab", {name: "Prompts"}).getAttribute("aria-selected")).toBe("true");
+  expect(selectedGraphNodes()).toEqual(initialGraphSelection);
   fireEvent.click(within(row).getByRole("link", {name: "pr"}));
   const back = onNavigate.mock.lastCall?.[0] as string;
   expect(back).toContain("/stages/cohort#stage-cohort-artifact-pr");
   view.rerender(<WorkflowDefDetail {...props} selection={{kind: "stage", stage: "cohort#" + back.split("#")[2], tab: null}} />);
   expect(screen.getByRole("tab", {name: "Artifacts"}).getAttribute("aria-selected")).toBe("true");
+  expect(selectedGraphNodes()).toEqual(initialGraphSelection);
 });
