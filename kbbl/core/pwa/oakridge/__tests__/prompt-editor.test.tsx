@@ -1,3 +1,4 @@
+import { PromptEditor } from "../components/organisms/PromptEditor";
 import { WorkflowDefDetail } from "../components/organisms/WorkflowDefDetail";
 import { useHashRoute } from "../../hooks/useHashRoute";
 import { selectPromptReferences } from "../lib/prompt-editor";
@@ -50,7 +51,7 @@ afterEach(() => {cleanup(); vi.unstubAllGlobals();});
 function mount(stage = "brief") {
   const model = selectStageInspector(definition, {kind: "stage", stage, tab: "prompts"});
   if (!model) throw new Error("Missing fixture stage");
-  return render(<QueryClientProvider client={new QueryClient({defaultOptions: {queries: {retry: false}}})}><StagePromptsSection model={model} /></QueryClientProvider>);
+  return render(<QueryClientProvider client={new QueryClient({defaultOptions: {queries: {retry: false}}})}><StagePromptsSection model={model} renderPromptEditor={props => <PromptEditor {...props} />} /></QueryClientProvider>);
 }
 const click = (name: string) => fireEvent.click(screen.getByRole("button", {name}));
 async function open() {mount(); click("Edit " + path); await screen.findByRole("region", {name: "Prompt editor"});}

@@ -53,7 +53,6 @@ export function usePromptEditor({path, definition, versions, selection, onClose}
     setBusy(false);
   }
   function close() {
-    if (state.is_dirty && !window.confirm("Discard unsaved local edits and open another view?")) return;
     onClose();
   }
   return {state, feedback, is_busy, save, validate, publish, close,
