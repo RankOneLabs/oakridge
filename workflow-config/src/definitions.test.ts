@@ -6,10 +6,11 @@ import { dirname, resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import YAML from "yaml";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
-import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
+import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId, type PromptVersionId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type DefinitionOrder, type OperationRegistry } from "./definition-objects";
 import { DEFINITION_STORE_ROOT, readSkillIndex, readSkillBundle, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, isCommittedDefinition, type DefinitionStoreFailure } from "./definition-store";
 import { WORKFLOW_SOURCES } from "./workflow-sources";
+import { writeStoreFile, withPublishedPrompt, type PromptVersionObject, type PromptPointer } from "../../oakridge-dbos/src/runtime/definition-store";
 
 function unwrap<Value, Failure>(result: Result<Value, Failure>): Value {
   if (!result.ok) throw new Error(JSON.stringify(result.error));
@@ -666,42 +667,57 @@ for (const entry of [{ definition_id: "a".repeat(64), audience: "unknown" }, { d
   });
 }
 
-test("published prompt survives regeneration and check without altering the authored file", async () => {
-  const { savePendingPrompt, publishPrompt, listPromptVersions } = await import("../../oakridge-dbos/src/runtime/prompt-versions");
-  const { CoreClient } = await import("../../oakridge-dbos/src/core-client/client");
+test("published prompt survives regeneration and check without altering the authored file", () => {
   const root = generatorFixture();
   expect(runGenerator(root).exitCode).toBe(0);
   const store = resolve(root, "workflow-config/definitions");
-  const previous = process.env.OAKRIDGE_DEFINITION_ROOT;
-  process.env.OAKRIDGE_DEFINITION_ROOT = store;
-  const core = unwrap(CoreClient.start());
-  try {
-    const path = "review-loop/write.md";
-    const authored = readFileSync(resolve(root, "workflow-config/prompts", path));
-    const before = unwrap(listPromptVersions(path));
-    const pending = unwrap(await savePendingPrompt({ path, body: before.published.body + "\nAdditional guidance.\n", expected_pending_version_id: null }));
-    const outcome = unwrap(await publishPrompt(core, { path, expected_pending_version_id: pending.version_id, expected_published_version_id: before.published.version_id }));
-    const interrupted = resolve(store, "prompt-pointers", path + ".json.interrupted.tmp");
-    writeFileSync(interrupted, '{"history":');
-    const generated = runGenerator(root);
-    expect(generated.exitCode).toBe(0);
-    expect(readFileSync(interrupted, "utf8")).toBe('{"history":');
-    expect(generated.stderr.toString()).toContain("using the published version");
-    const resolved = unwrap(resolveLaunchableDefinition("review-loop", store));
-    expect(resolved.definition_id).toBe(outcome.moved[0].definition_id);
-    expect(resolved.prompts[path]).toBe(pending.body);
-    expect(readFileSync(resolve(root, "workflow-config/prompts", path))).toEqual(authored);
-    const checked = runGenerator(root, true);
-    expect(checked.exitCode).toBe(0);
-    expect(checked.stderr.toString()).toContain("prompt review-loop/write.md: authored file");
-    const launchable = readFileSync(resolve(store, "launchable.json"));
-    writeFileSync(resolve(store, "prompt-pointers", path + ".json"), "{}");
-    const invalid = runGenerator(root);
-    expect(invalid.exitCode).not.toBe(0);
-    expect(invalid.stderr.toString()).toContain("prompt-pointers/review-loop/write.md.json");
-    expect(readFileSync(resolve(store, "launchable.json"))).toEqual(launchable);
-  } finally {
-    core.close();
-    if (previous === undefined) delete process.env.OAKRIDGE_DEFINITION_ROOT; else process.env.OAKRIDGE_DEFINITION_ROOT = previous;
-  }
+  const path = "review-loop/write.md";
+  const authored = readFileSync(resolve(root, "workflow-config/prompts", path));
+  const catalog = unwrap(readLaunchableCatalog(store));
+  const committed: unknown = JSON.parse(readFileSync(resolve(store, "workflows", catalog["review-loop"].definition_id + ".json"), "utf8"));
+  if (!isCommittedDefinition(committed)) throw new Error("invalid fixture definition");
+
+  // Match the runtime's published store layout without requiring the WASM compiler.
+  // Runtime compilation and pinned-run behavior are covered by the DBOS tests.
+  const body = authored.toString("utf8") + "\nAdditional guidance.\n";
+  const prompt_id = bytesIdentity(Buffer.from(body));
+  const seeded: PromptVersionObject = { prompt_id: committed.prompts[path], source_path: path };
+  const published: PromptVersionObject = { prompt_id, source_path: path };
+  const seed_id = unwrap(jsonIdentity<PromptVersionId>(seeded));
+  const version_id = unwrap(jsonIdentity<PromptVersionId>(published));
+  const pointer: PromptPointer = { source_path: path, pending: null, published: version_id, history: [
+    { version_id: seed_id, published_at: null },
+    { version_id, published_at: "2026-11-15T00:00:00.000Z" },
+  ] };
+  const definition = withPublishedPrompt(committed, path, prompt_id);
+  const definition_id = unwrap(jsonIdentity<DefinitionId>(definition));
+  const writeObject = (path: string, value: unknown) => unwrap(writeStoreFile({
+    root: store, path, bytes: Buffer.from(unwrap(canonicalJson(value))), mutable: path === "launchable.json" || path.startsWith("prompt-pointers/"),
+  }));
+  unwrap(writeStoreFile({ root: store, path: "prompts/" + prompt_id + ".md", bytes: Buffer.from(body) }));
+  writeObject("prompt-versions/" + seed_id + ".json", seeded);
+  writeObject("prompt-versions/" + version_id + ".json", published);
+  writeObject("workflows/" + definition_id + ".json", definition);
+  writeObject("launchable.json", { ...catalog, "review-loop": { ...catalog["review-loop"], definition_id } });
+  writeObject("prompt-pointers/" + path + ".json", pointer);
+
+  const interrupted = resolve(store, "prompt-pointers", path + ".json.interrupted.tmp");
+  writeFileSync(interrupted, '{"history":');
+  const generated = runGenerator(root);
+  expect(generated.exitCode).toBe(0);
+  expect(readFileSync(interrupted, "utf8")).toBe('{"history":');
+  expect(generated.stderr.toString()).toContain("using the published version");
+  const resolved = unwrap(resolveLaunchableDefinition("review-loop", store));
+  expect(resolved.definition_id).toBe(definition_id);
+  expect(resolved.prompts[path]).toBe(body);
+  expect(readFileSync(resolve(root, "workflow-config/prompts", path))).toEqual(authored);
+  const checked = runGenerator(root, true);
+  expect(checked.exitCode).toBe(0);
+  expect(checked.stderr.toString()).toContain("prompt review-loop/write.md: authored file");
+  const launchable = readFileSync(resolve(store, "launchable.json"));
+  writeFileSync(resolve(store, "prompt-pointers", path + ".json"), "{}");
+  const invalid = runGenerator(root);
+  expect(invalid.exitCode).not.toBe(0);
+  expect(invalid.stderr.toString()).toContain("prompt-pointers/review-loop/write.md.json");
+  expect(readFileSync(resolve(store, "launchable.json"))).toEqual(launchable);
 });
