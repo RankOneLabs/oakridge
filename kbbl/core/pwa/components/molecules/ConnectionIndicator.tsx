@@ -7,7 +7,11 @@ const CONNECTION_COPY: Record<Status, { label: string; description: string }> = 
   stale: { label: "Stale", description: "Stale — no update received recently; what you see may be out of date." },
 };
 
-export function ConnectionIndicator({ status }: { status: Status }) {
+interface ConnectionIndicatorProps {
+  status: Status;
+}
+
+export function ConnectionIndicator({ status }: ConnectionIndicatorProps) {
   const { label, description } = CONNECTION_COPY[status];
   return <span role="status" aria-label={`Connection: ${label}`} title={description}
     className={`connection-indicator status p-0! rounded-none! bg-transparent! status-${status}`} data-testid="session-connection-indicator" data-status={status}>
