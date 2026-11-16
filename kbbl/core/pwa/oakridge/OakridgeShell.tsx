@@ -112,7 +112,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
       );
       break;
     case "grading-config":
-      content = <GradingConfigView version={route.version} onNavigate={(version) => onNavigate(version === null ? "settings/workflows/grading-config" : `settings/workflows/grading-config/versions/${version}`)} />;
+      content = <GradingConfigView definitionId={route.definitionId} version={route.version} onNavigate={(version) => onNavigate(version === null ? "settings/workflows/grading-config" : `settings/workflows/grading-config/versions/${version}`)} />;
       break;
     case "workflows":
       content = (

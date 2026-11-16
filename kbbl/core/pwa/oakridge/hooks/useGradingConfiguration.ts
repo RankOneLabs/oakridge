@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { readGradingConfiguration, type GradingConfigurationRead } from "../client-grading-config";
+import { readGradingConfiguration, readPublishedGradingConfiguration, type GradingConfigurationRead } from "../client-grading-config";
+import { readDefinitions } from "../client";
+import { selectWorkflowArtifactTargets } from "../lib/grading-applicability";
+import { feedbackText } from "../lib/grading-config";
 import type { GradingFeedback } from "../lib/grading-config";
 interface GradingConfigurationSnapshot { readonly read: GradingConfigurationRead; readonly revision: number }
 export const GRADING_CONFIG_QUERY_KEY = ["oakridge", "grading-config"] as const;
@@ -27,4 +30,13 @@ export function useGradingConfiguration(version: number | null) {
     } else setReloadFeedback(result.data?.ok === false ? result.data.feedback : { kind: "transport_error", detail: result.error?.message ?? "Reload failed" });
   };
   return { ...query, snapshot, reload, reloadFeedback };
+}
+
+export function usePublishedGradingDefinitions() {
+  const query = useQuery({ queryKey: [...GRADING_CONFIG_QUERY_KEY, "published"], queryFn: readPublishedGradingConfiguration });
+  return { definitions: query.data?.ok ? query.data.value?.definitions ?? [] : [], isLoading: query.isPending,
+    error: query.data?.ok === false ? feedbackText(query.data.feedback).replace(/^Request failed: /, "") : query.error?.message ?? null };
+}
+export function useGradingWorkflowTargets() {
+  return useQuery({ queryKey: ["oakridge", "definitions", "summaries"], queryFn: readDefinitions, select: summaries => summaries.flatMap(selectWorkflowArtifactTargets) });
 }

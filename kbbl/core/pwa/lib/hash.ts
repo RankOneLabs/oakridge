@@ -85,7 +85,7 @@ export type SettingsSubRoute =
   | { sub: "status" }
   | { sub: "workflows" }
   | { sub: "workflow"; id: string; selection: DefinitionSelection | null }
-  | { sub: "grading-config"; version: number | null };
+  | { sub: "grading-config"; version: number | null; definitionId?: string | null };
 
 export type HashRoute =
   | { view: "redirect"; hash: string }
@@ -166,6 +166,8 @@ export function readHashRoute(
     const rest = hash.slice("settings".length);
     if (rest === "" || rest === "/status") return { view: "settings", route: { sub: "status" } };
     if (rest === "/workflows/grading-config") return { view: "settings", route: { sub: "grading-config", version: null } };
+    const gradingDefinition = /^\/workflows\/grading-config\/definitions\/(.+)$/.exec(rest);
+    if (gradingDefinition) return { view: "settings", route: { sub: "grading-config", version: null, definitionId: tryDecode(gradingDefinition[1]) } };
     const gradingVersion = /^\/workflows\/grading-config\/versions\/([1-9]\d*)$/.exec(rest);
     if (gradingVersion && Number.isSafeInteger(Number(gradingVersion[1]))) return { view: "settings", route: { sub: "grading-config", version: Number(gradingVersion[1]) } };
     if (rest === "/workflows") {

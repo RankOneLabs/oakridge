@@ -83,7 +83,7 @@ async function readRunPage(isArchived = false): Promise<OperatorRunView[]> {
   return items;
 }
 
-async function readDefinitions(): Promise<OperatorDefinitionSummary[]> {
+export async function readDefinitions(): Promise<OperatorDefinitionSummary[]> {
   const items: OperatorDefinitionSummary[] = [];
   let cursor: string | null = null;
   do {
