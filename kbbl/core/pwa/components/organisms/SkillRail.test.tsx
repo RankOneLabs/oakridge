@@ -282,7 +282,11 @@ it("shows only advertised default quick actions beside Skills", () => {
 it("persists a selected action and shows it after collapsing", () => {
   setup([PLAIN_SKILL]);
   renderOpenRail();
-  fireEvent.click(screen.getByRole("button", { name: "Quick action: list-tasks" }));
+  const toggle = screen.getByRole("button", { name: "Quick action: list-tasks" });
+  expect(toggle.textContent).toBe("☆");
+  fireEvent.click(toggle);
+  expect(toggle.textContent).toBe("★");
+  expect(toggle.getAttribute("aria-pressed")).toBe("true");
   fireEvent.click(screen.getByRole("button", { name: "Skills" }));
   expect(screen.getByRole("button", { name: /^list-tasks/ })).toBeTruthy();
   expect(JSON.parse(localStorage.getItem("kbbl.skillRail.quickActions") ?? "null")).toContain("list-tasks");

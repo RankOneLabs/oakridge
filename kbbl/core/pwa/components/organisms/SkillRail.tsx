@@ -267,7 +267,7 @@ export function SkillRail({
                             const next = quickKeys.includes(key) ? quickKeys.filter((item) => item !== key) : [...quickKeys, key];
                             setQuickKeys(next);
                             writeStoredQuickActionKeys(next);
-                          }}>☆</Button>
+                          }}><span aria-hidden="true">{quickKeys.includes(quickActionKey(skill)) ? "★" : "☆"}</span></Button>
                         </span>
                       ))}
                     </div>

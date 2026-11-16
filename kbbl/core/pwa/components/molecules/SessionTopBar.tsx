@@ -104,7 +104,6 @@ export function SessionTopBar({
         {snapshot && (
           <span className="session-label-workdir">
             {workdirBasename(snapshot.projectWorkdir)}
-
           </span>
         )}
         <span className="flex min-w-0 max-w-full items-center gap-1">
