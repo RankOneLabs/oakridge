@@ -1,3 +1,4 @@
+import { pinProvenance } from "./grading-fixture";
 import { targetOf } from "./grading-fixture";
 import { expect } from "bun:test";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
@@ -18,7 +19,7 @@ const credentials: Credentials = { ingest: [{ ...tenant, token: "ingest" }], rea
   grade: [{ ...tenant, token: "grade", reviewer_id: "operator" }] };
 const MACHINE = "machine";
 const human = (() => { const definition = humanEvaluator(); if (!definition.ok) throw new Error(definition.error.detail); return definition.value; })();
-const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const, ...question, ...targetOf(question.question_id),
+const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const, ...question, ...targetOf(question.question_id), ...pinProvenance(question),
   evaluator_definition_ids: [evaluatorId(MACHINE), human.evaluator_definition_id as EvaluatorDefinitionId] })) };
 const analysis = (findings: readonly JsonValue[]): JsonValue => ({ summary: "s", source_spec_refs: [], findings, requirements: [], risks: [], proposed_spec_updates: [] });
 const assessment = (findings: readonly JsonValue[]): JsonValue => ({ head_sha: "abc", verdict: "pass", findings, recommended_next_actions: [] });

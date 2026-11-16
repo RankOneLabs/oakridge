@@ -4,10 +4,14 @@
 import type { ObservationArtifactRevisionId, ObservationEvaluatorDefinitionId, ObservationEvidenceSetId, ObservationItemOccurrenceId, ObservationLogicalItemId, ObservationRunId } from "../domain/identity";
 import type { ObservationJsonValue } from "../domain/primitives";
 import type { ObservationQuestionKey } from "./question";
+import type { ObservationEvidenceCapabilityReference } from "../ports/producer-profile";
+
+export interface ObservationEvidencePlan extends ObservationQuestionKey { readonly evidence: readonly ObservationEvidenceCapabilityReference[] }
 
 export type ObservationEvidenceReference = ObservationRevisionEvidence | ObservationRunInputEvidence | ObservationRepositoryEvidence | ObservationReportedEvidence;
 
-export interface ObservationEvidenceSet extends ObservationQuestionKey {
+export interface ObservationEvidenceSet extends ObservationQuestionKey, ObservationConfigurationIdentity {
+  readonly collection_plan: ObservationEvidencePlan;
   readonly evidence_set_id: ObservationEvidenceSetId;
   readonly subject_occurrence_id: ObservationItemOccurrenceId;
   readonly task_id: ObservationLogicalItemId | null;
@@ -47,6 +51,8 @@ export interface ObservationReportedEvidence extends ObservationReferenceFields 
   readonly revision_id: ObservationArtifactRevisionId;
   readonly item_path: string;
 }
+
+export interface ObservationConfigurationIdentity { readonly config_version: number; readonly config_hash: string }
 
 export type ObservationEvidenceReadiness =
   | { readonly state: "not_ready"; readonly reason: ObservationNotReadyReason }

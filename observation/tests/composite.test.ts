@@ -1,3 +1,4 @@
+import { pinProvenance } from "./grading-fixture";
 import { targetOf } from "./grading-fixture";
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -26,7 +27,7 @@ const context = { stages: [
 const all = { limit: 200, offset: 0 };
 const pages = uniformDrilldownPages(all);
 const MACHINE_A = "machine-a", MACHINE_B = "machine-b", HUMAN = "human";
-const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question, ...targetOf(question.question_id),
+const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question, ...targetOf(question.question_id), ...pinProvenance(question),
   evaluator_definition_ids: [evaluatorId(MACHINE_A), evaluatorId(MACHINE_B), evaluatorId(HUMAN)] })) };
 const finding = (task_ids: readonly string[], extra: { readonly [key: string]: JsonValue } = {}): JsonValue => ({ task_ids: [...task_ids], criterion: "c", status: "met", evidence: [], ...extra });
 const choice = (value: string): GradeAnswer => ({ state: "answered", kind: "choice", value });

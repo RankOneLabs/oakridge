@@ -1,3 +1,4 @@
+import { pinProvenance } from "./grading-fixture";
 import { questionVersion } from "./grading-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -147,7 +148,7 @@ integration("a cited binary file freezes as ready evidence instead of failing th
   const question = OAKRIDGE_QUESTIONS.find((candidate) => candidate.question_id === EVIDENCE_SUPPORT_ID)!;
   await registerQuestion(db, tenant, question);
   await registerEvaluator(db, tenant, evaluator("human"));
-  const feed = createFeed(db, tenant, { pins: [{ ...scopeOf(EVIDENCE_SUPPORT_ID), ...question, ...targetOf(EVIDENCE_SUPPORT_ID), evaluator_definition_ids: [evaluatorId("human")] }] });
+  const feed = createFeed(db, tenant, { pins: [{ ...scopeOf(EVIDENCE_SUPPORT_ID), ...question, ...targetOf(EVIDENCE_SUPPORT_ID), ...pinProvenance(question), evaluator_definition_ids: [evaluatorId("human")] }] });
   await feed.launch({ spec: "s", primary_repository_key: "binary", repositories: [{ key: "binary", preparation: { repository_path: binary } }] });
   await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
   await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment",

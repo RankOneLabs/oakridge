@@ -28,7 +28,7 @@ test("runtime replacement swaps a complete immutable snapshot and retains earlie
 });
 
 integration("replacement reaches new HTTP captures and health while existing pins remain frozen", async () => scratchDatabase(async (db) => {
-  const before = snapshot(definitions);
+  const before = snapshot(definitions, 1);
   const selected = definitions.filter((definition) => definition.id === "finding.relevance");
   const changed = selected.map((definition) => ({ ...definition, question: { ...definition.question, text: "Changed question" } }));
   const after = snapshot(changed, 1);
@@ -88,3 +88,8 @@ integration("each reconciliation reads the current collector while retaining the
   const result = await reconciler.reconcileRun(tenant, "run-1");
   expect([calls, result.collection.ready.length]).toEqual([["before", "after"], 1]);
 }));
+
+test("runtime pins carry the snapshot version and hash", () => {
+  const current = snapshot(definitions, 3);
+  expect(current.capture_configuration.pins.map((pin) => [pin.config_version, pin.config_hash])).toEqual(current.registration.capture.pins.map(() => [3, current.hash ?? "missing"]));
+});

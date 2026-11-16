@@ -1,3 +1,6 @@
+import { stampCapture } from "../src/grading/configuration";
+import { pinIdentity } from "./grading-fixture";
+import { pinProvenance } from "./grading-fixture";
 import { targetOf } from "./grading-fixture";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, ItemOccurrenceId } from "../src/domain/identity";
@@ -28,7 +31,7 @@ const credentials: Credentials = {
 };
 const MACHINE = "machine";
 const human = (() => { const definition = humanEvaluator(); if (!definition.ok) throw new Error(definition.error.detail); return definition.value; })();
-const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const, ...question, ...targetOf(question.question_id),
+const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const, ...question, ...targetOf(question.question_id), ...pinProvenance(question),
   evaluator_definition_ids: [evaluatorId(MACHINE), human.evaluator_definition_id as EvaluatorDefinitionId] })) };
 
 async function setup(db: Database, grading_enabled = false) {
@@ -168,7 +171,7 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
   const { pinSubjectInTransaction, collectPinnedQuestion } = await import("../src/storage/captured-evidence-store");
   const { CaptureArtifactSource } = await import("../src/storage/capture-artifact-source");
   const { oakridgeEvidence } = await import("./grading-fixture");
-  const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question, ...scopeOf(question.question_id), ...targetOf(question.question_id),
+  const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...question, ...scopeOf(question.question_id), ...targetOf(question.question_id), ...pinProvenance(question),
     evaluator_definition_ids: [human.evaluator_definition_id as EvaluatorDefinitionId] })) };
   for (const question of OAKRIDGE_QUESTIONS) await registerQuestion(db, tenant, question);
   await registerEvaluator(db, tenant, human);
@@ -260,7 +263,7 @@ integration("empty task_ids pins one task-less subject; unresolved ids wait and 
   const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   await registerDefinitions(db, tenant, registration.value);
-  const feed = createFeed(db, tenant, registration.value.capture);
+  const feed = createFeed(db, tenant, stampCapture(registration.value.capture, pinIdentity));
   await feed.launch({ spec: "the spec" });
   await feed.revision({ revision_id: "assessment", artifact_kind: "assessment", body: { findings: [
     { task_ids: [], evidence: [], description: "General finding" },
@@ -280,7 +283,7 @@ integration("empty task_ids pins one task-less subject; unresolved ids wait and 
     const result = await collectPinnedQuestion(db, tenant, source, set);
     expect(result).toMatchObject({ ok: true, value: { task_id: null, readiness: { state: "ready", references: [{ ref: "subject" }] } } });
   }
-  const app = createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: registration.value.capture });
+  const app = createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: stampCapture(registration.value.capture, pinIdentity) });
   const send = (occurrence: string, body: unknown) => app.request(`/v1/items/${encodeURIComponent(occurrence)}/answers`,
     { method: "POST", headers: { authorization: "Bearer grade", "content-type": "application/json" }, body: JSON.stringify(body) });
   expect((await send(empty, answer("taskless", "supports", { task_id: null }))).status).toBe(201);
