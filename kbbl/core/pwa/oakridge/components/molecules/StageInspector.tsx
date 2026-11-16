@@ -1,7 +1,10 @@
+import { selectStageInspectorNavigation, selectStageInspectorIdentity } from "../../lib/stage-inspector-navigation";
+import { StageInspectorTabs } from "./StageInspectorTabs";
+import { selectEffectiveStageTab, STAGE_TABS } from "../../lib/definition-selection";
 import { selectDefinitionOverview, selectDefinitionSelection, type DefinitionOverview as Overview } from "../../lib/definition-overview";
 import type { DefinitionSelection } from "../../../lib/hash";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
-import { selectStageInspector, selectStageNavigation } from "../../lib/stage-inspector";
+import { selectStageInspector } from "../../lib/stage-inspector";
 import { definitionStageHref, definitionUnitHref } from "../../lib/definition-selection";
 import { StageInputsSection } from "./StageInputsSection";
 import { StageBindingsSection } from "./StageBindingsSection";
@@ -14,60 +17,55 @@ import { StageSummarySection } from "./StageSummarySection";
 interface StageInspectorProps {
   definition: OperatorDefinitionDetail;
   selection: DefinitionSelection | null;
+  anchor?: string;
 }
-export function StageInspector({ definition, selection }: StageInspectorProps) {
+export function StageInspector({ definition, selection, anchor }: StageInspectorProps) {
   const overview = selectDefinitionOverview(definition);
-  const stages = selectStageNavigation(definition);
+  const navigation = selectStageInspectorNavigation(definition, selection);
   const model = selectStageInspector(definition, selection);
+  const identity = selectStageInspectorIdentity(model);
+  const activeTab = selectEffectiveStageTab(selection, anchor, model?.name);
   return (
     <section
       aria-label="Stage inspector"
       className="or-definition-inspector [&_h3]:mb-[.6rem] [&_h3]:text-[1.1rem] [&_h3]:font-bold [&_h4]:mt-[.6rem] [&_h4]:mb-1 [&_h4]:font-[650] [&_dd]:ml-3"
     >
       <aside className="or-definition-navigation max-[1024px]:text-[.9rem] max-[640px]:border max-[640px]:border-[var(--border-muted)] max-[640px]:p-2" aria-label="Stages in authored order">
-        {stages.map(({ name, units }) => (
-          <div key={name} className="or-definition-navigation-entry">
-            <a
-              href={definitionStageHref(definition.definition_id, name)}
-              aria-current={selection?.kind === "stage" && selection.stage === name ? "page" : undefined}
-              className={model?.name === name ? "font-bold" : undefined}
-            >
-              {name}
+        {navigation.stages.map(({ stage, units, isSelected }) => (
+          <div key={stage.label} className="or-definition-navigation-entry">
+            <a href={stage.href} aria-current={stage.isCurrent ? "page" : undefined} className={isSelected ? "font-bold" : undefined}>
+              {stage.label}
             </a>
             <ul>
-              {units.map((unit) => (
-                <li key={unit.path}>
-                  <a
-                    href={definitionUnitHref(definition.definition_id, unit.path)}
-                    aria-current={
-                      selection?.kind === "unit" && selection.path === unit.path
-                        ? "page"
-                        : undefined
-                    }
-                  >
-                    {unit.path}
-                  </a>
+              {units.map(unit => (
+                <li key={unit.href}>
+                  <a href={unit.href} aria-current={unit.isCurrent ? "page" : undefined}>{unit.label}</a>
                 </li>
               ))}
             </ul>
           </div>
         ))}
-        {overview.groups.map((unit) => <a key={unit.path} href={definitionUnitHref(definition.definition_id, unit.path)} aria-current={selection?.kind === "unit" && selection.path === unit.path ? "page" : undefined}>{unit.path} (group)</a>)}
+        {navigation.groups.map(group => <a key={group.href} href={group.href} aria-current={group.isCurrent ? "page" : undefined}>{group.label}</a>)}
       </aside>
       <div className="min-w-0 grid content-start gap-3">
-        <div data-testid="or-def-selection">{(selection?.kind !== "stage" || !model) && <DefinitionSelectionDetail overview={overview} selection={selection} />}</div>
-        {model && (
-          <>
-            <StageSummarySection model={model} />
-            <StageInputsSection model={model} />
-            <StageBindingsSection model={model} />
-            <StageWorkersSection model={model} />
-            <StagePromptsSection model={model} />
-            <StageArtifactsSection model={model} />
-            <StageReviewsSection model={model} />
-            <StageCompletionSection model={model} />
-          </>
-        )}
+        <div data-testid="or-def-selection">{!model && <DefinitionSelectionDetail overview={overview} selection={selection} />}</div>
+        {model && selection && <>
+          {identity && <header aria-label="Stage identity">
+            <h3>{identity.title}</h3>
+            {identity.invokers.length > 0 && <p>Invoked by: {identity.invokers.map(unit => <a className="mr-2" key={unit.href} href={unit.href}>{unit.label}</a>)}</p>}
+          </header>}
+          <StageInspectorTabs id={definition.definition_id} selection={selection} activeTab={activeTab} />
+          <div role="tabpanel" aria-label={STAGE_TABS.find(tab => tab.value === activeTab)?.label}>
+            {activeTab === "overview" && <><StageSummarySection model={model} />{selection.kind === "unit" && <DefinitionSelectionDetail overview={overview} selection={selection} />}</>}
+            {activeTab === "inputs" && <StageInputsSection model={model} />}
+            {activeTab === "bindings" && <StageBindingsSection model={model} />}
+            {activeTab === "workers" && <StageWorkersSection model={model} />}
+            {activeTab === "prompts" && <StagePromptsSection model={model} />}
+            {activeTab === "artifacts" && <StageArtifactsSection model={model} />}
+            {activeTab === "reviews" && <StageReviewsSection model={model} />}
+            {activeTab === "completion" && <StageCompletionSection model={model} />}
+          </div>
+        </>}
       </div>
     </section>
   );

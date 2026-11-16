@@ -3,6 +3,7 @@
 // the same type rather than two kept in step by hand. This module already owns
 // the oakridge sub-route namespace, so the reference is not a new coupling.
 import type { RoutePaneTarget } from "../oakridge/lib/run-workspace";
+import { STAGE_TABS, type StageTab } from "../oakridge/lib/definition-selection";
 import type { ArtifactId, Sid } from "./ids";
 
 type HashNavigationGuard = () => boolean;
@@ -67,7 +68,7 @@ export function readHashSessionTarget(): SessionHashTarget | null {
   return params.get("focus") === "pending-permission" ? "pending-permission" : null;
 }
 
-export type DefinitionSelection = { kind: "stage"; stage: string } | { kind: "unit"; path: string };
+export type DefinitionSelection = { kind: "stage"; stage: string; tab: StageTab | null } | { kind: "unit"; path: string; tab: StageTab | null };
 
 export type OakridgeSubRoute =
   | { sub: "runs" }
@@ -176,12 +177,15 @@ export function readHashRoute(
       const routePath = anchorAt === -1 ? rest : rest.slice(0, anchorAt);
       const anchor = anchorAt === -1 ? "" : rest.slice(anchorAt);
       const segments = routePath.slice("/workflows/".length).split("/");
-      const [rawId, kind, ...path] = segments;
+      const rawId = segments[0];
+      const hasTab = segments[1] === "tabs";
+      const tab = hasTab ? STAGE_TABS.find(item => item.value === segments[2])?.value ?? null : null;
+      const [kind, ...path] = segments.slice(hasTab ? 3 : 1);
       if (rawId && segments.every(Boolean)) {
         const id = tryDecode(rawId);
         if (segments.length === 1) return { view: "settings", route: { sub: "workflow", id, selection: null } };
-        if (kind === "stages" && path.length === 1) return { view: "settings", route: { sub: "workflow", id, selection: { kind: "stage", stage: tryDecode(path[0] as string) + anchor } } };
-        if (kind === "units" && path.length > 0) return { view: "settings", route: { sub: "workflow", id, selection: { kind: "unit", path: path.map(tryDecode).join("/") + anchor } } };
+        if (kind === "stages" && path.length === 1) return { view: "settings", route: { sub: "workflow", id, selection: { kind: "stage", tab, stage: tryDecode(path[0] as string) + anchor } } };
+        if (kind === "units" && path.length > 0) return { view: "settings", route: { sub: "workflow", id, selection: { kind: "unit", tab, path: path.map(tryDecode).join("/") + anchor } } };
       }
     }
     return { view: "settings", route: { sub: "status" } };

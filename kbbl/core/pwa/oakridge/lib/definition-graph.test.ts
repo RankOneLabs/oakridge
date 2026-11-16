@@ -53,7 +53,7 @@ test("nested group selection filters its level and links each ancestor breadcrum
   const graph = selectDefinitionGraph({
     overview,
     dependencies,
-    selection: { kind: "unit", path: "work/nested" },
+    selection: { kind: "unit", path: "work/nested", tab: null },
   });
   expect(graph.units.map((unit) => unit.path)).toEqual([
     "work/nested/item",
@@ -77,12 +77,12 @@ test("selecting a leaf retains its containing group level", () => {
   const group = selectDefinitionGraph({
     overview,
     dependencies,
-    selection: { kind: "unit", path: "work/nested" },
+    selection: { kind: "unit", path: "work/nested", tab: null },
   });
   const leaf = selectDefinitionGraph({
     overview,
     dependencies,
-    selection: { kind: "unit", path: "work/nested/item" },
+    selection: { kind: "unit", path: "work/nested/item", tab: null },
   });
   expect(leaf).toEqual(group);
 });
@@ -97,14 +97,14 @@ test("stage and unknown unit selections retain the root level", () => {
     selectDefinitionGraph({
       overview,
       dependencies,
-      selection: { kind: "stage", stage: "cohort" },
+      selection: { kind: "stage", stage: "cohort", tab: null },
     }),
   ).toEqual(root);
   expect(
     selectDefinitionGraph({
       overview,
       dependencies,
-      selection: { kind: "unit", path: "missing" },
+      selection: { kind: "unit", path: "missing", tab: null },
     }),
   ).toEqual(root);
 });

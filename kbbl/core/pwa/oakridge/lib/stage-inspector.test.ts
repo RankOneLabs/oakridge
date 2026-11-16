@@ -4,13 +4,13 @@ import type { OperatorDefinitionDetail } from "../operator-contracts/projections
 import { stageElementHref, selectStageInputUnits, selectStageInspector, selectStageNavigation } from "./stage-inspector";
 const detail = fixture.definition as unknown as OperatorDefinitionDetail;
 test("unit selection resolves implementation to cohort", () => {
-  expect(selectStageInspector(detail, { kind: "unit", path: "implementation" })?.name).toBe(
+  expect(selectStageInspector(detail, { kind: "unit", path: "implementation", tab: null })?.name).toBe(
     "cohort",
   );
 });
 test("artifact relationships join effective workers and reviews", () => {
   expect(
-    selectStageInspector(detail, { kind: "stage", stage: "cohort" })?.artifacts.find(
+    selectStageInspector(detail, { kind: "stage", stage: "cohort", tab: null })?.artifacts.find(
       (item) => item.name === "build_result",
     ),
   ).toEqual({
@@ -22,7 +22,7 @@ test("artifact relationships join effective workers and reviews", () => {
 });
 test("analysis exposes both spec consumers from dependency references", () => {
   expect(
-    selectStageInspector(detail, { kind: "stage", stage: "analysis" })
+    selectStageInspector(detail, { kind: "stage", stage: "analysis", tab: null })
       ?.readers.filter((reader) => reader.outcome_path[0] === "spec")
       .map((reader) => reader.downstream)
       .sort(),
@@ -30,7 +30,7 @@ test("analysis exposes both spec consumers from dependency references", () => {
 });
 test("planning exposes collection reads of plan.cohorts", () => {
   expect(
-    selectStageInspector(detail, { kind: "stage", stage: "planning" })?.readers,
+    selectStageInspector(detail, { kind: "stage", stage: "planning", tab: null })?.readers,
   ).toContainEqual({
     upstream: "planning",
     downstream: "briefs",
@@ -39,11 +39,11 @@ test("planning exposes collection reads of plan.cohorts", () => {
   });
 });
 test("unknown selections do not silently select a different stage", () => {
-  expect(selectStageInspector(detail, { kind: "unit", path: "absent" })).toBeNull();
+  expect(selectStageInspector(detail, { kind: "unit", path: "absent", tab: null })).toBeNull();
 });
 
 test("whole implementation outcomes are listed separately from named fields", () => {
-  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort", tab: null });
   expect(model?.wholeOutcomeReaders).toContainEqual({
     upstream: "implementation",
     downstream: "integration",
@@ -101,7 +101,7 @@ test("provenance contains each shared worker and review template only once", () 
       },
     },
   };
-  const model = selectStageInspector(definition, { kind: "stage", stage: "cohort" });
+  const model = selectStageInspector(definition, { kind: "stage", stage: "cohort", tab: null });
   expect(
     model?.sources
       .filter((source) => source.kind === "template-worker")
@@ -115,7 +115,7 @@ test("provenance contains each shared worker and review template only once", () 
 });
 
 test("unit model retains authored bindings and anchors keep its route", () => {
-  const model = selectStageInspector(detail, { kind: "unit", path: "implementation" });
+  const model = selectStageInspector(detail, { kind: "unit", path: "implementation", tab: null });
   expect(model?.selected_unit?.input).toEqual(detail.workflow.run.units.implementation?.input);
   if (!model) throw new Error("Missing implementation model");
   expect(stageElementHref(model, { kind: "artifact", name: "build_result" })).toContain("/units/implementation#stage-cohort-artifact-build_result");
@@ -123,14 +123,14 @@ test("unit model retains authored bindings and anchors keep its route", () => {
 
 test("development cohort summary counts effective declarations and retains invoking units", async () => {
   const { selectStageSummary } = await import("./stage-inspector");
-  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort", tab: null });
   if (!model) throw new Error("Missing cohort");
   expect(selectStageSummary(model)).toEqual({ name: "cohort", invoking_units: model.units,
     worker_count: 4, artifact_count: 5, review_count: 3, done_when: model.stage.done_when });
 });
 test("inputs list only the selected unit, else every invoking unit", () => {
-  const unitModel = selectStageInspector(detail, { kind: "unit", path: "implementation" });
-  const stageModel = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  const unitModel = selectStageInspector(detail, { kind: "unit", path: "implementation", tab: null });
+  const stageModel = selectStageInspector(detail, { kind: "stage", stage: "cohort", tab: null });
   if (!unitModel || !stageModel) throw new Error("Missing cohort models");
   expect(selectStageInputUnits(unitModel).map((unit) => unit.path)).toEqual(["implementation"]);
   expect(selectStageInputUnits(stageModel)).toEqual(stageModel.units);

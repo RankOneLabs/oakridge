@@ -8,7 +8,7 @@ export function StageArtifactsSection({ model }: StageSectionProps) {
   return (
     <section aria-label="Artifacts" className="rounded border border-[var(--border-muted)] p-3">
       <h3>Artifacts</h3>
-      {model.artifacts.map(({ name, artifact, producers, consumers }) => (
+      {model.sections.artifacts.map(({ name, artifact, producers, consumers }) => (
         <article
           key={name}
           className="or-stage-artifact border-t border-[var(--border-muted)] py-2"

@@ -132,20 +132,46 @@ test("browser navigates the committed definition list and detail", async () => {
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
+    page.setDefaultTimeout(10_000);
     await page.goto(`${server.url.href}?definitions`);
     await page.getByTestId("or-def-list").waitFor();
     await page.getByTestId("or-def-view-btn").click();
     await page.getByTestId("or-def-detail").waitFor();
-    const overview = page.getByRole("region", { name: "Workflow overview" });
-    const definitionId = overview.locator("code[title]");
-    expect(await definitionId.textContent()).toBe(selectAbbreviatedDefinitionId(definition.definition_id));
-    expect(await definitionId.getAttribute("title")).toBe(definition.definition_id);
+    await page.getByRole("heading", { name: definition.effective_workflow.workflow, exact: true }).waitFor();
+    expect(await page.locator(".or-page-summary").textContent()).toStartWith(selectAbbreviatedDefinitionId(definition.definition_id) + " · ");
     const stages = page.getByLabel("Stages in authored order");
     expect(await stages.locator(".or-definition-navigation-entry > a").allTextContents()).toEqual(definition.bundle.stages);
-    expect(await stages.locator('a[aria-current="page"]').textContent()).toBe(definition.bundle.stages[0]);
-    expect(await page.getByRole("heading", { name: "Schemas", exact: true }).isVisible()).toBe(false);
-    await overview.getByText("Workflow inputs, outputs and schemas", { exact: true }).click();
-    await page.getByRole("heading", { name: "Schemas", exact: true }).waitFor();
+    expect(await stages.locator('a[aria-current="page"]').count()).toBe(0);
+    await page.getByText("Select a stage or unit to inspect its declaration.", { exact: true }).waitFor();
+    for (const name of ["Schema", "Raw definition"]) {
+      expect(await page.getByRole("button", { name, exact: true }).getAttribute("aria-pressed")).toBe("false");
+      expect(await page.getByRole("region", { name, exact: true }).count()).toBe(0);
+    }
+    await page.getByRole("button", { name: "Schema", exact: true }).click();
+    const schema = page.getByRole("region", { name: "Schema", exact: true });
+    await schema.getByRole("heading", { name: "Schemas", exact: true }).waitFor();
+    expect(await schema.getByRole("heading", { name: "Root input", exact: true }).isVisible()).toBe(true);
+    await page.getByRole("button", { name: "Schema", exact: true }).click();
+    expect(await schema.count()).toBe(0);
+
+    const graph = page.getByRole("region", { name: "Definition dependencies" });
+    await graph.getByRole("link", { name: "implementation", exact: true }).first().click();
+    await page.getByRole("heading", { name: "cohort · unit implementation", exact: true }).waitFor();
+    expect(new URL(page.url()).hash).toBe(`#settings/workflows/${definition.definition_id}/units/implementation`);
+    const graphHandle = await graph.elementHandle();
+    const breadcrumbs = await graph.getByRole("navigation", { name: "Graph level" }).textContent();
+    await page.getByRole("tab", { name: "Workers", exact: true }).click();
+    const workers = page.getByRole("tabpanel", { name: "Workers", exact: true });
+    await workers.waitFor();
+    expect(new URL(page.url()).hash).toBe(`#settings/workflows/${definition.definition_id}/tabs/workers/units/implementation`);
+    expect(await graphHandle?.evaluate(element => element.isConnected)).toBe(true);
+    expect(await graph.getByRole("navigation", { name: "Graph level" }).textContent()).toBe(breadcrumbs);
+    await workers.getByRole("link", { name: "build_result", exact: true }).first().click();
+    await page.getByRole("tabpanel", { name: "Artifacts", exact: true }).waitFor();
+    expect(new URL(page.url()).hash).toBe(`#settings/workflows/${definition.definition_id}/units/implementation#stage-cohort-artifact-build_result`);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("stage-cohort-artifact-build_result");
+    await page.getByRole("button", { name: "Raw definition", exact: true }).click();
+    await page.getByRole("tabpanel", { name: "Authored", exact: true }).waitFor();
     await page.getByRole("button", { name: "← Workflows" }).click();
     await page.getByTestId("or-def-list").waitFor();
   } finally { await context.close(); server.stop(true); }

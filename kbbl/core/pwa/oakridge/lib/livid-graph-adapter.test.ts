@@ -257,14 +257,14 @@ test("route changes restore group and stage scopes and selection across rerender
   view.rerender(
     createElement(DefinitionGraph, {
       ...props,
-      selection: { kind: "unit", path: group.path },
+      selection: { kind: "unit", path: group.path, tab: null },
     }),
   );
   await screen.findByRole("button", { name: child.key }, { timeout: 20000 });
   view.rerender(
     createElement(DefinitionGraph, {
       ...props,
-      selection: { kind: "unit", path: group.path },
+      selection: { kind: "unit", path: group.path, tab: null },
     }),
   );
   expect(screen.queryByRole("status")).toBeNull();
@@ -276,7 +276,7 @@ test("route changes restore group and stage scopes and selection across rerender
   view.rerender(
     createElement(DefinitionGraph, {
       ...props,
-      selection: { kind: "stage", stage: child.stage },
+      selection: { kind: "stage", stage: child.stage, tab: null },
     }),
   );
   const stageNode = await screen.findByRole(
@@ -289,14 +289,14 @@ test("route changes restore group and stage scopes and selection across rerender
   view.rerender(
     createElement(DefinitionGraph, {
       ...props,
-      selection: { kind: "unit", path: group.path },
+      selection: { kind: "unit", path: group.path, tab: null },
     }),
   );
   await screen.findByRole("button", { name: child.key }, { timeout: 20000 });
   view.rerender(
     createElement(DefinitionGraph, {
       ...props,
-      selection: { kind: "unit", path: child.path },
+      selection: { kind: "unit", path: child.path, tab: null },
     }),
   );
   expect(

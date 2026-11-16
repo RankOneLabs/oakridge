@@ -9,7 +9,7 @@ export function StageWorkersSection({ model }: StageSectionProps) {
   return (
     <section aria-label="Workers" className="rounded border border-[var(--border-muted)] p-3">
       <h3>Workers</h3>
-      {model.workers.map(({ key, worker, source }) => {
+      {model.sections.workers.map(({ key, worker, source }) => {
         const trigger = selectWorkerTrigger(worker);
         return (
           <article

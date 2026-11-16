@@ -117,7 +117,7 @@ test("selection summary returns all stage callers including nested units", () =>
   const overview = selectDefinitionOverview({ ...detail, workflow });
   const summary = selectDefinitionSelection({
     overview,
-    selection: { kind: "stage", stage: "cohort" },
+    selection: { kind: "stage", stage: "cohort", tab: null },
   });
   expect(summary).toEqual({
     kind: "stage",
@@ -145,7 +145,7 @@ test("selection summary preserves a selected nested group declaration", () => {
   expect(
     selectDefinitionSelection({
       overview,
-      selection: { kind: "unit", path: "work/nested" },
+      selection: { kind: "unit", path: "work/nested", tab: null },
     }),
   ).toEqual({
     kind: "unit",
@@ -161,20 +161,20 @@ test("selection summary distinguishes no selection from absent stages and units"
   expect(
     selectDefinitionSelection({
       overview,
-      selection: { kind: "stage", stage: "unknown" },
+      selection: { kind: "stage", stage: "unknown", tab: null },
     }),
   ).toEqual({
     kind: "missing",
-    selection: { kind: "stage", stage: "unknown" },
+    selection: { kind: "stage", stage: "unknown", tab: null },
   });
   expect(
     selectDefinitionSelection({
       overview,
-      selection: { kind: "unit", path: "unknown" },
+      selection: { kind: "unit", path: "unknown", tab: null },
     }),
   ).toEqual({
     kind: "missing",
-    selection: { kind: "unit", path: "unknown" },
+    selection: { kind: "unit", path: "unknown", tab: null },
   });
 });
 
