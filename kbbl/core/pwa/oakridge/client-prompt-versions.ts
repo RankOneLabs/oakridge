@@ -18,10 +18,10 @@ async function request<T>(path: string, method = "GET", payload?: OperatorSavePe
 export const readPromptVersions = (path: string) => request<OperatorPromptVersionListing>(`${root}?path=${encodeURIComponent(path)}`);
 export const savePendingPrompt = ({path, body, expected}: {path: string; body: string; expected: OperatorSavePendingPromptRequest["expected_pending_version_id"]}) =>
   request<OperatorPromptVersionView>(root + "/pending", "PUT", {path, body, expected_pending_version_id: expected});
-export async function validatePendingPrompt(path: string): Promise<PromptVersionResult<OperatorPromptValidationOutcome>> {
+export async function validatePendingPrompt(path: string, expected: OperatorPromptVersionView["version_id"]): Promise<PromptVersionResult<OperatorPromptValidationOutcome>> {
   const listing = await readPromptVersions(path);
   if (!listing.ok) return listing;
-  if (!listing.value.pending) return {ok: false, feedback: {kind: "transport_error", detail: "No pending version"}};
+  if (!listing.value.pending || listing.value.pending.version_id !== expected) return {ok: false, feedback: {kind: "conflict"}};
   return request(root + "/validate", "POST", {path, body: listing.value.pending.body});
 }
 export const publishPrompt = ({path, expected}: {path: string; expected: Omit<OperatorPublishPromptRequest, "path">}) =>

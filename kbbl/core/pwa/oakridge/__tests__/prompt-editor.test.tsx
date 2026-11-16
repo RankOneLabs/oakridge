@@ -3,7 +3,7 @@ import { WorkflowDefDetail } from "../components/organisms/WorkflowDefDetail";
 import { useHashRoute } from "../../hooks/useHashRoute";
 import { selectPromptReferences } from "../lib/prompt-editor";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import fixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
@@ -48,10 +48,10 @@ beforeEach(() => {
   }));
 });
 afterEach(() => {cleanup(); vi.unstubAllGlobals();});
-function mount(stage = "brief") {
+function mount(stage = "brief", client = new QueryClient({defaultOptions: {queries: {retry: false}}})) {
   const model = selectStageInspector(definition, {kind: "stage", stage, tab: "prompts"});
   if (!model) throw new Error("Missing fixture stage");
-  return render(<QueryClientProvider client={new QueryClient({defaultOptions: {queries: {retry: false}}})}><StagePromptsSection model={model} renderPromptEditor={props => <PromptEditor {...props} />} /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><StagePromptsSection model={model} renderPromptEditor={props => <PromptEditor {...props} />} /></QueryClientProvider>);
 }
 const click = (name: string) => fireEvent.click(screen.getByRole("button", {name}));
 async function open() {mount(); click("Edit " + path); await screen.findByRole("region", {name: "Prompt editor"});}
@@ -81,13 +81,14 @@ test("edit save validate publish sends preconditions and pushes the reported def
   }
   click("Save draft");
   await screen.findByText("Pending version saved · pending-digest");
+  await waitFor(() => expect((screen.getByRole("button", {name: "Validate saved draft"}) as HTMLButtonElement).disabled).toBe(false));
   expect(saved).toEqual({path, body: "operator edit", expected_pending_version_id: null});
   expect(screen.getByText("Saved pending version pending-digest")).toBeTruthy();
   expect(within(screen.getByRole("region", {name: "Versions"})).getByText(/Pending · pending-digest/)).toBeTruthy();
   click("Validate saved draft"); await screen.findByText("Pending version is valid.");
   click("Publish prompt");
   await screen.findByText("Published · new definition new-definiti");
-  await waitFor(() => expect(window.location.hash).toBe(definitionSelectionHref("new-definition-id", {kind: "stage", stage: "brief", tab: "prompts"})));
+  await waitFor(() => expect(window.location.hash).toBe(definitionTabHref("new-definition-id", {kind: "stage", stage: "brief", tab: "prompts"}, "prompts")));
 });
 test("conflict preserves the edited textarea", async () => {
   conflict = true; await open(); edit(); click("Save draft");
@@ -104,6 +105,7 @@ test("declined stage navigation leaves draft and URL intact", async () => {
 });
 test("validation refusal lists store issues and publication without a move keeps the URL", async () => {
   await open(); edit(); click("Save draft"); await screen.findByText("Pending version saved · pending-digest");
+  await waitFor(() => expect((screen.getByRole("button", {name: "Validate saved draft"}) as HTMLButtonElement).disabled).toBe(false));
   invalid = true; click("Validate saved draft");
   await screen.findByText("Validation failed. Review the issues below.");
   expect(screen.getByText("prompts.brief: Invalid body")).toBeTruthy();
@@ -117,7 +119,7 @@ test("client preserves conflicts, validation issues, and network error messages"
   expect(await savePendingPrompt({path, body: "edit", expected: null})).toEqual({ok: false, feedback: {kind: "conflict"}});
   listing = {...listing, pending: {...listing.published, status: "pending"}};
   invalid = true;
-  expect(await validatePendingPrompt(path)).toMatchObject({ok: false, feedback: {kind: "validation_failed", issues: [{path: ["prompts", "brief"], detail: "Invalid body"}]}});
+  expect(await validatePendingPrompt(path, listing.published.version_id)).toMatchObject({ok: false, feedback: {kind: "validation_failed", issues: [{path: ["prompts", "brief"], detail: "Invalid body"}]}});
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
   expect(await savePendingPrompt({path, body: "edit", expected: null})).toEqual({ok: false, feedback: {kind: "transport_error", detail: "offline"}});
 });
@@ -145,6 +147,7 @@ test("published navigation preserves Back access to the mocked previous definiti
   await screen.findByRole("button", {name: "Edit " + path});
   click("Edit " + path); await screen.findByLabelText("Prompt body");
   edit(); click("Save draft"); await screen.findByText("Pending version saved · pending-digest");
+  await waitFor(() => expect((screen.getByRole("button", {name: "Validate saved draft"}) as HTMLButtonElement).disabled).toBe(false));
   click("Publish prompt");
   await waitFor(() => expect(window.location.hash).toContain("new-definition-id"));
   await screen.findByTestId("or-def-detail");
@@ -175,4 +178,78 @@ test("declining a dirty editor switch preserves the open prompt and edits", asyn
   expect(confirm).toHaveBeenCalledOnce();
   expect(screen.getByRole("heading", {name: "Editing development/merge-confirmation.md"})).toBeTruthy();
   expect((screen.getByLabelText("Prompt body") as HTMLTextAreaElement).value).toBe("operator edit");
+});
+
+interface DeferredResponse {
+  promise: Promise<Response>;
+  resolve: (response: Response) => void;
+}
+function deferResponse(): DeferredResponse {
+  let resolve: DeferredResponse["resolve"] = () => {};
+  const promise = new Promise<Response>(complete => { resolve = complete; });
+  return {promise, resolve};
+}
+test("cached clean editor adopts fresh bodies and concurrency tokens", async () => {
+  const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
+  client.setQueryData(["oakridge", "prompt-versions", path], {ok: true, value: listing});
+  const fresh = {...listing.published, version_id: "new-published", body: "new published body"};
+  listing = {...listing, published: fresh, pending: {...fresh, version_id: "new-pending", status: "pending", body: "new saved body"}};
+  const read = deferResponse();
+  const baseFetch = fetch;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).includes("/prompt-versions?") ? read.promise : baseFetch(input, init)));
+  mount("brief", client); click("Edit " + path);
+  await screen.findByLabelText("Prompt body");
+  expect((screen.getByLabelText("Prompt body") as HTMLTextAreaElement).value).toBe(definition.prompts[path].body);
+  // Subsequent invalidation reads use the normal mock, not the consumed Response.
+  vi.stubGlobal("fetch", baseFetch);
+  await act(async () => { read.resolve(Response.json(listing)); });
+  await waitFor(() => expect((screen.getByLabelText("Prompt body") as HTMLTextAreaElement).value).toBe("new saved body"));
+  click("Publish prompt");
+  await screen.findByText("Published · new definition new-definiti");
+  const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/publish"));
+  expect(JSON.parse(String(request?.[1]?.body))).toEqual({path, expected_pending_version_id: "new-pending", expected_published_version_id: "new-published"});
+});
+test("fresh versions do not replace unsaved edits", async () => {
+  const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
+  mount("brief", client); click("Edit " + path); await screen.findByLabelText("Prompt body"); edit();
+  listing = {...listing, pending: {...listing.published, version_id: "another-pending", body: "another saved body", status: "pending"}};
+  await act(async () => { await client.refetchQueries({queryKey: ["oakridge", "prompt-versions", path]}); });
+  expect((screen.getByLabelText("Prompt body") as HTMLTextAreaElement).value).toBe("operator edit");
+  click("Save draft"); await screen.findByText("Pending version saved · pending-digest");
+  await waitFor(() => expect((screen.getByRole("button", {name: "Validate saved draft"}) as HTMLButtonElement).disabled).toBe(false));
+  expect(saved?.expected_pending_version_id).toBeNull();
+});
+test("validation refuses a pending version that differs from the editor's saved draft", async () => {
+  await open(); edit(); click("Save draft"); await screen.findByText("Pending version saved · pending-digest");
+  await waitFor(() => expect((screen.getByRole("button", {name: "Validate saved draft"}) as HTMLButtonElement).disabled).toBe(false));
+  listing = {...listing, pending: {...listing.published, version_id: "another-pending", body: "another saved body", status: "pending"}};
+  click("Validate saved draft");
+  await screen.findByText(/Conflict: the prompt changed/);
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/validate"))).toBe(false);
+  expect((screen.getByLabelText("Prompt body") as HTMLTextAreaElement).value).toBe("operator edit");
+});
+test.each(["navigation", "unmount"])("slow publication respects later %s", async departure => {
+  const view = mount(); click("Edit " + path); await screen.findByLabelText("Prompt body");
+  edit(); click("Save draft"); await screen.findByText("Pending version saved · pending-digest");
+  await waitFor(() => expect((screen.getByRole("button", {name: "Validate saved draft"}) as HTMLButtonElement).disabled).toBe(false));
+  const publication = deferResponse();
+  const baseFetch = fetch;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith("/publish") ? publication.promise : baseFetch(input, init)));
+  click("Publish prompt");
+  const previous = window.location.hash;
+  if (departure === "unmount") view.unmount();
+  else {
+    await act(async () => { await new Promise<void>(resolve => {
+      window.addEventListener("hashchange", () => resolve(), {once: true});
+      window.location.hash = "#settings";
+    }); });
+    // A return to the same URL must still cancel the old publication's navigation.
+    await act(async () => { await new Promise<void>(resolve => {
+      window.addEventListener("hashchange", () => resolve(), {once: true});
+      window.location.hash = previous;
+    }); });
+  }
+  await act(async () => { publication.resolve(await baseFetch("/publish", {method: "POST"})); });
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/definitions/new-definition-id"))).toBe(true));
+  expect(window.location.hash).toBe(previous);
 });
