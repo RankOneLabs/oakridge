@@ -112,15 +112,28 @@ const awaitsManualMergeAfterWatchFailure = (input: StatusInput): boolean => {
     && input.decisions.some((decision) => decision.submit.kind === "review"
       && decision.submit.review === "merge_confirmation" && decision.submit.decision === "confirm_merged");
 };
+/** A worker's latest attempt that is working now. A queued attempt can wait indefinitely, so it does not count. */
+const isRunningAttempt = (attempt: OperatorAttemptView): boolean => attempt.is_current && attempt.status === "running";
+/** A stall a failed worker raised, as the authority words it, rather than one the run's commit raised. */
+const isWorkerStall = ({ attention, attempts }: StatusInput): boolean => {
+  if (attention?.kind !== "stalled") return true;
+  return attempts.some((attempt) => attempt.is_current && attempt.failure !== null
+    && attention.detail.startsWith(`${attempt.worker} failed:`));
+};
+/** One worker failed while another still works the unit, so the unit has not stopped. */
+const isStillWorkingPastFailure = (input: StatusInput): boolean =>
+  !input.hasRunStall && isWorkerStall(input) && input.attempts.some(isRunningAttempt);
+const failedUnlessStillWorking = (input: StatusInput): { readonly run: RunStatus; readonly stage: StageStatus } =>
+  isStillWorkingPastFailure(input) ? { run: "running", stage: "running" } : { run: "failed", stage: "failed" };
+
 export function deriveStatus(input: StatusInput): { readonly run: RunStatus; readonly stage: StageStatus } {
   const { status, attention, attempts, decisions, hasRunStall } = input;
   if (status.kind === "done") return { run: "complete", stage: "complete" };
   if (status.kind === "cancelled") return { run: "cancelled", stage: "failed" };
   if (!hasRunStall && awaitsManualMergeAfterWatchFailure(input)) return { run: "parked", stage: "parked" };
-  if (hasRunStall || attention?.kind === "stalled")
-    return { run: "failed", stage: "failed" };
+  if (hasRunStall || attention?.kind === "stalled") return failedUnlessStillWorking(input);
   if (attention?.kind === "waiting" && awaitsOperator(decisions)) return { run: "parked", stage: "parked" };
-  if (attempts.some((attempt) => attempt.is_current && attempt.failure)) return { run: "failed", stage: "failed" };
+  if (attempts.some((attempt) => attempt.is_current && attempt.failure)) return failedUnlessStillWorking(input);
   if (status.kind === "active") return { run: "running", stage: "running" };
   return { run: "pending", stage: "pending" };
 }

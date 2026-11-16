@@ -218,7 +218,7 @@
     "pr_watch": {
       "kind": "code",
       "operation": "pull_request.observe",
-      "when": "pr_published",
+      "when": "pr_opened",
       "inputs": {
         "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
       },
@@ -654,6 +654,7 @@
         "brief_value": "input.brief",
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
+        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
         "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
         "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
         "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
@@ -825,6 +826,7 @@
       },
       "let": {
         "pr_published": "published(pr)",
+        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
         "watch_base": "input.repository.forge.final_base",
         "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
         "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",

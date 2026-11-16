@@ -328,6 +328,13 @@ impl Run {
             .collect()
     }
 
+    fn wants(&self, unit: &str, worker: &str) -> bool {
+        self.last
+            .wanted
+            .iter()
+            .any(|wanted| wanted.unit.0 == unit && wanted.worker.0 == worker)
+    }
+
     fn review_decisions(&self, unit: &str) -> usize {
         self.state()
             .decisions
@@ -957,6 +964,38 @@ fn an_operator_cannot_accept_a_failed_brief_or_release_its_builder_until_correct
     assert!(run.state().attempts.iter().any(|attempt| {
         attempt.unit.0 == "run/implementation/a" && attempt.worker.0 == "builder"
     }));
+}
+
+#[test]
+fn pr_watch_waits_until_the_published_pr_carries_a_url() {
+    let planned = cohort(PlannedCohort {
+        id: "a",
+        repository_key: "oakridge",
+        depends_on: &[],
+        task_ids: &["T1"],
+    });
+    let mut run = at_briefs(std::slice::from_ref(&planned), &["T1"]);
+    run.accepted_brief(&planned);
+    let unit = "run/implementation/a";
+    let output = WorkerOutput {
+        unit,
+        worker: "builder",
+        artifact: "pr",
+    };
+    let held = json!({"pr_url": "", "branch": "a", "summary": "held unpushed"});
+    run.publish(Publication {
+        output,
+        body: held,
+        subject: None,
+    });
+    assert!(!run.wants(unit, "pr_watch"));
+
+    run.publish(Publication {
+        output,
+        body: pr("oakridge", "a"),
+        subject: None,
+    });
+    assert!(run.wants(unit, "pr_watch"));
 }
 
 /// Two repositories, with task T1 shared by two cohorts of `alpha`.
