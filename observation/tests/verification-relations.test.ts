@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
+import { configurationHash, parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
 import type { LogicalItemComposite, LogicalItemLineage } from "../src/grading/composite";
 import { oakridgeGradingRegistry, fixtureDefinitions, integration, scratchDatabase } from "./grading-fixture";
 import type { MeasurementReadback, RelationCheckpoint } from "../verification/proof-contract";
@@ -73,11 +73,13 @@ integration("the shared-task matrix passes through real delivery, and sends no r
   if (!parsed.ok) throw new Error(parsed.error.detail);
   const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
+  const hash = configurationHash(parsed.value);
+  if (!hash.ok) throw new Error(hash.error.detail);
   const realFetch = globalThis.fetch;
   let outbound = 0;
   globalThis.fetch = (async () => { outbound++; throw new Error("no outbound request is allowed"); }) as unknown as typeof fetch;
   try {
-    const { checks } = await sharedTaskMatrix(db, { producer: "oakridge", namespace: "matrix-test" }, registration.value);
+    const { checks } = await sharedTaskMatrix(db, { producer: "oakridge", namespace: "matrix-test" }, registration.value, { config_version: 1, config_hash: hash.value });
     expect(failed(checks)).toEqual([]);
     expect(checks.length).toBeGreaterThan(5);
   } finally { globalThis.fetch = realFetch; }

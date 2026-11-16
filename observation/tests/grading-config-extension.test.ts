@@ -1,3 +1,5 @@
+import { stampCapture } from "../src/grading/configuration";
+import { pinIdentity } from "./grading-fixture";
 import { expect } from "bun:test";
 import { ok } from "../src/domain/primitives";
 import { parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
@@ -21,7 +23,7 @@ for (const is_valid of [true, false]) integration(`a configuration-only question
   if (!registration.ok) throw new Error(registration.error.detail);
   const registered = await registerDefinitions(db, tenant, registration.value);
   if (!registered.ok) throw new Error(registered.error.detail);
-  const feed = createFeed(db, tenant, registration.value.capture);
+  const feed = createFeed(db, tenant, stampCapture(registration.value.capture, pinIdentity));
   await feed.launch({ spec: "Ship organization reads" }, "run-1", runConfig(true));
   await feed.revision({ revision_id: "analysis", artifact_kind: "analysis", body: { summary: "Reads", findings: [
     { id: "F1", description: "Organization reads are required", severity: "warning" }], requirements: [], risks: [], proposed_spec_updates: [] } });
@@ -42,7 +44,7 @@ for (const is_valid of [true, false]) integration(`a configuration-only question
   expect(question.machine[0]!.measurement).toMatchObject(is_valid
     ? { state: "answered", answer: { kind: "choice", value: "relevant" } } : { state: "failed" });
   const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: "read" }] },
-    profile: createProfile(registration.value.questions, registration.value.collector), capture_configuration: registration.value.capture });
+    profile: createProfile(registration.value.questions, registration.value.collector), capture_configuration: stampCapture(registration.value.capture, pinIdentity) });
   const response = await app.request(`/v1/items/${encodeURIComponent(item.occurrence_id)}/answers`, { headers: { authorization: "Bearer read" } });
   expect(response.status).toBe(200);
   const body = await response.json() as { items: { question: { question_id: string }; answer: { value: string } }[] };

@@ -1,3 +1,5 @@
+import { stampCapture } from "../src/grading/configuration";
+import { pinIdentity } from "./grading-fixture";
 import { questionVersion } from "./grading-fixture";
 import { expect, test } from "bun:test";
 import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../src/domain/identity";
@@ -82,7 +84,7 @@ integration("tasks, plan contributions and briefs freeze their original context 
   if (!registration.ok) throw new Error(registration.error.detail);
   const registered = await registerDefinitions(db, tenant, registration.value);
   if (!registered.ok) throw new Error(registered.error.detail);
-  const feed = createFeed(db, tenant, registration.value.capture);
+  const feed = createFeed(db, tenant, stampCapture(registration.value.capture, pinIdentity));
   await feed.launch({ spec: "Original spec" }, "run-1", runConfig(true));
   for (const [index, entry] of revisions.entries()) await feed.revision({ revision_id: entry.revision_id, artifact_kind: entry.artifact_kind, body: entry.body,
     recorded_at: `2026-11-01T00:00:0${index}.000Z` });
@@ -127,7 +129,7 @@ integration("an explicit coverage upgrade adds only the new question and leaves 
   const registration = planRegistration(parsed.value, oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   await registerDefinitions(db, tenant, registration.value);
-  const old = { pins: registration.value.capture.pins.filter((pin) => pin.question_id !== TASK_COVERAGE_ID) };
+  const old = { pins: stampCapture(registration.value.capture, pinIdentity).pins.filter((pin) => pin.question_id !== TASK_COVERAGE_ID) };
   const feed = createFeed(db, tenant, old);
   await feed.launch({ spec: "The original spec" });
   await feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body: { ...analysis, findings: [{ id: "F1", description: "An existing finding", severity: "warning" }] } });
@@ -135,7 +137,7 @@ integration("an explicit coverage upgrade adds only the new question and leaves 
   const before = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set").selectAll().execute());
   const item = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select("occurrence_id")
     .where("item_kind", "=", "task").executeTakeFirstOrThrow());
-  const coverage = { pins: registration.value.capture.pins.filter((pin) => pin.question_id === TASK_COVERAGE_ID) };
+  const coverage = { pins: stampCapture(registration.value.capture, pinIdentity).pins.filter((pin) => pin.question_id === TASK_COVERAGE_ID) };
   for (let replay = 0; replay < 2; replay++) await withTenant(db, tenant, (trx) =>
     pinOccurrenceInTransaction(trx, tenant, item.occurrence_id as ItemOccurrenceId, coverage));
   expect(await readOccurrenceEvidence(db, tenant, item.occurrence_id as ItemOccurrenceId)).toHaveLength(1);
@@ -168,7 +170,7 @@ integration("a brief resolves its task, requirements and plan at the brief's own
   const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   await registerDefinitions(db, tenant, registration.value);
-  const feed = createFeed(db, tenant, registration.value.capture);
+  const feed = createFeed(db, tenant, stampCapture(registration.value.capture, pinIdentity));
   await feed.launch({ spec: "Original spec" });
   await feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body: analysis, recorded_at: "2026-11-01T00:00:00Z" });
   await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: tasks, recorded_at: "2026-11-01T00:00:01Z" });

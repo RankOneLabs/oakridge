@@ -1,3 +1,5 @@
+import { stampCapture } from "../src/grading/configuration";
+import { pinIdentity } from "./grading-fixture";
 import { afterEach, beforeEach, expect } from "bun:test";
 import { sql } from "kysely";
 import { Client } from "pg";
@@ -70,7 +72,7 @@ async function lifecycle(db: Database, retry_limit = 3): Promise<Lifecycle> {
   const requests: Requests = { sent: [] };
   const silent = () => undefined;
   return {
-    db, registration: planned.value, requests, feed: createFeed(db, tenant, planned.value.capture),
+    db, registration: planned.value, requests, feed: createFeed(db, tenant, stampCapture(planned.value.capture, pinIdentity)),
     reconciler: createEvidenceReconciler({ db, collector: oakridgeProfile.evidence, repository, admission: { retry_limit }, log: silent }),
     worker: (script, overrides = {}) => ({ db, tenants: [tenant], log: silent, lease_owner: "worker-a",
       controls: { run_spend: 5, retry_limit, provider_deadline_ms: 30_000, lease_ms: 60_000 },
@@ -100,7 +102,7 @@ async function captureAssessment(life: Lifecycle, input: { readonly run_id?: str
   const has_tasks = await withTenant(life.db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select("occurrence_id")
     .where("run_id", "=", run_id).where("item_kind", "=", "task").executeTakeFirst());
   if (!has_tasks) await life.feed.revision({ revision_id: `${run_id}-context-tasks`, artifact_kind: "tasks", run_id,
-    body: await fixtureBody("tasks") }, { pins: life.registration.capture.pins.filter((pin) => pin.scope === "per_task") });
+    body: await fixtureBody("tasks") }, stampCapture({ pins: life.registration.capture.pins.filter((pin) => pin.scope === "per_task") }, pinIdentity));
   await life.feed.revision({ revision_id: `${run_id}-assessment`, artifact_kind: "assessment", run_id, subject_id: input.subject_id,
     body: await fixtureBody("assessment") });
   await life.reconciler.reconcileRun(tenant, run_id);

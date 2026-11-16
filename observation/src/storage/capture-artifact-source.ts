@@ -51,7 +51,7 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
       .where("i.run_id", "=", run_id).where("e.subject_occurrence_id", "=", artifact.occurrence_id)
       .where("e.task_id", question.task_id === null ? "is" : "=", question.task_id)
       .where("e.question_id", "=", question.question_id).where("e.question_version", "=", question.question_version).executeTakeFirst());
-    if (pin?.collection_plan === null || pin === undefined) return collector.collect(artifact, question, this);
+    if (pin === undefined) return collector.collect(artifact, question, this);
     const plan = decodeEvidencePlan(pin.collection_plan);
     if (!plan.ok) return { state: "not_ready", reason: { code: "invalid_collection_plan", detail: plan.error.detail } };
     return collector.collect(artifact, { ...question, collection_plan: plan.value }, this);

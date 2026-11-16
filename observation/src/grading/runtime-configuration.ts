@@ -1,7 +1,7 @@
 import type { ProducerProfile } from "../ports/producer-profile";
 import { NO_CONFIGURED_GRADERS, type GraderCapability } from "../http/health";
 import type { CaptureConfiguration } from "./evidence";
-import type { GradingRegistration } from "./configuration";
+import { stampCapture, type GradingRegistration } from "./configuration";
 
 export interface RuntimeSnapshot {
   readonly version: number | null;
@@ -24,7 +24,7 @@ export const graderCapability = (registration: GradingRegistration): GraderCapab
     evaluator_definition_id: grader.evaluator_definition_id })) };
 
 export const runtimeSnapshot = (input: RuntimeSnapshotInput): RuntimeSnapshot => ({ ...input,
-  capture_configuration: input.registration.capture, grader_capability: graderCapability(input.registration) });
+  capture_configuration: stampCapture(input.registration.capture, input.version === null || input.hash === null ? null : { config_version: input.version, config_hash: input.hash }), grader_capability: graderCapability(input.registration) });
 
 /** Copy and freeze data; injected schema instances and functions keep their own lifecycle. */
 function immutable<T>(value: T): T {
