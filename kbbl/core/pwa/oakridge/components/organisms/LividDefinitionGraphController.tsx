@@ -24,9 +24,9 @@ export function LividDefinitionGraphController({
       selectDefinitionGraphRoute(
         model,
         kind === "stage" && key
-          ? { kind, stage: key }
+          ? { kind, stage: key, tab: null }
           : kind === "unit" && key
-            ? { kind, path: key }
+            ? { kind, path: key, tab: null }
             : null,
       ),
     [model, kind, key],

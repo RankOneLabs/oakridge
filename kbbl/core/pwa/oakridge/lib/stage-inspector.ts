@@ -192,7 +192,7 @@ export function selectStageSummary(model: StageInspectorModel): StageSummary {
 export function selectStageInputUnits(
   model: StageInspectorModel,
 ): StageInspectorModel["units"] {
-  return model.selected_unit ? [model.selected_unit] : model.units;
+  return model.selected_unit ? [model.selected_unit] : model.sections.inputs.units;
 }
 
 export interface PromptReference {
@@ -299,6 +299,7 @@ export function selectStageInspectorModels(
       const model = selectStageInspectorEntry(definition, {
         kind: "stage",
         stage,
+        tab: null,
       });
       return model ? [[stage, model] as const] : [];
     }),

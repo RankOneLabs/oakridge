@@ -57,7 +57,7 @@ export function StageInputsSection({ model }: StageSectionProps) {
   return (
     <section aria-label="Inputs" className="rounded border border-[var(--border-muted)] p-3">
       <h3>Inputs</h3>
-      <StageType model={model} value={model.stage.input} />
+      <StageType model={model} value={model.sections.inputs.input} />
       {selectStageInputUnits(model).map((unit) => (
         <div key={unit.path}>
           <h4>

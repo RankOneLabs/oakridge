@@ -1,3 +1,5 @@
+import { StageInspectorTabs } from "./StageInspectorTabs";
+import { selectEffectiveStageTab, selectTabForAnchor, STAGE_TABS } from "../../lib/definition-selection";
 import { selectDefinitionOverview, selectDefinitionSelection, type DefinitionOverview as Overview } from "../../lib/definition-overview";
 import type { DefinitionSelection } from "../../../lib/hash";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
@@ -14,11 +16,13 @@ import { StageSummarySection } from "./StageSummarySection";
 interface StageInspectorProps {
   definition: OperatorDefinitionDetail;
   selection: DefinitionSelection | null;
+  anchor?: string;
 }
-export function StageInspector({ definition, selection }: StageInspectorProps) {
+export function StageInspector({ definition, selection, anchor }: StageInspectorProps) {
   const overview = selectDefinitionOverview(definition);
   const stages = selectStageNavigation(definition);
   const model = selectStageInspector(definition, selection);
+  const activeTab = selection?.tab ?? (model ? selectTabForAnchor(model.name, anchor) : null) ?? selectEffectiveStageTab(selection, anchor);
   return (
     <section
       aria-label="Stage inspector"
@@ -35,7 +39,7 @@ export function StageInspector({ definition, selection }: StageInspectorProps) {
               {name}
             </a>
             <ul>
-              {units.map((unit) => (
+              {units.filter(unit => !(units.length === 1 && unit.path === name)).map((unit) => (
                 <li key={unit.path}>
                   <a
                     href={definitionUnitHref(definition.definition_id, unit.path)}
@@ -55,19 +59,24 @@ export function StageInspector({ definition, selection }: StageInspectorProps) {
         {overview.groups.map((unit) => <a key={unit.path} href={definitionUnitHref(definition.definition_id, unit.path)} aria-current={selection?.kind === "unit" && selection.path === unit.path ? "page" : undefined}>{unit.path} (group)</a>)}
       </aside>
       <div className="min-w-0 grid content-start gap-3">
-        <div data-testid="or-def-selection">{(selection?.kind !== "stage" || !model) && <DefinitionSelectionDetail overview={overview} selection={selection} />}</div>
-        {model && (
-          <>
-            <StageSummarySection model={model} />
-            <StageInputsSection model={model} />
-            <StageBindingsSection model={model} />
-            <StageWorkersSection model={model} />
-            <StagePromptsSection model={model} />
-            <StageArtifactsSection model={model} />
-            <StageReviewsSection model={model} />
-            <StageCompletionSection model={model} />
-          </>
-        )}
+        <div data-testid="or-def-selection">{!model && <DefinitionSelectionDetail overview={overview} selection={selection} />}</div>
+        {model && selection && <>
+          <header aria-label="Stage identity">
+            <h3>{model.name}{selection.kind === "unit" && selection.path !== model.name ? ` · unit ${selection.path}` : ""}</h3>
+            {stages.filter(stage => stage.name === model.name).map(stage => !(stage.units.length === 1 && stage.units[0]?.path === model.name) && <p key={stage.name}>Invoked by: {stage.units.map(unit => <a className="mr-2" key={unit.path} href={definitionUnitHref(definition.definition_id, unit.path)}>{unit.path}</a>)}</p>)}
+          </header>
+          <StageInspectorTabs id={definition.definition_id} selection={selection} activeTab={activeTab} />
+          <div role="tabpanel" aria-label={STAGE_TABS.find(tab => tab.value === activeTab)?.label}>
+            {activeTab === "overview" && <><StageSummarySection model={model} />{selection.kind === "unit" && <DefinitionSelectionDetail overview={overview} selection={selection} />}</>}
+            {activeTab === "inputs" && <StageInputsSection model={model} />}
+            {activeTab === "bindings" && <StageBindingsSection model={model} />}
+            {activeTab === "workers" && <StageWorkersSection model={model} />}
+            {activeTab === "prompts" && <StagePromptsSection model={model} />}
+            {activeTab === "artifacts" && <StageArtifactsSection model={model} />}
+            {activeTab === "reviews" && <StageReviewsSection model={model} />}
+            {activeTab === "completion" && <StageCompletionSection model={model} />}
+          </div>
+        </>}
       </div>
     </section>
   );

@@ -6,13 +6,13 @@ export function StageCompletionSection({ model }: StageSectionProps) {
     <section aria-label="Completion" className="rounded border border-[var(--border-muted)] p-3">
       <h3>Completion</h3>
       <h4>done_when</h4>
-      {model.stage.done_when ? (
+      {model.sections.completion.done_when ? (
         <p>
-          done_when: <LetExpression model={model} expression={model.stage.done_when} />
+          done_when: <LetExpression model={model} expression={model.sections.completion.done_when} />
         </p>
       ) : <p>Not declared</p>}
       <h4>Stage outcome fields</h4>
-      {model.outcomes.map(({ name, expression }) => (
+      {model.sections.completion.outcome.map(({ name, expression }) => (
         <div key={name} id={stageElementId({ stage: model.name, kind: "outcome", name: name })}>
           <h4>outcome.{name}</h4>
           <LetExpression model={model} expression={expression} />
@@ -40,7 +40,7 @@ export function StageCompletionSection({ model }: StageSectionProps) {
           </ul>
         </div>
       )}
-      {model.outcomes.map(({ name, readers }) => <div key={name}>
+      {model.sections.completion.outcome.map(({ name, readers }) => <div key={name}>
           <ul>
             {readers.map((reader, index) => {
               const binding =

@@ -1,8 +1,4 @@
-import { TextInput } from "../../../components/atoms/TextInput";
-import { useState } from "react";
-import { Button } from "../../../components/atoms/Button";
 import {
-  selectAbbreviatedDefinitionId,
   selectDefinitionSchemaParts,
   type DefinitionOverview as Overview,
 } from "../../lib/definition-overview";
@@ -32,33 +28,8 @@ function SchemaType({ text, overview, selection }: { text: string; overview: Ove
   );
 }
 export function DefinitionOverview({ overview, selection }: DefinitionOverviewProps) {
-  const [shouldShowFullId, setShouldShowFullId] = useState(false);
-  async function onCopyDefinitionId(): Promise<void> {
-    if (!navigator.clipboard?.writeText) {
-      setShouldShowFullId(true);
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(overview.id);
-    } catch {
-      setShouldShowFullId(true);
-    }
-  }
   return (
-    <section aria-label="Workflow overview" className="or-definition-overview">
-      <h2>{overview.name}</h2>
-      <p>
-        Definition ID: <code title={overview.id}>{selectAbbreviatedDefinitionId(overview.id)}</code>
-        <Button variant="secondary" onClick={onCopyDefinitionId}>Copy definition ID</Button>
-      </p>
-      {shouldShowFullId && (
-        <div>
-          <p role="status">Copy unavailable. Select and copy the full definition ID.</p>
-          <TextInput aria-label="Full definition ID" value={overview.id} readOnly autoFocus onFocus={(event) => event.currentTarget.select()} className="w-full" />
-        </div>
-      )}
-      <p>{overview.stages.length} stages · {overview.units.length} units · {overview.collections.length} collections · {overview.pools.length} pools</p>
-      <details><summary>Workflow inputs, outputs and schemas</summary>
+    <section aria-label="Schema" className="or-definition-overview">
       <h3>Root input</h3>
       {typeof overview.input === "string" ? (
         <p>
@@ -113,7 +84,7 @@ export function DefinitionOverview({ overview, selection }: DefinitionOverviewPr
           <pre>{JSON.stringify(schema.shape, null, 2)}</pre>
         </section>
       ))}
-      </details>
+
     </section>
   );
 }

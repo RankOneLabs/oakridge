@@ -30,5 +30,36 @@ export function selectEffectiveDefinitionSelection(
   selection: DefinitionSelection | null,
 ): EffectiveDefinitionSelection {
   const first = definition.bundle.stages[0];
-  return selection ?? (first ? { kind: "stage", stage: first } : null);
+  return selection ?? (first ? { kind: "stage", stage: first, tab: null } : null);
+}
+
+export type StageTab = "overview" | "inputs" | "bindings" | "workers" | "prompts" | "artifacts" | "reviews" | "completion";
+export const STAGE_TABS: readonly { value: StageTab; label: string }[] = [
+  { value: "overview", label: "Overview" }, { value: "inputs", label: "Inputs" },
+  { value: "bindings", label: "Bindings" }, { value: "workers", label: "Workers" },
+  { value: "prompts", label: "Prompts" }, { value: "artifacts", label: "Artifacts" },
+  { value: "reviews", label: "Reviews" }, { value: "completion", label: "Completion" },
+];
+export function definitionTabHref(id: string, selection: DefinitionSelection, tab: StageTab): string {
+  const clean = selection.kind === "stage" ? { ...selection, stage: selection.stage.split("#")[0] ?? "" } : { ...selection, path: selection.path.split("#")[0] ?? "" };
+  return definitionSelectionHref(id, clean).replace(definitionHref(id), `${definitionHref(id)}/tabs/${tab}`);
+}
+export function selectTabForAnchor(stage: string, anchor: string | null | undefined): StageTab | null {
+  const prefix = `stage-${encodeURIComponent(stage)}-`;
+  if (!anchor?.startsWith(prefix)) return null;
+  const suffix = anchor.slice(prefix.length);
+  const kinds: readonly [string, StageTab][] = [
+    ["worker-input", "workers"], ["template-worker", "prompts"], ["template-review", "prompts"],
+    ["decision-set", "prompts"], ["prompt", "prompts"], ["let", "bindings"], ["worker", "workers"],
+    ["artifact", "artifacts"], ["review", "reviews"], ["outcome", "completion"],
+  ];
+  return kinds.find(([kind]) => suffix.startsWith(kind + "-"))?.[1] ?? null;
+}
+export function selectEffectiveStageTab(selection: DefinitionSelection | null, anchor?: string | null): StageTab {
+  const stage = selection?.kind === "stage" ? selection.stage.split("#")[0] ?? "" : "";
+  return selection?.tab ?? selectTabForAnchor(stage, anchor) ?? "overview";
+}
+export function selectDefinitionStructureSummary(overview: import("./definition-overview").DefinitionOverview): string {
+  return ([["stage", overview.stages.length], ["unit", overview.units.length], ["group", overview.groups.length], ["collection", overview.collections.length], ["pool", overview.pools.length]] as const)
+    .map(([noun, count]) => `${count} ${noun}${count === 1 ? "" : "s"}`).join(" · ");
 }

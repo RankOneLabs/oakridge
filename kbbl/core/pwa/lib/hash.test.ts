@@ -163,15 +163,15 @@ it("round trips an exact pinned artifact revision", () => {
 
 describe("definition selection routes", () => {
   it.each([
-    ["#settings/workflows/d1/stages/a%2Fb", { kind: "stage", stage: "a/b" }],
-    ["#settings/workflows/d1/units/work/item", { kind: "unit", path: "work/item" }],
-    ["#settings/workflows/d1/units/a%20b", { kind: "unit", path: "a b" }],
+    ["#settings/workflows/d1/stages/a%2Fb", { kind: "stage", stage: "a/b", tab: null }],
+    ["#settings/workflows/d1/units/work/item", { kind: "unit", path: "work/item", tab: null }],
+    ["#settings/workflows/d1/units/a%20b", { kind: "unit", path: "a b", tab: null }],
   ])("parses %s", (href, selection) => {
     expect(readHashRoute(href as string, "")).toEqual({ view: "settings", route: { sub: "workflow", id: "d1", selection } });
   });
   it("keeps a declaration anchor verbatim while decoding the stage", () => {
     expect(readHashRoute("#settings/workflows/d1/stages/a%2Fb#stage-a%2Fb-artifact-%24draft", "")).toEqual({
-      view: "settings", route: { sub: "workflow", id: "d1", selection: { kind: "stage", stage: "a/b#stage-a%2Fb-artifact-%24draft" } },
+      view: "settings", route: { sub: "workflow", id: "d1", selection: { kind: "stage", stage: "a/b#stage-a%2Fb-artifact-%24draft", tab: null } },
     });
   });
   it.each(["/workflows/d1/units/", "/workflows/d1/units/a//b", "/workflows/d1/unknown/a", "/workflows/d1/stages/a/b"])("rejects %s", (path) => {
