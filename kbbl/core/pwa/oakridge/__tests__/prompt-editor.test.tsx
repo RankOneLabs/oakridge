@@ -1,4 +1,3 @@
-import { PromptEditor } from "../components/organisms/PromptEditor";
 import { WorkflowDefDetail } from "../components/organisms/WorkflowDefDetail";
 import { useHashRoute } from "../../hooks/useHashRoute";
 import { selectPromptReferences } from "../lib/prompt-editor";
@@ -8,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import fixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import type { OperatorPromptVersionListing, OperatorSavePendingPromptRequest } from "../operator-contracts/http/prompt-versions";
-import { StagePromptsSection } from "../components/molecules/StagePromptsSection";
+import { StagePromptsEditing } from "../components/organisms/StagePromptsEditing";
 import { selectStageInspector } from "../lib/stage-inspector";
 import { savePendingPrompt, validatePendingPrompt } from "../client-prompt-versions";
 import { acceptHashNavigation } from "../../lib/hash";
@@ -18,10 +17,12 @@ let listing: OperatorPromptVersionListing;
 let conflict: boolean;
 let invalid: boolean;
 let moves: boolean;
+let retired: boolean;
+let retiredRead = false;
 let saved: OperatorSavePendingPromptRequest | null;
 const path = "development/brief.md";
 beforeEach(() => {
-  conflict = false; invalid = false; moves = true; saved = null;
+  conflict = false; invalid = false; moves = true; retired = false; saved = null;
   const published = {version_id: "published-digest", prompt_id: "prompt", source_path: path, body: definition.prompts[path].body, status: "published" as const, published_at: "2026-11-15"};
   listing = {source_path: path, published, pending: null, versions: [published], referenced_by: []};
   window.location.hash = definitionSelectionHref(definition.definition_id, {kind: "stage", stage: "brief", tab: "prompts"});
@@ -37,13 +38,19 @@ beforeEach(() => {
     }
     if (url.endsWith("/validate")) return invalid ? error("invalid_prompt") : Response.json({valid: true, workflows: ["development"]});
     if (url.endsWith("/publish")) {
+      if (moves) retired = true;
       listing = {...listing, published: {...listing.published, version_id: "pending-digest", body: listing.pending?.body ?? ""}, pending: null};
       return Response.json({version_id: "pending-digest", prompt_id: "prompt", source_path: path, published_at: "now", moved: moves ? [{workflow: "development", definition_id: "new-definition-id", previous_definition_id: definition.definition_id, audience: "user", workflow_name: "Development"}] : []});
     }
     if (url.includes("/prompt-versions?")) return Response.json(listing);
     if (url.includes("/definitions?")) return Response.json({items: [definition], next_cursor: null});
-    if (url.endsWith("/definitions/new-definition-id")) return Response.json({...definition, definition_id: "new-definition-id"});
-    if (url.endsWith("/definitions/" + definition.definition_id)) return Response.json(definition);
+    if (url.endsWith("/definitions/new-definition-id")) {
+      // With a retired previous definition, give the new read network-like latency so a
+      // re-render of the retired page can land before it resolves.
+      if (retiredRead) await new Promise(resolve => setTimeout(resolve, 50));
+      return Response.json({...definition, definition_id: "new-definition-id"});
+    }
+    if (url.endsWith("/definitions/" + definition.definition_id)) return retiredRead && retired ? Response.json({error: "not found"}, {status: 404}) : Response.json(definition);
     return Response.json({}, {status: 404});
   }));
 });
@@ -51,7 +58,7 @@ afterEach(() => {cleanup(); vi.unstubAllGlobals();});
 function mount(stage = "brief", client = new QueryClient({defaultOptions: {queries: {retry: false}}})) {
   const model = selectStageInspector(definition, {kind: "stage", stage, tab: "prompts"});
   if (!model) throw new Error("Missing fixture stage");
-  return render(<QueryClientProvider client={client}><StagePromptsSection model={model} renderPromptEditor={props => <PromptEditor {...props} />} /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><StagePromptsEditing model={model} /></QueryClientProvider>);
 }
 const click = (name: string) => fireEvent.click(screen.getByRole("button", {name}));
 async function open() {mount(); click("Edit " + path); await screen.findByRole("region", {name: "Prompt editor"});}
@@ -155,6 +162,22 @@ test("published navigation preserves Back access to the mocked previous definiti
   await waitFor(() => expect(window.location.hash).toContain(definition.definition_id));
   await screen.findByTestId("or-def-detail");
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/definitions/" + definition.definition_id))).toBe(true);
+});
+
+test("publishing navigates to the new definition although the retired one is no longer served", async () => {
+  retiredRead = true;
+  try {
+    window.history.replaceState(null, "", definitionTabHref(definition.definition_id, {kind: "stage", stage: "brief", tab: "prompts"}, "prompts"));
+    render(<QueryClientProvider client={new QueryClient({defaultOptions: {queries: {retry: false}}})}><RoutedDefinition /></QueryClientProvider>);
+    await screen.findByRole("button", {name: "Edit " + path});
+    click("Edit " + path); await screen.findByLabelText("Prompt body");
+    edit(); click("Save draft"); await screen.findByText("Pending version saved · pending-digest");
+    await waitFor(() => expect((screen.getByRole("button", {name: "Validate saved draft"}) as HTMLButtonElement).disabled).toBe(false));
+    click("Publish prompt");
+    await waitFor(() => expect(window.location.hash).toContain("new-definition-id"));
+    await screen.findByTestId("or-def-detail");
+    expect(screen.queryByTestId("or-def-detail-error")).toBeNull();
+  } finally { retiredRead = false; }
 });
 
 test("switching clean prompt editors does not ask for confirmation", async () => {

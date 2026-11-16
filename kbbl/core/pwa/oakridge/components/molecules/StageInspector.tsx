@@ -10,7 +10,9 @@ import { definitionStageHref, definitionUnitHref } from "../../lib/definition-se
 import { StageInputsSection } from "./StageInputsSection";
 import { StageBindingsSection } from "./StageBindingsSection";
 import { StageWorkersSection } from "./StageWorkersSection";
-import { StagePromptsSection, type StagePromptsSectionProps } from "./StagePromptsSection";
+import { StagePromptsSection } from "./StagePromptsSection";
+import type { StageSectionProps } from "../../lib/stage-inspector";
+import type { ReactNode } from "react";
 import { StageArtifactsSection } from "./StageArtifactsSection";
 import { StageReviewsSection } from "./StageReviewsSection";
 import { StageCompletionSection } from "./StageCompletionSection";
@@ -19,10 +21,11 @@ interface StageInspectorProps {
   definition: OperatorDefinitionDetail;
   selection: DefinitionSelection | null;
   anchor?: string;
-  renderPromptEditor?: StagePromptsSectionProps["renderPromptEditor"];
+  /** Replaces the read-only Prompts tab, e.g. with an organism that adds editing. */
+  renderPromptsTab?: (props: StageSectionProps) => ReactNode;
   grading?: PublishedGradingContext;
 }
-export function StageInspector({ definition, selection, anchor, renderPromptEditor, grading }: StageInspectorProps) {
+export function StageInspector({ definition, selection, anchor, renderPromptsTab, grading }: StageInspectorProps) {
   const overview = selectDefinitionOverview(definition);
   const navigation = selectStageInspectorNavigation(definition, selection);
   const model = selectStageInspector(definition, selection);
@@ -63,7 +66,7 @@ export function StageInspector({ definition, selection, anchor, renderPromptEdit
             {activeTab === "inputs" && <StageInputsSection model={model} />}
             {activeTab === "bindings" && <StageBindingsSection model={model} />}
             {activeTab === "workers" && <StageWorkersSection model={model} />}
-            {activeTab === "prompts" && <StagePromptsSection model={model} renderPromptEditor={renderPromptEditor} />}
+            {activeTab === "prompts" && (renderPromptsTab ? renderPromptsTab({ model }) : <StagePromptsSection model={model} />)}
             {activeTab === "artifacts" && <StageArtifactsSection model={model} grading={grading} />}
             {activeTab === "reviews" && <StageReviewsSection model={model} />}
             {activeTab === "completion" && <StageCompletionSection model={model} />}

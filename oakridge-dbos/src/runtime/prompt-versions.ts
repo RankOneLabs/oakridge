@@ -143,10 +143,14 @@ export function publishPrompt(core: CoreClient, request: PublishPromptRequest): 
       moved.push({ workflow: reference.workflow, workflow_name: committed.source.workflow, audience: entry.audience, previous_definition_id: entry.definition_id, definition_id: identity.value });
     }
     const published_at = new Date().toISOString();
-    const catalogWrite = writeJson(state, "launchable.json", catalog, true); if (!catalogWrite.ok) return catalogWrite;
+    // The pointer is written before launchable.json. If the catalog write fails or the process
+    // stops in between, the pointer already names the new version and generate.ts, which
+    // resolves prompts through published pointers, completes the move. The reverse order
+    // would let a regenerate move the catalog back and undo the publication.
     const pointerWrite = writeJson(state, "prompt-pointers/" + request.path + ".json", { ...state.pointer, published: state.pointer.pending, pending: null,
       history: [...state.pointer.history, { version_id: state.pointer.pending, published_at }] }, true);
     if (!pointerWrite.ok) return pointerWrite;
+    const catalogWrite = writeJson(state, "launchable.json", catalog, true); if (!catalogWrite.ok) return catalogWrite;
     return { ok: true, value: { version_id: state.pointer.pending, prompt_id: pending.value.prompt_id, source_path: request.path, published_at, moved } };
   });
 }

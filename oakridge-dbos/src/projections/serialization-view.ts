@@ -1,4 +1,5 @@
 import type { PromptVersionListing, PromptVersionView } from "../http/prompt-versions";
+import type { DefinitionDetail, DefinitionPrompts } from "./definition-view";
 import type { MiddlewareHandler } from "hono";
 
 const BEARER = /Authorization:\s*Bearer\s+[A-Za-z0-9._~+/-]+/g;
@@ -28,6 +29,16 @@ function redactingPromptVersionListing(listing: PromptVersionListing): PromptVer
   };
 }
 
+/** Pinned prompt bodies are opaque source text whose digest names the exact bytes; the rest of the detail is redacted. */
+function redactingDefinitionDetail(detail: DefinitionDetail): DefinitionDetail {
+  const redacted = redactingView(detail) as DefinitionDetail;
+  const prompts: DefinitionPrompts = Object.fromEntries(Object.entries(redacted.prompts)
+    .map(([path, prompt]) => [path, { ...prompt, body: detail.prompts[path].body }]));
+  return { ...redacted, prompts };
+}
+
+const DEFINITION_DETAIL_PATH = /^\/api\/definitions\/[^/]+$/;
+
 /** Central boundary for all JSON reads, including future projections and diagnostics. */
 export const redactingReadResponses = (): MiddlewareHandler => async (context, next) => {
   await next();
@@ -37,9 +48,11 @@ export const redactingReadResponses = (): MiddlewareHandler => async (context, n
   const value: unknown = await context.res.json();
   const headers = new Headers(context.res.headers);
   headers.delete("content-length");
-  // Only successful listings have the known editable-body fields. Errors and all
-  // other read responses retain full recursive credential redaction.
-  const view = context.req.path === "/api/prompt-versions" && context.res.status === 200
-    ? redactingPromptVersionListing(value as PromptVersionListing) : redactingView(value);
+  // Only successful prompt listings and definition details have the known prompt-body
+  // fields. Errors and all other read responses retain full recursive credential redaction.
+  const isOk = context.res.status === 200;
+  const view = isOk && context.req.path === "/api/prompt-versions" ? redactingPromptVersionListing(value as PromptVersionListing)
+    : isOk && DEFINITION_DETAIL_PATH.test(context.req.path) ? redactingDefinitionDetail(value as DefinitionDetail)
+    : redactingView(value);
   context.res = new Response(JSON.stringify(view), { status: context.res.status, headers });
 };

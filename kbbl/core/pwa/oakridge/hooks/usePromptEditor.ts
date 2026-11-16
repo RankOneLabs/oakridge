@@ -57,17 +57,22 @@ export function usePromptEditor({path, definition, versions, selection, onClose}
     const id = selectPublishedDefinitionId(result.value, definition.bundle.key);
     setState(promptPublished(state, result.value.version_id)); setPublishedId(result.value.version_id);
     setFeedback({kind: "published", definition_id: id});
-    await Promise.all([
-      queryClient.invalidateQueries({queryKey: ["oakridge", "prompt-versions", path]}),
-      queryClient.invalidateQueries({queryKey: ["oakridge", "workflow_defs"]}),
-      queryClient.invalidateQueries({queryKey: ["oakridge", "workflow_def"]}),
-    ]);
     if (id) {
       await queryClient.prefetchQuery({queryKey: ["oakridge", "workflow_def", id], queryFn: () => fetchOperatorDefinition(id)});
+      // Navigate before invalidating: the definition on screen is now retired, and
+      // refetching it would fail and unmount this editor before it could move.
       if (isMounted.current && window.location.href === originHref && navigationEpoch.current === originEpoch) {
         window.location.hash = selection ? definitionTabHref(id, selection, "prompts") : definitionSelectionHref(id, null);
       }
     }
+    // Retired definitions keep their cached detail (Back still renders it) and are not
+    // refetched, because GET /api/definitions/:id no longer serves them.
+    const retired = new Set(result.value.moved.map(move => move.previous_definition_id));
+    await Promise.all([
+      queryClient.invalidateQueries({queryKey: ["oakridge", "prompt-versions", path]}),
+      queryClient.invalidateQueries({queryKey: ["oakridge", "workflow_defs"]}),
+      queryClient.invalidateQueries({queryKey: ["oakridge", "workflow_def"], predicate: query => !retired.has(String(query.queryKey[2]))}),
+    ]);
     setBusy(false);
   }
   function close() {

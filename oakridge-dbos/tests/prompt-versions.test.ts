@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { cpSync, mkdtempSync, readFileSync, rmSync, readdirSync } from "node:fs";
+import { chmodSync, cpSync, mkdtempSync, readFileSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { Hono } from "hono";
@@ -8,7 +8,9 @@ import { DEFINITION_STORE_ROOT, readLaunchableCatalog, readPromptPointer, resolv
 import { listPromptVersions, savePendingPrompt, publishPrompt, validatePrompt } from "../src/runtime/prompt-versions";
 import { installPromptVersions, type PromptVersionListing, type PromptPublicationOutcome, type PromptVersionErrorKind } from "../src/http/prompt-versions";
 import { installReadModels } from "../src/http/read-models";
-import type { DefinitionPage } from "../src/projections/definition-view";
+import { createHttpApp, type DefinitionApiDependencies } from "../src/http/app";
+import { browserWritePolicy } from "../src/http/browser-write-policy";
+import type { DefinitionDetail, DefinitionPage } from "../src/projections/definition-view";
 import type { Result } from "canonical-json";
 function unwrap<T,E>(result: Result<T,E>): T { if (!result.ok) throw new Error(JSON.stringify(result.error)); return result.value; }
 const temporary: string[] = [];
@@ -225,4 +227,43 @@ test("prompt body preservation keeps credential redaction in metadata, errors an
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: { entity_id: "../Authorization: Bearer [REDACTED]" } });
   } finally { core.close(); }
+});
+
+test("definition detail served by the app keeps pinned prompt bodies byte-exact and still redacts errors", async () => {
+  const { core } = fixture();
+  const path = "development/brief.md";
+  const body = "Send `Authorization: Bearer EXAMPLE_TOKEN` when calling the example API.";
+  try {
+    const pending = unwrap(await savePendingPrompt({ path, body, expected_pending_version_id: null }));
+    const outcome = unwrap(await publishPrompt(core, { path, expected_pending_version_id: pending.version_id,
+      expected_published_version_id: unwrap(listPromptVersions(path)).published.version_id }));
+    const definition_id = outcome.moved[0].definition_id;
+    const app = createHttpApp({ ...({} as DefinitionApiDependencies), application_version: "test",
+      access: { kind: "loopback_open" }, write_policy: browserWritePolicy([]) });
+    const response = await app.request("/api/definitions/" + definition_id);
+    expect(response.status).toBe(200);
+    const detail = await response.json() as DefinitionDetail;
+    expect(detail.prompts[path]).toEqual({ body, digest: pending.prompt_id });
+    const missing = await app.request("/api/definitions/" + encodeURIComponent("Authorization: Bearer SERVER_CREDENTIAL"));
+    expect(missing.status).toBe(404);
+    expect(JSON.stringify(await missing.json())).not.toContain("SERVER_CREDENTIAL");
+  } finally { core.close(); }
+});
+
+test("a publish whose pointer write fails leaves launchable.json on the previous definition", async () => {
+  const { root, core } = fixture();
+  const path = "development/brief.md";
+  const pointerDirectory = resolve(root, "prompt-pointers", "development");
+  try {
+    const pending = unwrap(await savePendingPrompt({ path, body: "unwritable pointer body", expected_pending_version_id: null }));
+    const published = unwrap(listPromptVersions(path)).published.version_id;
+    const catalogBefore = readFileSync(resolve(root, "launchable.json"));
+    const pointerBefore = readFileSync(resolve(pointerDirectory, "brief.md.json"));
+    chmodSync(pointerDirectory, 0o555);
+    const result = await publishPrompt(core, { path, expected_pending_version_id: pending.version_id, expected_published_version_id: published });
+    chmodSync(pointerDirectory, 0o755);
+    expect(result.ok).toBe(false);
+    expect(readFileSync(resolve(root, "launchable.json")).equals(catalogBefore)).toBe(true);
+    expect(readFileSync(resolve(pointerDirectory, "brief.md.json")).equals(pointerBefore)).toBe(true);
+  } finally { chmodSync(pointerDirectory, 0o755); core.close(); }
 });
