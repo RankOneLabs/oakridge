@@ -1,3 +1,4 @@
+import type { PromptVersionListing, PromptVersionView } from "../http/prompt-versions";
 import type { MiddlewareHandler } from "hono";
 
 const BEARER = /Authorization:\s*Bearer\s+[A-Za-z0-9._~+/-]+/g;
@@ -12,6 +13,21 @@ export function redactingView(value: unknown): unknown {
   return value;
 }
 
+function withOriginalPromptBody(redacted: PromptVersionView, original: PromptVersionView): PromptVersionView {
+  return { ...redacted, body: original.body };
+}
+
+/** Editable source text is opaque; credential-bearing metadata still uses the normal redactor. */
+function redactingPromptVersionListing(listing: PromptVersionListing): PromptVersionListing {
+  const redacted = redactingView(listing) as PromptVersionListing;
+  return {
+    ...redacted,
+    published: withOriginalPromptBody(redacted.published, listing.published),
+    pending: redacted.pending && listing.pending ? withOriginalPromptBody(redacted.pending, listing.pending) : null,
+    versions: redacted.versions.map((version, index) => withOriginalPromptBody(version, listing.versions[index])),
+  };
+}
+
 /** Central boundary for all JSON reads, including future projections and diagnostics. */
 export const redactingReadResponses = (): MiddlewareHandler => async (context, next) => {
   await next();
@@ -21,5 +37,9 @@ export const redactingReadResponses = (): MiddlewareHandler => async (context, n
   const value: unknown = await context.res.json();
   const headers = new Headers(context.res.headers);
   headers.delete("content-length");
-  context.res = new Response(JSON.stringify(redactingView(value)), { status: context.res.status, headers });
+  // Only successful listings have the known editable-body fields. Errors and all
+  // other read responses retain full recursive credential redaction.
+  const view = context.req.path === "/api/prompt-versions" && context.res.status === 200
+    ? redactingPromptVersionListing(value as PromptVersionListing) : redactingView(value);
+  context.res = new Response(JSON.stringify(view), { status: context.res.status, headers });
 };

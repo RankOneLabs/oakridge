@@ -19,3 +19,5 @@ export type { IngressRequest, LaunchRequest, DecideRequest, PublishRequest, Ingr
 
 export type { PrIntegration, PrLaunchPreflightError } from "../domain/pr-integration";
 export type { InstallStatus, InstallCheck, AccessMode, AgentProfileStatus, PrIntegrationStatus, ObservationStatus, LaunchBlock } from "../projections/install-status-view";
+
+export type { PromptVersionView, PromptVersionListing, PromptValidationOutcome, PromptPublicationOutcome, PromptVersionError, PromptVersionErrorKind, PromptIssue, SavePendingPromptRequest, ValidatePromptRequest, PublishPromptRequest } from "./prompt-versions";
