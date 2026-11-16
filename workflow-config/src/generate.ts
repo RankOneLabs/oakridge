@@ -1,3 +1,5 @@
+import { readPromptPointer, readPromptVersion } from "./prompt-versions";
+import { readText } from "./definition-store";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
@@ -56,6 +58,24 @@ function selectIncompatibleDefinitions(): string[] {
 }
 
 const prompts = filesUnder(promptRoot).map(readPrompt);
+// Validate every pointer before planning or writing outputs, including unreferenced paths.
+const pointerRoot = resolve(storeRoot, "prompt-pointers");
+const publishedPrompts = new Map<string, AuthoredPrompt>();
+if (existsSync(pointerRoot)) for (const file of filesUnder(pointerRoot)) {
+  const path = relative(pointerRoot, file).split(sep).join("/").replace(/\.json$/, "");
+  const pointer = required(readPromptPointer(path, storeRoot));
+  const version = required(readPromptVersion(pointer.published, storeRoot));
+  const body = required(readText({ operation: "read_prompt", identifier: version.prompt_id, path: resolve(storeRoot, "prompts", version.prompt_id + ".md") }));
+  const bytes = Buffer.from(body);
+  publishedPrompts.set(path, { path, id: version.prompt_id, bytes });
+}
+for (let index = 0; index < prompts.length; index++) {
+  const authored = prompts[index];
+  const published = publishedPrompts.get(authored.path);
+  if (!published) continue;
+  if (authored.id !== published.id) console.error(`prompt ${authored.path}: authored file ${authored.id} differs from published version ${published.id}; using the published version`);
+  prompts[index] = published;
+}
 const promptsByPath = new Map(prompts.map((prompt) => [prompt.path, prompt]));
 const registryId = required(jsonIdentity<OperationRegistryId>(OPERATION_REGISTRY));
 const generated: GeneratedFile[] = [

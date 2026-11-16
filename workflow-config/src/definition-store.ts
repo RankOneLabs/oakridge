@@ -6,7 +6,7 @@ import { jsonIdentity, bytesIdentity, isIdentity, type DefinitionId } from "./de
 import { referencedPromptPaths, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type ResolvedDefinition } from "./definition-objects";
 
 export const DEFINITION_STORE_ROOT = resolve(import.meta.dir, "../definitions");
-type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable" | "read_skill_index" | "read_skill_bundle";
+type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable" | "read_skill_index" | "read_skill_bundle" | "read_prompt_version" | "read_prompt_pointer";
 interface FailureContext {
   readonly operation: StoreOperation;
   readonly identifier: string;
@@ -19,15 +19,15 @@ export interface MissingPrompt extends FailureContext { readonly kind: "missing_
 export interface MissingOperationRegistry extends FailureContext { readonly kind: "missing_operation_registry" }
 export interface StoreIoFailure extends FailureContext { readonly kind: "store_io" }
 export type DefinitionStoreFailure = HashMismatch | MalformedObject | InvalidUtf8 | MissingPrompt | MissingOperationRegistry | StoreIoFailure;
-type ReadContext = Pick<FailureContext, "operation" | "identifier">;
+export type ReadContext = Pick<FailureContext, "operation" | "identifier">;
 interface ObjectRead extends ReadContext { readonly path: string }
 /** Unknown JSON exists only while validating objects at the IO boundary. */
 interface JsonObject { readonly [key: string]: unknown }
 
-function failure(kind: DefinitionStoreFailure["kind"], context: ReadContext, detail: string): Result<never, DefinitionStoreFailure> {
+export function failure(kind: DefinitionStoreFailure["kind"], context: ReadContext, detail: string): Result<never, DefinitionStoreFailure> {
   return { ok: false, error: { kind, operation: context.operation, identifier: context.identifier, detail } };
 }
-function isObject(value: unknown): value is JsonObject {
+export function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function hasOnlyKeys(value: JsonObject, keys: readonly string[]): boolean {
@@ -80,28 +80,28 @@ function decodeUtf8(bytes: Uint8Array, context: ReadContext): Result<string, Def
     return failure("invalid_utf8", context, String(error));
   }
 }
-function readText(request: ObjectRead): Result<string, DefinitionStoreFailure> {
+export function readText(request: ObjectRead): Result<string, DefinitionStoreFailure> {
   const bytes = readBytes(request);
   if (!bytes.ok) return bytes;
   const text = decodeUtf8(bytes.value, request);
   if (!text.ok) return text;
-  if (request.operation !== "read_launchable" && bytesIdentity(bytes.value) !== request.identifier)
-    return failure("hash_mismatch", request, "SHA-256 of stored bytes differs from filename identity");
+  if (request.operation !== "read_launchable" && request.operation !== "read_prompt_pointer" && bytesIdentity(bytes.value) !== request.identifier)
+    return failure("hash_mismatch", request, request.path + ": SHA-256 of stored bytes differs from filename identity");
   return text;
 }
-function readJson(request: ObjectRead): Result<unknown, DefinitionStoreFailure> {
+export function readJson(request: ObjectRead): Result<unknown, DefinitionStoreFailure> {
   const text = readText(request);
   if (!text.ok) return text;
   let value: unknown;
   try {
     value = JSON.parse(text.value);
   } catch (error) {
-    return failure("malformed_object", request, String(error));
+    return failure("malformed_object", request, request.path + ": " + String(error));
   }
   if (!hasSafeWireNumbers(value)) return failure("malformed_object", request, "JSON exceeds the wire depth or safe numeric bounds");
   const canonical = canonicalJson(value);
   if (!canonical.ok) return failure("malformed_object", request, canonical.error.detail);
-  if (canonical.value !== text.value) return failure("malformed_object", request, "stored JSON is not byte-exact canonical JSON");
+  if (canonical.value !== text.value) return failure("malformed_object", request, request.path + ": stored JSON is not byte-exact canonical JSON");
   return { ok: true, value };
 }
 

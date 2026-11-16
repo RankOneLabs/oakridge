@@ -665,3 +665,40 @@ for (const entry of [{ definition_id: "a".repeat(64), audience: "unknown" }, { d
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 }
+
+test("published prompt survives regeneration and check without altering the authored file", async () => {
+  const { savePendingPrompt, publishPrompt, listPromptVersions } = await import("../../oakridge-dbos/src/runtime/prompt-versions");
+  const { CoreClient } = await import("../../oakridge-dbos/src/core-client/client");
+  const root = generatorFixture();
+  expect(runGenerator(root).exitCode).toBe(0);
+  const store = resolve(root, "workflow-config/definitions");
+  const previous = process.env.OAKRIDGE_DEFINITION_ROOT;
+  process.env.OAKRIDGE_DEFINITION_ROOT = store;
+  const core = unwrap(CoreClient.start());
+  try {
+    const path = "review-loop/write.md";
+    const authored = readFileSync(resolve(root, "workflow-config/prompts", path));
+    const before = unwrap(listPromptVersions(path));
+    const pending = unwrap(await savePendingPrompt({ path, body: before.published.body + "\nAdditional guidance.\n", expected_pending_version_id: null }));
+    const outcome = unwrap(await publishPrompt(core, { path, expected_pending_version_id: pending.version_id, expected_published_version_id: before.published.version_id }));
+    const generated = runGenerator(root);
+    expect(generated.exitCode).toBe(0);
+    expect(generated.stderr.toString()).toContain("using the published version");
+    const resolved = unwrap(resolveLaunchableDefinition("review-loop", store));
+    expect(resolved.definition_id).toBe(outcome.moved[0].definition_id);
+    expect(resolved.prompts[path]).toBe(pending.body);
+    expect(readFileSync(resolve(root, "workflow-config/prompts", path))).toEqual(authored);
+    const checked = runGenerator(root, true);
+    expect(checked.exitCode).toBe(0);
+    expect(checked.stderr.toString()).toContain("prompt review-loop/write.md: authored file");
+    const launchable = readFileSync(resolve(store, "launchable.json"));
+    writeFileSync(resolve(store, "prompt-pointers", path + ".json"), "{}");
+    const invalid = runGenerator(root);
+    expect(invalid.exitCode).not.toBe(0);
+    expect(invalid.stderr.toString()).toContain("prompt-pointers/review-loop/write.md.json");
+    expect(readFileSync(resolve(store, "launchable.json"))).toEqual(launchable);
+  } finally {
+    core.close();
+    if (previous === undefined) delete process.env.OAKRIDGE_DEFINITION_ROOT; else process.env.OAKRIDGE_DEFINITION_ROOT = previous;
+  }
+});

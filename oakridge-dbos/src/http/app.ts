@@ -1,3 +1,4 @@
+import { installPromptVersions } from "./prompt-versions";
 import { installStatusRoute } from "./install-status";
 import type { InstallStatus } from "../projections/install-status-view";
 import { Hono, type Context } from "hono";
@@ -63,6 +64,7 @@ export function createHttpApp(deps: HttpAppDependencies): Hono {
 }
 
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
+  installPromptVersions(app, deps.core);
   installProjectApi(app, deps);
   installIngress(app, deps);
   installReadModels(app, deps);
