@@ -63,7 +63,7 @@ integration("replacement reaches new HTTP captures and health while existing pin
 }));
 
 integration("each reconciliation reads the current collector while retaining the original capture plan", async () => scratchDatabase(async (db) => {
-  const initial = snapshot(definitions.filter((definition) => definition.id === "finding.relevance"));
+  const initial = snapshot(definitions.filter((definition) => definition.id === "finding.relevance"), 1);
   const registered = await registerDefinitions(db, tenant, initial.registration);
   if (!registered.ok) throw new Error(registered.error.detail);
   const calls: string[] = [];

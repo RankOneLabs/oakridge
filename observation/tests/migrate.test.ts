@@ -187,15 +187,8 @@ integration("evidence pins require valid configuration identity and a collection
     const names = columns.rows.map((row) => row.column_name);
     expect(names).toEqual(expect.arrayContaining(["config_version", "config_hash", "collection_plan"]));
     expect(names.filter((name) => ["run_id", "definition_id", "unit", "unit_id", "stage"].includes(name))).toEqual([]);
-    const base = {
-      producer: "test", namespace: "test", evidence_set_id: "canonical-json/v1:" + "a".repeat(64),
-      subject_occurrence_id: "absent", question_id: "question", question_version: "1",
-      pinned_evaluator_definition_ids: ["grader"], config_version: 1,
-      config_hash: "canonical-json/v1:" + "a".repeat(64),
-      collection_plan: jsonText({ question_id: "question", question_version: "1", evidence: [] }),
-      readiness: "not_ready", not_ready_code: "pending", not_ready_detail: "pending",
-    };
-    // PostgreSQL checks NOT NULL and CHECK constraints before the absent fixture foreign keys.
+    const row = await baselineSubject(db);
+    const base = { ...row, evidence_set_id: "canonical-json/v1:" + "a".repeat(64) };
     const cases = [
       { values: { ...base, config_version: undefined }, code: "23502" },
       { values: { ...base, config_hash: undefined }, code: "23502" },
@@ -210,7 +203,7 @@ integration("evidence pins require valid configuration identity and a collection
       try {
         await expect(client.query(
           `INSERT INTO observation.evidence_set (${columns.map(([name]) => name).join(",")}) VALUES (${columns.map((_, index) => "$" + (index + 1)).join(",")})`,
-          columns.map(([name, value]) => name === "collection_plan" && value !== null ? JSON.stringify({ question_id: "question", question_version: "1", evidence: [] }) : value),
+          columns.map(([name, value]) => name === "collection_plan" && value !== null ? JSON.stringify(row.collection_plan) : name === "evidence_refs" ? JSON.stringify(value) : value),
         )).rejects.toMatchObject({ code: entry.code });
       } finally { await client.end(); }
     }

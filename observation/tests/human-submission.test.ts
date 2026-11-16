@@ -233,7 +233,7 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
   for (const question of OAKRIDGE_QUESTIONS.filter((question) => question.item_kind === "assessment_finding"))
     await registerQuestion(db, tenant, { ...question, question_version: next_version });
   const later_configuration: CaptureConfiguration = { pins: configuration.pins.map((pin) =>
-    pin.scope === "per_task" ? { ...pin, question_version: next_version } : pin) };
+    pin.scope === "per_task" ? { ...pin, question_version: next_version, collection_plan: { ...pin.collection_plan, question_version: next_version } } : pin) };
   await feed.revision({ revision_id: "tasks-later", artifact_kind: "tasks", body: taskBody(["T3", "T7", "T9", "T99"]) }, later_configuration);
   const later_sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
   expect(later_sets.filter((set) => set.task_id === task("T99")).map((set) => set.question_version)).toEqual([next_version, next_version]);
