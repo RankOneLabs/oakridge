@@ -30,6 +30,10 @@ for (const [directory, extension, kind] of [["workflows", "json", "missing_defin
     expect(!result.ok && result.error.kind).toBe(kind);
   }));
 }
+test("reports an unavailable store root as a store failure, not a missing definition", () => fixture((root, id) => {
+  const result = resolveDefinition(id, resolve(root, "absent-store"));
+  expect(!result.ok && result.error.kind).toBe("store_io");
+}));
 test("refuses changed workflow bytes", () => fixture((root, id) => {
   writeFileSync(resolve(root, "workflows", `${id}.json`), "{}");
   const result = resolveDefinition(id, root);

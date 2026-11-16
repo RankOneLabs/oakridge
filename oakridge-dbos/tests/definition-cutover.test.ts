@@ -97,7 +97,7 @@ test("HTTP publication, operator edit and decision recover from exact committed 
   } finally { restarted.value.close(); }
 });
 
-test("a run's pinned review metadata survives removal from the launch catalog", async () => {
+test("a definition removed from the launch catalog stays readable by id and pinned to its run", async () => {
   const { definition_id } = await commitTestDefinition({ source: { ...sampleWorkflow("review-loop"), workflow: `pinned-${crypto.randomUUID()}` } });
   const launched = await app().request("/api/runs", json({ request_id: crypto.randomUUID(), definition_id, input: { topic: "pinned" } }));
   expect(launched.status).toBe(201);
@@ -110,9 +110,16 @@ test("a run's pinned review metadata survives removal from the launch catalog", 
   try {
     const catalog: { [name: string]: string } = JSON.parse(saved);
     writeFileSync(path, JSON.stringify(Object.fromEntries(Object.entries(catalog).filter(([, id]) => id !== definition_id))));
-    expect((await app().request(`/api/definitions/${definition_id}`)).status).toBe(404);
+    const superseded = await app().request(`/api/definitions/${definition_id}`);
+    expect(superseded.status).toBe(200);
+    expect((await superseded.json() as DefinitionDetail).effective_workflow).toEqual(detail.effective_workflow);
     const pinned = await app().request(`/api/runs/${run_id}/definition`);
     expect(pinned.status).toBe(200);
     expect((await pinned.json() as import("../src/projections/definition-view").PinnedDefinition).effective_workflow).toEqual(detail.effective_workflow);
   } finally { writeFileSync(path, saved); }
+});
+
+test("a definition id absent from the store reads as not found", async () => {
+  const statuses = await Promise.all(["0".repeat(64), "not-a-definition-id"].map(async (id) => (await app().request(`/api/definitions/${id}`)).status));
+  expect(statuses).toEqual([404, 404]);
 });

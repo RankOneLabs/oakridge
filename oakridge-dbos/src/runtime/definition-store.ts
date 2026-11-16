@@ -139,10 +139,12 @@ function isOperationRegistry(value: unknown): value is OperationRegistry {
 }
 
 function readBytes(request: ObjectRead): Result<Uint8Array, DefinitionStoreFailure> {
+  if (isAbsolute(request.path) || request.path.includes("\\") || request.path.split("/").includes(".."))
+    return failure("unsafe_path", request, "store path must be relative without backslashes or parent segments");
+  // An unavailable root is a broken store, not a missing object: only paths inside a resolved root are "missing".
+  let root: string;
+  try { root = realpathSync(request.root); } catch (error) { return failure("store_io", request, String(error)); }
   try {
-    if (isAbsolute(request.path) || request.path.includes("\\") || request.path.split("/").includes(".."))
-      return failure("unsafe_path", request, "store path must be relative without backslashes or parent segments");
-    const root = realpathSync(request.root);
     const actual = realpathSync(resolve(root, request.path));
     const position = relative(root, actual);
     if (position === ".." || position.startsWith(`..${sep}`) || isAbsolute(position))
