@@ -25,11 +25,12 @@ test("artifacts retain schema and relationship links with compact validation mar
   inspect("artifacts"); const section = screen.getByRole("region", { name: "Artifacts" });
   expect(section.querySelectorAll('a').length).toBeGreaterThan(3);
   expect(section.textContent).toContain("Produced by:");
-  expect(section.textContent).toContain("Consumed by reviews:");
+  expect(section.textContent).toContain("Consumed by:");
 });
 test("prompt references are text and template declarations start collapsed", () => {
   inspect("prompts"); const section = screen.getByRole("region", { name: "Prompts" });
-  expect(section.querySelector("a")).toBeNull();
+  expect(section.textContent).toContain("development/build.md");
+  expect(section.querySelector("pre")?.textContent).toBeTruthy();
   expect(section.querySelectorAll("details").length).toBeGreaterThan(0);
   expect(section.querySelector("details[open]")).toBeNull();
 });

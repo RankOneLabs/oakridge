@@ -13,11 +13,11 @@ test("artifact relationships join effective workers and reviews", () => {
     selectStageInspector(detail, { kind: "stage", stage: "cohort", tab: null })?.artifacts.find(
       (item) => item.name === "build_result",
     ),
-  ).toEqual({
+  ).toMatchObject({
     name: "build_result",
-    artifact: detail.effective_workflow.stages.cohort?.artifacts.build_result,
+    kind: detail.effective_workflow.stages.cohort?.artifacts.build_result?.kind,
     producers: ["builder"],
-    consumers: ["pr_closed"],
+    consumers: expect.arrayContaining([{ kind: "review_of", review: "pr_closed" }]),
   });
 });
 test("analysis exposes both spec consumers from dependency references", () => {

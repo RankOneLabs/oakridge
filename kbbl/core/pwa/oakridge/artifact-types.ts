@@ -259,3 +259,22 @@ export interface CohortPullRequestReconciliation {
   completed_at: string | null;
   updated_at: string;
 }
+
+// Definition declarations, distinct from run ArtifactDetail and revision bodies.
+export type ArtifactConsumer =
+  | { kind: "review_of"; review: string }
+  | { kind: "review_input"; review: string; input: string }
+  | { kind: "worker_input"; worker: string; input: string }
+  | { kind: "evaluates"; worker: string }
+  | { kind: "let"; name: string }
+  | { kind: "outcome"; name: string };
+export interface ArtifactContract {
+  name: string;
+  kind: import("./operator-contracts/core-client/core-types").OperatorArtifactKind;
+  schema: import("./operator-contracts/core-client/core-types").OperatorType;
+  required_fields: string[] | null;
+  validate: import("./operator-contracts/core-client/core-types").OperatorParsedArtifact["validate"];
+  producers: string[];
+  consumers: ArtifactConsumer[];
+  producer_prompts: import("./lib/prompt-inspector").PromptRow[];
+}

@@ -1,24 +1,18 @@
-import { stageElementId, type StageSectionProps } from "../../lib/stage-inspector";
+import { stageElementHref, stageElementId, type StageSectionProps } from "../../lib/stage-inspector";
+import { selectPromptRows } from "../../lib/prompt-inspector";
+import { LetExpression } from "./LetExpression";
 export function StagePromptsSection({ model }: StageSectionProps) {
-  return (
-    <section aria-label="Prompts" className="rounded border border-[var(--border-muted)] p-3">
-      <h3>Prompts</h3>
-      {model.sections.prompts.map(reference => (
-        <div key={`${reference.owner_kind}:${reference.owner_key}:${reference.mode}`}>
-          <h4>{reference.owner_key}</h4>
-          <dl><dt>{reference.mode}</dt><dd>{reference.path}</dd></dl>
-        </div>
-      ))}
-      {model.sources.map(({ kind, name, label, content }) => (
-        <details
-          key={`${kind}:${name}`}
-          id={stageElementId({ stage: model.name, kind, name })}
-          tabIndex={-1}
-        >
-          <summary>{label}</summary>
-          <pre>{content}</pre>
-        </details>
-      ))}
-    </section>
-  );
+  return <section aria-label="Prompts" className="rounded border border-[var(--border-muted)] p-3">
+    <h3>Prompts</h3>
+    {selectPromptRows(model).map(row => <article key={row.id} id={stageElementId({ stage: model.name, kind: "prompt", name: row.id })} tabIndex={-1}>
+      <h4>{row.owner.key}</h4>
+      <dl><dt>Used by</dt><dd>{row.owner.kind} {row.owner.key}{row.owner.template && <> from template {row.owner.template}</>}</dd>
+      <dt>Mode</dt><dd>{row.mode}</dd><dt>Source</dt><dd>{row.path}</dd><dt>Digest</dt><dd>{row.digest}</dd></dl>
+      {row.body !== null && <pre>{row.body}</pre>}
+      <h5>Inputs</h5><dl>{row.inputs.map(input => <div key={input.name}><dt>inputs.{input.name}</dt><dd><LetExpression model={model} expression={input.expression} /></dd></div>)}</dl>
+      <p>Produces {row.produces.map(name => <a key={name} className="mr-2" href={stageElementHref(model, {kind: "artifact", name})}>{name}</a>)}</p>
+      {row.owner.kind === "review" && <p>Reviews <a href={stageElementHref(model, {kind: "artifact", name: row.owner.of})}>{row.owner.of}</a></p>}
+    </article>)}
+    {model.sources.map(({kind, name, label, content}) => <details key={kind + ":" + name} id={stageElementId({stage: model.name, kind, name})} tabIndex={-1}><summary>{label}</summary><pre>{content}</pre></details>)}
+  </section>;
 }

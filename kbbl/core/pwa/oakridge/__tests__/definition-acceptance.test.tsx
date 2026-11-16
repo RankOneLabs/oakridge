@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import fixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
@@ -106,4 +106,47 @@ test("7: output flow names downstream unit bindings and upstream outcomes", () =
     completion.getByRole("link", { name: "planning.input.spec" }).parentElement?.textContent,
   ).toBe("planning.input.spec reads analysis.outcome.spec");
   expect(completion.getByRole("link", { name: "briefs.input.spec" })).toBeTruthy();
+});
+
+test("prompt bodies expose pinned content and artifact links", () => {
+  const {unmount} = inspect("brief", "prompts");
+  const prompts = screen.getByRole("region", {name: "Prompts"});
+  expect(prompts.textContent).toContain(detail.prompts["development/brief.md"].body);
+  expect(prompts.textContent).toContain(detail.prompts["development/brief.md"].digest);
+  expect(prompts.textContent).toContain("development/brief.md");
+  unmount();
+  inspect("cohort", "prompts");
+  const article = document.getElementById("stage-cohort-prompt-worker%3Abuilder%3Ainitial");
+  if (!article) throw new Error("Missing builder prompt");
+  expect(within(article as HTMLElement).getByRole("link", {name: "build_result"}).getAttribute("href")).toContain("artifact-build_result");
+  expect(within(article as HTMLElement).getByRole("link", {name: "pr"})).toBeTruthy();
+});
+test("definition contracts link every producing prompt", () => {
+  inspect("cohort", "artifacts");
+  const region = screen.getByRole("region", {name: "Artifacts"});
+  expect(region.textContent).toContain("Contracts declared by this workflow definition — not artifacts produced by a run.");
+  const article = within(region).getByRole("heading", {name: "pr"}).closest("article");
+  if (!article) throw new Error("Missing pr");
+  expect(within(article).getByRole("link", {name: "worker:builder:revise"}).getAttribute("href")).toContain("prompt-worker%3Abuilder%3Arevise");
+});
+
+test("prompt and artifact cross-links open their tabs and preserve stage selection", () => {
+  const onNavigate = vi.fn();
+  const props = {definitionId: detail.definition_id, onNavigate, onBack: () => {}};
+  const view = render(<WorkflowDefDetail {...props} selection={{kind: "stage", stage: "cohort", tab: "artifacts"}} />);
+  const artifact = screen.getByRole("region", {name: "Artifacts"});
+  const pr = within(artifact).getByRole("heading", {name: "pr"}).closest("article");
+  if (!pr) throw new Error("Missing pr");
+  fireEvent.click(within(pr).getByRole("link", {name: "worker:builder:revise"}));
+  const href = onNavigate.mock.lastCall?.[0] as string;
+  expect(href).toContain("/stages/cohort#stage-cohort-prompt-");
+  view.rerender(<WorkflowDefDetail {...props} selection={{kind: "stage", stage: "cohort#" + href.split("#")[2], tab: null}} />);
+  const row = document.getElementById("stage-cohort-prompt-worker%3Abuilder%3Arevise");
+  if (!row) throw new Error("Missing prompt row");
+  expect(screen.getByRole("tab", {name: "Prompts"}).getAttribute("aria-selected")).toBe("true");
+  fireEvent.click(within(row).getByRole("link", {name: "pr"}));
+  const back = onNavigate.mock.lastCall?.[0] as string;
+  expect(back).toContain("/stages/cohort#stage-cohort-artifact-pr");
+  view.rerender(<WorkflowDefDetail {...props} selection={{kind: "stage", stage: "cohort#" + back.split("#")[2], tab: null}} />);
+  expect(screen.getByRole("tab", {name: "Artifacts"}).getAttribute("aria-selected")).toBe("true");
 });
