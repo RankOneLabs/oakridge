@@ -1,17 +1,29 @@
+import { type PaneSlots } from "../../lib/pane-selection";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
+import { selectBulkHideActionLabel, selectBulkHideFailureMessage, type BulkHideOutcome } from "../../../lib/session-bulk-hide";
 import { Button } from "../../../components/atoms/Button";
 import { useState, type ReactNode } from "react";
 
 import { selectRunSidebarSessionVisibility, type RunSidebarSessionRow } from "../../lib/run-overview";
 
+export interface RunHideEndedControl {
+  eligibleCount: number;
+  isArmed: boolean;
+  isPending: boolean;
+  outcome: BulkHideOutcome | undefined;
+  onPress: () => void;
+}
+
 interface RunSidebarSessionsProps {
+  hideEnded: RunHideEndedControl;
   rows: readonly RunSidebarSessionRow[];
   /** Whether the gate read answered. When it did not, no row can carry "needs you". */
   isActionStateKnown: boolean;
   /** Whether the attempt read answered. When it did not, no row exists to show. */
   isSessionListKnown: boolean;
   /** Sessions currently on screen in either slot, so the list can mark them. */
-  openSessionIds: ReadonlySet<string>;
-  renderRow: (row: RunSidebarSessionRow, isOpen: boolean) => ReactNode;
+  slotsOf: (id: string) => PaneSlots;
+  renderRow: (row: RunSidebarSessionRow, slots: PaneSlots) => ReactNode;
 }
 
 /**
@@ -27,10 +39,11 @@ interface RunSidebarSessionsProps {
  * the absence of markers speak for itself.
  */
 export function RunSidebarSessions({
+  hideEnded,
   rows,
   isActionStateKnown,
   isSessionListKnown,
-  openSessionIds,
+  slotsOf,
   renderRow,
 }: RunSidebarSessionsProps) {
   const [showArchived, setShowArchived] = useState(false);
@@ -38,17 +51,25 @@ export function RunSidebarSessions({
   return (
     <section className="or-run-sidebar__section" data-testid="or-sidebar-sessions">
       <h3 className="or-run-sidebar__heading">Sessions</h3>
-      {visibility.archived_count > 0 && (
-        <Button variant="secondary"
-          type="button"
-          className="self-start text-xs!"
+      <div className="flex flex-wrap items-center gap-2" data-testid="or-sidebar-session-controls">
+        <Button variant="secondary" type="button" className="text-xs!"
           onClick={() => setShowArchived((current) => !current)}
-          aria-expanded={showArchived}
-          data-testid="or-sidebar-archived-toggle"
-        >
-          {showArchived ? "Hide archived sessions" : `Show all sessions (${visibility.archived_count} archived)`}
+          aria-pressed={showArchived} data-testid="or-sidebar-archived-toggle">
+          Show all
         </Button>
-      )}
+        {visibility.archived_count > 0 && <span>({visibility.archived_count} archived)</span>}
+        <Button variant={hideEnded.isArmed ? "armed" : "secondary"} type="button"
+          disabled={hideEnded.eligibleCount === 0 || hideEnded.isPending}
+          onClick={hideEnded.onPress} data-testid="or-sidebar-hide-ended">
+          {selectBulkHideActionLabel(hideEnded.eligibleCount, hideEnded.isArmed)}
+        </Button>
+      </div>
+      {hideEnded.outcome && <>
+        <FeedbackMessage testId="or-sidebar-hide-ended-outcome">
+          Archived {hideEnded.outcome.archivedSids.length} of {hideEnded.outcome.eligibleCount}: {hideEnded.outcome.archivedSids.length ? hideEnded.outcome.archivedSids.join(", ") : "none"}.
+        </FeedbackMessage>
+        {hideEnded.outcome.failures.map((failure) => <FeedbackMessage key={failure.sid} tone="danger">{selectBulkHideFailureMessage(failure)}</FeedbackMessage>)}
+      </>}
       {!isActionStateKnown && (
         <p
           className="or-run-sidebar__empty text-[var(--amber-fg)]"
@@ -76,7 +97,7 @@ export function RunSidebarSessions({
         <p className="or-run-sidebar__empty">All sessions are archived.</p>
       )}
       <ul className="or-run-sidebar__list">
-        {visibility.visible_rows.map((row) => renderRow(row, openSessionIds.has(row.session_id)))}
+        {visibility.visible_rows.map((row) => renderRow(row, slotsOf(row.session_id)))}
       </ul>
     </section>
   );

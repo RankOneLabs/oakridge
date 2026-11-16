@@ -1,3 +1,4 @@
+import { paneSelectionClass, paneSelectionName, type PaneSlots } from "../../lib/pane-selection";
 import { Select } from "../../../components/atoms/Select";
 import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId } from "../../../lib/ids";
@@ -11,7 +12,7 @@ interface RunSidebarArtifactsProps {
   filter: RunArtifactFilter;
   onFilterChange: (filter: RunArtifactFilter) => void;
   /** Artifacts currently on screen in either slot, so the list can mark them. */
-  openArtifactIds: ReadonlySet<string>;
+  slotsOf: (id: string) => PaneSlots;
   onOpen: (artifactId: ArtifactId, slot: RunWorkspaceSlot) => void;
 }
 
@@ -23,7 +24,7 @@ const artifactLabel = (typeId: string): string =>
  * fetch is added. Clicking a row changes the pane rather than navigating away,
  * which is the whole point of the workspace.
  */
-export function RunSidebarArtifacts({ rows, totalCount, filter, onFilterChange, openArtifactIds, onOpen }: RunSidebarArtifactsProps) {
+export function RunSidebarArtifacts({ rows, totalCount, filter, onFilterChange, slotsOf, onOpen }: RunSidebarArtifactsProps) {
   return (
     <section className="or-run-sidebar__section" data-testid="or-sidebar-artifacts">
       <h3 className="or-run-sidebar__heading">Artifacts</h3>
@@ -43,7 +44,8 @@ export function RunSidebarArtifacts({ rows, totalCount, filter, onFilterChange, 
           <li key={row.artifact_id} className="or-run-sidebar__row">
             <Button variant="sidebar-row"
               type="button"
-              className={openArtifactIds.has(row.artifact_id) ? "border-[var(--or-run-accent,var(--accent-primary))]! bg-[var(--bg-elevated)]!" : ""}
+              className={paneSelectionClass(slotsOf(row.artifact_id))}
+              data-pane-selection={paneSelectionName(slotsOf(row.artifact_id))}
               onClick={() => onOpen(row.artifact_id, "primary")}
               data-testid="or-sidebar-artifact"
               data-artifact-id={row.artifact_id}

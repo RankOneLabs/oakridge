@@ -108,8 +108,8 @@ test("a definition removed from the launch catalog stays readable by id and pinn
   const path = resolve(root, "launchable.json");
   const saved = readFileSync(path, "utf8");
   try {
-    const catalog: { [name: string]: string } = JSON.parse(saved);
-    writeFileSync(path, JSON.stringify(Object.fromEntries(Object.entries(catalog).filter(([, id]) => id !== definition_id))));
+    const catalog: import("../src/runtime/definition-store").LaunchableCatalog = JSON.parse(saved);
+    writeFileSync(path, JSON.stringify(Object.fromEntries(Object.entries(catalog).filter(([, entry]) => entry.definition_id !== definition_id))));
     const superseded = await app().request(`/api/definitions/${definition_id}`);
     expect(superseded.status).toBe(200);
     expect((await superseded.json() as DefinitionDetail).effective_workflow).toEqual(detail.effective_workflow);
@@ -117,6 +117,36 @@ test("a definition removed from the launch catalog stays readable by id and pinn
     expect(pinned.status).toBe(200);
     expect((await pinned.json() as import("../src/projections/definition-view").PinnedDefinition).effective_workflow).toEqual(detail.effective_workflow);
   } finally { writeFileSync(path, saved); }
+});
+
+test("a run launched before prompt publication reads its superseded pinned definition over HTTP", async () => {
+  const { listPromptVersions, savePendingPrompt, publishPrompt } = await import("../src/runtime/prompt-versions");
+  const { readLaunchableCatalog } = await import("../src/runtime/definition-store");
+  const unwrap = <T, E>(result: import("canonical-json").Result<T, E>): T => {
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    return result.value;
+  };
+  // sampleDefinition establishes the existing isolated committed-store fixture.
+  const { definition_id } = await sampleDefinition();
+  const http = app();
+  const launched = await http.request("/api/runs", json({ request_id: crypto.randomUUID(), definition_id, input: { topic: "pinned prompt" } }));
+  expect(launched.status).toBe(201);
+  const { run_id } = await launched.json() as { run_id: string };
+  const before = await (await http.request(`/api/runs/${run_id}/definition`)).json() as import("../src/projections/definition-view").PinnedDefinition;
+  expect(before.definition_id).toBe(definition_id);
+  const path = "review-loop/write.md";
+  const listing = unwrap(listPromptVersions(path));
+  const pending = unwrap(await savePendingPrompt({ path, body: listing.published.body + "\nPublished after launch.\n", expected_pending_version_id: null }));
+  const outcome = unwrap(await publishPrompt(authority.core, { path, expected_pending_version_id: pending.version_id, expected_published_version_id: listing.published.version_id }));
+  const moved = outcome.moved.find(entry => entry.workflow === "review-loop");
+  expect(moved?.previous_definition_id).toBe(definition_id);
+  expect(moved?.definition_id).not.toBe(definition_id);
+  expect(unwrap(readLaunchableCatalog())["review-loop"].definition_id).toBe(moved!.definition_id);
+  // The superseded definition stays readable by id; it is no longer launchable.
+  expect((await http.request(`/api/definitions/${definition_id}`)).status).toBe(200);
+  const response = await http.request(`/api/runs/${run_id}/definition`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual(before);
 });
 
 test("a definition id absent from the store reads as not found", async () => {

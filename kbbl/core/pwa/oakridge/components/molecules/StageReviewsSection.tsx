@@ -8,7 +8,7 @@ export function StageReviewsSection({ model }: StageSectionProps) {
   return (
     <section aria-label="Reviews" className="rounded border border-[var(--border-muted)] p-3">
       <h3>Reviews</h3>
-      {model.reviews.map(({ key, review, source, decisions }) => (
+      {model.sections.reviews.map(({ key, review, source, decisions }) => (
         <article
           key={key}
           className="or-stage-review my-3 rounded-[.35rem] border border-[var(--border-muted)] border-l-4 border-l-[var(--accent-primary)] bg-[var(--bg-elevated)] p-[.8rem]"

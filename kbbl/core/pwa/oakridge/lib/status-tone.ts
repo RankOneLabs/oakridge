@@ -36,3 +36,12 @@ const STATUS_TONE: Record<StatusToneSource, ChipTone> = {
 export function selectStatusTone(status: StatusToneSource): ChipTone {
   return STATUS_TONE[status] ?? "muted";
 }
+
+export function selectConditionTone(condition: import("./status-condition").StatusCondition): ChipTone {
+  switch (condition.kind) {
+    case "healthy": return "success";
+    case "disabled": return "muted";
+    case "unavailable": return "warning";
+    case "failed": return "danger";
+  }
+}

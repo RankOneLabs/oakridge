@@ -1,20 +1,21 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { readFileSync, readdirSync, realpathSync, existsSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { canonicalJson, type CanonicalizationError, type Result } from "canonical-json";
 import type { CodeOperation } from "../core-client/core-types";
 import { decodeWorkflowSource, hasSafeWireNumbers, type TypeExpression, type Prompts, type WorkflowDefinitionDescriptor as AuthoredSource } from "../core-client/source-types";
 export type DefinitionId = string & { readonly __brand: "DefinitionId" };
 export type PromptId = string & { readonly __brand: "PromptId" };
 export type OperationRegistryId = string & { readonly __brand: "OperationRegistryId" };
-export type DefinitionIdentity = DefinitionId | PromptId | OperationRegistryId;
+export type PromptVersionId = string & { readonly __brand: "PromptVersionId" };
+export type DefinitionIdentity = DefinitionId | PromptId | OperationRegistryId | PromptVersionId;
 
 export function isIdentity(value: unknown): value is DefinitionIdentity {
   return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
 /** JSON identities use the shared canonical bytes, without a domain prefix. */
-export function jsonIdentity<Id extends DefinitionId | OperationRegistryId>(value: unknown): Result<Id, CanonicalizationError> {
+export function jsonIdentity<Id extends DefinitionId | OperationRegistryId | PromptVersionId>(value: unknown): Result<Id, CanonicalizationError> {
   const canonical = canonicalJson(value);
   if (!canonical.ok) return canonical;
   return { ok: true, value: createHash("sha256").update(canonical.value, "utf8").digest("hex") as Id };
@@ -30,7 +31,9 @@ export type AuthoredWorkflow = AuthoredSource;
 export type OperationRegistry = readonly CodeOperation[];
 export interface PromptReferences { readonly [authored_path: string]: PromptId }
 export interface PromptTexts { readonly [authored_path: string]: string }
-export interface LaunchableCatalog { readonly [authoring_name: string]: DefinitionId }
+export type WorkflowAudience = "user" | "test_fixture";
+export interface LaunchableEntry { readonly definition_id: DefinitionId; readonly audience: WorkflowAudience }
+export interface LaunchableCatalog { readonly [authoring_name: string]: LaunchableEntry }
 
 export interface CommittedDefinition {
   readonly source: AuthoredWorkflow;
@@ -45,6 +48,7 @@ export interface ResolvedDefinition {
   readonly source: AuthoredWorkflow;
   readonly operation_registry_id: OperationRegistryId;
   readonly prompts: PromptTexts;
+  readonly prompt_ids: PromptReferences;
   readonly operations: OperationRegistry;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
@@ -79,7 +83,7 @@ export function referencedPromptPaths(source: AuthoredWorkflow): string[] {
 }
 
 export const DEFINITION_STORE_ROOT = resolve(import.meta.dir, "../../../workflow-config/definitions");
-type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable" | "read_skill_index" | "read_skill_bundle";
+type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable" | "read_skill_index" | "read_skill_bundle" | "read_prompt_version" | "read_prompt_pointer";
 interface FailureContext {
   readonly operation: StoreOperation;
   readonly identifier: string;
@@ -170,8 +174,8 @@ function readText(request: ObjectRead): Result<string, DefinitionStoreFailure> {
   if (!bytes.ok) return bytes;
   const text = decodeUtf8(bytes.value, request);
   if (!text.ok) return text;
-  if (request.operation !== "read_launchable" && bytesIdentity(bytes.value) !== request.identifier)
-    return failure("hash_mismatch", request, "SHA-256 of stored bytes differs from filename identity");
+  if (request.operation !== "read_launchable" && request.operation !== "read_prompt_pointer" && bytesIdentity(bytes.value) !== request.identifier)
+    return failure("hash_mismatch", request, request.path + ": SHA-256 of stored bytes differs from filename identity");
   return text;
 }
 function readJson(request: ObjectRead): Result<unknown, DefinitionStoreFailure> {
@@ -181,12 +185,12 @@ function readJson(request: ObjectRead): Result<unknown, DefinitionStoreFailure> 
   try {
     value = JSON.parse(text.value);
   } catch (error) {
-    return failure("malformed_object", request, String(error));
+    return failure("malformed_object", request, request.path + ": " + String(error));
   }
   if (!hasSafeWireNumbers(value)) return failure("malformed_object", request, "JSON exceeds the wire depth or safe numeric bounds");
   const canonical = canonicalJson(value);
   if (!canonical.ok) return failure("malformed_object", request, canonical.error.detail);
-  if (canonical.value !== text.value) return failure("malformed_object", request, "stored JSON is not byte-exact canonical JSON");
+  if (canonical.value !== text.value) return failure("malformed_object", request, request.path + ": stored JSON is not byte-exact canonical JSON");
   return { ok: true, value };
 }
 
@@ -213,6 +217,7 @@ export function resolveDefinition(definition_id: DefinitionId, store_root = proc
     source: committed.source,
     operation_registry_id: committed.operation_registry_id,
     prompts: Object.fromEntries(prompt_entries),
+    prompt_ids: committed.prompts,
     operations: operations.value,
     schema_names: committed.schema_names,
     stage_names: committed.stage_names,
@@ -223,14 +228,14 @@ export function readLaunchableCatalog(store_root = process.env.OAKRIDGE_DEFINITI
   const context: ReadContext = { operation: "read_launchable", identifier: "launchable.json" };
   const catalog = readJson({ ...context, root: store_root, path: ["launchable.json"].join("/") });
   if (!catalog.ok) return catalog;
-  if (!isObject(catalog.value) || !Object.values(catalog.value).every(isIdentity)) return failure("malformed_object", context, "expected an authoring-name-to-definition-ID map");
+  if (!isObject(catalog.value) || !Object.values(catalog.value).every((entry) => isObject(entry) && Object.keys(entry).length === 2 && hasOnlyKeys(entry, ["audience", "definition_id"]) && isIdentity(entry.definition_id) && (entry.audience === "user" || entry.audience === "test_fixture"))) return failure("malformed_object", context, "expected an authoring-name-to-definition-ID map");
   return { ok: true, value: catalog.value as LaunchableCatalog };
 }
 
 export function resolveLaunchableDefinition(definition_id: DefinitionId, store_root = process.env.OAKRIDGE_DEFINITION_ROOT ?? DEFINITION_STORE_ROOT): Result<ResolvedDefinition, DefinitionStoreFailure> {
   const catalog = readLaunchableCatalog(store_root);
   if (!catalog.ok) return catalog;
-  if (!Object.values(catalog.value).includes(definition_id)) return failure("definition_not_launchable", { operation: "read_launchable", identifier: definition_id }, "definition ID is absent from launchable.json");
+  if (!launchableDefinitionIds(catalog.value, null).includes(definition_id)) return failure("definition_not_launchable", { operation: "read_launchable", identifier: definition_id }, "definition ID is absent from launchable.json");
   return resolveDefinition(definition_id, store_root);
 }
 
@@ -240,7 +245,7 @@ export function listCommittedPrompts(): readonly CommittedPromptSummary[] {
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
   const prompts = new Map<string, string>();
-  for (const id of Object.values(catalog.value)) {
+  for (const id of launchableDefinitionIds(catalog.value, null)) {
     const resolved = resolveDefinition(id);
     if (!resolved.ok) throw new Error(JSON.stringify(resolved.error));
     for (const [path, content] of Object.entries(resolved.value.prompts)) prompts.set(path, content);
@@ -288,5 +293,79 @@ export function readSkillBundle(digest: string, store_root = process.env.OAKRIDG
     if (!identity.ok) return failure("malformed_object", context, identity.error.detail);
     if (identity.value !== digest) return failure("hash_mismatch", context, "skill manifest SHA-256 differs from bundle identity");
     return { ok: true, value: { files: Object.fromEntries(entries) } };
+  } catch (cause) { return failure("store_io", context, String(cause)); }
+}
+
+export function launchableDefinitionIds(catalog: LaunchableCatalog, audience: WorkflowAudience | null): DefinitionId[] {
+  return [...new Set(Object.values(catalog).filter((entry) => audience === null || entry.audience === audience).map((entry) => entry.definition_id))];
+}
+
+export interface PromptVersionObject { readonly prompt_id: PromptId; readonly source_path: string }
+export interface PromptHistoryEntry { readonly published_at: string | null; readonly version_id: PromptVersionId }
+export interface PromptPointer { readonly history: readonly PromptHistoryEntry[]; readonly pending: PromptVersionId | null; readonly published: PromptVersionId; readonly source_path: string }
+
+export function readPromptVersion(version_id: PromptVersionId, store_root = process.env.OAKRIDGE_DEFINITION_ROOT ?? DEFINITION_STORE_ROOT): Result<PromptVersionObject, DefinitionStoreFailure> {
+  const path = `prompt-versions/${version_id}.json`;
+  const context: ReadContext = { operation: "read_prompt_version", identifier: version_id };
+  if (!isIdentity(version_id)) return failure("malformed_object", context, path + ": invalid version identity");
+  const result = readJson({ ...context, root: store_root, path });
+  if (!result.ok) return result;
+  const value = result.value;
+  if (!isObject(value) || Object.keys(value).length !== 2 || !isIdentity(value.prompt_id) || typeof value.source_path !== "string" || !isPromptPath(value.source_path))
+    return failure("malformed_object", context, path + ": invalid version object");
+  return { ok: true, value: value as unknown as PromptVersionObject };
+}
+export function readPromptPointer(source_path: string, store_root = process.env.OAKRIDGE_DEFINITION_ROOT ?? DEFINITION_STORE_ROOT): Result<PromptPointer, DefinitionStoreFailure> {
+  const path = `prompt-pointers/${source_path}.json`;
+  const context: ReadContext = { operation: "read_prompt_pointer", identifier: path };
+  if (!isPromptPath(source_path)) return failure("malformed_object", context, path + ": invalid prompt path");
+  const result = readJson({ ...context, root: store_root, path });
+  if (!result.ok) return result;
+  const value = result.value;
+  if (!isObject(value) || Object.keys(value).length !== 4 || value.source_path !== source_path || !isIdentity(value.published)
+    || !(value.pending === null || isIdentity(value.pending)) || !Array.isArray(value.history) || value.history.length === 0
+    || !value.history.every((entry: unknown) => isObject(entry) && Object.keys(entry).length === 2 && isIdentity(entry.version_id)
+      && (entry.published_at === null || typeof entry.published_at === "string"))
+    || value.history[value.history.length - 1].version_id !== value.published)
+    return failure("malformed_object", context, path + ": invalid prompt pointer");
+  const pointer = value as unknown as PromptPointer;
+  for (const id of [...pointer.history.map(entry => entry.version_id), ...(pointer.pending === null ? [] : [pointer.pending])]) {
+    const version = readPromptVersion(id, store_root);
+    if (!version.ok) return version;
+    if (version.value.source_path !== source_path) return failure("malformed_object", context, path + ": version source path mismatch");
+  }
+  return { ok: true, value: pointer };
+}
+
+
+export function withPublishedPrompt(committed: CommittedDefinition, path: string, prompt_id: PromptId): CommittedDefinition {
+  return { ...committed, prompts: { ...committed.prompts, [path]: prompt_id } };
+}
+/** Existing objects must be byte identical; mutable indexes use same-directory rename. */
+export function writeStoreFile(request: { root: string; path: string; bytes: Uint8Array; mutable?: boolean }): Result<void, DefinitionStoreFailure> {
+  const context: ReadContext = { operation: "read_prompt_version", identifier: request.path };
+  try {
+    if (!isPromptPath(request.path)) return failure("malformed_object", context, "invalid store path");
+    const path = resolve(request.root, request.path);
+    mkdirSync(dirname(path), { recursive: true });
+    const actualRoot = realpathSync(request.root);
+    const parentPosition = relative(actualRoot, realpathSync(dirname(path)));
+    if (parentPosition === ".." || parentPosition.startsWith(`..${sep}`) || isAbsolute(parentPosition))
+      return failure("unsafe_path", context, "write directory resolves outside definition root");
+    if (existsSync(path)) {
+      const position = relative(actualRoot, realpathSync(path));
+      if (position === ".." || position.startsWith(`..${sep}`) || isAbsolute(position))
+        return failure("unsafe_path", context, "write target resolves outside definition root");
+    }
+    if (!request.mutable) {
+      if (existsSync(path)) return Buffer.from(readFileSync(path)).equals(Buffer.from(request.bytes))
+        ? { ok: true, value: undefined } : failure("hash_mismatch", context, path + ": existing bytes differ");
+      writeFileSync(path, request.bytes, { flag: "wx" });
+    } else {
+      const temporary = path + "." + crypto.randomUUID() + ".tmp";
+      writeFileSync(temporary, request.bytes, { flag: "wx" });
+      renameSync(temporary, path);
+    }
+    return { ok: true, value: undefined };
   } catch (cause) { return failure("store_io", context, String(cause)); }
 }

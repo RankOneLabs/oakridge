@@ -5,7 +5,6 @@ import type { OperatorEvent, OperatorUnitStatus, OperatorWriter } from "../core-
 import type { OperatorPrIntegration } from "../domain/pr-integration";
 import type { OperatorRunStall } from "./attention";
 import type { OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition } from "./unit-view";
-import type { OperatorDefinitionId } from "../runtime/definition-store";
 
 export interface OperatorRunPage { readonly items: readonly OperatorRunView[]; readonly next_cursor: string | null }
 
@@ -16,7 +15,7 @@ export interface OperatorRunSummary {
   readonly pr_integration: OperatorPrIntegration | null;
   readonly config_error: string | null;
   readonly pr_skill_digest: string | null;
-  readonly run_id: string; readonly definition_id: OperatorDefinitionId;
+  readonly run_id: string; readonly definition_id: string;
   readonly created_at: string; readonly updated_at: string; readonly archived_at: string | null;
   readonly title: string | null; readonly repository_keys: readonly string[];
   /** The root unit's status. */

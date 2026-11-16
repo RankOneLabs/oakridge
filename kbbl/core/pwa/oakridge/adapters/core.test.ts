@@ -243,3 +243,14 @@ describe("v2 development adapters", () => {
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "merge_confirmation")?.resume_actions).toEqual(["confirm_merged"]);
   });
 });
+
+it("definition prompts validates bodies and SHA-256 digests with path context", async () => {
+  const { parseDefinitionPrompts } = await import("./core");
+  const fixture = await import("../__fixtures__/v2-definition-detail.json");
+  expect(parseDefinitionPrompts(fixture.definition.prompts).ok).toBe(true);
+  for (const entry of [{body: 42, digest: "a".repeat(64)}, {body: "text", digest: "ABC"}]) {
+    const result = parseDefinitionPrompts({"x/prompt.md": entry});
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.detail).toContain("x/prompt.md");
+  }
+});

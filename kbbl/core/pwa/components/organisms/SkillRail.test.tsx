@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
+import { useStore } from "../../state/store";
+import { readStoredQuickActionKeys } from "../../lib/storage";
 import { SkillRail } from "./SkillRail";
 import type { Skill } from "../../../runtime-interface";
 import type { SessionSnapshot } from "../../types";
@@ -62,11 +64,14 @@ function setup(skills: Skill[]) {
 
 function renderOpenRail() {
   render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
-  fireEvent.click(screen.getByRole("button", { name: /^Skills$/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)^Skills$/ }));
 }
+
+beforeEach(() => useStore.setState({ quickActionKeys: readStoredQuickActionKeys() }));
 
 afterEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
 });
 
 describe("SkillRail collapsed default", () => {
@@ -76,10 +81,10 @@ describe("SkillRail collapsed default", () => {
 
     expect(
       screen
-        .getByRole("button", { name: /^Skills$/ })
+        .getByRole("button", { name: /^(?!Quick action:)^Skills$/ })
         .getAttribute("aria-expanded"),
     ).toBe("false");
-    expect(screen.queryByRole("button", { name: /list-tasks/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^(?!Quick action:)list-tasks/ })).toBeNull();
   });
 });
 
@@ -88,7 +93,7 @@ describe("SkillRail two-tap confirm chain — no args", () => {
     setup([CONFIRM_SKILL]);
     renderOpenRail();
 
-    fireEvent.click(screen.getByRole("button", { name: /deploy/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)deploy/ }));
 
     expect(screen.getByLabelText("tap to confirm")).toBeTruthy();
     expect(mockMutateAsync).not.toHaveBeenCalled();
@@ -98,13 +103,14 @@ describe("SkillRail two-tap confirm chain — no args", () => {
     setup([CONFIRM_SKILL]);
     renderOpenRail();
 
-    const btn = screen.getByRole("button", { name: /deploy/ });
+    const btn = screen.getByRole("button", { name: /^(?!Quick action:)deploy/ });
     fireEvent.click(btn); // first tap → confirming
     fireEvent.click(btn); // second tap → dispatch
 
     await waitFor(() =>
       expect(mockMutateAsync).toHaveBeenCalledWith({ skill_id: "s-deploy", args: {} }),
     );
+    expect(screen.getByRole("button", { name: "Skills" }).getAttribute("aria-expanded")).toBe("false");
   });
 });
 
@@ -113,7 +119,7 @@ describe("SkillRail two-tap confirm chain — with args", () => {
     setup([CONFIRM_SKILL_WITH_ARGS]);
     renderOpenRail();
 
-    fireEvent.click(screen.getByRole("button", { name: /ship/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)ship/ }));
 
     expect(screen.getByLabelText("tap to confirm")).toBeTruthy();
     expect(mockMutateAsync).not.toHaveBeenCalled();
@@ -123,7 +129,7 @@ describe("SkillRail two-tap confirm chain — with args", () => {
     setup([CONFIRM_SKILL_WITH_ARGS]);
     renderOpenRail();
 
-    const btn = screen.getByRole("button", { name: /ship/ });
+    const btn = screen.getByRole("button", { name: /^(?!Quick action:)ship/ });
     fireEvent.click(btn); // first tap → confirming
     fireEvent.click(btn); // second tap → collect (ArgSheet)
 
@@ -146,12 +152,12 @@ describe("SkillRail confirm gate — ArgSheet cleared on gate entry", () => {
     renderOpenRail();
 
     // Open ArgSheet for the plain-with-args skill
-    fireEvent.click(screen.getByRole("button", { name: /search/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)search/ }));
     expect(screen.getByRole("dialog")).toBeTruthy();
 
     // Tap the confirm-gate skill — ArgSheet should close, confirming state entered
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /deploy/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)deploy/ }));
     });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByLabelText("tap to confirm")).toBeTruthy();
@@ -163,7 +169,7 @@ describe("SkillRail confirm gate — non-confirm skills bypass gate", () => {
     setup([PLAIN_SKILL]);
     renderOpenRail();
 
-    fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)list-tasks/ }));
 
     await waitFor(() =>
       expect(mockMutateAsync).toHaveBeenCalledWith({ skill_id: "s-list", args: {} }),
@@ -174,12 +180,12 @@ describe("SkillRail confirm gate — non-confirm skills bypass gate", () => {
     setup([CONFIRM_SKILL, PLAIN_SKILL]);
     renderOpenRail();
 
-    fireEvent.click(screen.getByRole("button", { name: /deploy/ })); // enter confirming
+    fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)deploy/ })); // enter confirming
     expect(screen.getByLabelText("tap to confirm")).toBeTruthy();
 
     // Tap a different skill — confirm gate should clear; dispatch fires async
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)list-tasks/ }));
     });
     expect(screen.queryByLabelText("tap to confirm")).toBeNull();
   });
@@ -195,11 +201,12 @@ describe("SkillRail dispatch in-flight", () => {
     } as unknown as ReturnType<typeof useInvokeSkill>);
     renderOpenRail();
 
-    fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)list-tasks/ }));
 
-    // The tapped button is dispatching (disabled); the sibling is now disabled too.
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    // Reopening the full set during dispatch keeps every action disabled.
     expect(
-      (screen.getByRole("button", { name: /other-task/ }) as HTMLButtonElement)
+      (screen.getByRole("button", { name: /^(?!Quick action:)other-task/ }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
   });
@@ -222,17 +229,17 @@ describe("SkillRail MCP grouping + collapse", () => {
     renderOpenRail();
 
     // Non-MCP skill is visible; the MCP tool button is hidden behind its header.
-    expect(screen.getByRole("button", { name: /list-tasks/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /open_pr/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /^(?!Quick action:)list-tasks/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^(?!Quick action:)open_pr/ })).toBeNull();
   });
 
   it("expanding the MCP section reveals the de-prefixed tool name", () => {
     setup([MCP_SKILL]);
     renderOpenRail();
 
-    fireEvent.click(screen.getByRole("button", { name: /MCP · gated-review/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)MCP · gated-review/ }));
 
-    const toolBtn = screen.getByRole("button", { name: /open_pr/ });
+    const toolBtn = screen.getByRole("button", { name: /^(?!Quick action:)open_pr/ });
     expect(toolBtn).toBeTruthy();
     // The verbose mcp:server: prefix is stripped from the visible label.
     expect(toolBtn.textContent).not.toContain("mcp:gated-review:");
@@ -242,8 +249,8 @@ describe("SkillRail MCP grouping + collapse", () => {
     setup([MCP_SKILL]);
     renderOpenRail();
 
-    fireEvent.click(screen.getByRole("button", { name: /MCP · gated-review/ }));
-    fireEvent.click(screen.getByRole("button", { name: /open_pr/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)MCP · gated-review/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)open_pr/ }));
 
     await waitFor(() =>
       expect(mockMutateAsync).toHaveBeenCalledWith({
@@ -263,9 +270,67 @@ describe("SkillRail invoke failure", () => {
     } as unknown as ReturnType<typeof useInvokeSkill>);
     renderOpenRail();
 
-    fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)list-tasks/ }));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("list-tasks");
   });
+});
+
+it("shows only advertised default quick actions beside Skills", () => {
+  setup([PLAIN_SKILL, { ...PLAIN_SKILL, id: "cc:mcp:gated-review:get_review_round", name: "mcp:gated-review:get_review_round" }]);
+  render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} commands={[{ name: "compact", description: "Compact" }]} />);
+  expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual(["Skills", "compactclaude-code", "get_review_roundclaude-code"]);
+});
+
+it("persists a selected action and shows it after collapsing", () => {
+  setup([PLAIN_SKILL]);
+  renderOpenRail();
+  const toggle = screen.getByRole("button", { name: "Quick action: list-tasks" });
+  expect(toggle.textContent).toBe("☆");
+  fireEvent.click(toggle);
+  expect(toggle.textContent).toBe("★");
+  expect(toggle.getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+  expect(screen.getByRole("button", { name: /^list-tasks/ })).toBeTruthy();
+  expect(JSON.parse(localStorage.getItem("kbbl.skillRail.quickActions") ?? "null")).toContain("list-tasks");
+});
+
+it("collapses at dispatch start", () => {
+  setup([PLAIN_SKILL]);
+  renderOpenRail();
+  fireEvent.click(screen.getByRole("button", { name: /^list-tasks/ }));
+  expect(screen.getByRole("button", { name: "Skills" }).getAttribute("aria-expanded")).toBe("false");
+  expect(mockMutateAsync).toHaveBeenCalledWith({ skill_id: PLAIN_SKILL.id, args: {} });
+});
+
+it("collapses after ArgSheet submit and preserves invocation arguments", async () => {
+  setup([CONFIRM_SKILL_WITH_ARGS]);
+  renderOpenRail();
+  const button = screen.getByRole("button", { name: /^(?!Quick action:)ship/ });
+  fireEvent.click(button);
+  fireEvent.click(button);
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "production" } });
+  fireEvent.click(screen.getByRole("button", { name: "Run" }));
+  expect(screen.getByRole("button", { name: "Skills" }).getAttribute("aria-expanded")).toBe("false");
+  await waitFor(() => expect(mockMutateAsync).toHaveBeenCalledWith({ skill_id: "s-ship", args: { env: "production" } }));
+});
+
+
+it("shares quick-action choices across session panes without losing either edit", () => {
+  const otherSkill = { ...PLAIN_SKILL, id: "s-other", name: "other-task" };
+  setup([PLAIN_SKILL, otherSkill]);
+  const { getByTestId } = render(<>
+    <div data-testid="first-rail"><SkillRail sid="first" snapshot={LIVE_SNAPSHOT} /></div>
+    <div data-testid="second-rail"><SkillRail sid="second" snapshot={LIVE_SNAPSHOT} /></div>
+  </>);
+  const first = within(getByTestId("first-rail"));
+  const second = within(getByTestId("second-rail"));
+  fireEvent.click(first.getByRole("button", { name: "Skills" }));
+  fireEvent.click(second.getByRole("button", { name: "Skills" }));
+  fireEvent.click(first.getByRole("button", { name: "Quick action: list-tasks" }));
+  expect(second.getByRole("button", { name: "Quick action: list-tasks" }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(second.getByRole("button", { name: "Quick action: other-task" }));
+  expect(first.getByRole("button", { name: "Quick action: other-task" }).textContent).toBe("★");
+  expect(JSON.parse(localStorage.getItem("kbbl.skillRail.quickActions") ?? "null")).toEqual(expect.arrayContaining(["list-tasks", "other-task"]));
 });

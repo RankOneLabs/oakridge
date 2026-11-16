@@ -4,7 +4,7 @@
 import type { ObservationArtifactRevisionId, ObservationEvaluatorDefinitionId, ObservationEvidenceSetId, ObservationExecutionId, ObservationItemOccurrenceId, ObservationLogicalItemId, ObservationRelationId } from "../domain/identity";
 import type { ObservationJsonValue } from "../domain/primitives";
 import type { ObservationAnswerDetail, ObservationCompositeRelation, ObservationContributionItem, ObservationLogicalItemComposite, ObservationMeasurementRead, ObservationPaged, ObservationQuestionSummary, ObservationScopedResult, ObservationStageComposite, ObservationSubjectScope, ObservationUnresolvedReference } from "./composite";
-import type { ObservationEvidenceReference } from "./evidence";
+import type { ObservationEvidencePlan, ObservationEvidenceReference } from "./evidence";
 import type { ObservationQuestionDefinition, ObservationQuestionKey } from "./question";
 import type { ObservationAssociationProvenance } from "./task-association";
 
@@ -59,6 +59,9 @@ export type ObservationStagePublicationRead =
   | { readonly state: "published"; readonly is_final: boolean; readonly unit_ids: ObservationPaged<string> };
 
 export interface ObservationEvidenceRead extends ObservationQuestionKey {
+  readonly config_version: number;
+  readonly config_hash: string;
+  readonly collection_plan: ObservationEvidencePlan;
   readonly evidence_set_id: ObservationEvidenceSetId;
   readonly subject_occurrence_id: ObservationItemOccurrenceId;
   readonly task_id: ObservationLogicalItemId | null;

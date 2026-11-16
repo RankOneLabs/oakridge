@@ -1,3 +1,5 @@
+import { stampCapture } from "../src/grading/configuration";
+import { pinIdentity } from "./grading-fixture";
 import { expect, test } from "bun:test";
 import { logicalReference } from "../src/projection/relations";
 import { declaredAnalysisLinks } from "../src/producers/oakridge/declarations";
@@ -150,12 +152,12 @@ integration("late build-item and task resolution pins each newly reached subject
   const { registerDefinitions } = await import("../src/storage/grading-store");
   await registerDefinitions(db, tenant, first.value);
   await registerDefinitions(db, tenant, second.value);
-  const feed = createFeed(db, tenant, first.value.capture);
+  const feed = createFeed(db, tenant, stampCapture(first.value.capture, pinIdentity));
   await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: { tasks: [{ id: "T1", description: "One", requirement_ids: [] }] } });
   await feed.revision({ revision_id: "assessment", artifact_kind: "assessment", brief_revision_ids: ["brief"], body: { findings: [{ subjects: [{ kind: "build_item", id: "B1" }], evidence: [] }] } });
   const occurrence = (await listRunItems(db, tenant, "run-1", everything)).items.find((item) => item.item_kind === "assessment_finding")!;
   expect(await readOccurrenceEvidence(db, tenant, occurrence.occurrence_id as import("../src/domain/identity").ItemOccurrenceId)).toEqual([]);
-  await feed.revision({ revision_id: "brief", artifact_kind: "brief", body: { cohort_id: "alpha", decisions_made: [], approaches_rejected: [], build_items: [{ id: "B1", description: "Both tasks", task_ids: ["T1", "T2"], decision_ids: [], verification: "test" }] } }, second.value.capture);
+  await feed.revision({ revision_id: "brief", artifact_kind: "brief", body: { cohort_id: "alpha", decisions_made: [], approaches_rejected: [], build_items: [{ id: "B1", description: "Both tasks", task_ids: ["T1", "T2"], decision_ids: [], verification: "test" }] } }, stampCapture(second.value.capture, pinIdentity));
   const read = () => readOccurrenceEvidence(db, tenant, occurrence.occurrence_id as import("../src/domain/identity").ItemOccurrenceId);
   expect((await read()).map((set) => [set.task_id?.split(":").at(-1), set.question_version])).toEqual([["T1", second.value.questions[0]!.question_version]]);
   await feed.revision({ revision_id: "tasks-2", artifact_kind: "tasks", body: { tasks: [{ id: "T2", description: "Two", requirement_ids: [] }] } });

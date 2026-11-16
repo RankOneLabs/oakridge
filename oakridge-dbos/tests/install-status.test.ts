@@ -45,7 +45,7 @@ function definitions(): readonly ResolvedDefinition[] {
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error("catalog unavailable");
   return ["development", "review-loop", "fan-out"].map((name) => {
-    const definition = resolveDefinition(catalog.value[name]!);
+    const definition = resolveDefinition(catalog.value[name].definition_id);
     if (!definition.ok) throw new Error("fixture unavailable");
     return definition.value;
   });
@@ -115,4 +115,10 @@ test("an invalid observation health response is a non-blocking failure", async (
   const status = await readInstallStatus({ ...sources(), observation_url: "http://observation.example", fetch: async () => Response.json({ status: "ok" }) });
   expect(status.observation.availability).toMatchObject({ kind: "failed", required: false });
   expect(status.installation_failed).toBe(false);
+});
+
+test("default status catalog excludes fixtures from launch blocks", async () => {
+  const { definitions: _definitions, ...dependencies } = sources();
+  const status = await readInstallStatus(dependencies);
+  expect(status.launch_blocks.map((block) => block.definition_name)).toEqual(["development"]);
 });

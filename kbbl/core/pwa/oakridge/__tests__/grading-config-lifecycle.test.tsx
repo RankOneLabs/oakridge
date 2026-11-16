@@ -10,7 +10,7 @@ import type { ObservationJsonValue as Json } from "../grading-contracts/domain/p
 
 vi.mock("../views/RunListView", () => ({ RunListView: () => <p>Run browser</p> }));
 vi.mock("../views/WorkflowDefListView", () => ({ WorkflowDefListView: () => <p>Workflow browser</p> }));
-const path = "#/oakridge/grading-config";
+const path = "#settings/workflows/grading-config";
 let client: QueryClient;
 beforeEach(() => {
   window.history.replaceState(null, "", path);
@@ -29,7 +29,7 @@ beforeEach(() => {
   }));
 });
 afterEach(() => { cleanup(); client.clear(); vi.unstubAllGlobals(); window.history.replaceState(null, "", "#"); });
-const click = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
+const click = (name: string) => fireEvent.click(name === "Workflows" ? screen.getByRole("link", { name }) : name === "Runs" ? screen.getByRole("button", { name: "Go to Runs" }) : screen.getByRole("button", { name }));
 const change = (name: string, value: string) => fireEvent.change(screen.getByLabelText(name), { target: { value } });
 const value = (name: string) => (screen.getByLabelText(name) as HTMLTextAreaElement).value;
 async function view() {
@@ -38,7 +38,7 @@ async function view() {
 }
 function RoutedShell() {
   const route = useHashRoute();
-  return route?.view === "oakridge" ? <OakridgeShell route={route.route} /> : <p>Other view</p>;
+  return route?.view === "oakridge" || route?.view === "settings" ? <><button onClick={() => { window.location.hash = "oakridge"; }}>Go to Runs</button><OakridgeShell route={route.route} /></> : <p>Other view</p>;
 }
 async function shell() {
   render(<QueryClientProvider client={client}><RoutedShell /></QueryClientProvider>);

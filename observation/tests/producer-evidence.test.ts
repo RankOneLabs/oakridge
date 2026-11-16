@@ -1,3 +1,4 @@
+import { pinProvenance } from "./grading-fixture";
 import { targetOf } from "./grading-fixture";
 import { questionVersion } from "./grading-fixture";
 import { expect, test } from "bun:test";
@@ -161,7 +162,7 @@ test("a question outside the profile is reported rather than collected", async (
 integration("captured sources feed the collector within one run, and collection freezes per question", async () => scratchDatabase(async (db) => {
   for (const question of OAKRIDGE_QUESTIONS) await registerQuestion(db, tenant, question);
   await registerEvaluator(db, tenant, evaluator("human"));
-  const configuration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question, ...targetOf(question.question_id), evaluator_definition_ids: [evaluatorId("human")] })) };
+  const configuration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question, ...targetOf(question.question_id), ...pinProvenance(question), evaluator_definition_ids: [evaluatorId("human")] })) };
   const feed = createFeed(db, tenant, configuration);
   await feed.launch(launch);
   await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });

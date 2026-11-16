@@ -1,7 +1,7 @@
 import type { Theme } from "../../types";
 import { Button } from "../atoms/Button";
 
-export type PrimarySurface = "runs" | "sessions" | "attention";
+export type PrimarySurface = "runs" | "sessions" | "attention" | "settings";
 
 interface PrimaryNavProps {
   activeSurface: PrimarySurface;
@@ -28,6 +28,7 @@ export function PrimaryNav({ activeSurface, attentionCount, onNavigate, theme, o
         Attention
         {attentionCount > 0 && <span className="app-surface-nav__count">{attentionCount}</span>}
       </Button>
+      <Button variant="session" className={navItemClass(activeSurface === "settings")} onClick={() => onNavigate("settings")} aria-label="Settings" title="Settings">⚙</Button>
       <Button
         variant="secondary"
         size="xsmall"

@@ -15,6 +15,7 @@ function revealDefinitionAnchor(target: string | undefined): void {
     if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
   }
   element.scrollIntoView?.();
+  element.setAttribute("tabindex", "-1");
   element.focus();
 }
 
@@ -30,20 +31,20 @@ export function useDefinitionAnchors({
   const selection =
     routeSelection && path
       ? routeSelection.kind === "stage"
-        ? { kind: "stage" as const, stage: path }
-        : { kind: "unit" as const, path }
+        ? { kind: "stage" as const, stage: path, tab: routeSelection.tab }
+        : { kind: "unit" as const, path, tab: routeSelection.tab }
       : routeSelection;
 
   useEffect(() => {
     if (isReady) revealDefinitionAnchor(target);
-  }, [target, isReady]);
+  }, [target, isReady, routeSelection?.tab]);
 
   function onClick(event: MouseEvent<HTMLElement>): void {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
       return;
     const anchor = event.target instanceof Element ? event.target.closest("a") : null;
     const href = anchor?.getAttribute("href");
-    if (!href?.startsWith("#oakridge/defs/")) return;
+    if (!href?.startsWith("#settings/workflows/")) return;
     event.preventDefault();
     // Navigating to the current hash changes no route, so reveal its target directly.
     if (href === window.location.hash) {

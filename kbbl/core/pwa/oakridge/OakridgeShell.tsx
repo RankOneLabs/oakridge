@@ -1,6 +1,5 @@
 import { StatusView } from "./views/StatusView";
 import { definitionHref } from "./lib/definition-selection";
-import { Button } from "../components/atoms/Button";
 import { GradingConfigView } from "./views/GradingConfigView";
 import { useOakridgeConfig } from "./hooks/useOakridgeConfig";
 import { RunListView } from "./views/RunListView";
@@ -12,11 +11,11 @@ import { WorkflowDefListView } from "./views/WorkflowDefListView";
 import { WorkflowDefDetailView } from "./views/WorkflowDefDetailView";
 import { ReviewInboxView } from "./views/ReviewInboxView";
 import { SessionWorkspaceRedirectView } from "./views/SessionWorkspaceRedirectView";
-import { formatRunWorkspaceHash, type OakridgeSubRoute } from "../lib/hash";
+import { formatRunWorkspaceHash, type SettingsSubRoute, type OakridgeSubRoute } from "../lib/hash";
 import type { ArtifactId } from "../lib/ids";
 import type { WorkflowDefSummary } from "./project-types";
 interface OakridgeShellInnerProps {
-  route: OakridgeSubRoute;
+  route: OakridgeSubRoute | SettingsSubRoute;
   runAttentionCounts: ReadonlyMap<string, number>;
   onNavigate: (hash: string) => void;
 }
@@ -53,7 +52,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
   const navigateToRuns = () => onNavigate("oakridge");
   const navigateToNewRun = () => onNavigate("oakridge/new-run");
   const navigateToCreateProject = () => onNavigate("oakridge/create-project");
-  const navigateToDefs = () => onNavigate("oakridge/defs");
+  const navigateToDefs = () => onNavigate("settings/workflows");
   const navigateToDef = (id: string) => onNavigate(definitionHref(id));
 
   let content: React.ReactNode;
@@ -113,16 +112,16 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
       );
       break;
     case "grading-config":
-      content = <GradingConfigView version={route.version} onNavigate={(version) => onNavigate(version === null ? "/oakridge/grading-config" : `/oakridge/grading-config/versions/${version}`)} />;
+      content = <GradingConfigView definitionId={route.definitionId} version={route.version} onNavigate={(version) => onNavigate(version === null ? "settings/workflows/grading-config" : `settings/workflows/grading-config/versions/${version}`)} />;
       break;
-    case "defs":
+    case "workflows":
       content = (
         <WorkflowDefListView
           onSelect={(def: WorkflowDefSummary) => navigateToDef(def.id)}
         />
       );
       break;
-    case "def":
+    case "workflow":
       content = (
         <WorkflowDefDetailView
           definitionId={route.id}
@@ -137,12 +136,10 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
 
   return (
     <div className="or-shell" data-testid="or-shell">
-      <nav aria-label="Oakridge" className="flex flex-wrap gap-2 p-3">
-        <Button onClick={navigateToRuns}>Runs</Button>
-        <Button onClick={() => onNavigate("oakridge/status")}>Status</Button>
-        <Button onClick={navigateToDefs}>Workflows</Button>
-        <Button onClick={() => onNavigate("/oakridge/grading-config")}>Grading configuration</Button>
-      </nav>
+      {(["status", "workflows", "workflow", "grading-config"] as string[]).includes(route.sub) && <nav aria-label="Settings" className="flex flex-wrap gap-2 p-3">
+        <a href="#settings/status" aria-current={route.sub === "status" ? "page" : undefined}>Status</a>
+        <a href="#settings/workflows" aria-current={route.sub !== "status" ? "page" : undefined}>Workflows</a>
+      </nav>}
       <main className="or-shell__content">
         {content}
       </main>
@@ -151,7 +148,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
 }
 
 interface OakridgeShellProps {
-  route: OakridgeSubRoute;
+  route: OakridgeSubRoute | SettingsSubRoute;
   runAttentionCounts?: ReadonlyMap<string, number>;
 }
 

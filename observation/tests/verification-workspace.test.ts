@@ -41,7 +41,7 @@ test("the definition scan names any retained definition carrying a discarded fie
   mkdirSync(join(root, "operations"));
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  writeFileSync(join(root, "workflows", "clean.json"), readFileSync(join(DEFINITION_STORE_ROOT, "workflows", `${catalog.value.development}.json`)));
+  writeFileSync(join(root, "workflows", "clean.json"), readFileSync(join(DEFINITION_STORE_ROOT, "workflows", `${catalog.value.development.definition_id}.json`)));
   writeFileSync(join(root, "operations", "registry.json"), JSON.stringify({ operations: [] }));
   writeFileSync(join(root, "launchable.json"), JSON.stringify([]));
   expect(scanDefinitions(root)).toEqual({ scanned: 1, with_discarded_field: [], files_scanned: 3, files_naming_gated_review: [] });

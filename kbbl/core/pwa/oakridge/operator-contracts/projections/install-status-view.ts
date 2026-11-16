@@ -2,7 +2,6 @@
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
 import type { OperatorPrIntegration, OperatorPrLaunchPreflightError } from "../domain/pr-integration";
-import type { OperatorDefinitionId } from "../runtime/definition-store";
 
 export interface OperatorInstallStatus {
   readonly access_mode: OperatorAccessMode;
@@ -36,7 +35,7 @@ export interface OperatorPrIntegrationStatus { readonly selected: OperatorPrInte
 export interface OperatorObservationStatus { readonly availability: OperatorInstallCheck }
 
 export interface OperatorLaunchBlock {
-  readonly definition_id: OperatorDefinitionId;
+  readonly definition_id: string;
   readonly definition_name: string;
   readonly error: OperatorPrLaunchPreflightError;
 }

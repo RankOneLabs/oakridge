@@ -22,6 +22,9 @@ const RUN_VIEW_FIELDS = {
   pr_integration: true, pr_skill_digest: true, repository_keys: true, run_id: true,
   status: true, title: true, units: true, updated_at: true,
 } satisfies Record<keyof RunView, true>;
+const DEFINITION_DETAIL_FIELDS = {
+  bundle: true, definition_id: true, effective_workflow: true, graph: true, prompts: true, workflow: true,
+} satisfies Record<keyof DefinitionDetail, true>;
 const CONTRACT_FIELDS = {
   RunView: Object.keys(RUN_VIEW_FIELDS).sort(),
   RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
@@ -47,7 +50,7 @@ const CONTRACT_FIELDS = {
   ArtifactDetail: ["artifact_key", "decisions", "is_editable", "is_reviewable", "original_spec", "revisions", "run_id", "schema", "status", "unit_id"],
   DefinitionSummary: ["bundle", "definition_id"],
   PinnedDefinition: ["bundle", "definition_id", "effective_workflow"],
-  DefinitionDetail: ["bundle", "definition_id", "effective_workflow", "graph", "workflow"],
+  DefinitionDetail: Object.keys(DEFINITION_DETAIL_FIELDS).sort(),
   DefinitionBundle: ["key", "root", "schemas", "stages", "units"],
   UnitDefinition: ["artifacts", "input_schema", "key", "label", "stage"],
   ArtifactDefinition: ["key", "schema"],

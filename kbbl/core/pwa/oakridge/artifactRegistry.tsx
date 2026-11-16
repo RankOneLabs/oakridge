@@ -1,3 +1,4 @@
+import { SchemaContractView } from "./components/molecules/SchemaContractView";
 import type { Task } from "./lib/tasks";
 import { parseAssessment } from "./lib/assessment";
 import { parsePlan } from "./lib/plan";
@@ -87,4 +88,14 @@ export function selectViewerItemPaths(Viewer: ComponentType<ViewerProps>, body: 
     return parsed.ok ? parsed.value.cohorts.flatMap((cohort, cohortIndex) => cohort.acceptance_criteria.map((_, index) => `/cohorts/${cohortIndex}/acceptance_criteria/${index}`)) : [];
   }
   return [];
+}
+
+export interface ContractRendererProps {
+  schema: import("./operator-contracts/core-client/core-types").OperatorType;
+  schemas: import("./operator-contracts/core-client/core-types").OperatorParsedWorkflow["schemas"];
+  definition_id: string;
+}
+export const CONTRACT_RENDERERS: Partial<Record<import("./operator-contracts/core-client/core-types").OperatorArtifactKind, ComponentType<ContractRendererProps>>> = {};
+export function resolveContractRenderer(kind: import("./operator-contracts/core-client/core-types").OperatorArtifactKind): ComponentType<ContractRendererProps> {
+  return CONTRACT_RENDERERS[kind] ?? SchemaContractView;
 }

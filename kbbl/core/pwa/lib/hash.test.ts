@@ -52,9 +52,9 @@ describe("readHashRoute oakridge routes", () => {
       view: "oakridge",
       route: { sub: "run", id: "run-1", pane: null },
     });
-    expect(withHash("#oakridge/defs/def%2F1")).toEqual({
-      view: "oakridge",
-      route: { sub: "def", id: "def/1", selection: null },
+    expect(withHash("#settings/workflows/def%2F1")).toEqual({
+      view: "settings",
+      route: { sub: "workflow", id: "def/1", selection: null },
     });
     expect(withHash("#oakridge/review-inbox")).toEqual({
       view: "oakridge",
@@ -163,18 +163,36 @@ it("round trips an exact pinned artifact revision", () => {
 
 describe("definition selection routes", () => {
   it.each([
-    ["#oakridge/defs/d1/stages/a%2Fb", { kind: "stage", stage: "a/b" }],
-    ["#oakridge/defs/d1/units/work/item", { kind: "unit", path: "work/item" }],
-    ["#oakridge/defs/d1/units/a%20b", { kind: "unit", path: "a b" }],
+    ["#settings/workflows/d1/stages/a%2Fb", { kind: "stage", stage: "a/b", tab: null }],
+    ["#settings/workflows/d1/units/work/item", { kind: "unit", path: "work/item", tab: null }],
+    ["#settings/workflows/d1/units/a%20b", { kind: "unit", path: "a b", tab: null }],
   ])("parses %s", (href, selection) => {
-    expect(readHashRoute(href as string, "")).toEqual({ view: "oakridge", route: { sub: "def", id: "d1", selection } });
+    expect(readHashRoute(href as string, "")).toEqual({ view: "settings", route: { sub: "workflow", id: "d1", selection } });
   });
   it("keeps a declaration anchor verbatim while decoding the stage", () => {
-    expect(readHashRoute("#oakridge/defs/d1/stages/a%2Fb#stage-a%2Fb-artifact-%24draft", "")).toEqual({
-      view: "oakridge", route: { sub: "def", id: "d1", selection: { kind: "stage", stage: "a/b#stage-a%2Fb-artifact-%24draft" } },
+    expect(readHashRoute("#settings/workflows/d1/stages/a%2Fb#stage-a%2Fb-artifact-%24draft", "")).toEqual({
+      view: "settings", route: { sub: "workflow", id: "d1", selection: { kind: "stage", stage: "a/b#stage-a%2Fb-artifact-%24draft", tab: null } },
     });
   });
-  it.each(["/defs/d1/units/", "/defs/d1/units/a//b", "/defs/d1/unknown/a", "/defs/d1/stages/a/b", "/def/d1"])("rejects %s", (path) => {
-    expect(readHashRoute("#oakridge" + path, "")).toEqual({ view: "oakridge", route: { sub: "runs" } });
+  it.each(["/workflows/d1/units/", "/workflows/d1/units/a//b", "/workflows/d1/unknown/a", "/workflows/d1/stages/a/b"])("rejects %s", (path) => {
+    expect(readHashRoute("#settings" + path, "")).toEqual({ view: "settings", route: { sub: "status" } });
   });
+});
+
+it.each([
+  ["#oakridge/status", "settings/status"],
+  ["#oakridge/defs", "settings/workflows"],
+  ["#oakridge/defs/def%2F1", "settings/workflows/def%2F1"],
+  ["#oakridge/defs/d1/stages/a%2Fb#stage-a%2Fb-artifact-%24draft", "settings/workflows/d1/stages/a%2Fb#stage-a%2Fb-artifact-%24draft"],
+  ["#oakridge/def/d1/units/work/item", "settings/workflows/d1/units/work/item"],
+  ["#oakridge/grading-config", "settings/workflows/grading-config"],
+  ["#/oakridge/grading-config/versions/3", "settings/workflows/grading-config/versions/3"],
+])("redirects %s preserving encoded suffixes", (legacy, hash) => {
+  expect(readHashRoute(legacy, "")).toEqual({ view: "redirect", hash });
+});
+it.each(["#settings", "#settings/status"])("opens Status at %s", (hash) => {
+  expect(readHashRoute(hash, "")).toEqual({ view: "settings", route: { sub: "status" } });
+});
+it("opens a published grading version in Settings", () => {
+  expect(readHashRoute("#settings/workflows/grading-config/versions/2", "")).toEqual({ view: "settings", route: { sub: "grading-config", version: 2 } });
 });

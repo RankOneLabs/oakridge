@@ -68,6 +68,9 @@ export function generateContracts(config: ContractConfig): ReadonlyMap<string, s
   /** In erase mode, `type RunId = Brand<string, "RunId">` in the primitives module serializes as a string. */
   function isErasedBrand(declaration: Declaration): boolean {
     if (config.brands.kind !== "erase") return false;
+    if (ts.isTypeAliasDeclaration(declaration) && ts.isIntersectionTypeNode(declaration.type)
+      && declaration.type.types.some(type => type.kind === ts.SyntaxKind.StringKeyword)
+      && declaration.type.types.some(type => ts.isTypeLiteralNode(type) && type.members.some(member => member.name?.getText() === "__brand"))) return true;
     return resolve(declaration.getSourceFile().fileName) === config.brands.primitives && ts.isTypeAliasDeclaration(declaration)
       && ts.isTypeReferenceNode(declaration.type) && declaration.type.typeName.getText() === "Brand";
   }

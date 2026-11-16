@@ -6,7 +6,7 @@ import { jsonIdentity, bytesIdentity, isIdentity, type DefinitionId } from "./de
 import { referencedPromptPaths, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type ResolvedDefinition } from "./definition-objects";
 
 export const DEFINITION_STORE_ROOT = resolve(import.meta.dir, "../definitions");
-type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable" | "read_skill_index" | "read_skill_bundle";
+type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable" | "read_skill_index" | "read_skill_bundle" | "read_prompt_version" | "read_prompt_pointer";
 interface FailureContext {
   readonly operation: StoreOperation;
   readonly identifier: string;
@@ -19,15 +19,15 @@ export interface MissingPrompt extends FailureContext { readonly kind: "missing_
 export interface MissingOperationRegistry extends FailureContext { readonly kind: "missing_operation_registry" }
 export interface StoreIoFailure extends FailureContext { readonly kind: "store_io" }
 export type DefinitionStoreFailure = HashMismatch | MalformedObject | InvalidUtf8 | MissingPrompt | MissingOperationRegistry | StoreIoFailure;
-type ReadContext = Pick<FailureContext, "operation" | "identifier">;
+export type ReadContext = Pick<FailureContext, "operation" | "identifier">;
 interface ObjectRead extends ReadContext { readonly path: string }
 /** Unknown JSON exists only while validating objects at the IO boundary. */
 interface JsonObject { readonly [key: string]: unknown }
 
-function failure(kind: DefinitionStoreFailure["kind"], context: ReadContext, detail: string): Result<never, DefinitionStoreFailure> {
+export function failure(kind: DefinitionStoreFailure["kind"], context: ReadContext, detail: string): Result<never, DefinitionStoreFailure> {
   return { ok: false, error: { kind, operation: context.operation, identifier: context.identifier, detail } };
 }
-function isObject(value: unknown): value is JsonObject {
+export function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function hasOnlyKeys(value: JsonObject, keys: readonly string[]): boolean {
@@ -80,28 +80,28 @@ function decodeUtf8(bytes: Uint8Array, context: ReadContext): Result<string, Def
     return failure("invalid_utf8", context, String(error));
   }
 }
-function readText(request: ObjectRead): Result<string, DefinitionStoreFailure> {
+export function readText(request: ObjectRead): Result<string, DefinitionStoreFailure> {
   const bytes = readBytes(request);
   if (!bytes.ok) return bytes;
   const text = decodeUtf8(bytes.value, request);
   if (!text.ok) return text;
-  if (request.operation !== "read_launchable" && bytesIdentity(bytes.value) !== request.identifier)
-    return failure("hash_mismatch", request, "SHA-256 of stored bytes differs from filename identity");
+  if (request.operation !== "read_launchable" && request.operation !== "read_prompt_pointer" && bytesIdentity(bytes.value) !== request.identifier)
+    return failure("hash_mismatch", request, request.path + ": SHA-256 of stored bytes differs from filename identity");
   return text;
 }
-function readJson(request: ObjectRead): Result<unknown, DefinitionStoreFailure> {
+export function readJson(request: ObjectRead): Result<unknown, DefinitionStoreFailure> {
   const text = readText(request);
   if (!text.ok) return text;
   let value: unknown;
   try {
     value = JSON.parse(text.value);
   } catch (error) {
-    return failure("malformed_object", request, String(error));
+    return failure("malformed_object", request, request.path + ": " + String(error));
   }
   if (!hasSafeWireNumbers(value)) return failure("malformed_object", request, "JSON exceeds the wire depth or safe numeric bounds");
   const canonical = canonicalJson(value);
   if (!canonical.ok) return failure("malformed_object", request, canonical.error.detail);
-  if (canonical.value !== text.value) return failure("malformed_object", request, "stored JSON is not byte-exact canonical JSON");
+  if (canonical.value !== text.value) return failure("malformed_object", request, request.path + ": stored JSON is not byte-exact canonical JSON");
   return { ok: true, value };
 }
 
@@ -138,7 +138,7 @@ export function readLaunchableCatalog(store_root = DEFINITION_STORE_ROOT): Resul
   const context: ReadContext = { operation: "read_launchable", identifier: "launchable.json" };
   const catalog = readJson({ ...context, path: resolve(store_root, "launchable.json") });
   if (!catalog.ok) return catalog;
-  if (!isObject(catalog.value) || !Object.values(catalog.value).every(isIdentity)) return failure("malformed_object", context, "expected an authoring-name-to-definition-ID map");
+  if (!isObject(catalog.value) || !Object.values(catalog.value).every((entry) => isObject(entry) && Object.keys(entry).length === 2 && hasOnlyKeys(entry, ["audience", "definition_id"]) && isIdentity(entry.definition_id) && (entry.audience === "user" || entry.audience === "test_fixture"))) return failure("malformed_object", context, "expected an authoring-name-to-definition-ID map");
   return { ok: true, value: catalog.value as LaunchableCatalog };
 }
 
@@ -146,7 +146,7 @@ export function resolveLaunchableDefinition(name: string, store_root = DEFINITIO
   const catalog = readLaunchableCatalog(store_root);
   if (!catalog.ok) return catalog;
   if (!Object.hasOwn(catalog.value, name)) return failure("malformed_object", { operation: "read_launchable", identifier: name }, "authoring name is absent from launchable.json");
-  return resolveDefinition(catalog.value[name], store_root);
+  return resolveDefinition(catalog.value[name].definition_id, store_root);
 }
 
 /** Current PR skill pins, derived from authored bundle directories. */
@@ -189,4 +189,8 @@ export function readSkillBundle(digest: string, store_root = process.env.OAKRIDG
     if (identity.value !== digest) return failure("hash_mismatch", context, "skill manifest SHA-256 differs from bundle identity");
     return { ok: true, value: { files: Object.fromEntries(entries) } };
   } catch (cause) { return failure("store_io", context, String(cause)); }
+}
+
+export function launchableDefinitionIds(catalog: LaunchableCatalog, audience: import("./definition-objects").WorkflowAudience | null): DefinitionId[] {
+  return [...new Set(Object.values(catalog).filter((entry) => audience === null || entry.audience === audience).map((entry) => entry.definition_id))];
 }

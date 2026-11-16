@@ -9,7 +9,7 @@ const detail = fixture.definition as unknown as OperatorDefinitionDetail;
 afterEach(cleanup);
 
 test("analysis input.spec stays verbatim without linking to the spec artifact", () => {
-  const model = selectStageInspector(detail, { kind: "stage", stage: "analysis" });
+  const model = selectStageInspector(detail, { kind: "stage", stage: "analysis", tab: null });
   if (!model) throw new Error("Missing analysis stage");
   const view = render(<LetExpression model={model} expression="input.spec" />);
   expect(view.container.textContent).toBe("input.spec");
@@ -17,7 +17,7 @@ test("analysis input.spec stays verbatim without linking to the spec artifact", 
 });
 
 test("standalone artifacts link while property accesses and quoted names do not", () => {
-  const model = selectStageInspector(detail, { kind: "stage", stage: "analysis" });
+  const model = selectStageInspector(detail, { kind: "stage", stage: "analysis", tab: null });
   if (!model) throw new Error("Missing analysis stage");
   const expression = 'approved(spec) and input . spec == "spec"';
   const view = render(<LetExpression model={model} expression={expression} />);
@@ -26,7 +26,7 @@ test("standalone artifacts link while property accesses and quoted names do not"
 });
 
 test("a field sharing a let binding's name stays verbatim", () => {
-  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  const model = selectStageInspector(detail, { kind: "stage", stage: "cohort", tab: null });
   if (!model) throw new Error("Missing cohort stage");
   const view = render(<LetExpression model={model} expression="input.brief_value and brief_value" />);
   expect(view.container.textContent).toBe("input.brief_value and brief_value");
@@ -36,7 +36,7 @@ test("a field sharing a let binding's name stays verbatim", () => {
 });
 
 test("hyphenated and dollar identifiers link whole, never by their parts", () => {
-  const cohort = selectStageInspector(detail, { kind: "stage", stage: "cohort" });
+  const cohort = selectStageInspector(detail, { kind: "stage", stage: "cohort", tab: null });
   if (!cohort) throw new Error("Missing cohort stage");
   const artifact = cohort.stage.artifacts.build_result;
   const model = { ...cohort, stage: { ...cohort.stage, artifacts: { ...cohort.stage.artifacts, "build-result": artifact, "$draft": artifact, build: artifact } } };

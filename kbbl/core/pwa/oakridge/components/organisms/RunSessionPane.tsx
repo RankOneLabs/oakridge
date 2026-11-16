@@ -8,6 +8,7 @@ import type { Sid } from "../../../lib/ids";
 
 interface RunSessionPaneProps {
   sessionId: Sid;
+  stage?: string | null;
   /**
    * Show `sessionId` in this same pane. Resume opens the new session here
    * rather than navigating, so the operator keeps their spatial context.
@@ -30,7 +31,7 @@ interface RunSessionPaneProps {
  * unconditionally, above the route branch, so the store is populated under the
  * Oakridge route exactly as it is under `sid=`.
  */
-export function RunSessionPane({ sessionId, onOpenSession }: RunSessionPaneProps) {
+export function RunSessionPane({ sessionId, stage = null, onOpenSession }: RunSessionPaneProps) {
   const scrollHostRef = useRef<HTMLDivElement>(null);
   const sessions = useStore((state) => state.sessions);
   const inboxStatus = useStore((state) => state.inboxStatus);
@@ -61,7 +62,7 @@ export function RunSessionPane({ sessionId, onOpenSession }: RunSessionPaneProps
         sid={sessionId}
         snapshot={sessions.get(sessionId) ?? null}
         inboxStatus={inboxStatus}
-        chrome={{ kind: "pane" }}
+        chrome={{ kind: "pane", stage }}
         layout={layout}
         onResume={(parentSid) =>
           resumeSession(parentSid, hydrateSession, (resumedSid) =>

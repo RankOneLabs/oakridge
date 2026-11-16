@@ -152,7 +152,7 @@ test("concurrent publications serialize and the loser observes a latest-version 
 
 integration("publication leaves nonempty capture pins, grades, evidence and executions byte-for-byte unchanged", async () => scratchDatabase(async (db) => {
   const selected = original.filter((definition) => definition.id === "finding.relevance");
-  const initial = snapshot(selected);
+  const initial = snapshot(selected, 1);
   const registered = await registerDefinitions(db, tenant, initial.registration);
   if (!registered.ok) throw new Error(registered.error.detail);
   const feed = createFeed(db, tenant, initial.capture_configuration);

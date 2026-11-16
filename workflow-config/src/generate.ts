@@ -1,3 +1,5 @@
+import { readPromptPointer, readPromptVersion } from "./prompt-versions";
+import { readText } from "./definition-store";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
@@ -6,7 +8,7 @@ import { WORKFLOW_SOURCES } from "./workflow-sources";
 import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
-import { commitDefinition, referencedPromptPaths, type DefinitionOrder, type LaunchableCatalog, type PromptReferences } from "./definition-objects";
+import { commitDefinition, referencedPromptPaths, type DefinitionOrder, type LaunchableCatalog, type LaunchableEntry, type PromptReferences } from "./definition-objects";
 import { isCommittedDefinition, isPromptPath } from "./definition-store";
 
 const root = resolve(import.meta.dir, "../..");
@@ -56,6 +58,24 @@ function selectIncompatibleDefinitions(): string[] {
 }
 
 const prompts = filesUnder(promptRoot).map(readPrompt);
+// Validate every pointer before planning or writing outputs, including unreferenced paths.
+const pointerRoot = resolve(storeRoot, "prompt-pointers");
+const publishedPrompts = new Map<string, AuthoredPrompt>();
+if (existsSync(pointerRoot)) for (const file of filesUnder(pointerRoot).filter(path => !path.endsWith(".tmp"))) {
+  const path = relative(pointerRoot, file).split(sep).join("/").replace(/\.json$/, "");
+  const pointer = required(readPromptPointer(path, storeRoot));
+  const version = required(readPromptVersion(pointer.published, storeRoot));
+  const body = required(readText({ operation: "read_prompt", identifier: version.prompt_id, path: resolve(storeRoot, "prompts", version.prompt_id + ".md") }));
+  const bytes = Buffer.from(body);
+  publishedPrompts.set(path, { path, id: version.prompt_id, bytes });
+}
+for (let index = 0; index < prompts.length; index++) {
+  const authored = prompts[index];
+  const published = publishedPrompts.get(authored.path);
+  if (!published) continue;
+  if (authored.id !== published.id) console.error(`prompt ${authored.path}: authored file ${authored.id} differs from published version ${published.id}; using the published version`);
+  prompts[index] = published;
+}
 const promptsByPath = new Map(prompts.map((prompt) => [prompt.path, prompt]));
 const registryId = required(jsonIdentity<OperationRegistryId>(OPERATION_REGISTRY));
 const generated: GeneratedFile[] = [
@@ -73,8 +93,8 @@ const skillEntries = readdirSync(skillRoot, { withFileTypes: true }).filter((ent
   return [entry.name, digest];
 });
 generated.push({ path: resolve(storeRoot, "skills.json"), bytes: canonicalBytes(Object.fromEntries(skillEntries)) });
-const launchableEntries: [string, DefinitionId][] = [];
-for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
+const launchableEntries: [string, LaunchableEntry][] = [];
+for (const [name, { path, audience }] of Object.entries(WORKFLOW_SOURCES)) {
   const sourcePath = resolve(root, path);
   const document = YAML.parseDocument(readFileSync(sourcePath, "utf8"), { uniqueKeys: true });
   if (document.errors.length > 0) {
@@ -101,7 +121,7 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
   }));
   const definition = commitDefinition({ source, operation_registry_id: registryId, prompts: references }, order);
   const definitionId = required(jsonIdentity<DefinitionId>(definition));
-  launchableEntries.push([name, definitionId]);
+  launchableEntries.push([name, { audience, definition_id: definitionId }]);
   generated.push(
     { path: resolve(root, "workflow-core/fixtures/bundles", `${name}.json`), bytes: Buffer.from(JSON.stringify(authored, null, 2) + "\n") },
     { path: resolve(storeRoot, "workflows", `${definitionId}.json`), bytes: canonicalBytes(definition) },

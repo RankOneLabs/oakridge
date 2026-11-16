@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { GradingConfigBrowser } from "../components/organisms/GradingConfigBrowser";
 import { GradingConfigView } from "../views/GradingConfigView";
 import { GradingConfigFeedback } from "../components/molecules/GradingConfigFeedback";
 import { configDefinitions, configRead, publishedConfig } from "./grading-config-fixture";
+import { readDefinitions } from "../client";
 import { readHashRoute } from "../../lib/hash";
 import { atPath, replaceAtPath, type GradingFeedback } from "../lib/grading-config";
 import type { ObservationJsonValue as Json } from "../grading-contracts/domain/primitives";
@@ -35,8 +36,8 @@ const click = (text: string) => fireEvent.click(screen.getByRole("button", { nam
 
 describe("grading configuration browser and structured sections", () => {
   it("parses both slash-prefixed routes and existing shell route spelling", () => {
-    expect(readHashRoute("#/oakridge/grading-config", "")).toEqual({ view: "oakridge", route: { sub: "grading-config", version: null } });
-    expect(readHashRoute("#oakridge/grading-config/versions/3", "")).toEqual({ view: "oakridge", route: { sub: "grading-config", version: 3 } });
+    expect(readHashRoute("#/oakridge/grading-config", "")).toEqual({ view: "redirect", hash: "settings/workflows/grading-config" });
+    expect(readHashRoute("#oakridge/grading-config/versions/3", "")).toEqual({ view: "redirect", hash: "settings/workflows/grading-config/versions/3" });
   });
   it("loads only the proxy routes and renders latest timestamp, saved draft and every definition summary", async () => {
     render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><GradingConfigView version={null} onNavigate={vi.fn()} /></QueryClientProvider>);
@@ -217,4 +218,22 @@ it("places task_source validation issues beside the Targets scope fields", async
   click("Validate saved draft"); await screen.findByText("Validation failed. Review the issues below.");
   expect(within(screen.getByRole("region", { name: "Targets" })).getByRole("alert").textContent).toBe("Resolved relation source is unavailable");
   expect(within(screen.getByRole("region", { name: "Question" })).queryByRole("alert")).toBeNull();
+});
+
+vi.mock("../client", async importOriginal => ({ ...await importOriginal<typeof import("../client")>(), readDefinitions: vi.fn(async () => []) }));
+
+it("keeps workflow target loading and failures distinct from successful empty reads", async () => {
+  let rejectTargets: (error: Error) => void = () => {};
+  vi.mocked(readDefinitions).mockReturnValueOnce(new Promise((_resolve, reject) => { rejectTargets = reject; }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><GradingConfigView version={null} onNavigate={vi.fn()} /></QueryClientProvider>);
+  await screen.findByTestId("grading-config-browser");
+  const region = screen.getByRole("region", { name: "Applies to workflow artifacts" });
+  expect(within(region).getByText("Loading workflow artifacts…")).toBeTruthy();
+  expect(within(region).queryByText("No workflow artifact matches this definition's targets.")).toBeNull();
+  await act(async () => rejectTargets(new Error("Workflow catalogue offline")));
+  await within(region).findByText("Workflow artifacts unavailable: Workflow catalogue offline");
+  expect(within(region).queryByText("No workflow artifact matches this definition's targets.")).toBeNull();
+  await act(async () => { await client.refetchQueries({ queryKey: ["oakridge", "definitions", "summaries"] }); });
+  await within(region).findByText("No workflow artifact matches this definition's targets.");
 });

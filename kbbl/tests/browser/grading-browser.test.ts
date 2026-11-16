@@ -25,8 +25,9 @@ let script: string;
 beforeAll(async () => {
   const directory = mkdtempSync(join(tmpdir(), "oakridge-grading-browser-"));
   const output = join(directory, "entry.js");
+  // Library imports emit CSS too; keep its extension distinct from entry.js.
   try {
-    const built = Bun.spawnSync({ cmd: [process.execPath, "build", resolve(import.meta.dir, "operator-browser-entry.tsx"), "--target=browser", `--outfile=${output}`], cwd: resolve(import.meta.dir, "../../.."), stdout: "pipe", stderr: "pipe" });
+    const built = Bun.spawnSync({ cmd: [process.execPath, "build", resolve(import.meta.dir, "operator-browser-entry.tsx"), "--target=browser", `--outdir=${directory}`, "--entry-naming=entry.[ext]"], cwd: resolve(import.meta.dir, "../../.."), stdout: "pipe", stderr: "pipe" });
     if (built.exitCode !== 0) throw new Error(`Browser fixture build failed: ${built.stderr.toString()}`);
     script = readFileSync(output, "utf8");
   } finally { rmSync(directory, { recursive: true, force: true }); }

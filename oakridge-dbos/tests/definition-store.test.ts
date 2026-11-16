@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, type DefinitionId } from "../src/runtime/definition-store";
+import { DEFINITION_STORE_ROOT, launchableDefinitionIds, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, type DefinitionId } from "../src/runtime/definition-store";
 
 function fixture(check: (root: string, id: DefinitionId) => void): void {
   const root = mkdtempSync("/tmp/authority-definitions-");
@@ -9,7 +9,7 @@ function fixture(check: (root: string, id: DefinitionId) => void): void {
     cpSync(DEFINITION_STORE_ROOT, root, { recursive: true });
     const catalog = readLaunchableCatalog(root);
     if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-    check(root, Object.values(catalog.value)[0]);
+    check(root, Object.values(catalog.value)[0].definition_id);
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
@@ -74,3 +74,26 @@ test("changed prompt bytes fail their content hash", () => fixture((root, id) =>
   const result = resolveDefinition(id, root);
   expect(!result.ok && result.error.kind).toBe("hash_mismatch");
 }));
+
+test("audience filtering keeps fixtures resolvable", () => {
+  const catalog = readLaunchableCatalog(DEFINITION_STORE_ROOT);
+  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
+  expect(launchableDefinitionIds(catalog.value, "user")).toEqual([catalog.value.development.definition_id]);
+  expect(launchableDefinitionIds(catalog.value, null).length).toBe(3);
+  expect(resolveLaunchableDefinition(catalog.value["fan-out"].definition_id, DEFINITION_STORE_ROOT).ok).toBe(true);
+});
+
+test("user catalog pagination excludes fixtures while detail reads accept them", async () => {
+  const { listDefinitions, readDefinition } = await import("../src/storage/read-store");
+  // These definition reads use committed files and do not issue database queries.
+  const reader = {} as Parameters<typeof listDefinitions>[0];
+  const catalog = readLaunchableCatalog(DEFINITION_STORE_ROOT);
+  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
+  const page = await listDefinitions(reader, { after: null, limit: 1 });
+  expect([page.items.map((item) => item.definition_id), page.next]).toEqual([[catalog.value.development.definition_id], null]);
+  expect((await listDefinitions(reader, { after: catalog.value.development.definition_id, limit: 1 })).items).toEqual([]);
+  for (const name of ["fan-out", "review-loop"]) {
+    const detail = await readDefinition(reader, catalog.value[name].definition_id);
+    expect(detail?.definition_id).toBe(catalog.value[name].definition_id);
+  }
+});

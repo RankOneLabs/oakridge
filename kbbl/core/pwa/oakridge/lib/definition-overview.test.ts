@@ -15,7 +15,14 @@ test("development overview exposes identity, interfaces and declarations", () =>
   expect(overview.name).toBe("development");
   expect(overview.input).toEqual(detail.workflow.input);
   expect(overview.outputs).toEqual(detail.workflow.run.outcome);
-  expect(overview.stages).toEqual(["prepare", "analysis", "planning", "brief", "cohort", "integration"]);
+  expect(overview.stages).toEqual([
+    "prepare",
+    "analysis",
+    "planning",
+    "brief",
+    "cohort",
+    "integration",
+  ]);
   expect(overview.collections.map((unit) => unit.path).sort()).toEqual([
     "briefs",
     "implementation",
@@ -28,15 +35,27 @@ test("development overview exposes identity, interfaces and declarations", () =>
       { name: "builders", scope: null, capacity: 4, units: ["implementation"] },
     ]),
   );
-  expect(overview.units.find((unit) => unit.path === "implementation")?.after).toBe("each.depends_on");
+  expect(
+    overview.units.find((unit) => unit.path === "implementation")?.after,
+  ).toBe("each.depends_on");
 });
 test("fan-out groups retain nested pools and child declaration paths", () => {
-  const root = resolve(import.meta.dirname, "../../../../../workflow-config/definitions");
-  const catalog = JSON.parse(readFileSync(resolve(root, "launchable.json"), "utf8")) as {
-    [name: string]: string;
+  const root = resolve(
+    import.meta.dirname,
+    "../../../../../workflow-config/definitions",
+  );
+  const catalog = JSON.parse(
+    readFileSync(resolve(root, "launchable.json"), "utf8"),
+  ) as {
+    [name: string]: { definition_id: string };
   };
   const workflow = (
-    JSON.parse(readFileSync(resolve(root, "workflows", catalog["fan-out"] + ".json"), "utf8")) as {
+    JSON.parse(
+      readFileSync(
+        resolve(root, "workflows", catalog["fan-out"].definition_id + ".json"),
+        "utf8",
+      ),
+    ) as {
       source: OperatorDefinitionDetail["workflow"];
     }
   ).source;
@@ -44,7 +63,12 @@ test("fan-out groups retain nested pools and child declaration paths", () => {
   expect(overview.groups).toMatchObject([
     { path: "work", stage: null, children: ["work/item"], is_group: true },
   ]);
-  expect(overview.pools).toContainEqual({ name: "slots", scope: "work", capacity: 2, units: ["work/item"] });
+  expect(overview.pools).toContainEqual({
+    name: "slots",
+    scope: "work",
+    capacity: 2,
+    units: ["work/item"],
+  });
 });
 
 test("overview preserves prerequisite arrays, expressions, empty arrays and absence", () => {
@@ -55,16 +79,22 @@ test("overview preserves prerequisite arrays, expressions, empty arrays and abse
       units: {
         first: { stage: "analysis" },
         second: { stage: "planning", after: ["first"] },
-        collection: { stage: "cohort", after: "each.depends_on", for_each: "input.items" },
+        collection: {
+          stage: "cohort",
+          after: "each.depends_on",
+          for_each: "input.items",
+        },
         empty: { stage: "prepare", after: [] },
       },
     },
   };
   expect(
-    selectDefinitionOverview({ ...detail, workflow }).units.map(({ after, after_text }) => ({
-      after,
-      after_text,
-    })),
+    selectDefinitionOverview({ ...detail, workflow }).units.map(
+      ({ after, after_text }) => ({
+        after,
+        after_text,
+      }),
+    ),
   ).toEqual([
     { after: null, after_text: null },
     { after: ["first"], after_text: '["first"]' },
@@ -85,7 +115,10 @@ test("selection summary returns all stage callers including nested units", () =>
     },
   };
   const overview = selectDefinitionOverview({ ...detail, workflow });
-  const summary = selectDefinitionSelection({ overview, selection: { kind: "stage", stage: "cohort" } });
+  const summary = selectDefinitionSelection({
+    overview,
+    selection: { kind: "stage", stage: "cohort", tab: null },
+  });
   expect(summary).toEqual({
     kind: "stage",
     stage: "cohort",
@@ -99,12 +132,22 @@ test("selection summary preserves a selected nested group declaration", () => {
     run: {
       outcome: {},
       units: {
-        work: { group: { outcome: {}, units: { nested: { group: { outcome: {}, units: {} } } } } },
+        work: {
+          group: {
+            outcome: {},
+            units: { nested: { group: { outcome: {}, units: {} } } },
+          },
+        },
       },
     },
   };
   const overview = selectDefinitionOverview({ ...detail, workflow });
-  expect(selectDefinitionSelection({ overview, selection: { kind: "unit", path: "work/nested" } })).toEqual({
+  expect(
+    selectDefinitionSelection({
+      overview,
+      selection: { kind: "unit", path: "work/nested", tab: null },
+    }),
+  ).toEqual({
     kind: "unit",
     unit: overview.units[1],
   });
@@ -112,14 +155,26 @@ test("selection summary preserves a selected nested group declaration", () => {
 
 test("selection summary distinguishes no selection from absent stages and units", () => {
   const overview = selectDefinitionOverview(detail);
-  expect(selectDefinitionSelection({ overview, selection: null })).toEqual({ kind: "none" });
-  expect(selectDefinitionSelection({ overview, selection: { kind: "stage", stage: "unknown" } })).toEqual({
-    kind: "missing",
-    selection: { kind: "stage", stage: "unknown" },
+  expect(selectDefinitionSelection({ overview, selection: null })).toEqual({
+    kind: "none",
   });
-  expect(selectDefinitionSelection({ overview, selection: { kind: "unit", path: "unknown" } })).toEqual({
+  expect(
+    selectDefinitionSelection({
+      overview,
+      selection: { kind: "stage", stage: "unknown", tab: null },
+    }),
+  ).toEqual({
     kind: "missing",
-    selection: { kind: "unit", path: "unknown" },
+    selection: { kind: "stage", stage: "unknown", tab: null },
+  });
+  expect(
+    selectDefinitionSelection({
+      overview,
+      selection: { kind: "unit", path: "unknown", tab: null },
+    }),
+  ).toEqual({
+    kind: "missing",
+    selection: { kind: "unit", path: "unknown", tab: null },
   });
 });
 
@@ -149,5 +204,35 @@ test("schema matching preserves text when no schemas are declared", () => {
   expect(selectDefinitionSchemaParts("", [])).toEqual([]);
 });
 test("abbreviated definition id keeps a twelve-character prefix with an ellipsis", () => {
-  expect(selectAbbreviatedDefinitionId("0123456789abcdef")).toBe("0123456789ab…");
+  expect(selectAbbreviatedDefinitionId("0123456789abcdef")).toBe(
+    "0123456789ab…",
+  );
 });
+
+import fanOut from "../__fixtures__/definition-fan-out.json";
+import reviewLoop from "../__fixtures__/definition-review-loop.json";
+import { renameStage, removeStage } from "./definition-mutations.test-helpers";
+for (const fixture of [fanOut, reviewLoop]) {
+  test(`${fixture.definition.workflow.workflow}: stage mutations keep authored, effective and bundled references consistent`, () => {
+    const source = fixture.definition as unknown as OperatorDefinitionDetail;
+    const name = source.bundle.stages[0];
+    if (!name) throw Error("missing stage");
+    const renamed = renameStage(source, { old: name, name: "renamed_stage" });
+    expect(renamed.bundle.stages).not.toContain(name);
+    expect(Object.keys(renamed.workflow.stages)).not.toContain(name);
+    expect(Object.keys(renamed.effective_workflow.stages)).not.toContain(name);
+    expect(
+      selectDefinitionOverview(renamed).units.some(
+        (unit) => unit.stage === name,
+      ),
+    ).toBe(false);
+    expect(renamed.bundle.units.some((unit) => unit.stage === name)).toBe(
+      false,
+    );
+    expect(
+      selectDefinitionOverview(removeStage(source, name)).units.some(
+        (unit) => unit.stage === name,
+      ),
+    ).toBe(false);
+  });
+}

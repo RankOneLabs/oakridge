@@ -1,59 +1,13 @@
-import {
-  stageElementHref,
-  stageElementId,
-  type StageSectionProps,
-} from "../../lib/stage-inspector";
-import { StageType } from "./StageInputsSection";
-export function StageArtifactsSection({ model }: StageSectionProps) {
-  return (
-    <section aria-label="Artifacts" className="rounded border border-[var(--border-muted)] p-3">
-      <h3>Artifacts</h3>
-      {model.artifacts.map(({ name, artifact, producers, consumers }) => (
-        <article
-          key={name}
-          className="or-stage-artifact border-t border-[var(--border-muted)] py-2"
-          id={stageElementId({ stage: model.name, kind: "artifact", name: name })}
-          tabIndex={-1}
-        >
-          <h4 aria-label={artifact.validate?.length ? `${name} · Validated artifact` : name}>
-            {name}
-            {Boolean(artifact.validate?.length) && <small className="or-stage-validated ml-2 text-xs font-normal">validated</small>}
-          </h4>
-          <p>kind: {artifact.kind}</p>
-          <StageType model={model} value={artifact.schema} />
-          <ul>
-            {artifact.validate?.map((rule, index) => (
-              <li key={index}>
-                <code>{rule.check}</code> — {rule.message}
-              </li>
-            ))}
-          </ul>
-          <p>
-            Produced by:{" "}
-            {producers.map((key) => (
-              <a
-                key={key}
-                className="mr-2"
-                href={stageElementHref(model, { kind: "worker", name: key })}
-              >
-                {key}
-              </a>
-            ))}
-          </p>
-          <p>
-            Consumed by reviews:{" "}
-            {consumers.map((key) => (
-              <a
-                key={key}
-                className="mr-2"
-                href={stageElementHref(model, { kind: "review", name: key })}
-              >
-                {key}
-              </a>
-            ))}
-          </p>
-        </article>
-      ))}
-    </section>
-  );
+import type { PublishedGradingContext } from "../../lib/grading-applicability";
+import { stageElementId, type StageSectionProps } from "../../lib/stage-inspector";
+import { ArtifactContractView } from "./ArtifactContractView";
+export function StageArtifactsSection({ model, grading }: StageSectionProps & { grading?: PublishedGradingContext }) {
+  return <section aria-label="Artifacts" className="rounded border border-[var(--border-muted)] p-3">
+    <h3>Artifacts</h3>
+    <p>Contracts declared by this workflow definition — not artifacts produced by a run.</p>
+    {model.sections.artifacts.map(contract => <article key={contract.name} className="or-stage-artifact border-t border-[var(--border-muted)] py-2" id={stageElementId({stage: model.name, kind: "artifact", name: contract.name})} tabIndex={-1}>
+      <h4 aria-label={contract.validate?.length ? `${contract.name} · Validated artifact` : contract.name}>{contract.name}{Boolean(contract.validate?.length) && <small className="or-stage-validated ml-2 text-xs font-normal">validated</small>}</h4>
+      <ArtifactContractView model={model} contract={contract} grading={grading} />
+    </article>)}
+  </section>;
 }

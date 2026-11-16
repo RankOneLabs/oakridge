@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogueArtifactKinds, catalogueEvidenceCapability, catalogueEvidenceNames, catalogueItemSelectors, catalogueRunners, configurationDiff, configurationHeader, createDraft, definitionSummaries, editDraft, parseDefinitions, publicationFailure, publicationFeedback, saveFailed, saveSucceeded, sectionIssues, definitionWithScope, evaluatorWithRunner } from "./grading-config";
+import { selectDefinitionTargetIndex, selectGradingDefinitionSelection, catalogueArtifactKinds, catalogueEvidenceCapability, catalogueEvidenceNames, catalogueItemSelectors, catalogueRunners, configurationDiff, configurationHeader, createDraft, definitionSummaries, editDraft, parseDefinitions, publicationFailure, publicationFeedback, saveFailed, saveSucceeded, sectionIssues, definitionWithScope, evaluatorWithRunner } from "./grading-config";
 import type { ObservationPublicationError } from "../grading-contracts/grading/publication";
 import type { ObservationGradingCatalogue } from "../grading-contracts/http/grading-config";
 
@@ -113,5 +113,29 @@ describe("per_task source variants", () => {
   });
   it("summaries distinguish both task-source variants and per_item", () => {
     expect(definitionSummaries([{ scope: "per_task", task_ids: "/task_ids" }, { scope: "per_task", task_source: "resolved_assesses" }, { scope: "per_item" }]).map((summary) => summary.scope)).toEqual(["per_task (task_ids pointer)", "per_task (resolved_assesses)", "per_item"]);
+  });
+});
+
+it("definition selector entries preserve fallback names and selected index", async () => {
+  const { definitionSelectorEntries } = await import("./grading-config");
+  expect(definitionSelectorEntries(definitionSummaries([{}, { id: "second", scope: "per_item" }]), 1)).toEqual([{ index: 0, id: "Definition 1", scope: "", is_selected: false }, { index: 1, id: "second", scope: "per_item", is_selected: true }]);
+});
+
+describe("grading definition selection", () => {
+  const summaries = definitionSummaries([{ id: "first" }, { id: "second" }]);
+  it("targets a definition by stable id", () => {
+    expect(selectDefinitionTargetIndex(summaries, "second")).toBe(1);
+  });
+  it.each(["missing", null, undefined])("falls back to the first index for target %s", id => {
+    expect(selectDefinitionTargetIndex(summaries, id)).toBe(0);
+  });
+  it("selects the current summary and identifies an unknown link target", () => {
+    expect(selectGradingDefinitionSelection(summaries, { index: 0, id: "missing" })).toEqual({ summary: summaries[0], is_target_missing: true });
+  });
+  it("keeps an existing target available after selecting a different summary", () => {
+    expect(selectGradingDefinitionSelection(summaries, { index: 0, id: "second" })).toEqual({ summary: summaries[0], is_target_missing: false });
+  });
+  it.each([null, 2])("returns no summary for an absent index %s", index => {
+    expect(selectGradingDefinitionSelection(summaries, { index, id: null })).toEqual({ summary: null, is_target_missing: false });
   });
 });

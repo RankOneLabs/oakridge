@@ -21,7 +21,7 @@ async function reconcileFixtures(should_check: boolean): Promise<void> {
   const directory = resolve(import.meta.dir, "../../kbbl/core/pwa/oakridge/__fixtures__");
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  const definition_id = catalog.value.development;
+  const definition_id = catalog.value.development.definition_id;
   const core = CoreClient.start();
   if (!core.ok) throw new Error(core.error.detail.detail);
   try {

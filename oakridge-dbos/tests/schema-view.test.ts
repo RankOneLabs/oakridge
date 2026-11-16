@@ -110,7 +110,7 @@ test("the development bundle lists each direct collection declaration", async ()
   const source = JSON.parse(readFileSync(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/development.json"), "utf8")) as Workflow;
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  const prompts = resolveDefinition(catalog.value.development);
+  const prompts = resolveDefinition(catalog.value.development.definition_id);
   if (!prompts.ok) throw new Error(JSON.stringify(prompts.error));
   const started = CoreClient.start();
   if (!started.ok) throw new Error(started.error.detail.detail);

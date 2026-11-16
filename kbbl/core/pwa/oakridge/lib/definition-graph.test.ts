@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import snapshot from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import { selectDefinitionDependencies } from "./definition-dependencies";
-import { selectDefinitionGraph } from "./definition-graph";
+import { selectDefinitionGraph } from "./graph-layout";
 import { selectDefinitionOverview } from "./definition-overview";
 
 const detail = snapshot.definition as unknown as OperatorDefinitionDetail;
@@ -37,9 +37,15 @@ const overview = selectDefinitionOverview({ ...detail, workflow });
 const dependencies = selectDefinitionDependencies(workflow);
 
 test("root graph keeps nested units and their edges out of the root level", () => {
-  const graph = selectDefinitionGraph({ overview, dependencies, selection: null });
+  const graph = selectDefinitionGraph({
+    overview,
+    dependencies,
+    selection: null,
+  });
   expect(graph.units.map((unit) => unit.path)).toEqual(["start", "work"]);
-  expect(graph.edges).toEqual([{ kind: "explicit", from: "start", to: "work", offset_x: 0 }]);
+  expect(graph.edges).toEqual([
+    { kind: "explicit", from: "start", to: "work", offset_x: 0 },
+  ]);
   expect(graph.breadcrumbs).toEqual([]);
 });
 
@@ -47,11 +53,19 @@ test("nested group selection filters its level and links each ancestor breadcrum
   const graph = selectDefinitionGraph({
     overview,
     dependencies,
-    selection: { kind: "unit", path: "work/nested" },
+    selection: { kind: "unit", path: "work/nested", tab: null },
   });
-  expect(graph.units.map((unit) => unit.path)).toEqual(["work/nested/item", "work/nested/finish"]);
+  expect(graph.units.map((unit) => unit.path)).toEqual([
+    "work/nested/item",
+    "work/nested/finish",
+  ]);
   expect(graph.edges).toEqual([
-    { kind: "explicit", from: "work/nested/item", to: "work/nested/finish", offset_x: 0 },
+    {
+      kind: "explicit",
+      from: "work/nested/item",
+      to: "work/nested/finish",
+      offset_x: 0,
+    },
   ]);
   expect(graph.breadcrumbs).toEqual([
     { name: "work", path: "work" },
@@ -63,23 +77,35 @@ test("selecting a leaf retains its containing group level", () => {
   const group = selectDefinitionGraph({
     overview,
     dependencies,
-    selection: { kind: "unit", path: "work/nested" },
+    selection: { kind: "unit", path: "work/nested", tab: null },
   });
   const leaf = selectDefinitionGraph({
     overview,
     dependencies,
-    selection: { kind: "unit", path: "work/nested/item" },
+    selection: { kind: "unit", path: "work/nested/item", tab: null },
   });
   expect(leaf).toEqual(group);
 });
 
 test("stage and unknown unit selections retain the root level", () => {
-  const root = selectDefinitionGraph({ overview, dependencies, selection: null });
+  const root = selectDefinitionGraph({
+    overview,
+    dependencies,
+    selection: null,
+  });
   expect(
-    selectDefinitionGraph({ overview, dependencies, selection: { kind: "stage", stage: "cohort" } }),
+    selectDefinitionGraph({
+      overview,
+      dependencies,
+      selection: { kind: "stage", stage: "cohort", tab: null },
+    }),
   ).toEqual(root);
   expect(
-    selectDefinitionGraph({ overview, dependencies, selection: { kind: "unit", path: "missing" } }),
+    selectDefinitionGraph({
+      overview,
+      dependencies,
+      selection: { kind: "unit", path: "missing", tab: null },
+    }),
   ).toEqual(root);
 });
 
@@ -89,7 +115,9 @@ test("development graph includes all eleven authored referenced dependencies", (
     dependencies: selectDefinitionDependencies(detail.workflow),
     selection: null,
   });
-  expect(graph.edges.map(({ from, to, kind }) => `${from}→${to} (${kind})`).sort()).toEqual(
+  expect(
+    graph.edges.map(({ from, to, kind }) => `${from}→${to} (${kind})`).sort(),
+  ).toEqual(
     [
       "prepare→analysis",
       "prepare→planning",
@@ -115,7 +143,11 @@ test("parallel dependency kinds receive separate routes without changing their r
       outcome: {},
       units: {
         first: { stage: "analysis" },
-        second: { stage: "planning", after: ["first"], input: { spec: "first.outcome.spec" } },
+        second: {
+          stage: "planning",
+          after: ["first"],
+          input: { spec: "first.outcome.spec" },
+        },
       },
     },
   };
@@ -133,9 +165,27 @@ test("parallel dependency kinds receive separate routes without changing their r
 });
 
 test("long expressions keep fixed nodes and expose per-member dependencies", () => {
-  const workflow = { ...detail.workflow, run: { outcome: {}, units: { long: { stage: "cohort", for_each: "input." + "x".repeat(500), after: "each.depends_on" } } } };
+  const workflow = {
+    ...detail.workflow,
+    run: {
+      outcome: {},
+      units: {
+        long: {
+          stage: "cohort",
+          for_each: "input." + "x".repeat(500),
+          after: "each.depends_on",
+        },
+      },
+    },
+  };
   const overview = selectDefinitionOverview({ ...detail, workflow });
-  const graph = selectDefinitionGraph({ overview, dependencies: selectDefinitionDependencies(workflow), selection: null });
-  expect(graph.layout.nodes.map(({ width, height }) => [width, height])).toEqual([[240, 100]]);
+  const graph = selectDefinitionGraph({
+    overview,
+    dependencies: selectDefinitionDependencies(workflow),
+    selection: null,
+  });
+  expect(
+    graph.layout.nodes.map(({ width, height }) => [width, height]),
+  ).toEqual([[240, 100]]);
   expect(overview.units[0]?.has_per_member_after).toBe(true);
 });

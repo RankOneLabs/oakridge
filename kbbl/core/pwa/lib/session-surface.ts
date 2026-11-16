@@ -53,7 +53,7 @@ export type SessionSurfaceChrome =
       readonly kind: "route";
       readonly onBack: () => void;
     }
-  | { readonly kind: "pane" };
+  | { readonly kind: "pane"; readonly stage: string | null };
 
 /**
  * How close to the bottom still counts as "following along", in CSS pixels.

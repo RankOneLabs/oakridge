@@ -1,5 +1,5 @@
 import { CoreClient, compileDefinition } from "../core-client/client";
-import { isIdentity, readLaunchableCatalog, resolveDefinition } from "../runtime/definition-store";
+import { isIdentity, launchableDefinitionIds, readLaunchableCatalog, resolveDefinition } from "../runtime/definition-store";
 import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysely";
 import type { ParsedWorkflow, UnitStatus } from "../core-client/core-types";
 import type { ActionId, Brand, DecisionId, DefinitionId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
@@ -454,7 +454,7 @@ async function loadDefinition(definition_id: DefinitionId): Promise<DefinitionRe
 export async function listDefinitions(_db: Reader, query: { readonly after: string | null; readonly limit: number }): Promise<DefinitionReadPage> {
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  const ids = [...new Set(Object.values(catalog.value))].sort().reverse().filter((id) => query.after === null || id < query.after);
+  const ids = launchableDefinitionIds(catalog.value, "user").sort().reverse().filter((id) => query.after === null || id < query.after);
   const selected = ids.slice(0, query.limit);
   return { items: await Promise.all(selected.map(loadDefinition)), next: ids.length > selected.length ? selected.at(-1) ?? null : null };
 }

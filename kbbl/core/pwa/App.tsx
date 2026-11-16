@@ -1,3 +1,4 @@
+import { replaceHashRoute } from "./lib/hash";
 import { useEffect } from "react";
 
 import { useHashRoute } from "./hooks/useHashRoute";
@@ -26,6 +27,7 @@ import { selectRunFrameNotification } from "./oakridge/lib/run-notifications";
 
 export function App() {
   const route = useHashRoute();
+  useEffect(() => { if (route?.view === "redirect") replaceHashRoute(route.hash); }, [route]);
   const [sid, navigate] = useHashSid();
   const [theme, toggleTheme] = useTheme();
   const oakridgeConfig = useOakridgeConfig();
@@ -69,7 +71,7 @@ export function App() {
 
   const config = useServerConfig();
 
-  const activeSurface: PrimarySurface = sid !== null || route?.view === "sessions"
+  const activeSurface: PrimarySurface = route?.view === "settings" ? "settings" : sid !== null || route?.view === "sessions"
     ? "sessions"
     : route?.view === "oakridge" && route.route.sub === "review-inbox"
       ? "attention"
@@ -79,12 +81,14 @@ export function App() {
       ? "oakridge"
       : surface === "sessions"
         ? "sessions"
-        : "oakridge/review-inbox";
+        : surface === "settings" ? "settings" : "oakridge/review-inbox";
   };
 
   // Workflow routes take precedence over session hashes.
   let view: React.ReactNode;
-  if (route?.view === "oakridge") {
+  if (route?.view === "redirect") {
+    view = null;
+  } else if (route?.view === "oakridge" || route?.view === "settings") {
     view = <OakridgeShell route={route.route} runAttentionCounts={runAttentionCounts} />;
   } else if (sid !== null) {
     view = (

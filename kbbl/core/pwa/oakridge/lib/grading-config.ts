@@ -162,3 +162,15 @@ export function definitionWithTaskSource(definition: Json, source: Json): Json {
   return source === "resolved_assesses" ? { ...fields, scope: "per_task", task_source: "resolved_assesses" }
     : { ...fields, scope: "per_task", task_ids: task_ids ?? "" };
 }
+
+export interface DefinitionSelectorEntry { index: number; id: string; scope: string; is_selected: boolean }
+export const definitionSelectorEntries = (summaries: readonly DefinitionSummary[], selectedIndex: number | null): DefinitionSelectorEntry[] => summaries.map(summary => ({ index: summary.index, id: summary.id, scope: summary.scope, is_selected: summary.index === selectedIndex }));
+
+export const selectDefinitionTargetIndex = (summaries: readonly DefinitionSummary[], definitionId: string | null | undefined): number =>
+  Math.max(0, summaries.findIndex(summary => summary.id === definitionId));
+export interface GradingDefinitionSelection { summary: DefinitionSummary | null; is_target_missing: boolean }
+export interface GradingDefinitionSelectionTarget { index: number | null; id: string | null | undefined }
+export function selectGradingDefinitionSelection(summaries: readonly DefinitionSummary[], target: GradingDefinitionSelectionTarget): GradingDefinitionSelection {
+  return { summary: target.index === null ? null : summaries[target.index] ?? null,
+    is_target_missing: Boolean(target.id) && !summaries.some(summary => summary.id === target.id) };
+}

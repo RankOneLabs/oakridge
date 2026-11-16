@@ -185,3 +185,6 @@ export const CORRECTNESS_ID = "assessment_finding.correctness" as QuestionId;
 export const EVIDENCE_SUPPORT_ID = "assessment_finding.evidence_support" as QuestionId;
 export const TASK_COVERAGE_ID = "task.requirement_coverage" as QuestionId;
 export const CONTRIBUTION_COVERAGE_ID = "acceptance_entry.task_coverage" as QuestionId;
+
+export const pinIdentity = { config_version: 1, config_hash: "canonical-json/v1:" + "a".repeat(64) };
+export const pinProvenance = (question: import("../src/grading/question").QuestionKey) => ({ ...pinIdentity, collection_plan: { question_id: question.question_id, question_version: question.question_version, evidence: committedRegistration.value.capture.pins.find((pin) => pin.question_id === question.question_id)?.collection_plan.evidence ?? [] } });

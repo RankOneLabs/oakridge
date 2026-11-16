@@ -12,7 +12,7 @@ export interface GradingSectionProps {
 }
 export function GradingConfigQuestion({ definition, onEdit, jsonField }: GradingSectionProps) {
   const question = jsonObject(jsonObject(definition).question);
-  return <div className="grid gap-3">
+  return <div className="min-w-0 [overflow-wrap:anywhere] grid gap-3">
     <GradingTextField label="Question text" value={question.text} onChange={(value) => onEdit(["question", "text"], value)} />
     <Button size="small" onClick={() => onEdit(["question", "text"], null)}>Set text to null</Button>
     <GradingSelect label="Response type" value={question.response} options={["boolean", "choice", "ordinal", "numeric", "text", "structured"]} onChange={(value) => onEdit(["question", "response"], value)} />
@@ -23,11 +23,11 @@ export function GradingConfigQuestion({ definition, onEdit, jsonField }: Grading
 }
 export function GradingConfigTargets({ definition, catalogue, onEdit, jsonField }: GradingSectionProps) {
   const object = jsonObject(definition), targets = jsonList(object.targets);
-  return <div className="grid gap-3">
+  return <div className="min-w-0 [overflow-wrap:anywhere] grid gap-3">
     <GradingSelect label="Scope" value={object.scope} options={["per_item", "per_task"]} onChange={(value) => onEdit([], definitionWithScope(definition, value))} />
     {object.scope === "per_task" && <GradingSelect label="Task source" value={object.task_source ?? "task_ids"} options={["task_ids", "resolved_assesses"]} onChange={(value) => onEdit([], definitionWithTaskSource(definition, value))} />}
     {object.scope === "per_task" && object.task_source !== "resolved_assesses" && <GradingTextField label="Task pointer (task_ids JSON pointer)" value={object.task_ids} onChange={(value) => onEdit(["task_ids"], value)} />}
-    {targets.map((target, index) => <div key={index} className="grid gap-2 rounded border border-[var(--border-muted)] p-3">
+    {targets.map((target, index) => <div key={index} className="min-w-0 [overflow-wrap:anywhere] grid gap-2 rounded border border-[var(--border-muted)] p-3">
       <GradingSelect label={`Artifact kind ${index + 1}`} value={jsonObject(target).artifact} options={catalogueArtifactKinds(catalogue)} onChange={(value) => onEdit(["targets", index, "artifact"], value)} />
       <GradingSelect label={`Item selector ${index + 1}`} value={jsonObject(target).selector} options={catalogueItemSelectors(catalogue, jsonObject(target).artifact)} onChange={(value) => onEdit(["targets", index, "selector"], value)} />
       <Button size="small" variant="danger" onClick={() => onEdit(["targets"], targets.filter((_, position) => position !== index))}>Remove target {index + 1}</Button>
@@ -38,27 +38,27 @@ export function GradingConfigTargets({ definition, catalogue, onEdit, jsonField 
 }
 export function GradingConfigEvidence({ definition, catalogue, onEdit, jsonField }: GradingSectionProps) {
   const evidence = jsonList(jsonObject(definition).evidence);
-  return <div className="grid gap-3">{evidence.map((reference, index) => {
+  return <div className="min-w-0 [overflow-wrap:anywhere] grid gap-3">{evidence.map((reference, index) => {
     const name = typeof reference === "string" ? reference : jsonText(jsonObject(reference).capability);
     const capability = catalogueEvidenceCapability(catalogue, name);
-    return <div key={index} className="grid gap-2 rounded border border-[var(--border-muted)] p-3">
+    return <div key={index} className="min-w-0 [overflow-wrap:anywhere] grid gap-2 rounded border border-[var(--border-muted)] p-3">
       <GradingSelect label={`Evidence capability ${index + 1}`} value={name} options={catalogueEvidenceNames(catalogue)} onChange={(value) => onEdit(["evidence", index], typeof reference === "string" ? value : { ...jsonObject(reference), capability: value })} />
       {typeof reference === "string" ? <Button onClick={() => onEdit(["evidence", index], { capability: name, params: {} })}>Add optional params</Button> : <>
         {jsonField(`Evidence params ${index + 1} (JSON)`, ["evidence", index, "params"])}
         <Button onClick={() => onEdit(["evidence", index], name)}>Remove optional params</Button>
       </>}
-      <details><summary>Parameter JSON Schema</summary><pre className="whitespace-pre-wrap break-all">{JSON.stringify(capability?.params_schema ?? null, null, 2)}</pre></details>
+      <details><summary>Parameter JSON Schema</summary><pre className="min-w-0 [overflow-wrap:anywhere] whitespace-pre-wrap break-all">{JSON.stringify(capability?.params_schema ?? null, null, 2)}</pre></details>
       <Button variant="danger" onClick={() => onEdit(["evidence"], evidence.filter((_, position) => position !== index))}>Remove evidence {index + 1}</Button>
     </div>;
   })}<Button onClick={() => onEdit(["evidence"], [...evidence, catalogue.evidence_capabilities[0]?.name ?? ""])}>Add evidence</Button></div>;
 }
 export function GradingConfigEvaluators({ definition, catalogue, onEdit, jsonField }: GradingSectionProps) {
   const evaluators = jsonList(jsonObject(definition).evaluators);
-  return <div className="grid gap-4">{evaluators.map((entry, index) => {
+  return <div className="min-w-0 [overflow-wrap:anywhere] grid gap-4">{evaluators.map((entry, index) => {
     const evaluator = jsonObject(entry), runner = jsonText(evaluator.runner), path: GradingPath = ["evaluators", index];
     const instructionsPath: GradingPath = [...path, "instructions"];
     const recipe = atPath(definition, [...instructionsPath, "system_one"]);
-    return <div key={index} className="grid gap-3 rounded border border-[var(--border-muted)] p-3">
+    return <div key={index} className="min-w-0 [overflow-wrap:anywhere] grid gap-3 rounded border border-[var(--border-muted)] p-3">
       <h4>Evaluator {index + 1}</h4>
       <GradingSelect label={`Runner ${index + 1}`} value={runner} options={catalogueRunners(catalogue)} onChange={(value) => onEdit(path, evaluatorWithRunner(entry, value))} />
       {runner !== "human" && <>

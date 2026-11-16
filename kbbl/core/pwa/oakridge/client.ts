@@ -13,7 +13,7 @@ import type { OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefiniti
 import type { OperatorRunInboxBatch } from "./operator-contracts/projections/inbox";
 import type { OperatorRunPage, OperatorRunView } from "./operator-contracts/projections/run-view";
 import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
-import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, latestUnitAttemptPerSession, parseCompositeId, revisionToArtifact, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
+import { parseDefinitionPrompts, artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, latestUnitAttemptPerSession, parseCompositeId, revisionToArtifact, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { createCollabClient } from "./client-collab";
 import { createGateClient } from "./client-gates";
 import { committed, oakridgeGet, oakridgePost, OPERATOR, runPath, unitPath } from "./client-http";
@@ -84,7 +84,7 @@ async function readRunPage(isArchived = false): Promise<OperatorRunView[]> {
   return items;
 }
 
-async function readDefinitions(): Promise<OperatorDefinitionSummary[]> {
+export async function readDefinitions(): Promise<OperatorDefinitionSummary[]> {
   const items: OperatorDefinitionSummary[] = [];
   let cursor: string | null = null;
   do {
@@ -206,7 +206,7 @@ export function fetchWorkflowDef(id: string): Promise<OperatorDefinitionDetail> 
 }
 
 export function fetchOperatorDefinition(id: string): Promise<OperatorDefinitionDetail> {
-  return oakridgeGet<OperatorDefinitionDetail>(`${OPERATOR}/definitions/${encodeURIComponent(id)}`);
+  return oakridgeGet<OperatorDefinitionDetail>(`${OPERATOR}/definitions/${encodeURIComponent(id)}`).then(detail => ({ ...detail, prompts: unwrapAdapter("definition", parseDefinitionPrompts(detail.prompts)) }));
 }
 
 export async function createRun(body: CreateRunRequest, idempotencyKey: string): Promise<RunSummary> {

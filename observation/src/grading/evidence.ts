@@ -78,9 +78,10 @@ export interface CaptureTarget {
   readonly item_kind: string;
 }
 /** One question and the full evaluator set an occurrence of its declared target is pinned to when captured. */
-export type CapturePin = QuestionKey & QuestionScope & CaptureTarget & {
+export interface ConfigurationIdentity { readonly config_version: number; readonly config_hash: string }
+export type CapturePin = ConfigurationIdentity & QuestionKey & QuestionScope & CaptureTarget & {
   readonly evaluator_definition_ids: readonly EvaluatorDefinitionId[];
-  readonly collection_plan?: EvidencePlan;
+  readonly collection_plan: EvidencePlan;
 }
 /** A pin applies only to an occurrence of its declared artifact, selector and item kind. One item kind
  * can be selected from several artifacts, so item kind alone does not identify a target. */
@@ -88,6 +89,8 @@ export const isPinTarget = (pin: CaptureTarget, occurrence: CaptureTarget): bool
   pin.artifact_kind === occurrence.artifact_kind && pin.item_selector === occurrence.item_selector
   && pin.item_kind === occurrence.item_kind;
 /** The configuration in force when an occurrence is captured. Later edits reach later captures. */
+export type PlannedPin = Omit<CapturePin, keyof ConfigurationIdentity | keyof QuestionScope> & QuestionScope;
+export interface PlannedCapture { readonly pins: readonly PlannedPin[] }
 export interface CaptureConfiguration { readonly pins: readonly CapturePin[] }
 export const NO_CAPTURE_PINS: CaptureConfiguration = { pins: [] };
 
@@ -103,7 +106,8 @@ export type EvidenceReadiness =
   | { readonly state: "ready"; readonly references: readonly EvidenceReference[]; readonly ready_at: Date };
 
 /** Mirrors observation.evidence_set: the capture pin, its readiness and its frozen references. */
-export interface EvidenceSet extends QuestionKey {
+export interface EvidenceSet extends QuestionKey, ConfigurationIdentity {
+  readonly collection_plan: EvidencePlan;
   readonly evidence_set_id: EvidenceSetId;
   readonly subject_occurrence_id: ItemOccurrenceId;
   readonly task_id: LogicalItemId | null;

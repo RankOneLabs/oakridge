@@ -1,7 +1,8 @@
+import { pinProvenance } from "./grading-fixture";
 import { expect, test } from "bun:test";
 import { sql } from "kysely";
 import type { ArtifactRevisionId, ItemOccurrenceId, QuestionId, RunId } from "../src/domain/identity";
-import { planRegistration } from "../src/grading/configuration";
+import { stampCapture, configurationHash, planRegistration } from "../src/grading/configuration";
 import { COLLECTION_PENDING, isPinTarget, type CapturePin } from "../src/grading/evidence";
 import { CONTRIBUTION_COVERAGE_ID, CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID, TASK_COVERAGE_ID } from "./grading-fixture";
 import { OAKRIDGE_QUESTIONS, fixtureDefinitions, oakridgeGradingRegistry, questionVersion, targetOf, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
@@ -12,7 +13,7 @@ import { registerDefinitions, registerEvaluator, registerQuestion } from "../src
 import { listRunItems, projectRevisionInTransaction } from "../src/storage/projection-store";
 
 const pinsFor = (...evaluators: readonly string[]): CaptureConfiguration => ({ pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const,
-  question_id: question.question_id, question_version: question.question_version, ...targetOf(question.question_id),
+  question_id: question.question_id, question_version: question.question_version, ...targetOf(question.question_id), ...pinProvenance(question),
   evaluator_definition_ids: evaluators.map(evaluatorId) })) });
 
 async function registerAll(db: Database): Promise<void> {
@@ -51,7 +52,7 @@ integration("a pin needs a registered question and evaluator, and rejects anothe
     .rejects.toThrow("evaluator definition that does not exist");
   await expect(createFeed(db, tenant, pinsFor("grader-a", "grader-a")).revision({ revision_id: "analysis-1", artifact_kind: "analysis", body }))
     .rejects.toThrow("pins an evaluator twice");
-  const mismatched: CaptureConfiguration = { pins: [{ scope: "per_item", ...OAKRIDGE_QUESTIONS[1]!, ...targetOf(RELEVANCE_ID), evaluator_definition_ids: [evaluatorId("grader-a")] }] };
+  const mismatched: CaptureConfiguration = { pins: [{ scope: "per_item", ...OAKRIDGE_QUESTIONS[1]!, ...targetOf(RELEVANCE_ID), ...pinProvenance(OAKRIDGE_QUESTIONS[1]!), evaluator_definition_ids: [evaluatorId("grader-a")] }] };
   await expect(createFeed(db, tenant, mismatched).revision({ revision_id: "analysis-1", artifact_kind: "analysis", body }))
     .rejects.toThrow("does not apply to its subject item kind");
   // The refused deliveries rolled back with their capture transaction.
@@ -130,7 +131,7 @@ async function committedCapture(db: Database) {
   if (!registration.ok) throw new Error(registration.error.detail);
   const registered = await registerDefinitions(db, tenant, registration.value);
   if (!registered.ok) throw new Error(registered.error.detail);
-  return registration.value;
+  return { ...registration.value, capture: stampCapture(registration.value.capture, { config_version: 1, config_hash: "canonical-json/v1:" + "a".repeat(64) }) };
 }
 /** Distinct pinned question ids per captured artifact and selector, in a stable order. */
 async function pinnedByTarget(db: Database): Promise<{ readonly [target: string]: readonly string[] }> {
@@ -210,7 +211,7 @@ integration("a pin refuses an occurrence outside its declared target, and the re
   const relevance = OAKRIDGE_QUESTIONS.find((question) => question.question_id === RELEVANCE_ID)!;
   await createFeed(db, tenant, NO_PINS).revision({ revision_id: "analysis-1", artifact_kind: "analysis", body });
   const [finding] = await occurrences(db, "finding");
-  const pin: CapturePin = { scope: "per_item", ...relevance, ...targetOf(RELEVANCE_ID), artifact_kind: "assessment", evaluator_definition_ids: [evaluatorId("grader-a")] };
+  const pin: CapturePin = { scope: "per_item", ...relevance, ...targetOf(RELEVANCE_ID), ...pinProvenance(OAKRIDGE_QUESTIONS.find((q) => q.question_id === RELEVANCE_ID)!), artifact_kind: "assessment", evaluator_definition_ids: [evaluatorId("grader-a")] };
   const refused = await withTenant(db, tenant, (trx) => pinSubjectInTransaction(trx, tenant, { subject: { subject_occurrence_id: finding!, task_id: null }, pin }));
   expect([refused.ok, await readOccurrenceEvidence(db, tenant, finding!)]).toEqual([false, []]);
 }));
@@ -240,7 +241,7 @@ integration("the pre-cleanup fixture retains every target, task-less subject, an
   const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   await registerDefinitions(db, tenant, registration.value);
-  const feed = createFeed(db, tenant, registration.value.capture);
+  const feed = createFeed(db, tenant, stampCapture(registration.value.capture, { config_version: 1, config_hash: "canonical-json/v1:" + "a".repeat(64) }));
   await feed.launch({ spec: "The whole spec", repositories: [{ key: "oakridge", preparation: { repository_path: "/fixture" } }] });
   for (const [index, kind] of ["analysis", "tasks", "plan", "brief", "build-result", "assessment"].entries())
     await feed.revision({ revision_id: kind, artifact_kind: kind === "build-result" ? "build_result" : kind,
@@ -284,3 +285,47 @@ integration("the pre-cleanup fixture retains every target, task-less subject, an
     }
   }
 }));
+
+test("stampCapture binds every plan to one published identity and disables unpublished captures", async () => {
+  const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
+  if (!registration.ok) throw new Error(registration.error.detail);
+  const identity = { config_version: 3, config_hash: "canonical-json/v1:" + "a".repeat(64) };
+  expect(stampCapture(registration.value.capture, identity).pins).toEqual(
+    registration.value.capture.pins.map((pin) => ({ ...pin, ...identity })));
+  expect(stampCapture(registration.value.capture, null)).toEqual(NO_PINS);
+});
+
+integration("later publication and redelivery preserve the original pin attribution", async () => scratchDatabase(async (db) => {
+  const definitions = await fixtureDefinitions();
+  const hash = configurationHash(definitions);
+  if (!hash.ok) throw new Error(hash.error.detail);
+  const registration = await committedCapture(db);
+  const first = stampCapture(registration.capture, { config_version: 1, config_hash: hash.value });
+  const second = stampCapture(registration.capture, { config_version: 2, config_hash: "canonical-json/v1:" + "b".repeat(64) });
+  const feed = createFeed(db, tenant, first);
+  const body = await fixtureBody("analysis");
+  await feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body });
+  const before = await Promise.all((await occurrences(db, "finding")).map((id) => readOccurrenceEvidence(db, tenant, id)));
+  expect(before.flat().length).toBeGreaterThan(0);
+  for (const set of before.flat()) {
+    expect([set.config_version, set.config_hash, set.collection_plan]).toEqual([1, hash.value,
+      first.pins.find((pin) => pin.question_id === set.question_id)!.collection_plan]);
+  }
+  await feed.revision({ revision_id: "analysis-2", artifact_kind: "analysis", body }, second);
+  const items = (await listRunItems(db, tenant, "run-1", { limit: 200, offset: 0 })).items;
+  const later = items.filter((item) => item.revision_id === "analysis-2" && item.item_kind === "finding");
+  expect(later.length).toBeGreaterThan(0);
+  for (const item of later) for (const set of await readOccurrenceEvidence(db, tenant, item.occurrence_id as ItemOccurrenceId))
+    expect([set.config_version, set.config_hash]).toEqual([2, second.pins[0]!.config_hash]);
+  await feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body }, second);
+  const after = await Promise.all(before.map((sets) => readOccurrenceEvidence(db, tenant, sets[0]!.subject_occurrence_id)));
+  expect(after).toEqual(before);
+}));
+
+test("evidenceRead retains the stored configuration and plan", async () => {
+  const { evidenceRead } = await import("../src/grading/item-reads");
+  const { evidence, occurrence, revision } = await import("./rollup-fixture");
+  const set = evidence(occurrence("one", revision("r", "analysis")), null);
+  const read = evidenceRead(set, { references: { limit: 10, offset: 0 }, pinned_evaluators: { limit: 10, offset: 0 } });
+  expect([read.config_version, read.config_hash, read.collection_plan]).toEqual([set.config_version, set.config_hash, set.collection_plan]);
+});

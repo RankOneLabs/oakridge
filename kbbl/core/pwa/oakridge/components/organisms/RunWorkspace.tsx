@@ -1,3 +1,5 @@
+import { useHideEndedSessions } from "../../../hooks/useHideEndedSessions";
+import { selectRunHideEndedSessions } from "../../../lib/session-bulk-hide";
 import { RunSidebarSessionRow } from "./RunSidebarSessionRow";
 import { PromptViewer } from "./PromptViewer";
 import { useOperatorUnits } from "../../hooks/useOperatorUnits";
@@ -5,7 +7,7 @@ import { selectStageRead } from "../../hooks/useStageOverview";
 import type { StageRead } from "../../lib/stage-overview";
 import type { OperatorUnitView } from "../../operator-contracts/projections/unit-view";
 import { StageOverview } from "./StageOverview";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { useRun } from "../../hooks/useRun";
@@ -13,7 +15,7 @@ import { useRunGates } from "../../hooks/useRunGates";
 import { useRunSessions } from "../../hooks/useRunSessions";
 import { useRunWorkspaceState } from "../../hooks/useRunWorkspaceState";
 import { selectRunAccentClass } from "../../lib/run-accent";
-import { selectPurgedRunSessionIds, selectRunSessionsRead } from "../../lib/run-sessions";
+import { selectPurgedRunSessionIds, selectRunSessionsRead, selectRunSessionStage } from "../../lib/run-sessions";
 import {
   selectRunArtifacts,
   selectRunGatesRead,
@@ -81,6 +83,23 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
     is_error: sessionsQuery.isError,
   });
   const inventorySessions = useStore((state) => state.sessions);
+  const eligibleSessions = selectRunHideEndedSessions([...inventorySessions.values()], runId);
+  const bulkHide = useHideEndedSessions();
+  const [isBulkHideArmed, setIsBulkHideArmed] = useState(false);
+  useEffect(() => {
+    setIsBulkHideArmed(false);
+  }, [runId]);
+  useEffect(() => {
+    if (!isBulkHideArmed) return;
+    const timeout = setTimeout(() => setIsBulkHideArmed(false), 4000);
+    return () => clearTimeout(timeout);
+  }, [isBulkHideArmed]);
+  const onHideEnded = () => {
+    if (bulkHide.isPending || eligibleSessions.length === 0) return;
+    if (!isBulkHideArmed) { setIsBulkHideArmed(true); return; }
+    setIsBulkHideArmed(false);
+    void bulkHide.mutateAsync(eligibleSessions);
+  };
   const hasInboxSnapshot = useStore((state) => state.hasInboxSnapshot);
   const removedSids = useStore((state) => state.removedSids);
   const purgedSessionIds = selectPurgedRunSessionIds({
@@ -154,6 +173,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
         }}
       >
         <PaneBody
+          stage={selectRunSessionStage(sessionsQuery.data, pane.kind === "session" ? pane.session_id : null)}
           pane={pane}
           runId={runId}
           onRunDeleted={onBack}
@@ -181,7 +201,8 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
       />
       <div className="or-run-workspace__body">
         <RunWorkspaceSidebar
-          renderRow={(row, isOpen) => <RunSidebarSessionRow key={row.work_order_id} row={row} isOpen={isOpen} onOpen={(sessionId, slot) => workspace.openPane({ kind: "session", session_id: sessionId }, slot)} />}
+          hideEnded={{ eligibleCount: eligibleSessions.length, isArmed: isBulkHideArmed, isPending: bulkHide.isPending, outcome: bulkHide.data, onPress: onHideEnded }}
+          renderRow={(row, slots) => <RunSidebarSessionRow key={row.work_order_id} row={row} slots={slots} onOpen={(sessionId, slot) => workspace.openPane({ kind: "session", session_id: sessionId }, slot)} />}
           isOpen={isSidebarOpen}
           workspace={state}
           sessions={sidebarSessions}
@@ -203,6 +224,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
 }
 
 interface PaneBodyProps {
+  stage: string | null;
   pane: RunWorkspacePane;
   runId: string;
   overview: RunOverview;
@@ -226,7 +248,7 @@ interface PaneBodyProps {
  * would give one renderer two fetching paths, which is the duplication reuse
  * was meant to avoid.
  */
-function PaneBody({ pane, runId, overview, units, activity, onRunDeleted, onOpenPane, onOpenBeside }: PaneBodyProps) {
+function PaneBody({ stage, pane, runId, overview, units, activity, onRunDeleted, onOpenPane, onOpenBeside }: PaneBodyProps) {
   const openItem = (selection: ObservationItemAddress) => onOpenBeside({ kind: "item", selection });
   const openTask = (task_id: string) => onOpenBeside({ kind: "task", task_id });
   switch (pane.kind) {
@@ -258,6 +280,7 @@ function PaneBody({ pane, runId, overview, units, activity, onRunDeleted, onOpen
     case "session":
       return (
         <RunSessionPane
+          stage={stage}
           sessionId={pane.session_id}
           onOpenSession={(sessionId: Sid) =>
             onOpenPane({ kind: "session", session_id: sessionId })
