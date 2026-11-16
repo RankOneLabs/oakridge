@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import fixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionSummary } from "../operator-contracts/projections/definition-view";
 import { publishedConfig } from "../__tests__/grading-config-fixture";
-import { gradingEditorHref, selectWorkflowArtifactTargets, selectGradingMatches, selectArtifactGrading, selectGradingRequirements } from "./grading-applicability";
+import { selectWorkflowGradingGroups, gradingEditorHref, selectWorkflowArtifactTargets, selectGradingMatches, selectArtifactGrading, selectGradingRequirements } from "./grading-applicability";
 const definition = fixture.definition as unknown as OperatorDefinitionSummary;
 const artifacts = selectWorkflowArtifactTargets(definition);
 const source = { id: "brief.correctness", targets: [{ artifact: "brief", selector: "/build_items/*" }, { artifact: "brief", selector: "/acceptance_criteria/*" }] };
@@ -48,4 +48,20 @@ it("normalizes typed requirements including human and parameterized evidence", (
 });
 it("encodes a stable editor definition target", () => {
   expect(gradingEditorHref("brief.build_item correctness")).toMatch(/\/definitions\/brief.build_item%20correctness$/);
+});
+
+it("groups matches by shared source in definition order with every matching contract", () => {
+  const other = { id: "assessment", targets: [{ artifact: "assessment", selector: "/items/*" }] };
+  const absent = { id: "absent", targets: [{ artifact: "missing", selector: "/" }] };
+  const matches = selectGradingMatches([source, other, absent], artifacts);
+  const groups = selectWorkflowGradingGroups(matches);
+  expect(groups.map(group => ({ id: group.source.id, artifacts: group.matches.map(match => `${match.artifact.stage}/${match.artifact.artifact}`) }))).toEqual([
+    { id: source.id, artifacts: ["brief/brief"] },
+    { id: other.id, artifacts: ["cohort/assessment", "integration/assessment"] },
+  ]);
+  expect(groups[0]?.source).toBe(source);
+  expect(groups[1]?.source).toBe(other);
+});
+it("has no groups when no definitions match", () => {
+  expect(selectWorkflowGradingGroups([])).toEqual([]);
 });

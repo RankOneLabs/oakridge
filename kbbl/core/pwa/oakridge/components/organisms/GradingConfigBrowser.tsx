@@ -1,6 +1,6 @@
-import type { WorkflowArtifactTarget } from "../../lib/grading-applicability";
+import type { GradingWorkflowTargets } from "../../lib/grading-applicability";
 import { GradingWorkflowLinks } from "../molecules/GradingWorkflowLinks";
-import { definitionSelectorEntries } from "../../lib/grading-config";
+import { definitionSelectorEntries, selectDefinitionTargetIndex, selectGradingDefinitionSelection } from "../../lib/grading-config";
 import { useState } from "react";
 import { useGradingNavigationGuard } from "../../hooks/useGradingNavigationGuard";
 import { Button } from "../../../components/atoms/Button";
@@ -13,7 +13,7 @@ import { atPath, configurationDiff, configurationHeader, createDraft, definition
 import type { ObservationJsonValue as Json } from "../../grading-contracts/domain/primitives";
 
 interface GradingConfigBrowserProps {
-  readonly workflowTargets?: readonly WorkflowArtifactTarget[];
+  readonly workflowTargets?: GradingWorkflowTargets;
   readonly definitionId?: string | null;
   readonly initial: GradingConfigurationRead;
   readonly version: number | null;
@@ -22,11 +22,11 @@ interface GradingConfigBrowserProps {
   /** Called after each confirmed draft or publication write, so cached server reads can be refreshed. */
   readonly onWrite?: () => void;
 }
-export function GradingConfigBrowser({ initial, version, onNavigate, onReload, onWrite, definitionId, workflowTargets = [] }: GradingConfigBrowserProps) {
+export function GradingConfigBrowser({ initial, version, onNavigate, onReload, onWrite, definitionId, workflowTargets = { status: "loading" } }: GradingConfigBrowserProps) {
   const [read, setRead] = useState(initial);
   const [draft, setDraft] = useState(() => createDraft(initial.draft, initial.versions.latest_version));
   const [feedback, setFeedback] = useState<GradingFeedback | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(() => Math.max(0, definitionSummaries(version === null ? initial.draft?.document.definitions ?? [] : publishedDefinitions(initial.selected)).findIndex(summary => summary.id === definitionId)));
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(() => selectDefinitionTargetIndex(definitionSummaries(version === null ? initial.draft?.document.definitions ?? [] : publishedDefinitions(initial.selected)), definitionId));
   const [isRaw, setIsRaw] = useState(false);
   const [rawText, setRawText] = useState("");
   const [rawError, setRawError] = useState<string | null>(null);
@@ -36,6 +36,7 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload, o
   const [restoreVersion, setRestoreVersion] = useState<number | null>(null);
   const header = configurationHeader(draft, read.latest);
   const summaries = definitionSummaries(version === null ? draft.definitions : publishedDefinitions(read.selected));
+  const selected = selectGradingDefinitionSelection(summaries, { index: selectedIndex, id: definitionId });
   const isBlocked = rawError !== null || hasJsonErrors(jsonInputs);
   useGradingNavigationGuard(draft.dirty || isBlocked);
   const issues = validationIssues(feedback);
@@ -110,7 +111,7 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload, o
     <GradingConfigFeedback feedback={feedback} />
     {version !== null ? <section className="grid gap-3"><h2>Published version {version} · read-only</h2><p>{read.selected?.published_at}</p>
       <Button disabled={isBusy} onClick={() => requestRestore(version)}>Initialize draft from this version</Button>
-      {summaries.map((summary) => <article key={summary.index} className="rounded border border-[var(--border-muted)] p-4"><GradingConfigSummary summary={summary} /><GradingWorkflowLinks source={summary} artifacts={workflowTargets} /><details><summary>Definition sections (read-only JSON)</summary><pre className="whitespace-pre-wrap break-all">{JSON.stringify(publishedDefinitions(read.selected)[summary.index], null, 2)}</pre></details></article>)}
+      {summaries.map((summary) => <article key={summary.index} className="rounded border border-[var(--border-muted)] p-4"><GradingConfigSummary summary={summary} /><GradingWorkflowLinks source={summary} targets={workflowTargets} /><details><summary>Definition sections (read-only JSON)</summary><pre className="whitespace-pre-wrap break-all">{JSON.stringify(publishedDefinitions(read.selected)[summary.index], null, 2)}</pre></details></article>)}
     </section> : <>
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" disabled={isBusy || isBlocked} onClick={() => void save()}>Save draft</Button>
@@ -138,9 +139,9 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload, o
             <Button disabled={isBlocked} onClick={() => { edit([], [...draft.definitions, {}]); setSelectedIndex(draft.definitions.length); }}>Add definition</Button>
           </aside>
           <div className="min-w-0 grid content-start gap-3">
-            {definitionId && !summaries.some(summary => summary.id === definitionId) && <p role="status">Definition {definitionId} is not in the shared draft.</p>}
+            {selected.is_target_missing && <p role="status">Definition {definitionId} is not in the shared draft.</p>}
             {selectedIndex !== null && draft.definitions[selectedIndex] !== undefined ? <>
-              {summaries[selectedIndex] && <><GradingConfigSummary summary={summaries[selectedIndex]} /><GradingWorkflowLinks source={summaries[selectedIndex]} artifacts={workflowTargets} /></>}
+              {selected.summary && <><GradingConfigSummary summary={selected.summary} /><GradingWorkflowLinks source={selected.summary} targets={workflowTargets} /></>}
               <h2>Definition {selectedIndex + 1} · shared draft section</h2>
               <Button variant="danger" disabled={isBlocked} onClick={() => { edit([], draft.definitions.filter((_, index) => index !== selectedIndex)); setSelectedIndex(0); }}>Remove definition</Button>
               <GradingDefinitionEditor definition={draft.definitions[selectedIndex]} index={selectedIndex} catalogue={read.catalogue} issues={issues} onEdit={(path, value) => { if (!hasJsonErrors(jsonInputs)) edit([selectedIndex, ...path], value); }} jsonField={jsonField} />

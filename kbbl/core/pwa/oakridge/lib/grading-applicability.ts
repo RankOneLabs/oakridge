@@ -24,3 +24,13 @@ export const selectArtifactGrading = <T extends GradingTargetSource>(matches: re
 export const gradingEditorHref = (id: string): string => `#settings/workflows/grading-config/definitions/${encodeURIComponent(id)}`;
 export const GRADING_NOTE = "Separate from this workflow's reviews. Grading runs only for runs launched with grading enabled.";
 export interface PublishedGradingContext { definitions: readonly ObservationGradingDefinition[]; isLoading: boolean; error: string | null }
+
+export type GradingWorkflowTargets =
+  | { status: "loading" }
+  | { status: "unavailable"; detail: string }
+  | { status: "ready"; artifacts: readonly WorkflowArtifactTarget[] };
+export interface WorkflowGradingGroup<T extends GradingTargetSource> { source: T; matches: readonly GradingMatch<T>[] }
+export function selectWorkflowGradingGroups<T extends GradingTargetSource>(matches: readonly GradingMatch<T>[]): WorkflowGradingGroup<T>[] {
+  const sources = [...new Set(matches.map(match => match.source))];
+  return sources.map(source => ({ source, matches: matches.filter(match => match.source === source) }));
+}

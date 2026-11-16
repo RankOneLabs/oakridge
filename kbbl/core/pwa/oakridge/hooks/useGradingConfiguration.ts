@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { readGradingConfiguration, type GradingConfigurationRead } from "../client-grading-config";
+import { readGradingConfiguration, readPublishedGradingConfiguration, type GradingConfigurationRead } from "../client-grading-config";
 import { readDefinitions } from "../client";
 import { selectWorkflowArtifactTargets } from "../lib/grading-applicability";
 import { feedbackText } from "../lib/grading-config";
@@ -33,8 +33,8 @@ export function useGradingConfiguration(version: number | null) {
 }
 
 export function usePublishedGradingDefinitions() {
-  const query = useQuery({ queryKey: [...GRADING_CONFIG_QUERY_KEY, "published"], queryFn: () => readGradingConfiguration(null) });
-  return { definitions: query.data?.ok ? query.data.value.latest?.definitions ?? [] : [], isLoading: query.isPending,
+  const query = useQuery({ queryKey: [...GRADING_CONFIG_QUERY_KEY, "published"], queryFn: readPublishedGradingConfiguration });
+  return { definitions: query.data?.ok ? query.data.value?.definitions ?? [] : [], isLoading: query.isPending,
     error: query.data?.ok === false ? feedbackText(query.data.feedback).replace(/^Request failed: /, "") : query.error?.message ?? null };
 }
 export function useGradingWorkflowTargets() {

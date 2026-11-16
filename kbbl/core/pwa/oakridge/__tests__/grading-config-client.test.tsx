@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { publishGradingDraft, saveGradingDraft, validateGradingDraft } from "../client-grading-config";
+import { readPublishedGradingConfiguration, readGradingConfiguration, publishGradingDraft, saveGradingDraft, validateGradingDraft } from "../client-grading-config";
+
+import { configRead, publishedConfig } from "./grading-config-fixture";
 
 afterEach(() => vi.unstubAllGlobals());
 it.each(["published", "unchanged", "reapplied"] as const)("accepts only confirmed 2xx %s outcomes", async (outcome) => {
@@ -38,4 +40,29 @@ it("treats non-JSON and network failures as transport failures", async () => {
   expect((await publishGradingDraft({ expected_draft_digest: "d", expected_latest_version: null })).kind).toBe("transport_error");
   vi.mocked(fetch).mockRejectedValueOnce(new Error("Offline"));
   expect(await publishGradingDraft({ expected_draft_digest: "d", expected_latest_version: null })).toEqual({ kind: "transport_error", detail: "Offline" });
+});
+
+it("preserves a published-document failure while leaving the shared draft accessible", async () => {
+  const initial = configRead();
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path.endsWith("/versions/3")) return Response.json({ error: { message: "Published document unreadable" } }, { status: 500 });
+    if (path.endsWith("/versions")) return Response.json(initial.versions);
+    if (path.endsWith("/draft")) return Response.json(initial.draft);
+    if (path.endsWith("/catalogue")) return Response.json(initial.catalogue);
+    return Response.json(initial.runtime);
+  }));
+  expect(await readPublishedGradingConfiguration()).toEqual({ ok: false, feedback: { kind: "transport_error", detail: "Published document unreadable" } });
+  const editable = await readGradingConfiguration(null);
+  expect(editable.ok && editable.value.draft).toEqual(initial.draft);
+});
+it("reads only version metadata when no published version exists", async () => {
+  const fetchMock = vi.fn(async () => Response.json({ ...configRead().versions, latest_version: null }));
+  vi.stubGlobal("fetch", fetchMock);
+  expect(await readPublishedGradingConfiguration()).toEqual({ ok: true, value: null });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+it("returns the latest published document", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).endsWith("/versions") ? configRead().versions : publishedConfig())));
+  expect(await readPublishedGradingConfiguration()).toEqual({ ok: true, value: publishedConfig() });
 });

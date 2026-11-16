@@ -26,6 +26,12 @@ const write = (method: string, body?: Json | ObservationPublishRequest): Request
 export const readGradingDraft = (): Promise<ConfigurationResult<ObservationStoredDraft | null>> => request("/draft");
 export const readGradingVersions = (): Promise<ConfigurationResult<ObservationVersionListing>> => request("/versions");
 export const readGradingVersion = (version: number): Promise<ConfigurationResult<ObservationPublishedConfiguration>> => request(`/versions/${version}`);
+/** Published viewers must distinguish an absent version from an unreadable document. */
+export async function readPublishedGradingConfiguration(): Promise<ConfigurationResult<ObservationPublishedConfiguration | null>> {
+  const versions = await readGradingVersions();
+  if (!versions.ok) return versions;
+  return versions.value.latest_version === null ? { ok: true, value: null } : readGradingVersion(versions.value.latest_version);
+}
 export const readGradingCatalogue = (): Promise<ConfigurationResult<ObservationGradingCatalogue>> => request("/catalogue");
 export const readGradingRuntime = (): Promise<ConfigurationResult<ObservationGradingRuntimeRead>> => request("/runtime");
 export const saveGradingDraft = (definitions: readonly Json[], digest: string | null): Promise<ConfigurationResult<ObservationStoredDraft>> =>

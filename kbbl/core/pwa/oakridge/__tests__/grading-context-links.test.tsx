@@ -6,11 +6,11 @@ import type { OperatorDefinitionDetail } from "../operator-contracts/projections
 import { useWorkflowDef } from "../hooks/useWorkflowDef";
 import { WorkflowDefDetail } from "../components/organisms/WorkflowDefDetail";
 import { useGradingConfigurationWrites, GRADING_CONFIG_QUERY_KEY } from "../hooks/useGradingConfiguration";
-import { configRead, publishedConfig } from "./grading-config-fixture";
-import { readGradingConfiguration } from "../client-grading-config";
+import { publishedConfig } from "./grading-config-fixture";
+import { readPublishedGradingConfiguration } from "../client-grading-config";
 const definition = fixture.definition as unknown as OperatorDefinitionDetail;
 vi.mock("../hooks/useWorkflowDef", () => ({ useWorkflowDef: vi.fn(() => ({ data: definition, isPending: false, isError: false })) }));
-vi.mock("../client-grading-config", () => ({ readGradingConfiguration: vi.fn() }));
+vi.mock("../client-grading-config", () => ({ readPublishedGradingConfiguration: vi.fn() }));
 const published = { ...publishedConfig().definitions[0], id: "brief.quality", targets: [{ artifact: "brief", selector: "/build_items/*" }], evaluators: [{ runner: "human" as const }] };
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 function show(stage = "brief") {
@@ -19,7 +19,7 @@ function show(stage = "brief") {
   return client;
 }
 it("shows published requirements and shared editor links on the matching artifact contract", async () => {
-  vi.mocked(readGradingConfiguration).mockResolvedValue({ ok: true, value: { ...configRead(), latest: { ...publishedConfig(), definitions: [published] } } });
+  vi.mocked(readPublishedGradingConfiguration).mockResolvedValue({ ok: true, value: { ...publishedConfig(), definitions: [published] } });
   show();
   const region = await screen.findByRole("region", { name: "Independent grading" });
   await within(region).findByRole("link", { name: "Open brief.quality in grading editor" });
@@ -34,18 +34,18 @@ it("shows published requirements and shared editor links on the matching artifac
   }
 });
 it("leaves unmatched contracts visible", async () => {
-  vi.mocked(readGradingConfiguration).mockResolvedValue({ ok: true, value: { ...configRead(), latest: { ...publishedConfig(), definitions: [published] } } });
+  vi.mocked(readPublishedGradingConfiguration).mockResolvedValue({ ok: true, value: { ...publishedConfig(), definitions: [published] } });
   show("planning");
   await screen.findByText("No published grading definition targets this artifact.");
 });
 it("keeps contracts available on grading read failure", async () => {
-  vi.mocked(readGradingConfiguration).mockResolvedValue({ ok: false, feedback: { kind: "transport_error", detail: "offline" } });
+  vi.mocked(readPublishedGradingConfiguration).mockResolvedValue({ ok: false, feedback: { kind: "transport_error", detail: "offline" } });
   show();
   await waitFor(() => expect(screen.getAllByText("Grading configuration unavailable: offline")).toHaveLength(2));
   expect(screen.getByText("Definition contract")).toBeTruthy();
 });
 it("invalidates published reads after recordWrite and picks up the next published definition", async () => {
-  vi.mocked(readGradingConfiguration).mockResolvedValueOnce({ ok: true, value: { ...configRead(), latest: null } }).mockResolvedValue({ ok: true, value: { ...configRead(), latest: { ...publishedConfig(), definitions: [published] } } });
+  vi.mocked(readPublishedGradingConfiguration).mockResolvedValueOnce({ ok: true, value: null }).mockResolvedValue({ ok: true, value: { ...publishedConfig(), definitions: [published] } });
   let write = () => {};
   function WriteObserver() { write = useGradingConfigurationWrites().recordWrite; return null; }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -64,7 +64,7 @@ it("invalidates published reads after recordWrite and picks up the next publishe
 it("lists each matching shared definition once and excludes unrelated targets", async () => {
   const assessment = { ...published, id: "assessment.quality", targets: [{ artifact: "assessment", selector: "/items/*" }] };
   const unrelated = { ...published, id: "unrelated", targets: [{ artifact: "absent", selector: "/items/*" }] };
-  vi.mocked(readGradingConfiguration).mockResolvedValue({ ok: true, value: { ...configRead(), latest: { ...publishedConfig(), definitions: [published, assessment, unrelated] } } });
+  vi.mocked(readPublishedGradingConfiguration).mockResolvedValue({ ok: true, value: { ...publishedConfig(), definitions: [published, assessment, unrelated] } });
   show();
   const region = screen.getByRole("region", { name: "Independent grading definitions" });
   await within(region).findByRole("link", { name: "Open brief.quality in grading editor" });
@@ -74,13 +74,13 @@ it("lists each matching shared definition once and excludes unrelated targets", 
   expect(region.textContent).not.toContain("unrelated");
 });
 it("shows the workflow empty state when no published definition matches", async () => {
-  vi.mocked(readGradingConfiguration).mockResolvedValue({ ok: true, value: { ...configRead(), latest: null } });
+  vi.mocked(readPublishedGradingConfiguration).mockResolvedValue({ ok: true, value: null });
   show();
   await screen.findByText("No published grading definition targets this workflow's artifacts.");
 });
 
 it("renders a grading-disabled run's pinned definition identically to the catalog definition", async () => {
-  vi.mocked(readGradingConfiguration).mockResolvedValue({ ok: true, value: { ...configRead(), latest: { ...publishedConfig(), definitions: [published] } } });
+  vi.mocked(readPublishedGradingConfiguration).mockResolvedValue({ ok: true, value: { ...publishedConfig(), definitions: [published] } });
   // The viewer receives the pinned definition id, never launch configuration.
   const disabledRun = { definition_id: definition.definition_id, config: { grading_enabled: false } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

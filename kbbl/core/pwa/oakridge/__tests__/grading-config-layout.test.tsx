@@ -9,12 +9,13 @@ afterEach(cleanup);
 const longId = "x".repeat(200);
 function browser(id: string | null = longId) {
   const initial: import("../client-grading-config").GradingConfigurationRead = { ...configRead(), draft: { digest: "draft", document: { status: "draft", definitions: [{ id: "first" }, { id: longId, scope: "per_item", targets: [{ artifact: "brief", selector: "/build_items/*" }] }] } } };
-  return render(<GradingConfigBrowser initial={initial} definitionId={id} workflowTargets={selectWorkflowArtifactTargets(fixture.definition as unknown as OperatorDefinitionSummary)} version={null} onNavigate={vi.fn()} onReload={vi.fn()} />);
+  return render(<GradingConfigBrowser initial={initial} definitionId={id} workflowTargets={{ status: "ready", artifacts: selectWorkflowArtifactTargets(fixture.definition as unknown as OperatorDefinitionSummary) }} version={null} onNavigate={vi.fn()} onReload={vi.fn()} />);
 }
 it("keeps a compact selector and one selected summary in constrained responsive columns", () => {
   const { container } = browser();
-  const aside = container.querySelector("aside")!;
-  const grid = aside.parentElement!;
+  const aside = container.querySelector("aside");
+  if (!aside?.parentElement) throw new Error("Missing definition selector grid");
+  const grid = aside.parentElement;
   expect(grid.classList.contains("lg:grid-cols-[minmax(12rem,16rem)_minmax(0,1fr)]")).toBe(true);
   expect(Array.from(grid.classList).some(name => name.startsWith("grid-cols-"))).toBe(false);
   expect(Array.from(grid.children).every(column => column.classList.contains("min-w-0"))).toBe(true);
@@ -49,7 +50,9 @@ it("preserves the unsaved draft guard when following reverse links", async () =>
   fireEvent.change(screen.getByLabelText("Definition id"), { target: { value: "changed" } });
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const link = within(screen.getByRole("region", { name: "Applies to workflow artifacts" })).getAllByRole("link")[0];
-  window.history.replaceState(null, "", link.getAttribute("href")!);
+  const href = link?.getAttribute("href");
+  if (!href) throw new Error("Missing reverse-link destination");
+  window.history.replaceState(null, "", href);
   expect(acceptHashNavigation()).toBe(false);
   expect(confirm).toHaveBeenCalled();
   confirm.mockRestore();

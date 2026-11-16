@@ -15,6 +15,6 @@ export function GradingConfigRoute({ version, onNavigate, definitionId }: Gradin
   }
   return <>
     <GradingConfigFeedback feedback={query.reloadFeedback} />
-    <GradingConfigBrowser key={query.snapshot.revision} workflowTargets={targets.data} definitionId={definitionId} initial={query.snapshot.read} version={version} onNavigate={onNavigate} onReload={() => void query.reload()} onWrite={recordWrite} />
+    <GradingConfigBrowser key={query.snapshot.revision} workflowTargets={targets.isPending ? { status: "loading" } : targets.isError ? { status: "unavailable", detail: targets.error.message } : { status: "ready", artifacts: targets.data }} definitionId={definitionId} initial={query.snapshot.read} version={version} onNavigate={onNavigate} onReload={() => void query.reload()} onWrite={recordWrite} />
   </>;
 }
