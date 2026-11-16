@@ -173,6 +173,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
         }}
       >
         <PaneBody
+          stage={pane.kind === "session" ? sessionsQuery.data?.find((attempt) => attempt.session_id === pane.session_id)?.stage_key ?? null : null}
           pane={pane}
           runId={runId}
           onRunDeleted={onBack}
@@ -223,6 +224,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
 }
 
 interface PaneBodyProps {
+  stage: string | null;
   pane: RunWorkspacePane;
   runId: string;
   overview: RunOverview;
@@ -246,7 +248,7 @@ interface PaneBodyProps {
  * would give one renderer two fetching paths, which is the duplication reuse
  * was meant to avoid.
  */
-function PaneBody({ pane, runId, overview, units, activity, onRunDeleted, onOpenPane, onOpenBeside }: PaneBodyProps) {
+function PaneBody({ stage, pane, runId, overview, units, activity, onRunDeleted, onOpenPane, onOpenBeside }: PaneBodyProps) {
   const openItem = (selection: ObservationItemAddress) => onOpenBeside({ kind: "item", selection });
   const openTask = (task_id: string) => onOpenBeside({ kind: "task", task_id });
   switch (pane.kind) {
@@ -278,6 +280,7 @@ function PaneBody({ pane, runId, overview, units, activity, onRunDeleted, onOpen
     case "session":
       return (
         <RunSessionPane
+          stage={stage}
           sessionId={pane.session_id}
           onOpenSession={(sessionId: Sid) =>
             onOpenPane({ kind: "session", session_id: sessionId })

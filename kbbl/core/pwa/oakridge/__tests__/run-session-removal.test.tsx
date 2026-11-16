@@ -168,3 +168,12 @@ it("shows archived count and rows only after Show all is pressed", async () => {
   expect(visibleSessions()).toEqual(["deleted", "existing"]);
 });
 
+it("marks the primary session and shows its attempt stage in the pane header", async () => {
+  useStore.getState().applySnapshot([{ ...existing, worktreeBranch: "kbbl/cohort-x", workflow: { runId: run.id, unitId: "unit", worker: "builder" } }]);
+  renderRun();
+  fireEvent.click(await screen.findByTestId("or-sidebar-session"));
+  expect(screen.getByTestId("or-sidebar-session").getAttribute("data-pane-selection")).toBe("primary");
+  expect(screen.getByTestId("session-stage").textContent).toBe("build");
+  fireEvent.click(screen.getByTestId("or-sidebar-pane-overview"));
+  expect(screen.getByTestId("or-sidebar-pane-overview").getAttribute("data-pane-selection")).toBe("primary");
+});

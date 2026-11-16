@@ -1,3 +1,4 @@
+import type { SessionSurfaceChrome } from "./session-surface";
 import type { SessionSnapshot, SessionStatus } from "../types";
 import { compareSessionsByActivity } from "../../acp/pwa-session-order";
 import type { RunDetail, RunSummary } from "../oakridge/run-types";
@@ -112,4 +113,24 @@ export async function resumeSession(
 
 export function resumeTitle(): string {
   return "Start a new session with this conversation and its committed work.";
+}
+
+export interface SessionHeaderSegments {
+  role: string | null;
+  stage: string | null;
+  branch: string | null;
+}
+
+export interface SessionHeaderInput {
+  snapshot: SessionSnapshot | null;
+  chrome: SessionSurfaceChrome;
+}
+
+export function selectSessionHeaderSegments({ snapshot, chrome }: SessionHeaderInput): SessionHeaderSegments {
+  const worker = snapshot?.workflow?.worker.replace(/[_-]/g, " ");
+  return {
+    role: worker ? worker.charAt(0).toUpperCase() + worker.slice(1) : null,
+    stage: chrome.kind === "pane" ? chrome.stage : null,
+    branch: snapshot?.worktreeBranch?.replace(/^kbbl\//, "") || null,
+  };
 }
