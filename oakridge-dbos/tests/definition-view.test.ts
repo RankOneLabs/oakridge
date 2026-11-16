@@ -9,7 +9,7 @@ test("development detail preserves authored uses alongside compiled declarations
   const core = CoreClient.start();
   if (!core.ok) throw new Error(JSON.stringify(core.error));
   try {
-    const compiled = await compileDefinition(core.value, catalog.value.development);
+    const compiled = await compileDefinition(core.value, catalog.value.development.definition_id);
     if (!compiled.ok) throw new Error(JSON.stringify(compiled.error));
     const detail = selectDefinitionDetail(compiled.value);
     expect(detail.workflow.stages.cohort?.workers.pr_watch).toEqual({ template: "pr_watch" });

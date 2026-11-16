@@ -1,3 +1,4 @@
+import { sortWorkflowDefinitions, defaultWorkflowDefinitionId } from "../../lib/workflow-defs";
 import { describe, expect, test } from "vitest";
 import type { RuntimeDescriptor } from "../../types";
 import { coerceSelection } from "./launch-config";
@@ -89,4 +90,9 @@ describe("coerceSelection effort handling", () => {
     expect(next.runtime).toBe("claude-code");
     expect(next.effort).toBeUndefined();
   });
+});
+
+test("user-only definitions supply the new-run options and default", () => {
+  const options = sortWorkflowDefinitions([{ id: "development-id", name: "development" }]);
+  expect([options.map((option) => option.name), defaultWorkflowDefinitionId(options)]).toEqual([["development"], "development-id"]);
 });

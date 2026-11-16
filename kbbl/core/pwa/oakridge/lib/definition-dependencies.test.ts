@@ -5,9 +5,9 @@ import type { OperatorAuthoredWorkflow } from "../operator-contracts/core-client
 import { selectDefinitionDependencies } from "./definition-dependencies";
 
 const root = resolve(import.meta.dirname, "../../../../../workflow-config/definitions");
-const catalog = JSON.parse(readFileSync(resolve(root, "launchable.json"), "utf8")) as { [name: string]: string };
+const catalog = JSON.parse(readFileSync(resolve(root, "launchable.json"), "utf8")) as { [name: string]: { definition_id: string } };
 function source(name: string): OperatorAuthoredWorkflow {
-  return (JSON.parse(readFileSync(resolve(root, "workflows", `${catalog[name]}.json`), "utf8")) as { source: OperatorAuthoredWorkflow }).source;
+  return (JSON.parse(readFileSync(resolve(root, "workflows", `${catalog[name].definition_id}.json`), "utf8")) as { source: OperatorAuthoredWorkflow }).source;
 }
 test("development references retain bindings and outcome paths", () => {
   const result = selectDefinitionDependencies(source("development"));

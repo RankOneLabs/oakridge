@@ -12,7 +12,7 @@ const digest = (text: string): string => createHash("sha256").update(text).diges
 
 // The Rust compiler and replay tests read the JSON; the YAML is what a person
 // edits. These assertions are what generate.ts --check enforces in CI.
-for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
+for (const [name, { path }] of Object.entries(WORKFLOW_SOURCES)) {
   test(`${name}.json is the committed derivation of ${path}`, () => {
     const source = readFileSync(resolve(root, path), "utf8");
     const document = YAML.parseDocument(source, { uniqueKeys: true });
@@ -48,7 +48,7 @@ test("development reviews analysis, specification, and tasks before planning", (
         readonly tasks_review: { readonly of: string } };
       readonly done_when: string; readonly outcome: { readonly spec: string; readonly tasks: string } } };
   }
-  const workflow = YAML.parse(readFileSync(resolve(root, WORKFLOW_SOURCES.development), "utf8")) as DevelopmentSpecFlow;
+  const workflow = YAML.parse(readFileSync(resolve(root, WORKFLOW_SOURCES.development.path), "utf8")) as DevelopmentSpecFlow;
   const analysis = workflow.stages.analysis;
   expect(Object.keys(analysis.workers).sort()).toEqual(["author", "spec_editor"]);
   expect({ artifacts: analysis.artifacts, author: analysis.workers.author.produces,

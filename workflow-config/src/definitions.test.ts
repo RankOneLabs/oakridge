@@ -267,7 +267,7 @@ reviews:
 });
 
 const repository_root = resolve(import.meta.dir, "../..");
-for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
+for (const [name, { path }] of Object.entries(WORKFLOW_SOURCES)) {
   test(`${name} resolves all transitive references through the committed launchable catalog`, () => {
     const definition = unwrap(resolveLaunchableDefinition(name));
     const document = YAML.parseDocument(readFileSync(resolve(repository_root, path), "utf8"), { uniqueKeys: true });
@@ -362,7 +362,7 @@ test("two generator runs produce identical store filenames and bytes and preserv
 for (const mapping of ["schemas", "stages"] as const) {
   test(`numeric-looking ${mapping} names preserve authored order and change identity when reordered`, () => {
     const root = generatorFixture();
-    const path = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+    const path = resolve(root, WORKFLOW_SOURCES["review-loop"].path);
     const numeric_names = authored.replace(/\bfirst\b/g, '"2"').replace(/\bsecond\b/g, '"1"')
       .replaceAll("write.md", "review-loop/write.md");
     writeFileSync(path, numeric_names);
@@ -410,7 +410,7 @@ test("regeneration publishes new identities after an authored prompt byte change
   const generated = runGenerator(root);
   if (generated.exitCode !== 0) throw new Error(generated.stderr.toString());
   const store = resolve(root, "workflow-config/definitions");
-  const previous = unwrap(readLaunchableCatalog(store))["review-loop"];
+  const previous = unwrap(readLaunchableCatalog(store))["review-loop"].definition_id;
   const pinned = unwrap(resolveDefinition(previous, store));
   const prompt_path = resolve(root, "workflow-config/prompts/review-loop/write.md");
   writeFileSync(prompt_path, Buffer.concat([readFileSync(prompt_path), Buffer.from("\r\nChanged.\r\n")]));
@@ -436,7 +436,7 @@ test("--check names a missing store file", () => {
 
 interface AuthoringChange { readonly name: string; readonly path: string; readonly change: (source: string) => string }
 const historical_changes: readonly AuthoringChange[] = [
-  { name: "workflow", path: WORKFLOW_SOURCES["review-loop"],
+  { name: "workflow", path: WORKFLOW_SOURCES["review-loop"].path,
     change: (source) => source.replace("workflow: review_loop", "workflow: review_loop_updated") },
   { name: "operation registry", path: "oakridge-dbos/src/operations/registry.ts",
     change: (source) => source.replace('key: "repository.prepare"', 'key: "repository.prepare.updated"') },
@@ -485,7 +485,7 @@ const incompatible_definitions: readonly IncompatibleDefinitionCase[] = [
 ];
 /** An incompatible object under its own hash, as an old store or merge would hold it. */
 function plantDiscardedDefinition(store: string, change = incompatible_definitions[0].change): string {
-  const launchable = unwrap(readLaunchableCatalog(store))["review-loop"];
+  const launchable = unwrap(readLaunchableCatalog(store))["review-loop"].definition_id;
   const definition = JSON.parse(readFileSync(resolve(store, "workflows", `${launchable}.json`), "utf8")) as CommittedDefinition;
   const object = change(definition);
   const id = unwrap(jsonIdentity<DefinitionId>(object));
@@ -496,7 +496,7 @@ function plantDiscardedDefinition(store: string, change = incompatible_definitio
 
 test("generation keeps a launchable definition with an input named like the removed field", () => {
   const root = generatorFixture();
-  const source = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+  const source = resolve(root, WORKFLOW_SOURCES["review-loop"].path);
   writeFileSync(source, readFileSync(source, "utf8").replace("input: { topic: text }\nrun:", "input: { topic: text, gated_review: text }\nrun:"));
   expect(runGenerator(root).exitCode).toBe(0);
   const resolved = unwrap(resolveLaunchableDefinition("review-loop", resolve(root, "workflow-config/definitions")));
@@ -507,7 +507,7 @@ test("the committed store's complete inventory resolves and carries no discarded
   const retained = retainedDefinitions(DEFINITION_STORE_ROOT);
   expect(retained.every(({ object }) => isCommittedDefinition(object))).toBe(true);
   expect(retained.map(({ id }) => unwrap(resolveDefinition(id)).definition_id)).toEqual(retained.map(({ id }) => id));
-  expect(retained.map(({ id }) => id)).toEqual(expect.arrayContaining(Object.values(unwrap(readLaunchableCatalog()))));
+  expect(retained.map(({ id }) => id)).toEqual(expect.arrayContaining(Object.values(unwrap(readLaunchableCatalog())).map((entry) => entry.definition_id)));
 });
 
 test("the source contract refuses the removed grant", () => {
@@ -535,11 +535,11 @@ for (const is_check of [false, true]) {
     const root = generatorFixture();
     expect(runGenerator(root).exitCode).toBe(0);
     const store = resolve(root, "workflow-config/definitions");
-    const definition_id = unwrap(readLaunchableCatalog(store))["review-loop"];
+    const definition_id = unwrap(readLaunchableCatalog(store))["review-loop"].definition_id;
     const path = resolve(store, "workflows", `${definition_id}.json`);
     const snapshot = storeSnapshot(root);
     // Make the unreadable object historical, so it would not be regenerated.
-    const source = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+    const source = resolve(root, WORKFLOW_SOURCES["review-loop"].path);
     writeFileSync(source, readFileSync(source, "utf8").replace("workflow: review_loop", "workflow: review_loop_updated"));
     chmodSync(path, 0o000);
     try {
@@ -563,7 +563,7 @@ test("generation after a later authored change stays clean and cannot revive a d
   expect(runGenerator(root).exitCode).toBe(0);
   const store = resolve(root, "workflow-config/definitions");
   const path = plantDiscardedDefinition(store);
-  const source = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+  const source = resolve(root, WORKFLOW_SOURCES["review-loop"].path);
   writeFileSync(source, readFileSync(source, "utf8").replace("workflow: review_loop", "workflow: review_loop_updated"));
   expect(runGenerator(root).exitCode).toBe(0);
   expect(runGenerator(root).exitCode).toBe(0);
@@ -649,3 +649,19 @@ test("development prompts use the integration-neutral skill while historical pin
   const historical = readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8");
   expect(historical).toContain("development");
 });
+
+test("authored audiences travel with the committed definitions", () => {
+  const catalog = unwrap(readLaunchableCatalog());
+  expect(Object.fromEntries(Object.entries(catalog).map(([name, entry]) => [name, entry.audience]))).toEqual({ development: "user", "fan-out": "test_fixture", "review-loop": "test_fixture" });
+  expect(Object.values(catalog).every((entry) => resolveDefinition(entry.definition_id).ok)).toBe(true);
+});
+for (const entry of [{ definition_id: "a".repeat(64), audience: "unknown" }, { definition_id: "a".repeat(64) }, { definition_id: "a".repeat(64), audience: "user", extra: true }, "a".repeat(64)]) {
+  test(`refuses malformed launchable entry ${JSON.stringify(entry)}`, () => {
+    const root = mkdtempSync(resolve(tmpdir(), "catalog-shape-"));
+    try {
+      writeFileSync(resolve(root, "launchable.json"), unwrap(canonicalJson({ test: entry })));
+      const result = readLaunchableCatalog(root);
+      expect(!result.ok && result.error.kind).toBe("malformed_object");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+}
