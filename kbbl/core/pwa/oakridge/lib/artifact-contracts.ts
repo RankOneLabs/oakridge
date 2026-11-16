@@ -1,6 +1,8 @@
 import type { ArtifactContract, ArtifactConsumer } from "../artifact-types";
 import type { StageInspectorModel, StageElementReference } from "./stage-inspector";
 import { selectPromptRows } from "./prompt-inspector";
+import { selectExpressionReadsArtifact } from "./definition-dependencies";
+import type { OperatorType, OperatorParsedWorkflow } from "../operator-contracts/core-client/core-types";
 
 export interface ExpressionToken {
   text: string;
@@ -27,10 +29,22 @@ export function selectConsumerTarget(consumer: ArtifactConsumer): StageElementRe
     case "let": case "outcome": return { kind: consumer.kind, name: consumer.name };
   }
 }
+/** Resolve named aliases without recursing forever on malformed schema cycles. */
+export function selectResolvedContractType(type: OperatorType, schemas: OperatorParsedWorkflow["schemas"]): OperatorType {
+  const visited = new Set<string>();
+  while (type.kind === "named" && !visited.has(type.schema)) {
+    visited.add(type.schema);
+    const resolved = schemas?.[type.schema];
+    if (!resolved) break;
+    type = resolved;
+  }
+  return type;
+}
+
 export function selectArtifactContracts(model: Pick<StageInspectorModel, "stage" | "workers" | "reviews" | "definition">): ArtifactContract[] {
   const rows = selectPromptRows(model);
   return Object.entries(model.stage.artifacts).map(([name, artifact]) => {
-    const references = (expression: string) => selectExpressionIdentifiers(expression).includes(name);
+    const references = (expression: string) => selectExpressionReadsArtifact({expression, artifact: name, bindings: model.stage.let ?? {}});
     const producers = model.workers.filter(({worker}) => worker.produces.includes(name)).map(({key}) => key);
     const consumers: ArtifactConsumer[] = [
       ...model.reviews.flatMap(({key, review}): ArtifactConsumer[] => [
@@ -44,14 +58,8 @@ export function selectArtifactContracts(model: Pick<StageInspectorModel, "stage"
       ...Object.entries(model.stage.let ?? {}).filter(([, expression]) => references(expression)).map(([name]): ArtifactConsumer => ({kind: "let", name})),
       ...Object.entries(model.stage.outcome).filter(([, expression]) => references(expression)).map(([name]): ArtifactConsumer => ({kind: "outcome", name})),
     ];
-    let schema = artifact.schema;
-    const visited = new Set<string>();
-    while (schema.kind === "named" && !visited.has(schema.schema)) {
-      visited.add(schema.schema);
-      const resolved = model.definition.effective_workflow.schemas?.[schema.schema];
-      if (!resolved) break;
-      schema = resolved;
-    }
-    return { name, ...artifact, validate: artifact.validate, required_fields: schema.kind === "record" ? Object.entries(schema.fields).filter(([, type]) => type.kind !== "optional").map(([name]) => name) : null, producers, consumers, producer_prompts: rows.filter(row => row.owner.kind === "worker" && producers.includes(row.owner.key)) };
+    const schemas = model.definition.effective_workflow.schemas;
+    const schema = selectResolvedContractType(artifact.schema, schemas);
+    return { name, ...artifact, validate: artifact.validate, required_fields: schema.kind === "record" ? Object.entries(schema.fields).filter(([, type]) => selectResolvedContractType(type, schemas).kind !== "optional").map(([name]) => name) : null, producers, consumers, producer_prompts: rows.filter(row => row.owner.kind === "worker" && producers.includes(row.owner.key)) };
   });
 }

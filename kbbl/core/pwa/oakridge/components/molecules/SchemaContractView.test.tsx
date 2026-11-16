@@ -33,3 +33,9 @@ test("a newly declared artifact renders a definition contract from its schema", 
   expect(article?.textContent).toContain("title · required");
   expect(article?.textContent).toContain("notes · optional");
 });
+
+test("record field labels follow named optional aliases", () => {
+  render(<SchemaContractView definition_id="test" schemas={{maybe_text: {kind: "optional", value: {kind: "text"}}, alias: {kind: "named", schema: "maybe_text"}, title_text: {kind: "text"}}} schema={{kind: "record", fields: {title: {kind: "named", schema: "title_text"}, notes: {kind: "named", schema: "alias"}}}} />);
+  expect(screen.getByText("title · required")).toBeTruthy();
+  expect(screen.getByText("notes · optional")).toBeTruthy();
+});
