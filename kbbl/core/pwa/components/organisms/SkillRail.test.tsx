@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
+import { useStore } from "../../state/store";
+import { readStoredQuickActionKeys } from "../../lib/storage";
 import { SkillRail } from "./SkillRail";
 import type { Skill } from "../../../runtime-interface";
 import type { SessionSnapshot } from "../../types";
@@ -64,6 +66,8 @@ function renderOpenRail() {
   render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
   fireEvent.click(screen.getByRole("button", { name: /^(?!Quick action:)^Skills$/ }));
 }
+
+beforeEach(() => useStore.setState({ quickActionKeys: readStoredQuickActionKeys() }));
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -310,4 +314,23 @@ it("collapses after ArgSheet submit and preserves invocation arguments", async (
   fireEvent.click(screen.getByRole("button", { name: "Run" }));
   expect(screen.getByRole("button", { name: "Skills" }).getAttribute("aria-expanded")).toBe("false");
   await waitFor(() => expect(mockMutateAsync).toHaveBeenCalledWith({ skill_id: "s-ship", args: { env: "production" } }));
+});
+
+
+it("shares quick-action choices across session panes without losing either edit", () => {
+  const otherSkill = { ...PLAIN_SKILL, id: "s-other", name: "other-task" };
+  setup([PLAIN_SKILL, otherSkill]);
+  const { getByTestId } = render(<>
+    <div data-testid="first-rail"><SkillRail sid="first" snapshot={LIVE_SNAPSHOT} /></div>
+    <div data-testid="second-rail"><SkillRail sid="second" snapshot={LIVE_SNAPSHOT} /></div>
+  </>);
+  const first = within(getByTestId("first-rail"));
+  const second = within(getByTestId("second-rail"));
+  fireEvent.click(first.getByRole("button", { name: "Skills" }));
+  fireEvent.click(second.getByRole("button", { name: "Skills" }));
+  fireEvent.click(first.getByRole("button", { name: "Quick action: list-tasks" }));
+  expect(second.getByRole("button", { name: "Quick action: list-tasks" }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(second.getByRole("button", { name: "Quick action: other-task" }));
+  expect(first.getByRole("button", { name: "Quick action: other-task" }).textContent).toBe("★");
+  expect(JSON.parse(localStorage.getItem("kbbl.skillRail.quickActions") ?? "null")).toEqual(expect.arrayContaining(["list-tasks", "other-task"]));
 });

@@ -1,5 +1,5 @@
 import { quickActionKey, selectQuickActions } from "../../lib/quick-actions";
-import { readStoredQuickActionKeys, writeStoredQuickActionKeys } from "../../lib/storage";
+import { useStore } from "../../state/store";
 import { Button } from "../atoms/Button";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSnapshot, UiAvailableCommand } from "../../types";
@@ -67,7 +67,8 @@ export function SkillRail({
   const [collecting, setCollecting] = useState<Skill | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [quickKeys, setQuickKeys] = useState(readStoredQuickActionKeys);
+  const quickKeys = useStore((state) => state.quickActionKeys);
+  const toggleQuickAction = useStore((state) => state.toggleQuickAction);
   const [collapsed, setCollapsed] = useState(true);
   const [invokeError, setInvokeError] = useState<string | null>(null);
   // Missing overrides use the section default: MCP closed, everything else open.
@@ -262,12 +263,7 @@ export function SkillRail({
                         <Button variant="session" type="button"
                           aria-label={`Quick action: ${skillLabel(skill)}`}
                           aria-pressed={quickKeys.includes(quickActionKey(skill))}
-                          onClick={() => {
-                            const key = quickActionKey(skill);
-                            const next = quickKeys.includes(key) ? quickKeys.filter((item) => item !== key) : [...quickKeys, key];
-                            setQuickKeys(next);
-                            writeStoredQuickActionKeys(next);
-                          }}><span aria-hidden="true">{quickKeys.includes(quickActionKey(skill)) ? "★" : "☆"}</span></Button>
+                          onClick={() => toggleQuickAction(quickActionKey(skill))}><span aria-hidden="true">{quickKeys.includes(quickActionKey(skill)) ? "★" : "☆"}</span></Button>
                         </span>
                       ))}
                     </div>

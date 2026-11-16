@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { readStoredQuickActionKeys, writeStoredQuickActionKeys } from "../lib/storage";
+import { selectToggledQuickActionKeys } from "../lib/quick-actions";
 
 import type { Sid } from "../lib/ids";
 import type { PwaSessionChanges } from "../../acp/pwa-wire";
@@ -9,6 +11,8 @@ export type SessionArchiveUpdate =
   | { readonly kind: "end_and_archive"; readonly sid: Sid };
 
 export interface AppState {
+  quickActionKeys: string[];
+  toggleQuickAction: (key: string) => void;
   /**
    * Session map, fed by the /inbox stream: the authoritative `snapshot`
    * frame opening each connection, then `changes` frames.
@@ -36,6 +40,12 @@ export interface AppState {
 }
 
 export const useStore = create<AppState>()((set) => ({
+  quickActionKeys: readStoredQuickActionKeys(),
+  toggleQuickAction: (key) => set((state) => {
+    const quickActionKeys = selectToggledQuickActionKeys(state.quickActionKeys, key);
+    writeStoredQuickActionKeys(quickActionKeys);
+    return { quickActionKeys };
+  }),
   sessions: new Map(),
   hasInboxSnapshot: false,
   inboxStatus: "connecting",

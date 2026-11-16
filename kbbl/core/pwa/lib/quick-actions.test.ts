@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import type { Skill } from "../../runtime-interface";
-import { DEFAULT_QUICK_ACTION_KEYS, quickActionKey, selectQuickActions } from "./quick-actions";
+import { DEFAULT_QUICK_ACTION_KEYS, quickActionKey, selectQuickActions, selectToggledQuickActionKeys } from "./quick-actions";
 import { QUICK_ACTIONS_STORAGE_KEY, readStoredQuickActionKeys, writeStoredQuickActionKeys } from "./storage";
 
 const tool = (id: string, name: string): Skill => ({ id, name, description: "", backend: "codex", scope: "system", args: [], user_invocable: true, model_invocable: false });
@@ -27,4 +27,12 @@ it("falls back on absent and malformed preferences and round trips valid keys", 
   expect(readStoredQuickActionKeys()).toEqual(["/compact"]);
   writeStoredQuickActionKeys([]);
   expect(readStoredQuickActionKeys()).toEqual([]);
+});
+
+
+it("toggles one key while preserving the other choices and input", () => {
+  const keys = ["/compact", "other"];
+  expect(selectToggledQuickActionKeys(keys, "new")).toEqual(["/compact", "other", "new"]);
+  expect(selectToggledQuickActionKeys(keys, "/compact")).toEqual(["other"]);
+  expect(keys).toEqual(["/compact", "other"]);
 });

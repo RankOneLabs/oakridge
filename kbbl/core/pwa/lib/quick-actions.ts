@@ -10,3 +10,8 @@ export function selectQuickActions(available: Skill[], keys: string[]): Skill[] 
   const selected = new Set(keys);
   return available.filter((skill) => selected.has(quickActionKey(skill)));
 }
+
+/** Toggle one name-based preference without changing the other choices. */
+export function selectToggledQuickActionKeys(keys: readonly string[], key: string): string[] {
+  return keys.includes(key) ? keys.filter((item) => item !== key) : [...keys, key];
+}
