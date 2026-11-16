@@ -23,7 +23,7 @@ export const discardLocalEdits = (state: PromptDraftState): PromptDraftState => 
 export const promptPublished = (state: PromptDraftState, digest: string): PromptDraftState => ({...state, published_body: state.pending?.body ?? state.body, published_digest: digest, pending: null, is_dirty: false});
 export function selectPromptEditorActions(state: PromptDraftState, is_busy: boolean) {
   return {save: !is_busy && state.is_dirty, validate: !is_busy && !state.is_dirty && state.pending !== null,
-    publish: !is_busy && !state.is_dirty && state.pending !== null, discard: !is_busy && state.is_dirty, close: !is_busy};
+    publish: !is_busy && !state.is_dirty && state.pending !== null, discard: !is_busy && state.is_dirty, close: !is_busy && !state.is_dirty};
 }
 export function promptFeedbackText(feedback: PromptFeedback): string {
   switch (feedback.kind) {

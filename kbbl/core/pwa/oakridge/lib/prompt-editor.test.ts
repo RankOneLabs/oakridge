@@ -38,8 +38,12 @@ test("references include both shared review uses and the sole brief writer", () 
   expect(selectPromptIsShared(brief)).toBe(false);
 });
 test("template provenance survives reference selection", () => {
-  const refs = Object.keys(definition.prompts).flatMap(path => selectPromptReferences({path, definitions: [definition]}));
-  expect(refs.some(reference => reference.template !== null)).toBe(true);
+  const worker = {template: "shared_builder"};
+  const templated: OperatorDefinitionDetail = {...definition, workflow: {...definition.workflow,
+    stages: {...definition.workflow.stages, cohort: {...definition.workflow.stages.cohort,
+      workers: {...definition.workflow.stages.cohort.workers, builder: worker}}}}};
+  const references = selectPromptReferences({path: "development/build.md", definitions: [templated]});
+  expect(references.find(reference => reference.stage === "cohort" && reference.owner_key === "builder")?.template).toBe(worker.template);
 });
 test("publication selects only the viewed workflow's reported id", () => {
   const outcome: OperatorPromptPublicationOutcome = {version_id: "v", prompt_id: "p", source_path: "p", published_at: "now", moved: [{workflow: "development", workflow_name: "Development", definition_id: "new", previous_definition_id: "old", audience: "user"}]};

@@ -6,11 +6,12 @@ import { selectPromptRows } from "../../lib/prompt-inspector";
 import { LetExpression } from "./LetExpression";
 export function StagePromptsSection({ model }: StageSectionProps) {
   const [openPath, setOpenPath] = useState<string | null>(null);
+  const [isDirty, setDirty] = useState(false);
   return <section aria-label="Prompts" className="rounded border border-[var(--border-muted)] p-3">
     <h3>Prompts</h3>
     {selectPromptRows(model).map(row => <article key={row.id} id={stageElementId({ stage: model.name, kind: "prompt", name: row.id })} tabIndex={-1}>
       <h4>{row.owner.key}</h4>
-      <Button aria-label={`Edit ${row.path}`} onClick={() => { if (openPath === null || openPath === row.path || window.confirm("Discard unsaved local edits and open another view?")) setOpenPath(row.path); }}>Edit prompt</Button>
+      <Button aria-label={`Edit ${row.path}`} onClick={() => { if (openPath === null || openPath === row.path || !isDirty || window.confirm("Discard unsaved local edits and open another view?")) setOpenPath(row.path); }}>Edit prompt</Button>
       <dl><dt>Used by</dt><dd>{row.owner.kind} {row.owner.key}{row.owner.template && <> from template {row.owner.template}</>}</dd>
       <dt>Mode</dt><dd>{row.mode}</dd><dt>Source</dt><dd>{row.path}</dd><dt>Digest</dt><dd>{row.digest}</dd></dl>
       {row.body !== null && <pre>{row.body}</pre>}
@@ -18,7 +19,7 @@ export function StagePromptsSection({ model }: StageSectionProps) {
       <p>Produces {row.produces.map(name => <a key={name} className="mr-2" href={stageElementHref(model, {kind: "artifact", name})}>{name}</a>)}</p>
       {row.owner.kind === "review" && <p>Reviews <a href={stageElementHref(model, {kind: "artifact", name: row.owner.of})}>{row.owner.of}</a></p>}
     </article>)}
-    {openPath && <PromptEditor key={openPath} path={openPath} model={model} onClose={() => setOpenPath(null)} />}
+    {openPath && <PromptEditor key={openPath} path={openPath} model={model} onDirtyChange={setDirty} onClose={() => { setDirty(false); setOpenPath(null); }} />}
     {model.sources.map(({kind, name, label, content}) => <details key={kind + ":" + name} id={stageElementId({stage: model.name, kind, name})} tabIndex={-1}><summary>{label}</summary><pre>{content}</pre></details>)}
   </section>;
 }

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TextArea } from "../../../components/atoms/TextArea";
 import { Button } from "../../../components/atoms/Button";
@@ -8,7 +9,7 @@ import { selectPromptEditorActions, selectPromptReferences, selectPromptIsShared
 import { PromptVersionHistory } from "../molecules/PromptVersionHistory";
 import type { StageInspectorModel } from "../../lib/stage-inspector";
 import type { OperatorPromptVersionListing } from "../../operator-contracts/http/prompt-versions";
-interface PromptEditorProps { path: string; model: StageInspectorModel; onClose: () => void }
+interface PromptEditorProps { path: string; model: StageInspectorModel; onClose: () => void; onDirtyChange?: (isDirty: boolean) => void }
 export function PromptEditor(props: PromptEditorProps) {
   const versions = usePromptVersions(props.path);
   if (versions.isPending) return <p role="status">Loading prompt versions…</p>;
@@ -17,9 +18,10 @@ export function PromptEditor(props: PromptEditorProps) {
   return <LoadedPromptEditor {...props} versions={versions.data.value} />;
 }
 interface LoadedPromptEditorProps extends PromptEditorProps {versions: OperatorPromptVersionListing}
-function LoadedPromptEditor({path, model, onClose, versions}: LoadedPromptEditorProps) {
+function LoadedPromptEditor({path, model, onClose, onDirtyChange, versions}: LoadedPromptEditorProps) {
   const editor = usePromptEditor({path, definition: model.definition, versions,
     selection: model.selected_unit ? {kind: "unit", path: model.selected_unit.path, tab: "prompts"} : {kind: "stage", stage: model.name, tab: "prompts"}, onClose});
+  useEffect(() => { onDirtyChange?.(editor.state.is_dirty); }, [onDirtyChange, editor.state.is_dirty]);
   const definitions = useQuery({queryKey: ["oakridge", "prompt-references", model.definition.definition_id], queryFn: async () => {
     const listed = await readDefinitions();
     const others = await Promise.all(listed.filter(item => item.definition_id !== model.definition.definition_id).map(item => fetchOperatorDefinition(item.definition_id)));

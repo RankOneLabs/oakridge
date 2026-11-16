@@ -72,7 +72,12 @@ test("shared review lists both stage uses and template references remain visible
 test("edit save validate publish sends preconditions and pushes the reported definition", async () => {
   await open(); edit();
   expect(screen.getByText("Unsaved local edits")).toBeTruthy();
-  expect((screen.getByRole("button", {name: "Validate saved draft"}) as HTMLButtonElement).disabled).toBe(true);
+  for (const name of ["Save draft", "Discard local edits"]) {
+    expect((screen.getByRole("button", {name}) as HTMLButtonElement).disabled).toBe(false);
+  }
+  for (const name of ["Validate saved draft", "Publish prompt", "Close editor"]) {
+    expect((screen.getByRole("button", {name}) as HTMLButtonElement).disabled).toBe(true);
+  }
   click("Save draft");
   await screen.findByText("Pending version saved · pending-digest");
   expect(saved).toEqual({path, body: "operator edit", expected_pending_version_id: null});
@@ -146,4 +151,27 @@ test("published navigation preserves Back access to the mocked previous definiti
   await waitFor(() => expect(window.location.hash).toContain(definition.definition_id));
   await screen.findByTestId("or-def-detail");
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/definitions/" + definition.definition_id))).toBe(true);
+});
+
+test("switching clean prompt editors does not ask for confirmation", async () => {
+  mount("cohort");
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal("confirm", confirm);
+  click("Edit development/merge-confirmation.md");
+  await screen.findByRole("heading", {name: "Editing development/merge-confirmation.md"});
+  fireEvent.click(screen.getAllByRole("button", {name: "Edit development/build.md"})[0]);
+  await screen.findByRole("heading", {name: "Editing development/build.md"});
+  expect(confirm).not.toHaveBeenCalled();
+});
+test("declining a dirty editor switch preserves the open prompt and edits", async () => {
+  mount("cohort");
+  click("Edit development/merge-confirmation.md");
+  await screen.findByLabelText("Prompt body");
+  edit();
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal("confirm", confirm);
+  fireEvent.click(screen.getAllByRole("button", {name: "Edit development/build.md"})[0]);
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(screen.getByRole("heading", {name: "Editing development/merge-confirmation.md"})).toBeTruthy();
+  expect((screen.getByLabelText("Prompt body") as HTMLTextAreaElement).value).toBe("operator edit");
 });
