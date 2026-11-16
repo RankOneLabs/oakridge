@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RunSessionAttempt } from "../run-types";
-import { runUnitKeyOf, selectRunSessionRows, selectRunSessionsRead } from "./run-sessions";
+import { runUnitKeyOf, selectRunSessionRows, selectRunSessionsRead, selectRunSessionStage } from "./run-sessions";
 
 // Timestamps are written the way the route actually sends them — Postgres
 // `timestamptz::text`, so a space separator and a numeric offset, not ISO-8601
@@ -136,5 +136,20 @@ describe("selectRunSessionsRead", () => {
   it("reads a settled empty response as a run with no sessions", () => {
     expect(selectRunSessionsRead({ attempts: [], is_pending: false, is_error: false }))
       .toEqual({ kind: "loaded", attempts: [] });
+  });
+});
+
+
+describe("selectRunSessionStage", () => {
+  const attempts = [attempt({ work_order_id: "work-1", created_at: "2026-09-01 00:00:00+00" })];
+  it("uses the stage of the matching session attempt", () => {
+    expect(selectRunSessionStage(attempts, "session-work-1")).toBe("build");
+  });
+  it("omits stage when attempts or a matching session are absent", () => {
+    expect([
+      selectRunSessionStage(undefined, "session-work-1"),
+      selectRunSessionStage(attempts, "other"),
+      selectRunSessionStage(attempts, null),
+    ]).toEqual([null, null, null]);
   });
 });

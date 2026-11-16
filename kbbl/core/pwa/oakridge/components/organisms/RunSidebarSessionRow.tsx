@@ -1,3 +1,4 @@
+import { paneSelectionClass, paneSelectionName, type PaneSlots } from "../../lib/pane-selection";
 import { Button } from "../../../components/atoms/Button";
 import { useEffect, useState } from "react";
 
@@ -9,11 +10,11 @@ import { type RunSidebarSessionRow as SidebarSessionRow } from "../../lib/run-ov
 
 interface RunSidebarSessionRowProps {
   row: SidebarSessionRow;
-  isOpen: boolean;
+  slots: PaneSlots;
   onOpen: (sessionId: Sid, slot: RunWorkspaceSlot) => void;
 }
 
-export function RunSidebarSessionRow({ row, isOpen, onOpen }: RunSidebarSessionRowProps) {
+export function RunSidebarSessionRow({ row, slots, onOpen }: RunSidebarSessionRowProps) {
   const [confirmEnd, setConfirmEnd] = useState(false);
   const status = useStore((state) => state.sessions.get(row.session_id)?.status ?? null);
   const canEnd = status !== null && !row.is_archived;
@@ -42,7 +43,8 @@ export function RunSidebarSessionRow({ row, isOpen, onOpen }: RunSidebarSessionR
     <li className="or-run-sidebar__row flex-wrap" data-testid="or-sidebar-session-item">
       <Button variant="sidebar-row"
         type="button"
-        className={isOpen ? "border-[var(--or-run-accent,var(--accent-primary))]! bg-[var(--bg-elevated)]!" : ""}
+        className={paneSelectionClass(slots)}
+        data-pane-selection={paneSelectionName(slots)}
         onClick={() => onOpen(row.session_id, "primary")}
         data-testid="or-sidebar-session"
         data-session-id={row.session_id}

@@ -1,3 +1,4 @@
+import { DEFAULT_QUICK_ACTION_KEYS } from "./quick-actions";
 import type { Theme } from "../types";
 import type { RuntimeDescriptor } from "../types";
 import { defaultModelForRuntime, matchAdvertisedModel } from "../../runtime";
@@ -133,4 +134,18 @@ export function readStoredTheme(): Theme {
     if (v === "light" || v === "dark") return v;
   } catch {}
   return "dark";
+}
+
+export const QUICK_ACTIONS_STORAGE_KEY = "kbbl.skillRail.quickActions";
+
+export function readStoredQuickActionKeys(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(QUICK_ACTIONS_STORAGE_KEY) ?? "null");
+    if (Array.isArray(value) && value.every((key) => typeof key === "string")) return value;
+  } catch {}
+  return [...DEFAULT_QUICK_ACTION_KEYS];
+}
+
+export function writeStoredQuickActionKeys(keys: string[]): void {
+  try { localStorage.setItem(QUICK_ACTIONS_STORAGE_KEY, JSON.stringify(keys)); } catch {}
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SessionSnapshot } from "../types";
 import type { Sid } from "./ids";
-import { selectBulkHideActionLabel, selectBulkHideEligibleSessions, summarizeBulkHideOutcome } from "./session-bulk-hide";
+import { selectRunHideEndedSessions, selectBulkHideActionLabel, selectBulkHideEligibleSessions, summarizeBulkHideOutcome } from "./session-bulk-hide";
 import { selectSessionCloseRefusal } from "./session-close";
 
 const session = (sid: string, status: SessionSnapshot["status"], archivedAt: string | null = null) =>
@@ -59,4 +59,16 @@ describe("session bulk hide selectors", () => {
       ],
     });
   });
+});
+
+
+it("scopes terminal unarchived snapshots to the owning run", () => {
+  const owned = (id: string, status: SessionSnapshot["status"], runId: string | null, archivedAt: string | null = null): SessionSnapshot =>
+    ({ ...session(id, status, archivedAt), workflow: runId ? { runId, unitId: "unit", worker: "builder" } : null });
+  expect(selectRunHideEndedSessions([
+    owned("ended", "ended", "run-1"), owned("fenced", "fenced", "run-1"),
+    owned("failed", "failed", "run-1"), owned("idle", "idle", "run-1"),
+    owned("prompting", "prompting", "run-1"), owned("archived", "ended", "run-1", "now"),
+    owned("other", "ended", "run-2"), owned("standalone", "ended", null),
+  ], "run-1").map((s) => s.sid)).toEqual(["ended", "fenced", "failed"]);
 });

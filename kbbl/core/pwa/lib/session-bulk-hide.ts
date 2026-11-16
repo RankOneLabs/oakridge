@@ -52,3 +52,9 @@ export function summarizeBulkHideOutcome(
       : []),
   };
 }
+
+/** Apply the shared archive rule only to snapshots owned by this run. */
+export function selectRunHideEndedSessions(sessions: readonly SessionSnapshot[], runId: string): SessionSnapshot[] {
+  const eligible = new Set<string>(selectBulkHideEligibleSessions(sessions));
+  return sessions.filter((session) => session.workflow?.runId === runId && eligible.has(session.sid));
+}
