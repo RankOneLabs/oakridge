@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { DefinitionSelection } from "../../../lib/hash";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
 import type { DefinitionOverview } from "../../lib/definition-overview";
@@ -40,13 +41,18 @@ function edgeLabel(edge: DependencyEdge): string {
 }
 export function DefinitionGraph(props: DefinitionGraphProps) {
   const { definition } = props;
-  const model = selectDefinitionGraphModel(definition);
+  const model = useMemo(
+    () => selectDefinitionGraphModel(definition),
+    [definition],
+  );
   const { units, edges, layout, breadcrumbs } = selectDefinitionGraph({
     overview: props.overview,
     model,
     selection: props.selection,
     dependencies: selectDefinitionDependencies(definition.workflow),
   });
+  const parent = breadcrumbs.at(-1)?.path ?? null;
+  const scope = useMemo(() => ({ kind: "group" as const, parent }), [parent]);
   const id = definition.definition_id;
   return (
     <section aria-label="Definition dependencies">
@@ -65,7 +71,7 @@ export function DefinitionGraph(props: DefinitionGraphProps) {
           <LividDefinitionGraph
             model={model}
             definition_id={id}
-            scope={{ kind: "group", parent: breadcrumbs.at(-1)?.path ?? null }}
+            scope={scope}
           />
         ) : (
           <svg

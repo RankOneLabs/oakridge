@@ -117,6 +117,11 @@ vi.mock("@rankonelabs/livid-react", () => ({
     createElement(
       "div",
       { "aria-label": props.ariaLabel },
+      props.diagram.nodes.filter(({ node }) => node.childState.kind === "deferred").map(({ node }) =>
+        createElement("button", { key: `descend:${node.id}`, onClick: () => {
+          if (node.childState.kind === "deferred") props.onDescendRequest?.({ nodeId: node.id, childState: node.childState });
+        } }, `Descend ${node.label}`),
+      ),
       props.diagram.nodes.map(({ node }) =>
         createElement(
           "button",
@@ -175,4 +180,37 @@ test("Livid consumer imports both required library stylesheets", () => {
   );
   expect(source).toContain('import "@xyflow/react/dist/style.css"');
   expect(source).toContain('import "@rankonelabs/livid-react/styles.css"');
+});
+
+test("fan-out groups defer descent to their child group scope", () => {
+  const definition = fanOut.definition as unknown as OperatorDefinitionDetail;
+  const model = selectDefinitionGraphModel(definition);
+  const group = model.nodes.find((node) => node.kind === "unit" && node.is_group);
+  if (group?.kind !== "unit") throw Error("missing group");
+  const spec = selectLividDiagramSpec(model, group.scope);
+  expect(spec.nodes.find((node) => node.id === group.id)?.childState).toEqual({ kind: "deferred", key: group.id });
+  const children = selectLividDiagramSpec(model, { kind: "group", parent: group.path });
+  expect(children.nodes.map((node) => node.id)).toEqual(model.nodes.filter((node) => node.scope.kind === "group" && node.scope.parent === group.path).map((node) => node.id));
+  expect(children.nodes.length).toBeGreaterThan(0);
+});
+
+
+import { DefinitionGraph } from "../components/molecules/DefinitionGraph";
+test("parent rerenders preserve Livid group descent without another layout", async () => {
+  const definition = fanOut.definition as unknown as OperatorDefinitionDetail;
+  const overview = selectDefinitionOverview(definition);
+  const group = overview.units.find((unit) => unit.is_group);
+  if (!group) throw Error("missing group");
+  const child = overview.units.find((unit) => unit.parent === group.path);
+  if (!child) throw Error("missing child");
+  const props = { definition, overview, selection: null, renderer: "livid" as const };
+  const view = render(createElement(DefinitionGraph, props));
+  fireEvent.click(await screen.findByRole("button", { name: `Descend ${group.key}` }, { timeout: 20000 }));
+  await screen.findByRole("button", { name: child.key }, { timeout: 20000 });
+  view.rerender(createElement(DefinitionGraph, { ...props }));
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("button", { name: child.key })).toBeDefined();
+  expect(screen.queryByRole("button", { name: group.key })).toBeNull();
+  // Flush effects: a recreated root scope would reset descent after this render.
+  await waitFor(() => expect(screen.getByRole("button", { name: child.key })).toBeDefined());
 });
