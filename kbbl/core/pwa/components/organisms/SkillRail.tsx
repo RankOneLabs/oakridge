@@ -1,3 +1,5 @@
+import { quickActionKey, selectQuickActions } from "../../lib/quick-actions";
+import { readStoredQuickActionKeys, writeStoredQuickActionKeys } from "../../lib/storage";
 import { Button } from "../atoms/Button";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSnapshot, UiAvailableCommand } from "../../types";
@@ -13,12 +15,10 @@ import { ArgSheet } from "./ArgSheet";
 interface RailSection {
   key: string;
   label: string;
-  /** MCP-tool sections are collapsed by default so they never crowd the rail. */
   isMcp: boolean;
   skills: Skill[];
 }
 
-/** True for a typed MCP rail action (e.g. `cc:mcp:<server>:<tool>`). */
 function isMcpSkill(skill: Skill): boolean {
   return skill.id.split(":")[1] === "mcp";
 }
@@ -29,10 +29,7 @@ function backendLabel(backend: Skill["backend"]): string {
   return backend;
 }
 
-/**
- * Group a skill into a rail section. MCP tools cluster per server under their own
- * "MCP · <server>" header; everything else clusters by backend + scope.
- */
+// MCP tools cluster by server; other actions cluster by backend and scope.
 function sectionFor(skill: Skill): { key: string; label: string; isMcp: boolean } {
   if (isMcpSkill(skill)) {
     const server = skill.id.split(":")[2] ?? "mcp";
@@ -43,10 +40,7 @@ function sectionFor(skill: Skill): { key: string; label: string; isMcp: boolean 
   return { key: `${skill.backend}:${skill.scope}`, label, isMcp: false };
 }
 
-/**
- * Button label. MCP tools carry a verbose `mcp:<server>:<tool>` name; under the
- * per-server header only the bare tool name is meaningful.
- */
+// Show the bare MCP tool name under its server header.
 function skillLabel(skill: Skill): string {
   if (isMcpSkill(skill)) {
     const parts = skill.name.split(":");
@@ -63,8 +57,6 @@ export function SkillRail({
 }: {
   sid: string;
   snapshot: SessionSnapshot | null;
-  /** Agent-provided slash commands (§16.1), from the session's
-   * `commands` UI events — the second rail source next to app skills. */
   commands?: readonly UiAvailableCommand[];
   position?: "bottom" | "right" | "composer";
 }) {
@@ -75,10 +67,10 @@ export function SkillRail({
   const [collecting, setCollecting] = useState<Skill | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [quickKeys, setQuickKeys] = useState(readStoredQuickActionKeys);
   const [collapsed, setCollapsed] = useState(true);
   const [invokeError, setInvokeError] = useState<string | null>(null);
-  // Per-section open/closed overrides keyed by section key. Absent → use the
-  // section's default (MCP collapsed, everything else expanded).
+  // Missing overrides use the section default: MCP closed, everything else open.
   const [sectionOverrides, setSectionOverrides] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -92,8 +84,7 @@ export function SkillRail({
 
   const sections = useMemo(() => {
     const map = new Map<string, RailSection>();
-    // Agent-provided slash commands (§16.1) lead the rail: they are what
-    // this agent says it can do right now.
+    // Advertised agent commands lead; MCP tools sort last.
     if (commands.length > 0) {
       map.set("agent-commands", {
         key: "agent-commands",
@@ -120,7 +111,6 @@ export function SkillRail({
       }
       section.skills.push(skill);
     }
-    // Real skills first, MCP tool sections last so they never lead the rail.
     return [...map.values()].sort((a, b) =>
       a.isMcp === b.isMcp ? 0 : a.isMcp ? 1 : -1,
     );
@@ -142,8 +132,6 @@ export function SkillRail({
   function getButtonState(skill: Skill) {
     if (!isSessionLive) return "disabled" as const;
     if (dispatchingId === skill.id) return "dispatching" as const;
-    // A dispatch in-flight blocks taps on every button (see handleTap), so the
-    // other buttons must look disabled rather than enabled-but-inert.
     if (dispatchingId !== null) return "disabled" as const;
     if (collecting?.id === skill.id) return "collecting" as const;
     if (confirmingId === skill.id) return "confirming" as const;
@@ -151,6 +139,7 @@ export function SkillRail({
   }
 
   async function dispatch(skill: Skill, args: Record<string, string>) {
+    setCollapsed(true);
     setCollecting(null);
     setInvokeError(null);
     setDispatchingId(skill.id);
@@ -161,8 +150,7 @@ export function SkillRail({
         await invokeMutation.mutateAsync({ skill_id: skill.id, args });
       }
     } catch (err) {
-      // Submission failed (transport down, session not live, …). Surface it
-      // explicitly so the user can tell "not dispatched" from "dispatched".
+      // A failed submission must remain visible even after the rail closes.
       const detail = err instanceof Error ? ` ${err.message}` : "";
       setInvokeError(`Couldn't invoke "${skill.name}".${detail}`);
     } finally {
@@ -181,8 +169,8 @@ export function SkillRail({
   function handleTap(skill: Skill) {
     if (!isSessionLive || dispatchingId !== null) return;
 
+    // The second tap proceeds to argument collection or dispatch.
     if (confirmingId === skill.id) {
-      // Second tap: clear gate and proceed — confirm → collect or dispatch
       clearConfirming();
       if (skill.args.length > 0) {
         setCollecting(skill);
@@ -192,12 +180,10 @@ export function SkillRail({
       return;
     }
 
-    // Tapping a different skill cancels any in-flight confirm gate
     if (confirmingId !== null) clearConfirming();
 
+    // Preserve the existing confirm timeout and clear any argument sheet.
     if (skill.confirm) {
-      // First tap on a confirm-gate skill: enter confirming state with timeout revert.
-      // Clear any open ArgSheet so collecting and confirming can't be set simultaneously.
       setCollecting(null);
       setConfirmingId(skill.id);
       confirmTimerRef.current = setTimeout(() => {
@@ -207,7 +193,6 @@ export function SkillRail({
       return;
     }
 
-    // Normal skill: collect args or dispatch directly
     if (skill.args.length > 0) {
       setCollecting(skill);
     } else {
@@ -241,6 +226,9 @@ export function SkillRail({
             </Button>
           </div>
         )}
+        {collapsed && selectQuickActions(sections.flatMap((section) => section.skills), quickKeys).map((skill) =>
+          <SkillButton key={skill.id} skill={skill} label={skillLabel(skill)}
+            state={getButtonState(skill)} onTap={() => handleTap(skill)} />)}
         {!collapsed && (
           <div className="skill-rail__groups">
             {sections.map((section) => {
@@ -264,13 +252,23 @@ export function SkillRail({
                   {open && (
                     <div className="skill-rail__scope">
                       {section.skills.map((skill) => (
+                        <span key={skill.id} className="inline-flex items-center">
                         <SkillButton
-                          key={skill.id}
                           skill={skill}
                           label={skillLabel(skill)}
                           state={getButtonState(skill)}
                           onTap={() => handleTap(skill)}
                         />
+                        <Button variant="session" type="button"
+                          aria-label={`Quick action: ${skillLabel(skill)}`}
+                          aria-pressed={quickKeys.includes(quickActionKey(skill))}
+                          onClick={() => {
+                            const key = quickActionKey(skill);
+                            const next = quickKeys.includes(key) ? quickKeys.filter((item) => item !== key) : [...quickKeys, key];
+                            setQuickKeys(next);
+                            writeStoredQuickActionKeys(next);
+                          }}>☆</Button>
+                        </span>
                       ))}
                     </div>
                   )}
