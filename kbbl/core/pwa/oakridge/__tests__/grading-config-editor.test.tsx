@@ -218,3 +218,5 @@ it("places task_source validation issues beside the Targets scope fields", async
   expect(within(screen.getByRole("region", { name: "Targets" })).getByRole("alert").textContent).toBe("Resolved relation source is unavailable");
   expect(within(screen.getByRole("region", { name: "Question" })).queryByRole("alert")).toBeNull();
 });
+
+vi.mock("../client", async importOriginal => ({ ...await importOriginal<typeof import("../client")>(), readDefinitions: vi.fn(async () => []) }));

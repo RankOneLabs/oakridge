@@ -279,3 +279,5 @@ test("template anchors reveal enclosing details in the Prompts tab", () => {
   expect(source.open).toBe(true);
   expect(document.activeElement).toBe(source);
 });
+
+vi.mock("../../hooks/useGradingConfiguration", () => ({ usePublishedGradingDefinitions: () => ({ definitions: [], isLoading: false, error: null }) }));

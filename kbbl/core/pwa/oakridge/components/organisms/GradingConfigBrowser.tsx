@@ -1,3 +1,6 @@
+import type { WorkflowArtifactTarget } from "../../lib/grading-applicability";
+import { GradingWorkflowLinks } from "../molecules/GradingWorkflowLinks";
+import { definitionSelectorEntries } from "../../lib/grading-config";
 import { useState } from "react";
 import { useGradingNavigationGuard } from "../../hooks/useGradingNavigationGuard";
 import { Button } from "../../../components/atoms/Button";
@@ -10,6 +13,8 @@ import { atPath, configurationDiff, configurationHeader, createDraft, definition
 import type { ObservationJsonValue as Json } from "../../grading-contracts/domain/primitives";
 
 interface GradingConfigBrowserProps {
+  readonly workflowTargets?: readonly WorkflowArtifactTarget[];
+  readonly definitionId?: string | null;
   readonly initial: GradingConfigurationRead;
   readonly version: number | null;
   readonly onNavigate: (version: number | null) => void;
@@ -17,11 +22,11 @@ interface GradingConfigBrowserProps {
   /** Called after each confirmed draft or publication write, so cached server reads can be refreshed. */
   readonly onWrite?: () => void;
 }
-export function GradingConfigBrowser({ initial, version, onNavigate, onReload, onWrite }: GradingConfigBrowserProps) {
+export function GradingConfigBrowser({ initial, version, onNavigate, onReload, onWrite, definitionId, workflowTargets = [] }: GradingConfigBrowserProps) {
   const [read, setRead] = useState(initial);
   const [draft, setDraft] = useState(() => createDraft(initial.draft, initial.versions.latest_version));
   const [feedback, setFeedback] = useState<GradingFeedback | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(0);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(() => Math.max(0, definitionSummaries(version === null ? initial.draft?.document.definitions ?? [] : publishedDefinitions(initial.selected)).findIndex(summary => summary.id === definitionId)));
   const [isRaw, setIsRaw] = useState(false);
   const [rawText, setRawText] = useState("");
   const [rawError, setRawError] = useState<string | null>(null);
@@ -105,7 +110,7 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload, o
     <GradingConfigFeedback feedback={feedback} />
     {version !== null ? <section className="grid gap-3"><h2>Published version {version} · read-only</h2><p>{read.selected?.published_at}</p>
       <Button disabled={isBusy} onClick={() => requestRestore(version)}>Initialize draft from this version</Button>
-      {summaries.map((summary) => <article key={summary.index} className="rounded border border-[var(--border-muted)] p-4"><GradingConfigSummary summary={summary} /><details><summary>Definition sections (read-only JSON)</summary><pre className="whitespace-pre-wrap break-all">{JSON.stringify(publishedDefinitions(read.selected)[summary.index], null, 2)}</pre></details></article>)}
+      {summaries.map((summary) => <article key={summary.index} className="rounded border border-[var(--border-muted)] p-4"><GradingConfigSummary summary={summary} /><GradingWorkflowLinks source={summary} artifacts={workflowTargets} /><details><summary>Definition sections (read-only JSON)</summary><pre className="whitespace-pre-wrap break-all">{JSON.stringify(publishedDefinitions(read.selected)[summary.index], null, 2)}</pre></details></article>)}
     </section> : <>
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" disabled={isBusy || isBlocked} onClick={() => void save()}>Save draft</Button>
@@ -125,15 +130,17 @@ export function GradingConfigBrowser({ initial, version, onNavigate, onReload, o
             setDraft((current) => replaceDefinitions(current, jsonList(parsed.value)));
             setJsonInputs({});
           }
-        }} /> : <div className="grid gap-5 md:grid-cols-[minmax(14rem,1fr)_minmax(0,2fr)]">
-          <aside className="grid content-start gap-3"><h2>Shared draft · {summaries.length} definitions</h2>
-            {summaries.map((summary) => <article key={summary.index} className="grid gap-2 rounded border border-[var(--border-muted)] p-3">
-              <GradingConfigSummary summary={summary} /><Button onClick={() => setSelectedIndex(summary.index)}>Edit {summary.id}</Button>
+        }} /> : <div className="grid gap-5 lg:grid-cols-[minmax(12rem,16rem)_minmax(0,1fr)]">
+          <aside className="min-w-0 grid content-start gap-3"><h2>Shared draft · {summaries.length} definitions</h2>
+            {definitionSelectorEntries(summaries, selectedIndex).map((summary) => <article key={summary.index} className="min-w-0 grid gap-2 rounded border border-[var(--border-muted)] p-3">
+              <Button className="min-w-0 [overflow-wrap:anywhere]" aria-current={summary.is_selected ? "true" : undefined} onClick={() => setSelectedIndex(summary.index)}>Edit {summary.id}</Button><p className="[overflow-wrap:anywhere]">{summary.scope}</p>
             </article>)}
             <Button disabled={isBlocked} onClick={() => { edit([], [...draft.definitions, {}]); setSelectedIndex(draft.definitions.length); }}>Add definition</Button>
           </aside>
           <div className="min-w-0 grid content-start gap-3">
+            {definitionId && !summaries.some(summary => summary.id === definitionId) && <p role="status">Definition {definitionId} is not in the shared draft.</p>}
             {selectedIndex !== null && draft.definitions[selectedIndex] !== undefined ? <>
+              {summaries[selectedIndex] && <><GradingConfigSummary summary={summaries[selectedIndex]} /><GradingWorkflowLinks source={summaries[selectedIndex]} artifacts={workflowTargets} /></>}
               <h2>Definition {selectedIndex + 1} · shared draft section</h2>
               <Button variant="danger" disabled={isBlocked} onClick={() => { edit([], draft.definitions.filter((_, index) => index !== selectedIndex)); setSelectedIndex(0); }}>Remove definition</Button>
               <GradingDefinitionEditor definition={draft.definitions[selectedIndex]} index={selectedIndex} catalogue={read.catalogue} issues={issues} onEdit={(path, value) => { if (!hasJsonErrors(jsonInputs)) edit([selectedIndex, ...path], value); }} jsonField={jsonField} />

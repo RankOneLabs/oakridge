@@ -115,3 +115,8 @@ describe("per_task source variants", () => {
     expect(definitionSummaries([{ scope: "per_task", task_ids: "/task_ids" }, { scope: "per_task", task_source: "resolved_assesses" }, { scope: "per_item" }]).map((summary) => summary.scope)).toEqual(["per_task (task_ids pointer)", "per_task (resolved_assesses)", "per_item"]);
   });
 });
+
+it("definition selector entries preserve fallback names and selected index", async () => {
+  const { definitionSelectorEntries } = await import("./grading-config");
+  expect(definitionSelectorEntries(definitionSummaries([{}, { id: "second", scope: "per_item" }]), 1)).toEqual([{ index: 0, id: "Definition 1", scope: "", is_selected: false }, { index: 1, id: "second", scope: "per_item", is_selected: true }]);
+});

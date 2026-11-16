@@ -1,9 +1,10 @@
 import { Button } from "../../../components/atoms/Button";
 import { GradingConfigBrowser } from "./GradingConfigBrowser";
 import { GradingConfigFeedback } from "../molecules/GradingConfigFeedback";
-import { useGradingConfiguration, useGradingConfigurationWrites } from "../../hooks/useGradingConfiguration";
-export interface GradingConfigViewProps { readonly version: number | null; readonly onNavigate: (version: number | null) => void }
-export function GradingConfigRoute({ version, onNavigate }: GradingConfigViewProps) {
+import { useGradingWorkflowTargets, useGradingConfiguration, useGradingConfigurationWrites } from "../../hooks/useGradingConfiguration";
+export interface GradingConfigViewProps { readonly definitionId?: string | null; readonly version: number | null; readonly onNavigate: (version: number | null) => void }
+export function GradingConfigRoute({ version, onNavigate, definitionId }: GradingConfigViewProps) {
+  const targets = useGradingWorkflowTargets();
   const query = useGradingConfiguration(version);
   const { recordWrite } = useGradingConfigurationWrites();
   if (query.snapshot === null) {
@@ -14,6 +15,6 @@ export function GradingConfigRoute({ version, onNavigate }: GradingConfigViewPro
   }
   return <>
     <GradingConfigFeedback feedback={query.reloadFeedback} />
-    <GradingConfigBrowser key={query.snapshot.revision} initial={query.snapshot.read} version={version} onNavigate={onNavigate} onReload={() => void query.reload()} onWrite={recordWrite} />
+    <GradingConfigBrowser key={query.snapshot.revision} workflowTargets={targets.data} definitionId={definitionId} initial={query.snapshot.read} version={version} onNavigate={onNavigate} onReload={() => void query.reload()} onWrite={recordWrite} />
   </>;
 }

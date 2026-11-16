@@ -166,3 +166,5 @@ test("prompt and artifact cross-links open their tabs and preserve stage selecti
   expect(screen.getByRole("tab", {name: "Artifacts"}).getAttribute("aria-selected")).toBe("true");
   expect(selectedGraphNodes()).toEqual(initialGraphSelection);
 });
+
+vi.mock("../hooks/useGradingConfiguration", () => ({ usePublishedGradingDefinitions: () => ({ definitions: [], isLoading: false, error: null }) }));

@@ -162,3 +162,6 @@ export function definitionWithTaskSource(definition: Json, source: Json): Json {
   return source === "resolved_assesses" ? { ...fields, scope: "per_task", task_source: "resolved_assesses" }
     : { ...fields, scope: "per_task", task_ids: task_ids ?? "" };
 }
+
+export interface DefinitionSelectorEntry { index: number; id: string; scope: string; is_selected: boolean }
+export const definitionSelectorEntries = (summaries: readonly DefinitionSummary[], selectedIndex: number | null): DefinitionSelectorEntry[] => summaries.map(summary => ({ index: summary.index, id: summary.id, scope: summary.scope, is_selected: summary.index === selectedIndex }));
