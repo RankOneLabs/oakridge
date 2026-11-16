@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { CoreClient } from "../src/core-client/client";
-import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, writeStoreFile, withPublishedPrompt, bytesIdentity } from "../src/runtime/definition-store";
+import { DEFINITION_STORE_ROOT, readLaunchableCatalog, readPromptPointer, resolveDefinition, writeStoreFile, withPublishedPrompt, bytesIdentity } from "../src/runtime/definition-store";
 import { listPromptVersions, savePendingPrompt, publishPrompt, validatePrompt } from "../src/runtime/prompt-versions";
 import { installPromptVersions, type PromptVersionListing, type PromptPublicationOutcome, type PromptVersionErrorKind } from "../src/http/prompt-versions";
 import { installReadModels } from "../src/http/read-models";
@@ -132,4 +132,32 @@ test("HTTP failures carry the complete prompt error contract and status", async 
   await assertError(await request("publish", { path, expected_pending_version_id: pending.version_id, expected_published_version_id: listing.published.version_id }),
     { kind: "invalid_prompt", status: 422, entity_id: path, has_issues: true });
   core.close();
+});
+
+test("restoring a published body uses its latest publication date and lists each version once", async () => {
+  const { core } = fixture();
+  const path = "development/brief.md";
+  try {
+    const initial = unwrap(listPromptVersions(path));
+    const changed = unwrap(await savePendingPrompt({ path, body: initial.published.body + "\nTemporary guidance.\n", expected_pending_version_id: null }));
+    unwrap(await publishPrompt(core, { path, expected_pending_version_id: changed.version_id, expected_published_version_id: initial.published.version_id }));
+    const restored = unwrap(await savePendingPrompt({ path, body: initial.published.body, expected_pending_version_id: null }));
+    const withPending = unwrap(listPromptVersions(path));
+    expect(withPending.versions.map(version => [version.version_id, version.status])).toEqual([
+      [changed.version_id, "published"], [initial.published.version_id, "pending"],
+    ]);
+    const outcome = unwrap(await publishPrompt(core, { path, expected_pending_version_id: restored.version_id, expected_published_version_id: changed.version_id }));
+    const listing = unwrap(listPromptVersions(path));
+    expect(listing.published).toMatchObject({ version_id: initial.published.version_id, body: initial.published.body, published_at: outcome.published_at });
+    expect(listing.versions.map(version => [version.version_id, version.status, version.published_at])).toEqual([
+      [initial.published.version_id, "published", outcome.published_at],
+      [changed.version_id, "superseded", expect.any(String)],
+    ]);
+    const pointer = unwrap(readPromptPointer(path));
+    expect(pointer.history).toEqual([
+      { version_id: initial.published.version_id, published_at: null },
+      { version_id: changed.version_id, published_at: expect.any(String) },
+      { version_id: initial.published.version_id, published_at: outcome.published_at },
+    ]);
+  } finally { core.close(); }
 });

@@ -63,7 +63,7 @@ function versionView(state: PromptState, id: PromptVersionId): PromptResult<Prom
     if (bytesIdentity(bytes) !== object.prompt_id) return refused("store_io", object.source_path, "prompt hash mismatch");
     const body = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
     return { ok: true, value: { ...object, version_id: id, body, status: id === state.pointer.published ? "published" : id === state.pointer.pending ? "pending" : "superseded",
-      published_at: state.pointer.history.find(entry => entry.version_id === id)?.published_at ?? null } };
+      published_at: [...state.pointer.history].reverse().find(entry => entry.version_id === id)?.published_at ?? null } };
   } catch (cause) { return refused("store_io", object.source_path, String(cause)); }
 }
 export function listPromptVersions(path: string): PromptResult<PromptVersionListing> {
@@ -73,8 +73,10 @@ export function listPromptVersions(path: string): PromptResult<PromptVersionList
   const pending = value.pointer.pending === null ? null : versionView(value, value.pointer.pending);
   if (pending && !pending.ok) return pending;
   const versions: PromptVersionView[] = [];
-  for (const entry of [...value.pointer.history].reverse()) {
-    const view = versionView(value, entry.version_id); if (!view.ok) return view;
+  const history_version_ids = [...new Set([...value.pointer.history].reverse().map(entry => entry.version_id))]
+    .filter(id => id !== value.pointer.pending);
+  for (const id of history_version_ids) {
+    const view = versionView(value, id); if (!view.ok) return view;
     versions.push(view.value);
   }
   if (pending?.ok) versions.push({ ...pending.value, status: "pending" });
