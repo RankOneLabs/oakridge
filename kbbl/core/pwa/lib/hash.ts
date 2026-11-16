@@ -71,7 +71,6 @@ export type DefinitionSelection = { kind: "stage"; stage: string } | { kind: "un
 
 export type OakridgeSubRoute =
   | { sub: "runs" }
-  | { sub: "status" }
   | { sub: "review-inbox" }
   /** `#oakridge/run/:id`, optionally naming the pane to open in `#oakridge/run/:id/session/:sid` form. */
   | { sub: "run"; id: string; pane: RoutePaneTarget | null }
@@ -79,12 +78,17 @@ export type OakridgeSubRoute =
   /** `#oakridge/session/:sid` — resolved to its run and replaced with the run-scoped form. */
   | { sub: "session"; session_id: Sid }
   | { sub: "new-run" }
-  | { sub: "create-project" }
-  | { sub: "grading-config"; version: number | null }
-  | { sub: "defs" }
-  | { sub: "def"; id: string; selection: DefinitionSelection | null };
+  | { sub: "create-project" };
+
+export type SettingsSubRoute =
+  | { sub: "status" }
+  | { sub: "workflows" }
+  | { sub: "workflow"; id: string; selection: DefinitionSelection | null }
+  | { sub: "grading-config"; version: number | null };
 
 export type HashRoute =
+  | { view: "redirect"; hash: string }
+  | { view: "settings"; route: SettingsSubRoute }
   | { view: "sessions"; route: { sub: "sessions" } }
   | { view: "oakridge"; route: OakridgeSubRoute };
 
@@ -154,6 +158,34 @@ export function readHashRoute(
   search = window.location.search,
 ): HashRoute | null {
   const hash = (rawHash.startsWith("#") ? rawHash.slice(1) : rawHash).replace(/^\//, "");
+  for (const [oldPrefix, newPrefix] of [["oakridge/status", "settings/status"], ["oakridge/defs", "settings/workflows"], ["oakridge/def", "settings/workflows"], ["oakridge/grading-config", "settings/workflows/grading-config"]]) {
+    if (hash === oldPrefix || hash.startsWith(oldPrefix + "/")) return { view: "redirect", hash: newPrefix + hash.slice(oldPrefix.length) };
+  }
+  if (hash === "settings" || hash.startsWith("settings/")) {
+    const rest = hash.slice("settings".length);
+    if (rest === "" || rest === "/status") return { view: "settings", route: { sub: "status" } };
+    if (rest === "/workflows/grading-config") return { view: "settings", route: { sub: "grading-config", version: null } };
+    const gradingVersion = /^\/workflows\/grading-config\/versions\/([1-9]\d*)$/.exec(rest);
+    if (gradingVersion && Number.isSafeInteger(Number(gradingVersion[1]))) return { view: "settings", route: { sub: "grading-config", version: Number(gradingVersion[1]) } };
+    if (rest === "/workflows") {
+      return { view: "settings", route: { sub: "workflows" } };
+    }
+    if (rest.startsWith("/workflows/")) {
+      // A declaration anchor is an exact DOM id: split it off before decoding and keep it verbatim.
+      const anchorAt = rest.indexOf("#");
+      const routePath = anchorAt === -1 ? rest : rest.slice(0, anchorAt);
+      const anchor = anchorAt === -1 ? "" : rest.slice(anchorAt);
+      const segments = routePath.slice("/workflows/".length).split("/");
+      const [rawId, kind, ...path] = segments;
+      if (rawId && segments.every(Boolean)) {
+        const id = tryDecode(rawId);
+        if (segments.length === 1) return { view: "settings", route: { sub: "workflow", id, selection: null } };
+        if (kind === "stages" && path.length === 1) return { view: "settings", route: { sub: "workflow", id, selection: { kind: "stage", stage: tryDecode(path[0] as string) + anchor } } };
+        if (kind === "units" && path.length > 0) return { view: "settings", route: { sub: "workflow", id, selection: { kind: "unit", path: path.map(tryDecode).join("/") + anchor } } };
+      }
+    }
+    return { view: "settings", route: { sub: "status" } };
+  }
   if (hash === "sessions") return { view: "sessions", route: { sub: "sessions" } };
   if (hash === "oakridge" || hash.startsWith("oakridge/")) {
     const rest = hash.slice("oakridge".length);
@@ -183,32 +215,11 @@ export function readHashRoute(
     if (rest === "/new-run") {
       return { view: "oakridge", route: { sub: "new-run" } };
     }
-    if (rest === "/status") return { view: "oakridge", route: { sub: "status" } };
     if (rest === "/review-inbox") {
       return { view: "oakridge", route: { sub: "review-inbox" } };
     }
     if (rest === "/create-project") {
       return { view: "oakridge", route: { sub: "create-project" } };
-    }
-    if (rest === "/grading-config") return { view: "oakridge", route: { sub: "grading-config", version: null } };
-    const gradingVersion = /^\/grading-config\/versions\/([1-9]\d*)$/.exec(rest);
-    if (gradingVersion && Number.isSafeInteger(Number(gradingVersion[1]))) return { view: "oakridge", route: { sub: "grading-config", version: Number(gradingVersion[1]) } };
-    if (rest === "/defs") {
-      return { view: "oakridge", route: { sub: "defs" } };
-    }
-    if (rest.startsWith("/defs/")) {
-      // A declaration anchor is an exact DOM id: split it off before decoding and keep it verbatim.
-      const anchorAt = rest.indexOf("#");
-      const routePath = anchorAt === -1 ? rest : rest.slice(0, anchorAt);
-      const anchor = anchorAt === -1 ? "" : rest.slice(anchorAt);
-      const segments = routePath.slice("/defs/".length).split("/");
-      const [rawId, kind, ...path] = segments;
-      if (rawId && segments.every(Boolean)) {
-        const id = tryDecode(rawId);
-        if (segments.length === 1) return { view: "oakridge", route: { sub: "def", id, selection: null } };
-        if (kind === "stages" && path.length === 1) return { view: "oakridge", route: { sub: "def", id, selection: { kind: "stage", stage: tryDecode(path[0] as string) + anchor } } };
-        if (kind === "units" && path.length > 0) return { view: "oakridge", route: { sub: "def", id, selection: { kind: "unit", path: path.map(tryDecode).join("/") + anchor } } };
-      }
     }
     return { view: "oakridge", route: { sub: "runs" } };
   }
