@@ -10,7 +10,7 @@ import { definitionStageHref, definitionUnitHref } from "../../lib/definition-se
 import { StageInputsSection } from "./StageInputsSection";
 import { StageBindingsSection } from "./StageBindingsSection";
 import { StageWorkersSection } from "./StageWorkersSection";
-import { StagePromptsSection } from "./StagePromptsSection";
+import { StagePromptsSection, type StagePromptsSectionProps } from "./StagePromptsSection";
 import { StageArtifactsSection } from "./StageArtifactsSection";
 import { StageReviewsSection } from "./StageReviewsSection";
 import { StageCompletionSection } from "./StageCompletionSection";
@@ -19,9 +19,10 @@ interface StageInspectorProps {
   definition: OperatorDefinitionDetail;
   selection: DefinitionSelection | null;
   anchor?: string;
+  renderPromptEditor?: StagePromptsSectionProps["renderPromptEditor"];
   grading?: PublishedGradingContext;
 }
-export function StageInspector({ definition, selection, anchor, grading }: StageInspectorProps) {
+export function StageInspector({ definition, selection, anchor, renderPromptEditor, grading }: StageInspectorProps) {
   const overview = selectDefinitionOverview(definition);
   const navigation = selectStageInspectorNavigation(definition, selection);
   const model = selectStageInspector(definition, selection);
@@ -62,7 +63,7 @@ export function StageInspector({ definition, selection, anchor, grading }: Stage
             {activeTab === "inputs" && <StageInputsSection model={model} />}
             {activeTab === "bindings" && <StageBindingsSection model={model} />}
             {activeTab === "workers" && <StageWorkersSection model={model} />}
-            {activeTab === "prompts" && <StagePromptsSection model={model} />}
+            {activeTab === "prompts" && <StagePromptsSection model={model} renderPromptEditor={renderPromptEditor} />}
             {activeTab === "artifacts" && <StageArtifactsSection model={model} grading={grading} />}
             {activeTab === "reviews" && <StageReviewsSection model={model} />}
             {activeTab === "completion" && <StageCompletionSection model={model} />}
