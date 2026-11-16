@@ -10,13 +10,23 @@ it("matches a contract once carrying both selectors", () => {
   expect(selectGradingMatches([source], artifacts).map(match => ({ stage: match.artifact.stage, artifact: match.artifact.artifact, selectors: match.selectors }))).toEqual([{ stage: "brief", artifact: "brief", selectors: ["/build_items/*", "/acceptance_criteria/*"] }]);
 });
 it("deduplicates every invoking stage's artifact keys and excludes root", () => {
-  const expected = [...new Set(definition.bundle.units.filter(unit => unit.key !== "$root" && unit.stage !== null).flatMap(unit => unit.artifacts.map(artifact => `${unit.stage}/${artifact.key}`)))];
+  // Explicit captured contracts: adding or omitting a unit artifact must change this expectation.
+  const expected = [
+    "analysis/analysis", "analysis/spec", "analysis/tasks", "brief/brief",
+    "cohort/assessment", "cohort/build_result", "cohort/observed_state", "cohort/pr", "cohort/pr_state",
+    "integration/assessment", "integration/manual_merge_target", "integration/observed_state", "integration/pr", "integration/pr_state",
+    "planning/plan", "prepare/workspace",
+  ];
   expect(artifacts.map(target => `${target.stage}/${target.artifact}`)).toEqual(expected);
 });
 it("shares source references across matching artifacts", () => {
   const shared = { id: "shared", targets: [{ artifact: "brief", selector: "/a" }, { artifact: "assessment", selector: "/b" }] };
   const matches = selectGradingMatches([shared], artifacts);
-  expect(matches.length).toBeGreaterThanOrEqual(2);
+  expect(matches.map(match => ({ stage: match.artifact.stage, artifact: match.artifact.artifact, selectors: match.selectors }))).toEqual([
+    { stage: "brief", artifact: "brief", selectors: ["/a"] },
+    { stage: "cohort", artifact: "assessment", selectors: ["/b"] },
+    { stage: "integration", artifact: "assessment", selectors: ["/b"] },
+  ]);
   expect(matches.every(match => match.source === shared)).toBe(true);
 });
 it("supports newly declared artifacts without a named workflow rule", () => {
