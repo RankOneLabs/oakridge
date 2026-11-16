@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import { readHashRoute, type DefinitionSelection } from "../../lib/hash";
 import { definitionHref, definitionStageHref, definitionUnitHref, definitionSelectionHref, selectDefinitionSlice, definitionSchemaElementId } from "./definition-selection";
 import snapshot from "../__fixtures__/v2-definition-detail.json";
+import fanOut from "../__fixtures__/definition-fan-out.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 const detail = snapshot.definition as unknown as OperatorDefinitionDetail;
 test.each<DefinitionSelection | null>([null, { kind: "stage", stage: "review / stage", tab: null }, { kind: "unit", path: "work/item name", tab: null }])("round trips selection %j", (selection) => {
@@ -51,4 +52,10 @@ test("structure summary derives every count", () => {
 test("unit anchor tabs use the resolved stage and respect explicit tabs", () => {
   expect(selectEffectiveStageTab({ kind: "unit", path: "work/item", tab: null }, "stage-a-b-artifact-result", "a-b")).toBe("artifacts");
   expect(selectEffectiveStageTab({ kind: "unit", path: "work/item", tab: "workers" }, "stage-a-b-artifact-result", "a-b")).toBe("workers");
+});
+
+test("fan-out structure summary derives counts and uses singular group, collection and pool labels", () => {
+  const overview = selectDefinitionOverview(fanOut.definition as unknown as OperatorDefinitionDetail);
+  expect([overview.groups.length, overview.collections.length, overview.pools.length]).toEqual([1, 1, 1]);
+  expect(selectDefinitionStructureSummary(overview)).toBe(`${overview.stages.length} stages · ${overview.units.length} units · ${overview.groups.length} group · ${overview.collections.length} collection · ${overview.pools.length} pool`);
 });
