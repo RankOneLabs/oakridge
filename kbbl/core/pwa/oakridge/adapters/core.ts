@@ -112,17 +112,21 @@ const awaitsManualMergeAfterWatchFailure = (input: StatusInput): boolean => {
     && input.decisions.some((decision) => decision.submit.kind === "review"
       && decision.submit.review === "merge_confirmation" && decision.submit.decision === "confirm_merged");
 };
-/** A worker's latest attempt that is working now. A queued attempt can wait indefinitely, so it does not count. */
-const isRunningAttempt = (attempt: OperatorAttemptView): boolean => attempt.is_current && attempt.status === "running";
+/**
+ * An agent session working the unit now. A queued attempt can wait indefinitely, and a code
+ * worker (a PR watcher) stays running through transient retries, so neither counts.
+ */
+const isAgentWorking = (attempt: OperatorAttemptView): boolean =>
+  attempt.is_current && attempt.status === "running" && attempt.kbbl_session_id !== null;
 /** A stall a failed worker raised, as the authority words it, rather than one the run's commit raised. */
 const isWorkerStall = ({ attention, attempts }: StatusInput): boolean => {
   if (attention?.kind !== "stalled") return true;
   return attempts.some((attempt) => attempt.is_current && attempt.failure !== null
     && attention.detail.startsWith(`${attempt.worker} failed:`));
 };
-/** One worker failed while another still works the unit, so the unit has not stopped. */
+/** One worker failed while an agent still works the unit, so the unit has not stopped. */
 const isStillWorkingPastFailure = (input: StatusInput): boolean =>
-  !input.hasRunStall && isWorkerStall(input) && input.attempts.some(isRunningAttempt);
+  !input.hasRunStall && isWorkerStall(input) && input.attempts.some(isAgentWorking);
 const failedUnlessStillWorking = (input: StatusInput): { readonly run: RunStatus; readonly stage: StageStatus } =>
   isStillWorkingPastFailure(input) ? { run: "running", stage: "running" } : { run: "failed", stage: "failed" };
 
