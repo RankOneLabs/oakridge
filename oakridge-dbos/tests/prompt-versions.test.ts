@@ -6,7 +6,9 @@ import { Hono } from "hono";
 import { CoreClient } from "../src/core-client/client";
 import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, writeStoreFile, withPublishedPrompt, bytesIdentity } from "../src/runtime/definition-store";
 import { listPromptVersions, savePendingPrompt, publishPrompt, validatePrompt } from "../src/runtime/prompt-versions";
-import { installPromptVersions } from "../src/http/prompt-versions";
+import { installPromptVersions, type PromptVersionListing, type PromptPublicationOutcome, type PromptVersionErrorKind } from "../src/http/prompt-versions";
+import { installReadModels } from "../src/http/read-models";
+import type { DefinitionPage } from "../src/projections/definition-view";
 import type { Result } from "canonical-json";
 function unwrap<T,E>(result: Result<T,E>): T { if (!result.ok) throw new Error(JSON.stringify(result.error)); return result.value; }
 const temporary: string[] = [];
@@ -58,13 +60,26 @@ test("conflicts and invalid compilation write nothing", async () => {
 });
 test("HTTP list, save, validate and publish expose the version lifecycle", async () => {
   const { core } = fixture(); const app = new Hono(); installPromptVersions(app, core);
+  // Definition listing reads the file store; no database queries are needed.
+  installReadModels(app, { db: null as never });
   const path = "development/brief.md"; const listing = unwrap(listPromptVersions(path));
-  expect((await app.request("/api/prompt-versions?path=development%2Fbrief.md")).status).toBe(200);
+  const response = await app.request("/api/prompt-versions?path=development%2Fbrief.md");
+  expect(response.status).toBe(200);
+  const httpListing = await response.json() as PromptVersionListing;
+  const definition = unwrap(resolveDefinition(unwrap(readLaunchableCatalog()).development.definition_id));
+  expect(httpListing).toMatchObject({ source_path: path, published: { body: definition.prompts[path], status: "published" }, pending: null,
+    referenced_by: [{ workflow: "development", workflow_name: "development", definition_id: definition.definition_id }] });
   const request = (url: string, method: string, body: unknown) => app.request(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   expect((await request("/api/prompt-versions/pending", "PUT", { path, body: listing.published.body + "\nNew guidance.\n", expected_pending_version_id: null })).status).toBe(200);
   const pending = unwrap(listPromptVersions(path)).pending!;
   expect((await request("/api/prompt-versions/validate", "POST", { path, body: pending.body })).status).toBe(200);
-  expect((await request("/api/prompt-versions/publish", "POST", { path, expected_pending_version_id: pending.version_id, expected_published_version_id: listing.published.version_id })).status).toBe(200);
+  const published = await request("/api/prompt-versions/publish", "POST", { path, expected_pending_version_id: pending.version_id, expected_published_version_id: listing.published.version_id });
+  expect(published.status).toBe(200);
+  const outcome = await published.json() as PromptPublicationOutcome;
+  const definitionsResponse = await app.request("/api/definitions");
+  expect(definitionsResponse.status).toBe(200);
+  const definitions = await definitionsResponse.json() as DefinitionPage;
+  expect(definitions.items.find(entry => entry.bundle.key === "development")?.definition_id).toBe(outcome.moved[0].definition_id);
   expect((await app.request("/api/prompt-versions?path=../bad")).status).toBe(400);
   expect((await app.request("/api/prompt-versions?path=missing.md")).status).toBe(404); core.close();
 });
@@ -86,5 +101,35 @@ test("all four prompt routes require the configured operator token", async () =>
   for (const [method, path] of [["GET", ""], ["PUT", "/pending"], ["POST", "/validate"], ["POST", "/publish"]]) {
     expect((await app.request("/api/prompt-versions" + path, { method, headers: { "content-type": "application/json" } })).status).toBe(401);
   }
+  core.close();
+});
+
+test("HTTP failures carry the complete prompt error contract and status", async () => {
+  const { core } = fixture(); const app = new Hono(); installPromptVersions(app, core);
+  const path = "development/brief.md";
+  const listing = unwrap(listPromptVersions(path));
+  const request = (route: string, body: unknown) => app.request("/api/prompt-versions/" + route, {
+    method: route === "pending" ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const assertError = async (response: Response, expected: { kind: PromptVersionErrorKind; status: number; entity_id: string; has_issues?: boolean }) => {
+    expect(response.status).toBe(expected.status);
+    expect(await response.json()).toEqual({ error: { operation: "prompt_versions", kind: expected.kind, entity_id: expected.entity_id,
+      detail: expect.any(String), issues: expected.has_issues ? [{ workflow: "development", path: ["development"], detail: expect.any(String) }] : [] } });
+  };
+  await assertError(await app.request("/api/prompt-versions?path=../bad"), { kind: "invalid_path", status: 400, entity_id: "../bad" });
+  await assertError(await app.request("/api/prompt-versions?path=missing.md"), { kind: "unknown_prompt", status: 404, entity_id: "missing.md" });
+  await assertError(await request("publish", { path, expected_pending_version_id: null, expected_published_version_id: listing.published.version_id }),
+    { kind: "no_pending", status: 409, entity_id: path });
+  await assertError(await request("validate", { path, body: "{{ nonexistent.required }}" }),
+    { kind: "invalid_prompt", status: 422, entity_id: path, has_issues: true });
+  const pending = unwrap(await savePendingPrompt({ path, body: "{{ nonexistent.required }}", expected_pending_version_id: null }));
+  await assertError(await request("pending", { path, body: "stale save", expected_pending_version_id: null }),
+    { kind: "pending_conflict", status: 409, entity_id: path });
+  await assertError(await request("publish", { path, expected_pending_version_id: listing.published.version_id, expected_published_version_id: listing.published.version_id }),
+    { kind: "pending_conflict", status: 409, entity_id: path });
+  await assertError(await request("publish", { path, expected_pending_version_id: pending.version_id, expected_published_version_id: pending.version_id }),
+    { kind: "published_conflict", status: 409, entity_id: path });
+  await assertError(await request("publish", { path, expected_pending_version_id: pending.version_id, expected_published_version_id: listing.published.version_id }),
+    { kind: "invalid_prompt", status: 422, entity_id: path, has_issues: true });
   core.close();
 });

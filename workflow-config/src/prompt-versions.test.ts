@@ -22,6 +22,7 @@ test("runtime version bytes are read with the same content identity by the gener
 test("pointer rejects altered canonical bytes and unsafe source paths", () => {
   const root = mkdtempSync(resolve(tmpdir(), "prompt-pointer-")); roots.push(root);
   unwrap(writeStoreFile({ root, path: "prompt-pointers/development/brief.md.json", bytes: Buffer.from('{"source_path":"../bad"}') }));
-  expect(readPromptPointer("development/brief.md", root).ok).toBe(false);
+  const altered = readPromptPointer("development/brief.md", root);
+  expect(altered.ok ? null : altered.error).toMatchObject({ kind: "malformed_object", detail: expect.stringContaining("prompt-pointers/development/brief.md.json") });
   expect(readPromptPointer("../bad", root).ok).toBe(false);
 });

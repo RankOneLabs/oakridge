@@ -681,8 +681,11 @@ test("published prompt survives regeneration and check without altering the auth
     const before = unwrap(listPromptVersions(path));
     const pending = unwrap(await savePendingPrompt({ path, body: before.published.body + "\nAdditional guidance.\n", expected_pending_version_id: null }));
     const outcome = unwrap(await publishPrompt(core, { path, expected_pending_version_id: pending.version_id, expected_published_version_id: before.published.version_id }));
+    const interrupted = resolve(store, "prompt-pointers", path + ".json.interrupted.tmp");
+    writeFileSync(interrupted, '{"history":');
     const generated = runGenerator(root);
     expect(generated.exitCode).toBe(0);
+    expect(readFileSync(interrupted, "utf8")).toBe('{"history":');
     expect(generated.stderr.toString()).toContain("using the published version");
     const resolved = unwrap(resolveLaunchableDefinition("review-loop", store));
     expect(resolved.definition_id).toBe(outcome.moved[0].definition_id);

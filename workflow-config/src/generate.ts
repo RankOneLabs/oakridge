@@ -61,7 +61,7 @@ const prompts = filesUnder(promptRoot).map(readPrompt);
 // Validate every pointer before planning or writing outputs, including unreferenced paths.
 const pointerRoot = resolve(storeRoot, "prompt-pointers");
 const publishedPrompts = new Map<string, AuthoredPrompt>();
-if (existsSync(pointerRoot)) for (const file of filesUnder(pointerRoot)) {
+if (existsSync(pointerRoot)) for (const file of filesUnder(pointerRoot).filter(path => !path.endsWith(".tmp"))) {
   const path = relative(pointerRoot, file).split(sep).join("/").replace(/\.json$/, "");
   const pointer = required(readPromptPointer(path, storeRoot));
   const version = required(readPromptVersion(pointer.published, storeRoot));
