@@ -23,16 +23,6 @@ export function selectDefinitionSlice(workflow: OperatorDefinitionDetail["workfl
 }
 
 
-export type EffectiveDefinitionSelection = DefinitionSelection | null;
-/** Preserve explicit routes, including missing declarations; default without changing history. */
-export function selectEffectiveDefinitionSelection(
-  definition: OperatorDefinitionDetail,
-  selection: DefinitionSelection | null,
-): EffectiveDefinitionSelection {
-  const first = definition.bundle.stages[0];
-  return selection ?? (first ? { kind: "stage", stage: first, tab: null } : null);
-}
-
 export type StageTab = "overview" | "inputs" | "bindings" | "workers" | "prompts" | "artifacts" | "reviews" | "completion";
 export const STAGE_TABS: readonly { value: StageTab; label: string }[] = [
   { value: "overview", label: "Overview" }, { value: "inputs", label: "Inputs" },
@@ -55,8 +45,8 @@ export function selectTabForAnchor(stage: string, anchor: string | null | undefi
   ];
   return kinds.find(([kind]) => suffix.startsWith(kind + "-"))?.[1] ?? null;
 }
-export function selectEffectiveStageTab(selection: DefinitionSelection | null, anchor?: string | null): StageTab {
-  const stage = selection?.kind === "stage" ? selection.stage.split("#")[0] ?? "" : "";
+export function selectEffectiveStageTab(selection: DefinitionSelection | null, anchor?: string | null, resolvedStage?: string | null): StageTab {
+  const stage = resolvedStage ?? (selection?.kind === "stage" ? selection.stage.split("#")[0] ?? "" : "");
   return selection?.tab ?? selectTabForAnchor(stage, anchor) ?? "overview";
 }
 export function selectDefinitionStructureSummary(overview: import("./definition-overview").DefinitionOverview): string {

@@ -13,6 +13,11 @@ import { DefinitionOverview } from "../molecules/DefinitionOverview";
 import { DefinitionGraph } from "../molecules/DefinitionGraph";
 import { DefinitionRawView } from "../molecules/DefinitionRawView";
 
+interface SchemaToggle {
+  readonly anchor: string | undefined;
+  readonly open: boolean;
+}
+
 interface WorkflowDefDetailProps {
   readonly definitionId: string;
   readonly selection: DefinitionSelection | null;
@@ -25,7 +30,15 @@ export function WorkflowDefDetail({
   onNavigate,
   onBack,
 }: WorkflowDefDetailProps) {
-  const [schemaOpen, setSchemaOpen] = useState(false);
+  const anchor = (routeSelection?.kind === "stage" ? routeSelection.stage : routeSelection?.path)?.split("#")[1];
+  const [schemaToggle, setSchemaToggle] = useState<SchemaToggle>(() => ({
+    anchor, open: anchor?.startsWith("definition-schema-") === true,
+  }));
+  const isSchemaOpen = schemaToggle.anchor === anchor
+    ? schemaToggle.open
+    : anchor?.startsWith("definition-schema-") === true;
+  // A new route anchor resets the local toggle before its declaration is revealed.
+  if (schemaToggle.anchor !== anchor) setSchemaToggle({ anchor, open: isSchemaOpen });
   const [rawOpen, setRawOpen] = useState(false);
   const [showFullId, setShowFullId] = useState(false);
   async function onCopyDefinitionId() {
@@ -50,8 +63,6 @@ export function WorkflowDefDetail({
   const definition = query.data;
   const selection = normalizedSelection;
   const overview = selectDefinitionOverview(definition);
-  const anchor = (routeSelection?.kind === "stage" ? routeSelection.stage : routeSelection?.path)?.split("#")[1];
-  const isSchemaOpen = schemaOpen || anchor?.startsWith("definition-schema-") === true || window.location.hash.includes("#definition-schema-");
   return (
     <div className="or-page or-page--wide" data-testid="or-def-detail" onClick={onClick}>
       <PageHeader eyebrow="Settings › Workflows" title={overview.name}
@@ -59,7 +70,7 @@ export function WorkflowDefDetail({
         backAction={<Button variant="secondary" onClick={onBack}>← Workflows</Button>}
         actions={<>
           <Button variant="secondary" onClick={onCopyDefinitionId}>Copy definition ID</Button>
-          <Button variant="secondary" aria-pressed={isSchemaOpen} onClick={() => setSchemaOpen(!schemaOpen)}>Schema</Button>
+          <Button variant="secondary" aria-pressed={isSchemaOpen} onClick={() => setSchemaToggle({ anchor, open: !isSchemaOpen })}>Schema</Button>
           <Button variant="secondary" aria-pressed={rawOpen} onClick={() => setRawOpen(!rawOpen)}>Raw definition</Button>
         </>} />
       {showFullId && <div><p role="status">Copy unavailable. Select and copy the full definition ID.</p><TextInput aria-label="Full definition ID" value={overview.id} readOnly autoFocus onFocus={event => event.currentTarget.select()} /></div>}

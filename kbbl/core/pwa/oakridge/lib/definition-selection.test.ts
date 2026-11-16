@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { readHashRoute, type DefinitionSelection } from "../../lib/hash";
-import { selectEffectiveDefinitionSelection, definitionHref, definitionStageHref, definitionUnitHref, definitionSelectionHref, selectDefinitionSlice, definitionSchemaElementId } from "./definition-selection";
+import { definitionHref, definitionStageHref, definitionUnitHref, definitionSelectionHref, selectDefinitionSlice, definitionSchemaElementId } from "./definition-selection";
 import snapshot from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 const detail = snapshot.definition as unknown as OperatorDefinitionDetail;
@@ -22,12 +22,6 @@ test("selects nested units and missing declarations", () => {
 });
 test("schema targets distinguish punctuation", () => {
   expect(definitionSchemaElementId("a/b")).not.toBe(definitionSchemaElementId("a b"));
-});
-
-test("defaults to first authored stage and preserves explicit missing selections", () => {
-  expect(selectEffectiveDefinitionSelection(detail, null)).toEqual({ kind: "stage", stage: detail.bundle.stages[0], tab: null });
-  const selection = { kind: "unit" as const, path: "missing", tab: null };
-  expect(selectEffectiveDefinitionSelection(detail, selection)).toBe(selection);
 });
 
 import { definitionTabHref, selectEffectiveStageTab, selectTabForAnchor, selectDefinitionStructureSummary } from "./definition-selection";
@@ -52,4 +46,9 @@ test("tab precedence is route, anchor, overview", () => {
 test("structure summary derives every count", () => {
   const overview = selectDefinitionOverview(detail);
   expect(selectDefinitionStructureSummary(overview)).toBe(`${overview.stages.length} stages · ${overview.units.length} units · ${overview.groups.length} groups · ${overview.collections.length} collections · ${overview.pools.length} pools`);
+});
+
+test("unit anchor tabs use the resolved stage and respect explicit tabs", () => {
+  expect(selectEffectiveStageTab({ kind: "unit", path: "work/item", tab: null }, "stage-a-b-artifact-result", "a-b")).toBe("artifacts");
+  expect(selectEffectiveStageTab({ kind: "unit", path: "work/item", tab: "workers" }, "stage-a-b-artifact-result", "a-b")).toBe("workers");
 });

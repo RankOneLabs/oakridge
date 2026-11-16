@@ -1,5 +1,5 @@
 import { StageInspectorTabs } from "./StageInspectorTabs";
-import { selectEffectiveStageTab, selectTabForAnchor, STAGE_TABS } from "../../lib/definition-selection";
+import { selectEffectiveStageTab, STAGE_TABS } from "../../lib/definition-selection";
 import { selectDefinitionOverview, selectDefinitionSelection, type DefinitionOverview as Overview } from "../../lib/definition-overview";
 import type { DefinitionSelection } from "../../../lib/hash";
 import type { OperatorDefinitionDetail } from "../../operator-contracts/projections/definition-view";
@@ -22,7 +22,7 @@ export function StageInspector({ definition, selection, anchor }: StageInspector
   const overview = selectDefinitionOverview(definition);
   const stages = selectStageNavigation(definition);
   const model = selectStageInspector(definition, selection);
-  const activeTab = selection?.tab ?? (model ? selectTabForAnchor(model.name, anchor) : null) ?? selectEffectiveStageTab(selection, anchor);
+  const activeTab = selectEffectiveStageTab(selection, anchor, model?.name);
   return (
     <section
       aria-label="Stage inspector"
@@ -33,7 +33,7 @@ export function StageInspector({ definition, selection, anchor }: StageInspector
           <div key={name} className="or-definition-navigation-entry">
             <a
               href={definitionStageHref(definition.definition_id, name)}
-              aria-current={selection?.kind === "stage" && selection.stage === name ? "page" : undefined}
+              aria-current={(selection?.kind === "stage" && selection.stage === name) || (selection?.kind === "unit" && units.length === 1 && selection.path === name && units[0]?.path === name) ? "page" : undefined}
               className={model?.name === name ? "font-bold" : undefined}
             >
               {name}
