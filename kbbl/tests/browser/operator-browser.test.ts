@@ -10,9 +10,10 @@ import { selectAbbreviatedDefinitionId } from "../../core/pwa/oakridge/lib/defin
 async function browserScript(): Promise<string> {
   const directory = mkdtempSync(join(tmpdir(), "oakridge-v1-browser-"));
   const output = join(directory, "entry.js");
+  // Library imports emit CSS too; keep its extension distinct from entry.js.
   try {
     const result = Bun.spawnSync({ cmd: [process.execPath, "build", resolve(import.meta.dir, "operator-browser-entry.tsx"),
-      "--target=browser", `--outfile=${output}`], cwd: resolve(import.meta.dir, "../../.."),
+      "--target=browser", `--outdir=${directory}`, "--entry-naming=entry.[ext]"], cwd: resolve(import.meta.dir, "../../.."),
       stdout: "pipe", stderr: "pipe" });
     if (result.exitCode !== 0) throw new Error(`Browser fixture build failed: ${result.stderr.toString()}`);
     return readFileSync(output, "utf8");
