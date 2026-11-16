@@ -118,3 +118,53 @@ it("keeps × on an ended session and hides its row after archiving", async () =>
   expect(screen.getByTestId("or-run-pane-session").getAttribute("data-session-id")).toBe("existing");
   expect(screen.getByText("Resume in new session")).toBeTruthy();
 });
+
+it("keeps Show all and disabled Hide ended together with no eligible sessions", async () => {
+  useStore.getState().applySnapshot([existing]);
+  renderRun();
+  const controls = await screen.findByTestId("or-sidebar-session-controls");
+  expect(controls.contains(screen.getByTestId("or-sidebar-archived-toggle"))).toBe(true);
+  expect(controls.contains(screen.getByTestId("or-sidebar-hide-ended"))).toBe(true);
+  expect(screen.getByTestId("or-sidebar-archived-toggle").getAttribute("aria-pressed")).toBe("false");
+  expect(screen.getByTestId("or-sidebar-hide-ended").textContent).toBe("Hide 0 ended sessions");
+  expect((screen.getByTestId("or-sidebar-hide-ended") as HTMLButtonElement).disabled).toBe(true);
+});
+
+it("confirms only this run's ended sessions and reports successes beside refusals", async () => {
+  const workflow = { runId: run.id, unitId: "unit", worker: "builder" };
+  useStore.getState().applySnapshot([
+    { ...existing, sid: "deleted", status: "ended", workflow },
+    { ...existing, status: "failed", workflow },
+    { ...existing, sid: "active", workflow },
+    { ...existing, sid: "other", status: "ended", workflow: { ...workflow, runId: "other-run" } },
+  ]);
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    if (init?.method === "DELETE") return String(input).includes("/existing?")
+      ? new Response(JSON.stringify({ error: "refused by authority" }), { status: 409 })
+      : new Response("{}");
+    const url = String(input);
+    return new Response(JSON.stringify(url.endsWith("/sessions") ? attempts : url.endsWith("/gates") ? [] : run));
+  });
+  renderRun();
+  const button = await screen.findByTestId("or-sidebar-hide-ended");
+  expect(button.textContent).toBe("Hide 2 ended sessions");
+  fireEvent.click(button);
+  expect(button.textContent).toBe("Confirm hide 2 ended sessions");
+  expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(0);
+  fireEvent.click(button);
+  await waitFor(() => expect(screen.getByTestId("or-sidebar-hide-ended-outcome").textContent).toBe("Archived 1 of 2: deleted."));
+  expect(screen.getByRole("alert").textContent).toContain("existing: refused by authority");
+  expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "DELETE").map(([url]) => String(url)).sort()).toEqual(["/sessions/deleted?archive=true", "/sessions/existing?archive=true"]);
+});
+
+it("shows archived count and rows only after Show all is pressed", async () => {
+  useStore.getState().applySnapshot([{ ...existing, archivedAt: "now" }, { ...existing, sid: "deleted", archivedAt: "now" }]);
+  renderRun();
+  await screen.findByTestId("or-sidebar-session-controls");
+  expect(screen.getByText("(2 archived)")).toBeTruthy();
+  expect(visibleSessions()).toEqual([]);
+  fireEvent.click(screen.getByTestId("or-sidebar-archived-toggle"));
+  expect(screen.getByTestId("or-sidebar-archived-toggle").getAttribute("aria-pressed")).toBe("true");
+  expect(visibleSessions()).toEqual(["deleted", "existing"]);
+});
+

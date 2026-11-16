@@ -1,3 +1,5 @@
+import { useHideEndedSessions } from "../../../hooks/useHideEndedSessions";
+import { selectRunHideEndedSessions } from "../../../lib/session-bulk-hide";
 import { RunSidebarSessionRow } from "./RunSidebarSessionRow";
 import { PromptViewer } from "./PromptViewer";
 import { useOperatorUnits } from "../../hooks/useOperatorUnits";
@@ -5,7 +7,7 @@ import { selectStageRead } from "../../hooks/useStageOverview";
 import type { StageRead } from "../../lib/stage-overview";
 import type { OperatorUnitView } from "../../operator-contracts/projections/unit-view";
 import { StageOverview } from "./StageOverview";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { useRun } from "../../hooks/useRun";
@@ -81,6 +83,23 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
     is_error: sessionsQuery.isError,
   });
   const inventorySessions = useStore((state) => state.sessions);
+  const eligibleSessions = selectRunHideEndedSessions([...inventorySessions.values()], runId);
+  const bulkHide = useHideEndedSessions();
+  const [isBulkHideArmed, setIsBulkHideArmed] = useState(false);
+  useEffect(() => {
+    setIsBulkHideArmed(false);
+  }, [runId]);
+  useEffect(() => {
+    if (!isBulkHideArmed) return;
+    const timeout = setTimeout(() => setIsBulkHideArmed(false), 4000);
+    return () => clearTimeout(timeout);
+  }, [isBulkHideArmed]);
+  const onHideEnded = () => {
+    if (bulkHide.isPending || eligibleSessions.length === 0) return;
+    if (!isBulkHideArmed) { setIsBulkHideArmed(true); return; }
+    setIsBulkHideArmed(false);
+    void bulkHide.mutateAsync(eligibleSessions);
+  };
   const hasInboxSnapshot = useStore((state) => state.hasInboxSnapshot);
   const removedSids = useStore((state) => state.removedSids);
   const purgedSessionIds = selectPurgedRunSessionIds({
@@ -181,7 +200,8 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
       />
       <div className="or-run-workspace__body">
         <RunWorkspaceSidebar
-          renderRow={(row, isOpen) => <RunSidebarSessionRow key={row.work_order_id} row={row} isOpen={isOpen} onOpen={(sessionId, slot) => workspace.openPane({ kind: "session", session_id: sessionId }, slot)} />}
+          hideEnded={{ eligibleCount: eligibleSessions.length, isArmed: isBulkHideArmed, isPending: bulkHide.isPending, outcome: bulkHide.data, onPress: onHideEnded }}
+          renderRow={(row, slots) => <RunSidebarSessionRow key={row.work_order_id} row={row} slots={slots} onOpen={(sessionId, slot) => workspace.openPane({ kind: "session", session_id: sessionId }, slot)} />}
           isOpen={isSidebarOpen}
           workspace={state}
           sessions={sidebarSessions}

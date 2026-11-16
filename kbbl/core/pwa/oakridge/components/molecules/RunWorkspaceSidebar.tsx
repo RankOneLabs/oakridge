@@ -1,3 +1,4 @@
+import { paneSelectionClass, paneSelectionName, selectPaneSlots } from "../../lib/pane-selection";
 import { useState, type ComponentProps } from "react";
 import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId } from "../../../lib/ids";
@@ -9,7 +10,6 @@ import {
   OVERVIEW_PANE,
   arePanesEqual,
   isTwinView,
-  selectOpenEntityIds,
   type RunWorkspacePane,
   type RunWorkspaceSlot,
   type RunWorkspaceState,
@@ -18,6 +18,7 @@ import { RunSidebarArtifacts } from "./RunSidebarArtifacts";
 import { RunSidebarSessions } from "./RunSidebarSessions";
 
 interface RunWorkspaceSidebarProps {
+  hideEnded: ComponentProps<typeof RunSidebarSessions>["hideEnded"];
   renderRow: ComponentProps<typeof RunSidebarSessions>["renderRow"];
   isOpen: boolean;
   workspace: RunWorkspaceState;
@@ -49,6 +50,7 @@ const PANE_SHORTCUTS: readonly PaneShortcut[] = [
  * which state the toggle is in.
  */
 export function RunWorkspaceSidebar({
+  hideEnded,
   renderRow,
   isOpen,
   workspace,
@@ -58,7 +60,7 @@ export function RunWorkspaceSidebar({
   onCollapse,
 }: RunWorkspaceSidebarProps) {
   const [artifactFilter, setArtifactFilter] = useState<RunArtifactFilter>("all");
-  const open = selectOpenEntityIds(workspace);
+
   const visibleArtifacts = selectFilteredRunArtifacts(artifacts, artifactFilter);
   const openArtifact = (artifactId: ArtifactId, slot: RunWorkspaceSlot) =>
     onOpenPane({ kind: "artifact", artifact_id: artifactId }, slot);
@@ -76,12 +78,8 @@ export function RunWorkspaceSidebar({
             <li key={shortcut.testId} className="or-run-sidebar__row">
               <Button variant="sidebar-row"
                 type="button"
-                className={
-                  arePanesEqual(workspace.primary, shortcut.pane) ||
-                  arePanesEqual(workspace.secondary, shortcut.pane)
-                    ? "border-[var(--or-run-accent,var(--accent-primary))]! bg-[var(--bg-elevated)]!"
-                    : ""
-                }
+                className={paneSelectionClass(selectPaneSlots(workspace, (pane) => arePanesEqual(pane, shortcut.pane)))}
+                data-pane-selection={paneSelectionName(selectPaneSlots(workspace, (pane) => arePanesEqual(pane, shortcut.pane)))}
                 onClick={() => onOpenPane(shortcut.pane, "primary")}
                 data-testid={shortcut.testId}
               >
@@ -112,15 +110,16 @@ export function RunWorkspaceSidebar({
       </section>
 
       <RunSidebarSessions
+        hideEnded={hideEnded}
         rows={sessions.rows}
         isActionStateKnown={sessions.is_action_state_known}
         isSessionListKnown={sessions.is_session_list_known}
-        openSessionIds={open.session_ids}
+        slotsOf={(id) => selectPaneSlots(workspace, (pane) => pane.kind === "session" && pane.session_id === id)}
         renderRow={renderRow}
       />
       <RunSidebarArtifacts rows={visibleArtifacts} totalCount={artifacts.length} filter={artifactFilter}
         onFilterChange={setArtifactFilter}
-        openArtifactIds={open.artifact_ids} onOpen={openArtifact} />
+        slotsOf={(id) => selectPaneSlots(workspace, (pane) => pane.kind === "artifact" && pane.artifact_id === id)} onOpen={openArtifact} />
     </aside>
   );
 }
