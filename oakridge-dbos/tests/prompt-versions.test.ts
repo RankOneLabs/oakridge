@@ -161,3 +161,68 @@ test("restoring a published body uses its latest publication date and lists each
     ]);
   } finally { core.close(); }
 });
+
+test("operator HTTP prompt readback preserves exact pending and published text", async () => {
+  const { createHttpApp } = await import("../src/http/app");
+  const { browserWritePolicy } = await import("../src/http/browser-write-policy");
+  const { core } = fixture();
+  const app = createHttpApp({ db: null as never, core, wake: () => {}, application_version: "test",
+    access: { kind: "token_required", token: "operator-token" }, write_policy: browserWritePolicy([]) });
+  const path = "development/brief.md";
+  const headers = { authorization: "Bearer operator-token", "content-type": "application/json" };
+  const read = () => app.request("/api/prompt-versions?path=development%2Fbrief.md", { headers });
+  try {
+    const initial = unwrap(listPromptVersions(path));
+    const body = initial.published.body + "\r\nAuthorization: Bearer EXAMPLE_TOKEN\r\nUnicode: 雪\r\n";
+    const saved = await app.request("/api/prompt-versions/pending", { method: "PUT", headers,
+      body: JSON.stringify({ path, body, expected_pending_version_id: null }) });
+    expect(saved.status).toBe(200);
+    const pending = await saved.json() as import("../src/http/prompt-versions").PromptVersionView;
+    expect(pending.body).toBe(body);
+    const response = await read();
+    expect(response.status).toBe(200);
+    const listing = await response.json() as PromptVersionListing;
+    expect(listing.pending?.body).toBe(body);
+    expect(listing.versions.find(version => version.version_id === pending.version_id)?.body).toBe(body);
+    expect(bytesIdentity(Buffer.from(listing.pending!.body))).toBe(pending.prompt_id);
+    const published = await app.request("/api/prompt-versions/publish", { method: "POST", headers,
+      body: JSON.stringify({ path, expected_pending_version_id: pending.version_id, expected_published_version_id: initial.published.version_id }) });
+    expect(published.status).toBe(200);
+    const after = await (await read()).json() as PromptVersionListing;
+    expect(after.published.body).toBe(body);
+    expect(after.versions.find(version => version.version_id === pending.version_id)?.body).toBe(body);
+  } finally { core.close(); }
+});
+
+test("prompt body preservation keeps credential redaction in metadata, errors and other read routes", async () => {
+  const { redactingReadResponses } = await import("../src/projections/serialization-view");
+  const { core } = fixture();
+  interface PromptListingDiagnostic extends PromptVersionListing {
+    readonly publication_secret: string;
+    readonly publication_secret_hash: string;
+    readonly detail: string;
+  }
+  const path = "development/brief.md";
+  const body = "Authorization: Bearer EXAMPLE_TOKEN";
+  try {
+    unwrap(await savePendingPrompt({ path, body, expected_pending_version_id: null }));
+    const diagnostic: PromptListingDiagnostic = { ...unwrap(listPromptVersions(path)),
+      publication_secret: "actual-server-secret", publication_secret_hash: "actual-secret-hash", detail: "Authorization: Bearer SERVER_CREDENTIAL" };
+    const app = new Hono();
+    app.use("*", redactingReadResponses());
+    app.get("/api/prompt-versions", context => context.json(diagnostic));
+    app.get("/api/diagnostics", context => context.json(diagnostic));
+    const listing = await (await app.request("/api/prompt-versions")).json() as PromptListingDiagnostic;
+    expect({ body: listing.pending?.body, secret: listing.publication_secret, hash: listing.publication_secret_hash, detail: listing.detail })
+      .toEqual({ body, secret: "[REDACTED]", hash: "[REDACTED]", detail: "Authorization: Bearer [REDACTED]" });
+    const other = await (await app.request("/api/diagnostics")).json() as PromptListingDiagnostic;
+    expect({ body: other.pending?.body, secret: other.publication_secret, hash: other.publication_secret_hash })
+      .toEqual({ body: "Authorization: Bearer [REDACTED]", secret: "[REDACTED]", hash: "[REDACTED]" });
+    const errors = new Hono();
+    errors.use("*", redactingReadResponses());
+    installPromptVersions(errors, core);
+    const response = await errors.request("/api/prompt-versions?path=" + encodeURIComponent("../Authorization: Bearer SERVER_CREDENTIAL"));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { entity_id: "../Authorization: Bearer [REDACTED]" } });
+  } finally { core.close(); }
+});
