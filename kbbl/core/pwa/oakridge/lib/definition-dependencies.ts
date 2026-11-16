@@ -29,7 +29,7 @@ function isCallParen(previous: string | undefined): boolean {
  * Grouping parentheses are dropped because the compiler treats them as transparent
  * to field access: `(a).outcome.x` and `(a.outcome).x` both read `a.outcome.x`.
  */
-function selectExpressionTokens(expression: string): string[] {
+export function selectExpressionTokens(expression: string): string[] {
   const tokens = expression.match(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_$][A-Za-z0-9_$-]*|[^\s]/g) ?? [];
   const kept: string[] = [];
   const is_grouping: boolean[] = [];
