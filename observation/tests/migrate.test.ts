@@ -1,3 +1,4 @@
+import { pinProvenance } from "./grading-fixture";
 import { expect, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import { Client } from "pg";
@@ -141,7 +142,7 @@ async function baselineSubject(db: import("../src/storage/database").Database) {
   const question = OAKRIDGE_QUESTIONS[0]!;
   await registerQuestion(db, tenant, question);
   await registerEvaluator(db, tenant, evaluator("human"));
-  await createFeed(db, tenant, { pins: [{ scope: "per_item", ...question, ...targetOf(question.question_id), evaluator_definition_ids: [evaluatorId("human")] }] })
+  await createFeed(db, tenant, { pins: [{ scope: "per_item", ...question, ...targetOf(question.question_id), ...pinProvenance(question), evaluator_definition_ids: [evaluatorId("human")] }] })
     .revision({ revision_id: "analysis", artifact_kind: "analysis", body: await fixtureBody("analysis") });
   return (await db.selectFrom("observation.evidence_set").selectAll().executeTakeFirstOrThrow());
 }
@@ -174,6 +175,37 @@ integration("execution tasks must match their evidence including null against no
         VALUES (${row.producer}, ${row.namespace}, 'mismatch', 'run-1', ${row.subject_occurrence_id}, ${task},
          ${`canonical-json/v1:${"e".repeat(64)}`}, ${row.question_id}, ${row.question_version}, 'human', 'test',
          ${`canonical-json/v1:${"d".repeat(64)}`}, 'queued')`.execute(db)).rejects.toThrow("execution requires");
+    }
+  } finally { await db.destroy(); }
+}));
+
+integration("evidence pins require valid configuration identity and a collection plan without workflow context", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    const columns = await sql<{ column_name: string }>`SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation' AND table_name = 'evidence_set'`.execute(db);
+    const names = columns.rows.map((row) => row.column_name);
+    expect(names).toEqual(expect.arrayContaining(["config_version", "config_hash", "collection_plan"]));
+    expect(names.filter((name) => ["run_id", "definition_id", "unit", "unit_id", "stage"].includes(name))).toEqual([]);
+    const row = await baselineSubject(db);
+    const base = { ...row, evidence_set_id: "canonical-json/v1:" + "a".repeat(64) };
+    const cases = [
+      { values: { ...base, config_version: undefined }, code: "23502" },
+      { values: { ...base, config_hash: undefined }, code: "23502" },
+      { values: { ...base, collection_plan: null }, code: "23502" },
+      { values: { ...base, config_version: 0 }, code: "23514" },
+      { values: { ...base, config_hash: "sha256:abc" }, code: "23514" },
+    ];
+    for (const entry of cases) {
+      const columns = Object.entries(entry.values).filter(([, value]) => value !== undefined);
+      const client = new Client({ connectionString: url });
+      await client.connect();
+      try {
+        await expect(client.query(
+          `INSERT INTO observation.evidence_set (${columns.map(([name]) => name).join(",")}) VALUES (${columns.map((_, index) => "$" + (index + 1)).join(",")})`,
+          columns.map(([name, value]) => name === "collection_plan" && value !== null ? JSON.stringify(row.collection_plan) : name === "evidence_refs" ? JSON.stringify(value) : value),
+        )).rejects.toMatchObject({ code: entry.code });
+      } finally { await client.end(); }
     }
   } finally { await db.destroy(); }
 }));

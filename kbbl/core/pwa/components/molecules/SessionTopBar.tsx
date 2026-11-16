@@ -1,3 +1,4 @@
+import { ConnectionIndicator } from "./ConnectionIndicator";
 import { Button } from "../atoms/Button";
 import type { Ref } from "react";
 
@@ -5,7 +6,7 @@ import type { SessionSnapshot, Status } from "../../types";
 import type { UsageState } from "../../lib/acp-timeline";
 import type { SessionSurfaceChrome } from "../../lib/session-surface";
 import { formatTokens, prettyEffortLabel, prettyModelLabel } from "../../lib/format";
-import { sessionLabelTitle, workdirBasename } from "../../lib/session";
+import { selectSessionHeaderSegments, sessionLabelTitle, workdirBasename } from "../../lib/session";
 
 function usageLabel(usage: UsageState): string | null {
   if (usage.used === null) return null;
@@ -43,6 +44,7 @@ export function SessionTopBar({
   // Show stream status on an open session, inbox status otherwise —
   // stream status on a closed session's view is misleading.
   const shownStatus = isOpen ? streamStatus : inboxStatus;
+  const segments = selectSessionHeaderSegments({ snapshot, chrome });
   const usageText = usage !== null ? usageLabel(usage) : null;
 
   return (
@@ -58,7 +60,7 @@ export function SessionTopBar({
           ←
         </Button>
       )}
-      <span className={`status status-${shownStatus}`}>{shownStatus}</span>
+      <ConnectionIndicator status={shownStatus} />
       {usageText !== null && (
         <span
           className="event-count"
@@ -102,14 +104,13 @@ export function SessionTopBar({
         {snapshot && (
           <span className="session-label-workdir">
             {workdirBasename(snapshot.projectWorkdir)}
-            {snapshot.worktreeBranch && (
-              <span className="session-label-slug">
-                {" "}
-                › {snapshot.worktreeBranch.replace(/^kbbl\//, "")}
-              </span>
-            )}
           </span>
         )}
+        <span className="flex min-w-0 max-w-full items-center gap-1">
+          {segments.role && <strong className="session-role" data-testid="session-role">{segments.role}</strong>}
+          {segments.stage && <>{segments.role && <span aria-hidden="true">·</span>}<span className="session-stage" data-testid="session-stage">{segments.stage}</span></>}
+          {segments.branch && <>{(segments.role || segments.stage) && <span aria-hidden="true">·</span>}<span className="session-branch truncate" data-testid="session-branch" title={segments.branch}>{segments.branch}</span></>}
+        </span>
       </span>
     </header>
   );

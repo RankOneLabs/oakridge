@@ -47,12 +47,12 @@ test("fan-out groups retain nested pools and child declaration paths", () => {
   const catalog = JSON.parse(
     readFileSync(resolve(root, "launchable.json"), "utf8"),
   ) as {
-    [name: string]: string;
+    [name: string]: { definition_id: string };
   };
   const workflow = (
     JSON.parse(
       readFileSync(
-        resolve(root, "workflows", catalog["fan-out"] + ".json"),
+        resolve(root, "workflows", catalog["fan-out"].definition_id + ".json"),
         "utf8",
       ),
     ) as {

@@ -43,7 +43,7 @@ export function useDefinitionAnchors({
       return;
     const anchor = event.target instanceof Element ? event.target.closest("a") : null;
     const href = anchor?.getAttribute("href");
-    if (!href?.startsWith("#oakridge/defs/")) return;
+    if (!href?.startsWith("#settings/workflows/")) return;
     event.preventDefault();
     // Navigating to the current hash changes no route, so reveal its target directly.
     if (href === window.location.hash) {

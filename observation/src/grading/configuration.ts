@@ -3,7 +3,7 @@ import { canonicalDigest, canonicalJson } from "canonical-json";
 import type { EvaluatorDefinitionId, QuestionId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { evaluatorIdentity, instructionDigest, type EvaluatorDefinition } from "./evaluator";
-import { capabilityReferenceSchema, createCapabilityCollector, type CaptureConfiguration, type CapturePin, type QuestionScope } from "./evidence";
+import { capabilityReferenceSchema, createCapabilityCollector, type CaptureConfiguration, NO_CAPTURE_PINS, type ConfigurationIdentity, type PlannedCapture, type PlannedPin, type QuestionScope } from "./evidence";
 import type { EvidenceCapabilities, EvidenceCapabilityReference, EvidenceCollector } from "../ports/producer-profile";
 import type { QuestionDefinition, QuestionKey } from "./question";
 import { runnerEntry } from "./runner";
@@ -251,11 +251,11 @@ export interface GradingRegistration {
   readonly questions: readonly QuestionDefinition[];
   readonly evaluators: readonly EvaluatorDefinition[];
   readonly graders: readonly RegisteredGrader[];
-  readonly capture: CaptureConfiguration;
+  readonly capture: PlannedCapture;
   readonly collector: EvidenceCollector;
 }
 
-interface PinnedQuestion { readonly pins: readonly CapturePin[]; readonly evaluators: readonly EvaluatorDefinition[]; readonly graders: readonly RegisteredGrader[] }
+interface PinnedQuestion { readonly pins: readonly PlannedPin[]; readonly evaluators: readonly EvaluatorDefinition[]; readonly graders: readonly RegisteredGrader[] }
 
 /** One question with the evaluators the definitions configure for it and the human evaluator every question keeps. */
 interface QuestionSelection {
@@ -350,3 +350,7 @@ export function planRegistration(configuration: GradingDefinitions, registry: Gr
     capture: { pins: pinned.flatMap((entry) => entry.pins) },
     collector: createCapabilityCollector(configuration.map((definition, index) => ({ ...questions[index]!, evidence: definition.evidence })), registry.capabilities) });
 }
+
+/** Bind every planned pin to the published snapshot that resolved it. */
+export const stampCapture = (planned: PlannedCapture, identity: ConfigurationIdentity | null): CaptureConfiguration =>
+  identity === null ? NO_CAPTURE_PINS : { pins: planned.pins.map((pin) => ({ ...pin, ...identity })) };

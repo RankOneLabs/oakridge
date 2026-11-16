@@ -26,7 +26,8 @@ import { canonicalDigest } from "canonical-json";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId } from "../src/domain/identity";
 import type { JsonValue, Result } from "../src/domain/primitives";
 import { uniformDrilldownPages, type DrilldownRow, type LogicalItemComposite, type LogicalItemLineage, type Paged, type StageComposite } from "../src/grading/composite";
-import type { GradingRegistration } from "../src/grading/configuration";
+import { stampCapture, type GradingRegistration } from "../src/grading/configuration";
+import type { ConfigurationIdentity } from "../src/grading/evidence";
 import { AUTOMATIC_ATTEMPT_LABEL, evaluationDigest, submissionAttemptLabel, submissionDigest } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
 import type { SourceEventCursor, SourceEventOutcome } from "../src/ingest/cursor";
@@ -340,7 +341,8 @@ const RELEVANCE = "finding.relevance";
 
 /** One run of synthetic revisions through the real delivery path, with answers stored under the execution
  * contract. It is labelled synthetic in the report: it proves the reads on this database, not a real run. */
-export async function sharedTaskMatrix(db: Database, tenant: TenantScope, registration: GradingRegistration): Promise<{ readonly checks: readonly ProofCheck[]; readonly reads: unknown }> {
+export async function sharedTaskMatrix(db: Database, tenant: TenantScope, registration: GradingRegistration, identity: ConfigurationIdentity): Promise<{ readonly checks: readonly ProofCheck[]; readonly reads: unknown }> {
+  const capture = stampCapture(registration.capture, identity);
   const run_id = "matrix-run";
   const registered = await registerDefinitions(db, tenant, registration);
   if (!registered.ok) return { checks: [check("the matrix tenant registers its definitions", false, registered.error.detail)], reads: null };
@@ -351,7 +353,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
   const provenance = { format: "observation.source-event/v1", definition_id: "matrix", artifact_schema_version: null } as const;
   const send = async (outcome: SourceEventOutcome): Promise<void> => {
     const next = { commit_txid: String(++sequence), id: outcome.event_id };
-    const result = await deliverSourceEvent(db, tenant, { previous: cursor, cursor: next, outcome }, { extraction: oakridgeProfile.extraction, configuration: registration.capture });
+    const result = await deliverSourceEvent(db, tenant, { previous: cursor, cursor: next, outcome }, { extraction: oakridgeProfile.extraction, configuration: capture });
     if (result.status !== 200) throw new Error(`matrix delivery refused: ${JSON.stringify(result.body)}`);
     cursor = next;
   };
@@ -424,7 +426,7 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
   const read = async (task: string) => readLogicalItemComposite(db, tenant, path, run_id, task, { stages: [
     { stage: "analysis", artifact_kinds: ["analysis"] }, { stage: "tasks", artifact_kinds: ["tasks"] },
     { stage: "implementation", artifact_kinds: ["assessment"] }, { stage: "integration", artifact_kinds: ["assessment"] }
-  ], pins: registration.capture.pins, is_run_complete: true });
+  ], pins: capture.pins, is_run_complete: true });
   const pending = await read(shared);
   await revision("integration-1", "assessment", `${run_id}/integration/oakridge`, { findings: [finding([shared])] });
   const final = await read(shared);
@@ -490,7 +492,9 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
     const settled = await settleObservation(io);
     checks.push(check("observation is up", observationSettled(settled.health), `health ${settled.health}; launcher ${settled.launcher}`));
     if (!observationSettled(settled.health)) return finish();
-    const plans = graderPlans(JSON.stringify((await io.readGradingConfiguration()).definitions));
+    const published = await io.readGradingConfiguration();
+    const identity: ConfigurationIdentity = { config_version: published.version, config_hash: published.hash };
+    const plans = graderPlans(JSON.stringify(published.definitions));
     if (!plans.ok) { checks.push(check("published configuration plans a registration", false, plans.error.detail)); return finish(); }
     const opened = await source.openObservation();
     checks.push(check("the shadow's observation database opens for composite reads", opened.ok, opened.ok ? opened.value.tenant.namespace : opened.error.detail));
@@ -499,13 +503,13 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
       const response = await io.dbos(new URL(url).pathname);
       return response.ok ? Response.json(response.value) : new Response(response.error.detail, { status: 502 });
     } });
-    const pins = plans.value.committed_plan.capture.pins;
-    reads = { ...opened.value, context: async (run_id) => {
+    const pins = stampCapture(plans.value.committed_plan.capture, identity).pins;
+    const open: ObservationReads = { ...opened.value, context: async (run_id) => {
       const units = await stage_source.read(run_id);
       if (!units.ok) throw new Error(units.error.detail);
       return { stages: stagesFromReadiness(units.value), pins, is_run_complete: isRunComplete(units.value) };
     } };
-    const open = reads;
+    reads = open;
     let answeredBeforeTasks: readonly MeasurementReadback[] = [];
     let beforeApproval: RelationCheckpoint | null = null;
 
@@ -647,7 +651,7 @@ export async function relationsScenario(io: ProofIo, source: RelationsSource, ma
     await sharedRun(io, source, open, { checks, runs, measurements, checkpoints, readbacks });
 
     // The shared-task matrix, in a tenant of its own.
-    const matrix = await sharedTaskMatrix(open.db, { producer: open.tenant.producer, namespace: matrix_namespace }, plans.value.committed_plan);
+    const matrix = await sharedTaskMatrix(open.db, { producer: open.tenant.producer, namespace: matrix_namespace }, plans.value.committed_plan, identity);
     checks.push(...matrix.checks);
     readbacks.shared_task_matrix = matrix.reads;
     return finish();

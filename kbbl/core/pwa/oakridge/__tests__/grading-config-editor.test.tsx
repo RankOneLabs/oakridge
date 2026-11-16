@@ -35,8 +35,8 @@ const click = (text: string) => fireEvent.click(screen.getByRole("button", { nam
 
 describe("grading configuration browser and structured sections", () => {
   it("parses both slash-prefixed routes and existing shell route spelling", () => {
-    expect(readHashRoute("#/oakridge/grading-config", "")).toEqual({ view: "oakridge", route: { sub: "grading-config", version: null } });
-    expect(readHashRoute("#oakridge/grading-config/versions/3", "")).toEqual({ view: "oakridge", route: { sub: "grading-config", version: 3 } });
+    expect(readHashRoute("#/oakridge/grading-config", "")).toEqual({ view: "redirect", hash: "settings/workflows/grading-config" });
+    expect(readHashRoute("#oakridge/grading-config/versions/3", "")).toEqual({ view: "redirect", hash: "settings/workflows/grading-config/versions/3" });
   });
   it("loads only the proxy routes and renders latest timestamp, saved draft and every definition summary", async () => {
     render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><GradingConfigView version={null} onNavigate={vi.fn()} /></QueryClientProvider>);

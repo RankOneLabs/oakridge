@@ -18,7 +18,7 @@ test("committed development depends on PR operations; samples do not", () => {
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
   expect(["development", "review-loop", "fan-out"].map((name) => {
-    const definition = resolveDefinition(catalog.value[name]!);
+    const definition = resolveDefinition(catalog.value[name].definition_id);
     if (!definition.ok) throw new Error(JSON.stringify(definition.error));
     return isPrDependent(definition.value.source);
   })).toEqual([true, false, false]);
@@ -51,7 +51,7 @@ test("a refused PR-dependent launch reads only its receipt and never creates a r
   const db = { selectFrom(table: string) { database_accesses++; expect(table).toBe("authority.ingress_receipt"); return lookup; } };
   installIngress(app, { db, is_operator_request: () => true } as unknown as IngressDependencies);
   const response = await app.request("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ request_id: "refused-pr", definition_id: catalog.value.development, input: {}, pr_integration: "none" }) });
+    body: JSON.stringify({ request_id: "refused-pr", definition_id: catalog.value.development.definition_id, input: {}, pr_integration: "none" }) });
   expect({ status: response.status, kind: (await response.json()).kind, database_accesses })
     .toEqual({ status: 422, kind: "integration_none", database_accesses: 1 });
 });

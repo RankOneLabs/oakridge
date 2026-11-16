@@ -1,3 +1,4 @@
+import { pinProvenance } from "./grading-fixture";
 import { expect, test } from "bun:test";
 import { selectComposite, selectDrilldown, uniformDrilldownPages } from "../src/grading/composite";
 import { stagesFromReadiness } from "../src/grading/task-stages";
@@ -19,7 +20,7 @@ test("a profile's new extractor and readiness stage appear in dependency order w
     { unit_id: "audit", stage: "compliance_audit", depends_on: ["start"], status: { kind: "done" }, artifacts: [{ artifact_key: "audit-note" }] },
     { unit_id: "start", stage: "discovery", depends_on: [], status: { kind: "done" }, artifacts: [{ artifact_key: "memo" }] },
     { unit_id: "last", stage: "release", depends_on: ["audit"], status: { kind: "not_started" }, artifacts: [{ artifact_key: "audit-note" }] }
-  ]), pins: [{ ...question, scope: "per_task", task_ids: "/task_ids", artifact_kind: "audit-note", item_selector: extension.item_selector, item_kind: extension.item_kind, evaluator_definition_ids: [grader] }],
+  ]), pins: [{ ...question, ...pinProvenance(question), scope: "per_task", task_ids: "/task_ids", artifact_kind: "audit-note", item_selector: extension.item_selector, item_kind: extension.item_kind, evaluator_definition_ids: [grader] }],
     revisions: [audit, revision("old-capture", "retired_stage")], occurrences: items, evidence_sets: sets, answers: sets.map(answer) });
   const rollup = selectComposite(snapshot, profile.composite, snapshot.logical_items[0]!);
   expect(rollup.stages.map((stage) => [stage.stage, stage.state])).toEqual([

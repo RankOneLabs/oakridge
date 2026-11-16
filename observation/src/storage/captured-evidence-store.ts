@@ -1,7 +1,7 @@
 import type { Selectable } from "kysely";
 import type { EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, LogicalItemId, QuestionId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
-import { COLLECTION_PENDING, evidenceSetId, gradingSubjects, isPinTarget, type CapturePin, type GradingSubject, type CaptureConfiguration, type EvidenceReadiness, type EvidenceReference, type EvidenceSet } from "../grading/evidence";
+import { decodeEvidencePlan, COLLECTION_PENDING, evidenceSetId, gradingSubjects, isPinTarget, type CapturePin, type GradingSubject, type CaptureConfiguration, type EvidenceReadiness, type EvidenceReference, type EvidenceSet } from "../grading/evidence";
 import type { ArtifactSource, EvidenceCollection } from "../ports/artifact-source";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationEvidenceSet } from "./db-types";
@@ -62,7 +62,7 @@ export async function pinSubjectInTransaction(trx: DatabaseTransaction, tenant: 
   if (!id.ok) return err({ operation: "evidence_store", entity_id: subject.subject_occurrence_id, detail: id.error.detail });
   await trx.insertInto("observation.evidence_set").values({ producer: tenant.producer, namespace: tenant.namespace,
     evidence_set_id: id.value, ...subject, question_id: pin.question_id,
-    question_version: pin.question_version, collection_plan: pin.collection_plan ? jsonText(pin.collection_plan as unknown as JsonValue) : null, pinned_evaluator_definition_ids: [...pin.evaluator_definition_ids],
+    question_version: pin.question_version, config_version: pin.config_version, config_hash: pin.config_hash, collection_plan: jsonText(pin.collection_plan as unknown as JsonValue), pinned_evaluator_definition_ids: [...pin.evaluator_definition_ids],
     readiness: "not_ready", not_ready_code: COLLECTION_PENDING.code, not_ready_detail: COLLECTION_PENDING.detail,
     incompleteness_reason: null, ready_at: null })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "subject_occurrence_id", "task_id", "question_id", "question_version"]).doNothing()).execute();
@@ -70,10 +70,12 @@ export async function pinSubjectInTransaction(trx: DatabaseTransaction, tenant: 
 }
 
 export function evidenceSetFromRow(row: Selectable<ObservationEvidenceSet>): EvidenceSet {
+  const plan = decodeEvidencePlan(row.collection_plan);
+  if (!plan.ok) throw new Error(`evidence_set ${row.evidence_set_id}: ${plan.error.detail}`);
   const readiness: EvidenceReadiness = row.readiness === "ready"
     ? { state: "ready", references: row.evidence_refs as unknown as readonly EvidenceReference[], ready_at: row.ready_at! }
     : { state: "not_ready", reason: { code: row.not_ready_code!, detail: row.not_ready_detail! } };
-  return { evidence_set_id: row.evidence_set_id as EvidenceSetId, subject_occurrence_id: row.subject_occurrence_id as ItemOccurrenceId,
+  return { config_version: row.config_version, config_hash: row.config_hash, collection_plan: plan.value, evidence_set_id: row.evidence_set_id as EvidenceSetId, subject_occurrence_id: row.subject_occurrence_id as ItemOccurrenceId,
     task_id: row.task_id as LogicalItemId | null, question_id: row.question_id as QuestionId, question_version: row.question_version,
     pinned_evaluator_definition_ids: row.pinned_evaluator_definition_ids as EvaluatorDefinitionId[], readiness,
     is_incomplete: row.is_incomplete, incompleteness_reason: row.incompleteness_reason };

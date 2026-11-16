@@ -6,7 +6,7 @@ import { WORKFLOW_SOURCES } from "./workflow-sources";
 import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
-import { commitDefinition, referencedPromptPaths, type DefinitionOrder, type LaunchableCatalog, type PromptReferences } from "./definition-objects";
+import { commitDefinition, referencedPromptPaths, type DefinitionOrder, type LaunchableCatalog, type LaunchableEntry, type PromptReferences } from "./definition-objects";
 import { isCommittedDefinition, isPromptPath } from "./definition-store";
 
 const root = resolve(import.meta.dir, "../..");
@@ -73,8 +73,8 @@ const skillEntries = readdirSync(skillRoot, { withFileTypes: true }).filter((ent
   return [entry.name, digest];
 });
 generated.push({ path: resolve(storeRoot, "skills.json"), bytes: canonicalBytes(Object.fromEntries(skillEntries)) });
-const launchableEntries: [string, DefinitionId][] = [];
-for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
+const launchableEntries: [string, LaunchableEntry][] = [];
+for (const [name, { path, audience }] of Object.entries(WORKFLOW_SOURCES)) {
   const sourcePath = resolve(root, path);
   const document = YAML.parseDocument(readFileSync(sourcePath, "utf8"), { uniqueKeys: true });
   if (document.errors.length > 0) {
@@ -101,7 +101,7 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
   }));
   const definition = commitDefinition({ source, operation_registry_id: registryId, prompts: references }, order);
   const definitionId = required(jsonIdentity<DefinitionId>(definition));
-  launchableEntries.push([name, definitionId]);
+  launchableEntries.push([name, { audience, definition_id: definitionId }]);
   generated.push(
     { path: resolve(root, "workflow-core/fixtures/bundles", `${name}.json`), bytes: Buffer.from(JSON.stringify(authored, null, 2) + "\n") },
     { path: resolve(storeRoot, "workflows", `${definitionId}.json`), bytes: canonicalBytes(definition) },

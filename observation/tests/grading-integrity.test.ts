@@ -1,3 +1,4 @@
+import { pinProvenance } from "./grading-fixture";
 import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
@@ -15,7 +16,7 @@ import { listRunItems } from "../src/storage/projection-store";
 const relevance = OAKRIDGE_QUESTIONS[0]!;
 const other_tenant: TenantScope = { producer: "oakridge", namespace: "other" };
 const answer = (value: string): GradeAnswer => ({ state: "answered", kind: "choice", value });
-const configuration: CaptureConfiguration = { pins: [{ scope: "per_item", ...relevance, ...targetOf(relevance.question_id), evaluator_definition_ids: [evaluatorId("model"), evaluatorId("human")] }] };
+const configuration: CaptureConfiguration = { pins: [{ scope: "per_item", ...relevance, ...targetOf(relevance.question_id), ...pinProvenance(relevance), evaluator_definition_ids: [evaluatorId("model"), evaluatorId("human")] }] };
 
 interface Measured { readonly occurrence_id: ItemOccurrenceId; readonly evidence_set_id: EvidenceSetId }
 /** A captured finding pinned to two evaluators, with ready evidence. */

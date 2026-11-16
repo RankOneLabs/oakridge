@@ -54,13 +54,13 @@ test("group selection drills in and exposes a root breadcrumb", () => {
   render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "work" }} onNavigate={() => {}} onBack={() => {}} />);
   const graph = screen.getByRole("region", { name: "Definition dependencies" });
   expect(within(graph).getByRole("link", { name: "item" }).getAttribute("href")).toContain("/units/work/item");
-  expect(within(graph).getByRole("link", { name: "Root" }).getAttribute("href")).toBe("#oakridge/defs/" + detail.definition_id);
+  expect(within(graph).getByRole("link", { name: "Root" }).getAttribute("href")).toBe("#settings/workflows/" + detail.definition_id);
   expect(within(graph).getByText(/per-member after/)).toBeTruthy();
   expect(within(graph).queryByRole("link", { name: "work (group)" })).toBeNull();
   const pane = within(screen.getByTestId("or-def-selection"));
   expect(pane.getByRole("heading", { name: "Unit: work" })).toBeTruthy();
   expect(pane.getByText(/Choose a child unit/)).toBeTruthy();
-  expect(pane.getByRole("link", { name: "work/item" }).getAttribute("href")).toBe(`#oakridge/defs/${detail.definition_id}/units/work/item`);
+  expect(pane.getByRole("link", { name: "work/item" }).getAttribute("href")).toBe(`#settings/workflows/${detail.definition_id}/units/work/item`);
   for (const [name, value] of [["for_each", "input.cohorts"], ["key", "each.name"], ["after", "each.depends_on"], ["pool", "builders"]]) {
     expect(pane.getByText(name as string).nextElementSibling?.textContent).toBe(value);
   }
@@ -104,9 +104,9 @@ test("explicit after arrays render a solid labelled edge and linked relation", (
   const relation = within(graph).getByRole("list", { name: "Dependency edges" });
   expect(relation.textContent).toBe("second after first");
   expect(within(relation).getByRole("link", { name: "second" }).getAttribute("href"))
-    .toBe(`#oakridge/defs/${detail.definition_id}/units/second`);
+    .toBe(`#settings/workflows/${detail.definition_id}/units/second`);
   expect(within(relation).getByRole("link", { name: "first" }).getAttribute("href"))
-    .toBe(`#oakridge/defs/${detail.definition_id}/units/first`);
+    .toBe(`#settings/workflows/${detail.definition_id}/units/first`);
 });
 
 test("array prerequisites remain visible and parallel dependency kinds stay separate", () => {
@@ -203,7 +203,7 @@ test("schema href on a definition without stages reveals its target from the bar
   render(<WorkflowDefDetail definitionId="d1" selection={null} onNavigate={navigate} onBack={() => {}} />);
   const schema = document.getElementById("definition-schema-final_merge_policy") as HTMLElement;
   fireEvent.click(screen.getByRole("link", { name: "final_merge_policy", hidden: true }));
-  expect(navigate).toHaveBeenCalledWith(`#oakridge/defs/${encodeURIComponent(detail.definition_id)}#definition-schema-final_merge_policy`);
+  expect(navigate).toHaveBeenCalledWith(`#settings/workflows/${encodeURIComponent(detail.definition_id)}#definition-schema-final_merge_policy`);
   expect((schema.closest("details") as HTMLDetailsElement).open).toBe(true);
   expect(document.activeElement).toBe(schema);
 });
@@ -264,10 +264,10 @@ test("Back and Forward route restoration keeps navigation, graph and detail sele
   const forwardSelection = { kind: "unit" as const, path: "implementation#stage-cohort-artifact-build_result" };
   const view = render(<WorkflowDefDetail definitionId="d1" selection={backSelection} onNavigate={navigate} onBack={() => {}} />);
   fireEvent.click(within(screen.getByLabelText("Stages in authored order")).getByRole("link", { name: "implementation" }));
-  expect(navigate).toHaveBeenLastCalledWith(`#oakridge/defs/${detail.definition_id}/units/implementation`);
+  expect(navigate).toHaveBeenLastCalledWith(`#settings/workflows/${detail.definition_id}/units/implementation`);
   view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation" }} onNavigate={navigate} onBack={() => {}} />);
   fireEvent.click(within(screen.getByRole("region", { name: "Workers" })).getAllByRole("link", { name: "build_result" })[0] as HTMLElement);
-  expect(navigate).toHaveBeenLastCalledWith(`#oakridge/defs/${detail.definition_id}/units/${forwardSelection.path}`);
+  expect(navigate).toHaveBeenLastCalledWith(`#settings/workflows/${detail.definition_id}/units/${forwardSelection.path}`);
   // The router supplies the historical selection again on popstate, including anchors.
   for (const selection of [forwardSelection, backSelection, forwardSelection]) {
     view.rerender(<WorkflowDefDetail definitionId="d1" selection={selection} onNavigate={navigate} onBack={() => {}} />);

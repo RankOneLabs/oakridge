@@ -1,3 +1,4 @@
+import type { EvidencePlan } from "./evidence";
 import type { AssociationProvenance } from "./task-association";
 import type { SubjectScope } from "./composite";
 /**
@@ -42,6 +43,9 @@ export type EvidenceReadinessRead =
   | { readonly state: "not_ready"; readonly reason: { readonly code: string; readonly detail: string } };
 /** The exact frozen references one question's answers all share. */
 export interface EvidenceRead extends QuestionKey {
+  readonly config_version: number;
+  readonly config_hash: string;
+  readonly collection_plan: EvidencePlan;
   readonly evidence_set_id: EvidenceSetId;
   readonly subject_occurrence_id: ItemOccurrenceId;
   readonly task_id: LogicalItemId | null;
@@ -53,7 +57,7 @@ export interface EvidenceRead extends QuestionKey {
 }
 export interface EvidenceWindows { readonly references: PageRequest; readonly pinned_evaluators: PageRequest }
 export const EVIDENCE_WINDOWS = ["references", "pinned_evaluators"] as const;
-export const evidenceRead = (set: EvidenceSet, windows: EvidenceWindows): EvidenceRead => ({ question_id: set.question_id, question_version: set.question_version,
+export const evidenceRead = (set: EvidenceSet, windows: EvidenceWindows): EvidenceRead => ({ config_version: set.config_version, config_hash: set.config_hash, collection_plan: set.collection_plan, question_id: set.question_id, question_version: set.question_version,
   task_id: set.task_id, evidence_set_id: set.evidence_set_id, subject_occurrence_id: set.subject_occurrence_id, pinned_evaluator_definition_ids: pageOf(set.pinned_evaluator_definition_ids, windows.pinned_evaluators),
   readiness: set.readiness.state === "ready" ? { state: "ready", ready_at: set.readiness.ready_at } : { state: "not_ready", reason: set.readiness.reason },
   references: pageOf(set.readiness.state === "ready" ? set.readiness.references : [], windows.references),

@@ -166,3 +166,12 @@ export const selectRunSessionRows = (attempts: readonly RunSessionAttempt[]): re
     };
   });
 };
+
+/** Stage context is supplied only by the matching run attempt. */
+export function selectRunSessionStage(
+  attempts: readonly RunSessionAttempt[] | undefined,
+  sessionId: string | null,
+): string | null {
+  if (sessionId === null) return null;
+  return attempts?.find((attempt) => attempt.session_id === sessionId)?.stage_key ?? null;
+}

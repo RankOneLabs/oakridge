@@ -1,3 +1,6 @@
+import { pinProvenance } from "./grading-fixture";
+import { stampCapture } from "../src/grading/configuration";
+import { pinIdentity } from "./grading-fixture";
 // Captured fixtures exercise the same extractor, definition targets and storage read used by HTTP.
 import { planRegistration } from "../src/grading/configuration";
 import { registerDefinitions } from "../src/storage/grading-store";
@@ -25,7 +28,7 @@ test("task, acceptance and linked findings retain independent scoped results and
   const snapshot = inputs({ revisions: sources, occurrences: items, relations: [edge(analysis!, task), edge(assessment!, analysis!, "supersedes"), edge(assessment!, task),
     edge(derived!, task, "derived_from"), edge(addressed!, task, "addresses")], evidence_sets: sets, answers: [answer(ownGrade), answer(analysisGrade), answer(otherGrade)],
     stages: sources.map((source) => ({ stage: source.stage, artifact_kinds: [source.artifact_kind] })),
-    pins: sources.map((source) => ({ ...question, scope: "per_item", artifact_kind: source.artifact_kind, item_selector: "/items/*", evaluator_definition_ids: [grader] })) });
+    pins: sources.map((source) => ({ ...question, ...pinProvenance(question), scope: "per_item", artifact_kind: source.artifact_kind, item_selector: "/items/*", evaluator_definition_ids: [grader] })) });
   const before = JSON.stringify(snapshot);
   const rollup = selectComposite(snapshot, path, snapshot.logical_items[0]!);
   const results = rollup.stages.flatMap((stage) => stage.results);
@@ -70,7 +73,7 @@ integration("captured Oakridge task, plan, brief and linked findings appear toge
   if (!registration.ok) throw new Error(registration.error.detail);
   const registered = await registerDefinitions(db, tenant, registration.value);
   if (!registered.ok) throw new Error(registered.error.detail);
-  const feed = createFeed(db, tenant, registration.value.capture);
+  const feed = createFeed(db, tenant, stampCapture(registration.value.capture, pinIdentity));
   for (const artifact_kind of ["analysis", "tasks", "plan", "brief", "assessment"]) {
     await feed.revision({ revision_id: `${artifact_kind}-1`, artifact_kind, stage: artifact_kind, body: await fixtureBody(artifact_kind) });
   }
@@ -78,7 +81,7 @@ integration("captured Oakridge task, plan, brief and linked findings appear toge
     kind: "relation_declaration", event_kind: "analysis_links_declared", event_id: "link-analysis", run_id: "run-1",
     declaration: { run_id: "run-1", tasks_revision_id: "tasks-1", entries: [{ source_revision_id: "analysis-1", item_path: "/findings/0", task_ids: ["T7"] }] } });
   const rollup = await readLogicalItemComposite(db, tenant, oakridgeProfile.composite, "run-1", "T7", {
-    stages: ["analysis", "tasks", "plan", "brief", "assessment"].map((stage) => ({ stage, artifact_kinds: [stage] })), pins: registration.value.capture.pins, is_run_complete: false
+    stages: ["analysis", "tasks", "plan", "brief", "assessment"].map((stage) => ({ stage, artifact_kinds: [stage] })), pins: stampCapture(registration.value.capture, pinIdentity).pins, is_run_complete: false
   });
   if (!rollup) throw new Error("captured task missing");
   const results = rollup.stages.flatMap((stage) => stage.results);

@@ -7,7 +7,9 @@ export type AuthoredWorkflow = WorkflowDefinitionDescriptor;
 export type OperationRegistry = readonly CodeOperation[];
 export interface PromptReferences { readonly [authored_path: string]: PromptId }
 export interface PromptTexts { readonly [authored_path: string]: string }
-export interface LaunchableCatalog { readonly [authoring_name: string]: DefinitionId }
+export type WorkflowAudience = "user" | "test_fixture";
+export interface LaunchableEntry { readonly definition_id: DefinitionId; readonly audience: WorkflowAudience }
+export interface LaunchableCatalog { readonly [authoring_name: string]: LaunchableEntry }
 
 export interface CommittedDefinition {
   readonly source: AuthoredWorkflow;

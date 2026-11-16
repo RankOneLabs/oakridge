@@ -1,3 +1,4 @@
+import { pinProvenance } from "./grading-fixture";
 import { expect, test } from "bun:test";
 import { sql } from "kysely";
 import type { JsonValue } from "../src/domain/primitives";
@@ -146,7 +147,7 @@ integration("a finding is captured and pinned before any task exists, and a late
   const [relevance] = OAKRIDGE_QUESTIONS;
   await registerQuestion(db, tenant, relevance!);
   await registerEvaluator(db, tenant, evaluator("human"));
-  const configuration: CaptureConfiguration = { pins: [{ scope: "per_item", ...relevance!, ...targetOf(relevance!.question_id), evaluator_definition_ids: [evaluatorId("human")] }] };
+  const configuration: CaptureConfiguration = { pins: [{ scope: "per_item", ...relevance!, ...targetOf(relevance!.question_id), ...pinProvenance(relevance!), evaluator_definition_ids: [evaluatorId("human")] }] };
   const feed = createFeed(db, tenant, configuration);
   await feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body: await fixtureBody("analysis") });
   const [finding] = (await items(db)).filter((item) => item.item_kind === "finding");

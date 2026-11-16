@@ -1,3 +1,4 @@
+import { pinProvenance } from "./grading-fixture";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, QuestionId, RelationId, RunId, UnitId } from "../src/domain/identity";
 import type { CompositeAnswer, CompositeInputs, CompositeOccurrence, CompositeRelation, CompositeRevision } from "../src/grading/composite";
 import type { EvidenceSet } from "../src/grading/evidence";
@@ -17,7 +18,7 @@ export const edge = (source: CompositeOccurrence, target: CompositeOccurrence | 
     source_occurrence_id: source.occurrence_id, target_logical_item_id: typeof target === "string" ? target : null,
     target_occurrence_id: typeof target === "string" ? null : target.occurrence_id, type, unresolved_target_ref: null, evidence_ref: `${source.item_path}/task_ids/0`, asserted_by: "producer_explicit" });
 export const evidence = (item: CompositeOccurrence, task_id: LogicalItemId | null, ready = true): EvidenceSet =>
-  ({ evidence_set_id: `evidence:${item.occurrence_id}:${task_id}` as EvidenceSetId, subject_occurrence_id: item.occurrence_id, task_id,
+  ({ ...pinProvenance(question), evidence_set_id: `evidence:${item.occurrence_id}:${task_id}` as EvidenceSetId, subject_occurrence_id: item.occurrence_id, task_id,
     question_id: question.question_id, question_version: question.question_version, pinned_evaluator_definition_ids: [grader],
     readiness: ready ? { state: "ready", references: [], ready_at: new Date(0) } : { state: "not_ready", reason: { code: "missing", detail: "not captured" } }, is_incomplete: false, incompleteness_reason: null });
 export const answer = (set: EvidenceSet): CompositeAnswer => ({ observation_id: `answer:${set.evidence_set_id}` as GradeObservationId,

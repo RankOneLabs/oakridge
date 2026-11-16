@@ -138,7 +138,7 @@ export function readLaunchableCatalog(store_root = DEFINITION_STORE_ROOT): Resul
   const context: ReadContext = { operation: "read_launchable", identifier: "launchable.json" };
   const catalog = readJson({ ...context, path: resolve(store_root, "launchable.json") });
   if (!catalog.ok) return catalog;
-  if (!isObject(catalog.value) || !Object.values(catalog.value).every(isIdentity)) return failure("malformed_object", context, "expected an authoring-name-to-definition-ID map");
+  if (!isObject(catalog.value) || !Object.values(catalog.value).every((entry) => isObject(entry) && Object.keys(entry).length === 2 && hasOnlyKeys(entry, ["audience", "definition_id"]) && isIdentity(entry.definition_id) && (entry.audience === "user" || entry.audience === "test_fixture"))) return failure("malformed_object", context, "expected an authoring-name-to-definition-ID map");
   return { ok: true, value: catalog.value as LaunchableCatalog };
 }
 
@@ -146,7 +146,7 @@ export function resolveLaunchableDefinition(name: string, store_root = DEFINITIO
   const catalog = readLaunchableCatalog(store_root);
   if (!catalog.ok) return catalog;
   if (!Object.hasOwn(catalog.value, name)) return failure("malformed_object", { operation: "read_launchable", identifier: name }, "authoring name is absent from launchable.json");
-  return resolveDefinition(catalog.value[name], store_root);
+  return resolveDefinition(catalog.value[name].definition_id, store_root);
 }
 
 /** Current PR skill pins, derived from authored bundle directories. */
@@ -189,4 +189,8 @@ export function readSkillBundle(digest: string, store_root = process.env.OAKRIDG
     if (identity.value !== digest) return failure("hash_mismatch", context, "skill manifest SHA-256 differs from bundle identity");
     return { ok: true, value: { files: Object.fromEntries(entries) } };
   } catch (cause) { return failure("store_io", context, String(cause)); }
+}
+
+export function launchableDefinitionIds(catalog: LaunchableCatalog, audience: import("./definition-objects").WorkflowAudience | null): DefinitionId[] {
+  return [...new Set(Object.values(catalog).filter((entry) => audience === null || entry.audience === audience).map((entry) => entry.definition_id))];
 }
