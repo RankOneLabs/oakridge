@@ -1,4 +1,7 @@
 import { PromptEditor } from "./PromptEditor";
+import { usePublishedGradingDefinitions } from "../../hooks/useGradingConfiguration";
+import { WorkflowGradingDefinitions } from "../molecules/WorkflowGradingDefinitions";
+
 import { useState } from "react";
 import { PageHeader } from "../molecules/PageHeader";
 import { TextInput } from "../../../components/atoms/TextInput";
@@ -49,6 +52,7 @@ export function WorkflowDefDetail({
     } catch { setShowFullId(true); }
   }
   const query = useWorkflowDef(definitionId);
+  const grading = usePublishedGradingDefinitions();
   const { selection: normalizedSelection, onClick } = useDefinitionAnchors({
     selection: routeSelection,
     isReady: Boolean(query.data),
@@ -79,8 +83,10 @@ export function WorkflowDefDetail({
       {rawOpen && <DefinitionRawView definition={definition} selection={selection} />}
       <div data-testid="or-def-split" className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div className="min-w-0"><DefinitionGraph key="definition-graph" overview={overview} definition={definition} selection={selection} /></div>
-        <div className="min-w-0 lg:overflow-auto"><StageInspector definition={definition} selection={selection} anchor={anchor} renderPromptEditor={props => <PromptEditor {...props} />} /></div>
+        <div className="min-w-0 lg:overflow-auto"><StageInspector definition={definition} selection={selection} anchor={anchor} grading={grading} renderPromptEditor={props => <PromptEditor {...props} />} /></div>
+
       </div>
+      <WorkflowGradingDefinitions definition={definition} grading={grading} />
     </div>
   );
 }

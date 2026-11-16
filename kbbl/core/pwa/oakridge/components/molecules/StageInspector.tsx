@@ -1,3 +1,4 @@
+import type { PublishedGradingContext } from "../../lib/grading-applicability";
 import { selectStageInspectorNavigation, selectStageInspectorIdentity } from "../../lib/stage-inspector-navigation";
 import { StageInspectorTabs } from "./StageInspectorTabs";
 import { selectEffectiveStageTab, STAGE_TABS } from "../../lib/definition-selection";
@@ -19,8 +20,9 @@ interface StageInspectorProps {
   selection: DefinitionSelection | null;
   anchor?: string;
   renderPromptEditor?: StagePromptsSectionProps["renderPromptEditor"];
+  grading?: PublishedGradingContext;
 }
-export function StageInspector({ definition, selection, anchor, renderPromptEditor }: StageInspectorProps) {
+export function StageInspector({ definition, selection, anchor, renderPromptEditor, grading }: StageInspectorProps) {
   const overview = selectDefinitionOverview(definition);
   const navigation = selectStageInspectorNavigation(definition, selection);
   const model = selectStageInspector(definition, selection);
@@ -62,7 +64,7 @@ export function StageInspector({ definition, selection, anchor, renderPromptEdit
             {activeTab === "bindings" && <StageBindingsSection model={model} />}
             {activeTab === "workers" && <StageWorkersSection model={model} />}
             {activeTab === "prompts" && <StagePromptsSection model={model} renderPromptEditor={renderPromptEditor} />}
-            {activeTab === "artifacts" && <StageArtifactsSection model={model} />}
+            {activeTab === "artifacts" && <StageArtifactsSection model={model} grading={grading} />}
             {activeTab === "reviews" && <StageReviewsSection model={model} />}
             {activeTab === "completion" && <StageCompletionSection model={model} />}
           </div>
