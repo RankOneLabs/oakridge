@@ -10,6 +10,6 @@ export function InstallStatusContent({ status }: InstallStatusContentProps) {
     <section><h3>How operators reach Oakridge</h3><p>{selectAccessExplanation(status.access_mode)}</p></section>
     <section><h3>Required dependencies</h3>{sections.required.map((entry) => <InstallCheckView key={entry.id} entry={entry} />)}</section>
     <section><h3>Optional integrations</h3>{sections.optional.map((entry) => <InstallCheckView key={entry.id} entry={entry} />)}</section>
-    <section><h3>Workflows that cannot launch</h3>{status.launch_blocks.length === 0 && <p>Every workflow can launch.</p>}{status.launch_blocks.map((block) => <div key={block.definition_id}><strong>{block.definition_name}</strong><p>{block.error.detail}</p><p>Fix: {block.error.fix}</p></div>)}</section>
+    <section><h3>Workflows that cannot launch</h3>{status.launch_blocks.length === 0 && <p>No PR integration launch blocks reported.</p>}{status.launch_blocks.map((block) => <div key={block.definition_id}><strong>{block.definition_name}</strong><p>{block.error.detail}</p><p>Fix: {block.error.fix}</p></div>)}</section>
   </article>;
 }

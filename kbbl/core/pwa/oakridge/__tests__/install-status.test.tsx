@@ -75,7 +75,8 @@ it("separates required failures from disabled and unavailable integrations", () 
   expect(screen.getByRole("alert").textContent).toBe("Installation failure: a required dependency failed. Fix it before launching runs.");
   expect(screen.getByText("Required dependencies").parentElement?.textContent).toContain("Failed");
   expect(screen.getByText("Optional integrations").parentElement?.textContent).toContain("Disabled: no PR integration is selected.");
-  expect(screen.getByText("Every workflow can launch.")).toBeTruthy();
+  expect(screen.getByText("No PR integration launch blocks reported.")).toBeTruthy();
+  expect(screen.queryByText("Every workflow can launch.")).toBeNull();
 });
 it("shows disabled profiles and fixes for optional failures", () => {
   render(<InstallStatusContent status={{ ...installStatus, agent_profiles: [{ profile_id: "off", label: "Off", enabled: false, readiness: { kind: "failed", id: "agent", label: "Agent", required: false, detail: "Off", fix: "Enable" } }], checks: [{ kind: "failed", id: "optional", label: "Optional check", required: false, detail: "Unreachable", fix: "Reconnect" }] }} />);
