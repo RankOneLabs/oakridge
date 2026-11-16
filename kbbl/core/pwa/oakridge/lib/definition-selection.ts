@@ -2,7 +2,7 @@ import type { DefinitionSelection } from "../../lib/hash";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import type { OperatorGroup, OperatorUnit } from "../operator-contracts/core-client/core-types";
 
-export function definitionHref(id: string): string { return `#oakridge/defs/${encodeURIComponent(id)}`; }
+export function definitionHref(id: string): string { return `#settings/workflows/${encodeURIComponent(id)}`; }
 export function definitionStageHref(id: string, stage: string): string { return `${definitionHref(id)}/stages/${encodeURIComponent(stage)}`; }
 export function definitionUnitHref(id: string, path: string): string { return `${definitionHref(id)}/units/${path.split("/").map(encodeURIComponent).join("/")}`; }
 export function definitionSelectionHref(id: string, selection: DefinitionSelection | null): string {

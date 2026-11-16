@@ -30,7 +30,9 @@ export type AuthoredWorkflow = AuthoredSource;
 export type OperationRegistry = readonly CodeOperation[];
 export interface PromptReferences { readonly [authored_path: string]: PromptId }
 export interface PromptTexts { readonly [authored_path: string]: string }
-export interface LaunchableCatalog { readonly [authoring_name: string]: DefinitionId }
+export type WorkflowAudience = "user" | "test_fixture";
+export interface LaunchableEntry { readonly definition_id: DefinitionId; readonly audience: WorkflowAudience }
+export interface LaunchableCatalog { readonly [authoring_name: string]: LaunchableEntry }
 
 export interface CommittedDefinition {
   readonly source: AuthoredWorkflow;
@@ -221,14 +223,14 @@ export function readLaunchableCatalog(store_root = process.env.OAKRIDGE_DEFINITI
   const context: ReadContext = { operation: "read_launchable", identifier: "launchable.json" };
   const catalog = readJson({ ...context, root: store_root, path: ["launchable.json"].join("/") });
   if (!catalog.ok) return catalog;
-  if (!isObject(catalog.value) || !Object.values(catalog.value).every(isIdentity)) return failure("malformed_object", context, "expected an authoring-name-to-definition-ID map");
+  if (!isObject(catalog.value) || !Object.values(catalog.value).every((entry) => isObject(entry) && Object.keys(entry).length === 2 && hasOnlyKeys(entry, ["audience", "definition_id"]) && isIdentity(entry.definition_id) && (entry.audience === "user" || entry.audience === "test_fixture"))) return failure("malformed_object", context, "expected an authoring-name-to-definition-ID map");
   return { ok: true, value: catalog.value as LaunchableCatalog };
 }
 
 export function resolveLaunchableDefinition(definition_id: DefinitionId, store_root = process.env.OAKRIDGE_DEFINITION_ROOT ?? DEFINITION_STORE_ROOT): Result<ResolvedDefinition, DefinitionStoreFailure> {
   const catalog = readLaunchableCatalog(store_root);
   if (!catalog.ok) return catalog;
-  if (!Object.values(catalog.value).includes(definition_id)) return failure("definition_not_launchable", { operation: "read_launchable", identifier: definition_id }, "definition ID is absent from launchable.json");
+  if (!launchableDefinitionIds(catalog.value, null).includes(definition_id)) return failure("definition_not_launchable", { operation: "read_launchable", identifier: definition_id }, "definition ID is absent from launchable.json");
   return resolveDefinition(definition_id, store_root);
 }
 
@@ -238,7 +240,7 @@ export function listCommittedPrompts(): readonly CommittedPromptSummary[] {
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
   const prompts = new Map<string, string>();
-  for (const id of Object.values(catalog.value)) {
+  for (const id of launchableDefinitionIds(catalog.value, null)) {
     const resolved = resolveDefinition(id);
     if (!resolved.ok) throw new Error(JSON.stringify(resolved.error));
     for (const [path, content] of Object.entries(resolved.value.prompts)) prompts.set(path, content);
@@ -287,4 +289,8 @@ export function readSkillBundle(digest: string, store_root = process.env.OAKRIDG
     if (identity.value !== digest) return failure("hash_mismatch", context, "skill manifest SHA-256 differs from bundle identity");
     return { ok: true, value: { files: Object.fromEntries(entries) } };
   } catch (cause) { return failure("store_io", context, String(cause)); }
+}
+
+export function launchableDefinitionIds(catalog: LaunchableCatalog, audience: WorkflowAudience | null): DefinitionId[] {
+  return [...new Set(Object.values(catalog).filter((entry) => audience === null || entry.audience === audience).map((entry) => entry.definition_id))];
 }

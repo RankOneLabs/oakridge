@@ -37,7 +37,7 @@ test.each(["shell", "back", "forward"])("cancelled %s navigation preserves the g
     page.setDefaultTimeout(10_000);
     const errors: Error[] = [];
     page.on("pageerror", (error) => errors.push(error));
-    await page.goto(server.url.href + "#/oakridge/grading-config");
+    await page.goto(server.url.href + "#settings/workflows/grading-config");
     await page.getByLabel("Question text", { exact: true }).waitFor();
     if (direction !== "shell") {
       await page.getByRole("button", { name: "Version 1", exact: true }).click();
@@ -50,7 +50,7 @@ test.each(["shell", "back", "forward"])("cancelled %s navigation preserves the g
     if (direction === "shell") await page.getByRole("button", { name: "Runs", exact: true }).click();
     else await page.evaluate((direction) => direction === "back" ? history.back() : history.forward(), direction);
     await dismissed;
-    await page.waitForFunction(() => location.hash === "#/oakridge/grading-config");
+    await page.waitForFunction(() => location.hash === "#settings/workflows/grading-config");
     expect(await page.getByLabel("Question text", { exact: true }).inputValue()).toBe("Keep this unsaved question");
     expect(await page.getByTestId("grading-draft-status").innerText()).toBe("Unsaved local edits");
     expect(errors).toEqual([]);

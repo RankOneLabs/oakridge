@@ -1,9 +1,13 @@
-import type { OperatorInstallCheck } from "../../operator-contracts/projections/install-status-view";
-import { selectCheckTone } from "../../state/install-status";
-interface InstallCheckViewProps { readonly check: OperatorInstallCheck }
-export function InstallCheckView({ check }: InstallCheckViewProps) {
-  return <div data-tone={selectCheckTone(check)} className={selectCheckTone(check) === "danger" ? "text-[var(--tone-danger-fg)]" : "text-[var(--text-muted)]"}>
-    <strong>{check.label}</strong>: {check.kind} · {check.detail}
-    {check.kind !== "ok" && <p>Fix: {check.fix}</p>}
+import type { StatusEntry } from "../../lib/status-condition";
+import { selectConditionTone } from "../../lib/status-tone";
+import { Chip } from "../../../components/atoms/Chip";
+interface InstallCheckViewProps { readonly entry: StatusEntry }
+const labels = { healthy: "Healthy", disabled: "Disabled", unavailable: "Unavailable", failed: "Failed" } as const;
+export function InstallCheckView({ entry }: InstallCheckViewProps) {
+  const condition = entry.condition;
+  return <div data-tone={selectConditionTone(condition)}>
+    <strong>{entry.label}</strong> <Chip tone={selectConditionTone(condition)}>{labels[condition.kind]}</Chip><p>{entry.detail}</p>
+    {condition.kind === "disabled" && <p>{condition.reason === "profile_disabled" ? "Disabled: this agent profile is turned off." : "Disabled: no PR integration is selected."}</p>}
+    {(condition.kind === "failed" || condition.kind === "unavailable") && <p>Fix: {condition.fix}</p>}
   </div>;
 }

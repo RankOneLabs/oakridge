@@ -118,7 +118,7 @@ test("artifact schema version is unchanged when only authored presentation kind 
   const { artifactSchemaVersion } = await import("../src/adapters/observation-schema-version");
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  const resolved = resolveLaunchableDefinition(catalog.value.development);
+  const resolved = resolveLaunchableDefinition(catalog.value.development.definition_id);
   if (!resolved.ok) throw new Error(JSON.stringify(resolved.error));
   const started = CoreClient.start();
   if (!started.ok) throw new Error(started.error.detail.detail);

@@ -5,10 +5,10 @@ import snapshot from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 const detail = snapshot.definition as unknown as OperatorDefinitionDetail;
 test.each<DefinitionSelection | null>([null, { kind: "stage", stage: "review / stage" }, { kind: "unit", path: "work/item name" }])("round trips selection %j", (selection) => {
-  expect(readHashRoute(definitionSelectionHref("def/1", selection), "")).toEqual({ view: "oakridge", route: { sub: "def", id: "def/1", selection } });
+  expect(readHashRoute(definitionSelectionHref("def/1", selection), "")).toEqual({ view: "settings", route: { sub: "workflow", id: "def/1", selection } });
 });
 test("formats canonical routes", () => {
-  expect([definitionHref("a/b"), definitionStageHref("a", "b/c"), definitionUnitHref("a", "work/item")]).toEqual(["#oakridge/defs/a%2Fb", "#oakridge/defs/a/stages/b%2Fc", "#oakridge/defs/a/units/work/item"]);
+  expect([definitionHref("a/b"), definitionStageHref("a", "b/c"), definitionUnitHref("a", "work/item")]).toEqual(["#settings/workflows/a%2Fb", "#settings/workflows/a/stages/b%2Fc", "#settings/workflows/a/units/work/item"]);
 });
 test("selects authored and effective stages independently", () => {
   expect(selectDefinitionSlice(detail.workflow, { kind: "stage", stage: "cohort" })).toEqual(detail.workflow.stages.cohort);

@@ -3,7 +3,7 @@ import type { Hono } from "hono";
 import type { KbblClient } from "../adapters/kbbl";
 import type { PrIntegration } from "../domain/pr-integration";
 import { assembleInstallStatus, selectAccessMode, type AccessModeInput, type AgentProfileStatus, type InstallCheck, type InstallStatus, type LaunchBlock } from "../projections/install-status-view";
-import { readLaunchableCatalog, resolveDefinition, type ResolvedDefinition } from "../runtime/definition-store";
+import { launchableDefinitionIds, readLaunchableCatalog, resolveDefinition, type ResolvedDefinition } from "../runtime/definition-store";
 import { preflightLaunch, type PrIntegrationHealth } from "../runtime/pr-launch-preflight";
 
 type StatusFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -26,7 +26,7 @@ const absent = (input: AbsentCheckInput): InstallCheck => ({ ...input, kind: "un
 function readDefinitions(): readonly ResolvedDefinition[] {
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error("Pinned definition catalog could not be read");
-  return [...new Set(Object.values(catalog.value))].map((id) => {
+  return launchableDefinitionIds(catalog.value, "user").map((id) => {
     const definition = resolveDefinition(id);
     if (!definition.ok) throw new Error("Pinned definition could not be read");
     return definition.value;

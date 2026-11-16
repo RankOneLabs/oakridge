@@ -1,5 +1,5 @@
 import { CoreClient, compileDefinition } from "../core-client/client";
-import { readLaunchableCatalog } from "../runtime/definition-store";
+import { launchableDefinitionIds, readLaunchableCatalog } from "../runtime/definition-store";
 import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysely";
 import type { ParsedWorkflow, UnitStatus } from "../core-client/core-types";
 import type { ActionId, Brand, DecisionId, DefinitionId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
@@ -454,14 +454,14 @@ async function loadDefinition(definition_id: DefinitionId): Promise<DefinitionRe
 export async function listDefinitions(_db: Reader, query: { readonly after: string | null; readonly limit: number }): Promise<DefinitionReadPage> {
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  const ids = [...new Set(Object.values(catalog.value))].sort().reverse().filter((id) => query.after === null || id < query.after);
+  const ids = launchableDefinitionIds(catalog.value, "user").sort().reverse().filter((id) => query.after === null || id < query.after);
   const selected = ids.slice(0, query.limit);
   return { items: await Promise.all(selected.map(loadDefinition)), next: ids.length > selected.length ? selected.at(-1) ?? null : null };
 }
 export async function readDefinition(_db: Reader, definition_id: string): Promise<DefinitionRead | null> {
   const catalog = readLaunchableCatalog();
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  if (!Object.values(catalog.value).includes(definition_id as DefinitionId)) return null;
+  if (!launchableDefinitionIds(catalog.value, null).includes(definition_id as DefinitionId)) return null;
   return loadDefinition(definition_id as DefinitionId);
 }
 export async function readPinnedDefinition(db: Reader, run_id: string): Promise<PinnedDefinitionRead | null> {

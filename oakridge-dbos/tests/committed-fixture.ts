@@ -28,12 +28,13 @@ function jsonBytes(value: unknown): string {
 export async function sampleDefinition(name: "review-loop" | "fan-out" | "development" = "review-loop"): Promise<CommittedFixture> {
   const catalog = readLaunchableCatalog(storeRoot());
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  return { definition_id: catalog.value[name] };
+  return { definition_id: catalog.value[name].definition_id };
 }
 interface PromptEdit { readonly path: string; readonly content: string }
 /** Generate test-only committed objects with the production object format and canonical bytes. */
 interface CommittedFixture { readonly definition_id: DefinitionId }
 interface CommittedFixtureRequest {
+  readonly audience?: import("../src/runtime/definition-store").WorkflowAudience;
   readonly source: CompileInput["workflow"];
   readonly prompt_edit?: PromptEdit;
   readonly operations?: readonly import("../src/core-client/core-types").CodeOperation[];
@@ -55,6 +56,6 @@ export async function commitTestDefinition(request: CommittedFixtureRequest): Pr
   const definition_id = put("workflows", jsonBytes({ source, prompts, operation_registry_id,
     schema_names: Object.keys(source.schemas ?? {}), stage_names: Object.keys(source.stages) }), "json") as DefinitionId;
   const catalog = JSON.parse(readFileSync(resolve(root, "launchable.json"), "utf8"));
-  writeFileSync(resolve(root, "launchable.json"), jsonBytes({ ...catalog, [definition_id]: definition_id }));
+  writeFileSync(resolve(root, "launchable.json"), jsonBytes({ ...catalog, [definition_id]: { definition_id, audience: request.audience ?? "user" } }));
   return { definition_id };
 }

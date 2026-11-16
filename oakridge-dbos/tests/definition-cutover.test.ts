@@ -108,8 +108,8 @@ test("a run's pinned review metadata survives removal from the launch catalog", 
   const path = resolve(root, "launchable.json");
   const saved = readFileSync(path, "utf8");
   try {
-    const catalog: { [name: string]: string } = JSON.parse(saved);
-    writeFileSync(path, JSON.stringify(Object.fromEntries(Object.entries(catalog).filter(([, id]) => id !== definition_id))));
+    const catalog: import("../src/runtime/definition-store").LaunchableCatalog = JSON.parse(saved);
+    writeFileSync(path, JSON.stringify(Object.fromEntries(Object.entries(catalog).filter(([, entry]) => entry.definition_id !== definition_id))));
     expect((await app().request(`/api/definitions/${definition_id}`)).status).toBe(404);
     const pinned = await app().request(`/api/runs/${run_id}/definition`);
     expect(pinned.status).toBe(200);

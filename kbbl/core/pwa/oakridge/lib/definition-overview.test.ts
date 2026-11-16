@@ -33,10 +33,10 @@ test("development overview exposes identity, interfaces and declarations", () =>
 test("fan-out groups retain nested pools and child declaration paths", () => {
   const root = resolve(import.meta.dirname, "../../../../../workflow-config/definitions");
   const catalog = JSON.parse(readFileSync(resolve(root, "launchable.json"), "utf8")) as {
-    [name: string]: string;
+    [name: string]: { definition_id: string };
   };
   const workflow = (
-    JSON.parse(readFileSync(resolve(root, "workflows", catalog["fan-out"] + ".json"), "utf8")) as {
+    JSON.parse(readFileSync(resolve(root, "workflows", catalog["fan-out"].definition_id + ".json"), "utf8")) as {
       source: OperatorDefinitionDetail["workflow"];
     }
   ).source;
