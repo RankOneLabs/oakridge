@@ -1,0 +1,607 @@
+{
+  "source": "/api/definitions/176f675c6475af8db85773273d1d7f99bc5b0780b1911f03a136e3b718195604",
+  "captured_at": "2026-11-16T00:07:39.116Z",
+  "run_id": null,
+  "definition": {
+    "definition_id": "176f675c6475af8db85773273d1d7f99bc5b0780b1911f03a136e3b718195604",
+    "bundle": {
+      "key": "fan_out",
+      "root": "$root",
+      "schemas": [
+        {
+          "key": "{items: list({after: list(ident), key: ident, text: text}), repository: {base_branch: text, expected_head: optional(text), integration_branch: text, repository_path: repo_path}}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "items",
+                "schema": "list({after: list(ident), key: ident, text: text})"
+              },
+              {
+                "key": "repository",
+                "schema": "{base_branch: text, expected_head: optional(text), integration_branch: text, repository_path: repo_path}"
+              }
+            ]
+          }
+        },
+        {
+          "key": "list({after: list(ident), key: ident, text: text})",
+          "shape": {
+            "kind": "list",
+            "item": "{after: list(ident), key: ident, text: text}",
+            "max_items": 9007199254740991
+          }
+        },
+        {
+          "key": "{after: list(ident), key: ident, text: text}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "after",
+                "schema": "list(ident)"
+              },
+              {
+                "key": "key",
+                "schema": "ident"
+              },
+              {
+                "key": "text",
+                "schema": "text"
+              }
+            ]
+          }
+        },
+        {
+          "key": "list(ident)",
+          "shape": {
+            "kind": "list",
+            "item": "ident",
+            "max_items": 9007199254740991
+          }
+        },
+        {
+          "key": "ident",
+          "shape": {
+            "kind": "string",
+            "min_length": 1,
+            "max_length": 100
+          }
+        },
+        {
+          "key": "text",
+          "shape": {
+            "kind": "string",
+            "min_length": 0,
+            "max_length": 9007199254740991
+          }
+        },
+        {
+          "key": "{base_branch: text, expected_head: optional(text), integration_branch: text, repository_path: repo_path}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "base_branch",
+                "schema": "text"
+              },
+              {
+                "key": "expected_head",
+                "schema": "optional(text)"
+              },
+              {
+                "key": "integration_branch",
+                "schema": "text"
+              },
+              {
+                "key": "repository_path",
+                "schema": "repo_path"
+              }
+            ]
+          }
+        },
+        {
+          "key": "optional(text)",
+          "shape": {
+            "kind": "optional",
+            "item": "text"
+          }
+        },
+        {
+          "key": "repo_path",
+          "shape": {
+            "kind": "string",
+            "min_length": 0,
+            "max_length": 9007199254740991
+          }
+        },
+        {
+          "key": "{}",
+          "shape": {
+            "kind": "record",
+            "fields": []
+          }
+        },
+        {
+          "key": "{repository: {base_branch: text, expected_head: optional(text), integration_branch: text, repository_path: repo_path}}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "repository",
+                "schema": "{base_branch: text, expected_head: optional(text), integration_branch: text, repository_path: repo_path}"
+              }
+            ]
+          }
+        },
+        {
+          "key": "{base_branch: text, head: ident, push_remote_owner: ident, repository_path: repo_path}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "base_branch",
+                "schema": "text"
+              },
+              {
+                "key": "head",
+                "schema": "ident"
+              },
+              {
+                "key": "push_remote_owner",
+                "schema": "ident"
+              },
+              {
+                "key": "repository_path",
+                "schema": "repo_path"
+              }
+            ]
+          }
+        },
+        {
+          "key": "{text: text, workspace: {base_branch: text, head: ident, push_remote_owner: ident, repository_path: repo_path}}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "text",
+                "schema": "text"
+              },
+              {
+                "key": "workspace",
+                "schema": "{base_branch: text, head: ident, push_remote_owner: ident, repository_path: repo_path}"
+              }
+            ]
+          }
+        }
+      ],
+      "stages": [
+        "prepare",
+        "item"
+      ],
+      "units": [
+        {
+          "key": "$root",
+          "stage": null,
+          "label": "Fan Out",
+          "input_schema": "{items: list({after: list(ident), key: ident, text: text}), repository: {base_branch: text, expected_head: optional(text), integration_branch: text, repository_path: repo_path}}",
+          "artifacts": []
+        },
+        {
+          "key": "prepare",
+          "stage": "prepare",
+          "label": "Prepare",
+          "input_schema": "{repository: {base_branch: text, expected_head: optional(text), integration_branch: text, repository_path: repo_path}}",
+          "artifacts": [
+            {
+              "key": "workspace",
+              "schema": "{base_branch: text, head: ident, push_remote_owner: ident, repository_path: repo_path}"
+            }
+          ]
+        },
+        {
+          "key": "work/item",
+          "stage": "item",
+          "label": "Item",
+          "input_schema": "{text: text, workspace: {base_branch: text, head: ident, push_remote_owner: ident, repository_path: repo_path}}",
+          "artifacts": [
+            {
+              "key": "result",
+              "schema": "text"
+            }
+          ]
+        }
+      ]
+    },
+    "workflow": {
+      "input": {
+        "items": "list({ key: ident, text: text, after: list(ident) })",
+        "repository": {
+          "base_branch": "text",
+          "expected_head": "optional(text)",
+          "integration_branch": "text",
+          "repository_path": "repo_path"
+        }
+      },
+      "run": {
+        "outcome": {
+          "results": "work.outcome.results"
+        },
+        "units": {
+          "prepare": {
+            "input": {
+              "repository": "input.repository"
+            },
+            "stage": "prepare"
+          },
+          "work": {
+            "group": {
+              "outcome": {
+                "results": "map(item, item.outcome.result)"
+              },
+              "pools": {
+                "slots": 2
+              },
+              "units": {
+                "item": {
+                  "after": "each.after",
+                  "for_each": "input.items",
+                  "input": {
+                    "text": "each.text",
+                    "workspace": "input.workspace"
+                  },
+                  "key": "each.key",
+                  "pool": "slots",
+                  "stage": "item"
+                }
+              }
+            },
+            "input": {
+              "items": "input.items",
+              "workspace": "prepare.outcome.workspace"
+            }
+          }
+        }
+      },
+      "stages": {
+        "item": {
+          "artifacts": {
+            "result": {
+              "kind": "document",
+              "schema": "text"
+            }
+          },
+          "done_when": "published(result)",
+          "input": {
+            "text": "text",
+            "workspace": {
+              "base_branch": "text",
+              "head": "ident",
+              "push_remote_owner": "ident",
+              "repository_path": "repo_path"
+            }
+          },
+          "outcome": {
+            "result": "latest(result)"
+          },
+          "workers": {
+            "worker": {
+              "inputs": {
+                "text": "input.text"
+              },
+              "kind": "agent",
+              "produces": [
+                "result"
+              ],
+              "prompts": {
+                "initial": "fan-out/item.md"
+              },
+              "workspace": "repository(input.workspace)"
+            }
+          }
+        },
+        "prepare": {
+          "artifacts": {
+            "workspace": {
+              "kind": "record",
+              "schema": {
+                "base_branch": "text",
+                "head": "ident",
+                "push_remote_owner": "ident",
+                "repository_path": "repo_path"
+              }
+            }
+          },
+          "done_when": "published(workspace)",
+          "input": {
+            "repository": {
+              "base_branch": "text",
+              "expected_head": "optional(text)",
+              "integration_branch": "text",
+              "repository_path": "repo_path"
+            }
+          },
+          "outcome": {
+            "workspace": "latest(workspace)"
+          },
+          "workers": {
+            "git": {
+              "inputs": {
+                "base_branch": "input.repository.base_branch",
+                "expected_head": "input.repository.expected_head",
+                "integration_branch": "input.repository.integration_branch",
+                "repository_path": "input.repository.repository_path"
+              },
+              "kind": "code",
+              "operation": "repository.prepare",
+              "produces": [
+                "workspace"
+              ]
+            }
+          }
+        }
+      },
+      "workflow": "fan_out"
+    },
+    "effective_workflow": {
+      "workflow": "fan_out",
+      "input": {
+        "kind": "record",
+        "fields": {
+          "items": {
+            "kind": "list",
+            "item": {
+              "kind": "record",
+              "fields": {
+                "after": {
+                  "kind": "list",
+                  "item": {
+                    "kind": "ident"
+                  }
+                },
+                "key": {
+                  "kind": "ident"
+                },
+                "text": {
+                  "kind": "text"
+                }
+              }
+            }
+          },
+          "repository": {
+            "kind": "record",
+            "fields": {
+              "base_branch": {
+                "kind": "text"
+              },
+              "expected_head": {
+                "kind": "optional",
+                "value": {
+                  "kind": "text"
+                }
+              },
+              "integration_branch": {
+                "kind": "text"
+              },
+              "repository_path": {
+                "kind": "repo_path"
+              }
+            }
+          }
+        }
+      },
+      "schemas": {},
+      "run": {
+        "pools": {},
+        "units": {
+          "prepare": {
+            "stage": "prepare",
+            "group": null,
+            "input": {
+              "repository": "input.repository"
+            },
+            "after": null,
+            "for_each": null,
+            "key": null,
+            "pool": null
+          },
+          "work": {
+            "stage": null,
+            "group": {
+              "pools": {
+                "slots": 2
+              },
+              "units": {
+                "item": {
+                  "stage": "item",
+                  "group": null,
+                  "input": {
+                    "text": "each.text",
+                    "workspace": "input.workspace"
+                  },
+                  "after": "each.after",
+                  "for_each": "input.items",
+                  "key": "each.key",
+                  "pool": "slots"
+                }
+              },
+              "outcome": {
+                "results": "map(item, item.outcome.result)"
+              }
+            },
+            "input": {
+              "items": "input.items",
+              "workspace": "prepare.outcome.workspace"
+            },
+            "after": null,
+            "for_each": null,
+            "key": null,
+            "pool": null
+          }
+        },
+        "outcome": {
+          "results": "work.outcome.results"
+        }
+      },
+      "stages": {
+        "item": {
+          "input": {
+            "kind": "record",
+            "fields": {
+              "text": {
+                "kind": "text"
+              },
+              "workspace": {
+                "kind": "record",
+                "fields": {
+                  "base_branch": {
+                    "kind": "text"
+                  },
+                  "head": {
+                    "kind": "ident"
+                  },
+                  "push_remote_owner": {
+                    "kind": "ident"
+                  },
+                  "repository_path": {
+                    "kind": "repo_path"
+                  }
+                }
+              }
+            }
+          },
+          "let": {},
+          "artifacts": {
+            "result": {
+              "kind": "document",
+              "schema": {
+                "kind": "text"
+              },
+              "validate": []
+            }
+          },
+          "workers": {
+            "worker": {
+              "kind": "agent",
+              "prompts": {
+                "initial": "fan-out/item.md",
+                "revise": null,
+                "review": null,
+                "handoff": null
+              },
+              "inputs": {
+                "text": "input.text"
+              },
+              "produces": [
+                "result"
+              ],
+              "evaluates": null,
+              "runtime": null,
+              "workspace": "repository(input.workspace)",
+              "session": null,
+              "when": null
+            }
+          },
+          "reviews": {},
+          "done_when": "published(result)",
+          "outcome": {
+            "result": "latest(result)"
+          }
+        },
+        "prepare": {
+          "input": {
+            "kind": "record",
+            "fields": {
+              "repository": {
+                "kind": "record",
+                "fields": {
+                  "base_branch": {
+                    "kind": "text"
+                  },
+                  "expected_head": {
+                    "kind": "optional",
+                    "value": {
+                      "kind": "text"
+                    }
+                  },
+                  "integration_branch": {
+                    "kind": "text"
+                  },
+                  "repository_path": {
+                    "kind": "repo_path"
+                  }
+                }
+              }
+            }
+          },
+          "let": {},
+          "artifacts": {
+            "workspace": {
+              "kind": "record",
+              "schema": {
+                "kind": "record",
+                "fields": {
+                  "base_branch": {
+                    "kind": "text"
+                  },
+                  "head": {
+                    "kind": "ident"
+                  },
+                  "push_remote_owner": {
+                    "kind": "ident"
+                  },
+                  "repository_path": {
+                    "kind": "repo_path"
+                  }
+                }
+              },
+              "validate": []
+            }
+          },
+          "workers": {
+            "git": {
+              "kind": "code",
+              "operation": "repository.prepare",
+              "inputs": {
+                "base_branch": "input.repository.base_branch",
+                "expected_head": "input.repository.expected_head",
+                "integration_branch": "input.repository.integration_branch",
+                "repository_path": "input.repository.repository_path"
+              },
+              "produces": [
+                "workspace"
+              ],
+              "every": null,
+              "when": null
+            }
+          },
+          "reviews": {},
+          "done_when": "published(workspace)",
+          "outcome": {
+            "workspace": "latest(workspace)"
+          }
+        }
+      }
+    },
+    "graph": {
+      "nodes": [
+        {
+          "key": "prepare",
+          "stage": "prepare",
+          "depends_on": []
+        },
+        {
+          "key": "work",
+          "stage": "work",
+          "depends_on": []
+        },
+        {
+          "key": "work/item",
+          "stage": "item",
+          "depends_on": []
+        }
+      ],
+      "edges": []
+    }
+  }
+}

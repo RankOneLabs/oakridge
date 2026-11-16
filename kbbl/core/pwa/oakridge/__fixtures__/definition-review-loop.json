@@ -1,0 +1,394 @@
+{
+  "source": "/api/definitions/161a15f1e2f0dfb1bae72e7916ab3bdd0b99c7f919e9c4f83f3a14ee0d5c3fe5",
+  "captured_at": "2026-11-16T00:07:39.739Z",
+  "run_id": null,
+  "definition": {
+    "definition_id": "161a15f1e2f0dfb1bae72e7916ab3bdd0b99c7f919e9c4f83f3a14ee0d5c3fe5",
+    "bundle": {
+      "key": "review_loop",
+      "root": "$root",
+      "schemas": [
+        {
+          "key": "{topic: text}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "topic",
+                "schema": "text"
+              }
+            ]
+          }
+        },
+        {
+          "key": "text",
+          "shape": {
+            "kind": "string",
+            "min_length": 0,
+            "max_length": 9007199254740991
+          }
+        },
+        {
+          "key": "{}",
+          "shape": {
+            "kind": "record",
+            "fields": []
+          }
+        },
+        {
+          "key": "{notes: list(text)}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "notes",
+                "schema": "list(text)"
+              }
+            ]
+          }
+        },
+        {
+          "key": "list(text)",
+          "shape": {
+            "kind": "list",
+            "item": "text",
+            "max_items": 9007199254740991
+          }
+        },
+        {
+          "key": "{body: text, title: text}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "body",
+                "schema": "text"
+              },
+              {
+                "key": "title",
+                "schema": "text"
+              }
+            ]
+          }
+        },
+        {
+          "key": "{feedback: text}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "feedback",
+                "schema": "text"
+              }
+            ]
+          }
+        }
+      ],
+      "stages": [
+        "document"
+      ],
+      "units": [
+        {
+          "key": "$root",
+          "stage": null,
+          "label": "Review Loop",
+          "input_schema": "{topic: text}",
+          "artifacts": []
+        },
+        {
+          "key": "document",
+          "stage": "document",
+          "label": "Document",
+          "input_schema": "{topic: text}",
+          "artifacts": [
+            {
+              "key": "critique",
+              "schema": "{notes: list(text)}"
+            },
+            {
+              "key": "draft",
+              "schema": "{body: text, title: text}"
+            }
+          ]
+        }
+      ]
+    },
+    "workflow": {
+      "input": {
+        "topic": "text"
+      },
+      "run": {
+        "outcome": {
+          "draft": "document.outcome.draft"
+        },
+        "units": {
+          "document": {
+            "input": {
+              "topic": "input.topic"
+            },
+            "stage": "document"
+          }
+        }
+      },
+      "stages": {
+        "document": {
+          "artifacts": {
+            "critique": {
+              "kind": "assessment",
+              "schema": {
+                "notes": "list(text)"
+              }
+            },
+            "draft": {
+              "kind": "document",
+              "schema": {
+                "body": "text",
+                "title": "text"
+              },
+              "validate": [
+                {
+                  "check": "len(draft.body) > 0",
+                  "message": "body is empty"
+                }
+              ]
+            }
+          },
+          "done_when": "approved(draft)",
+          "input": {
+            "topic": "text"
+          },
+          "let": {
+            "topic_value": "input.topic"
+          },
+          "outcome": {
+            "draft": "latest(draft)"
+          },
+          "reviews": {
+            "editor": {
+              "by": "operator",
+              "decisions": {
+                "approve": {
+                  "effect": "approve",
+                  "label": "Approve"
+                },
+                "request_changes": {
+                  "effect": "request_changes",
+                  "fields": {
+                    "feedback": "What needs to change?"
+                  },
+                  "label": "Request changes"
+                }
+              },
+              "inputs": {
+                "critique": "latest(critique)",
+                "draft": "latest(draft)",
+                "topic": "input.topic"
+              },
+              "of": "draft",
+              "prompt": "review-loop/editor.md"
+            }
+          },
+          "workers": {
+            "critic": {
+              "evaluates": "draft",
+              "inputs": {},
+              "kind": "agent",
+              "produces": [
+                "critique"
+              ],
+              "prompts": {
+                "review": "review-loop/critique.md"
+              }
+            },
+            "writer": {
+              "inputs": {
+                "critique": "latest(critique)",
+                "topic": "topic_value"
+              },
+              "kind": "agent",
+              "produces": [
+                "draft"
+              ],
+              "prompts": {
+                "initial": "review-loop/write.md",
+                "revise": "review-loop/revise.md"
+              }
+            }
+          }
+        }
+      },
+      "workflow": "review_loop"
+    },
+    "effective_workflow": {
+      "workflow": "review_loop",
+      "input": {
+        "kind": "record",
+        "fields": {
+          "topic": {
+            "kind": "text"
+          }
+        }
+      },
+      "schemas": {},
+      "run": {
+        "pools": {},
+        "units": {
+          "document": {
+            "stage": "document",
+            "group": null,
+            "input": {
+              "topic": "input.topic"
+            },
+            "after": null,
+            "for_each": null,
+            "key": null,
+            "pool": null
+          }
+        },
+        "outcome": {
+          "draft": "document.outcome.draft"
+        }
+      },
+      "stages": {
+        "document": {
+          "input": {
+            "kind": "record",
+            "fields": {
+              "topic": {
+                "kind": "text"
+              }
+            }
+          },
+          "let": {
+            "topic_value": "input.topic"
+          },
+          "artifacts": {
+            "critique": {
+              "kind": "assessment",
+              "schema": {
+                "kind": "record",
+                "fields": {
+                  "notes": {
+                    "kind": "list",
+                    "item": {
+                      "kind": "text"
+                    }
+                  }
+                }
+              },
+              "validate": []
+            },
+            "draft": {
+              "kind": "document",
+              "schema": {
+                "kind": "record",
+                "fields": {
+                  "body": {
+                    "kind": "text"
+                  },
+                  "title": {
+                    "kind": "text"
+                  }
+                }
+              },
+              "validate": [
+                {
+                  "check": "len(draft.body) > 0",
+                  "message": "body is empty"
+                }
+              ]
+            }
+          },
+          "workers": {
+            "critic": {
+              "kind": "agent",
+              "prompts": {
+                "initial": null,
+                "revise": null,
+                "review": "review-loop/critique.md",
+                "handoff": null
+              },
+              "inputs": {},
+              "produces": [
+                "critique"
+              ],
+              "evaluates": "draft",
+              "runtime": null,
+              "workspace": null,
+              "session": null,
+              "when": null
+            },
+            "writer": {
+              "kind": "agent",
+              "prompts": {
+                "initial": "review-loop/write.md",
+                "revise": "review-loop/revise.md",
+                "review": null,
+                "handoff": null
+              },
+              "inputs": {
+                "critique": "latest(critique)",
+                "topic": "topic_value"
+              },
+              "produces": [
+                "draft"
+              ],
+              "evaluates": null,
+              "runtime": null,
+              "workspace": null,
+              "session": null,
+              "when": null
+            }
+          },
+          "reviews": {
+            "editor": {
+              "of": "draft",
+              "by": "operator",
+              "prompt": "review-loop/editor.md",
+              "inputs": {
+                "critique": "latest(critique)",
+                "draft": "latest(draft)",
+                "topic": "input.topic"
+              },
+              "decisions": {
+                "approve": {
+                  "effect": "approve",
+                  "on": null,
+                  "label": "Approve",
+                  "payload": null,
+                  "fields": {},
+                  "feedback": null
+                },
+                "request_changes": {
+                  "effect": "request_changes",
+                  "on": null,
+                  "label": "Request changes",
+                  "payload": null,
+                  "fields": {
+                    "feedback": "What needs to change?"
+                  },
+                  "feedback": null
+                }
+              },
+              "when": null
+            }
+          },
+          "done_when": "approved(draft)",
+          "outcome": {
+            "draft": "latest(draft)"
+          }
+        }
+      }
+    },
+    "graph": {
+      "nodes": [
+        {
+          "key": "document",
+          "stage": "document",
+          "depends_on": []
+        }
+      ],
+      "edges": []
+    }
+  }
+}
