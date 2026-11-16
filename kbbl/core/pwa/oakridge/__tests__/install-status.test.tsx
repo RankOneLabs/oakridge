@@ -11,7 +11,7 @@ const definition = definitionFixture.definition as unknown as OperatorDefinition
 it("optional services show fixes and no installation failure banner", () => {
   render(<InstallStatusContent status={installStatus} />);
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByText("Fix: Select a PR integration")).toBeTruthy();
+  expect(screen.getByText("Disabled: no PR integration is selected.")).toBeTruthy();
   expect(screen.getByText("Fix: Start with --observation")).toBeTruthy();
 });
 it("required failure shows the served verdict and check detail and fix", () => {
@@ -20,9 +20,13 @@ it("required failure shows the served verdict and check detail and fix", () => {
   expect(screen.getByText(/Required kbbl offline/)).toBeTruthy();
   expect(screen.getByText("Fix: Start kbbl now")).toBeTruthy();
 });
-it.each([ ["local", "Local"], ["authenticated_network", "Authenticated network"], ["insecure_network", "Insecure network"] ] as const)("renders %s access mode", (kind, label) => {
+it.each([
+  ["local", "Local access: Oakridge listens only on the loopback address host.example, so only this machine can reach it."],
+  ["authenticated_network", "Authenticated network access: Oakridge listens on host.example, which other machines on the network can reach, and every operator request must present the control token (OAKRIDGE_CONTROL_TOKEN)."],
+  ["insecure_network", "Insecure network access: Oakridge listens on host.example and accepts operator requests from the network without a control token (ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1)."],
+] as const)("renders %s access explanation", (kind, sentence) => {
   render(<InstallStatusContent status={{ ...installStatus, access_mode: { kind, bind_host: "host.example" } }} />);
-  expect(screen.getByText(`${label} · host.example`)).toBeTruthy();
+  expect(screen.getByText(sentence)).toBeTruthy();
 });
 it("launch blocks render definition name and the typed error detail", () => {
   render(<InstallStatusContent status={{ ...installStatus, launch_blocks: [{ definition_id: definition.definition_id, definition_name: "Blocked development", error: { kind: "integration_none", integration: "none", definition_id: definition.definition_id, detail: "Needs pull request integration", fix: "Choose github-cli" } }] }} />);
@@ -64,4 +68,18 @@ it("an older github-cli run loads pinned review metadata without consulting the 
     expect(requests.some((path) => path.includes("/runs/") && path.endsWith("/definition"))).toBe(true);
     expect(requests.some((path) => path.includes("/definitions/"))).toBe(false);
   } finally { vi.unstubAllGlobals(); client.clear(); }
+});
+
+it("separates required failures from disabled and unavailable integrations", () => {
+  render(<InstallStatusContent status={{ ...installStatus, installation_failed: true, checks: [{ kind: "failed", id: "kbbl", label: "kbbl", required: true, detail: "Offline", fix: "Start kbbl now" }] }} />);
+  expect(screen.getByRole("alert").textContent).toBe("Installation failure: a required dependency failed. Fix it before launching runs.");
+  expect(screen.getByText("Required dependencies").parentElement?.textContent).toContain("Failed");
+  expect(screen.getByText("Optional integrations").parentElement?.textContent).toContain("Disabled: no PR integration is selected.");
+  expect(screen.getByText("Every workflow can launch.")).toBeTruthy();
+});
+it("shows disabled profiles and fixes for optional failures", () => {
+  render(<InstallStatusContent status={{ ...installStatus, agent_profiles: [{ profile_id: "off", label: "Off", enabled: false, readiness: { kind: "failed", id: "agent", label: "Agent", required: false, detail: "Off", fix: "Enable" } }], checks: [{ kind: "failed", id: "optional", label: "Optional check", required: false, detail: "Unreachable", fix: "Reconnect" }] }} />);
+  expect(screen.getByText("Disabled: this agent profile is turned off.")).toBeTruthy();
+  expect(screen.getByText("Fix: Reconnect")).toBeTruthy();
+  expect(screen.queryByText(/misconfigured/i)).toBeNull();
 });
