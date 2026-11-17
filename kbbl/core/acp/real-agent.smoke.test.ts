@@ -9,11 +9,14 @@
  * throwaway repo, and prints a concise capability/behavior report.
  */
 
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, test, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type * as schema from "@agentclientprotocol/sdk";
+import { AcpUsageCapture } from "#kbbl/core/acp/usage-capture";
+import { object } from "#kbbl/core/acp/usage-parsers/types";
 import { openTestDb } from "../db/test-db";
 import { withoutContextHint, type RuntimeId } from "../runtime";
 import { GitWorktreeProvider } from "../worktree/service";
@@ -85,6 +88,22 @@ realTest(
       rmSync(tmpRoot, { recursive: true, force: true });
     });
 
+    // Observe the capture boundary before costless notifications are filtered.
+    type UsageProbe = { usage: unknown; _meta: unknown; usage_updates: schema.SessionUpdate[] };
+    const probes: UsageProbe[] = [];
+    let updates: schema.SessionUpdate[] = [];
+    const originalTurn = AcpUsageCapture.prototype.turn;
+    const originalReading = AcpUsageCapture.prototype.reading;
+    const turnSpy = spyOn(AcpUsageCapture.prototype, "turn").mockImplementation(function(this: AcpUsageCapture, response) {
+      probes.push({ usage: response.usage ?? null, _meta: response._meta ?? null, usage_updates: updates });
+      updates = [];
+      return originalTurn.call(this, response);
+    });
+    const readingSpy = spyOn(AcpUsageCapture.prototype, "reading").mockImplementation(function(this: AcpUsageCapture, update, key) {
+      if (update.sessionUpdate === "usage_update") updates.push(update);
+      return originalReading.call(this, update, key);
+    });
+    cleanups.push(() => { turnSpy.mockRestore(); readingSpy.mockRestore(); });
     const report: string[] = [`agent=${REAL_AGENT}`];
 
     const ensured = await service.ensureResumableSession("smoke-1", {
@@ -128,6 +147,59 @@ realTest(
       expect(captured[0].outputTokens).toBeGreaterThan(100);
       expect(captured[1].outputTokens).toBeLessThan(captured[0].outputTokens);
       console.log(report.join("\n"));
+    }
+
+    if (REAL_AGENT === "codex") {
+      const captured: UsageProbe[] = [];
+      for (const [index, prompt] of [
+        "Write a numbered list of exactly 100 distinct English nouns. Do not use tools.",
+        "Reply with exactly OK. Do not use tools.",
+      ].entries()) {
+        const key = `operator:codex-usage-${index}` as TurnKey;
+        const sent = await service.sendInput(sid, prompt, { client_message_id: `codex-usage-${index}` });
+        if (!sent.ok) throw new Error(sent.error.detail);
+        const deadline = Date.now() + 120_000;
+        while (["accepted", "prompting"].includes(store.getTurn(sid, key)?.status ?? "")) {
+          if (Date.now() > deadline) throw new Error("Codex usage probe timed out");
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        expect(store.getTurn(sid, key)?.status).toBe("succeeded");
+        const probe = probes.at(-1);
+        if (!probe) throw new Error("No captured prompt response");
+        captured.push(probe);
+        expect(probe.usage_updates.length).toBeGreaterThan(0);
+        for (const update of probe.usage_updates) {
+          if (update.sessionUpdate === "usage_update") expect(update.cost == null).toBe(true);
+        }
+        const row = store.readUsage(sid).turns.find(turn => turn.turn_key === key)?.usage;
+        expect(row?.status).toBe("reported");
+        expect(row?.output_tokens).toBe((probe.usage as schema.Usage).outputTokens);
+        expect(row?.input_tokens).toBe((probe.usage as schema.Usage).inputTokens);
+        expect(row?.total_tokens).toBe((probe.usage as schema.Usage).totalTokens);
+        expect(row?.cached_read_tokens).toBe((probe.usage as schema.Usage).cachedReadTokens);
+        expect(row?.thought_tokens).toBe((probe.usage as schema.Usage).thoughtTokens);
+        expect(row?.cached_write_tokens).toBeNull();
+        console.log(`codex_usage_turn_${index + 1}=${JSON.stringify(probe)}`);
+      }
+      const first = captured[0]?.usage as schema.Usage;
+      const second = captured[1]?.usage as schema.Usage;
+      const outputResets = second.outputTokens < first.outputTokens;
+      const sourceReports = captured.map((probe, index) => {
+        const quota = object(probe._meta) ? probe._meta.quota : null;
+        const sources = [
+          ...(probe.usage != null ? ["PromptResponse.usage"] : []),
+          ...(object(quota) && quota.token_count != null ? ["_meta.quota.token_count"] : []),
+          ...(object(quota) && quota.model_usage != null ? ["_meta.quota.model_usage"] : []),
+          ...probe.usage_updates.flatMap(update => update.sessionUpdate === "usage_update" ? [
+            `usage_update(${typeof update.used === "number" && typeof update.size === "number" ? "used/size" : "missing-used/size"},${update.cost == null ? "no-cost" : "cost"},${update._meta == null ? "no-meta" : "meta"})`,
+          ] : []),
+        ];
+        return `turn${index + 1}.sources=${sources.join(",") || "none"}`;
+      });
+      report.push(`codex-acp=1.13.0 ${sourceReports.join("; ")}; counters=${outputResets ? "per-turn(output-resets)" : "undetermined(no-output-reset)"}`);
+      expect(first.outputTokens).toBeGreaterThan(100);
+      expect(outputResets).toBe(true);
+      console.log(`codex_usage_capture=${JSON.stringify(captured)}`);
     }
 
     const controller = registry.getLive(sid as never);
