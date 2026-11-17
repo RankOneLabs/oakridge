@@ -66,7 +66,7 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
   const { db } = deps;
   app.get("/api/runs/:run_id/usage", async (c) => { try {
     const read = await readRun(db, c.req.param("run_id"));
-    return found(c, read ? await readUsageView(read, deps.kbbl, deps.observation) : null, "run");
+    return found(c, read ? await readUsageView({ read, kbbl: deps.kbbl, observation: deps.observation }) : null, "run");
   } catch (cause) { return fault(cause); } });
   // Diagnostics and the live inbox read effect intents, which change without an
   // event, so they are not keyed.
@@ -186,10 +186,11 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
   } catch (cause) { return fault(cause); } });
 }
 
-export async function readUsageView(read: RunRead, kbbl: Pick<KbblClient, "usage"> | null | undefined, observation?: ObservationOptions | null): Promise<RunUsage> {
+export interface UsageViewInput { read: RunRead; kbbl?: Pick<KbblClient, "usage"> | null; observation?: ObservationOptions | null }
+export async function readUsageView({ read, kbbl, observation }: UsageViewInput): Promise<RunUsage> {
   const ids = [...new Set(read.attempts.flatMap((a) => a.kbbl_session_id ? [a.kbbl_session_id] : []))];
   const sessions: KbblUsage[] = []; const failed: string[] = [];
   await Promise.all(ids.map(async (sid) => { const result = await kbbl?.usage(sid); if (result?.ok) sessions.push(result.value); else failed.push(sid); }));
   const cost = await readObservationCost(observation, read.run.id);
-  return selectRunUsage(read, sessions, failed, cost.ok && cost.value ? { usd: cost.value.charged_usd, usd_basis: "provider_charged" } : null);
+  return selectRunUsage({ read, sessions, failed_sessions: failed, verification: cost.ok && cost.value ? { usd: cost.value.charged_usd, usd_basis: "provider_charged" } : null });
 }

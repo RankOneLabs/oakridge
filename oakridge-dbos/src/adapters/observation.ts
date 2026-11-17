@@ -6,7 +6,7 @@ import type { CoreEvent } from "../storage/json-column-types";
 import { mapObservationEvent } from "./observation-mapping";
 import type { SourceEventAck, SourceEventCursor, SourceEventDelivery } from "./observation-wire";
 
-export interface ObservationOptions { readonly url: string; readonly namespace: string; readonly token: string;
+export interface ObservationOptions { readonly url: string; readonly namespace: string; readonly token: string; readonly read_token?: string | null;
   readonly poll_ms?: number; readonly fetcher?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   readonly log?: (detail: string) => void }
 
@@ -74,10 +74,10 @@ export function startObservationPublisher(db: Kysely<DB>, options: ObservationOp
 
 export interface ObservationCost { run_id: string; charged_usd: number }
 export async function readObservationCost(options: ObservationOptions | null | undefined, run_id: string): Promise<import("../domain/primitives").Traced<ObservationCost | null>> {
-  if (!options) return { ok: true, value: null };
+  if (!options?.read_token) return { ok: true, value: null };
   try {
     const response = await (options.fetcher ?? fetch)(new URL(`/v1/runs/${encodeURIComponent(run_id)}/cost`, options.url),
-      { headers: { authorization: `Bearer ${options.token}` }, signal: AbortSignal.timeout(5000) });
+      { headers: { authorization: `Bearer ${options.read_token}` }, signal: AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const value = await response.json() as ObservationCost;
     if (value.run_id !== run_id || !Number.isFinite(value.charged_usd)) throw new Error("invalid cost response");

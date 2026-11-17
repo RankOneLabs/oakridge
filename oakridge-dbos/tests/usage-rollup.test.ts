@@ -45,7 +45,7 @@ test("agent time sums turns into attempts, unit splits and the run across parall
   units: [{ id: "unit", stage: "implementation", collection_key: "first" }, { id: "parallel-unit", stage: "implementation", collection_key: "second" }],
   revisions: [], decisions: [], definition: { parsed_workflow: { stages: {} } },
  } as unknown as RunRead;
- const usage = selectRunUsage(read, [
+ const usage = selectRunUsage({ read, sessions: [
   session([
    turn(selectDeliveryKey(first), 0),
    { ...turn("steering", 3), completed_at: date(8) },
@@ -55,7 +55,7 @@ test("agent time sums turns into attempts, unit splits and the run across parall
    { ...turn(selectDeliveryKey(parallel), 0), completed_at: date(6) },
    { ...turn("parallel-steering", 6), completed_at: date(8) },
   ]), sid: parallel.kbbl_session_id },
- ], [], null);
+ ], failed_sessions: [], verification: null });
  expect({
   units: usage.units.map((unit) => ({
    attempts: unit.attempts.map((entry) => ({ turns: entry.turns.map((entry) => entry.agent_ms), agent_ms: entry.agent_ms })),
@@ -84,20 +84,28 @@ test("kbbl usage transport refusals and network errors are values", async () => 
 });
 test("observation cost uses the read credential and optional configuration", async () => {
  let request = "";
- const result = await readObservationCost({ url: "http://observation", namespace: "n", token: "secret", fetcher: async (url, init) => {
+ const result = await readObservationCost({ url: "http://observation", namespace: "n", token: "ingest", read_token: "secret", fetcher: async (url, init) => {
  request = `${url} ${new Headers(init?.headers).get("authorization")}`; return Response.json({ run_id: "run", charged_usd: .4 }); } }, "run");
  expect([result, request, await readObservationCost(null,"run")]).toEqual([{ ok: true, value: { run_id: "run", charged_usd: .4 } }, "http://observation/v1/runs/run/cost Bearer secret", { ok: true, value: null }]);
+});
+test("observation cost without a read credential makes no request", async () => {
+ let calls = 0;
+ const result = await readObservationCost({ url: "http://observation", namespace: "n", token: "ingest", fetcher: async () => {
+  calls++; return new Response("forbidden", { status: 403 });
+ } }, "run");
+ expect([result, calls]).toEqual([{ ok: true, value: null }, 0]);
 });
 test("read boundary fetches each session once per read and degrades failed coverage", async () => {
  const a = attempt(1);
  const read = { run: { id: "run", created_at: new Date(0) }, attempts: [{ ...a, unit_id: "unit", worker: "builder", cause: { kind: "missing" } }, { ...attempt(2), kbbl_session_id: "failed", unit_id: "second-unit", worker: "builder", cause: { kind: "retry" } }],
  units: [{ id: "unit", stage: "implementation", collection_key: "cohort" }, { id:"second-unit",stage:"implementation",collection_key:"second-cohort" }], revisions: [], decisions: [], definition: { parsed_workflow: { stages: {} } } } as unknown as RunRead;
- let current = session([turn(selectDeliveryKey(a),2)]); let calls = 0;
+ let current = session([{ ...turn(selectDeliveryKey(a),2), status: "unknown" }]); let calls = 0;
  const kbbl = new KbblClient({ base_url: "http://kbbl", fetch: async (url) => { calls++; return String(url).includes("failed") ? new Response("bad", { status: 500 }) : Response.json(current); } });
- const first = await readUsageView(read, kbbl);
+ const first = await readUsageView({ read, kbbl });
  current = session([...current.turns, turn("steering",8)]);
- const second = await readUsageView(read,kbbl,{ url: "http://observation", token: "read", namespace: "n", fetcher: async () => Response.json({ run_id: "run", charged_usd: .75 }) });
+ const second = await readUsageView({ read, kbbl, observation: { url: "http://observation", token: "ingest", read_token: "read", namespace: "n", fetcher: async () => Response.json({ run_id: "run", charged_usd: .75 }) } });
  expect([calls, first.coverage.turns,second.coverage.turns,second.coverage.failed_sessions,second.verification,second.units.length]).toEqual([4,1,2,["failed"],{ usd:.75, usd_basis:"provider_charged" },2]);
+ expect(second.units[0]?.attempts[0]?.turns[0]?.status).toBe("unknown");
 });
 
 test("review time separates operator, engine and external waits and flags approximations", async () => {
@@ -113,11 +121,11 @@ test("missing cost preserves reported tokens, absent coverage and nullable total
  const a = attempt(1);
  const reported = { ...turn(selectDeliveryKey(a),2), usage: { sid: "sid", turn_key: selectDeliveryKey(a), status: "reported" as const, input_tokens: 10, output_tokens: 2, cached_read_tokens: null, cached_write_tokens: null, thought_tokens: null, total_tokens: 12, model_usage: null, raw_json: null, recorded_at: date(5) } };
  const read = { run: { id: "run", created_at: new Date(0) }, attempts: [{ ...a, worker: "builder", unit_id: "u", cause: { kind: "missing" } }], units: [{ id: "u", stage: "s", collection_key: "c" }], revisions: [], decisions: [], definition: { parsed_workflow: { stages: {} } } } as unknown as RunRead;
- const usage = selectRunUsage(read,[session([reported,turn("absent",8)])],[],null);
+ const usage = selectRunUsage({ read, sessions: [session([reported,turn("absent",8)])], failed_sessions: [], verification: null });
  expect([usage.totals.tokens.total,usage.totals.usd,usage.coverage]).toEqual([12,null,{ turns:2,reported:1,partial:0,absent:1,cost_unreported_sessions:["sid"],failed_sessions:[] }]);
 });
 test("observation failures yield verification null", async () => {
- expect((await readObservationCost({ url:"http://observation", namespace:"n",token:"t",fetcher:async () => new Response("",{status:500}) },"run")).ok).toBe(false);
+ expect((await readObservationCost({ url:"http://observation", namespace:"n",token:"ingest",read_token:"t",fetcher:async () => new Response("",{status:500}) },"run")).ok).toBe(false);
 });
 
 test("operator revisions and periodic refreshes remain first pass", () => {

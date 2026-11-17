@@ -591,7 +591,7 @@ test("usage HTTP reads fetch live telemetry and degrade optional services", asyn
   let should_fail = false;
   let observation_fails = false;
   const kbbl = new KbblClient({ base_url: "http://kbbl", fetch: async () => should_fail ? new Response("offline", { status: 500 }) : Response.json({ sid: "sid-writer", turns, readings: [] }) });
-  installReadModels(local, { db: authority.db, kbbl, observation: { url: "http://observation", token: "read", namespace: "n", fetcher: async () => observation_fails ? new Response("bad",{status:500}) : Response.json({ run_id, charged_usd: .5 }) } });
+  installReadModels(local, { db: authority.db, kbbl, observation: { url: "http://observation", token: "ingest", read_token: "read", namespace: "n", fetcher: async () => observation_fails ? new Response("bad",{status:500}) : Response.json({ run_id, charged_usd: .5 }) } });
   const read = async () => {
     const response = await local.request(`/api/runs/${segment(run_id)}/usage`);
     expect(response.status).toBe(200);

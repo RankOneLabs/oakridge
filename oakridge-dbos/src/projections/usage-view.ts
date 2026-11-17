@@ -4,7 +4,8 @@ import { attributeUsage, attemptKey } from "./usage-attribution";
 import { costDeltas, nullableSum, sumUsage, tokensFor } from "./usage-cost";
 import { classifyRework } from "./usage-rework";
 import { elapsedTime, reviewTimes, turnDuration } from "./usage-time";
-export function selectRunUsage(read: RunRead, sessions: readonly KbblUsage[], failed_sessions: string[], verification: RunUsage["verification"]): RunUsage {
+export interface RunUsageInput { read: RunRead; sessions: readonly KbblUsage[]; failed_sessions: string[]; verification: RunUsage["verification"] }
+export function selectRunUsage({ read, sessions, failed_sessions, verification }: RunUsageInput): RunUsage {
   const owned = attributeUsage(read.attempts, sessions);
   const deltas = costDeltas(sessions, owned);
   const rework = classifyRework(read.attempts, read.revisions);
