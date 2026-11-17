@@ -1,3 +1,4 @@
+import { codexUsageParser } from "#kbbl/core/acp/usage-parsers/codex";
 import { claudeUsageParser } from "#kbbl/core/acp/usage-parsers/claude";
 // Built-in production agent profiles (§20, cohort 2). These are the two
 // profiles kbbl ships with; config.acp.agents entries override them wholesale
@@ -98,6 +99,7 @@ export function builtinAgentProfiles(
     // Verified against codex-acp 1.13.0 with the existing login.
     skillDiscovery: { kind: "additionalDirectories" },
     id: "codex",
+    usageParser: codexUsageParser,
     label: "Codex (ACP)",
     command: installedBin(kbblRoot, "codex-acp"),
     args: [],
