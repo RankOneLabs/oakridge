@@ -25,3 +25,15 @@ export function selectQuickActions(available: Skill[], keys: string[]): Skill[] 
 export function selectToggledQuickActionKeys(keys: readonly string[], key: string): string[] {
   return keys.includes(key) ? keys.filter((item) => item !== key) : [...keys, key];
 }
+
+export type SkillButtonState = "idle" | "disabled" | "collecting" | "confirming" | "dispatching";
+
+/** Accessible name for an icon-only skill button: its name plus what the hidden text would have announced. */
+export function selectSkillButtonLabel(name: string, skill: Pick<Skill, "args">, state: SkillButtonState): string {
+  const notes = [
+    skill.args.length > 0 ? "requires input" : null,
+    state === "confirming" ? "tap again to confirm" : null,
+    state === "dispatching" ? "dispatching" : null,
+  ].filter((note): note is string => note !== null);
+  return [name, ...notes].join(", ");
+}

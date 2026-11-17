@@ -1,7 +1,8 @@
 import { Button } from "../atoms/Button";
 import type { Skill } from "../../../runtime-interface";
+import { selectSkillButtonLabel, type SkillButtonState } from "../../lib/quick-actions";
 
-export type SkillButtonState = "idle" | "disabled" | "collecting" | "confirming" | "dispatching";
+export type { SkillButtonState };
 
 export function SkillButton({
   skill,
@@ -23,7 +24,7 @@ export function SkillButton({
     <Button variant="session"
       type="button"
       className={`skill-btn skill-btn--${state}${icon === undefined ? "" : " skill-btn--icon"}`}
-      aria-label={icon === undefined ? undefined : name}
+      aria-label={icon === undefined ? undefined : selectSkillButtonLabel(name, skill, state)}
       title={icon === undefined ? undefined : name}
       onClick={onTap}
       disabled={state === "disabled" || state === "dispatching"}
