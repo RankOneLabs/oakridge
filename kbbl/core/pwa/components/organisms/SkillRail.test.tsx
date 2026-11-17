@@ -280,7 +280,10 @@ describe("SkillRail invoke failure", () => {
 it("shows only advertised default quick actions beside Skills", () => {
   setup([PLAIN_SKILL, { ...PLAIN_SKILL, id: "cc:mcp:gated-review:get_review_round", name: "mcp:gated-review:get_review_round" }]);
   render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} commands={[{ name: "compact", description: "Compact" }]} />);
-  expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual(["Skills", "compactclaude-code", "get_review_roundclaude-code"]);
+  const buttons = screen.getAllByRole("button");
+  expect(buttons.map((button) => button.getAttribute("aria-label") ?? button.textContent)).toEqual(["Skills", "compact", "get_review_round"]);
+  expect(buttons.slice(1).map((button) => button.textContent)).toEqual(["⇊", "⟳"]);
+  expect(buttons.slice(1).map((button) => button.getAttribute("title"))).toEqual(["compact", "get_review_round"]);
 });
 
 it("persists a selected action and shows it after collapsing", () => {

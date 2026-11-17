@@ -8,23 +8,31 @@ export function SkillButton({
   state,
   onTap,
   label,
+  icon,
 }: {
   skill: Skill;
   state: SkillButtonState;
   onTap: () => void;
   /** Display label; defaults to skill.name (MCP tools pass a de-prefixed name). */
   label?: string;
+  /** Show this glyph instead of the name and backend; the name stays the accessible label and tooltip. */
+  icon?: string;
 }) {
+  const name = label ?? skill.name;
   return (
     <Button variant="session"
       type="button"
-      className={`skill-btn skill-btn--${state}`}
+      className={`skill-btn skill-btn--${state}${icon === undefined ? "" : " skill-btn--icon"}`}
+      aria-label={icon === undefined ? undefined : name}
+      title={icon === undefined ? undefined : name}
       onClick={onTap}
       disabled={state === "disabled" || state === "dispatching"}
       aria-pressed={state === "collecting" || state === "confirming"}
     >
-      <span className="skill-btn__name">{label ?? skill.name}</span>
-      <span className="skill-btn__badge">{skill.backend}</span>
+      {icon === undefined ? <>
+        <span className="skill-btn__name">{name}</span>
+        <span className="skill-btn__badge">{skill.backend}</span>
+      </> : <span className="skill-btn__icon" aria-hidden="true">{icon}</span>}
       {skill.args.length > 0 && (
         <span className="skill-btn__arg-affordance" aria-label="requires input">⋯</span>
       )}

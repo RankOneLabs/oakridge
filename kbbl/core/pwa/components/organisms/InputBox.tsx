@@ -167,10 +167,10 @@ export function InputBox({
             className="btn-interrupt"
             onClick={() => void interrupt()}
             disabled={interruptMutation.isPending}
-            aria-label="Interrupt current turn"
+            aria-label={interruptMutation.isPending ? "Interrupting current turn" : "Interrupt current turn"}
             title="Interrupt the current turn. The session stays live so you can redirect it with another message."
           >
-            {interruptMutation.isPending ? "interrupting…" : "Interrupt"}
+            <span aria-hidden="true">{interruptMutation.isPending ? "…" : "■"}</span>
           </Button>
         )}
         <TextArea
