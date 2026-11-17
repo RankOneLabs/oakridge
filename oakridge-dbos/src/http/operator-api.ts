@@ -21,3 +21,5 @@ export type { PrIntegration, PrLaunchPreflightError } from "../domain/pr-integra
 export type { InstallStatus, InstallCheck, AccessMode, AgentProfileStatus, PrIntegrationStatus, ObservationStatus, LaunchBlock } from "../projections/install-status-view";
 
 export type { PromptVersionView, PromptVersionListing, PromptValidationOutcome, PromptPublicationOutcome, PromptVersionError, PromptVersionErrorKind, PromptIssue, SavePendingPromptRequest, ValidatePromptRequest, PublishPromptRequest } from "./prompt-versions";
+
+export type { RunUsage } from "../domain/usage";

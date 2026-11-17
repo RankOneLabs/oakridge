@@ -1,3 +1,4 @@
+import { readRunChargedCost } from "../storage/grading-record-store";
 import { readEvaluatorDefinition } from "../storage/grading-store";
 import { isRunComplete, stagesFromReadiness, type RollupContext } from "../grading/task-stages";
 import { filterCompositeStage, selectComposite, selectCompositePage, selectDrilldown, selectRunStages } from "../grading/composite";
@@ -54,6 +55,11 @@ const contextErrorResponse = (c: Context, error: ContextError): Response => erro
 
 export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies): void {
   const path = deps.profile.composite;
+  app.get("/v1/runs/:run_id/cost", async (c) => {
+    const tenant = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!tenant) return errorResponse(c, 403, "forbidden", "read credential required");
+    return c.json(await readRunChargedCost(deps.db, tenant, c.req.param("run_id")));
+  });
   /** Tenant ownership is checked before DBOS is read, so a foreign run reveals none of its stages. */
   const contextFor = async (tenant: TenantScope, run_id: string): Promise<Result<RollupContext, ContextError>> => {
     if (!await hasCapturedRun(deps.db, tenant, run_id)) return { ok: false, error: { kind: "not_captured" } };

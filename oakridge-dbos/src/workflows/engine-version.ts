@@ -22,6 +22,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "domain/primitives.ts",
   "domain/prompt-template.ts",
   "effects/agent-provider.ts",
+  "effects/delivery-key.ts",
   "effects/outcomes.ts",
   "effects/provider-catalog.ts",
   "effects/session-prompt.ts",
