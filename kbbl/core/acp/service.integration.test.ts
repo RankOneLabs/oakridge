@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { applyMigrations } from "../db/migrations";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -196,3 +198,83 @@ test("scripted Claude responses and cost snapshots survive controller turns", as
   });
   expect(harness.registry.getLive(sid)?.snapshotEvents().some(event => event.kind === "usage")).toBe(true);
 }, 20000);
+
+
+test("cost readings advance process segments on respawn and database reopen, including between turns", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const databasePath = join(stateDir, "usage.sqlite");
+  const db = new Database(databasePath);
+  db.exec("PRAGMA foreign_keys=ON");
+  applyMigrations(db, join(import.meta.dir, "../db/migrations"));
+  await Bun.write(join(stateDir, "usage-script.json"), JSON.stringify([{
+    updates: [{ used: 60, size: 100, cost: { amount: 2.5, currency: "USD" } }],
+  }]));
+  const first = makeAcpTestService({ stateDir, db, profileIds: ["claude-code"] });
+  harnesses.push(first);
+  const ensured = await first.service.ensureResumableSession("usage-processes", {
+    initial_prompt: "hi", workdir, runtime: "claude-code",
+  });
+  if (!ensured.ok) throw Error(ensured.error.detail);
+  const sid = ensured.value.session.sid;
+  const observed = await first.service.observeInitialTurn(sid, 8000);
+  expect(observed).toMatchObject({ ok: true, value: { kind: "succeeded" } });
+  const initialKey = first.store.getInitialTurn(sid)?.turn_key;
+  if (!initialKey) throw Error("initial turn missing");
+  expect(first.store.readUsage(sid).readings).toMatchObject([{
+    seq: 0, process_seq: 0, active_turn_key: initialKey, cost_amount: 2.5,
+  }]);
+
+  // A config request triggers an actual ACP notification while no prompt is
+  // active. Its cumulative cost remains in the same process segment.
+  const idleScript = join(stateDir, "usage-on-config.json");
+  await Bun.write(idleScript, JSON.stringify([{
+    used: 70, size: 100, cost: { amount: 4, currency: "USD" },
+    _meta: { "_claude/origin": { kind: "task-notification" } },
+  }]));
+  expect(first.registry.getLive(sid)?.isPromptActive).toBe(false);
+  expect((await first.service.setConfigOption(sid, "model", "fake-large")).ok).toBe(true);
+  await rm(idleScript);
+  expect(first.store.readUsage(sid).readings[1]).toMatchObject({
+    seq: 1, process_seq: 0, active_turn_key: null, cost_amount: 4, autonomous: true,
+  });
+
+  async function promptAndWait(harness: AcpTestHarness, clientMessageId: string) {
+    const sent = await harness.service.sendInput(sid, "hi", { client_message_id: clientMessageId });
+    if (!sent.ok) throw Error(sent.error.detail);
+    const deadline = Date.now() + 8000;
+    while (["accepted", "prompting"].includes(harness.store.getTurn(sid, sent.value.turn_key)?.status ?? "")) {
+      if (Date.now() > deadline) throw Error("usage process turn timed out");
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(harness.store.getTurn(sid, sent.value.turn_key)?.status).toBe("succeeded");
+    return sent.value.turn_key;
+  }
+
+  const original = first.registry.getLive(sid);
+  if (!original) throw Error("initial controller missing");
+  await original.closeChild();
+  const respawnKey = await promptAndWait(first, "after-respawn");
+  expect(first.registry.getLive(sid)).not.toBe(original);
+  // Replayed cost notifications must not create duplicate readings.
+  expect(first.store.readUsage(sid).readings.map(row => [row.seq, row.process_seq, row.active_turn_key, row.cost_amount])).toEqual([
+    [0, 0, initialKey, 2.5], [1, 0, null, 4], [2, 1, respawnKey, 2.5],
+  ]);
+
+  await first.service.shutdown();
+  db.close();
+  // Reopen the actual SQLite file, not just a new facade over the old connection.
+  const reopenedDb = new Database(databasePath);
+  reopenedDb.exec("PRAGMA foreign_keys=ON");
+  const second = makeAcpTestService({ stateDir, db: reopenedDb, profileIds: ["claude-code"] });
+  harnesses.push(second);
+  try {
+    second.service.recoverOnBoot();
+    const restartKey = await promptAndWait(second, "after-restart");
+    expect(second.store.readUsage(sid).readings.map(row => [row.seq, row.process_seq, row.active_turn_key, row.cost_amount])).toEqual([
+      [0, 0, initialKey, 2.5], [1, 0, null, 4], [2, 1, respawnKey, 2.5], [3, 2, restartKey, 2.5],
+    ]);
+  } finally {
+    await second.service.shutdown();
+    reopenedDb.close();
+  }
+}, 30000);

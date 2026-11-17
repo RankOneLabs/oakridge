@@ -183,11 +183,20 @@ const app = agent({ name: `fake-acp-${behavior}` })
     });
     return { configOptions: options };
   })
-  .onRequest("session/set_config_option", (ctx) => {
+  .onRequest("session/set_config_option", async (ctx) => {
     const { sessionId, configId, value } = ctx.params;
     const known = CONFIG_OPTIONS.some((option) => option.id === configId);
     if (!known) {
       throw RequestError.invalidParams(undefined, `unknown config "${configId}"`);
+    }
+    // Tests can trigger a live notification after a prompt has completed,
+    // without timers or injecting events directly into the controller.
+    const usageOnConfig = Bun.file(join(stateDir, "usage-on-config.json"));
+    if (await usageOnConfig.exists()) {
+      const updates: schema.UsageUpdate[] = await usageOnConfig.json();
+      for (const update of updates) {
+        await notifyAndRecord(ctx.client, sessionId, { sessionUpdate: "usage_update", ...update });
+      }
     }
     configState.get(sessionId)?.set(configId, value as string | boolean);
     const options = CONFIG_OPTIONS.map((option) => {
