@@ -1,5 +1,8 @@
+import { AcpUsageStore } from "#kbbl/core/acp/store-usage";
+import type { TurnUsage } from "#kbbl/core/acp/usage-parsers/types";
 import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
 import { AcpTurnStore, type AcceptTurnInput, type AcceptTurnOutcome, type OpenTurnRow, type RetainedPromptTurn, type BootSweepResult } from "./store-turns";
+import { AcpSummaryStore } from "./store-summaries";
 import { AcpWorktreeStore, type ReusableWorktreeClaimInput, type ReusableWorktreeClaim, type WorktreeAssignment } from "./store-worktrees";
 import { nowIso, toAcpSessionRow, type RawAcpSessionRow } from "./store-records";
 // Typed repository over acp_sessions + acp_turns (migration 027). All
@@ -45,24 +48,19 @@ export type ClaimOutcome =
   | { kind: "existing"; row: AcpSessionRow }
   | { kind: "spec_conflict"; row: AcpSessionRow };
 
-interface RawTerminalSessionSummary {
-  sid: KbblSessionId;
-  schema_version: number;
-  method: TerminalSessionSummary["method"];
-  summary_json: string;
-  produced_at: string;
-  created_at: string;
-  updated_at: string;
-}
-
 export class AcpSessionStore {
   private readonly sessionsChangedListeners = new Set<() => void>();
 
+  /** Usage rows and readings (migration 006); callers use it directly. */
+  readonly usage: AcpUsageStore;
   private readonly turns: AcpTurnStore;
   private readonly worktrees: AcpWorktreeStore;
+  private readonly summaries: AcpSummaryStore;
   constructor(private readonly db: Database) {
+    this.usage = new AcpUsageStore(db);
     this.turns = new AcpTurnStore(db);
     this.worktrees = new AcpWorktreeStore(db);
+    this.summaries = new AcpSummaryStore(db);
   }
 
   /**
@@ -296,58 +294,8 @@ export class AcpSessionStore {
       .map(toAcpSessionRow);
   }
 
-  getSessionSummary(sid: KbblSessionId): TerminalSessionSummary | null {
-    const row = this.db
-      .prepare<RawTerminalSessionSummary, [KbblSessionId]>(
-        "SELECT * FROM acp_session_summaries WHERE sid = ?",
-      )
-      .get(sid);
-    if (!row) return null;
-    let decoded: unknown;
-    try {
-      decoded = JSON.parse(row.summary_json);
-    } catch {
-      return null;
-    }
-    if (typeof decoded !== "object" || decoded === null || !("markdown" in decoded) || typeof decoded.markdown !== "string") {
-      return null;
-    }
-    return {
-      schema_version: 1,
-      session_id: row.sid,
-      method: row.method,
-      produced_at: row.produced_at,
-      markdown: decoded.markdown,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    };
-  }
-
-  putSessionSummary(summary: TerminalSessionSummaryDraft): TerminalSessionSummary {
-    const timestamp = nowIso();
-    this.db.prepare(
-      `INSERT INTO acp_session_summaries
-         (sid,schema_version,method,summary_json,produced_at,created_at,updated_at)
-       VALUES (?,?,?,?,?,?,?)
-       ON CONFLICT(sid) DO UPDATE SET
-         schema_version=excluded.schema_version,
-         method=excluded.method,
-         summary_json=excluded.summary_json,
-         produced_at=excluded.produced_at,
-         updated_at=excluded.updated_at`,
-    ).run(
-      summary.session_id,
-      summary.schema_version,
-      summary.method,
-      JSON.stringify({ markdown: summary.markdown }),
-      summary.produced_at,
-      timestamp,
-      timestamp,
-    );
-    const stored = this.getSessionSummary(summary.session_id);
-    if (!stored) throw new Error(`failed to persist terminal summary for ${summary.session_id}`);
-    return stored;
-  }
+  getSessionSummary(sid: KbblSessionId): TerminalSessionSummary | null { return this.summaries.get(sid); }
+  putSessionSummary(summary: TerminalSessionSummaryDraft): TerminalSessionSummary { return this.summaries.put(summary); }
 
   /** Hard delete (operator purge). Turn rows go with the session. */
   deleteSession(sid: KbblSessionId): void {
@@ -415,8 +363,8 @@ export class AcpSessionStore {
   listAcceptedTurns(sid: KbblSessionId): AcpTurnRow[] { return this.turns.listAcceptedTurns(sid); }
   listOpenTurns(sid: KbblSessionId): OpenTurnRow[] { return this.turns.listOpenTurns(sid); }
   markTurnPrompting(sid: KbblSessionId, turnKey: TurnKey): void { this.turns.markTurnPrompting(sid, turnKey); }
-  completeTurn(sid: KbblSessionId, turnKey: TurnKey, outcome: Parameters<AcpTurnStore["completeTurn"]>[2]): void {
-    this.turns.completeTurn(sid, turnKey, outcome);
+  completeTurn(sid: KbblSessionId, turnKey: TurnKey, outcome: Parameters<AcpTurnStore["completeTurn"]>[2], usage: TurnUsage = { status: "absent" }): void {
+    this.turns.completeTurn(sid, turnKey, outcome, usage);
   }
   bootSweep(): BootSweepResult {
     const result = this.turns.bootSweep();

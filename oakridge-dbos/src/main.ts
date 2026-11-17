@@ -33,7 +33,8 @@ const gated_review_url = optional("OAKRIDGE_GATED_REVIEW_URL");
 const observation_url = optional("OAKRIDGE_OBSERVATION_URL");
 const observation = observation_url ? { url: observation_url,
   namespace: optional("OAKRIDGE_OBSERVATION_NAMESPACE") ?? "default",
-  token: optional("OAKRIDGE_OBSERVATION_INGEST_TOKEN") ?? "" } : null;
+  token: optional("OAKRIDGE_OBSERVATION_INGEST_TOKEN") ?? "",
+  read_token: optional("OAKRIDGE_OBSERVATION_READ_TOKEN") } : null;
 if (observation && !observation.token) throw new Error("OAKRIDGE_OBSERVATION_INGEST_TOKEN is required when OAKRIDGE_OBSERVATION_URL is set");
 if (!gated_review_url) console.warn("OAKRIDGE_GATED_REVIEW_URL is unset: pull_request.observe fails with discovery_unsupported");
 // The DBOS application version is the engine digest unless DBOS_APPLICATION_VERSION

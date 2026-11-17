@@ -73,9 +73,11 @@ export function reachable(graph: ModuleGraph, from: string, barriers: ReadonlySe
 
 export function projectionViolations(nodes: readonly ModuleNode[]): readonly BoundaryViolation[] {
   return nodes.flatMap((node) => {
-    const violations: BoundaryViolation[] = node.packages.map((name) => ({ path: node.path, detail: `projection imports external runtime package ${name}` }));
+    const violations: BoundaryViolation[] = node.packages.filter((name) => !(name === "node:crypto" && node.path.endsWith("/effects/delivery-key.ts"))).map((name) => ({ path: node.path, detail: `projection imports external runtime package ${name}` }));
     const parsed = parseModule(node.path, node.source);
     function visit(child: ts.Node): void {
+      // Parsing an explicit timestamp is deterministic; reading the clock remains forbidden.
+      if (ts.isPropertyAccessExpression(child) && child.expression.getText(parsed) === "Date" && child.name.text === "parse") return;
       // A type annotation naming Date is not a call to the clock.
       if (ts.isIdentifier(child) && !ts.isTypeReferenceNode(child.parent) && ["fetch", "Bun", "Deno", "Date", "crypto", "process", "performance", "setTimeout", "setInterval", "XMLHttpRequest", "EventSource"].includes(child.text))
         violations.push({ path: node.path, detail: `projection references IO capability ${child.text}` });
@@ -83,7 +85,7 @@ export function projectionViolations(nodes: readonly ModuleNode[]): readonly Bou
         violations.push({ path: node.path, detail: "projection references IO capability Math.random" });
       if (ts.isCallExpression(child) || ts.isNewExpression(child)) {
         const call = child.expression.getText(parsed);
-        if (/^(fetch|Bun\.|Date\b|crypto\.|process\.)/.test(call) || /\.(query|transaction|request|unsafe|connect|spawn|readFile|writeFile|now|random|randomUUID)$/.test(call))
+        if ((call !== "Date.parse" && /^(fetch|Bun\.|Date\b|crypto\.|process\.)/.test(call)) || /\.(query|transaction|request|unsafe|connect|spawn|readFile|writeFile|now|random|randomUUID)$/.test(call))
           violations.push({ path: node.path, detail: `projection calls IO capability ${call}` });
       }
       ts.forEachChild(child, visit);

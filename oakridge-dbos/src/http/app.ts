@@ -29,6 +29,8 @@ export interface DefinitionApiDependencies {
   readonly is_operator_request: (request: Request) => boolean;
 }
 export interface HttpAppDependencies extends Omit<DefinitionApiDependencies, "is_operator_request"> {
+  readonly kbbl?: Pick<import("../adapters/kbbl").KbblClient, "usage"> | null;
+  readonly observation?: import("../adapters/observation").ObservationOptions | null;
   readonly read_install_status?: () => Promise<InstallStatus>;
   readonly application_version: string;
   /** A token every operator route demands, or none: a loopback bind (open to loopback-addressed requests only) or an explicitly insecure one. */

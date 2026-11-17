@@ -108,3 +108,28 @@ test("cold session stream flushes readiness and releases its child after disconn
   expect(cold.registry.liveCount()).toBe(0);
   await cold.service.shutdown();
 }, 15000);
+
+test("usage is public and preserves ordered turns, null usage and cost readings", async () => {
+  const sid = crypto.randomUUID() as import("../../acp/types").KbblSessionId;
+  harness.store.insertSession({ sid, resumable_key: null, start_spec_hash: null, agent_profile: "fake",
+    name: "usage", artifact_id: null, project_workdir: "/tmp", worktree_path: "/tmp",
+    requested_model: null, requested_effort: null, requested_mode: null, workflow: null });
+  for (const key of ["reported", "absent", "pending"]) {
+    const turn_key = key as import("../../acp/types").TurnKey;
+    harness.store.acceptTurn({ sid, turn_key, source: "operator", payload: key });
+    if (key !== "pending") harness.store.completeTurn(sid, turn_key, { status: "succeeded" },
+      key === "reported" ? { status: "reported", input_tokens: 1, output_tokens: 2, cached_read_tokens: 0,
+        cached_write_tokens: 0, thought_tokens: 0, total_tokens: 3, model_usage: [], raw_json: "{}" } : { status: "absent" });
+  }
+  for (const amount of [1, 3]) harness.store.usage.appendReading({
+    sid, process_seq: 0, context_used: 20, context_size: 100, cost_amount: amount, cost_currency: "USD",
+    active_turn_key: null, autonomous: false, origin_kind: null,
+  });
+  const response = await app.request(`/sessions/${sid}/usage`);
+  expect(response.status).toBe(200);
+  const body: import("../../acp/usage-types").SessionUsage = await response.json();
+  expect(body.turns.map(t => t.usage?.status ?? null)).toEqual(["reported", "absent", null]);
+  expect(body.turns[0]?.usage?.model_usage).toEqual([]);
+  expect(body.readings.map(r => [r.seq, r.cost_amount, r.autonomous])).toEqual([[0, 1, false], [1, 3, false]]);
+  expect((await app.request(`/sessions/${SID}/usage`)).status).toBe(404);
+});

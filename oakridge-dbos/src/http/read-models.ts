@@ -1,3 +1,8 @@
+import { readObservationCost, type ObservationOptions } from "../adapters/observation";
+import type { KbblClient } from "../adapters/kbbl";
+import type { RunUsage, KbblUsage } from "../domain/usage";
+import type { RunRead } from "../storage/read-store";
+import { selectRunUsage } from "../projections/usage-view";
 import type { Context, Hono } from "hono";
 import type { UnitId } from "../domain/primitives";
 import { selectArtifactDetail } from "../projections/artifact-view";
@@ -17,7 +22,7 @@ import { errorResponse, fault, MalformedRequestError, MissingEntityError } from 
  * The operator read models: each route reads authority rows
  * from the read store and answers with its projection.
  */
-export interface ReadModelDependencies { readonly db: Database }
+export interface ReadModelDependencies { readonly db: Database; readonly kbbl?: Pick<import("../adapters/kbbl").KbblClient, "usage"> | null; readonly observation?: import("../adapters/observation").ObservationOptions | null }
 
 const DEFAULT_PAGE_LIMIT = 100;
 export function pageLimit(raw: string | undefined): number | MalformedRequestError {
@@ -59,6 +64,10 @@ const ALL_RUNS_KEYED_READS = ["/api/runs", "/api/run-inboxes"] as const;
 
 export function installReadModels(app: Hono, deps: ReadModelDependencies): void {
   const { db } = deps;
+  app.get("/api/runs/:run_id/usage", async (c) => { try {
+    const read = await readRun(db, c.req.param("run_id"));
+    return found(c, read ? await readUsageView({ read, kbbl: deps.kbbl, observation: deps.observation }) : null, "run");
+  } catch (cause) { return fault(cause); } });
   // Diagnostics and the live inbox read effect intents, which change without an
   // event, so they are not keyed.
   const runKeyed = changeKeyed((c) => readRunChangeKey(db, c.req.param("run_id") ?? ""));
@@ -175,4 +184,13 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     const definition = await readDefinition(db, c.req.param("definition_id"));
     return found(c, definition && selectDefinitionDetail(definition), "definition");
   } catch (cause) { return fault(cause); } });
+}
+
+export interface UsageViewInput { read: RunRead; kbbl?: Pick<KbblClient, "usage"> | null; observation?: ObservationOptions | null; now?: Date }
+export async function readUsageView({ read, kbbl, observation, now = new Date() }: UsageViewInput): Promise<RunUsage> {
+  const ids = [...new Set(read.attempts.flatMap((a) => a.kbbl_session_id ? [a.kbbl_session_id] : []))];
+  const sessions: KbblUsage[] = []; const failed: string[] = [];
+  await Promise.all(ids.map(async (sid) => { const result = await kbbl?.usage(sid); if (result?.ok) sessions.push(result.value); else failed.push(sid); }));
+  const cost = await readObservationCost(observation, read.run.id);
+  return selectRunUsage({ read, sessions, failed_sessions: failed, verification: cost.ok && cost.value ? { usd: cost.value.charged_usd, usd_basis: "provider_charged" } : null, now });
 }

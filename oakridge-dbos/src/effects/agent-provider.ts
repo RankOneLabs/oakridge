@@ -20,9 +20,8 @@ export function derivePublicationSecret(publication_key: string, session_key: st
 }
 /** The form an attempt stores and publish compares: sha256 hex of the secret. */
 export const publicationSecretHash = (secret: string): string => createHash("sha256").update(secret).digest("hex");
-/** The kbbl delivery key of an attempt's task: fixed-length, since an action id grows with its unit's path and kbbl caps keys at 300. */
-export const selectDeliveryKey = (instruction: EffectInstruction): string =>
-  createHash("sha256").update(`${instruction.attempt.action_id}\0${instruction.attempt.seq}`).digest("hex");
+import { selectDeliveryKey } from "./delivery-key";
+export { selectDeliveryKey } from "./delivery-key";
 
 /** The repository a `repository(<expr>)` workspace names, as `repository.prepare` publishes it. */
 export interface AgentWorkspace { readonly repository_path: string; readonly base_branch: string }

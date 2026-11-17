@@ -1,3 +1,4 @@
+import { AcpControllerProcess } from "#kbbl/core/acp/controller-process";
 // One controller == one kbbl session == at most one ACP child process
 // (§8.4). Owns: spawn+initialize+new/load, the live prompt mutex, turn
 // outcome recording, accepted-turn dispatch, pending permissions, UI
@@ -6,16 +7,12 @@
 
 import type * as schema from "@agentclientprotocol/sdk";
 
-import { matchRequestedOption, resolveRequestedOption } from "./config-option-resolver";
-import { resolveExternalGitDir } from "../session/worktree";
 import type { AgentProfile } from "./agent-profile";
-import { AcpClient } from "./client";
 import {
-  projectConfigOptions,
   projectPermissionRequest,
   projectSessionUpdate,
 } from "./event-projector";
-import type { AcpChildProcess, AcpProcessSupervisor } from "./process-supervisor";
+import type { AcpProcessSupervisor } from "./process-supervisor";
 import { AcpSessionStore } from "./store";
 import {
   acpError,
@@ -28,7 +25,6 @@ import {
   type AcpUiEvent,
   type KbblSessionId,
   type Result,
-  type StopReason,
   type TurnKey,
 } from "./types";
 
@@ -69,28 +65,33 @@ export type RequestedSessionConfig = Pick<
 export class AcpSessionController {
   /** §14.4: SSE event ids only have meaning within one projection epoch. */
   readonly streamEpoch: string = crypto.randomUUID();
-  private child: AcpChildProcess | null = null;
-  private client: AcpClient | null = null;
-  private acpSessionId: AcpAgentSessionId | null = null;
-  private configOptions: readonly schema.SessionConfigOption[] = [];
   private activeTurnKey: TurnKey | null = null;
-  private replaying = false;
   private fenced = false;
-  private defunct = false;
   private permissionCounter = 0;
   private chunkCounter = 0;
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private readonly events: AcpUiEvent[] = [];
   private readonly listeners = new Set<UiEventListener>();
 
-  constructor(private readonly deps: ControllerDeps) {}
+  private readonly process: AcpControllerProcess;
+  constructor(private readonly deps: ControllerDeps) {
+    this.process = new AcpControllerProcess(deps, {
+      emit: event => this.emit(event),
+      update: notification => this.handleUpdate(notification),
+      permission: request => this.handlePermissionRequest(request),
+      exit: code => this.handleChildExit(code),
+    });
+  }
+  start(...args: Parameters<AcpControllerProcess["start"]>) { return this.process.start(...args); }
+  applyRequestedConfig(requested: RequestedSessionConfig) { return this.process.applyRequestedConfig(requested); }
+  setConfigOption(configId: string, value: string | boolean) { return this.process.setConfigOption(configId, value); }
 
   get sid(): KbblSessionId {
     return this.deps.sid;
   }
 
   get sessionId(): AcpAgentSessionId | null {
-    return this.acpSessionId;
+    return this.process.acpSessionId;
   }
 
   get isPromptActive(): boolean {
@@ -98,15 +99,15 @@ export class AcpSessionController {
   }
 
   get isDefunct(): boolean {
-    return this.defunct;
+    return this.process.defunct;
   }
 
   get liveConfigOptions(): readonly schema.SessionConfigOption[] {
-    return this.configOptions;
+    return this.process.configOptions;
   }
 
   get childPid(): number | null {
-    return this.child?.pid ?? null;
+    return this.process.child?.pid ?? null;
   }
 
   get hasSubscribers(): boolean {
@@ -120,218 +121,6 @@ export class AcpSessionController {
   subscribe(listener: UiEventListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
-  }
-
-  /**
-   * Spawns the child, initializes ACP v1, validates capabilities, and
-   * creates or loads the agent session (§10.2 steps 5–10 / §10.3).
-   */
-  async start(
-    cwd: string,
-    mode: ControllerStartMode,
-    abortSignal?: AbortSignal,
-  ): Promise<Result<void, AcpError>> {
-    if (abortSignal?.aborted) {
-      return err(
-        acpError(
-          "acp_session_load_failed",
-          "controller.start",
-          "cold history load was cancelled",
-          this.deps.sid,
-        ),
-      );
-    }
-    // A linked worktree's git data lives outside cwd; granting it as a
-    // workspace root lets a sandboxed agent commit without asking. Resolved
-    // before the spawn: an await between initialize and session/new|load
-    // would open a window where a cancel's teardown nulls the client.
-    const integration = this.deps.prepareIntegration?.() ?? ok({ mcpServers: [], skillDirectory: null });
-    if (!integration.ok) return integration;
-    const externalGitDir = await resolveExternalGitDir(cwd);
-    const additionalDirectories = externalGitDir === null ? [] : [externalGitDir];
-    if (integration.value.skillDirectory !== null) additionalDirectories.push(integration.value.skillDirectory);
-    const spawned = this.deps.supervisor.spawn(this.deps.profile, cwd);
-    if (!spawned.ok) return spawned;
-    this.child = spawned.value;
-    this.child.onExit((code) => this.handleChildExit(code));
-    if (abortSignal?.aborted) {
-      await this.teardownChild();
-      return err(
-        acpError(
-          "acp_session_load_failed",
-          "controller.start",
-          "cold history load was cancelled",
-          this.deps.sid,
-        ),
-      );
-    }
-    abortSignal?.addEventListener(
-      "abort",
-      () => {
-        void this.teardownChild().catch((error: unknown) => {
-          console.error(
-            `[acp] sid=${this.deps.sid} cancelled child teardown failed`,
-            error,
-          );
-        });
-      },
-      { once: true },
-    );
-
-    this.client = new AcpClient(this.deps.sid, this.child, {
-      onSessionUpdate: (notification) => this.handleUpdate(notification),
-      onPermissionRequest: (request) => this.handlePermissionRequest(request),
-    }, integration.value.mcpServers);
-
-    const initialized = await this.client.initialize();
-    if (!initialized.ok) {
-      await this.teardownChild();
-      return initialized;
-    }
-    if (integration.value.skillDirectory !== null && this.client.agentCapabilities.sessionCapabilities?.additionalDirectories == null) {
-      await this.teardownChild();
-      return err(acpError("skill_unavailable", "controller.start", `${this.deps.profile.id} does not advertise the verified skill discovery path`, this.deps.sid));
-    }
-    if (
-      this.deps.profile.requireLoadSession &&
-      this.client.agentCapabilities.loadSession !== true
-    ) {
-      await this.teardownChild();
-      return err(
-        acpError(
-          "acp_required_capability_missing",
-          "controller.start",
-          `profile "${this.deps.profile.id}" requires session/load but the agent does not advertise loadSession`,
-          this.deps.sid,
-        ),
-      );
-    }
-
-    if (mode.kind === "new") {
-      const created = await this.client.newSession(cwd, additionalDirectories);
-      if (!created.ok) {
-        await this.teardownChild();
-        return created;
-      }
-      this.acpSessionId = created.value.sessionId as AcpAgentSessionId;
-      this.configOptions = created.value.configOptions ?? [];
-      this.deps.store.setAcpSessionId(this.deps.sid, this.acpSessionId);
-      if (this.configOptions.length > 0) {
-        this.emit(projectConfigOptions(this.configOptions));
-      }
-      return ok(undefined);
-    }
-
-    this.acpSessionId = mode.acp_session_id;
-    this.replaying = true;
-    const loaded = await this.client.loadSession(
-      mode.acp_session_id,
-      cwd,
-      additionalDirectories,
-    );
-    this.replaying = false;
-    if (!loaded.ok) {
-      await this.teardownChild();
-      return loaded;
-    }
-    // session/load answers with configOptions like session/new does; a
-    // respawned session must keep the §12 resolver cache and the UI's
-    // config selectors alive across child restarts.
-    const loadedOptions = loaded.value?.configOptions ?? [];
-    if (loadedOptions.length > 0) {
-      this.configOptions = loadedOptions;
-      this.emit(projectConfigOptions(loadedOptions));
-    }
-    return ok(undefined);
-  }
-
-  /**
-   * §12: apply the session's durable model/effort/mode requests via semantic
-   * config categories. A model or effort the agent cannot satisfy fails the
-   * session; a mode it cannot satisfy is logged and left at the agent's
-   * default — a missing permission preset must not kill a session that
-   * would otherwise run.
-   */
-  async applyRequestedConfig(
-    requested: RequestedSessionConfig,
-  ): Promise<Result<void, AcpError>> {
-    const requests: Array<["model" | "thought_level", string | null]> = [
-      ["model", requested.requested_model],
-      ["thought_level", requested.requested_effort],
-    ];
-    for (const [category, value] of requests) {
-      const resolved = resolveRequestedOption(this.configOptions, category, value);
-      if (!resolved.ok) return resolved;
-      if (resolved.value === null) continue;
-      // Any match that is not exact changed what will run, and nothing else
-      // can tell the operator: the picker showed one id and the session got
-      // another.
-      const match = resolved.value.match;
-      const prefix =
-        `[acp] sid=${this.deps.sid} ${category} requested=${value} ` +
-        `resolved=${resolved.value.valueId} `;
-      if (match.kind === "context_hint_ignored") {
-        console.log(
-          prefix +
-            `context_hint_ignored requested_hint=${match.requestedHint ?? "none"} ` +
-            `matched_hint=${match.matchedHint ?? "none"}`,
-        );
-      } else if (match.kind === "retired_id_mapped") {
-        console.log(prefix + `retired_id_mapped retired_id=${match.retiredId}`);
-      }
-      const applied = await this.setConfigOption(
-        resolved.value.configId,
-        resolved.value.valueId,
-      );
-      if (!applied.ok) return applied;
-    }
-    return this.applyRequestedMode(requested.requested_mode);
-  }
-
-  private async applyRequestedMode(
-    requestedMode: string | null,
-  ): Promise<Result<void, AcpError>> {
-    if (requestedMode === null) return ok(undefined);
-    const resolved = matchRequestedOption(this.configOptions, "mode", requestedMode);
-    if (!resolved.ok) {
-      console.warn(
-        `[acp] sid=${this.deps.sid} mode requested=${requestedMode} not applied: ${resolved.error}`,
-      );
-      return ok(undefined);
-    }
-    const current = this.configOptions.find(
-      (option) => option.id === resolved.value.configId,
-    );
-    if (current?.currentValue === resolved.value.valueId) return ok(undefined);
-    const applied = await this.setConfigOption(
-      resolved.value.configId,
-      resolved.value.valueId,
-    );
-    if (!applied.ok) {
-      console.warn(
-        `[acp] sid=${this.deps.sid} mode requested=${requestedMode} not applied: ${applied.error.detail}`,
-      );
-    }
-    return ok(undefined);
-  }
-
-  async setConfigOption(
-    configId: string,
-    value: string | boolean,
-  ): Promise<Result<void, AcpError>> {
-    const client = this.client;
-    if (!client || this.acpSessionId === null) {
-      return err(this.notLiveError("controller.setConfigOption"));
-    }
-    const applied = await client.setConfigOption(
-      this.acpSessionId,
-      configId,
-      value,
-    );
-    if (!applied.ok) return applied;
-    this.configOptions = applied.value.configOptions;
-    this.emit(projectConfigOptions(this.configOptions));
-    return ok(undefined);
   }
 
   /**
@@ -361,9 +150,9 @@ export class AcpSessionController {
         ),
       );
     }
-    const client = this.client;
-    if (!client || this.acpSessionId === null) {
-      return err(this.notLiveError("controller.runTurn"));
+    const client = this.process.client;
+    if (!client || this.process.acpSessionId === null) {
+      return err(this.process.notLiveError("controller.runTurn"));
     }
 
     this.activeTurnKey = turn.turn_key;
@@ -385,7 +174,7 @@ export class AcpSessionController {
       `[acp] sid=${turn.sid} turn=${turn.turn_key} prompting (pid=${this.childPid})`,
     );
 
-    const response = await client.prompt(this.acpSessionId, turn.payload);
+    const response = await client.prompt(this.process.acpSessionId, turn.payload);
     // The exit handler may have already classified this turn as lost.
     if (this.activeTurnKey !== turn.turn_key) {
       return err(
@@ -403,13 +192,13 @@ export class AcpSessionController {
       // §10.4: transport loss (child exit, closed stream) means the answer
       // never arrived — the outcome is uncertain, never a plain failure.
       const lost =
-        this.defunct || response.error.code === "acp_transport_lost";
+        this.process.defunct || response.error.code === "acp_transport_lost";
       const code = lost ? ("acp_transport_lost" as const) : response.error.code;
       this.deps.store.completeTurn(turn.sid, turn.turn_key, {
         status: lost ? "unknown" : "failed",
         failure_code: code,
         failure_detail: response.error.detail,
-      });
+      }, { status: "absent" });
       this.finishTurn(
         turn,
         lost ? "unknown" : "failed",
@@ -419,12 +208,13 @@ export class AcpSessionController {
       return err({ ...response.error, code });
     }
 
-    const stopReason: StopReason = response.value.stopReason;
+    const usage = this.process.usage.turn(response.value);
+    const stopReason: schema.StopReason = response.value.stopReason;
     if (stopReason === "end_turn") {
       this.deps.store.completeTurn(turn.sid, turn.turn_key, {
         status: "succeeded",
         stop_reason: stopReason,
-      });
+      }, usage);
       this.finishTurn(turn, "idle", stopReason);
       return ok(undefined);
     }
@@ -432,7 +222,7 @@ export class AcpSessionController {
       this.deps.store.completeTurn(turn.sid, turn.turn_key, {
         status: "cancelled",
         stop_reason: stopReason,
-      });
+      }, usage);
       this.finishTurn(turn, "cancelled", stopReason);
       return ok(undefined);
     }
@@ -443,7 +233,7 @@ export class AcpSessionController {
       stop_reason: stopReason,
       failure_code: "acp_prompt_failed",
       failure_detail: `stop reason "${stopReason}"`,
-    });
+    }, usage);
     this.finishTurn(turn, "failed", stopReason);
     return err(
       acpError(
@@ -460,7 +250,7 @@ export class AcpSessionController {
    * until none remain or one fails to reach the agent.
    */
   async dispatchAcceptedTurns(): Promise<void> {
-    while (!this.fenced && !this.defunct && this.activeTurnKey === null) {
+    while (!this.fenced && !this.process.defunct && this.activeTurnKey === null) {
       const next = this.deps.store.listAcceptedTurns(this.deps.sid)[0];
       if (!next) return;
       const result = await this.runTurn(next);
@@ -482,11 +272,11 @@ export class AcpSessionController {
   /** Normal user stop: forwards session/cancel; outcome arrives via the
    * active prompt's response (stopReason "cancelled"). Not a fence. */
   async cancelActiveTurn(): Promise<Result<void, AcpError>> {
-    const client = this.client;
-    if (!client || this.acpSessionId === null) {
-      return err(this.notLiveError("controller.cancelActiveTurn"));
+    const client = this.process.client;
+    if (!client || this.process.acpSessionId === null) {
+      return err(this.process.notLiveError("controller.cancelActiveTurn"));
     }
-    return client.cancel(this.acpSessionId);
+    return client.cancel(this.process.acpSessionId);
   }
 
   /**
@@ -500,14 +290,14 @@ export class AcpSessionController {
     this.deps.store.setFencedBy(this.deps.sid, fencedBy);
     this.rejectPendingPermissions();
 
-    const client = this.client;
-    if (client && this.acpSessionId !== null) {
+    const client = this.process.client;
+    if (client && this.process.acpSessionId !== null) {
       if (this.activeTurnKey !== null) {
-        await client.cancel(this.acpSessionId);
+        await client.cancel(this.process.acpSessionId);
       }
-      await this.closeSessionBounded(client);
+      await this.process.closeSessionBounded(client);
     }
-    await this.teardownChild();
+    await this.process.teardownChild();
     this.deps.store.markEnded(this.deps.sid, {
       status: "fenced",
       reason: endReason,
@@ -519,26 +309,13 @@ export class AcpSessionController {
 
   /** Idle-child close (§10.8) and shutdown path: no fence semantics. */
   async closeChild(): Promise<void> {
-    if (this.defunct) return;
-    const client = this.client;
-    if (client && this.acpSessionId !== null) {
-      await this.closeSessionBounded(client);
+    if (this.process.defunct) return;
+    const client = this.process.client;
+    if (client && this.process.acpSessionId !== null) {
+      await this.process.closeSessionBounded(client);
     }
-    await this.teardownChild();
+    await this.process.teardownChild();
     this.deps.onDefunct(this.deps.sid);
-  }
-
-  /** §10.5 steps 4–5: session/close when advertised, bounded grace — an
-   * agent that ignores close must not stall the kill (guardrail 19). */
-  private async closeSessionBounded(client: AcpClient): Promise<void> {
-    if (!client.agentCapabilities.sessionCapabilities?.close) return;
-    if (this.acpSessionId === null) return;
-    await Promise.race([
-      client.closeSession(this.acpSessionId),
-      new Promise((resolve) =>
-        setTimeout(resolve, this.deps.config.close_grace_ms),
-      ),
-    ]);
   }
 
   resolvePermission(
@@ -573,7 +350,7 @@ export class AcpSessionController {
   }
 
   stderrTail(): readonly string[] {
-    return this.child?.stderrTail() ?? [];
+    return this.process.child?.stderrTail() ?? [];
   }
 
   // === internals ===
@@ -589,22 +366,23 @@ export class AcpSessionController {
     // session/load replays historical chunks through the same notification
     // callback. A history read is not live activity and must not rewrite the
     // session timestamp or fan out one global inbox update per replay chunk.
-    if (!this.replaying) this.deps.store.touchActivity(this.deps.sid);
+    if (!this.process.replaying) this.deps.store.touchActivity(this.deps.sid);
     // While a kbbl-dispatched prompt is active, a live user_message_chunk
     // is the agent echoing that prompt back — runTurn already projected
     // the dispatched text, so the echo would duplicate it. Replayed user
     // chunks (session/load) still flow: there runTurn emitted nothing.
     if (
-      !this.replaying &&
+      !this.process.replaying &&
       this.activeTurnKey !== null &&
       notification.update.sessionUpdate === "user_message_chunk"
     ) {
       return;
     }
+    if (!this.process.replaying) this.process.usage.reading(notification.update, this.activeTurnKey);
     this.chunkCounter += 1;
     const projected = projectSessionUpdate(
       notification.update,
-      this.replaying,
+      this.process.replaying,
       `chunk-${this.chunkCounter}`,
     );
     if (projected === null) {
@@ -617,7 +395,7 @@ export class AcpSessionController {
       // Keep the controller's cache authoritative for the §12 resolver.
       const update = notification.update;
       if (update.sessionUpdate === "config_option_update") {
-        this.configOptions = update.configOptions;
+        this.process.configOptions = update.configOptions;
       }
     }
     this.emit(projected);
@@ -658,8 +436,8 @@ export class AcpSessionController {
    * and retires this controller.
    */
   private handleChildExit(code: number): void {
-    if (this.defunct) return;
-    this.defunct = true;
+    if (this.process.defunct) return;
+    this.process.defunct = true;
     this.rejectPendingPermissions();
     if (this.activeTurnKey !== null) {
       const turnKey = this.activeTurnKey;
@@ -671,7 +449,7 @@ export class AcpSessionController {
           status: "unknown",
           failure_code: "acp_transport_lost",
           failure_detail: `agent process exited (code ${code}) during an active prompt`,
-        },
+        }, { status: "absent" },
       );
       this.deps.store.setStatus(this.deps.sid, "idle");
       this.emit({
@@ -684,7 +462,7 @@ export class AcpSessionController {
         `[acp] sid=${this.deps.sid} child exited code=${code} during turn ${turnKey}; outcome unknown`,
       );
     }
-    this.client?.close();
+    this.process.client?.close();
     this.deps.onDefunct(this.deps.sid);
   }
 
@@ -694,7 +472,7 @@ export class AcpSessionController {
     stopReason?: string,
     detail?: string,
   ): void {
-    if (!this.defunct) this.deps.store.setStatus(turn.sid, "idle");
+    if (!this.process.defunct) this.deps.store.setStatus(turn.sid, "idle");
     this.deps.store.touchActivity(turn.sid);
     this.emit({
       kind: "turn_state",
@@ -708,22 +486,4 @@ export class AcpSessionController {
     );
   }
 
-  private async teardownChild(): Promise<void> {
-    this.defunct = true;
-    this.client?.close();
-    this.client = null;
-    if (this.child) {
-      await this.child.kill();
-      this.child = null;
-    }
-  }
-
-  private notLiveError(operation: string): AcpError {
-    return acpError(
-      "acp_transport_lost",
-      operation,
-      "no live ACP connection for this controller",
-      this.deps.sid,
-    );
-  }
 }

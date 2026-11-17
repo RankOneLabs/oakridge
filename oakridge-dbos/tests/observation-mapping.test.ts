@@ -56,7 +56,7 @@ test("a declaration maps to its own event with the exact journaled addresses", (
 });
 
 test("no adapter or ops command remains for the retired observation surfaces", async () => {
-  expect(Object.keys(await import("../src/adapters/observation")).sort()).toEqual(["publishObservationOnce", "startObservationPublisher"]);
+  expect(Object.keys(await import("../src/adapters/observation")).sort()).toEqual(["publishObservationOnce", "readObservationCost", "startObservationPublisher"]);
   await expect(runOps(["observation-backfill", "10"], "postgres://unused")).rejects.toThrow("usage: ops");
 });
 

@@ -131,7 +131,7 @@ describe("the baseline schema", () => {
     const db = openTestDb();
     const tables = db.query<{ name: string }, []>("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
       .all().map((row) => row.name);
-    expect(tables).toEqual(["_migrations", "acp_session_archives", "acp_session_summaries", "acp_sessions", "acp_turns"]);
+    expect(tables).toEqual(["_migrations", "acp_session_archives", "acp_session_summaries", "acp_sessions", "acp_turn_usage", "acp_turns", "acp_usage_reading"]);
     db.close();
   });
 });
@@ -180,7 +180,7 @@ describe("kbbl ledger migrations", () => {
   test("a fresh database applies the complete numbered sequence and has no grant column", () => {
     const ledger = new Database(":memory:");
     const { applied } = applyMigrations(ledger, ledgerMigrations);
-    expect(applied).toEqual(["001_sessions.sql", "002_session_archive.sql", "003_gated_review.sql", dropMigration, "005_session_pr_integration.sql"]);
+    expect(applied).toEqual(["001_sessions.sql", "002_session_archive.sql", "003_gated_review.sql", dropMigration, "005_session_pr_integration.sql", "006_turn_usage.sql"]);
     expect(sessionColumns(ledger)).not.toContain("gated_review_json");
     ledger.close();
   });
@@ -189,9 +189,9 @@ describe("kbbl ledger migrations", () => {
     const ledger = ledgerThrough003();
     const rows = retainedRows(ledger);
     const columns = sessionColumns(ledger);
-    expect(applyMigrations(ledger, ledgerMigrations).applied).toEqual([dropMigration, "005_session_pr_integration.sql"]);
+    expect(applyMigrations(ledger, ledgerMigrations).applied).toEqual([dropMigration, "005_session_pr_integration.sql", "006_turn_usage.sql"]);
     expect(sessionColumns(ledger)).toEqual([...columns.filter((column) => column !== "gated_review_json"), "pr_integration", "pr_skill_digest"]);
-    expect(retainedRows(ledger)).toEqual(rows);
+    expect(retainedRows(ledger)).toEqual({ ...rows, acp_turn_usage: [], acp_usage_reading: [] });
     ledger.close();
   });
 
@@ -217,4 +217,27 @@ describe("kbbl ledger migrations", () => {
     expect(store.insertSession({ ...claim, sid: "sid-fresh" as KbblSessionId, resumable_key: "key-fresh" as ResumableKey }).workflow).toEqual(claim.workflow);
     ledger.close();
   });
+});
+
+test("usage migration defines columns, composite keys, status CHECK and cascading foreign keys", () => {
+  const database = openTestDb();
+  const columns = (table: string) => database.query<{ name: string; pk: number }, []>(`PRAGMA table_info(${table})`).all();
+  expect(columns("acp_turn_usage").map(c => c.name)).toEqual([
+    "sid", "turn_key", "status", "input_tokens", "output_tokens", "cached_read_tokens", "cached_write_tokens", "thought_tokens", "total_tokens", "model_usage_json", "raw_json", "recorded_at",
+  ]);
+  expect(columns("acp_usage_reading").map(c => c.name)).toEqual([
+    "sid", "seq", "process_seq", "context_used", "context_size", "cost_amount", "cost_currency", "active_turn_key", "autonomous", "origin_kind", "received_at",
+  ]);
+  expect(columns("acp_turn_usage").filter(c => c.pk).map(c => c.name)).toEqual(["sid", "turn_key"]);
+  expect(columns("acp_usage_reading").filter(c => c.pk).map(c => c.name)).toEqual(["sid", "seq"]);
+  database.exec(`INSERT INTO acp_sessions (sid,agent_profile,name,project_workdir,worktree_path,status,last_activity_at,created_at,updated_at) VALUES ('s','fake','test','/tmp','/tmp','idle','t','t','t');
+    INSERT INTO acp_turns (sid,turn_key,source,payload_hash,payload,status,created_at) VALUES ('s','t','operator','hash','hi','succeeded','t');`);
+  expect(() => database.exec("INSERT INTO acp_turn_usage (sid,turn_key,status,recorded_at) VALUES ('s','t','other','t')")).toThrow();
+  database.exec("INSERT INTO acp_turn_usage (sid,turn_key,status,recorded_at) VALUES ('s','t','absent','t')");
+  database.exec("DELETE FROM acp_turns WHERE sid='s'");
+  expect(database.query("SELECT * FROM acp_turn_usage").all()).toEqual([]);
+  database.exec("INSERT INTO acp_usage_reading (sid,seq,process_seq,received_at) VALUES ('s',0,0,'t')");
+  database.exec("DELETE FROM acp_sessions WHERE sid='s'");
+  expect(database.query("SELECT * FROM acp_usage_reading").all()).toEqual([]);
+  database.close();
 });

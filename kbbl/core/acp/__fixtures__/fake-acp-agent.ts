@@ -34,12 +34,22 @@ import {
   type AgentContext,
 } from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk";
+
+interface ScriptedPromptResponse {
+  usage?: schema.Usage;
+  _meta?: { [key: string]: unknown };
+}
+interface UsageScriptEntry {
+  response?: ScriptedPromptResponse;
+  updates?: schema.UsageUpdate[];
+}
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 
+const usageTurnIndices = new Map<string, number>();
 const behavior = process.env.FAKE_ACP_BEHAVIOR ?? "happy";
 const stateDir =
   process.env.FAKE_ACP_STATE_DIR ?? join(tmpdir(), "fake-acp-state");
@@ -182,11 +192,20 @@ const app = agent({ name: `fake-acp-${behavior}` })
     });
     return { configOptions: options };
   })
-  .onRequest("session/set_config_option", (ctx) => {
+  .onRequest("session/set_config_option", async (ctx) => {
     const { sessionId, configId, value } = ctx.params;
     const known = CONFIG_OPTIONS.some((option) => option.id === configId);
     if (!known) {
       throw RequestError.invalidParams(undefined, `unknown config "${configId}"`);
+    }
+    // Tests can trigger a live notification after a prompt has completed,
+    // without timers or injecting events directly into the controller.
+    const usageOnConfig = Bun.file(join(stateDir, "usage-on-config.json"));
+    if (await usageOnConfig.exists()) {
+      const updates: schema.UsageUpdate[] = await usageOnConfig.json();
+      for (const update of updates) {
+        await notifyAndRecord(ctx.client, sessionId, { sessionUpdate: "usage_update", ...update });
+      }
     }
     configState.get(sessionId)?.set(configId, value as string | boolean);
     const options = CONFIG_OPTIONS.map((option) => {
@@ -282,6 +301,18 @@ const app = agent({ name: `fake-acp-${behavior}` })
       sessionUpdate: "agent_message_chunk",
       content: { type: "text", text: `fake reply to: ${text}` },
     });
+    // Optional per-turn script: raw response extensions and usage notifications.
+    const scriptFile = Bun.file(join(stateDir, "usage-script.json"));
+    if (await scriptFile.exists()) {
+      const scripts: UsageScriptEntry[] = await scriptFile.json();
+      const index = usageTurnIndices.get(sessionId) ?? 0;
+      usageTurnIndices.set(sessionId, index + 1);
+      const scripted = scripts[index];
+      for (const update of scripted?.updates ?? []) {
+        await notifyAndRecord(ctx.client, sessionId, { sessionUpdate: "usage_update", ...update });
+      }
+      return { stopReason: "end_turn" as const, ...scripted?.response };
+    }
     return { stopReason: "end_turn" as const };
   });
 

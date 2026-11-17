@@ -1,3 +1,4 @@
+import { claudeUsageParser } from "#kbbl/core/acp/usage-parsers/claude";
 // Shared test wiring: an AcpSessionService backed by the fake ACP agent
 // (§24.1) over real SQLite, optionally with the real git worktree
 // provider. Used by handler tests and the DBOS
@@ -60,6 +61,7 @@ export function makeAcpTestService(
   for (const id of profileIds) {
     profiles.set(id, {
       id,
+      usageParser: id === "claude-code" ? claudeUsageParser : undefined,
       skillDiscovery: options.skillDiscovery ?? null,
       label: `Fake agent (${id})`,
       command: process.execPath,

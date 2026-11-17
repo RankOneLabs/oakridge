@@ -228,11 +228,11 @@ integration("tenant and capability bound every read: another tenant sees nothing
   const item = await addressed(h, "assessment-1", "/findings/0");
   const id = encodeURIComponent(item.occurrence_id);
   for (const route of [`/v1/items/${id}/status`, `/v1/items/${id}/answers`, `/v1/items/${id}/evidence`, `/v1/runs/run-1/logical-items`, `/v1/runs/run-1/gradeable-items`, `/v1/runs/run-1/unlinked-items`,
-    `/v1/runs/run-1/unresolved-references`, `/v1/runs/run-1/logical-items/T1/lineage`, `/v1/runs/run-1/grading-spend`]) {
+    `/v1/runs/run-1/unresolved-references`, `/v1/runs/run-1/logical-items/T1/lineage`, `/v1/runs/run-1/grading-spend`, `/v1/runs/run-1/cost`]) {
     expect({ route, status: (await get(h, route, "grade")).status }).toEqual({ route, status: 403 });
     expect({ route, status: (await h.app.request(route)).status }).toEqual({ route, status: 403 });
-    const crossed = await get<{ total?: number; items?: unknown[]; executions?: Record<string, number>; requests_sent?: number }>(h, route, "other-read");
-    expect(crossed.status === 404 || crossed.body.total === 0 || crossed.body.requests_sent === 0).toBe(true);
+    const crossed = await get<{ total?: number; items?: unknown[]; executions?: Record<string, number>; requests_sent?: number; charged_usd?: number }>(h, route, "other-read");
+    expect(crossed.status === 404 || crossed.body.total === 0 || crossed.body.requests_sent === 0 || crossed.body.charged_usd === 0).toBe(true);
   }
 }));
 

@@ -277,3 +277,15 @@ export function selectGradeableItems(inputs: CompositeInputs, path: CompositePat
   return { ...page, items: page.items.map((entry) => ({ item: addressedItem(contributionItem(entry)),
     links: pageOf(logicalLinks(entry.links, inputs.logical_items), query.links) })) };
 }
+
+export interface RunChargedCost { readonly run_id: string; readonly charged_usd: number }
+/** Provider attempts are the charged ledger; execution.cost is deliberately excluded. */
+export function readRunChargedCost(db: Database, tenant: TenantScope, run_id: string): Promise<RunChargedCost> {
+  return withTenant(db, tenant, async (trx) => {
+    const row = await trx.selectFrom("observation.grading_provider_attempt")
+      .select((eb) => eb.fn.sum<number>("charged_cost").as("charged_usd"))
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", run_id).executeTakeFirst();
+    return { run_id, charged_usd: Number(row?.charged_usd ?? 0) };
+  });
+}
