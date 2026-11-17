@@ -102,6 +102,34 @@ realTest(
     report.push(`initial_turn=${observed.value.kind}`);
     expect(observed.value.kind).toBe("succeeded");
 
+    if (REAL_AGENT === "claude-code") {
+      const captured = [];
+      for (const [index, prompt] of [
+        "Write a numbered list of exactly 100 distinct English nouns. Do not use tools.",
+        "Reply with exactly OK. Do not use tools.",
+      ].entries()) {
+        const key = `operator:usage-probe-${index}` as TurnKey;
+        const sent = await service.sendInput(sid, prompt, { client_message_id: `usage-probe-${index}` });
+        if (!sent.ok) throw new Error(sent.error.detail);
+        const deadline = Date.now() + 120_000;
+        while (["accepted", "prompting"].includes(store.getTurn(sid, key)?.status ?? "")) {
+          if (Date.now() > deadline) throw new Error("usage probe timed out");
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        const row = store.readUsage(sid).turns.find(turn => turn.turn_key === key)?.usage;
+        expect(row?.status === "reported" || row?.status === "partial").toBe(true);
+        expect(row?.raw_json).toBeTruthy();
+        const raw = JSON.parse(row?.raw_json ?? "{}");
+        captured.push(raw.usage);
+        report.push(`usage_probe_${index}=PromptResponse.usage:${JSON.stringify(raw.usage)}; quota.model_usage:${JSON.stringify(raw.quota?.model_usage)}`);
+      }
+      // The second answer is deliberately tiny: a cumulative output counter
+      // cannot be smaller than the preceding long answer's counter.
+      expect(captured[0].outputTokens).toBeGreaterThan(100);
+      expect(captured[1].outputTokens).toBeLessThan(captured[0].outputTokens);
+      console.log(report.join("\n"));
+    }
+
     const controller = registry.getLive(sid as never);
     const options = controller?.liveConfigOptions ?? [];
     report.push(

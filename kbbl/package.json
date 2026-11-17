@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "imports": { "#kbbl/*": "./*.ts" },
   "description": "Operator surface for CLI coding agents. Tablet-first PWA over Tailscale.",
   "scripts": {
     "dev": "bun run --hot core/server.ts",

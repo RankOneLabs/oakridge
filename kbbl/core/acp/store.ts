@@ -1,3 +1,5 @@
+import { AcpUsageStore, type UsageReadingInput } from "#kbbl/core/acp/store-usage";
+import type { TurnUsage } from "#kbbl/core/acp/usage-parsers/types";
 import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
 import { AcpTurnStore, type AcceptTurnInput, type AcceptTurnOutcome, type OpenTurnRow, type RetainedPromptTurn, type BootSweepResult } from "./store-turns";
 import { AcpWorktreeStore, type ReusableWorktreeClaimInput, type ReusableWorktreeClaim, type WorktreeAssignment } from "./store-worktrees";
@@ -58,9 +60,11 @@ interface RawTerminalSessionSummary {
 export class AcpSessionStore {
   private readonly sessionsChangedListeners = new Set<() => void>();
 
+  private readonly usage: AcpUsageStore;
   private readonly turns: AcpTurnStore;
   private readonly worktrees: AcpWorktreeStore;
   constructor(private readonly db: Database) {
+    this.usage = new AcpUsageStore(db);
     this.turns = new AcpTurnStore(db);
     this.worktrees = new AcpWorktreeStore(db);
   }
@@ -415,9 +419,12 @@ export class AcpSessionStore {
   listAcceptedTurns(sid: KbblSessionId): AcpTurnRow[] { return this.turns.listAcceptedTurns(sid); }
   listOpenTurns(sid: KbblSessionId): OpenTurnRow[] { return this.turns.listOpenTurns(sid); }
   markTurnPrompting(sid: KbblSessionId, turnKey: TurnKey): void { this.turns.markTurnPrompting(sid, turnKey); }
-  completeTurn(sid: KbblSessionId, turnKey: TurnKey, outcome: Parameters<AcpTurnStore["completeTurn"]>[2]): void {
-    this.turns.completeTurn(sid, turnKey, outcome);
+  completeTurn(sid: KbblSessionId, turnKey: TurnKey, outcome: Parameters<AcpTurnStore["completeTurn"]>[2], usage: TurnUsage = { status: "absent" }): void {
+    this.turns.completeTurn(sid, turnKey, outcome, usage);
   }
+  nextProcessSeq(sid: KbblSessionId): number { return this.usage.nextProcessSeq(sid); }
+  appendUsageReading(row: UsageReadingInput): void { this.usage.appendReading(row); }
+  readUsage(sid: KbblSessionId) { return this.usage.read(sid); }
   bootSweep(): BootSweepResult {
     const result = this.turns.bootSweep();
     this.notifySessionsChanged();

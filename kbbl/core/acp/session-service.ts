@@ -1,14 +1,16 @@
+import { randomUUID } from "node:crypto";
+import { AcpSessionReads } from "#kbbl/core/acp/session-reads";
+import { AcpSessionHistory } from "#kbbl/core/acp/session-history";
+export type { HistoryLease } from "#kbbl/core/acp/session-history";
+import { AcpSessionProvisioner } from "#kbbl/core/acp/session-provisioner";
 import { createSessionController } from "./session-controller";
-import { prepareSessionIntegration, removeSessionSkills, selectDirectIntegration, type SessionIntegrationConfig } from "./session-integration";
-import { sha256Hex, startSpecHash } from "./start-spec-hash";
-import type { RetainedPromptTurn } from "./store-turns";
-import { toSnapshot, turnToReceipt, turnToOpenTurn } from "./pwa-wire";
+import { removeSessionSkills, type SessionIntegrationConfig } from "./session-integration";
+import { sha256Hex } from "./start-spec-hash";
+import { toSnapshot, turnToReceipt } from "./pwa-wire";
 // Application service used by HTTP handlers (§8.6). Routes never reach into
 // an SDK connection; everything goes through this facade. Every prompt is
 // dispatched through the controller's accepted-turn loop, so "one active
 // prompt per session, ledger as the only deferral" holds by construction.
-
-import { randomUUID } from "node:crypto";
 
 import type { AgentProfile, AgentProfileId } from "./agent-profile";
 import { resolveProfile } from "./agent-profile";
@@ -16,34 +18,23 @@ import type { AcpSessionController } from "./controller";
 import { configOptionCategory } from "./config-option-resolver";
 import type { AcpControllerRegistry } from "./controller-registry";
 import type { AcpProcessSupervisor } from "./process-supervisor";
-import {
-  FinalResponseSummaryGenerator,
-  generateSessionSummary,
-  ManualCompactionSummaryGenerator,
-  type SessionSummaryGenerator,
-} from "./session-summary";
+import type { SessionSummaryGenerator } from "./session-summary";
 import type { AcpSessionStore } from "./store";
 import {
   acpError,
   err,
-  isAcpFailureCode,
   ok,
   type AcpError,
   type AcpSessionRow,
   type AcpSessionSnapshot,
-  type AcpSessionStartSpec,
-  type AcpSessionWorkflowIdentity,
   type AcpUiEvent,
   type AdvanceResult,
-  type EnsureResult,
   type FenceContext,
   type InputReceipt,
   type KbblSessionId,
   type ResumableKey,
   type Result,
-  type TerminalObservation,
   type TurnKey,
-  type UiSessionHistory,
   type WorktreeProvider,
 } from "./types";
 
@@ -65,25 +56,23 @@ export interface AcpSessionServiceDeps {
   readonly summary_generators?: readonly SessionSummaryGenerator[];
 }
 
-const OBSERVE_POLL_MS = 100;
-
-export interface HistoryLease {
-  readonly history: UiSessionHistory;
-  release(): Promise<void>;
-}
-
 export class AcpSessionService {
-  private readonly historyConsumers = new Map<KbblSessionId, number>();
-  private readonly coldHistoryLoads = new Map<KbblSessionId, AbortController>();
-
-  private readonly summaryGenerators: readonly SessionSummaryGenerator[];
-
+  private readonly reads: AcpSessionReads;
+  private readonly history: AcpSessionHistory;
+  private readonly provisioner: AcpSessionProvisioner;
   constructor(private readonly deps: AcpSessionServiceDeps) {
-    this.summaryGenerators = deps.summary_generators ?? [
-      new ManualCompactionSummaryGenerator(),
-      new FinalResponseSummaryGenerator(),
-    ];
+    this.reads = new AcpSessionReads(deps.store);
+    this.history = new AcpSessionHistory(deps, { touchController: (sid, signal) => this.touchController(sid, signal) });
+    this.provisioner = new AcpSessionProvisioner(deps, { touchController: sid => this.touchController(sid) });
   }
+  ensureResumableSession(...args: Parameters<AcpSessionProvisioner["ensureResumableSession"]>) {
+    return this.provisioner.ensureResumableSession(...args);
+  }
+  createSession(...args: Parameters<AcpSessionProvisioner["createSession"]>) { return this.provisioner.createSession(...args); }
+  observeInitialTurn(...args: Parameters<AcpSessionProvisioner["observeInitialTurn"]>) { return this.provisioner.observeInitialTurn(...args); }
+  loadHistory(...args: Parameters<AcpSessionHistory["loadHistory"]>) { return this.history.loadHistory(...args); }
+  loadResumeHistory(...args: Parameters<AcpSessionHistory["loadResumeHistory"]>) { return this.history.loadResumeHistory(...args); }
+  acquireHistory(...args: Parameters<AcpSessionHistory["acquireHistory"]>) { return this.history.acquireHistory(...args); }
 
   /** §10.7 boot recovery sweep. Call once before serving requests. */
   recoverOnBoot(): void {
@@ -96,163 +85,19 @@ export class AcpSessionService {
     );
   }
 
-  /**
-   * Idempotent DBOS ensure. Integration and digest enter the hash so a retry
-   * cannot silently change PR procedures. run_id/unit_id/worker remain
-   * backfilled metadata outside the hash.
-   */
-  async ensureResumableSession(
-    key: string,
-    spec: AcpSessionStartSpec,
-    identity: AcpSessionWorkflowIdentity | null = null,
-  ): Promise<Result<EnsureResult, AcpError>> {
-    const resumableKey = key as ResumableKey;
-    const existing = identity === null ? this.deps.store.getByResumableKey(resumableKey) : null;
-    const selected = identity ? ok(identity) : existing
-      ? ok({ pr_integration: existing.pr_integration, pr_skill_digest: existing.pr_skill_digest })
-      : selectDirectIntegration(this.deps.integration);
-    if (!selected.ok) return selected;
-    const specHash = startSpecHash(spec, selected.value);
-    const sid = randomUUID() as KbblSessionId;
-    const profileId = spec.runtime ?? this.deps.config.default_agent;
+  readPromptTurns(sid: string) { return this.reads.readPromptTurns(sid); }
 
-    const claimed = this.deps.store.claimResumable(resumableKey, {
-      sid,
-      resumable_key: resumableKey,
-      start_spec_hash: specHash,
-      agent_profile: profileId,
-      name: spec.name ?? key,
-      artifact_id: spec.artifact_id ?? null,
-      project_workdir: spec.workdir,
-      worktree_path: spec.workdir,
-      requested_model: spec.model ?? null,
-      requested_effort: spec.effort ?? null,
-      requested_mode: this.profileSessionMode(profileId),
-      workflow: identity,
-      ...selected.value,
-    });
+  listSessions() { return this.reads.listSessions(); }
 
-    if (claimed.kind === "spec_conflict") {
-      return err(
-        acpError(
-          "session_key_conflict",
-          "service.ensureResumableSession",
-          `resumable key "${key}" already claimed with a different start spec`,
-          claimed.row.sid,
-        ),
-      );
-    }
-    if (claimed.kind === "existing") {
-      const profile = resolveProfile(this.deps.profiles, claimed.row.agent_profile);
-      if (!profile.ok) return profile;
-      const prepared = prepareSessionIntegration(claimed.row, profile.value, this.deps.integration);
-      if (!prepared.ok) return prepared;
-      // Re-touch so retained accepted turns dispatch (§10.7 lazy spawn).
-      if (this.hasDispatchableWork(claimed.row)) {
-        void this.touchController(claimed.row.sid);
-      }
-      return ok({ kind: "existing", session: toSnapshot(claimed.row) });
-    }
+  listSessionArchives() { return this.reads.listSessionArchives(); }
 
-    const provisioned = await this.provision(claimed.row, spec);
-    if (!provisioned.ok) return provisioned;
-    const controller = provisioned.value;
+  archiveSession(sid: string) { return this.reads.archiveSession(sid); }
 
-    const accepted = this.deps.store.acceptTurn({
-      sid: claimed.row.sid,
-      turn_key: `initial:${key}` as TurnKey,
-      source: "initial",
-      payload: spec.initial_prompt,
-    });
-    if (accepted.kind === "payload_conflict") {
-      return err(
-        acpError(
-          "delivery_key_conflict",
-          "service.ensureResumableSession",
-          "initial turn already recorded with different payload",
-          claimed.row.sid,
-        ),
-      );
-    }
-    // §10.2 step 13: return immediately; the initial prompt runs async.
-    void controller.dispatchAcceptedTurns();
-    const row = this.deps.store.getSession(claimed.row.sid);
-    return ok({
-      kind: "created",
-      session: toSnapshot(row ?? claimed.row),
-    });
-  }
+  readUsage(sid: string) { return this.reads.readUsage(sid); }
 
-  /** Browser-created session (no resumable key). */
-  async createSession(
-    spec: AcpSessionStartSpec,
-  ): Promise<Result<AcpSessionSnapshot, AcpError>> {
-    const sid = randomUUID() as KbblSessionId;
-    const profileId = spec.runtime ?? this.deps.config.default_agent;
-    const selected = selectDirectIntegration(this.deps.integration);
-    if (!selected.ok) return selected;
-    const row = this.deps.store.insertSession({
-      sid,
-      resumable_key: null,
-      start_spec_hash: null,
-      agent_profile: profileId,
-      name: spec.name ?? sid.slice(0, 8),
-      artifact_id: spec.artifact_id ?? null,
-      project_workdir: spec.workdir,
-      worktree_path: spec.workdir,
-      requested_model: spec.model ?? null,
-      requested_effort: spec.effort ?? null,
-      requested_mode: this.profileSessionMode(profileId),
-      workflow: null,
-      ...selected.value,
-    });
+  getSession(sid: string) { return this.reads.getSession(sid); }
 
-    const provisioned = await this.provision(row, spec);
-    if (!provisioned.ok) return provisioned;
-
-    if (spec.initial_prompt.length > 0) {
-      this.deps.store.acceptTurn({
-        sid,
-        turn_key: `initial:${sid}` as TurnKey,
-        source: "initial",
-        payload: spec.initial_prompt,
-      });
-      void provisioned.value.dispatchAcceptedTurns();
-    }
-    const fresh = this.deps.store.getSession(sid);
-    return ok(toSnapshot(fresh ?? row));
-  }
-
-  readPromptTurns(sid: string): RetainedPromptTurn[] | null {
-    return this.deps.store.readPromptTurns(sid as KbblSessionId);
-  }
-
-  listSessions(): AcpSessionSnapshot[] {
-    return this.deps.store.listSessions().map(toSnapshot);
-  }
-
-  listSessionArchives(): Map<KbblSessionId, string> {
-    return this.deps.store.listSessionArchives();
-  }
-
-  archiveSession(sid: string): Result<void, AcpError> {
-    const row = this.deps.store.getSession(sid as KbblSessionId);
-    if (!row) return err(acpError("session_not_found", "service.archiveSession", `no session ${sid}`, sid as KbblSessionId));
-    if (row.status !== "ended" && row.status !== "fenced" && row.status !== "failed") {
-      return err(acpError("session_busy", "service.archiveSession", `session ${sid} is still active`, row.sid));
-    }
-    this.deps.store.archiveSession(row.sid);
-    return ok(undefined);
-  }
-
-  getSession(sid: string): AcpSessionSnapshot | null {
-    const row = this.deps.store.getSession(sid as KbblSessionId);
-    return row ? toSnapshot(row) : null;
-  }
-
-  listByArtifact(artifactId: string): AcpSessionSnapshot[] {
-    return this.deps.store.listByArtifact(artifactId).map(toSnapshot);
-  }
+  listByArtifact(artifactId: string) { return this.reads.listByArtifact(artifactId); }
 
   /** Permission requests awaiting an operator answer (0 with no live
    * controller — pending permissions do not survive the child). */
@@ -415,11 +260,11 @@ export class AcpSessionService {
         // Fence ownership is durable before summary generation awaits agent
         // or storage work, so no new operator input can race terminalization.
         this.deps.store.setFencedBy(row.sid, fence.fenced_by);
-        await this.captureSummary(controller);
+        await this.history.captureSummary(controller);
         await controller.fence(fence.fenced_by);
       } else if (row.status !== "fenced") {
         this.deps.store.setFencedBy(row.sid, fence.fenced_by);
-        await this.captureColdSummary(this.deps.store.getSession(row.sid) ?? row);
+        await this.history.captureColdSummary(this.deps.store.getSession(row.sid) ?? row);
         this.deps.store.markEnded(row.sid, {
           status: "fenced",
           reason: "fenced",
@@ -429,10 +274,10 @@ export class AcpSessionService {
       return ok(undefined);
     }
     if (controller) {
-      await this.captureSummary(controller);
+      await this.history.captureSummary(controller);
       await controller.closeChild();
     } else if (row.status !== "ended" && row.status !== "fenced") {
-      await this.captureColdSummary(row);
+      await this.history.captureColdSummary(row);
     }
     if (row.status !== "ended" && row.status !== "fenced") {
       this.deps.store.markEnded(row.sid, { status: "ended", reason: "user_closed" });
@@ -531,196 +376,6 @@ export class AcpSessionService {
     return this.deps.controllers.getLive(sid as KbblSessionId)?.streamEpoch ?? null;
   }
 
-  /**
-   * Bounded observation of the INITIAL turn (§11.2): pending until that
-   * turn has a known final outcome; the child staying alive afterwards is
-   * not non-terminal. Also the lazy-spawn touch that dispatches retained
-   * accepted turns (§10.7).
-   */
-  async observeInitialTurn(
-    sid: string,
-    waitMs: number,
-  ): Promise<Result<TerminalObservation, AcpError>> {
-    const kbblSid = sid as KbblSessionId;
-    const first = this.deps.store.getSession(kbblSid);
-    if (!first) {
-      return err(
-        acpError(
-          "session_not_found",
-          "service.observeInitialTurn",
-          `no session ${sid}`,
-        ),
-      );
-    }
-    if (this.hasDispatchableWork(first)) void this.touchController(kbblSid);
-
-    const deadline = Date.now() + Math.max(0, waitMs);
-    for (;;) {
-      const row = this.deps.store.getSession(kbblSid);
-      if (!row) {
-        return err(
-          acpError(
-            "session_not_found",
-            "service.observeInitialTurn",
-            `session ${sid} disappeared`,
-          ),
-        );
-      }
-      const observation = this.classifyInitialTurn(row);
-      if (observation.kind !== "pending" || Date.now() >= deadline) {
-        return ok(observation);
-      }
-      await new Promise((resolve) => setTimeout(resolve, OBSERVE_POLL_MS));
-    }
-  }
-
-  /**
-   * History via the agent's own store (§10.3): live controllers answer
-   * from the projection buffer; otherwise a fresh child replays
-   * session/load. A failed load reports an expired history, not an error.
-   */
-  async loadHistory(
-    sid: string,
-    loadSignal?: AbortSignal,
-  ): Promise<Result<UiSessionHistory, AcpError>> {
-    const kbblSid = sid as KbblSessionId;
-    const row = this.deps.store.getSession(kbblSid);
-    if (!row) {
-      return err(
-        acpError(
-          "session_not_found",
-          "service.loadHistory",
-          `no session ${sid}`,
-        ),
-      );
-    }
-    const live = this.deps.controllers.getLive(kbblSid);
-    if (live) {
-      return ok({
-        kind: "transcript",
-        sid: kbblSid,
-        events: live.snapshotEvents(),
-        openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
-        expired: false,
-        summary: null,
-      });
-    }
-    if (
-      row.status === "ended" ||
-      row.status === "fenced" ||
-      row.status === "failed"
-    ) {
-      return this.loadTerminalHistory(row, loadSignal);
-    }
-    const touched = await this.touchController(kbblSid, loadSignal);
-    if (!touched.ok) {
-      if (touched.error.code === "acp_session_load_failed") {
-        return ok({
-          kind: "unavailable",
-          sid: kbblSid,
-          events: [],
-          openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
-          expired: true,
-          summary: null,
-          reason: "agent_history_unavailable",
-        });
-      }
-      return touched;
-    }
-    return ok({
-      kind: "transcript",
-      sid: kbblSid,
-      events: touched.value.snapshotEvents(),
-      openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
-      expired: false,
-      summary: null,
-    });
-  }
-
-  /** Resume needs the complete ACP replay, including events evicted from a
-   * live controller's bounded display buffer. The replay child is private and
-   * never takes ownership of the parent's active session. */
-  async loadResumeHistory(
-    sid: string,
-    loadSignal?: AbortSignal,
-  ): Promise<Result<UiSessionHistory, AcpError>> {
-    const kbblSid = sid as KbblSessionId;
-    const row = this.deps.store.getSession(kbblSid);
-    if (!row) return err(acpError("session_not_found", "service.loadResumeHistory", `no session ${sid}`));
-    const openTurns = this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn);
-    const fallback = (reason: "missing_acp_session_id" | "agent_history_unavailable"): UiSessionHistory => {
-      const summary = this.deps.store.getSessionSummary(kbblSid);
-      return summary
-        ? { kind: "summary", sid: kbblSid, events: [], openTurns, expired: true, summary }
-        : { kind: "unavailable", sid: kbblSid, events: [], openTurns, expired: true, summary: null, reason };
-    };
-    if (loadSignal?.aborted) return err(acpError("acp_session_load_failed", "service.loadResumeHistory", "resume request was cancelled", kbblSid));
-    if (row.acp_session_id === null) return ok(fallback("missing_acp_session_id"));
-    const profile = resolveProfile(this.deps.profiles, row.agent_profile);
-    if (!profile.ok) return ok(fallback("agent_history_unavailable"));
-
-    const controller = createSessionController({ row, profile: profile.value, deps: this.deps, historyOnly: true, fullReplay: true });
-    try {
-      const started = await controller.start(row.worktree_path, {
-        kind: "load",
-        acp_session_id: row.acp_session_id,
-      }, loadSignal);
-      if (loadSignal?.aborted) return err(acpError("acp_session_load_failed", "service.loadResumeHistory", "resume request was cancelled", kbblSid));
-      if (!started.ok) return ok(fallback("agent_history_unavailable"));
-      return ok({ kind: "transcript", sid: kbblSid, events: controller.snapshotEvents(), openTurns, expired: false, summary: null });
-    } finally {
-      await controller.closeChild();
-    }
-  }
-
-  /**
-   * History ownership for HTTP/SSE readers. A cold read may need an ACP child
-   * for session/load, but that display-only child must not outlive its final
-   * reader. Durable work and pre-existing live controllers are never owned by
-   * this lease and are therefore never closed by it.
-   */
-  async acquireHistory(
-    sid: string,
-    consumerSignal?: AbortSignal,
-  ): Promise<Result<HistoryLease, AcpError>> {
-    const kbblSid = sid as KbblSessionId;
-    let coldLoad = this.coldHistoryLoads.get(kbblSid) ?? null;
-    if (coldLoad === null && this.deps.controllers.getLive(kbblSid) === null) {
-      coldLoad = new AbortController();
-      this.coldHistoryLoads.set(kbblSid, coldLoad);
-    }
-    this.historyConsumers.set(
-      kbblSid,
-      (this.historyConsumers.get(kbblSid) ?? 0) + 1,
-    );
-
-    let isReleased = false;
-    const release = async () => {
-      if (isReleased) return;
-      isReleased = true;
-      consumerSignal?.removeEventListener("abort", releaseOnAbort);
-      await this.releaseHistoryConsumer(kbblSid, coldLoad);
-    };
-    const releaseOnAbort = () => {
-      void release().catch((error: unknown) => {
-        console.error(`[acp] sid=${kbblSid} history release failed`, error);
-      });
-    };
-    consumerSignal?.addEventListener("abort", releaseOnAbort, { once: true });
-    if (consumerSignal?.aborted) releaseOnAbort();
-
-    const history = await this.loadHistory(sid, coldLoad?.signal);
-    if (!history.ok) {
-      await release();
-      return history;
-    }
-
-    return ok({
-      history: history.value,
-      release,
-    });
-  }
-
   async setConfigOption(
     sid: string,
     configId: string,
@@ -740,11 +395,6 @@ export class AcpSessionService {
       this.deps.store.setRequestedMode(sid as KbblSessionId, value);
     }
     return ok(undefined);
-  }
-
-  /** The profile's starting permission mode; null when the profile is unknown or sets none. */
-  private profileSessionMode(profileId: AgentProfileId): string | null {
-    return this.deps.profiles.get(profileId)?.sessionMode ?? null;
   }
 
   subscribe(
@@ -772,138 +422,6 @@ export class AcpSessionService {
 
   async shutdown(): Promise<void> {
     await this.deps.controllers.shutdownAll();
-  }
-
-  // === internals ===
-
-  /** §10.2 steps 3–10 for a fresh `provisioning` row. Failures become a
-   * visible failed session, never an invisible claimed key. */
-  private async provision(
-    row: AcpSessionRow,
-    spec: AcpSessionStartSpec,
-  ): Promise<Result<AcpSessionController, AcpError>> {
-    const profile = resolveProfile(this.deps.profiles, row.agent_profile);
-    if (!profile.ok) return this.failProvisioning(row, profile.error);
-
-    const prepared = prepareSessionIntegration(row, profile.value, this.deps.integration);
-    if (!prepared.ok) return this.failProvisioning(row, prepared.error);
-    const worktree = await this.deps.worktrees.resolve(row.sid, spec);
-    if (!worktree.ok) return this.failProvisioning(row, worktree.error);
-    this.deps.store.setWorktree(row.sid, {
-      worktree_path: worktree.value.worktree_path,
-      worktree_branch: worktree.value.worktree_branch,
-      worktree_base_ref: worktree.value.worktree_base_ref,
-      parent_sid: worktree.value.parent_sid,
-      project_workdir: worktree.value.project_workdir,
-    });
-
-    const created = await this.deps.controllers.getOrCreate(row.sid, async () => {
-      const controller = createSessionController({ row, profile: profile.value, deps: this.deps });
-      const started = await controller.start(worktree.value.worktree_path, {
-        kind: "new",
-      });
-      if (!started.ok) return started;
-      const configured = await controller.applyRequestedConfig(row);
-      if (!configured.ok) {
-        await controller.closeChild();
-        return configured;
-      }
-      return ok(controller);
-    });
-    if (!created.ok) return this.failProvisioning(row, created.error);
-
-    this.deps.store.setStatus(row.sid, "idle");
-    console.log(
-      `[acp] sid=${row.sid} provisioned profile=${row.agent_profile} pid=${created.value.childPid}`,
-    );
-    return created;
-  }
-
-  private failProvisioning(
-    row: AcpSessionRow,
-    error: AcpError,
-  ): Result<never, AcpError> {
-    this.deps.store.markEnded(row.sid, {
-      status: "failed",
-      reason: error.code,
-      detail: error.detail,
-    });
-    console.error(
-      `[acp] sid=${row.sid} provisioning failed: ${error.code} (${error.detail})`,
-    );
-    return err({ ...error, sid: row.sid });
-  }
-
-  private async captureSummary(controller: AcpSessionController): Promise<void> {
-    if (this.deps.store.getSessionSummary(controller.sid)) return;
-    if (controller.isPromptActive) return;
-    const generated = await generateSessionSummary({
-      session_id: controller.sid,
-      events: controller.snapshotEvents(),
-      produced_at: new Date().toISOString(),
-    }, this.summaryGenerators);
-    if (!generated.ok) {
-      const detail = generated.error.map((failure) => `${failure.method}: ${failure.detail}`).join("; ");
-      console.warn(`[acp] sid=${controller.sid} terminal summary unavailable: ${detail || "no generators configured"}`);
-      return;
-    }
-    try {
-      this.deps.store.putSessionSummary(generated.value);
-    } catch (error) {
-      console.error(`[acp] sid=${controller.sid} terminal summary persistence failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  /**
-   * Capture a terminal fallback without registering a live controller or
-   * dispatching durable input. This is the cold counterpart to
-   * `captureSummary`: fencing records ownership first, then this display-only
-   * load runs before the session row is finalized.
-   */
-  private async captureColdSummary(row: AcpSessionRow): Promise<void> {
-    if (this.deps.store.getSessionSummary(row.sid)) return;
-    await this.loadTerminalHistory(row);
-  }
-
-  /**
-   * Terminal history is display-only: replay through a private controller so
-   * it cannot dispatch accepted work, reapply config, or reactivate the row.
-   */
-  private async loadTerminalHistory(
-    row: AcpSessionRow,
-    loadSignal?: AbortSignal,
-  ): Promise<Result<UiSessionHistory, AcpError>> {
-    const openTurns = this.deps.store.listOpenTurns(row.sid).map(turnToOpenTurn);
-    const fallback = (reason: "missing_acp_session_id" | "agent_history_unavailable"): Result<UiSessionHistory, AcpError> => {
-      const summary = this.deps.store.getSessionSummary(row.sid);
-      return summary
-        ? ok({ kind: "summary", sid: row.sid, events: [], openTurns, expired: true, summary })
-        : ok({ kind: "unavailable", sid: row.sid, events: [], openTurns, expired: true, summary: null, reason });
-    };
-    if (row.acp_session_id === null) return fallback("missing_acp_session_id");
-    const profile = resolveProfile(this.deps.profiles, row.agent_profile);
-    if (!profile.ok) return fallback("agent_history_unavailable");
-
-    const controller = createSessionController({ row, profile: profile.value, deps: this.deps, historyOnly: true });
-    const started = await controller.start(row.worktree_path, {
-      kind: "load",
-      acp_session_id: row.acp_session_id,
-    }, loadSignal);
-    if (!started.ok) {
-      await controller.closeChild();
-      return fallback("agent_history_unavailable");
-    }
-    const events = controller.snapshotEvents();
-    await this.captureSummary(controller);
-    await controller.closeChild();
-    return ok({
-      kind: "transcript",
-      sid: row.sid,
-      events,
-      openTurns,
-      expired: false,
-      summary: null,
-    });
   }
 
   /** §10.3 lazy respawn: fresh child + session/load for an idle session. */
@@ -978,109 +496,4 @@ export class AcpSessionService {
     return created;
   }
 
-  private hasDispatchableWork(row: AcpSessionRow): boolean {
-    return (
-      row.fenced_by === null &&
-      (row.status === "idle" || row.status === "prompting") &&
-      this.deps.controllers.getLive(row.sid) === null &&
-      this.deps.store.listAcceptedTurns(row.sid).length > 0
-    );
-  }
-
-  private async releaseHistoryConsumer(
-    sid: KbblSessionId,
-    coldLoad: AbortController | null,
-  ): Promise<void> {
-    const remaining = Math.max(0, (this.historyConsumers.get(sid) ?? 1) - 1);
-    if (remaining > 0) {
-      this.historyConsumers.set(sid, remaining);
-      return;
-    }
-    this.historyConsumers.delete(sid);
-    if (coldLoad === null) return;
-    const controller = this.deps.controllers.getLive(sid);
-    const hasDurableWork =
-      (controller?.isPromptActive ?? false) ||
-      this.deps.store.listAcceptedTurns(sid).length > 0;
-    if (hasDurableWork || (controller?.hasSubscribers ?? false)) {
-      // The display-only child has acquired a real owner. Detach it from
-      // history lifecycle without aborting the active/queued work.
-      if (this.coldHistoryLoads.get(sid) === coldLoad) {
-        this.coldHistoryLoads.delete(sid);
-      }
-      return;
-    }
-    if (controller) {
-      if (this.coldHistoryLoads.get(sid) === coldLoad) {
-        this.coldHistoryLoads.delete(sid);
-      }
-      await controller.closeChild();
-      return;
-    }
-    if (this.coldHistoryLoads.get(sid) === coldLoad) {
-      this.coldHistoryLoads.delete(sid);
-      coldLoad.abort();
-    }
-  }
-
-  private classifyInitialTurn(row: AcpSessionRow): TerminalObservation {
-    const session = toSnapshot(row);
-    if (row.status === "failed") {
-      // `failProvisioning` ends the row with the failing error's own code and
-      // detail, so the row already says what happened. Reporting
-      // `agent_spawn_failed` for all of them threw that away at the one
-      // boundary that matters: a caller watching for terminal state
-      // (Oakridge's observer, the PWA) saw "the agent would not start" for a
-      // session whose agent started fine and was handed a model it does not
-      // offer.
-      return {
-        kind: "failed",
-        session,
-        failure_code: isAcpFailureCode(row.end_reason)
-          ? row.end_reason
-          : "agent_spawn_failed",
-        failure_detail:
-          row.end_detail ?? row.end_reason ?? "session failed during provisioning",
-      };
-    }
-    const turn = this.deps.store.getInitialTurn(row.sid);
-    // A closed/fenced session can never complete its initial turn: pending
-    // here would be a wait on a state that cannot arrive. Success stays
-    // success (the turn finished before the close); everything else is a
-    // terminal fence/close outcome.
-    if (
-      (row.status === "fenced" || row.status === "ended") &&
-      turn?.status !== "succeeded"
-    ) {
-      return {
-        kind: "failed",
-        session,
-        failure_code: "session_fenced",
-        failure_detail: `session was ${row.status} (${row.end_reason ?? "closed"}) before the initial turn completed`,
-      };
-    }
-    if (!turn) return { kind: "pending", session };
-    switch (turn.status) {
-      case "succeeded":
-        return { kind: "succeeded", session };
-      case "failed":
-      case "unknown":
-        return {
-          kind: "failed",
-          session,
-          failure_code: turn.failure_code ?? "acp_prompt_failed",
-          failure_detail:
-            turn.failure_detail ?? `initial turn is ${turn.status}`,
-        };
-      case "cancelled":
-        return {
-          kind: "failed",
-          session,
-          failure_code: "acp_prompt_failed",
-          failure_detail: "initial turn was cancelled",
-        };
-      default:
-        return { kind: "pending", session };
-    }
-  }
 }

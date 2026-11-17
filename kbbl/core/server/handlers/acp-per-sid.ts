@@ -30,6 +30,13 @@ export interface AcpPerSidRouteDeps {
 export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void {
   const { acp } = deps;
 
+  app.get("/sessions/:sid/usage", (c) => {
+    const sid = c.req.param("sid");
+    if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
+    if (!acp.getSession(sid)) return c.json({ error: `no session ${sid}`, code: "session_not_found" }, 404);
+    return c.json(acp.readUsage(sid));
+  });
+
   // History (§14.3): live projection buffer when available, otherwise a
   // lazy respawn + session/load replay. Never a transcript file.
   app.get("/sessions/:sid/history", async (c) => {
