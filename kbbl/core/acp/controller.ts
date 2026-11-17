@@ -1,3 +1,4 @@
+import { parseTurn } from "./usage-parsers/types";
 // One controller == one kbbl session == at most one ACP child process
 // (§8.4). Owns: spawn+initialize+new/load, the live prompt mutex, turn
 // outcome recording, accepted-turn dispatch, pending permissions, UI
@@ -69,6 +70,7 @@ export type RequestedSessionConfig = Pick<
 export class AcpSessionController {
   /** §14.4: SSE event ids only have meaning within one projection epoch. */
   readonly streamEpoch: string = crypto.randomUUID();
+  private processSeq = 0;
   private child: AcpChildProcess | null = null;
   private client: AcpClient | null = null;
   private acpSessionId: AcpAgentSessionId | null = null;
@@ -150,6 +152,7 @@ export class AcpSessionController {
     const externalGitDir = await resolveExternalGitDir(cwd);
     const additionalDirectories = externalGitDir === null ? [] : [externalGitDir];
     if (integration.value.skillDirectory !== null) additionalDirectories.push(integration.value.skillDirectory);
+    this.processSeq = this.deps.store.nextProcessSeq(this.deps.sid);
     const spawned = this.deps.supervisor.spawn(this.deps.profile, cwd);
     if (!spawned.ok) return spawned;
     this.child = spawned.value;
@@ -409,7 +412,7 @@ export class AcpSessionController {
         status: lost ? "unknown" : "failed",
         failure_code: code,
         failure_detail: response.error.detail,
-      });
+      }, { status: "absent" });
       this.finishTurn(
         turn,
         lost ? "unknown" : "failed",
@@ -419,12 +422,13 @@ export class AcpSessionController {
       return err({ ...response.error, code });
     }
 
+    const usage = parseTurn(this.deps.profile.usageParser, response.value.usage, response.value._meta);
     const stopReason: StopReason = response.value.stopReason;
     if (stopReason === "end_turn") {
       this.deps.store.completeTurn(turn.sid, turn.turn_key, {
         status: "succeeded",
         stop_reason: stopReason,
-      });
+      }, usage);
       this.finishTurn(turn, "idle", stopReason);
       return ok(undefined);
     }
@@ -432,7 +436,7 @@ export class AcpSessionController {
       this.deps.store.completeTurn(turn.sid, turn.turn_key, {
         status: "cancelled",
         stop_reason: stopReason,
-      });
+      }, usage);
       this.finishTurn(turn, "cancelled", stopReason);
       return ok(undefined);
     }
@@ -443,7 +447,7 @@ export class AcpSessionController {
       stop_reason: stopReason,
       failure_code: "acp_prompt_failed",
       failure_detail: `stop reason "${stopReason}"`,
-    });
+    }, usage);
     this.finishTurn(turn, "failed", stopReason);
     return err(
       acpError(
@@ -601,6 +605,17 @@ export class AcpSessionController {
     ) {
       return;
     }
+    const update = notification.update;
+    if (!this.replaying && update.sessionUpdate === "usage_update" && update.cost) {
+      let origin = { autonomous: false, origin_kind: null as string | null };
+      try { origin = this.deps.profile.usageParser?.origin(update._meta) ?? origin; }
+      catch { /* Unrecognised origin must not affect the turn. */ }
+      this.deps.store.appendUsageReading({
+        sid: this.deps.sid, process_seq: this.processSeq, context_used: update.used,
+        context_size: update.size, cost_amount: update.cost.amount, cost_currency: update.cost.currency,
+        active_turn_key: this.activeTurnKey, ...origin,
+      });
+    }
     this.chunkCounter += 1;
     const projected = projectSessionUpdate(
       notification.update,
@@ -671,7 +686,7 @@ export class AcpSessionController {
           status: "unknown",
           failure_code: "acp_transport_lost",
           failure_detail: `agent process exited (code ${code}) during an active prompt`,
-        },
+        }, { status: "absent" },
       );
       this.deps.store.setStatus(this.deps.sid, "idle");
       this.emit({

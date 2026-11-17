@@ -245,6 +245,8 @@ export class AcpSessionService {
     return ok(undefined);
   }
 
+  readUsage(sid: string) { return this.deps.store.readUsage(sid as KbblSessionId); }
+
   getSession(sid: string): AcpSessionSnapshot | null {
     const row = this.deps.store.getSession(sid as KbblSessionId);
     return row ? toSnapshot(row) : null;

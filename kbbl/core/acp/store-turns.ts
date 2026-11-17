@@ -1,3 +1,4 @@
+import { emptyCounters, type TurnUsage } from "./usage-parsers/types";
 // Typed turn persistence and boot recovery; the session facade owns change notifications.
 import type { Database } from "bun:sqlite";
 import type { ExecutedPromptTurn } from "../executed-prompt";
@@ -150,7 +151,9 @@ export class AcpTurnStore {
       failure_code?: AcpFailureCode;
       failure_detail?: string;
     },
+    usage: TurnUsage = { status: "absent" },
   ): void {
+    this.db.transaction(() => {
     this.db
       .prepare(
         `UPDATE acp_turns
@@ -167,12 +170,31 @@ export class AcpTurnStore {
         sid,
         turnKey,
       );
+    this.writeUsage(sid, turnKey, usage, nowIso());
+    })();
+  }
+
+  writeUsage(sid: KbblSessionId, turnKey: TurnKey, usage: TurnUsage, timestamp: string): void {
+    const counts = usage.status === "absent" ? emptyCounters : usage;
+    this.db.prepare("INSERT OR REPLACE INTO acp_turn_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(
+      sid, turnKey, usage.status, counts.input_tokens, counts.output_tokens, counts.cached_read_tokens,
+      counts.cached_write_tokens, counts.thought_tokens, counts.total_tokens,
+      usage.status === "absent" || usage.model_usage === null ? null : JSON.stringify(usage.model_usage),
+      usage.status === "absent" ? null : usage.raw_json, timestamp,
+    );
   }
 
   /** Boot recovery sweep, one transaction. */
   bootSweep(): BootSweepResult {
     const result = this.db.transaction((): BootSweepResult => {
       const ts = nowIso();
+      this.db.prepare(
+        `DELETE FROM acp_turn_usage WHERE (sid, turn_key) IN (
+          SELECT sid, turn_key FROM acp_turns WHERE source = 'initial' AND status IN ('prompting','unknown')
+          AND sid IN (SELECT sid FROM acp_sessions WHERE resumable_key IS NOT NULL
+          AND status NOT IN ('failed','fenced','ended')))`,
+      ).run();
+      const interrupted = this.db.prepare<AcpTurnRow, []>("SELECT * FROM acp_turns WHERE status = 'prompting'").all();
       this.db.prepare(
         `UPDATE acp_turns
          SET status = 'accepted', completed_at = NULL, failure_code = NULL, failure_detail = NULL
@@ -189,6 +211,10 @@ export class AcpTurnStore {
            WHERE status = 'prompting'`,
         )
         .run(ts);
+      for (const turn of interrupted) {
+        if (this.getTurn(turn.sid, turn.turn_key)?.status === "unknown")
+          this.writeUsage(turn.sid, turn.turn_key, { status: "absent" }, ts);
+      }
       const retained = this.db
         .prepare<{ n: number }, []>(
           "SELECT COUNT(*) AS n FROM acp_turns WHERE status = 'accepted'",

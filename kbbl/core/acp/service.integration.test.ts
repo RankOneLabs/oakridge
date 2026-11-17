@@ -154,3 +154,45 @@ for (const change of ["default-changed", "index-advanced", "index-missing"] as c
     expect(explicitSwitch.ok ? null : explicitSwitch.error.code).toBe("session_key_conflict");
   });
 }
+
+test("scripted Claude responses and cost snapshots survive controller turns", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const usage = { inputTokens: 10, outputTokens: 5, cachedReadTokens: 4, cachedWriteTokens: 3, totalTokens: 22 };
+  const quota = { token_count: {}, model_usage: [{ model: "claude", token_count: {
+    inputTokens: 10, outputTokens: 5, cachedInputTokens: 4, cachedWriteTokens: 3, totalTokens: 22,
+  } }] };
+  await Bun.write(join(stateDir, "usage-script.json"), JSON.stringify([
+    { response: { usage, _meta: { quota } }, updates: [
+      { used: 50, size: 100 },
+      { used: 60, size: 100, cost: { amount: 2.5, currency: "USD" }, _meta: { "_claude/origin": { kind: "peer" } } },
+    ] },
+    { response: {} },
+    { response: { _meta: { quota: { unexpected: true } } } },
+  ]));
+  const harness = makeAcpTestService({ stateDir, profileIds: ["claude-code"] });
+  harnesses.push(harness);
+  const ensured = await harness.service.ensureResumableSession("usage-script", { initial_prompt: "hi", workdir, runtime: "claude-code" });
+  if (!ensured.ok) throw Error(ensured.error.detail);
+  const sid = ensured.value.session.sid;
+  await harness.service.observeInitialTurn(sid, 8000);
+  for (const key of ["absent", "partial"]) {
+    const sent = await harness.service.sendInput(sid, "hi", { client_message_id: key });
+    if (!sent.ok) throw Error(sent.error.detail);
+    const deadline = Date.now() + 8000;
+    while (["accepted", "prompting"].includes(harness.store.getTurn(sid, sent.value.turn_key)?.status ?? "")) {
+      if (Date.now() > deadline) throw Error("turn timed out");
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  const result = harness.store.readUsage(sid);
+  expect(result.turns.map(t => [t.status, t.usage?.status])).toEqual([
+    ["succeeded", "reported"], ["succeeded", "absent"], ["succeeded", "partial"],
+  ]);
+  expect(result.turns[0]?.usage?.input_tokens).toBe(10);
+  expect(result.turns[2]?.usage?.raw_json).toContain("unexpected");
+  expect(result.readings).toHaveLength(1);
+  expect(result.readings[0]).toMatchObject({
+    process_seq: 0, active_turn_key: result.turns[0]?.turn_key, autonomous: true, origin_kind: "peer", cost_amount: 2.5,
+  });
+  expect(harness.registry.getLive(sid)?.snapshotEvents().some(event => event.kind === "usage")).toBe(true);
+}, 20000);

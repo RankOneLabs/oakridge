@@ -1,3 +1,4 @@
+import { claudeUsageParser } from "./usage-parsers/claude";
 // Built-in production agent profiles (§20, cohort 2). These are the two
 // profiles kbbl ships with; config.acp.agents entries override them wholesale
 // by id. Only launch configuration lives here — no protocol or event
@@ -80,6 +81,7 @@ export function builtinAgentProfiles(
     // Verified against claude-agent-acp 0.76.0 with the existing login.
     skillDiscovery: { kind: "additionalDirectories" },
     id: "claude-code",
+    usageParser: claudeUsageParser,
     label: "Claude Code (ACP)",
     command: installedBin(kbblRoot, "claude-agent-acp"),
     args: [],

@@ -1,3 +1,4 @@
+import { claudeUsageParser } from "./usage-parsers/claude";
 // Static process-launch configuration for ACP agents (§8.1, §20). A
 // profile describes HOW to start an agent binary; it carries no protocol
 // or provider event knowledge.
@@ -19,6 +20,7 @@ export interface AgentProfileEnvPolicy {
 export type SkillDiscovery = { readonly kind: "additionalDirectories" };
 
 export interface AgentProfile {
+  readonly usageParser?: import("./usage-parsers/types").UsageParser;
   readonly skillDiscovery?: SkillDiscovery | null;
   readonly id: AgentProfileId;
   readonly label: string;
@@ -52,6 +54,7 @@ export function loadAgentProfiles(
   const profiles = new Map<AgentProfileId, AgentProfile>(builtins ?? []);
   for (const [id, agent] of Object.entries(acp.agents)) {
     profiles.set(id, {
+      usageParser: id === "claude-code" ? claudeUsageParser : undefined,
       id,
       skillDiscovery: agent.skill_discovery ?? null,
       label: agent.label ?? id,

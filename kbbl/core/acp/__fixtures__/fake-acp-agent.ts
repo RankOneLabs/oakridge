@@ -40,6 +40,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 
+const usageTurnIndices = new Map<string, number>();
 const behavior = process.env.FAKE_ACP_BEHAVIOR ?? "happy";
 const stateDir =
   process.env.FAKE_ACP_STATE_DIR ?? join(tmpdir(), "fake-acp-state");
@@ -282,6 +283,18 @@ const app = agent({ name: `fake-acp-${behavior}` })
       sessionUpdate: "agent_message_chunk",
       content: { type: "text", text: `fake reply to: ${text}` },
     });
+    // Optional per-turn script: raw response extensions and usage notifications.
+    const scriptFile = Bun.file(join(stateDir, "usage-script.json"));
+    if (await scriptFile.exists()) {
+      const scripts: { response?: { usage?: import("@agentclientprotocol/sdk").Usage; _meta?: { [key: string]: unknown } }; updates?: import("@agentclientprotocol/sdk").UsageUpdate[] }[] = await scriptFile.json();
+      const index = usageTurnIndices.get(sessionId) ?? 0;
+      usageTurnIndices.set(sessionId, index + 1);
+      const scripted = scripts[index];
+      for (const update of scripted?.updates ?? []) {
+        await notifyAndRecord(ctx.client, sessionId, { sessionUpdate: "usage_update", ...update });
+      }
+      return { stopReason: "end_turn" as const, ...scripted?.response };
+    }
     return { stopReason: "end_turn" as const };
   });
 
