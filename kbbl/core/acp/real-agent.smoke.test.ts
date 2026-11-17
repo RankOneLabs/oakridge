@@ -15,8 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type * as schema from "@agentclientprotocol/sdk";
-import { AcpUsageCapture } from "./usage-capture";
-import { object } from "./usage-parsers/types";
+import { AcpUsageCapture } from "#kbbl/core/acp/usage-capture";
+import { object } from "#kbbl/core/acp/usage-parsers/types";
 import { openTestDb } from "../db/test-db";
 import { withoutContextHint, type RuntimeId } from "../runtime";
 import { GitWorktreeProvider } from "../worktree/service";
