@@ -1,12 +1,13 @@
 import type { AcpSessionStore } from "#kbbl/core/acp/store";
 import type { RetainedPromptTurn } from "#kbbl/core/acp/store-turns";
 import { toSnapshot } from "#kbbl/core/acp/pwa-wire";
-import { acpError, err, ok, type AcpError, type AcpSessionSnapshot, type KbblSessionId, type Result, type SessionUsage } from "#kbbl/core/acp/types";
+import { acpError, err, ok, type AcpError, type AcpSessionSnapshot, type KbblSessionId, type Result } from "#kbbl/core/acp/types";
+import type { SessionUsage } from "#kbbl/core/acp/usage-types";
 
 /** Adapter-local read projections and archive state; no agent process is required. */
 export class AcpSessionReads {
   constructor(private readonly store: AcpSessionStore) {}
-  readUsage(sid: string): SessionUsage { return this.store.readUsage(sid as KbblSessionId); }
+  readUsage(sid: string): SessionUsage { return this.store.usage.read(sid as KbblSessionId); }
   readPromptTurns(sid: string): RetainedPromptTurn[] | null {
     return this.store.readPromptTurns(sid as KbblSessionId);
   }

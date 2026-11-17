@@ -186,11 +186,11 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
   } catch (cause) { return fault(cause); } });
 }
 
-export interface UsageViewInput { read: RunRead; kbbl?: Pick<KbblClient, "usage"> | null; observation?: ObservationOptions | null }
-export async function readUsageView({ read, kbbl, observation }: UsageViewInput): Promise<RunUsage> {
+export interface UsageViewInput { read: RunRead; kbbl?: Pick<KbblClient, "usage"> | null; observation?: ObservationOptions | null; now?: Date }
+export async function readUsageView({ read, kbbl, observation, now = new Date() }: UsageViewInput): Promise<RunUsage> {
   const ids = [...new Set(read.attempts.flatMap((a) => a.kbbl_session_id ? [a.kbbl_session_id] : []))];
   const sessions: KbblUsage[] = []; const failed: string[] = [];
   await Promise.all(ids.map(async (sid) => { const result = await kbbl?.usage(sid); if (result?.ok) sessions.push(result.value); else failed.push(sid); }));
   const cost = await readObservationCost(observation, read.run.id);
-  return selectRunUsage({ read, sessions, failed_sessions: failed, verification: cost.ok && cost.value ? { usd: cost.value.charged_usd, usd_basis: "provider_charged" } : null });
+  return selectRunUsage({ read, sessions, failed_sessions: failed, verification: cost.ok && cost.value ? { usd: cost.value.charged_usd, usd_basis: "provider_charged" } : null, now });
 }

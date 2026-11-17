@@ -1,5 +1,5 @@
 import type { ActionId, RunId, UnitId } from "./primitives";
-/** Wire fields mirror kbbl/core/acp/types.ts SessionUsage and usage-parsers/types.ts. */
+/** Wire fields mirror kbbl/core/acp/usage-types.ts SessionUsage and usage-parsers/types.ts. */
 export interface WireCounters { input_tokens: number | null; output_tokens: number | null; cached_read_tokens: number | null; cached_write_tokens: number | null; thought_tokens: number | null; total_tokens: number | null }
 export interface WireModelUsage extends Omit<WireCounters, "total_tokens"> { model: string }
 export interface WireTurnUsage extends WireCounters { sid: string; turn_key: string; status: "reported" | "partial" | "absent"; model_usage: WireModelUsage[] | null; raw_json: string | null; recorded_at: string }

@@ -7,7 +7,7 @@ import { parseTurn, type ReadingOrigin, type TurnUsage } from "#kbbl/core/acp/us
 export class AcpUsageCapture {
   private processSeq = 0;
   constructor(private readonly deps: Pick<ControllerDeps, "sid" | "store" | "profile">) {}
-  beginProcess(): void { this.processSeq = this.deps.store.nextProcessSeq(this.deps.sid); }
+  beginProcess(): void { this.processSeq = this.deps.store.usage.nextProcessSeq(this.deps.sid); }
   turn(response: schema.PromptResponse): TurnUsage {
     return parseTurn(this.deps.profile.usageParser, response.usage, response._meta);
   }
@@ -16,7 +16,7 @@ export class AcpUsageCapture {
     let origin: ReadingOrigin = { autonomous: false, origin_kind: null };
     try { origin = this.deps.profile.usageParser?.origin(update._meta) ?? origin; }
     catch { /* Unrecognised origin must not affect the turn. */ }
-    this.deps.store.appendUsageReading({
+    this.deps.store.usage.appendReading({
       sid: this.deps.sid, process_seq: this.processSeq, context_used: update.used,
       context_size: update.size, cost_amount: update.cost.amount, cost_currency: update.cost.currency,
       active_turn_key: activeTurnKey, ...origin,

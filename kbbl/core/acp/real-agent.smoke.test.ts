@@ -135,7 +135,7 @@ realTest(
           if (Date.now() > deadline) throw new Error("usage probe timed out");
           await new Promise(resolve => setTimeout(resolve, 100));
         }
-        const row = store.readUsage(sid).turns.find(turn => turn.turn_key === key)?.usage;
+        const row = store.usage.read(sid).turns.find(turn => turn.turn_key === key)?.usage;
         expect(row?.status === "reported" || row?.status === "partial").toBe(true);
         expect(row?.raw_json).toBeTruthy();
         const raw = JSON.parse(row?.raw_json ?? "{}");
@@ -171,7 +171,7 @@ realTest(
         for (const update of probe.usage_updates) {
           if (update.sessionUpdate === "usage_update") expect(update.cost == null).toBe(true);
         }
-        const row = store.readUsage(sid).turns.find(turn => turn.turn_key === key)?.usage;
+        const row = store.usage.read(sid).turns.find(turn => turn.turn_key === key)?.usage;
         expect(row?.status).toBe("reported");
         expect(row?.output_tokens).toBe((probe.usage as schema.Usage).outputTokens);
         expect(row?.input_tokens).toBe((probe.usage as schema.Usage).inputTokens);

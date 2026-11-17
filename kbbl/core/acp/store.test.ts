@@ -285,7 +285,7 @@ test("usage writes replace atomically and absent values stay null", () => {
   const key = "usage-turn" as TurnKey;
   store.acceptTurn({ sid, turn_key: key, source: "operator", payload: "hi" });
   store.completeTurn(sid, key, { status: "succeeded" });
-  const absent = store.readUsage(sid).turns[0]?.usage;
+  const absent = store.usage.read(sid).turns[0]?.usage;
   expect(absent).toMatchObject({ status: "absent", input_tokens: null, output_tokens: null, model_usage: null, raw_json: null });
   store.markTurnPrompting(sid, key);
   db.exec("CREATE TRIGGER reject_usage BEFORE INSERT ON acp_turn_usage BEGIN SELECT RAISE(ABORT, 'no usage'); END");
@@ -296,7 +296,7 @@ test("usage writes replace atomically and absent values stay null", () => {
     status: "reported", input_tokens: 10, output_tokens: 3, cached_read_tokens: 1,
     cached_write_tokens: 2, thought_tokens: 0, total_tokens: 16, model_usage: [], raw_json: "{}",
   });
-  expect(store.readUsage(sid).turns[0]?.usage).toMatchObject({ status: "reported", input_tokens: 10, total_tokens: 16 });
+  expect(store.usage.read(sid).turns[0]?.usage).toMatchObject({ status: "reported", input_tokens: 10, total_tokens: 16 });
   expect(db.query("SELECT * FROM acp_turn_usage").all()).toHaveLength(1);
   db.close();
 });
@@ -313,11 +313,11 @@ test("restart deletes requeued initial usage and records interrupted operator us
   }
   store.setStatus(sid, "prompting");
   store.bootSweep();
-  expect(store.readUsage(sid).turns.map(t => [t.status, t.usage?.status ?? null])).toEqual([
+  expect(store.usage.read(sid).turns.map(t => [t.status, t.usage?.status ?? null])).toEqual([
     ["accepted", null], ["unknown", "absent"],
   ]);
   store.completeTurn(sid, "initial" as TurnKey, { status: "succeeded" });
-  expect(store.readUsage(sid).turns.every(t => t.usage !== null)).toBe(true);
+  expect(store.usage.read(sid).turns.every(t => t.usage !== null)).toBe(true);
 });
 
 test("reading snapshots persist raw costs and process segments across store recreation", () => {
@@ -325,12 +325,12 @@ test("reading snapshots persist raw costs and process segments across store recr
   const store = new AcpSessionStore(db);
   claim(store, "reading", "hash");
   const sid = "reading" as KbblSessionId;
-  expect(store.nextProcessSeq(sid)).toBe(0);
+  expect(store.usage.nextProcessSeq(sid)).toBe(0);
   const reading = { sid, process_seq: 0, context_used: 20, context_size: 100, cost_amount: 5, cost_currency: "USD", active_turn_key: null, autonomous: false, origin_kind: null };
-  store.appendUsageReading(reading);
+  store.usage.appendReading(reading);
   const reopened = new AcpSessionStore(db);
-  expect(reopened.nextProcessSeq(sid)).toBe(1);
-  reopened.appendUsageReading({ ...reading, process_seq: 1, cost_amount: 8 });
-  expect(reopened.readUsage(sid).readings.map(r => [r.seq, r.process_seq, r.cost_amount, r.active_turn_key])).toEqual([[0, 0, 5, null], [1, 1, 8, null]]);
+  expect(reopened.usage.nextProcessSeq(sid)).toBe(1);
+  reopened.usage.appendReading({ ...reading, process_seq: 1, cost_amount: 8 });
+  expect(reopened.usage.read(sid).readings.map(r => [r.seq, r.process_seq, r.cost_amount, r.active_turn_key])).toEqual([[0, 0, 5, null], [1, 1, 8, null]]);
   db.close();
 });

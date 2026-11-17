@@ -17,7 +17,7 @@ interface RunDetailViewProps {
  * than the previous run's leaking across the navigation.
  */
 export function RunDetailView({ runId, routePane, onBack }: RunDetailViewProps) {
-  return <div className="flex h-full min-h-0 flex-col overflow-hidden">
+  return <div className="or-run-detail flex h-full min-h-0 flex-col overflow-hidden">
     <div className="max-h-1/3 shrink-0 overflow-y-auto">
       <RunUsagePanel runId={runId} />
       <ManualMergeIndications runId={runId} />

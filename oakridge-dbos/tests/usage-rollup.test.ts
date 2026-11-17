@@ -30,6 +30,11 @@ test("autonomous and idle deltas use the most recent turn as background", () => 
  const deltas = costDeltas([session([], [reading(0,.1),{ ...reading(1,.2), autonomous: true, active_turn_key: "missing" }])], turns);
  expect(deltas.map((d) => [d.owner?.turn.turn_key,d.background])).toEqual([["x",true],["x",true]]);
 });
+test("background cost skips turns that are queued but not started", () => {
+ const queued = { ...turn("queued",50), started_at: null, completed_at: null };
+ const turns = attributeUsage([attempt(1)], [session([turn("x",0), queued])]);
+ expect(costDeltas([session([], [{ ...reading(0,.1), autonomous: true }])], turns).map((d) => d.owner?.turn.turn_key)).toEqual(["x"]);
+});
 test("absent token sums remain null", () => expect(sumUsage([{ tokens: tokensFor(turn("x",0)), usd: null, agent_ms: null }]).tokens.total).toBeNull());
 test("turn time records agent work and queue separately", () => expect(turnDuration(turn("x",0))).toEqual({ agent_ms: 2000, queue_ms: 1000 }));
 test("agent time sums turns into attempts, unit splits and the run across parallel units", async () => {
@@ -55,7 +60,7 @@ test("agent time sums turns into attempts, unit splits and the run across parall
    { ...turn(selectDeliveryKey(parallel), 0), completed_at: date(6) },
    { ...turn("parallel-steering", 6), completed_at: date(8) },
   ]), sid: parallel.kbbl_session_id },
- ], failed_sessions: [], verification: null });
+ ], failed_sessions: [], verification: null, now: new Date(20_000) });
  expect({
   units: usage.units.map((unit) => ({
    attempts: unit.attempts.map((entry) => ({ turns: entry.turns.map((entry) => entry.agent_ms), agent_ms: entry.agent_ms })),
@@ -108,20 +113,41 @@ test("read boundary fetches each session once per read and degrades failed cover
  expect(second.units[0]?.attempts[0]?.turns[0]?.status).toBe("unknown");
 });
 
-test("review time separates operator, engine and external waits and flags approximations", async () => {
- const { reviewTimes, elapsedTime } = await import("../src/projections/usage-time");
- const read = { run: { created_at: new Date(0) }, units: [{ id: "u", stage: "s" }],
-  revisions: [{ id: "rev", created_at: new Date(1000), artifact: "pr" }],
+const reviewRead = (overrides: Record<string, unknown> = {}) => ({ run: { created_at: new Date(0), root_unit_id: "root" }, units: [{ id: "root", status: { kind: "running" } }, { id: "u", stage: "s" }],
+  revisions: [{ id: "rev", unit_id: "u", artifact: "pr", seq: 0, created_at: new Date(1000) }], latest_events: [],
   decisions: ["human","engine","merge_confirmation","pr_closed"].map((review,i) => ({ unit_id: "u", review, target_revision_id: "rev", decision: "approved", created_at: new Date(3000+i*1000) })),
-  definition: { parsed_workflow: { stages: { s: { reviews: { human: { by: "operator", when: "guard" }, engine: { by: "engine" }, merge_confirmation: { by: "operator" }, pr_closed: { by: "operator" } }, workers: { refresh: { kind: "code", every: "1m", produces: ["pr"] } } } } } } } as unknown as RunRead;
- expect([reviewTimes(read).map((r) => [r.review,r.kind,r.wait_ms,r.approximate]), elapsedTime(read)]).toEqual([[["human","human",2000,true],["merge_confirmation","external",4000,true],["pr_closed","external",5000,true]],6000]);
+  definition: { parsed_workflow: { stages: { s: { reviews: { human: { of: "pr", by: "operator", when: "guard" }, engine: { of: "pr", by: "engine" }, merge_confirmation: { of: "pr", by: "operator" }, pr_closed: { of: "pr", by: "operator" } }, workers: { refresh: { kind: "code", every: "1m", produces: ["pr"] } } } } } },
+  ...overrides }) as unknown as RunRead;
+test("review time separates operator, engine and external waits and flags approximations", async () => {
+ const { reviewTimes } = await import("../src/projections/usage-time");
+ expect(reviewTimes(reviewRead()).map((r) => [r.review,r.kind,r.wait_ms,r.approximate])).toEqual([["human","human",2000,true],["merge_confirmation","external",4000,true],["pr_closed","external",5000,true]]);
+});
+test("a redirected decision waits from the reviewed artifact's latest revision, not its effect target", async () => {
+ const { reviewTimes } = await import("../src/projections/usage-time");
+ const read = reviewRead({
+  revisions: [{ id: "build", unit_id: "u", artifact: "build_result", seq: 0, created_at: new Date(1000) },
+   { id: "old", unit_id: "u", artifact: "assessment", seq: 0, created_at: new Date(2000) },
+   { id: "assessed", unit_id: "u", artifact: "assessment", seq: 1, created_at: new Date(6000) },
+   { id: "later", unit_id: "u", artifact: "assessment", seq: 2, created_at: new Date(9000) }],
+  decisions: [{ unit_id: "u", review: "assessment_review", target_revision_id: "build", decision: "request_build_changes", created_at: new Date(8000) }],
+  definition: { parsed_workflow: { stages: { s: { reviews: { assessment_review: { of: "assessment", by: "operator" } }, workers: {} } } } } });
+ expect(reviewTimes(read).map((r) => [r.wait_ms,r.approximate])).toEqual([[2000,false]]);
+});
+test("elapsed time runs to the read for an active run", async () => {
+ const { elapsedTime } = await import("../src/projections/usage-time");
+ expect(elapsedTime(reviewRead({ revisions: [], decisions: [] }), new Date(42_000))).toBe(42_000);
+});
+test("elapsed time ends at the last recorded event for a finished run", async () => {
+ const { elapsedTime } = await import("../src/projections/usage-time");
+ const read = reviewRead({ units: [{ id: "root", status: { kind: "cancelled" } }, { id: "u", stage: "s" }], latest_events: [{ unit_id: "root", event_id: "e", created_at: new Date(7000) }] });
+ expect(elapsedTime(read, new Date(99_000))).toBe(7000);
 });
 test("missing cost preserves reported tokens, absent coverage and nullable totals", async () => {
  const { selectRunUsage } = await import("../src/projections/usage-view");
  const a = attempt(1);
  const reported = { ...turn(selectDeliveryKey(a),2), usage: { sid: "sid", turn_key: selectDeliveryKey(a), status: "reported" as const, input_tokens: 10, output_tokens: 2, cached_read_tokens: null, cached_write_tokens: null, thought_tokens: null, total_tokens: 12, model_usage: null, raw_json: null, recorded_at: date(5) } };
  const read = { run: { id: "run", created_at: new Date(0) }, attempts: [{ ...a, worker: "builder", unit_id: "u", cause: { kind: "missing" } }], units: [{ id: "u", stage: "s", collection_key: "c" }], revisions: [], decisions: [], definition: { parsed_workflow: { stages: {} } } } as unknown as RunRead;
- const usage = selectRunUsage({ read, sessions: [session([reported,turn("absent",8)])], failed_sessions: [], verification: null });
+ const usage = selectRunUsage({ read, sessions: [session([reported,turn("absent",8)])], failed_sessions: [], verification: null, now: new Date(10_000) });
  expect([usage.totals.tokens.total,usage.totals.usd,usage.coverage]).toEqual([12,null,{ turns:2,reported:1,partial:0,absent:1,cost_unreported_sessions:["sid"],failed_sessions:[] }]);
 });
 test("observation failures yield verification null", async () => {

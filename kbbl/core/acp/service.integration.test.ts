@@ -186,7 +186,7 @@ test("scripted Claude responses and cost snapshots survive controller turns", as
       await new Promise(resolve => setTimeout(resolve, 10));
     }
   }
-  const result = harness.store.readUsage(sid);
+  const result = harness.store.usage.read(sid);
   expect(result.turns.map(t => [t.status, t.usage?.status])).toEqual([
     ["succeeded", "reported"], ["succeeded", "absent"], ["succeeded", "partial"],
   ]);
@@ -220,7 +220,7 @@ test("cost readings advance process segments on respawn and database reopen, inc
   expect(observed).toMatchObject({ ok: true, value: { kind: "succeeded" } });
   const initialKey = first.store.getInitialTurn(sid)?.turn_key;
   if (!initialKey) throw Error("initial turn missing");
-  expect(first.store.readUsage(sid).readings).toMatchObject([{
+  expect(first.store.usage.read(sid).readings).toMatchObject([{
     seq: 0, process_seq: 0, active_turn_key: initialKey, cost_amount: 2.5,
   }]);
 
@@ -234,7 +234,7 @@ test("cost readings advance process segments on respawn and database reopen, inc
   expect(first.registry.getLive(sid)?.isPromptActive).toBe(false);
   expect((await first.service.setConfigOption(sid, "model", "fake-large")).ok).toBe(true);
   await rm(idleScript);
-  expect(first.store.readUsage(sid).readings[1]).toMatchObject({
+  expect(first.store.usage.read(sid).readings[1]).toMatchObject({
     seq: 1, process_seq: 0, active_turn_key: null, cost_amount: 4, autonomous: true,
   });
 
@@ -256,7 +256,7 @@ test("cost readings advance process segments on respawn and database reopen, inc
   const respawnKey = await promptAndWait(first, "after-respawn");
   expect(first.registry.getLive(sid)).not.toBe(original);
   // Replayed cost notifications must not create duplicate readings.
-  expect(first.store.readUsage(sid).readings.map(row => [row.seq, row.process_seq, row.active_turn_key, row.cost_amount])).toEqual([
+  expect(first.store.usage.read(sid).readings.map(row => [row.seq, row.process_seq, row.active_turn_key, row.cost_amount])).toEqual([
     [0, 0, initialKey, 2.5], [1, 0, null, 4], [2, 1, respawnKey, 2.5],
   ]);
 
@@ -270,7 +270,7 @@ test("cost readings advance process segments on respawn and database reopen, inc
   try {
     second.service.recoverOnBoot();
     const restartKey = await promptAndWait(second, "after-restart");
-    expect(second.store.readUsage(sid).readings.map(row => [row.seq, row.process_seq, row.active_turn_key, row.cost_amount])).toEqual([
+    expect(second.store.usage.read(sid).readings.map(row => [row.seq, row.process_seq, row.active_turn_key, row.cost_amount])).toEqual([
       [0, 0, initialKey, 2.5], [1, 0, null, 4], [2, 1, respawnKey, 2.5], [3, 2, restartKey, 2.5],
     ]);
   } finally {

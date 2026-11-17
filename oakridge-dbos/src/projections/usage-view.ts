@@ -4,8 +4,8 @@ import { attributeUsage, attemptKey } from "./usage-attribution";
 import { costDeltas, nullableSum, sumUsage, tokensFor } from "./usage-cost";
 import { classifyRework } from "./usage-rework";
 import { elapsedTime, reviewTimes, turnDuration } from "./usage-time";
-export interface RunUsageInput { read: RunRead; sessions: readonly KbblUsage[]; failed_sessions: string[]; verification: RunUsage["verification"] }
-export function selectRunUsage({ read, sessions, failed_sessions, verification }: RunUsageInput): RunUsage {
+export interface RunUsageInput { read: RunRead; sessions: readonly KbblUsage[]; failed_sessions: string[]; verification: RunUsage["verification"]; now: Date }
+export function selectRunUsage({ read, sessions, failed_sessions, verification, now }: RunUsageInput): RunUsage {
   const owned = attributeUsage(read.attempts, sessions);
   const deltas = costDeltas(sessions, owned);
   const rework = classifyRework(read.attempts, read.revisions);
@@ -27,7 +27,7 @@ export function selectRunUsage({ read, sessions, failed_sessions, verification }
       reviews: reviews.filter((r) => r.unit_id === u.id).map(({ unit_id, kind, ...review }) => review) };
   });
   return { run_id: read.run.id, usd_basis: "list_price_equivalent", totals: { ...sumUsage(turns), usd: nullableSum(deltas.map((d) => d.usd)),
-    human_wait_ms: reviews.filter((r) => r.kind === "human").reduce((s,r) => s+r.wait_ms,0), external_wait_ms: reviews.filter((r) => r.kind === "external").reduce((s,r) => s+r.wait_ms,0), elapsed_ms: elapsedTime(read) },
+    human_wait_ms: reviews.filter((r) => r.kind === "human").reduce((s,r) => s+r.wait_ms,0), external_wait_ms: reviews.filter((r) => r.kind === "external").reduce((s,r) => s+r.wait_ms,0), elapsed_ms: elapsedTime(read, now) },
     rework: sumUsage(attempts.filter((a) => a.rework)), verification, units, unattributed: turns.filter((_,i) => owned[i]?.attempt === null),
     coverage: { turns: turns.length, reported: turns.filter((t) => t.coverage === "reported").length, partial: turns.filter((t) => t.coverage === "partial").length,
       absent: turns.filter((t) => t.coverage === "absent").length, failed_sessions,

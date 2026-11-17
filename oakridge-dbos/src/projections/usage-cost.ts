@@ -23,9 +23,10 @@ export function costDeltas(sessions: readonly KbblUsage[], turns: readonly Owned
       const last = previous.get(r.process_seq);
       previous.set(r.process_seq, r.cost_amount);
       const usd = last === undefined || r.cost_amount < last ? r.cost_amount : r.cost_amount-last;
+      // Background cost belongs to work that has started; a queued turn has done none yet.
       const background = r.autonomous || r.active_turn_key === null;
       const candidates = turns.filter((t) => t.sid === session.sid);
-      const owner = background ? candidates.filter((t) => turnTime(t.turn) <= Date.parse(r.received_at)).sort((a,b) => turnTime(b.turn)-turnTime(a.turn))[0]
+      const owner = background ? candidates.filter((t) => t.turn.started_at !== null && turnTime(t.turn) <= Date.parse(r.received_at)).sort((a,b) => turnTime(b.turn)-turnTime(a.turn))[0]
         : candidates.find((t) => t.turn.turn_key === r.active_turn_key);
       return [{ owner: owner ?? null, usd, background }];
     });

@@ -2379,12 +2379,13 @@ a:focus-visible {
 }
 
 /* ── run command center ─────────────────────────────────────────────────────
-   The workspace fills .or-shell__content rather than scrolling inside it: the
-   shell is already a 100dvh flex column with a flex: 1 content area, so the
-   run route hands its scrolling to the panes instead. No split-pane or
+   The workspace (or the run detail wrapper holding it) fills
+   .or-shell__content rather than scrolling inside it: the shell is already a
+   100dvh flex column with a flex: 1 content area, so the run route hands its
+   scrolling to the panes instead. No split-pane or
    persistent-sidebar precedent existed in the PWA shell, so these are new
    primitives rather than reuse. */
-.or-shell__content:has(> .or-run-workspace) {
+.or-shell__content:has(> .or-run-workspace, > .or-run-detail) {
   padding: 0;
   overflow: hidden;
 }

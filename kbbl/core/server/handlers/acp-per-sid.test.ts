@@ -121,13 +121,13 @@ test("usage is public and preserves ordered turns, null usage and cost readings"
       key === "reported" ? { status: "reported", input_tokens: 1, output_tokens: 2, cached_read_tokens: 0,
         cached_write_tokens: 0, thought_tokens: 0, total_tokens: 3, model_usage: [], raw_json: "{}" } : { status: "absent" });
   }
-  for (const amount of [1, 3]) harness.store.appendUsageReading({
+  for (const amount of [1, 3]) harness.store.usage.appendReading({
     sid, process_seq: 0, context_used: 20, context_size: 100, cost_amount: amount, cost_currency: "USD",
     active_turn_key: null, autonomous: false, origin_kind: null,
   });
   const response = await app.request(`/sessions/${sid}/usage`);
   expect(response.status).toBe(200);
-  const body: import("../../acp/types").SessionUsage = await response.json();
+  const body: import("../../acp/usage-types").SessionUsage = await response.json();
   expect(body.turns.map(t => t.usage?.status ?? null)).toEqual(["reported", "absent", null]);
   expect(body.turns[0]?.usage?.model_usage).toEqual([]);
   expect(body.readings.map(r => [r.seq, r.cost_amount, r.autonomous])).toEqual([[0, 1, false], [1, 3, false]]);
