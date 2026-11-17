@@ -1,3 +1,4 @@
+import { RunUsagePanel } from "../components/organisms/RunUsagePanel";
 import { ManualMergeIndications } from "../components/organisms/ManualMergeIndications";
 import { RunWorkspace } from "../components/organisms/RunWorkspace";
 import type { RoutePaneTarget } from "../lib/run-workspace";
@@ -16,5 +17,5 @@ interface RunDetailViewProps {
  * than the previous run's leaking across the navigation.
  */
 export function RunDetailView({ runId, routePane, onBack }: RunDetailViewProps) {
-  return <><ManualMergeIndications runId={runId} /><RunWorkspace key={runId} runId={runId} routePane={routePane} onBack={onBack} /></>;
+  return <><RunUsagePanel runId={runId} /><ManualMergeIndications runId={runId} /><RunWorkspace key={runId} runId={runId} routePane={routePane} onBack={onBack} /></>;
 }

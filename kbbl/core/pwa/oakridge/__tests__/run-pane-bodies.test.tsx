@@ -241,3 +241,6 @@ describe("resuming an ended session from a pane", () => {
     );
   });
 });
+
+// Workspace fixtures isolate the separately tested usage query.
+vi.mock("../hooks/useRunUsage", () => ({ useRunUsage: () => ({ isPending: true, isError: false }) }));

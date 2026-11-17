@@ -492,3 +492,6 @@ describe("restoring an arrangement", () => {
     expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toContain("art-deleted");
   });
 });
+
+// Workspace fixtures isolate the separately tested usage query.
+vi.mock("../hooks/useRunUsage", () => ({ useRunUsage: () => ({ isPending: true, isError: false }) }));

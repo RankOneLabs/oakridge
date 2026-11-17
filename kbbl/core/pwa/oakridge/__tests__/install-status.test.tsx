@@ -84,3 +84,6 @@ it("shows disabled profiles and fixes for optional failures", () => {
   expect(screen.getByText("Fix: Reconnect")).toBeTruthy();
   expect(screen.queryByText(/misconfigured/i)).toBeNull();
 });
+
+// Workspace fixtures isolate the separately tested usage query.
+vi.mock("../hooks/useRunUsage", () => ({ useRunUsage: () => ({ isPending: true, isError: false }) }));

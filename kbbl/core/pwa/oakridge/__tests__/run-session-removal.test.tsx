@@ -177,3 +177,6 @@ it("marks the primary session and shows its attempt stage in the pane header", a
   fireEvent.click(screen.getByTestId("or-sidebar-pane-overview"));
   expect(screen.getByTestId("or-sidebar-pane-overview").getAttribute("data-pane-selection")).toBe("primary");
 });
+
+// Workspace fixtures isolate the separately tested usage query.
+vi.mock("../hooks/useRunUsage", () => ({ useRunUsage: () => ({ isPending: true, isError: false }) }));
