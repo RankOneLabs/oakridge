@@ -16,6 +16,7 @@ import { join } from "node:path";
 
 import type * as schema from "@agentclientprotocol/sdk";
 import { AcpUsageCapture } from "./usage-capture";
+import { object } from "./usage-parsers/types";
 import { openTestDb } from "../db/test-db";
 import { withoutContextHint, type RuntimeId } from "../runtime";
 import { GitWorktreeProvider } from "../worktree/service";
@@ -166,6 +167,10 @@ realTest(
         const probe = probes.at(-1);
         if (!probe) throw new Error("No captured prompt response");
         captured.push(probe);
+        expect(probe.usage_updates.length).toBeGreaterThan(0);
+        for (const update of probe.usage_updates) {
+          if (update.sessionUpdate === "usage_update") expect(update.cost == null).toBe(true);
+        }
         const row = store.readUsage(sid).turns.find(turn => turn.turn_key === key)?.usage;
         expect(row?.status).toBe("reported");
         expect(row?.output_tokens).toBe((probe.usage as schema.Usage).outputTokens);
@@ -178,9 +183,22 @@ realTest(
       }
       const first = captured[0]?.usage as schema.Usage;
       const second = captured[1]?.usage as schema.Usage;
+      const outputResets = second.outputTokens < first.outputTokens;
+      const sourceReports = captured.map((probe, index) => {
+        const quota = object(probe._meta) ? probe._meta.quota : null;
+        const sources = [
+          ...(probe.usage != null ? ["PromptResponse.usage"] : []),
+          ...(object(quota) && quota.token_count != null ? ["_meta.quota.token_count"] : []),
+          ...(object(quota) && quota.model_usage != null ? ["_meta.quota.model_usage"] : []),
+          ...probe.usage_updates.flatMap(update => update.sessionUpdate === "usage_update" ? [
+            `usage_update(${typeof update.used === "number" && typeof update.size === "number" ? "used/size" : "missing-used/size"},${update.cost == null ? "no-cost" : "cost"},${update._meta == null ? "no-meta" : "meta"})`,
+          ] : []),
+        ];
+        return `turn${index + 1}.sources=${sources.join(",") || "none"}`;
+      });
+      report.push(`codex-acp=1.13.0 ${sourceReports.join("; ")}; counters=${outputResets ? "per-turn(output-resets)" : "undetermined(no-output-reset)"}`);
       expect(first.outputTokens).toBeGreaterThan(100);
-      expect(second.outputTokens).toBeLessThan(first.outputTokens);
-      report.push("codex-acp=1.13.0 sources=PromptResponse.usage,_meta.quota.token_count,_meta.quota.model_usage,usage_update(used/size,no-cost,no-origin); counters=per-turn(output-resets)");
+      expect(outputResets).toBe(true);
       console.log(`codex_usage_capture=${JSON.stringify(captured)}`);
     }
 
