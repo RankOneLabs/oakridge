@@ -63,3 +63,12 @@ describe("SkillButton — confirming state", () => {
     expect(affordance?.getAttribute("aria-hidden")).toBeNull();
   });
 });
+
+describe("SkillButton — icon mode", () => {
+  it("announces the confirm step that the glyph hides", () => {
+    render(<SkillButton skill={CONFIRM_SKILL} state="confirming" label="deploy" icon="D" onTap={() => {}} />);
+    const button = screen.getByRole("button", { name: "deploy, tap again to confirm" });
+    expect(button.getAttribute("title")).toBe("deploy");
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+  });
+});

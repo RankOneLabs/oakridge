@@ -14,6 +14,8 @@ import { SessionWorkspaceRedirectView } from "./views/SessionWorkspaceRedirectVi
 import { formatRunWorkspaceHash, type SettingsSubRoute, type OakridgeSubRoute } from "../lib/hash";
 import type { ArtifactId } from "../lib/ids";
 import type { WorkflowDefSummary } from "./project-types";
+import { SETTINGS_NAV, selectSettingsNavItem } from "./lib/settings-nav";
+
 interface OakridgeShellInnerProps {
   route: OakridgeSubRoute | SettingsSubRoute;
   runAttentionCounts: ReadonlyMap<string, number>;
@@ -64,7 +66,6 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
           onSelectRun={navigateToRun}
           onNewRun={navigateToNewRun}
           onNewProject={navigateToCreateProject}
-          onWorkflows={navigateToDefs}
           runAttentionCounts={runAttentionCounts}
         />
       );
@@ -134,11 +135,14 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
 
   }
 
+  const settingsItem = selectSettingsNavItem(route);
   return (
     <div className="or-shell" data-testid="or-shell">
-      {(["status", "workflows", "workflow", "grading-config"] as string[]).includes(route.sub) && <nav aria-label="Settings" className="flex flex-wrap gap-2 p-3">
-        <a href="#settings/status" aria-current={route.sub === "status" ? "page" : undefined}>Status</a>
-        <a href="#settings/workflows" aria-current={route.sub !== "status" ? "page" : undefined}>Workflows</a>
+      {settingsItem && <nav aria-label="Settings" className="or-shell__subnav">
+        {SETTINGS_NAV.map(({ item, href, label }) => {
+          const isCurrent = item === settingsItem;
+          return <a key={item} href={href} className={isCurrent ? "or-shell__nav-item or-shell__nav-item--active" : "or-shell__nav-item"} aria-current={isCurrent ? "page" : undefined}>{label}</a>;
+        })}
       </nav>}
       <main className="or-shell__content">
         {content}

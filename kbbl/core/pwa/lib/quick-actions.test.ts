@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import type { Skill } from "../../runtime-interface";
-import { DEFAULT_QUICK_ACTION_KEYS, quickActionKey, selectQuickActions, selectToggledQuickActionKeys } from "./quick-actions";
+import { DEFAULT_QUICK_ACTION_KEYS, quickActionKey, selectQuickActionIcon, selectQuickActions, selectSkillButtonLabel, selectToggledQuickActionKeys, type SkillButtonState } from "./quick-actions";
 import { QUICK_ACTIONS_STORAGE_KEY, readStoredQuickActionKeys, writeStoredQuickActionKeys } from "./storage";
 
 const tool = (id: string, name: string): Skill => ({ id, name, description: "", backend: "codex", scope: "system", args: [], user_invocable: true, model_invocable: false });
@@ -35,4 +35,21 @@ it("toggles one key while preserving the other choices and input", () => {
   expect(selectToggledQuickActionKeys(keys, "new")).toEqual(["/compact", "other", "new"]);
   expect(selectToggledQuickActionKeys(keys, "/compact")).toEqual(["other"]);
   expect(keys).toEqual(["/compact", "other"]);
+});
+
+it("gives the default quick actions their icons and any other action its initial", () => {
+  expect(selectQuickActionIcon(tool("agent-command:compact", "compact"), "compact")).toBe("⇊");
+  expect(selectQuickActionIcon(tool("cc:mcp:gated-review:get_review_round", "mcp:gated-review:get_review_round"), "get_review_round")).toBe("⟳");
+  expect(selectQuickActionIcon(tool("cc:user:list-tasks", "list-tasks"), "list-tasks")).toBe("L");
+});
+
+const ARG: Skill["args"][number] = { key: "task", required: true, hint: "", kind: "string" };
+it.each<[Skill["args"], SkillButtonState, string]>([
+  [[], "idle", "compact"],
+  [[], "confirming", "compact, tap again to confirm"],
+  [[], "dispatching", "compact, dispatching"],
+  [[ARG], "idle", "compact, requires input"],
+  [[ARG], "confirming", "compact, requires input, tap again to confirm"],
+])("labels an icon button with args %j in state %s as %s", (args, state, label) => {
+  expect(selectSkillButtonLabel("compact", { args }, state)).toBe(label);
 });

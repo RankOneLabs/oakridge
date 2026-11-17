@@ -1,4 +1,4 @@
-import { quickActionKey, selectQuickActions } from "../../lib/quick-actions";
+import { quickActionKey, selectQuickActionIcon, selectQuickActions } from "../../lib/quick-actions";
 import { useStore } from "../../state/store";
 import { Button } from "../atoms/Button";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -211,8 +211,10 @@ export function SkillRail({
           className="skill-rail__toggle"
           onClick={() => setCollapsed((c) => !c)}
           aria-expanded={!collapsed}
+          aria-label="Skills"
+          title="Skills"
         >
-          Skills
+          <span aria-hidden="true">☰</span>
         </Button>
         {invokeError !== null && (
           <div className="skill-rail__error" role="alert">
@@ -228,7 +230,7 @@ export function SkillRail({
           </div>
         )}
         {collapsed && selectQuickActions(sections.flatMap((section) => section.skills), quickKeys).map((skill) =>
-          <SkillButton key={skill.id} skill={skill} label={skillLabel(skill)}
+          <SkillButton key={skill.id} skill={skill} label={skillLabel(skill)} icon={selectQuickActionIcon(skill, skillLabel(skill))}
             state={getButtonState(skill)} onTap={() => handleTap(skill)} />)}
         {!collapsed && (
           <div className="skill-rail__groups">

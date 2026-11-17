@@ -219,6 +219,11 @@ body {
   color: var(--accent-primary);
 }
 
+.app-surface-nav__item--icon {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
 .app-surface-nav__theme {
   margin-left: 0.5rem;
 }
@@ -1189,16 +1194,20 @@ body {
 
 /* Interrupt cancels the current turn and leaves the session live. */
 .input-bar button.btn-interrupt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--amber-bg);
   color: var(--amber-fg);
   border: 1px solid var(--amber-border);
   border-radius: 6px;
-  padding: 0 0.75rem;
+  padding: 0 0.5rem;
   font: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: 1rem;
+  line-height: 1;
   cursor: pointer;
   min-height: 44px;
+  min-width: 44px;
   white-space: nowrap;
 }
 .input-bar button.btn-interrupt:hover:not(:disabled) {
@@ -1579,16 +1588,19 @@ body {
 
 .skill-rail__toggle {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 44px;
   min-height: 44px;
-  padding: 0 0.75rem;
+  padding: 0 0.5rem;
   background: transparent;
   color: var(--text-muted);
   border: 1px solid var(--border-muted);
   border-radius: 6px;
   font: inherit;
-  font-size: 0.8rem;
-  font-weight: 500;
+  font-size: 1.1rem;
+  line-height: 1;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1719,6 +1731,17 @@ body {
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+/* Quick actions beside the Skills toggle: a square glyph button, name in the tooltip. */
+.skill-btn--icon {
+  justify-content: center;
+  padding: 0 0.5rem;
+}
+
+.skill-btn__icon {
+  font-size: 1.15rem;
+  line-height: 1;
 }
 
 .skill-btn:hover:not(:disabled) {
@@ -2274,9 +2297,31 @@ a:focus-visible {
   flex: 1;
 }
 
+/* Secondary bar under the primary nav, aligned to its gutter; entries sit on the bar's rule. */
+.or-shell__subnav {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.25rem;
+  padding: 0 clamp(1rem, 4vw, 4rem);
+  border-bottom: 1px solid var(--border-decorative);
+  background: color-mix(in srgb, var(--bg-app) 92%, transparent);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.or-shell__subnav .or-shell__nav-item {
+  flex: 0 0 auto;
+  min-height: 2.75rem;
+  margin-bottom: -1px;
+  font-size: 0.85rem;
+}
+
 .or-shell__nav-item {
+  display: inline-flex;
+  align-items: center;
   background: none;
   min-height: 2.5rem;
+  text-decoration: none;
   border: 0;
   border-bottom: 2px solid transparent;
   border-radius: 0;
