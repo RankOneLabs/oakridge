@@ -4,7 +4,6 @@ interface RunListViewProps {
   onSelectRun: (id: string) => void;
   onNewRun: () => void;
   onNewProject: () => void;
-  onWorkflows?: () => void;
   runAttentionCounts?: ReadonlyMap<string, number>;
 }
 

@@ -6,5 +6,5 @@ interface WorkflowDefListViewProps {
 }
 
 export function WorkflowDefListView(props: WorkflowDefListViewProps) {
-  return <><a href="#settings/workflows/grading-config">Grading configuration</a><WorkflowDefList {...props} /></>;
+  return <WorkflowDefList {...props} />;
 }

@@ -28,7 +28,7 @@ export function PrimaryNav({ activeSurface, attentionCount, onNavigate, theme, o
         Attention
         {attentionCount > 0 && <span className="app-surface-nav__count">{attentionCount}</span>}
       </Button>
-      <Button variant="session" className={navItemClass(activeSurface === "settings")} onClick={() => onNavigate("settings")} aria-label="Settings" title="Settings">⚙</Button>
+      <Button variant="session" className={`${navItemClass(activeSurface === "settings")} app-surface-nav__item--icon`} onClick={() => onNavigate("settings")} aria-label="Settings" title="Settings">⚙</Button>
       <Button
         variant="secondary"
         size="xsmall"

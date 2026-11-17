@@ -163,14 +163,6 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("RunListView", () => {
-  it("offers a visible workflow definitions entry point", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    const onWorkflows = vi.fn();
-    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} onWorkflows={onWorkflows} />);
-    fireEvent.click(await screen.findByTestId("or-workflows-btn"));
-    expect(onWorkflows).toHaveBeenCalledOnce();
-  });
-
   it("shows loading state while runs are pending", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
     wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
