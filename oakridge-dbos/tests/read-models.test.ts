@@ -581,3 +581,27 @@ describe("change-keyed reads", () => {
     expect(await revalidate("/api/runs/run-missing/units", 'W/"anything"')).toBe(404);
   });
 });
+
+test("usage HTTP reads fetch live telemetry and degrade optional services", async () => {
+  const { installReadModels } = await import("../src/http/read-models");
+  const { KbblClient } = await import("../src/adapters/kbbl");
+  const { run_id } = await drafted();
+  const local = new Hono();
+  let turns: import("../src/domain/usage").UsageTurn[] = [];
+  let should_fail = false;
+  let observation_fails = false;
+  const kbbl = new KbblClient({ base_url: "http://kbbl", fetch: async () => should_fail ? new Response("offline", { status: 500 }) : Response.json({ sid: "sid-writer", turns, readings: [] }) });
+  installReadModels(local, { db: authority.db, kbbl, observation: { url: "http://observation", token: "read", namespace: "n", fetcher: async () => observation_fails ? new Response("bad",{status:500}) : Response.json({ run_id, charged_usd: .5 }) } });
+  const read = async () => {
+    const response = await local.request(`/api/runs/${segment(run_id)}/usage`);
+    expect(response.status).toBe(200);
+    return await response.json() as import("../src/domain/usage").RunUsage;
+  };
+  expect((await read()).verification).toEqual({ usd:.5,usd_basis:"provider_charged" });
+  turns = [{ turn_key:"initial:key",source:"initial",status:"succeeded",created_at:new Date().toISOString(),started_at:null,completed_at:null,usage:null }];
+  expect((await read()).coverage.turns).toBe(1);
+  observation_fails = true; should_fail = true;
+  const degraded = await read();
+  expect([degraded.verification,degraded.coverage.failed_sessions]).toEqual([null,["sid-writer"]]);
+  expect((await local.request("/api/runs/missing/usage")).status).toBe(404);
+});

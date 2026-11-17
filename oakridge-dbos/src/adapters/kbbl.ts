@@ -118,6 +118,16 @@ export class KbblClient {
     return value === null ? { kind: "uncertain", detail: `kbbl ${operation} returned an unreadable body` } : { kind: "acknowledged", value };
   }
 
+  async usage(sid: string): Promise<import("../domain/primitives").Traced<import("../domain/usage").KbblUsage>> {
+    try {
+      const response = await this.fetch(`${this.base_url}/sessions/${encodeURIComponent(sid)}/usage`, { headers: this.headers(), signal: AbortSignal.timeout(5000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const value = await response.json() as import("../domain/usage").KbblUsage;
+      if (value.sid !== sid || !Array.isArray(value.turns) || !Array.isArray(value.readings)) throw new Error("invalid usage response");
+      return { ok: true, value };
+    } catch (cause) { return { ok: false, error: { operation: "kbbl.usage", entity_id: sid, detail: String(cause) } }; }
+  }
+
   profileReadiness(): Promise<ProviderResult<readonly AgentProfileReadiness[]>> {
     return this.call("profile_readiness", `${this.base_url}/agent-profiles/readiness`, { headers: this.headers() }, async (response) => {
       const raw: unknown = await response.json();

@@ -15,6 +15,7 @@ export interface HttpRoute {
 }
 
 export const HTTP_ROUTES: readonly HttpRoute[] = [
+  { method: "GET", path: "/api/runs/:run_id/usage", authority: "operator" },
   { method: "GET", path: "/api/prompt-versions", authority: "operator" },
   { method: "PUT", path: "/api/prompt-versions/pending", authority: "operator" },
   { method: "POST", path: "/api/prompt-versions/validate", authority: "operator" },

@@ -71,3 +71,16 @@ export function startObservationPublisher(db: Kysely<DB>, options: ObservationOp
   })();
   return { async stop() { controller.abort(); await running; } };
 }
+
+export interface ObservationCost { run_id: string; charged_usd: number }
+export async function readObservationCost(options: ObservationOptions | null | undefined, run_id: string): Promise<import("../domain/primitives").Traced<ObservationCost | null>> {
+  if (!options) return { ok: true, value: null };
+  try {
+    const response = await (options.fetcher ?? fetch)(new URL(`/v1/runs/${encodeURIComponent(run_id)}/cost`, options.url),
+      { headers: { authorization: `Bearer ${options.token}` }, signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const value = await response.json() as ObservationCost;
+    if (value.run_id !== run_id || !Number.isFinite(value.charged_usd)) throw new Error("invalid cost response");
+    return { ok: true, value };
+  } catch (cause) { return { ok: false, error: { operation: "observation.cost", entity_id: run_id, detail: String(cause) } }; }
+}
