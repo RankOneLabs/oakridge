@@ -219,6 +219,11 @@ body {
   color: var(--accent-primary);
 }
 
+.app-surface-nav__item--icon {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
 .app-surface-nav__theme {
   margin-left: 0.5rem;
 }
@@ -2272,6 +2277,25 @@ a:focus-visible {
   align-items: center;
   gap: 0.75rem;
   flex: 1;
+}
+
+/* Secondary bar under the primary nav, aligned to its gutter; entries sit on the bar's rule. */
+.or-shell__subnav {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.25rem;
+  padding: 0 clamp(1rem, 4vw, 4rem);
+  border-bottom: 1px solid var(--border-decorative);
+  background: color-mix(in srgb, var(--bg-app) 92%, transparent);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.or-shell__subnav .or-shell__nav-item {
+  flex: 0 0 auto;
+  min-height: 2.75rem;
+  margin-bottom: -1px;
+  font-size: 0.85rem;
 }
 
 .or-shell__nav-item {

@@ -154,7 +154,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
   const settingsItem = selectSettingsNavItem(route);
   return (
     <div className="or-shell" data-testid="or-shell">
-      {settingsItem && <nav aria-label="Settings" className="flex flex-wrap gap-2 p-3">
+      {settingsItem && <nav aria-label="Settings" className="or-shell__subnav">
         {SETTINGS_NAV.map(({ item, href, label }) => {
           const isCurrent = item === settingsItem;
           return <a key={item} href={href} className={isCurrent ? "or-shell__nav-item or-shell__nav-item--active" : "or-shell__nav-item"} aria-current={isCurrent ? "page" : undefined}>{label}</a>;
