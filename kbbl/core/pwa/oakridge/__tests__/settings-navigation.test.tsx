@@ -20,13 +20,24 @@ function Editor() {
 }
 vi.mock("../views/GradingConfigView", () => ({ GradingConfigView: () => <Editor /> }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
-it("keeps Primary destinations and only Status and Workflows under Settings", () => {
+it("keeps Primary destinations and Status, Workflows and Grading under Settings", () => {
   history.replaceState(null, "", "#settings/workflows"); render(<App />);
   expect(within(screen.getByRole("navigation", { name: "Primary" })).getAllByRole("button").slice(0, 4).map((button) => button.getAttribute("aria-label") ?? button.textContent)).toEqual(["Runs", "Sessions", "Attention", "Settings"]);
   expect(screen.queryByRole("navigation", { name: "Oakridge" })).toBeNull();
-  expect(within(screen.getByRole("navigation", { name: "Settings" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Status", "Workflows"]);
-  expect(screen.getByRole("link", { name: "Workflows" }).getAttribute("aria-current")).toBe("page");
-  expect(screen.getByRole("link", { name: "Grading configuration" }).getAttribute("href")).toBe("#settings/workflows/grading-config");
+  expect(within(screen.getByRole("navigation", { name: "Settings" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Status", "Workflows", "Grading"]);
+  expect(screen.getByRole("link", { name: "Grading" }).getAttribute("href")).toBe("#settings/workflows/grading-config");
+  expect(screen.queryByRole("link", { name: "Grading configuration" })).toBeNull();
+});
+it.each([
+  ["#settings/status", "Status"],
+  ["#settings/workflows", "Workflows"],
+  ["#settings/workflows/def%2F1", "Workflows"],
+  ["#settings/workflows/grading-config", "Grading"],
+])("marks only the current Settings entry on %s", (hash, current) => {
+  history.replaceState(null, "", hash); render(<App />);
+  const links = within(screen.getByRole("navigation", { name: "Settings" })).getAllByRole("link");
+  expect(links.filter((link) => link.getAttribute("aria-current") === "page").map((link) => link.textContent)).toEqual([current]);
+  expect(links.filter((link) => link.className.includes("or-shell__nav-item--active")).map((link) => link.textContent)).toEqual([current]);
 });
 it.each([false, true])("guards Primary Runs with confirmation=%s", async (accepted) => {
   history.replaceState(null, "", "#settings/workflows/grading-config"); vi.stubGlobal("confirm", vi.fn(() => accepted)); render(<App />);
@@ -50,13 +61,13 @@ it.each([
   expect(history.length).toBe(length);
   expect(screen.getByRole("button", { name: "Settings" }).className).toContain("app-surface-nav__item--active");
 });
-it("opens the editor from the real workflow list with Workflows active", async () => {
+it("opens the editor from the Settings Grading link with Grading current", async () => {
   history.replaceState(null, "", "#settings/workflows"); render(<App />);
   expect(screen.getByTestId("or-def-list")).toBeTruthy();
-  fireEvent.click(screen.getByRole("link", { name: "Grading configuration" }));
+  fireEvent.click(screen.getByRole("link", { name: "Grading" }));
   await screen.findByLabelText("Draft");
   expect(window.location.hash).toBe("#settings/workflows/grading-config");
-  expect(screen.getByRole("link", { name: "Workflows" }).getAttribute("aria-current")).toBe("page");
+  expect(screen.getByRole("link", { name: "Grading" }).getAttribute("aria-current")).toBe("page");
   expect(screen.getByRole("button", { name: "Settings" }).className).toContain("app-surface-nav__item--active");
 });
 it("opens Status from the Primary Settings button", async () => {

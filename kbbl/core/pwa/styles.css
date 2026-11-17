@@ -2275,8 +2275,11 @@ a:focus-visible {
 }
 
 .or-shell__nav-item {
+  display: inline-flex;
+  align-items: center;
   background: none;
   min-height: 2.5rem;
+  text-decoration: none;
   border: 0;
   border-bottom: 2px solid transparent;
   border-radius: 0;
