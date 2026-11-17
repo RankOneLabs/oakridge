@@ -18,7 +18,7 @@ it("selects one row per cohort with endpoint cost and time figures", () => {
   expect(selectUsageCohorts(usageFixture)).toEqual(["one", "two"].map((key) => ({ unit_id: key, label: key, first_pass_usd: 2, rework_usd: 1, agent_ms: 2000, human_wait_ms: 2000, approximate: true })));
 });
 it("keeps missing cost distinct from zero", () => { expect([formatUsageUsd(null), formatUsageUsd(0)]).toEqual(["Unreported", "$0.00"]); });
-it("preserves all coverage counts including zero", () => { expect(selectUsageCoverage(usageFixture)).toEqual(usageFixture.coverage); });
+it("preserves all coverage counts including zero", () => { expect(selectUsageCoverage(usageFixture)).toMatchObject(usageFixture.coverage); });
 it("reads totals and optional verification without recalculating them", () => {
   expect(selectUsageTotals(usageFixture)).toEqual({ ...usageFixture.totals, rework: usageFixture.rework });
   expect(selectUsageVerification({ ...usageFixture, verification: null })).toBeNull();
@@ -42,4 +42,25 @@ it("renders unreported costs and omits unavailable verification", () => {
 it("mounts usage on the run detail route", () => {
   render(<RunDetailView runId="run" routePane={null} onBack={() => {}} />);
   expect(screen.getByRole("region", { name: "Run usage" })).toBeTruthy();
+});
+
+it("excludes external waits and their approximation flags from human wait", () => {
+  const unit = usageFixture.units[0];
+  const usage = { ...usageFixture, units: [{ ...unit, reviews: [
+    { review: "approval", decision: "accept", wait_ms: 1500, approximate: false },
+    { review: "merge_confirmation", decision: "confirm", wait_ms: 9000, approximate: true },
+    { review: "pr_closed", decision: "confirm", wait_ms: 7000, approximate: true },
+  ] }] };
+  expect(selectUsageCohorts(usage)[0]).toMatchObject({ human_wait_ms: 1500, approximate: false });
+});
+it("shows failed sessions separately and warns that all totals may be incomplete", () => {
+  const usage = { ...usageFixture, coverage: { ...usageFixture.coverage, failed_sessions: ["missing"], cost_unreported_sessions: ["missing"] } };
+  render(<RunUsageSummary usage={usage} />);
+  expect(screen.getByTestId("usage-coverage").textContent).toContain("Failed sessions: 1");
+  expect(screen.getByRole("status").textContent).toContain("turn, token, time and cost totals may be incomplete");
+});
+it("does not warn of failed reads when coverage is available", () => {
+  render(<RunUsageSummary usage={usageFixture} />);
+  expect(screen.getByTestId("usage-coverage").textContent).toContain("Failed sessions: 0");
+  expect(screen.queryByRole("status")).toBeNull();
 });
