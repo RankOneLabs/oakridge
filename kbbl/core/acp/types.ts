@@ -1,4 +1,4 @@
-import type { UsageCounters as importUsageCounters } from "./usage-parsers/types";
+import type { UsageCounters as importUsageCounters } from "#kbbl/core/acp/usage-parsers/types";
 import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
 // Domain model for the ACP session substrate (migration spec §8–§13, §18).
 // Row shapes mirror migration 027_acp_sessions.sql; the start-spec shape
@@ -480,7 +480,7 @@ export interface AcpUsageReadingRow {
 export interface SessionUsage {
   sid: KbblSessionId;
   turns: (Pick<AcpTurnRow, "turn_key" | "source" | "status" | "created_at" | "started_at" | "completed_at"> & {
-    usage: (Omit<AcpTurnUsageRow, "model_usage_json"> & { model_usage: import("./usage-parsers/types").ModelUsage[] | null }) | null;
+    usage: (Omit<AcpTurnUsageRow, "model_usage_json"> & { model_usage: import("#kbbl/core/acp/usage-parsers/types").ModelUsage[] | null }) | null;
   })[];
   readings: (Omit<AcpUsageReadingRow, "sid" | "autonomous"> & { autonomous: boolean })[];
 }

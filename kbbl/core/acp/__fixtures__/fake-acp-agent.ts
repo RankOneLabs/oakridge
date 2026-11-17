@@ -34,6 +34,15 @@ import {
   type AgentContext,
 } from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk";
+
+interface ScriptedPromptResponse {
+  usage?: schema.Usage;
+  _meta?: { [key: string]: unknown };
+}
+interface UsageScriptEntry {
+  response?: ScriptedPromptResponse;
+  updates?: schema.UsageUpdate[];
+}
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -295,7 +304,7 @@ const app = agent({ name: `fake-acp-${behavior}` })
     // Optional per-turn script: raw response extensions and usage notifications.
     const scriptFile = Bun.file(join(stateDir, "usage-script.json"));
     if (await scriptFile.exists()) {
-      const scripts: { response?: { usage?: import("@agentclientprotocol/sdk").Usage; _meta?: { [key: string]: unknown } }; updates?: import("@agentclientprotocol/sdk").UsageUpdate[] }[] = await scriptFile.json();
+      const scripts: UsageScriptEntry[] = await scriptFile.json();
       const index = usageTurnIndices.get(sessionId) ?? 0;
       usageTurnIndices.set(sessionId, index + 1);
       const scripted = scripts[index];

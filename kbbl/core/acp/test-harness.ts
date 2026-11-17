@@ -1,4 +1,4 @@
-import { claudeUsageParser } from "./usage-parsers/claude";
+import { claudeUsageParser } from "#kbbl/core/acp/usage-parsers/claude";
 // Shared test wiring: an AcpSessionService backed by the fake ACP agent
 // (§24.1) over real SQLite, optionally with the real git worktree
 // provider. Used by handler tests and the DBOS

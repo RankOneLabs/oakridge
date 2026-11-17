@@ -1,4 +1,4 @@
-import { claudeUsageParser } from "./usage-parsers/claude";
+import { claudeUsageParser } from "#kbbl/core/acp/usage-parsers/claude";
 // Built-in production agent profiles (§20, cohort 2). These are the two
 // profiles kbbl ships with; config.acp.agents entries override them wholesale
 // by id. Only launch configuration lives here — no protocol or event

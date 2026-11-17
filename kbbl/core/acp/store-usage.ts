@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
-import type { AcpTurnRow, AcpTurnUsageRow, AcpUsageReadingRow, KbblSessionId, SessionUsage } from "./types";
-import { nowIso } from "./store-records";
+import type { AcpTurnRow, AcpTurnUsageRow, AcpUsageReadingRow, KbblSessionId, SessionUsage } from "#kbbl/core/acp/types";
+import { nowIso } from "#kbbl/core/acp/store-records";
 export type UsageReadingInput = Omit<AcpUsageReadingRow, "seq" | "received_at" | "autonomous"> & { autonomous: boolean };
+type UsageTurnRow = Pick<AcpTurnRow, "turn_key" | "source" | "status" | "created_at" | "started_at" | "completed_at">;
+
 export class AcpUsageStore {
   constructor(private readonly db: Database) {}
   nextProcessSeq(sid: KbblSessionId): number {
@@ -18,7 +20,7 @@ export class AcpUsageStore {
     })();
   }
   read(sid: KbblSessionId): SessionUsage {
-    const turns = this.db.prepare<AcpTurnRow, [string]>("SELECT * FROM acp_turns WHERE sid = ? ORDER BY created_at, rowid").all(sid);
+    const turns = this.db.prepare<UsageTurnRow, [string]>("SELECT turn_key, source, status, created_at, started_at, completed_at FROM acp_turns WHERE sid = ? ORDER BY created_at, rowid").all(sid);
     const usage = this.db.prepare<AcpTurnUsageRow, [string]>("SELECT * FROM acp_turn_usage WHERE sid = ?").all(sid);
     const byKey = new Map(usage.map(row => [row.turn_key, row]));
     return {

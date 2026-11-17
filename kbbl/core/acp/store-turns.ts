@@ -1,4 +1,4 @@
-import { emptyCounters, type TurnUsage } from "./usage-parsers/types";
+import { emptyCounters, type TurnUsage } from "#kbbl/core/acp/usage-parsers/types";
 // Typed turn persistence and boot recovery; the session facade owns change notifications.
 import type { Database } from "bun:sqlite";
 import type { ExecutedPromptTurn } from "../executed-prompt";
@@ -32,6 +32,13 @@ export interface BootSweepResult {
   turns_retained_accepted: number;
   sessions_marked_idle: number;
   sessions_marked_failed: number;
+}
+
+export interface WriteTurnUsageInput {
+  sid: KbblSessionId;
+  turnKey: TurnKey;
+  usage: TurnUsage;
+  timestamp: string;
 }
 
 export class AcpTurnStore {
@@ -170,11 +177,11 @@ export class AcpTurnStore {
         sid,
         turnKey,
       );
-    this.writeUsage(sid, turnKey, usage, nowIso());
+    this.writeUsage({ sid, turnKey, usage, timestamp: nowIso() });
     })();
   }
 
-  writeUsage(sid: KbblSessionId, turnKey: TurnKey, usage: TurnUsage, timestamp: string): void {
+  writeUsage({ sid, turnKey, usage, timestamp }: WriteTurnUsageInput): void {
     const counts = usage.status === "absent" ? emptyCounters : usage;
     this.db.prepare("INSERT OR REPLACE INTO acp_turn_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(
       sid, turnKey, usage.status, counts.input_tokens, counts.output_tokens, counts.cached_read_tokens,
@@ -213,7 +220,7 @@ export class AcpTurnStore {
         .run(ts);
       for (const turn of interrupted) {
         if (this.getTurn(turn.sid, turn.turn_key)?.status === "unknown")
-          this.writeUsage(turn.sid, turn.turn_key, { status: "absent" }, ts);
+          this.writeUsage({ sid: turn.sid, turnKey: turn.turn_key, usage: { status: "absent" }, timestamp: ts });
       }
       const retained = this.db
         .prepare<{ n: number }, []>(

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { claudeUsageParser as parser } from "./claude";
-import { parseTurn } from "./types";
+import { claudeUsageParser as parser } from "#kbbl/core/acp/usage-parsers/claude";
+import { parseTurn } from "#kbbl/core/acp/usage-parsers/types";
 export const usage = { inputTokens: 10, outputTokens: 5, cachedReadTokens: 4, cachedWriteTokens: 3, totalTokens: 22 };
 export const meta = { quota: { token_count: {}, model_usage: [{ model: "claude", token_count: {
   inputTokens: 12, outputTokens: 6, cachedInputTokens: 5, cachedWriteTokens: 4, totalTokens: 27,
