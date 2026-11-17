@@ -39,12 +39,14 @@ LEFT JOIN kbbl.acp_turn_usage AS u
 ```
 
 The SHA-256 result is hexadecimal, matching the agent delivery key. This exact
-match covers delivered turns only. Other turns on a shared or resumed session
-(operator steering, collaboration, and `initial:<key>` preambles) are attributed to the
-most recent delivered turn that started at or before their start time (or
-creation time). Before any delivery starts, they fall back to the first attempt
-holding the session. The usage endpoint applies these rules. Use the endpoint for complete attributed
-run totals rather than treating this delivered-turn query as complete coverage.
+match covers delivered turns only, including delivered turns stored with source
+`collaboration`. Operator turns, `initial:<key>` preambles, and any other turn
+whose key is not a delivery key are excluded from this match. These other turns
+on a shared or resumed session are attributed to the most recent delivered turn
+that started at or before their start time (or creation time). Before any
+delivery starts, they fall back to the first attempt holding the session. The
+usage endpoint applies these rules. Use the endpoint for complete attributed run
+totals rather than treating this delivered-turn query as complete coverage.
 
 Usage rows with status `absent` have null counts. Count these rows explicitly,
 for example with `count(*) FILTER (WHERE u.status = 'absent')`; do not turn their
