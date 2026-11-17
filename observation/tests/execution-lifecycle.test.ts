@@ -1,3 +1,4 @@
+import { readRunChargedCost } from "../src/storage/grading-record-store";
 import { stampCapture } from "../src/grading/configuration";
 import { pinIdentity } from "./grading-fixture";
 import { afterEach, beforeEach, expect } from "bun:test";
@@ -525,4 +526,19 @@ integration("a task first published after its finding makes both assessment ques
     .toEqual([[CORRECTNESS_ID, "answered"], [EVIDENCE_SUPPORT_ID, "answered"]]);
   await life.reconciler.reconcileRun(tenant, "run-1");
   expect((await readItemMeasurements(db, tenant, occurrence_id))!.questions.map((question) => question.evidence)).toEqual(measured.questions.map((question) => question.evidence));
+}));
+
+integration("run cost sums only charged provider attempts and excludes other runs and tenants", async () => scratchDatabase(async (db) => {
+  const life = await lifecycle(db);
+  await captureAnalysis(life, true);
+  await life.feed.revision({ revision_id: "second-analysis", artifact_kind: "analysis", run_id: "run-1", body: await fixtureBody("analysis") });
+  await life.reconciler.reconcileRun(tenant, "run-1");
+  await life.drain(life.worker(firstAllowed));
+  await withTenant(db, tenant, async (trx) => {
+    await trx.updateTable("observation.evaluation_execution").set({ cost: 99 }).execute();
+    await trx.updateTable("observation.grading_provider_attempt").set({ charged_cost: 0.25 }).execute();
+  });
+  expect(await readRunChargedCost(db, tenant, "run-1")).toEqual({ run_id: "run-1", charged_usd: 0.5 });
+  expect(await readRunChargedCost(db, tenant, "another-run")).toEqual({ run_id: "another-run", charged_usd: 0 });
+  expect(await readRunChargedCost(db, { ...tenant, namespace: "another-tenant" }, "run-1")).toEqual({ run_id: "run-1", charged_usd: 0 });
 }));
