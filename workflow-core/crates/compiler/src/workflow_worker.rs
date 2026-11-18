@@ -188,7 +188,11 @@ impl StageCheck<'_> {
                 Some(CheckedWorker::Agent {
                     key: WorkerKey::from(key),
                     inputs: input_fields.expect("valid worker inputs"),
-                    creates: produces.clone(),
+                    creates: produces
+                        .iter()
+                        .cloned()
+                        .chain([SymbolKey::from(BLOCKER_ARTIFACT)])
+                        .collect(),
                     reviews: evaluates.clone(),
                     workspace: workspace.expect("valid workspace"),
                     when: when.map(|(expression, _)| expression),

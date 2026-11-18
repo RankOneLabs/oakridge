@@ -179,6 +179,8 @@ pub fn generate() -> String {
     }
     let mut output = format!("// Generated from workflow-model::protocol. Run scripts/generate-core-contracts.sh.\nexport const CORE_PROTOCOL_SCHEMA = {} as const;\n", schemas);
     output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_DEPTH = {MAX_DEPTH_CEILING};\nexport const ROOT_DECLARATION = {ROOT_DECLARATION:?};\nexport const VALIDATION_REVIEW = {VALIDATION_REVIEW:?};\n"));
+    output.push_str(&format!("export const BLOCKER_ARTIFACT = {:?};\nexport const BLOCKER_REVIEW = {:?};\nexport const BLOCKER_SCHEMA: TypeExpression = {:?};\n",
+        workflow_model::BLOCKER_ARTIFACT, workflow_model::BLOCKER_REVIEW, workflow_model::blocker_schema().to_string()));
     for (name, schema) in &definitions {
         output.push_str(&format!(
             "export type {name} = {};\n",

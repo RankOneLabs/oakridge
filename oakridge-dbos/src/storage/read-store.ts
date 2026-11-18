@@ -1,7 +1,7 @@
 import { CoreClient, compileDefinition } from "../core-client/client";
 import { isIdentity, launchableDefinitionIds, readLaunchableCatalog, resolveDefinition } from "../runtime/definition-store";
 import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysely";
-import type { ParsedWorkflow, UnitStatus } from "../core-client/core-types";
+import type { ParsedWorkflow, UnitStatus, Writer } from "../core-client/core-types";
 import type { ActionId, Brand, DecisionId, DefinitionId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
 import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
 import type { PrIntegration } from "../domain/pr-integration";
@@ -98,12 +98,13 @@ export interface RunSummaryRead {
  * One launched run and everything recorded against it, each in the order
  * commit wrote it: the source of the unit, artifact and inspect projections.
  */
+export type ReviewDecisionRead = ReviewDecisionRecord & { readonly actor?: Writer | null };
 export interface RunRead extends RunSummaryRead {
   readonly run: RunRecord;
   readonly units: readonly UnitRecord[];
   readonly dependencies: readonly UnitDependencyRecord[];
   readonly revisions: readonly ArtifactRevisionRecord[];
-  readonly decisions: readonly ReviewDecisionRecord[];
+  readonly decisions: readonly ReviewDecisionRead[];
   readonly intents: readonly Pick<EffectIntentRecord, "action_id" | "seq" | "payload">[];
 }
 
@@ -164,16 +165,19 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
 async function runRead(trx: DatabaseTransaction, run_id: string): Promise<RunRead | null> {
   const [summary] = await runSummaryReads(trx, [run_id]);
   if (!summary) return null;
-  const [run, units, dependencies, revisions, decisions, intents] = await Promise.all([
+  const [run, units, dependencies, revisions, decisions, intents, decision_events] = await Promise.all([
     trx.selectFrom("authority.run").selectAll().where("id", "=", run_id).executeTakeFirstOrThrow(),
     trx.selectFrom("authority.unit").selectAll().where("run_id", "=", run_id).orderBy("id").execute(),
     trx.selectFrom("authority.unit_dependency").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("depends_on_id").execute(),
     trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.effect_intent").select(["action_id", "seq", "payload"]).where("run_id", "=", run_id).execute(),
+    trx.selectFrom("authority.event").select(["payload", "writer"]).where("run_id", "=", run_id).execute(),
   ]);
   return { ...summary, intents: intents.map((intent) => ({ ...intent, action_id: intent.action_id as ActionId })), run: runRecord(run), units: units.map(unitRecord), dependencies: dependencies.map(dependencyRecord),
-    revisions: revisions.map(revisionRecord), decisions: decisions.map(decisionRecord) };
+    revisions: revisions.map(revisionRecord), decisions: decisions.map((row) => ({ ...decisionRecord(row), actor: decision_events.find(({ payload }) =>
+      payload.kind === "operator_decided" && payload.unit === row.unit_id && payload.review === row.review
+        && payload.decision === row.decision && payload.target === row.target_revision_id)?.writer ?? null })) };
 }
 
 export async function readRun(db: Kysely<DB>, run_id: string): Promise<RunRead | null> {

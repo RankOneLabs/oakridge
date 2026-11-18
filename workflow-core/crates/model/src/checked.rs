@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct CheckedWorkflow {
     pub digest: BundleDigest,
+    #[serde(deserialize_with = "deserialize_checked_type")]
     pub input: CheckedType,
     pub stages: Vec<CheckedStage>,
     pub root: CheckedGroup,
@@ -67,6 +68,7 @@ pub struct CheckedStage {
 #[serde(deny_unknown_fields)]
 pub struct CheckedArtifact {
     pub key: SymbolKey,
+    #[serde(deserialize_with = "deserialize_checked_type")]
     pub schema: CheckedType,
     pub edit_policy: EditPolicy,
     pub validations: Vec<CheckedArtifactValidation>,
@@ -82,14 +84,21 @@ pub struct CheckedArtifactValidation {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedDecision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<CheckedDecisionGuard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feedback_field: Option<String>,
     pub effect: DeclaredDecisionEffect,
     pub on: Option<SymbolKey>,
+    #[serde(default, deserialize_with = "deserialize_optional_checked_type")]
     pub payload: Option<CheckedType>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedEngineDecision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<CheckedDecisionGuard>,
     pub key: SymbolKey,
     pub effect: DeclaredDecisionEffect,
     pub on: Option<SymbolKey>,
@@ -167,6 +176,14 @@ impl CheckedWorker {
             Self::Agent { creates, .. } | Self::Code { creates, .. } => creates,
         }
     }
+    /// Required publications; the implicit blocker is an alternative output.
+    pub fn required_creates(&self) -> Vec<SymbolKey> {
+        self.creates()
+            .iter()
+            .filter(|key| key.0 != BLOCKER_ARTIFACT)
+            .cloned()
+            .collect()
+    }
     pub fn when(&self) -> Option<&CheckedStageExpression> {
         match self {
             Self::Agent { when, .. } | Self::Code { when, .. } => when.as_ref(),
@@ -185,8 +202,86 @@ pub struct CheckedNamedExpression {
 #[serde(deny_unknown_fields)]
 pub struct CheckedStageExpression {
     pub source: String,
+    #[serde(deserialize_with = "deserialize_checked_type")]
     pub value_type: TypeExpression,
     /// The resolved expression. Evaluation walks this; `source` is kept for
     /// traces and error messages only.
     pub expression: Expression,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedDecisionGuard {
+    pub check: CheckedStageExpression,
+    pub reason: String,
+}
+
+/// Checked types are tagged on the wire. Source types retain their compact decoder,
+/// where a record is allowed to have a field literally named `kind`.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum TaggedCheckedType {
+    Text,
+    Uuid {
+        generated: bool,
+    },
+    Ident,
+    RepoPath,
+    Boolean,
+    Integer,
+    Enum {
+        variants: Vec<String>,
+    },
+    Optional {
+        value: Box<TaggedCheckedType>,
+    },
+    List {
+        item: Box<TaggedCheckedType>,
+    },
+    Record {
+        fields: BTreeMap<String, TaggedCheckedType>,
+    },
+    Named {
+        schema: SchemaKey,
+    },
+    OutcomeOf {
+        stage: SymbolKey,
+    },
+}
+impl From<TaggedCheckedType> for Type {
+    fn from(value: TaggedCheckedType) -> Self {
+        match value {
+            TaggedCheckedType::Text => Self::Text,
+            TaggedCheckedType::Uuid { generated } => Self::Uuid { generated },
+            TaggedCheckedType::Ident => Self::Ident,
+            TaggedCheckedType::RepoPath => Self::RepoPath,
+            TaggedCheckedType::Boolean => Self::Boolean,
+            TaggedCheckedType::Integer => Self::Integer,
+            TaggedCheckedType::Enum { variants } => Self::Enum { variants },
+            TaggedCheckedType::Optional { value } => Self::Optional {
+                value: Box::new((*value).into()),
+            },
+            TaggedCheckedType::List { item } => Self::List {
+                item: Box::new((*item).into()),
+            },
+            TaggedCheckedType::Record { fields } => Self::Record {
+                fields: fields
+                    .into_iter()
+                    .map(|(key, value)| (key, value.into()))
+                    .collect(),
+            },
+            TaggedCheckedType::Named { schema } => Self::Named { schema },
+            TaggedCheckedType::OutcomeOf { stage } => Self::OutcomeOf { stage },
+        }
+    }
+}
+fn deserialize_checked_type<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Type, D::Error> {
+    TaggedCheckedType::deserialize(deserializer).map(Into::into)
+}
+fn deserialize_optional_checked_type<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Type>, D::Error> {
+    Option::<TaggedCheckedType>::deserialize(deserializer).map(|value| value.map(Into::into))
 }

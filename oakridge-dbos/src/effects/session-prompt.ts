@@ -1,6 +1,7 @@
-import type { FeedbackEntry } from "../core-client/core-types";
+import { BLOCKER_ARTIFACT, BLOCKER_SCHEMA } from "../core-client/core-types";
+import type { FeedbackEntry, ResolvedRunWorker } from "../core-client/core-types";
 import type { AttemptStatus, Mode, TypeExpression } from "../core-client/core-types";
-import type { CreatedArtifact, EffectInstruction } from "../domain/effect-instruction";
+import type { CreatedArtifact, EffectInstruction, EngineInputs } from "../domain/effect-instruction";
 import { renderTemplate, renderValue } from "../domain/prompt-template";
 
 export { renderTemplate, renderValue } from "../domain/prompt-template";
@@ -41,7 +42,7 @@ export interface SessionHistoryRows {
 export interface SessionPromptTexts { readonly prompt_text: string; readonly handoff_text: string | null }
 
 export function selectSessionTaskContext(instruction: EffectInstruction, history: SessionHistoryRows, texts: SessionPromptTexts): SessionTaskContext {
-  const creates = instruction.worker.kind === "agent" ? instruction.worker.creates : [];
+  const creates = instruction.worker.kind === "agent" ? selectAgentPublications(instruction.worker.creates) : [];
   const latest = new Map(history.latest.map((revision) => [revision.artifact, revision]));
   const previous = history.earlier_attempts.at(-1);
   return {
@@ -54,14 +55,31 @@ export function selectSessionTaskContext(instruction: EffectInstruction, history
   };
 }
 
+/** Agent alternative output, also present for historical stored instructions. */
+export function selectAgentPublications(creates: readonly CreatedArtifact[]): readonly CreatedArtifact[] {
+  return creates.some((artifact) => artifact.key === BLOCKER_ARTIFACT) ? creates
+    : [...creates, { key: BLOCKER_ARTIFACT, schema: BLOCKER_SCHEMA }];
+}
+
 const inputValues = (instruction: EffectInstruction): { readonly [key: string]: unknown } =>
   typeof instruction.inputs === "object" && instruction.inputs !== null && !Array.isArray(instruction.inputs)
     ? instruction.inputs as { readonly [key: string]: unknown } : {};
 
+/** Additive instruction input retained by the existing instruction decoder. */
+export interface ReviewHistoryEngineInputs extends EngineInputs {
+  readonly review_history?: readonly FeedbackEntry[];
+}
+export interface ReviewHistoryInstruction extends EffectInstruction {
+  readonly engine_inputs: ReviewHistoryEngineInputs;
+}
+export function withReviewHistory(instruction: EffectInstruction, resolved: ResolvedRunWorker): ReviewHistoryInstruction {
+  return { ...instruction, engine_inputs: { ...instruction.engine_inputs, review_history: resolved.review_history ?? [] } };
+}
+
 /** The mode prompt with the declared inputs and the engine inputs for its mode (`previous`, `feedback`, `subject`). */
-export function renderModePrompt(instruction: EffectInstruction, prompt_text: string): string {
-  const { previous, feedback, subject } = instruction.engine_inputs;
-  return renderTemplate(prompt_text, { ...inputValues(instruction), previous, feedback, subject });
+export function renderModePrompt(instruction: ReviewHistoryInstruction, prompt_text: string): string {
+  const { previous, feedback, subject, review_history = [] } = instruction.engine_inputs;
+  return renderTemplate(prompt_text, { ...inputValues(instruction), previous, feedback, subject, review_history });
 }
 
 /** The fields a `prompts.handoff` template may read beside the declared inputs; the compiler checks the same list. */
@@ -119,11 +137,12 @@ export function renderHandoff(instruction: EffectInstruction, context: SessionTa
 /** Where this task's publications attach: each artifact's current revision, and the revision under review. */
 export function renderTaskPublication(instruction: EffectInstruction, context: SessionTaskContext): string {
   const latest = new Map(context.latest.map((revision) => [revision.artifact, revision.revision_id]));
-  const creates = instruction.worker.kind === "agent" ? instruction.worker.creates : [];
+  const creates = instruction.worker.kind === "agent" ? selectAgentPublications(instruction.worker.creates) : [];
   const subject = instruction.engine_inputs.subject;
   return [
     "## Publishing this task",
-    "Publish these artifacts with the session secret. For a shared session, use the endpoint below:",
+    "If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, publish a `blocker` instead of guessing; a published blocker ends the task.",
+    "Publish the normal artifacts below, or a blocker, with the session secret. For a shared session, use the endpoint below:",
     ...creates.map((artifact) => {
       const current = latest.get(artifact.key) ?? null;
       const endpoint = instruction.worker.kind === "agent" && instruction.worker.session === "shared"
@@ -139,7 +158,9 @@ export function renderSessionTask(instruction: EffectInstruction, context: Sessi
   const handoff = renderHandoff(instruction, context);
   const unit = instruction.worker.kind === "agent" && instruction.worker.session === "shared"
     ? `This task belongs to unit \`${instruction.action.unit}\`. Publish only to the endpoints below.` : null;
-  return [unit, handoff, renderModePrompt(instruction, context.prompt_text), renderTaskPublication(instruction, context)]
+  const blocker_answer = instruction.engine_inputs.feedback.some((entry) => entry.review === "blocker_review")
+    ? "The operator answered your blocker. Resume with this answer as feedback and publish your normal artifacts. If clarification is still needed, publish a successor blocker using its latest revision as predecessor." : null;
+  return [unit, handoff, blocker_answer, renderModePrompt(instruction, context.prompt_text), renderTaskPublication(instruction, context)]
     .filter((part): part is string => part !== null).join("\n\n");
 }
 
@@ -173,7 +194,7 @@ export function renderSharedTaskDelivery(instruction: EffectInstruction, task: s
     "## Publication credentials for this task",
     "Use this session bearer token for every artifact PUT. Do not use the backend publication key, an alternate header, or an unauthenticated request; those do not attribute the revision to this worker attempt.",
     `Authorization: Bearer ${input.secret}`,
-    ...worker.creates.map(({ key }) => `PUT ${selectPublishEndpoint({ run_id: instruction.run_id, unit: instruction.action.unit,
+    ...selectAgentPublications(worker.creates).map(({ key }) => `PUT ${selectPublishEndpoint({ run_id: instruction.run_id, unit: instruction.action.unit,
       publish_base_url: input.publish_base_url }, key)}`),
     "",
     task,
@@ -187,7 +208,8 @@ export function renderSessionPreamble(input: SessionPreambleInput): string {
     "Your tasks arrive as messages in this session. Reply \"ready\" now, and wait for the first task.",
     "",
     "## Publishing your work",
-    "Each task says which artifacts to publish. Publish every one of them before you finish the task: a task that ends without publishing every artifact it creates fails.",
+    "Each task says which artifacts to publish. Publish every normal artifact before you finish the task, or publish a blocker instead.",
+    "If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, publish a `blocker` instead of guessing; a published blocker ends the task.",
     "",
     "Publish an artifact with an HTTP PUT to its endpoint, with your publication secret as a bearer token and a JSON body:",
     ...(input.shared ? [`Prefix each task's endpoint with ${input.publish_base_url.replace(/\/+$/, "")}.`] : []),
@@ -198,7 +220,7 @@ export function renderSessionPreamble(input: SessionPreambleInput): string {
     "A 200 or 201 response means the revision was recorded. A 409 response says why it was refused: correct it and publish again with a new request_id.",
     "",
     "Artifacts:",
-    ...input.creates.flatMap((artifact) => [
+    ...selectAgentPublications(input.creates).flatMap((artifact) => [
       `- \`${artifact.key}\``,
       ...(input.shared ? ["  endpoint: supplied with each task"] : [`  endpoint: ${selectPublishEndpoint(input, artifact.key)}`]),
       `  schema: ${JSON.stringify(artifact.schema)}`,

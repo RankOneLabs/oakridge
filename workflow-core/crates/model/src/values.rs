@@ -19,6 +19,7 @@ pub enum UnitStatus {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BlockedReason {
+    Blocker { revision: RevisionId },
     WaitingOn { units: Vec<UnitId> },
     Capacity { pool: SymbolKey },
 }
@@ -373,6 +374,10 @@ pub struct ResolvedReview {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedDecision {
+    #[serde(default = "decision_available", skip_serializing_if = "is_available")]
+    pub is_available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
     pub decision: SymbolKey,
     pub target: RevisionId,
 }
@@ -398,6 +403,8 @@ pub struct FeedbackEntry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedRunWorker {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_history: Vec<FeedbackEntry>,
     #[serde(default)]
     pub input_provenance: Option<Vec<InputProvenance>>,
     pub action_id: ActionKey,
@@ -453,5 +460,49 @@ mod tests {
     fn event_contract_has_the_seven_kinds_swept_by_evaluator_invariants() {
         let schema = serde_json::to_value(schemars::schema_for!(Event)).unwrap();
         assert_eq!(schema["oneOf"].as_array().unwrap().len(), 7);
+    }
+}
+
+fn decision_available() -> bool {
+    true
+}
+fn is_available(value: &bool) -> bool {
+    *value
+}
+
+#[cfg(test)]
+mod engine_serde_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_resolved_worker_defaults_to_empty_history_without_changing_its_wire() {
+        let wire = serde_json::json!({"input_provenance":null,"action_id":"a","inputs":{},"previous":null,
+            "feedback":[],"subject":null,"workspace":null});
+        let resolved: ResolvedRunWorker = serde_json::from_value(wire.clone()).unwrap();
+        assert!(resolved.review_history.is_empty());
+        assert_eq!(serde_json::to_value(resolved).unwrap(), wire);
+    }
+
+    #[test]
+    fn historical_checked_definition_round_trips_with_no_new_default_fields() {
+        let bytes = include_bytes!("../../../fixtures/development-checked-1c7d8017.json");
+        let checked: CheckedWorkflow = serde_json::from_slice(bytes).unwrap();
+        let canonical = serde_json::to_vec(&serde_json::to_value(checked).unwrap()).unwrap();
+        assert_eq!(canonical, bytes);
+    }
+
+    #[test]
+    fn historical_snapshot_and_review_defaults_preserve_canonical_wire_bytes() {
+        let wire = serde_json::json!({"run":{"id":"run","root":"run"},"units":[],"attempts":[],
+            "revisions":[],"decisions":[],"retry_events":[]});
+        let snapshot: StepSnapshot = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&serde_json::to_value(snapshot).unwrap()).unwrap(),
+            serde_json::to_vec(&wire).unwrap()
+        );
+        let wire = serde_json::json!({"decision":"accept","target":"r1"});
+        let decision: ResolvedDecision = serde_json::from_value(wire.clone()).unwrap();
+        assert!(decision.is_available);
+        assert_eq!(serde_json::to_value(decision).unwrap(), wire);
     }
 }
