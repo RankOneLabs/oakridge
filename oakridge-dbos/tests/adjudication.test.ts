@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { composeBuilderFeedback, validateAdjudication, type Adjudication } from "../src/domain/adjudication";
+import { composeBuilderFeedback, validateAdjudication, type Adjudication, type AdjudicationEffect } from "../src/domain/adjudication";
 
 import { target, validAdjudication } from "./adjudication-fixture";
 
-const validate = (payload: unknown, effect: Parameters<typeof validateAdjudication>[2] = "accept") => validateAdjudication(payload, target, effect);
+const validate = (payload: unknown, effect: AdjudicationEffect = "accept") => validateAdjudication({ payload, assessment: target, effect });
 const actionId = target.body.next_actions[0].id;
 test("accepts accepted, modified, rejected and added actions across audiences", () => expect(validate(validAdjudication()).ok).toBe(true));
 test("feedback includes builder actions in order and omits rejected and operator actions", () => expect(validAdjudication().builder_feedback).toBe([
@@ -14,7 +14,7 @@ test("wire entry order cannot change next_actions feedback order", () => {
   const payload = validAdjudication();
   expect(validate({ ...payload, entries: [...payload.entries].reverse() }).ok).toBe(true);
 });
-interface RefusalCase { name: string; mutate: (payload: Adjudication) => unknown; id: string; effect?: Parameters<typeof validateAdjudication>[2] }
+interface RefusalCase { name: string; mutate: (payload: Adjudication) => unknown; id: string; effect?: AdjudicationEffect }
 const refusalCases: RefusalCase[] = [
   { name: "payload on assessment changes", mutate: p => p, id: target.id, effect: "request_assessment_changes" },
   ...(["accept", "request_build_changes", "request_changes"] as const).map(effect => ({ name: `missing payload on ${effect}`, mutate: () => null, id: target.id, effect })),

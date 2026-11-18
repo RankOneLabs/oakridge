@@ -100,10 +100,12 @@ export function parseBuildBrief(body: unknown): BuildBrief | null {
   return criteria.ok ? { ...body, shape: "legacy", acceptance_criteria: criteria.value } : null;
 }
 export type CurrentBuildBrief = CurrentBrief & { shape: "current" };
-export function readBuildBrief(body: unknown, version: string, registrations?: readonly CurrentVersionRegistration[]): BuildBrief | CurrentBuildBrief | null;
+/** The schema version a brief was published under, and the registrations that resolve it. */
+export interface BriefVersion { readonly version: string; readonly registrations?: readonly CurrentVersionRegistration[] }
+export function readBuildBrief(body: unknown, brief_version: BriefVersion): BuildBrief | CurrentBuildBrief | null;
 export function readBuildBrief(body: unknown): BuildBrief | null;
-export function readBuildBrief(body: unknown, version?: string, registrations?: readonly CurrentVersionRegistration[]): BuildBrief | CurrentBuildBrief | null {
-  if (selectVersionedComponent("brief_body", version, registrations) !== "dev-current-brief-viewer") return parseBuildBrief(body);
+export function readBuildBrief(body: unknown, brief_version?: BriefVersion): BuildBrief | CurrentBuildBrief | null {
+  if (selectVersionedComponent({ schema: "brief_body", version: brief_version?.version, registrations: brief_version?.registrations }) !== "dev-current-brief-viewer") return parseBuildBrief(body);
   const parsed = parseCurrentBrief(body);
   return parsed.ok ? { ...parsed.value, shape: "current" } : null;
 }

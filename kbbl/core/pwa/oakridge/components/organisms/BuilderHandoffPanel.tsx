@@ -112,7 +112,7 @@ export function BuilderHandoffPanel({ runId, unitLabel, revisionId, assessment, 
 
 import type { CurrentAssessment } from "../../lib/current-assessment";
 import { selectAssessmentActions } from "../../lib/current-assessment";
-import { addAction, initialAdjudication, selectAdjudicationPayload, selectAdjudicationSources, selectBuilderPreview, selectRecordedAssessmentDecision, selectSendability, setDisposition, type AdjudicationEffect } from "../../lib/assessment-handoff";
+import { addAction, initialAdjudication, selectAdjudicationBlockReason, selectAdjudicationDecision, selectAdjudicationEffects, selectAdjudicationGate, selectAdjudicationPayload, selectAdjudicationSources, selectBuilderPreview, setDisposition, type AdjudicationEffect } from "../../lib/assessment-handoff";
 import { useResumeGate } from "../../hooks/useResumeGate";
 import type { OperatorRevisionDecision } from "../../operator-contracts/projections/unit-view";
 import { decisionAction } from "../../adapters/core";
@@ -120,7 +120,6 @@ import { randomUuid } from "../../../lib/random-uuid";
 import { useRef } from "react";
 import { AdjudicationAction } from "./AdjudicationAction";
 import { AdjudicationHistory } from "../molecules/AdjudicationHistory";
-import { selectHandoffRevisionId } from "../../lib/handoff-provenance";
 interface CurrentProps { assessment: CurrentAssessment; revisionId: string; gate: ParkedGate | null; decisions: readonly OperatorRevisionDecision[] }
 /** This form records a decision snapshot; the assessor's source words remain immutable. */
 export function CurrentBuilderHandoffPanel(props: CurrentProps) {
@@ -138,11 +137,8 @@ function CurrentAdjudicationForm({ assessment, revisionId, gate, decisions }: Cu
   const mutation = useResumeGate(gate?.id ?? "", gate?.run_id ?? null);
   const lists = selectAssessmentActions(assessment);
   const preview = selectBuilderPreview(state);
-  const revision = selectHandoffRevisionId(revisionId) ?? revisionId;
-  const recordedDecision = selectRecordedAssessmentDecision(decisions, revision);
+  const { revision, recordedDecision, isRecorded, isOpen } = selectAdjudicationGate({ gate, revisionId, decisions, hasSubmitted: hasRecorded });
   const recordedAdjudication = recordedDecision?.adjudication;
-  const isRecorded = hasRecorded || recordedDecision !== null;
-  const isOpen = gate?.actionable === true && selectHandoffRevisionId(gate.artifact_revision_id ?? undefined) === revision && !isRecorded;
   const disabled = !isOpen || mutation.isPending;
   function recorded(): void {
     setHasRecorded(true);
@@ -150,12 +146,12 @@ function CurrentAdjudicationForm({ assessment, revisionId, gate, decisions }: Cu
   function submit(effect: AdjudicationEffect): void {
     if (!gate || disabled) return;
     const payload = selectAdjudicationPayload(state, effect);
-    const definition = gate.decision_definitions?.find(definition => definition.submit.kind === "review" && definition.submit.decision === effect);
-    if (!payload.ok || !definition || definition.is_available === false || !gate.artifact_revision_id) return;
+    const decision = selectAdjudicationDecision(gate, effect);
+    if (!payload.ok || decision.kind !== "available") return;
     const identity = JSON.stringify({ effect, payload: payload.value });
     let key = keys.current.get(identity);
     if (!key) { key = randomUuid(); keys.current.set(identity, key); }
-    mutation.mutate({ idempotency_key: key, artifact_revision_id: gate.artifact_revision_id, action: decisionAction(definition), feedback: preview, adjudication: payload.value }, { onSuccess: recorded });
+    mutation.mutate({ idempotency_key: key, artifact_revision_id: decision.revision_id, action: decisionAction(decision.definition), feedback: preview, adjudication: payload.value }, { onSuccess: recorded });
   }
   return <ArtifactSection title="Action adjudication" testId="or-assessment-handoff">
     {!isOpen && <FeedbackMessage>{recordedDecision ? "The decision is recorded. Dispositions appear beside each action." : hasRecorded ? "Decision submitted. Waiting for recorded dispositions." : NO_REVIEW_REASON}</FeedbackMessage>}
@@ -177,10 +173,8 @@ function CurrentAdjudicationForm({ assessment, revisionId, gate, decisions }: Cu
       <Button size="small" disabled={disabled || !text.trim() || !source} onClick={() => { const option = sources.find(option => option.value === source); if (!option) return; setState(current => addAction(current, { audience, source: option.source, text })); setText(""); }}>Add</Button>
     </section>
     <strong>Builder preview</strong><pre className="whitespace-pre-wrap rounded-md border border-[var(--border-decorative)] p-3" data-testid="or-assessment-handoff-preview">{preview || "No builder actions selected."}</pre>
-    <div className="flex flex-wrap gap-2">{(["accept", gate?.gate_step === "integration_review" ? "request_changes" : "request_build_changes"] as const).filter(effect => gate?.offered_decisions.includes(effect)).map(effect => {
-      const sendability = selectSendability(state, effect);
-      const definition = gate?.decision_definitions?.find(definition => definition.submit.kind === "review" && definition.submit.decision === effect);
-      const reason = sendability.kind === "blocked" ? sendability.reason : definition?.is_available === false ? definition.disabled_reason ?? "Decision unavailable" : null;
+    <div className="flex flex-wrap gap-2">{selectAdjudicationEffects(gate).map(effect => {
+      const reason = selectAdjudicationBlockReason(state, gate, effect);
       return <div key={effect}><Button disabled={disabled || reason !== null} title={reason ?? undefined} onClick={() => submit(effect)}>{effect === "accept" ? "Accept assessment" : effect === "request_changes" ? "Request integration changes" : "Request build changes"}</Button>{reason && <FeedbackMessage>{reason}</FeedbackMessage>}</div>;
     })}</div>
     {gate?.offered_decisions.includes("request_assessment_changes") && <section><label>Assessment feedback<TextArea aria-label="Assessment feedback" disabled={disabled} value={assessmentFeedback} onChange={event => setAssessmentFeedback(event.target.value)} /></label>

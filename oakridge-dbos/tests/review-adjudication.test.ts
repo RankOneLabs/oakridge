@@ -110,7 +110,7 @@ test("redirected adjudication refuses an unseen successor even when its actions 
   expect(published.ok && published.value.kind).toBe("committed");
   const successor = await authority.db.selectFrom("authority.artifact_revision").selectAll().where("unit_id", "=", state.unit_id)
     .where("artifact", "=", "assessment").orderBy("seq", "desc").executeTakeFirstOrThrow();
-  expect(validateAdjudication(payload, { id: successor.id, body: successor.body as typeof target.body }, "request_build_changes").ok).toBe(true);
+  expect(validateAdjudication({ payload, assessment: { id: successor.id, body: successor.body as typeof target.body }, effect: "request_build_changes" }).ok).toBe(true);
   const response = await decide(state, payload, "request_build_changes");
   expect({ status: response.status, decisions: (await decisions(state)).length }).toEqual({ status: 409, decisions: 0 });
   expect(await response.text()).toContain("reviewed assessment changed");

@@ -6,7 +6,7 @@ export interface RunIdentityRollup { readonly label: "Tasks" | "Requirements"; r
 export function selectRunIdentityRollup(units: readonly OperatorUnitView[]): RunIdentityRollup {
   const artifacts = units.flatMap((unit) => unit.artifacts.map((artifact) => ({ unit, artifact })));
   const current = artifacts.find(({ artifact }) => artifact.schema === "spec_body"
-    && selectVersionedComponent(artifact.schema, artifactSchemaVersion(artifact.latest_revision)) !== null);
+    && selectVersionedComponent({ schema: artifact.schema, version: artifactSchemaVersion(artifact.latest_revision) }) !== null);
   if (current) {
     const revision = current.artifact.latest_revision;
     const decision = current.unit.recorded_decisions.filter((entry) => entry.target_revision_id === revision?.id).at(-1);

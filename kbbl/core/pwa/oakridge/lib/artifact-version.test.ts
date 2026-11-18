@@ -39,7 +39,7 @@ test.each([
   ["brief_body", currentBrief, ["/build_items/0", "/build_items/1"]],
 ] as const)("registered current %s viewers have contract item paths", (schema, body, paths) => {
   const version = OPERATOR_CURRENT_ARTIFACT_VERSIONS[schema].version;
-  const Viewer = resolveViewer(selectVersionedComponent(schema, version));
+  const Viewer = resolveViewer(selectVersionedComponent({ schema, version }));
   expect(artifactType(schema, version).component_id).toBe(CURRENT_VIEWERS[schema]);
   expect(Viewer && selectViewerItemPaths(Viewer, body)).toEqual(paths);
 });
@@ -49,7 +49,7 @@ test("historical named declaration hashes retain legacy readers", () => {
     ["plan_body", "artifact-schema/v1:66a1e9afac28cdb4b4db8fa8e78c9df02da4ddba1952d189279d22025a4ef79e"],
     ["brief_body", "artifact-schema/v1:c1303586cb5531a0c0aed8a282c0ad68917d94c94834d336705373166479951f"],
   ];
-  expect(legacy.map(([schema, version]) => selectVersionedComponent(schema, version))).toEqual([null, null, null]);
+  expect(legacy.map(([schema, version]) => selectVersionedComponent({ schema, version }))).toEqual([null, null, null]);
 });
 test("revision metadata is preserved independently of its body", () => {
   const original = sample.artifact as unknown as OperatorArtifactDetail;
@@ -65,6 +65,6 @@ test("a refused unknown body uses the raw fallback without changing the legacy r
 });
 test("brief reader's current branch is explicit and legacy calls retain their shape", async () => {
   const { readBuildBrief } = await import("./build-brief");
-  const current = readBuildBrief(currentBrief, "fixture-current", [{ schema: "brief_body", version: "fixture-current", component_id: "dev-current-brief-viewer" }]);
+  const current = readBuildBrief(currentBrief, { version: "fixture-current", registrations: [{ schema: "brief_body", version: "fixture-current", component_id: "dev-current-brief-viewer" }] });
   expect([current?.shape, readBuildBrief(brief)?.shape]).toEqual(["current", "build_items"]);
 });
