@@ -15,10 +15,13 @@ test("development references retain bindings and outcome paths", () => {
   expect(result.edges.map((edge) => `${edge.from}->${edge.to}`).sort()).toEqual([
     "prepare->analysis", "prepare->planning", "analysis->planning", "planning->briefs", "analysis->briefs", "prepare->briefs",
     "briefs->implementation", "prepare->implementation", "implementation->integration", "briefs->integration", "prepare->integration",
+    "planning->implementation", "analysis->integration",
   ].sort());
-  expect(result.references).toHaveLength(13);
+  expect(result.references).toHaveLength(15);
   expect(result.references).toContainEqual({ downstream: "planning", binding: { kind: "input", field: "spec" }, upstream: "analysis", outcome_path: ["spec"] });
-  expect(result.per_member_after).toEqual([{ unit: "implementation", expression: "each.depends_on" }]);
+  expect(result.references).toContainEqual({ downstream: "briefs", binding: { kind: "input", field: "assignment" }, upstream: "analysis", outcome_path: ["spec", "requirements"] });
+  expect(result.references).toContainEqual({ downstream: "integration", binding: { kind: "input", field: "requirements" }, upstream: "analysis", outcome_path: ["spec", "requirements"] });
+  expect(result.per_member_after).toEqual([{ unit: "implementation", expression: "require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id)).depends_on" }]);
 });
 test("fan-out recurses with declaration paths and preserves per-member after", () => {
   const result = selectDefinitionDependencies(source("fan-out"));

@@ -130,6 +130,13 @@ them. Read failures stop generation before any stored objects are changed.
 `--check` reports differing or missing current output files and names every
 non-decodable retained workflow object without writing or deleting anything.
 The existing pretty-printed Rust bundle fixtures remain unchanged, and the source-less
-`r5-cohort.json` fixture has no committed definition. Run `bun test
-workflow-config/src` for the identity and store boundary tests; `bun run typecheck`
-includes this package.
+`r5-cohort.json` fixture has no committed definition. The workflow tests exercise
+the Rust evaluator through WASM as well as the identity and store boundaries.
+Build that prerequisite before running them (CI performs the same build):
+
+```bash
+cargo build --manifest-path workflow-core/Cargo.toml --locked --target wasm32-unknown-unknown -p workflow-evaluator
+bun test workflow-config/src
+```
+
+`bun run typecheck` includes this package.
