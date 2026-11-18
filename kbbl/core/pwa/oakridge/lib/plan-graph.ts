@@ -54,3 +54,13 @@ export function selectParallelWaves(plan: import("./current-contract").CurrentPl
   }
   return { ok: true, value: waves };
 }
+
+export interface ParallelCohortRow { readonly cohort: import("./current-contract").CurrentCohort; readonly cohort_index: number; readonly wave_number: number | null }
+export interface ParallelPlanView { readonly rows: readonly ParallelCohortRow[]; readonly error: ParallelOrderError | null }
+export function selectParallelCohortRows(plan: import("./current-contract").CurrentPlan): ParallelPlanView {
+  const waves = selectParallelWaves(plan);
+  const waveNumbers = new Map(waves.ok ? waves.value.flatMap((wave, index) => wave.map((cohort) => [cohort.id, index + 1] as const)) : []);
+  return { error: waves.ok ? null : waves.error,
+    rows: plan.cohorts.map((cohort, cohort_index) => ({ cohort, cohort_index, wave_number: waveNumbers.get(cohort.id) ?? null })),
+  };
+}

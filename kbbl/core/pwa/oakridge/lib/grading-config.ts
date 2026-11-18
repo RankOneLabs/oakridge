@@ -160,7 +160,7 @@ export const evaluatorWithRunner = (entry: Json, runner: Json): Json => {
 export function definitionWithTaskSource(definition: Json, source: Json): Json {
   const { task_ids, task_source, ...fields } = jsonObject(definition);
   return source === "resolved_assesses" ? { ...fields, scope: "per_task", task_source: "resolved_assesses" }
-    : { ...fields, scope: "per_task", task_ids: source === "requirement_ids" ? "/requirement_ids" : task_ids ?? "" };
+    : { ...fields, scope: "per_task", task_ids: source === "requirement_ids" ? "/requirement_ids" : gradingIdentityField(definition) === "requirement_ids" ? "/task_ids" : task_ids ?? "" };
 }
 
 export interface DefinitionSelectorEntry { index: number; id: string; scope: string; is_selected: boolean }

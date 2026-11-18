@@ -19,3 +19,11 @@ export function selectRevisionReceivedContext(unit: OperatorUnitView, attemptId:
   const intent = unit.attempts.find((attempt) => attempt.id === attemptId)?.intent;
   return intent ? selectReceivedContext({ input: intent.inputs, input_provenance: intent.input_provenance }) : selectReceivedContext(unit);
 }
+
+export interface ReceivedContextView extends ReceivedContext { readonly dependencies_text: string; readonly requirements: readonly (ResolvedAssignment["requirements"][number] & { readonly source_revisions_text: string })[] }
+export function selectReceivedContextView(context: ReceivedContext): ReceivedContextView {
+  const revisions = context.sources.filter((source) => source.input === "assignment").map((source) => source.revision_id);
+  return { ...context, dependencies_text: context.assignment.cohort.depends_on.join(", ") || "None",
+    requirements: context.assignment.requirements.map((requirement) => ({ ...requirement, source_revisions_text: revisions.join(", ") || "Not recorded" })),
+  };
+}

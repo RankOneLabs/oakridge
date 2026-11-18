@@ -34,7 +34,7 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
   const [taskPage, setTaskPage] = useState(FIRST);
   const [drill, setDrill] = useState<{ readonly key: ObservationCompositeDrilldownKey; readonly label: string } | null>(null);
   const tasks = useRunTasks({ run_id: runId, page: taskPage, nested: {} });
-  const requirementRows = selectRequirementGradingRows(tasks.identity, tasks.data?.items ?? []);
+  const requirementRows = selectRequirementGradingRows({ identity: tasks.identity, composites: tasks.data?.items ?? [], page: taskPage });
   const isRequirements = tasks.identity.label === "Requirements";
   const [unresolvedPage, setUnresolvedPage] = useState(FIRST);
   const unresolved = useRunUnresolvedReferences(runId, unresolvedPage);
@@ -52,7 +52,7 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
       <section className="flex flex-col gap-3" data-testid="or-grading-tasks">
         <h3 className="m-0 text-sm font-semibold text-[var(--text-primary)]">{tasks.identity.label}{isRequirements ? ` (${tasks.identity.rows.length})` : tasks.data ? ` (${tasks.data.total})` : ""}</h3>
         {tasks.isError && <FeedbackMessage testId="or-grading-tasks-unavailable">Tasks are unavailable: {tasks.error instanceof Error ? tasks.error.message : "observation did not answer"}</FeedbackMessage>}
-        {requirementRows.map((requirement) => <div key={requirement.id} className="flex flex-col gap-2">
+        {requirementRows.items.map((requirement) => <div key={requirement.id} className="flex flex-col gap-2">
           <Button variant="link" onClick={() => onOpenTask(requirement.id)}>{requirement.id}</Button><p>{requirement.text}</p>
           {requirement.composite && <TaskStageComposites runId={runId} taskId={requirement.id} stages={requirement.composite.stages} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })} />}
         </div>)}
@@ -66,7 +66,7 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
             <TaskStageComposites runId={runId} taskId={task.producer_local_id} stages={task.stages} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })} />
           </div>
         ))}
-        {tasks.data && <ListPager name="tasks" page={tasks.data} onWindow={setTaskPage} />}
+        {tasks.data && <ListPager name={isRequirements ? "requirements" : "tasks"} page={isRequirements ? requirementRows : tasks.data} onWindow={setTaskPage} />}
         {isRevealed && drill && <CompositeDrilldown runId={runId} drilldownKey={drill.key} label={drill.label} onClose={() => setDrill(null)} onOpenItem={onOpenItem} />}
       </section>
 

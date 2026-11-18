@@ -9,8 +9,12 @@ export function selectSpecTaskId(item: Pick<ObservationAddressedItem, "item_kind
 
 
 export interface RequirementGradingRow { readonly id: string; readonly text: string; readonly composite: ObservationCompositeRead | null }
-/** Requirement identity and text come from spec; observations supply grading only. */
-export const selectRequirementGradingRows = (identity: RunIdentityRollup, composites: readonly ObservationCompositeRead[]): readonly RequirementGradingRow[] =>
-  identity.label === "Requirements" ? identity.rows.map((requirement) => ({ id: requirement.id, text: requirement.description,
-    composite: composites.find((composite) => composite.producer_local_id === requirement.id) ?? null,
-  })) : [];
+export interface RequirementGradingInput { readonly identity: RunIdentityRollup; readonly composites: readonly ObservationCompositeRead[]; readonly page: import("../grading-contracts/grading/composite").ObservationPageRequest }
+/** Page canonical identities, then join each displayed row against the complete grading read. */
+export function selectRequirementGradingRows({ identity, composites, page }: RequirementGradingInput): import("../grading-contracts/grading/composite").ObservationPaged<RequirementGradingRow> {
+  const rows = identity.label === "Requirements" ? identity.rows : [];
+  const grades = new Map(composites.map((composite) => [composite.producer_local_id, composite]));
+  return { ...page, total: rows.length, items: rows.slice(page.offset, page.offset + page.limit).map((requirement) => ({
+    id: requirement.id, text: requirement.description, composite: grades.get(requirement.id) ?? null,
+  })) };
+}

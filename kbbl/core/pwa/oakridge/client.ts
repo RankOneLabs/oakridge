@@ -1,3 +1,5 @@
+import { readUnits, invalidateCachedRunUnits } from "./client-units";
+export { invalidateCachedRunUnits } from "./client-units";
 import { randomUuid } from "../lib/random-uuid";
 import { parseInstallStatus } from "./adapters/install-status";
 import type { ExecutedPromptRead } from "./lib/prompt-view";
@@ -12,25 +14,14 @@ import type { OperatorIngressResponse } from "./operator-contracts/http/ingress"
 import type { OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary } from "./operator-contracts/projections/definition-view";
 import type { OperatorRunInboxBatch } from "./operator-contracts/projections/inbox";
 import type { OperatorRunPage, OperatorRunView } from "./operator-contracts/projections/run-view";
-import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
 import { parseDefinitionPrompts, artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, latestUnitAttemptPerSession, parseCompositeId, revisionToArtifact, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { createCollabClient } from "./client-collab";
 import { createGateClient } from "./client-gates";
 import { committed, oakridgeGet, oakridgePost, OPERATOR, runPath, unitPath } from "./client-http";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
 import { developmentLaunch } from "./adapters/launch";
-import { parseArtifactDetail, parseRunInboxBatch, parseRunView, parseUnitViews } from "./adapters/parse";
+import { parseArtifactDetail, parseRunInboxBatch, parseRunView } from "./adapters/parse";
 
-interface CachedUnits {
-  readonly promise: Promise<readonly OperatorUnitView[]>;
-  expiresAt: number;
-  isLoading: boolean;
-}
-/** Run surfaces poll every ten seconds; a settled read must expire before their next poll. */
-const UNIT_CACHE_FRESH_MS = 5_000;
-const unitCache = new Map<string, CachedUnits>();
-/** Every unit input field the adapters read; the rest repeats upstream artifacts in each unit. */
-const UNIT_INPUT_FIELDS = ["assignment", "spec", "brief", "cohort", "repositories", "repository", "repository_key", "title", "workspace"];
 async function resolveArtifactId(id: string): Promise<CompositeId> {
   const parsed = parseCompositeId(id, "artifact");
   if (parsed.ok) return parsed.value;
@@ -43,30 +34,6 @@ async function resolveArtifactId(id: string): Promise<CompositeId> {
   if (matches.length !== 1) throw new Error(`oakridge ${id}: opaque artifact revision ${matches.length === 0 ? "not found" : "is ambiguous"}`);
   return matches[0];
 }
-const readUnits = (runId: string): Promise<readonly OperatorUnitView[]> => {
-  const cached = unitCache.get(runId);
-  if (cached && (cached.isLoading || cached.expiresAt > Date.now())) return cached.promise;
-  const path = `${runPath(runId)}/units?input_fields=${UNIT_INPUT_FIELDS.join(",")}`;
-  const entry: CachedUnits = {
-    expiresAt: 0,
-    isLoading: true,
-    promise: oakridgeGet<unknown>(path).then((value) => {
-      const units = unwrapAdapter(path, parseUnitViews(value));
-      entry.isLoading = false;
-      entry.expiresAt = Date.now() + UNIT_CACHE_FRESH_MS;
-      return units;
-    }).catch((error) => {
-      if (unitCache.get(runId) === entry) unitCache.delete(runId);
-      throw error;
-    }),
-  };
-  unitCache.set(runId, entry);
-  return entry.promise;
-};
-export const invalidateCachedRunUnits = (runId: string | null): void => {
-  if (runId) unitCache.delete(runId);
-  else unitCache.clear();
-};
 
 async function readRunPage(isArchived = false): Promise<OperatorRunView[]> {
   const items: OperatorRunView[] = [];
