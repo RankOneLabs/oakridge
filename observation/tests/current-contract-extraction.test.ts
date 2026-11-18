@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { CURRENT_SCHEMA_VERSIONS, definitionsForSchemaVersion, oakridgeCatalogue } from "../src/producers/oakridge/catalogue";
-import { selectRevision } from "../src/projection/extractor";
+import { logicalIdentityForItem, selectRevision } from "../src/projection/extractor";
 import { fixtureBody } from "./grading-fixture";
 
 const current = async (kind: keyof typeof CURRENT_SCHEMA_VERSIONS, fixture = kind as string) =>
@@ -46,9 +46,9 @@ test("missing and non-string producer and reference ids fail at the offending pa
 test("split allocations retain cohort scopes, canonical references and distinct contributions", async () => {
   const pass = await current("plan");
   const shared = pass.items.filter(({ item }) => item.producer_local_id === "R1").map(({ item }) => item);
-  expect(shared.map((item) => [item.item_scope, item.selected_value, item.links[0]?.target_local_id])).toEqual([
-    ["cohort/C1/allocation", { requirement_id: "R1", contribution: "C1 contribution to R1" }, "R1"],
-    ["cohort/C2/allocation", { requirement_id: "R1", contribution: "C2 contribution to R1" }, "R1"],
+  expect(shared.map((item) => [item.item_scope, item.selected_value, logicalIdentityForItem(item)])).toEqual([
+    ["cohort/C1/allocation", { requirement_id: "R1", contribution: "C1 contribution to R1" }, { scope: "task", producer_local_id: "R1" }],
+    ["cohort/C2/allocation", { requirement_id: "R1", contribution: "C2 contribution to R1" }, { scope: "task", producer_local_id: "R1" }],
   ]);
 });
 test("build items address only requirement_ids and technical decisions address build occurrences", async () => {
@@ -90,4 +90,15 @@ test("historical published declaration fingerprints retain legacy extraction", (
   for (const [kind, digest] of Object.entries(historical))
     expect(oakridgeCatalogue(kind, `artifact-schema/v1:${digest}`).map((definition) => definition.extractor_id))
       .toEqual(oakridgeCatalogue(kind, "development-v1").map((definition) => definition.extractor_id));
+});
+
+test("legacy extractors keep their original logical identity without an explicit override", async () => {
+  for (const kind of ["tasks", "plan", "brief", "assessment"]) {
+    const pass = selectRevision(await fixtureBody(kind), kind, oakridgeCatalogue(kind, "development-v1"));
+    for (const { item } of pass.items) {
+      expect(item.logical_item).toBeUndefined();
+      expect(logicalIdentityForItem(item)).toEqual(item.item_scope && item.producer_local_id
+        ? { scope: item.item_scope, producer_local_id: item.producer_local_id } : null);
+    }
+  }
 });

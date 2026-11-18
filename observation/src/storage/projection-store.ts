@@ -5,7 +5,7 @@ import type { ItemOccurrenceId, LogicalItemId, RelationId } from "../domain/iden
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { INITIAL_SOURCE_CURSOR, type SourceEventCursor } from "../ingest/cursor";
 import type { ExtractionProfile } from "../ports/producer-profile";
-import { selectRevision, type ExtractorDefinition, type LinkReference, type LogicalItemLink, type OccurrenceLink,
+import { logicalIdentityForItem, selectRevision, type ExtractorDefinition, type LinkReference, type LogicalItemLink, type OccurrenceLink,
   type RelationType, type SelectedItem } from "../projection/extractor";
 import { extractionIssue, issueId, type ExtractionIssue } from "../projection/issues";
 import { logicalItemId, logicalItemRelation, logicalReference, occurrenceRelation, relationId, revisionAnchorId,
@@ -77,8 +77,9 @@ async function saveOccurrence(trx: DatabaseTransaction, tenant: TenantScope, rev
     extractor_version: definition.extractor_version, item_selector: item.item_selector, item_id_or_path: item.item_id_or_path });
   if (!identity.ok) throw new Error(identity.error.detail);
   const occurrence_id = identity.value;
-  const logical_item_id = item.item_scope && item.producer_local_id ? await saveLogicalItem(trx, tenant, revision.run_id,
-    item.item_scope, item.producer_local_id, configuration) : null;
+  const logical_identity = logicalIdentityForItem(item);
+  const logical_item_id = logical_identity ? await saveLogicalItem(trx, tenant, revision.run_id,
+    logical_identity.scope, logical_identity.producer_local_id, configuration) : null;
   const row = { ...scope(tenant), occurrence_id, revision_id: revision.revision_id, run_id: revision.run_id,
     artifact_kind: revision.artifact_kind, schema_version: revision.artifact_schema_version,
     extractor_id: definition.extractor_id, extractor_version: definition.extractor_version,
@@ -93,7 +94,8 @@ async function saveOccurrence(trx: DatabaseTransaction, tenant: TenantScope, rev
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("occurrence_id", "=", occurrence_id).executeTakeFirstOrThrow();
   if (!sameJson(existing.selected_value, item.selected_value) || existing.item_scope !== item.item_scope
-    || existing.producer_local_id !== item.producer_local_id || existing.revision_id !== revision.revision_id) {
+    || existing.producer_local_id !== item.producer_local_id || existing.revision_id !== revision.revision_id
+    || existing.logical_item_id !== logical_item_id) {
     await saveIssue(trx, tenant, extractionIssue(revision.revision_id, definition.extractor_id,
       definition.extractor_version, item.item_selector, "identity_collision"));
     return null;

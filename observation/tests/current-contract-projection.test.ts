@@ -52,6 +52,16 @@ integration("current extractors project three canonical requirements across all 
   expect((await service.request(address, { headers: { authorization: "Bearer read" } })).status).toBe(400);
   const relations = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_relation").selectAll().where("source_occurrence_id", "is not", null).execute());
   const task_id = logical[0]!.logical_item_id as LogicalItemId;
+  const split = items.filter((item) => item.item_kind === "allocation" && item.producer_local_id === "R1")
+    .sort((left, right) => left.json_pointer.localeCompare(right.json_pointer));
+  expect(split.map((item) => [item.logical_item_id, item.item_scope, item.selected_value])).toEqual([
+    [task_id, "cohort/C1/allocation", { requirement_id: "R1", contribution: "C1 contribution to R1" }],
+    [task_id, "cohort/C2/allocation", { requirement_id: "R1", contribution: "C2 contribution to R1" }],
+  ]);
+  expect(new Set(split.map((item) => item.occurrence_id)).size).toBe(2);
+  const allocationIdentities = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.logical_item")
+    .select("logical_item_id").where("scope", "like", "cohort/%/allocation").execute());
+  expect(allocationIdentities).toEqual([]);
   const associated = associateTask({ task_id, occurrences: items.map((item) => ({ occurrence_id: item.occurrence_id as ItemOccurrenceId, logical_item_id: item.logical_item_id as LogicalItemId | null })),
     relations: relations.map((relation): CompositeRelation => ({ ...relation,
       relation_id: relation.relation_id as RelationId, source_occurrence_id: relation.source_occurrence_id as ItemOccurrenceId,

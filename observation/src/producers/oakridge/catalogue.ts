@@ -304,7 +304,7 @@ export function currentDefinitions(schemaVersion: string): readonly ExtractorDef
     definition("plan", schemaVersion, "plan.allocations", "allocation", "/cohorts/*/allocations/*",
       cohortList("allocations", (value, path, cohortId) => { const id = referenceId(value, "requirement_id", path);
         return id.ok ? ok({ ...taskItem("allocation", "/cohorts/*/allocations/*", path, id.value, value),
-          item_scope: `cohort/${cohortId}/allocation`, links: [{ target: "logical_item", type: "addresses",
+          item_scope: `cohort/${cohortId}/allocation`, logical_item: { scope: TASK_SCOPE, producer_local_id: id.value }, links: [{ target: "logical_item", type: "addresses",
             target_scope: TASK_SCOPE, target_local_id: id.value, evidence_ref: `${path}/requirement_id` }] }) : id; })),
     definition("brief", schemaVersion, "brief.requirement_build_items", "build_item", "/build_items/*",
       briefList("build_items", (value, path, cohortId) => { const id = requiredId(value, path);
