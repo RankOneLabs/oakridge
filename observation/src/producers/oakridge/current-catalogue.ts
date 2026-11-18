@@ -15,7 +15,8 @@ export function currentSchemaVersion(artifact: string): string | null {
 }
 type Selection = ExtractorDefinition["select"];
 type Mapping = (value: JsonValue, path: string) => Result<SelectedItem, ExtractionFailure>;
-function selectList(body: JsonValue, field: string, prefix: string, map: Mapping): Result<readonly SelectedItem[], ExtractionFailure> {
+interface CurrentListInput { readonly body: JsonValue; readonly field: string; readonly prefix: string; readonly map: Mapping }
+function selectList({ body, field, prefix, map }: CurrentListInput): Result<readonly SelectedItem[], ExtractionFailure> {
   const values = listAt(body, [field]);
   if (!values.ok) return values;
   const result: SelectedItem[] = [];
@@ -26,53 +27,57 @@ function selectList(body: JsonValue, field: string, prefix: string, map: Mapping
   }
   return ok(result);
 }
-function nestedList(body: JsonValue, outer: string, inner: string, map: (value: JsonValue, path: string, parent: JsonValue, parentPath: string) => Result<SelectedItem, ExtractionFailure>) {
+interface NestedSelection { readonly value: JsonValue; readonly path: string; readonly parent: JsonValue; readonly parent_path: string }
+interface NestedListInput { readonly body: JsonValue; readonly outer: string; readonly inner: string; readonly map: (selection: NestedSelection) => Result<SelectedItem, ExtractionFailure> }
+function nestedList({ body, outer, inner, map }: NestedListInput) {
   const parents = listAt(body, [outer]);
   if (!parents.ok) return parents;
   const result: SelectedItem[] = [];
   for (const [index, parent] of parents.value.entries()) {
     const parentPath = `/${outer}/${index}`;
-    const values = selectList(parent, inner, parentPath, (value, path) => map(value, path, parent, parentPath));
+    const values = selectList({ body: parent, field: inner, prefix: parentPath, map: (value, path) => map({ value, path, parent, parent_path: parentPath }) });
     if (!values.ok) return values;
     result.push(...values.value);
   }
   return ok(result);
 }
-function item(kind: string, selector: string, path: string, value: JsonValue, id: string, scope: string | null, links: SelectedItem["links"] = []): SelectedItem {
+interface CurrentItemInput { readonly kind: string; readonly selector: string; readonly path: string; readonly value: JsonValue; readonly id: string; readonly scope: string | null; readonly links?: SelectedItem["links"] }
+function item({ kind, selector, path, value, id, scope, links = [] }: CurrentItemInput): SelectedItem {
   return { item_kind: kind, item_selector: selector, item_id_or_path: path, item_scope: scope, producer_local_id: id, selected_value: value, path, links };
 }
+interface CurrentDefinitionInput { readonly artifact_kind: string; readonly item_kind: string; readonly item_selector: string; readonly select: Selection }
 export function currentDefinitions(schema_version: string, logical_scope: string): readonly ExtractorDefinition[] {
-  const define = (artifact_kind: string, item_kind: string, item_selector: string, select: Selection): ExtractorDefinition => ({
+  const define = ({ artifact_kind, item_kind, item_selector, select }: CurrentDefinitionInput): ExtractorDefinition => ({
     artifact_kind, schema_version, extractor_id: `canonical.${artifact_kind}.${item_kind}`, extractor_version: "1", item_kind, item_selector, select,
   });
   return [
-    define("analysis", "finding", "/requirements/*/findings/*", (body) => nestedList(body, "requirements", "findings", (value, path, parent, parentPath) => {
+    define({ artifact_kind: "analysis", item_kind: "finding", item_selector: "/requirements/*/findings/*", select: (body) => nestedList({ body, outer: "requirements", inner: "findings", map: ({ value, path, parent, parent_path: parentPath }) => {
       const requirement = requiredId(parent, parentPath), finding = requiredId(value, path);
       if (!requirement.ok) return requirement;
       if (!finding.ok) return finding;
-      return ok(item("finding", "/requirements/*/findings/*", path, value, finding.value, null, [{
+      return ok(item({ kind: "finding", selector: "/requirements/*/findings/*", path, value, id: finding.value, scope: null, links: [{
         target: "logical_item", type: "addresses", target_scope: logical_scope, target_local_id: requirement.value, evidence_ref: `${parentPath}/id`,
-      }]));
-    })),
-    define("spec", "requirement", "/requirements/*", (body) => selectList(body, "requirements", "", (value, path) => {
+      }] }));
+    } }) }),
+    define({ artifact_kind: "spec", item_kind: "requirement", item_selector: "/requirements/*", select: (body) => selectList({ body, field: "requirements", prefix: "", map: (value, path) => {
       const id = requiredId(value, path);
       if (!id.ok) return id;
       const findings = idList(value, "analysis_finding_ids", path);
       if (!findings.ok) return findings;
-      return ok(item("requirement", "/requirements/*", path, value, id.value, logical_scope, findings.value.map((finding, index) => ({
+      return ok(item({ kind: "requirement", selector: "/requirements/*", path, value, id: id.value, scope: logical_scope, links: findings.value.map((finding, index) => ({
         target: "occurrence", type: "derived_from", target_artifact_kind: "analysis", target_item_kind: "finding", target_scope: null,
-        target_local_id: finding, evidence_ref: `${path}/analysis_finding_ids/${index}`,
-      }))));
-    })),
-    define("plan", "allocation", "/cohorts/*/allocations/*", (body) => nestedList(body, "cohorts", "allocations", (value, path) => {
+        recorded_revisions_field: "analysis_revision_ids", target_local_id: finding, evidence_ref: `${path}/analysis_finding_ids/${index}`,
+      })) }));
+    } }) }),
+    define({ artifact_kind: "plan", item_kind: "allocation", item_selector: "/cohorts/*/allocations/*", select: (body) => nestedList({ body, outer: "cohorts", inner: "allocations", map: ({ value, path }) => {
       const fields = objectAt(value, path);
       if (!fields.ok) return fields;
       const id = fields.value.requirement_id;
       return typeof id === "string" && id.length > 0
-        ? ok(item("allocation", "/cohorts/*/allocations/*", path, value, id, logical_scope))
+        ? ok(item({ kind: "allocation", selector: "/cohorts/*/allocations/*", path, value, id, scope: logical_scope }))
         : err({ operation: "select_items", entity_id: `${path}/requirement_id`, detail: "missing requirement id" });
-    })),
-    define("brief", "build_item", "/build_items/*", (body) => selectList(body, "build_items", "", (value, path) => {
+    } }) }),
+    define({ artifact_kind: "brief", item_kind: "build_item", item_selector: "/build_items/*", select: (body) => selectList({ body, field: "build_items", prefix: "", map: (value, path) => {
       const id = requiredId(value, path), cohort = objectAt(body, "/");
       if (!id.ok) return id;
       if (!cohort.ok) return cohort;
@@ -81,8 +86,8 @@ export function currentDefinitions(schema_version: string, logical_scope: string
       if (!requirements.ok) return requirements;
       const links: LogicalItemLink[] = requirements.value.map((requirement, index) => ({ target: "logical_item", type: "addresses",
         target_scope: logical_scope, target_local_id: requirement, evidence_ref: `${path}/requirement_ids/${index}` }));
-      return ok(item("build_item", "/build_items/*", path, value, id.value, `cohort/${cohort.value.cohort_id}/build_item`, links));
-    })),
+      return ok(item({ kind: "build_item", selector: "/build_items/*", path, value, id: id.value, scope: `cohort/${cohort.value.cohort_id}/build_item`, links }));
+    } }) }),
   ];
 }
 export function currentItemFields(item_kind: string): readonly string[] {

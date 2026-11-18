@@ -35,7 +35,7 @@ export function selectArtifactDetail(read: RunRead, location: ArtifactLocation):
   const unit = read.units.find((candidate) => candidate.id === location.unit_id);
   const stage = unit?.stage == null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
   if (!unit || !stage?.artifacts[location.artifact]) return null;
-  const revisions = selectRevisionViews(read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === location.artifact), read.attempts, read.definition.artifact_schema_versions ?? {}, unit.stage ?? "");
+  const revisions = selectRevisionViews({ revisions: read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === location.artifact), attempts: read.attempts, versions: read.definition.artifact_schema_versions ?? {}, stage: unit.stage ?? "" });
   const ids = new Set(revisions.map((revision) => revision.id));
   const decisions = read.decisions.filter((decision) => ids.has(decision.target_revision_id)).map(selectRevisionDecision);
   const latest = revisions.at(-1);

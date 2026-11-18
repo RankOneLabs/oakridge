@@ -50,7 +50,7 @@ test("operator list and artifact detail revisions share the pinned capture versi
     predecessor_id: null, subject: null, created_at: new Date(0) } as ArtifactRevisionRecord;
   const read = { run: { input: { spec: "Original" } }, units: [{ id: revision.unit_id, stage: "analysis" }], revisions: [revision], attempts: [], decisions: [],
     definition: { parsed_workflow: current, artifact_schema_versions: artifactSchemaVersions(current) } } as unknown as RunRead;
-  const list = selectRevisionViews([revision], [], artifactSchemaVersions(current), "analysis");
+  const list = selectRevisionViews({ revisions: [revision], attempts: [], versions: artifactSchemaVersions(current), stage: "analysis" });
   const detail = selectArtifactDetail(read, { unit_id: revision.unit_id, artifact: "spec" });
   expect([list[0]?.artifact_schema_version, detail?.revisions[0]?.artifact_schema_version]).toEqual([DEVELOPMENT_ARTIFACT_VERSIONS.spec_body.version, DEVELOPMENT_ARTIFACT_VERSIONS.spec_body.version]);
   expect(list[0]?.body).toEqual({ objective: "Pinned" });
@@ -59,4 +59,13 @@ test("operator list and artifact detail revisions share the pinned capture versi
 test("backend and observation generated manifests stay synchronized", async () => {
   const observation = await import("../../observation/src/producers/oakridge/artifact-versions");
   expect(observation.DEVELOPMENT_ARTIFACT_VERSIONS).toEqual(DEVELOPMENT_ARTIFACT_VERSIONS);
+});
+
+test("current spec captures preserve the exact analysis revision ids supplied by the publisher", async () => {
+  const { mapObservationEvent } = await import("../src/adapters/observation-mapping");
+  const row = { id: "event", run_id: "run", payload: { kind: "revision_published", unit: "run/analysis", artifact: "spec", body: {} },
+    created_at: new Date(0) } as import("../src/storage/read-store").CommittedEventRow<import("../src/storage/json-column-types").CoreEvent>;
+  const definition = { definition_id: catalog.value.development!.definition_id, checked_program: { workflow: current } } as unknown as import("../src/storage/read-store").PinnedDefinitionRead;
+  const capture = mapObservationEvent({ row, definition, namespace: "test", stage: "analysis", revision_sequence: 1, run_config: null, analysis_revision_ids: ["run/analysis:analysis:2"] });
+  expect(capture.kind === "artifact_revision" && capture.revision.source.analysis_revision_ids).toEqual(["oakridge:test:run/analysis:analysis:2"]);
 });

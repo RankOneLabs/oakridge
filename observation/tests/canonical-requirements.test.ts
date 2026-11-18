@@ -121,3 +121,27 @@ integration("current capture, requirement rollups and human grades share canonic
   expect(grades.status).toBe(200);
   expect(JSON.stringify(await grades.json())).toContain("covered");
 }));
+
+integration("a revised finding resolves only in the spec's pinned analysis revision", async () => scratchDatabase(async (db) => {
+  const feed = createFeed(db);
+  for (const [revision_id, kind, version, body] of [
+    ["analysis-old", "analysis", versions.analysis_body.version, bodies.analysis],
+    ["analysis-revised", "analysis", versions.analysis_body.version, bodies.analysis],
+    ["spec-pinned", "spec", versions.spec_body.version, bodies.spec],
+  ] as const) {
+    const original = revisionOutcome({ revision_id, artifact_kind: kind, body });
+    if (original.kind !== "artifact_revision") throw new Error("Expected revision");
+    await feed.send({ ...original, artifact_schema_version: version, revision: { ...original.revision, format: "observation.artifact-revision/v4", source: { ...original.revision.source,
+      artifact_schema_version: version, ...(kind === "spec" ? { analysis_revision_ids: ["oakridge:grading-test:analysis-revised"] } : {}),
+    } } });
+  }
+  const { withTenant } = await import("../src/storage/database");
+  const links = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_relation as relation")
+    .innerJoin("observation.item_occurrence as source", "source.occurrence_id", "relation.source_occurrence_id")
+    .innerJoin("observation.item_occurrence as target", "target.occurrence_id", "relation.target_occurrence_id")
+    .select(["source.json_pointer", "target.revision_id", "target.producer_local_id"])
+    .where("source.revision_id", "=", "spec-pinned").where("relation.type", "=", "derived_from").orderBy("source.json_pointer").execute());
+  expect(links.map((link) => [link.json_pointer, link.revision_id, link.producer_local_id])).toEqual([
+    ["/requirements/0", "analysis-revised", "F1"], ["/requirements/1", "analysis-revised", "F3"], ["/requirements/2", "analysis-revised", "F5"],
+  ]);
+}));
