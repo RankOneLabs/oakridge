@@ -122,6 +122,11 @@ pub(super) fn eval_expression_inner(
     }
     Ok(match expression {
         Expression::Literal { value, .. } => Some(value.clone()),
+        Expression::Present { value, key } => Some(Value::Bool(
+            resolved!(eval!(value))
+                .get(key)
+                .is_some_and(|field| !field.is_null()),
+        )),
         Expression::Len { value } => Some(Value::from(match resolved!(eval!(value)) {
             Value::String(text) => text.chars().count(),
             Value::Array(items) => items.len(),

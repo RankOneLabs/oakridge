@@ -37,7 +37,7 @@ for (const state of ["blocking", "unchosen", "blank", "unknown", "resolved"] as 
   const accept = run.result.reviews.find(r => r.review === "analysis_review")?.decisions.find(d => d.decision === "accept");
   expect([accept ? accept.is_available ?? true : false, accept?.disabled_reason ?? null]).toEqual(state === "resolved" ? [true, null] : [false, guardReason]);
 });
-test.todo("B1 engine blocker: analysis findings with absent optional resolution must validate and be acceptable", async () => {
+test("analysis findings with absent optional resolution validate and are acceptable", async () => {
   const body = analysis(); delete body.requirements[0].findings[0].resolution;
   const run = await analysisRun(body);
   expect(run.result.snapshot.decisions.filter(d => d.kind === "validation")).toEqual([]);
@@ -52,13 +52,18 @@ const specCases: {name: string; change: (body: SpecBody) => void; message: strin
   {name: "no acceptance condition", change: b => { b.requirements[0].acceptance_conditions = []; }, message: "Every specification requirement needs at least one acceptance condition."},
 ];
 for (const c of specCases) test(`spec refuses ${c.name}`, async () => {const body = spec();c.change(body);expect(validationFeedback(await specRun(body))).toContain(c.message);});
-test.todo("B2 engine blocker: spec review reopens analysis and reruns the editor in revise mode", async () => {
+test("spec review reopens analysis and reruns the editor in revise mode", async () => {
   const run = await specRun(spec());await run.end("spec_editor");
   await run.decide("spec_review", "request_analysis_changes", "spec", {feedback: "Clarify R1"});
   expect(run.wanted("author").action.mode.kind).toBe("revise");
   const revised = analysis(); revised.requirements[0].text = "Clarified R1";
-  await run.publish("author", "analysis", revised);await run.end("author");await run.decide("analysis_review", "accept", "analysis");
-  expect(run.wanted("spec_editor").action.mode.kind).toBe("revise");
+  await run.publish("author", "analysis", revised);await run.end("author");
+  expect(() => run.wanted("spec_editor")).toThrow();
+  await run.decide("analysis_review", "accept", "analysis");
+  const editor = run.wanted("spec_editor");
+  expect([editor.action.mode.kind, editor.resolved.previous?.artifact, editor.resolved.feedback.map(f => f.decision)]).toEqual(["revise", "spec", ["request_analysis_changes"]]);
+  await run.publish("spec_editor", "spec", spec());await run.end("spec_editor");
+  expect(() => run.wanted("spec_editor")).toThrow();
 });
 test("canonical analysis stage has only analysis and spec, with spec as its only outcome", () => {
   expect([Object.keys(development.stages.analysis.artifacts), development.stages.analysis.outcome, Object.keys(development.stages.analysis.reviews ?? {}), development.schemas?.tasks_body]).toEqual([["analysis", "spec"], {spec: "latest(spec)"}, ["analysis_review", "spec_review"], undefined]);

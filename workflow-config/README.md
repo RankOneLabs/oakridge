@@ -46,10 +46,11 @@ the builder or integrator; assessors read the full implicit review_history. Ever
 initial/revise prompt directs the agent to raise a blocker instead of guessing.
 
 The development alias now pins definition
-`cf39117805e56b4bdc5540fed9c4a3c2202a9c432b8e7562bf76960fe383a9a5`.
-The previous definition
+`87dac99799b3d699b92499d4d322929a8b6a107c2cbdf7ab09bfb03874aa736b`.
+The previous definitions
+`cf39117805e56b4bdc5540fed9c4a3c2202a9c432b8e7562bf76960fe383a9a5` and
 `74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4`
-and its exact prompt objects remain addressable.
+and their exact prompt objects remain addressable.
 
 Current `artifact_schema_version` values, calculated by the observation adapter
 from the resolved schema bodies in the pinned requirement contract:
