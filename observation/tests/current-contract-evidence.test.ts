@@ -31,12 +31,13 @@ test("current build-item evidence includes every canonical requirement's text an
     { ref: "requirement:1", revision_id: "spec", content: { id: "R3", text: "Requirement R3", acceptance_conditions: ["Accept R3"] } },
   ] });
 });
-test("current findings resolve only the enclosing requirement", async () => {
-  const { source: sources, artifact, question } = await context();
+test("current findings resolve the enclosing analysis requirement before any spec exists", async () => {
+  const { source: sources, revisions, artifact, question } = await context();
+  revisions.delete("spec");
   const result = await oakridgeCapabilities.requirement!.resolve({ sources, question,
     artifact: { ...artifact, revision_id: "analysis" as ArtifactRevisionId, item_kind: "finding", item_path: "/requirements/1/findings/0", selected_value: { id: "F3" } } },
     { artifact: "spec", list: "/requirements", task_source: { artifact: "spec", list: "/requirements" } });
-  expect(result).toMatchObject({ state: "ready", references: [{ ref: "requirement:0", content: { id: "R2", text: "Requirement R2" } }] });
+  expect(result).toMatchObject({ state: "ready", references: [{ ref: "requirement:0", revision_id: "analysis", item_path: "/requirements/1", content: { id: "R2", text: "Requirement R2" } }] });
 });
 test("allocations resolve requirement_id in the spec", async () => {
   const { source: sources, artifact, question } = await context();

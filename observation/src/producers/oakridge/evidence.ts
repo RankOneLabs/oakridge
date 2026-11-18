@@ -140,23 +140,27 @@ async function taskDefinition({ artifact, sources }: EvidenceResolutionContext, 
   return task ? { state: "ready", revision, task } : notReady("task_unavailable", `task ${id} is absent from ${revision.revision_id}`);
 }
 
-/** Canonical references come from item fields or the finding's enclosing requirement. */
-async function currentRequirementIds({ artifact, sources }: EvidenceResolutionContext): Promise<readonly string[] | null> {
+/** Canonical requirement IDs declared by requirement, allocation and build-item subjects. */
+function currentRequirementIds(artifact: SourceArtifact): readonly string[] | null {
   const value = objectOf(artifact.selected_value);
   if (artifact.item_kind === "requirement") return typeof value?.id === "string" ? [value.id] : [];
   if (artifact.item_kind === "allocation") return typeof value?.requirement_id === "string" ? [value.requirement_id] : [];
   if (artifact.item_kind === "build_item" && Array.isArray(value?.requirement_ids))
     return value.requirement_ids.filter((id): id is string => typeof id === "string");
-  if (artifact.item_kind === "finding" && /^\/requirements\/\d+\/findings\/\d+$/.test(artifact.item_path)) {
-    const revision = await sources.readRevision(artifact.revision_id);
-    const enclosing = valueAtPointer(revision?.body ?? null, artifact.item_path.split("/").slice(0, -2).join("/"));
-    const id = objectOf(enclosing)?.id;
-    return typeof id === "string" ? [id] : [];
-  }
   return null;
 }
 async function currentRequirements(context: EvidenceResolutionContext): Promise<EvidenceCollection | null> {
-  const ids = await currentRequirementIds(context);
+  const { artifact, sources } = context;
+  if (artifact.item_kind === "finding" && /^\/requirements\/\d+\/findings\/\d+$/.test(artifact.item_path)) {
+    const revision = await sources.readRevision(artifact.revision_id);
+    if (!revision) return notReady("requirements_unavailable", "the containing analysis is not captured");
+    const path = artifact.item_path.split("/").slice(0, -2).join("/");
+    const requirement = valueAtPointer(revision.body, path);
+    if (requirement === undefined || typeof objectOf(requirement)?.id !== "string")
+      return notReady("requirements_unavailable", `enclosing requirement at ${path} is absent`);
+    return ready([revisionReference("requirement:0", revision, path, requirement)]);
+  }
+  const ids = currentRequirementIds(artifact);
   if (ids === null) return null;
   if (ids.length === 0) return notReady("requirements_unavailable", "item has no canonical requirement ids");
   const revision = await context.sources.readRevisionAt("spec", context.artifact.revision_id);
