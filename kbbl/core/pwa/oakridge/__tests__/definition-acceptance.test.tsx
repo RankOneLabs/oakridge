@@ -26,8 +26,8 @@ test("1: run order lists authored stages with their invoking units and per-membe
   const nav = inspector.getByLabelText("Stages in authored order");
   expect(
     within(nav)
-      .getAllByRole("link")
-      .map((link) => link.textContent),
+      .getAllByRole("option")
+      .map((option) => option.textContent?.trim()),
   ).toEqual([
     "prepare",
     "analysis",

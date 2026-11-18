@@ -4,7 +4,7 @@ import fanOut from "../__fixtures__/definition-fan-out.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import { definitionStageHref, definitionUnitHref } from "./definition-selection";
 import { selectStageInspector } from "./stage-inspector";
-import { selectStageInspectorIdentity, selectStageInspectorNavigation } from "./stage-inspector-navigation";
+import { selectStageInspectorIdentity, selectStageInspectorNavigation, selectStageNavigationOptions } from "./stage-inspector-navigation";
 
 const detail = fixture.definition as unknown as OperatorDefinitionDetail;
 
@@ -69,4 +69,15 @@ test("nested group links retain their routes and current selection", () => {
     { label: "work (group)", href: definitionUnitHref(definition.definition_id, "work"), isCurrent: true },
   ]);
   expect(navigation.stages.some(stage => stage.isSelected)).toBe(false);
+});
+
+test("dropdown options list each stage before its units and select the current entry", () => {
+  const { options, selectedHref } = selectStageNavigationOptions(selectStageInspectorNavigation(detail, { kind: "unit", path: "briefs", tab: null }));
+  const brief = options.findIndex(option => option.label === "brief");
+  expect(options.slice(brief, brief + 2).map(option => [option.kind, option.label])).toEqual([["stage", "brief"], ["unit", "briefs"]]);
+  expect(selectedHref).toBe(definitionUnitHref(detail.definition_id, "briefs"));
+});
+
+test("dropdown has no selected entry before a selection", () => {
+  expect(selectStageNavigationOptions(selectStageInspectorNavigation(detail, null)).selectedHref).toBeNull();
 });

@@ -18,6 +18,15 @@ export interface StageInspectorNavigation {
   stages: StageInspectorNavigationEntry[];
   groups: StageNavigationLink[];
 }
+export type StageNavigationOptionKind = "stage" | "unit" | "group";
+export interface StageNavigationOption extends StageNavigationLink {
+  kind: StageNavigationOptionKind;
+}
+export interface StageNavigationOptions {
+  options: StageNavigationOption[];
+  /** Absent when nothing in the navigation is current. */
+  selectedHref: string | null;
+}
 export interface StageInspectorIdentity {
   title: string;
   invokers: StageNavigationLink[];
@@ -60,6 +69,18 @@ export function selectStageInspectorNavigation(
       isCurrent: selectedUnit === unit.path,
     })),
   };
+}
+
+/** Flattens navigation into dropdown options: each stage, then its units, then groups. */
+export function selectStageNavigationOptions(navigation: StageInspectorNavigation): StageNavigationOptions {
+  const options: StageNavigationOption[] = [
+    ...navigation.stages.flatMap(({ stage, units }) => [
+      { ...stage, kind: "stage" as const },
+      ...units.map(unit => ({ ...unit, kind: "unit" as const })),
+    ]),
+    ...navigation.groups.map(group => ({ ...group, kind: "group" as const })),
+  ];
+  return { options, selectedHref: options.find(option => option.isCurrent)?.href ?? null };
 }
 
 export function selectStageInspectorIdentity(model: StageInspectorModel | null): StageInspectorIdentity | null {

@@ -27,7 +27,7 @@ test("a newly declared artifact renders a definition contract from its schema", 
   const stage = detail.effective_workflow.stages.brief;
   const release_note = {kind: "record", schema: {kind: "record", fields: {title: {kind: "text"}, notes: {kind: "optional", value: {kind: "text"}}}}} as const;
   stage.workers.writer.produces.push("release_note");
-  render(<StageInspector definition={{...detail, effective_workflow: {...detail.effective_workflow, stages: {...detail.effective_workflow.stages, brief: {...stage, artifacts: {...stage.artifacts, release_note}}}}}} selection={{kind: "stage", stage: "brief", tab: "artifacts"}} />);
+  render(<StageInspector definition={{...detail, effective_workflow: {...detail.effective_workflow, stages: {...detail.effective_workflow.stages, brief: {...stage, artifacts: {...stage.artifacts, release_note}}}}}} selection={{kind: "stage", stage: "brief", tab: "artifacts"}} onNavigate={() => {}} />);
   const article = within(screen.getByRole("region", {name: "Artifacts"})).getByRole("heading", {name: "release_note"}).closest("article");
   expect(article?.textContent).toContain("Definition contract");
   expect(article?.textContent).toContain("title · required");

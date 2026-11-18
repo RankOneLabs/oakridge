@@ -83,7 +83,7 @@ export function WorkflowDefDetail({
       {rawOpen && <DefinitionRawView definition={definition} selection={selection} />}
       <div data-testid="or-def-split" className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div className="min-w-0"><DefinitionGraph key="definition-graph" overview={overview} definition={definition} selection={selection} /></div>
-        <div className="min-w-0 lg:overflow-auto"><StageInspector definition={definition} selection={selection} anchor={anchor} grading={grading} renderPromptsTab={props => <StagePromptsEditing {...props} />} /></div>
+        <div className="min-w-0 lg:overflow-auto"><StageInspector definition={definition} selection={selection} anchor={anchor} grading={grading} onNavigate={onNavigate} renderPromptsTab={props => <StagePromptsEditing {...props} />} /></div>
 
       </div>
       <WorkflowGradingDefinitions definition={definition} grading={grading} />

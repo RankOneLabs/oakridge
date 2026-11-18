@@ -7,7 +7,7 @@ import { selectStageInspector } from "../../lib/stage-inspector";
 import { StageCompletionSection } from "./StageCompletionSection";
 const detail = fixture.definition as unknown as OperatorDefinitionDetail;
 afterEach(cleanup);
-function inspect(tab: import("../../lib/definition-selection").StageTab = "overview") { return render(<StageInspector definition={detail} selection={{ kind: "unit", path: "implementation", tab }} />); }
+function inspect(tab: import("../../lib/definition-selection").StageTab = "overview") { return render(<StageInspector definition={detail} selection={{ kind: "unit", path: "implementation", tab }} onNavigate={() => {}} />); }
 test("summary leads the section stack with effective counts and invoking unit links", () => {
   const { container } = inspect();
   const sections = container.querySelectorAll('section[aria-label]');
@@ -41,7 +41,7 @@ test("completion separates condition, fields and consumers including whole outco
 });
 
 test("validated artifacts display a compact inline marker", () => {
-  render(<StageInspector definition={detail} selection={{ kind: "stage", stage: "brief", tab: "artifacts" }} />);
+  render(<StageInspector definition={detail} selection={{ kind: "stage", stage: "brief", tab: "artifacts" }} onNavigate={() => {}} />);
   const heading = screen.getByRole("heading", { name: "brief · Validated artifact" });
   expect(heading.querySelector("small.or-stage-validated")?.textContent).toBe("validated");
 });
