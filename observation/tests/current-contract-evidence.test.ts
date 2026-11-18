@@ -3,10 +3,20 @@ import type { ArtifactRevisionId, ItemOccurrenceId, LogicalItemId, QuestionId, R
 import type { CapturedRevision, CapturedSources, SourceArtifact } from "../src/ports/artifact-source";
 import type { JsonValue } from "../src/domain/primitives";
 import { oakridgeCapabilities } from "../src/producers/oakridge/evidence";
+import { parseGradingDefinitions, planRegistration } from "../src/grading/configuration";
+import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { fixtureBody } from "./grading-fixture";
 
 const revision = (kind: string, body: JsonValue): CapturedRevision => ({ revision_id: kind as ArtifactRevisionId,
   artifact_kind: kind, stage: kind, subject_id: null, body });
+async function currentConfiguration() {
+  const document = await Bun.file(new URL("./fixtures/grading-definitions-current.json", import.meta.url)).json();
+  const definitions = parseGradingDefinitions(document.definitions, oakridgeGradingRegistry);
+  if (!definitions.ok) throw new Error(JSON.stringify(definitions.error));
+  const registration = planRegistration(definitions.value, oakridgeGradingRegistry);
+  if (!registration.ok) throw new Error(JSON.stringify(registration.error));
+  return registration.value;
+}
 async function context() {
   const revisions = new Map<string, CapturedRevision>();
   for (const kind of ["analysis", "spec", "plan", "brief", "assessment"]) revisions.set(kind, revision(kind, await fixtureBody(`current-${kind}`)));
@@ -59,4 +69,58 @@ test("canonical spec evidence retains the spec_task name used by existing evalua
   expect(await oakridgeCapabilities.spec_task!.resolve({ sources, question,
     artifact: { ...artifact, item_kind: "requirement", selected_value: { id: "R1" } } }, { artifact: "spec", list: "/requirements" }))
     .toMatchObject({ state: "ready", references: [{ ref: "spec_task", content: { id: "R1", text: "Requirement R1" } }] });
+});
+
+for (const absent of [false, true]) test(`configured additional-finding correctness collects cited file ${absent ? "absence" : "contents"}`, async () => {
+  const registration = await currentConfiguration();
+  const { source, artifact, revisions } = await context();
+  const definition = registration.questions.find((question) => question.question_id === "additional_finding.correctness")!;
+  revisions.set("assessment", revision("assessment", { head_sha: "captured-head" }));
+  const reads: string[] = [];
+  const result = await registration.collector.collect({ ...artifact, revision_id: "assessment" as ArtifactRevisionId,
+    item_kind: "additional_finding", item_path: "/additional_findings/0",
+    selected_value: { id: "AF1", observation: "A regression", related_build_item_ids: [], evidence: [{ kind: "file", ref: "src/a.ts:2-3" }] },
+  }, { ...definition, task_id: null }, { ...source,
+    readRunInput: async () => ({ spec: "Original obligation", repositories: [{ key: "oakridge", preparation: { repository_path: "/repo" } }] }),
+    repository: { hasCommit: async () => true, readFile: async (request) => {
+      reads.push(`${request.commit_sha}:${request.path}`);
+      return absent ? { state: "absent" } : { state: "present", content: "one\ntwo\nthree\nfour" };
+    } },
+  });
+  expect(result.state === "ready" && result.references.find((reference) => reference.ref === "citation:0"))
+    .toMatchObject({ source: "repository", commit_sha: "captured-head", path: "src/a.ts", line_range: { start: 2, end: 3 },
+      is_absent: absent, content: absent ? null : "two\nthree" });
+  expect(reads).toEqual(["captured-head:src/a.ts"]);
+});
+
+test("configured canonical requirement coverage compares its definition with the original launch specification", async () => {
+  const registration = await currentConfiguration();
+  const { source, artifact } = await context();
+  const definition = registration.questions.find((question) => question.question_id === "requirement.requirement_coverage")!;
+  const requirement = { id: "R1", text: "Canonical obligation", acceptance_conditions: ["Acceptance"], source_refs: ["input.spec"], analysis_finding_ids: ["F1"] };
+  const result = await registration.collector.collect({ ...artifact, revision_id: "spec" as ArtifactRevisionId,
+    item_kind: "requirement", item_path: "/requirements/0", selected_value: requirement,
+  }, { ...definition, task_id: null }, { ...source,
+    readRunInput: async () => ({ spec: "Original obligation" }),
+    readRevisionAt: async () => { throw new Error("requirement coverage must not compare the spec item with itself"); },
+  });
+  expect(result).toMatchObject({ state: "ready", references: [
+    { ref: "subject", content: requirement },
+    { ref: "spec", source: "run_input", input_path: "/spec", content: "Original obligation" },
+  ] });
+});
+
+for (const [question_id, kind, path, fixture] of [
+  ["technical_decision.correctness", "technical_decision", "/technical_decisions/0", "brief"],
+  ["next_action.correctness", "next_action", "/next_actions/0", "assessment"],
+] as const) test(`configured ${kind} grading includes its exact source container`, async () => {
+  const registration = await currentConfiguration();
+  const { source, artifact, revisions } = await context();
+  const definition = registration.questions.find((question) => question.question_id === question_id)!;
+  const body = revisions.get(fixture)!.body;
+  const result = await registration.collector.collect({ ...artifact, revision_id: fixture as ArtifactRevisionId,
+    item_kind: kind, item_path: path, selected_value: { id: "subject" },
+  }, { ...definition, task_id: null }, { ...source, readRunInput: async () => ({ spec: "Original obligation" }) });
+  expect(result.state === "ready" && result.references.find((reference) => reference.ref === "contribution_context"))
+    .toMatchObject({ source: "revision", revision_id: fixture, content: body });
 });
