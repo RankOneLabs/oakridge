@@ -1,4 +1,6 @@
-Compare the published revised specification with the original and the approved analysis. Approve it only when it correctly applies the approved proposed spec updates and stands on its own for planning, including an explicit Spec tasks section with stable ids, descriptions and requirement links. The spec owns that task list; the Tasks artifact is its exact mirror. Otherwise request changes and name the edits needed. Planning begins only after this specification is approved.
+# Review canonical specification
+
+Check exact requirement coverage, stable ids, source/finding links, observable acceptance conditions and non-goals. Verify only approved resolutions were applied without dropping obligations or inventing scope. Accept only the complete canonical specification. Use request_changes for normalization defects and request_analysis_changes when the analysis itself must change.
 
 ## Original specification
 
@@ -8,6 +10,6 @@ Compare the published revised specification with the original and the approved a
 
 {{approved_analysis}}
 
-## Revised specification
+## Canonical specification
 
-{{revised_spec}}
+{{spec}}

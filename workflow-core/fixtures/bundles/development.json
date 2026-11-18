@@ -42,107 +42,94 @@
     },
     "completed_cohort": "outcome_of(cohort)",
     "severity": "enum(blocking, warning, info)",
-    "risk": {
-      "description": "text",
-      "mitigation": "text"
-    },
     "issue": {
       "description": "text",
       "severity": "severity"
     },
+    "finding_evidence": {
+      "kind": "enum(file, search, test, output)",
+      "ref": "text",
+      "detail": "text"
+    },
+    "change_location": {
+      "path": "text",
+      "symbol": "optional(text)"
+    },
+    "resolution": {
+      "kind": "enum(spec_update, operator_decision, implementation_note)",
+      "text": "text",
+      "question": "optional(text)",
+      "alternatives": "optional(list({option: text, consequence: text}))",
+      "chosen": "optional(text)"
+    },
+    "analysis_finding": {
+      "id": "ident",
+      "severity": "severity",
+      "observation": "text",
+      "evidence": "list(finding_evidence)",
+      "expected_change_locations": "list(change_location)",
+      "resolution": "optional(resolution)"
+    },
+    "analysis_requirement": {
+      "id": "ident",
+      "text": "text",
+      "source_refs": "list(text)",
+      "findings": "list(analysis_finding)"
+    },
     "analysis_body": {
-      "summary": "text",
-      "source_spec_refs": "list(text)",
-      "findings": "list(spec_finding)",
-      "requirements": "list(requirement)",
-      "risks": "list(risk)",
-      "proposed_spec_updates": "list(spec_update)"
+      "requirements": "list(analysis_requirement)"
     },
-    "spec_finding": {
+    "spec_requirement": {
       "id": "ident",
-      "description": "text",
-      "severity": "severity"
+      "text": "text",
+      "acceptance_conditions": "list(text)",
+      "source_refs": "list(text)",
+      "analysis_finding_ids": "list(ident)"
     },
-    "requirement": {
-      "id": "ident",
-      "description": "text",
-      "status": "requirement_status"
+    "spec_body": {
+      "objective": "text",
+      "requirements": "list(spec_requirement)",
+      "non_goals": "list(text)"
     },
-    "spec_update": {
-      "section": "text",
-      "change": "text",
-      "reason": "text",
-      "finding_ids": "list(ident)"
-    },
-    "requirement_status": "enum(implementable, blocked, ambiguous)",
-    "task": {
-      "id": "ident",
-      "description": "text",
-      "requirement_ids": "list(ident)"
-    },
-    "tasks_body": {
-      "tasks": "list(task)"
-    },
-    "plan_body": {
-      "summary": "text",
-      "cohorts": "list(plan_cohort)",
-      "dependency_order": "list(ident)",
-      "scope": {
-        "in_scope": "list(text)",
-        "out_of_scope": "list(text)"
-      },
-      "acceptance_criteria": "list(text)",
-      "risks": "list(risk)"
+    "allocation": {
+      "requirement_id": "ident",
+      "contribution": "text"
     },
     "plan_cohort": {
       "id": "ident",
-      "repository_key": "optional(ident)",
+      "repository_key": "ident",
       "title": "text",
       "scope": "text",
+      "allocations": "list(allocation)",
       "depends_on": "list(ident)",
-      "description": "optional(text)",
-      "files_in_scope": "list(text)",
-      "decisions": "list(plan_decision)",
-      "acceptance_criteria": "list(task_acceptance)"
+      "rationale": "text"
     },
-    "plan_decision": {
-      "id": "ident",
-      "text": "text"
+    "plan_body": {
+      "cohorts": "list(plan_cohort)"
     },
-    "task_acceptance": {
-      "id": "ident",
-      "text": "text",
-      "decision_ids": "list(ident)"
+    "cohort_assignment": {
+      "cohort": "plan_cohort",
+      "requirements": "list(spec_requirement)"
     },
     "build_item": {
       "id": "ident",
-      "description": "text",
-      "task_ids": "list(ident)",
-      "decision_ids": "list(ident)",
+      "requirement_ids": "list(ident)",
+      "instructions": "text",
       "verification": "list(text)"
+    },
+    "technical_decision": {
+      "id": "ident",
+      "build_item_ids": "list(ident)",
+      "decision": "text",
+      "rationale": "text"
     },
     "brief_body": {
       "cohort_id": "ident",
       "repository_key": "ident",
-      "title": "text",
       "depends_on": "list(ident)",
-      "goal": "text",
       "files_in_scope": "list(text)",
-      "decisions_made": "list(brief_decision)",
-      "approaches_rejected": "list(rejected_approach)",
       "build_items": "list(build_item)",
-      "next_action": "text"
-    },
-    "brief_decision": {
-      "id": "ident",
-      "decision": "text",
-      "rationale": "text"
-    },
-    "rejected_approach": {
-      "id": "ident",
-      "approach": "text",
-      "reason": "text",
-      "decision_ids": "list(ident)"
+      "technical_decisions": "list(technical_decision)"
     },
     "build_body": {
       "repository_key": "optional(ident)",
@@ -165,32 +152,67 @@
       "session_id": "optional(ident)",
       "branch": "optional(ident)"
     },
-    "assessment_body": {
-      "head_sha": "text",
-      "verdict": "enum(pass, pass_with_notes, fail)",
-      "findings": "list(assessment_finding)",
-      "test_evidence": "optional(test_evidence)",
-      "recommended_next_actions": "list(next_action)"
+    "assessment_subject": {
+      "kind": "enum(build_item, requirement)",
+      "id": "ident"
+    },
+    "item_assessment": {
+      "subject": "assessment_subject",
+      "status": "enum(met, partial, not_met)",
+      "observation": "text",
+      "evidence": "list(evidence_ref)"
+    },
+    "additional_finding": {
+      "id": "ident",
+      "severity": "severity",
+      "observation": "text",
+      "related_build_item_ids": "list(ident)",
+      "evidence": "list(evidence_ref)"
+    },
+    "action_source": {
+      "kind": "enum(item_assessment, additional_finding)",
+      "id": "ident"
     },
     "next_action": {
       "id": "uuid(generated)",
+      "audience": "enum(builder, operator)",
+      "source": "action_source",
       "text": "text"
     },
-    "assessment_subject": {
-      "kind": "enum(build_item, task)",
-      "id": "ident",
-      "cohort_id": "optional(ident)"
-    },
-    "assessment_finding": {
-      "subjects": "list(assessment_subject)",
-      "status": "optional(enum(met, not_met, partial))",
-      "evidence": "list(evidence_ref)",
-      "description": "optional(text)"
+    "assessment_body": {
+      "head_sha": "text",
+      "item_assessments": "list(item_assessment)",
+      "additional_findings": "list(additional_finding)",
+      "next_actions": "list(next_action)",
+      "test_evidence": "test_evidence",
+      "verdict": "enum(pass, pass_with_notes, fail)"
     },
     "evidence_ref": {
       "kind": "enum(file, test, output)",
       "ref": "text",
       "detail": "optional(text)"
+    },
+    "action_disposition": {
+      "action_id": "text",
+      "disposition": "enum(accepted, modified, rejected)",
+      "original_text": "text",
+      "final_text": "optional(text)",
+      "audience": "enum(builder, operator)",
+      "source": "action_source",
+      "reason": "optional(text)"
+    },
+    "added_action": {
+      "action_id": "text",
+      "origin": "enum(operator)",
+      "final_text": "text",
+      "audience": "enum(builder, operator)",
+      "source": "action_source",
+      "reason": "optional(text)"
+    },
+    "adjudication": {
+      "entries": "list(action_disposition)",
+      "added_actions": "list(added_action)",
+      "builder_feedback": "text"
     },
     "pr_body": {
       "pr_url": "text",
@@ -274,9 +296,7 @@
         "stage": "planning",
         "input": {
           "spec": "analysis.outcome.spec",
-          "tasks": "analysis.outcome.tasks",
           "repositories": "input.repositories",
-          "repository_key": "input.primary_repository_key",
           "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
         }
       },
@@ -286,21 +306,21 @@
         "stage": "brief",
         "pool": "writers",
         "input": {
-          "cohort": "each",
-          "spec": "analysis.outcome.spec",
+          "assignment": "{cohort: each, requirements: filter(analysis.outcome.spec.requirements, contains(map(each.allocations, item.requirement_id), item.id))}",
           "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
         }
       },
       "implementation": {
         "for_each": "map(briefs, briefs.outcome.brief)",
         "key": "each.cohort_id",
-        "after": "each.depends_on",
+        "after": "require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id)).depends_on",
         "stage": "cohort",
         "pool": "builders",
         "input": {
           "brief": "each",
           "repository": "require(lookup(input.repositories, key, each.repository_key))",
-          "workspace": "require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace"
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace",
+          "cohort": "require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id))"
         }
       },
       "integration": {
@@ -312,7 +332,8 @@
           "workspace": "require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace",
           "cohorts": "filter(map(implementation, implementation.outcome), item.repository_key == each.key)",
           "briefs": "filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key)",
-          "final_merge_policy": "input.final_merge_policy"
+          "final_merge_policy": "input.final_merge_policy",
+          "requirements": "filter(analysis.outcome.spec.requirements, contains(flatten(map(filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key), flatten(map(item.build_items, item.requirement_ids)))), item.id))"
         }
       }
     },
@@ -361,15 +382,55 @@
       "artifacts": {
         "analysis": {
           "kind": "document",
-          "schema": "analysis_body"
+          "schema": "analysis_body",
+          "validate": [
+            {
+              "check": "unique(map(analysis.requirements, item.id))",
+              "message": "Requirement ids must be unique."
+            },
+            {
+              "check": "every(analysis.requirements, len(item.source_refs) > 0)",
+              "message": "Every requirement must cite at least one source reference."
+            },
+            {
+              "check": "every(analysis.requirements, len(item.findings) > 0)",
+              "message": "Every requirement needs at least one finding."
+            },
+            {
+              "check": "unique(map(flatten(map(analysis.requirements, item.findings)), item.id))",
+              "message": "Finding ids must be unique across the analysis."
+            },
+            {
+              "check": "every(flatten(map(analysis.requirements, item.findings)), require(item.resolution).kind != \"operator_decision\" or (require(item.resolution).question == default(require(item.resolution).question, \"\") and len(require(require(item.resolution).alternatives)) >= 2))",
+              "message": "An operator_decision resolution needs a question and at least two alternatives."
+            }
+          ]
         },
         "spec": {
           "kind": "document",
-          "schema": "text"
-        },
-        "tasks": {
-          "kind": "record",
-          "schema": "tasks_body"
+          "schema": "spec_body",
+          "validate": [
+            {
+              "check": "published(analysis) and unique(map(spec.requirements, item.id))",
+              "message": "Specification requirement ids must be unique."
+            },
+            {
+              "check": "published(analysis) and every(map(latest(analysis).requirements, item.id), contains(map(spec.requirements, item.id), item))",
+              "message": "Every approved analysis requirement must appear in the specification."
+            },
+            {
+              "check": "published(analysis) and every(spec.requirements, contains(map(latest(analysis).requirements, item.id), item.id))",
+              "message": "Specification requirement ids must belong to the approved analysis."
+            },
+            {
+              "check": "published(analysis) and every(flatten(map(spec.requirements, item.analysis_finding_ids)), contains(flatten(map(latest(analysis).requirements, map(item.findings, item.id))), item))",
+              "message": "Specification finding links must name approved analysis findings."
+            },
+            {
+              "check": "published(analysis) and every(spec.requirements, len(item.acceptance_conditions) > 0)",
+              "message": "Every specification requirement needs at least one acceptance condition."
+            }
+          ]
         }
       },
       "workers": {
@@ -400,8 +461,7 @@
           },
           "workspace": "repository(input.workspace)",
           "produces": [
-            "spec",
-            "tasks"
+            "spec"
           ]
         }
       },
@@ -415,7 +475,21 @@
             "analysis": "latest(analysis)"
           },
           "decisions": {
-            "set": "accept_or_request"
+            "accept": {
+              "effect": "approve",
+              "label": "Accept",
+              "when": {
+                "check": "every(flatten(map(analysis.requirements, item.findings)), item.severity != \"blocking\" and (require(item.resolution).kind != \"operator_decision\" or require(item.resolution).chosen == default(require(item.resolution).chosen, \"\")))",
+                "reason": "Resolve every blocking finding and choose an option for every operator decision before accepting the analysis."
+              }
+            },
+            "request_changes": {
+              "effect": "request_changes",
+              "label": "Request changes",
+              "fields": {
+                "feedback": "What must the analysis change?"
+              }
+            }
           }
         },
         "spec_review": {
@@ -425,51 +499,40 @@
           "inputs": {
             "original_spec": "input.spec",
             "approved_analysis": "latest(analysis)",
-            "revised_spec": "latest(spec)"
+            "spec": "latest(spec)"
           },
           "decisions": {
-            "set": "accept_or_request",
-            "overrides": {
-              "request_changes": {
-                "fields": {
-                  "feedback": "What must the revised specification change?"
-                }
+            "accept": {
+              "effect": "approve",
+              "label": "Accept"
+            },
+            "request_changes": {
+              "effect": "request_changes",
+              "label": "Request changes",
+              "fields": {
+                "feedback": "What must the canonical specification change?"
               }
-            }
-          }
-        },
-        "tasks_review": {
-          "of": "tasks",
-          "by": "operator",
-          "prompt": "development/tasks-review.md",
-          "inputs": {
-            "revised_spec": "latest(spec)",
-            "tasks": "latest(tasks)"
-          },
-          "decisions": {
-            "set": "accept_or_request",
-            "overrides": {
-              "request_changes": {
-                "fields": {
-                  "feedback": "What must the task list change?"
-                }
+            },
+            "request_analysis_changes": {
+              "effect": "request_changes",
+              "on": "analysis",
+              "label": "Request analysis changes",
+              "fields": {
+                "feedback": "What must the analysis change?"
               }
             }
           }
         }
       },
-      "done_when": "approved(analysis) and approved(spec) and approved(tasks)",
+      "done_when": "approved(analysis) and approved(spec)",
       "outcome": {
-        "spec": "latest(spec)",
-        "tasks": "latest(tasks)"
+        "spec": "latest(spec)"
       }
     },
     "planning": {
       "input": {
-        "spec": "text",
-        "tasks": "tasks_body",
+        "spec": "spec_body",
         "repositories": "list(repository)",
-        "repository_key": "ident",
         "workspace": "workspace"
       },
       "artifacts": {
@@ -490,16 +553,20 @@
               "message": "Cohort ids must be unique idents, and each depends_on must name other cohorts without repeats or a cycle."
             },
             {
-              "check": "every(plan.cohorts, every(item.acceptance_criteria, contains(map(input.tasks.tasks, item.id), item.id)))",
-              "message": "Every cohort acceptance id must be the id of a task in the approved task list."
+              "check": "every(plan.cohorts, every(item.allocations, contains(map(input.spec.requirements, item.id), item.requirement_id)))",
+              "message": "Every allocation must name a canonical specification requirement."
             },
             {
-              "check": "every(map(input.tasks.tasks, item.id), contains(flatten(map(plan.cohorts, map(item.acceptance_criteria, item.id))), item))",
-              "message": "Every task in the approved task list must appear in at least one cohort's acceptance_criteria."
+              "check": "every(map(input.spec.requirements, item.id), contains(flatten(map(plan.cohorts, map(item.allocations, item.requirement_id))), item))",
+              "message": "Every specification requirement must be allocated to at least one cohort."
             },
             {
-              "check": "every(plan.cohorts, unique(map(item.acceptance_criteria, item.id)))",
-              "message": "A task id may appear only once within a cohort's acceptance_criteria; repeating it in another cohort is valid."
+              "check": "every(plan.cohorts, unique(map(item.allocations, item.requirement_id)))",
+              "message": "A requirement may be allocated only once within a cohort."
+            },
+            {
+              "check": "every(plan.cohorts, len(item.allocations) > 0)",
+              "message": "Every cohort needs at least one allocation."
             }
           ]
         }
@@ -513,8 +580,7 @@
           },
           "inputs": {
             "spec": "input.spec",
-            "tasks": "input.tasks",
-            "repository_key": "input.repository_key"
+            "repository_keys": "map(input.repositories, item.key)"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -529,7 +595,6 @@
           "prompt": "development/plan-review.md",
           "inputs": {
             "spec": "input.spec",
-            "tasks": "input.tasks",
             "plan": "latest(plan)"
           },
           "decisions": {
@@ -551,8 +616,7 @@
     },
     "brief": {
       "input": {
-        "cohort": "plan_cohort",
-        "spec": "text",
+        "assignment": "cohort_assignment",
         "workspace": "workspace"
       },
       "artifacts": {
@@ -561,15 +625,15 @@
           "schema": "brief_body",
           "validate": [
             {
-              "check": "brief.cohort_id == input.cohort.id",
+              "check": "brief.cohort_id == input.assignment.cohort.id",
               "message": "The brief's cohort_id must be its plan cohort's id."
             },
             {
-              "check": "brief.repository_key == input.cohort.repository_key",
+              "check": "brief.repository_key == input.assignment.cohort.repository_key",
               "message": "The brief's repository_key must be its plan cohort's."
             },
             {
-              "check": "brief.depends_on == input.cohort.depends_on",
+              "check": "brief.depends_on == input.assignment.cohort.depends_on",
               "message": "The brief's depends_on must be its plan cohort's, in the same order."
             },
             {
@@ -577,24 +641,24 @@
               "message": "Build-item ids must be unique."
             },
             {
-              "check": "every(map(input.cohort.acceptance_criteria, item.id), contains(flatten(map(brief.build_items, item.task_ids)), item))",
-              "message": "Every assigned task must appear in a build item."
+              "check": "every(map(input.assignment.requirements, item.id), contains(flatten(map(brief.build_items, item.requirement_ids)), item))",
+              "message": "Every assigned requirement must appear in a build item."
             },
             {
-              "check": "every(flatten(map(brief.build_items, item.task_ids)), contains(map(input.cohort.acceptance_criteria, item.id), item))",
-              "message": "Build-item task ids must belong to the cohort allocation."
+              "check": "every(flatten(map(brief.build_items, item.requirement_ids)), contains(map(input.assignment.requirements, item.id), item))",
+              "message": "Build-item requirement ids must belong to the resolved assignment."
             },
             {
-              "check": "every(brief.build_items, len(item.description) > 0)",
-              "message": "Every build item must have a nonempty description."
+              "check": "every(brief.build_items, len(item.requirement_ids) > 0 and len(item.verification) > 0)",
+              "message": "Every build item needs at least one requirement and one verification entry."
             },
             {
-              "check": "every(brief.build_items, len(item.task_ids) > 0)",
-              "message": "Every build item must reference at least one task."
+              "check": "unique(map(brief.technical_decisions, item.id))",
+              "message": "Technical decision ids must be unique."
             },
             {
-              "check": "every(flatten(map(brief.build_items, item.decision_ids)), contains(map(brief.decisions_made, item.id), item))",
-              "message": "Build-item decision ids must name brief decisions."
+              "check": "every(flatten(map(brief.technical_decisions, item.build_item_ids)), contains(map(brief.build_items, item.id), item))",
+              "message": "Technical decision links must name brief build items."
             }
           ]
         }
@@ -608,8 +672,7 @@
             "revise": "development/brief-revise.md"
           },
           "inputs": {
-            "cohort": "input.cohort",
-            "spec": "input.spec"
+            "assignment": "input.assignment"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -623,9 +686,8 @@
           "by": "operator",
           "prompt": "development/brief-review.md",
           "inputs": {
-            "cohort": "input.cohort",
-            "brief": "latest(brief)",
-            "spec": "input.spec"
+            "assignment": "input.assignment",
+            "brief": "latest(brief)"
           },
           "decisions": {
             "set": "accept_or_request",
@@ -648,7 +710,8 @@
       "input": {
         "brief": "brief_body",
         "repository": "repository",
-        "workspace": "workspace"
+        "workspace": "workspace",
+        "cohort": "plan_cohort"
       },
       "let": {
         "brief_value": "input.brief",
@@ -677,20 +740,44 @@
           },
           "validate": [
             {
-              "check": "every(flatten(map(assessment.findings, item.subjects)), item.kind == \"build_item\")",
-              "message": "Cohort assessment subjects must be build items."
+              "check": "every(assessment.item_assessments, item.subject.kind == \"build_item\")",
+              "message": "Cohort assessment items must be build items."
             },
             {
-              "check": "every(flatten(map(assessment.findings, item.subjects)), contains(map(input.brief.build_items, item.id), item.id))",
-              "message": "Cohort assessment subjects must name brief build items."
-            },
-            {
-              "check": "every(map(input.brief.build_items, item.id), contains(map(flatten(map(assessment.findings, item.subjects)), item.id), item))",
+              "check": "every(map(input.brief.build_items, item.id), contains(map(assessment.item_assessments, item.subject.id), item))",
               "message": "Every brief build item must be assessed."
+            },
+            {
+              "check": "every(assessment.item_assessments, contains(map(input.brief.build_items, item.id), item.subject.id))",
+              "message": "Cohort assessment items must name brief build items."
+            },
+            {
+              "check": "every(flatten(map(assessment.additional_findings, item.related_build_item_ids)), contains(map(input.brief.build_items, item.id), item))",
+              "message": "Additional finding links must name brief build items."
             },
             {
               "check": "published(build_result) and assessment.head_sha == latest(build_result).head_sha",
               "message": "Assessment head_sha must match the latest build result."
+            },
+            {
+              "check": "unique(map(assessment.item_assessments, item.subject.id))",
+              "message": "Assessment item ids must be unique."
+            },
+            {
+              "check": "unique(map(assessment.additional_findings, item.id))",
+              "message": "Additional finding ids must be unique."
+            },
+            {
+              "check": "every(assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(assessment.additional_findings, item.id), item.source.id)))",
+              "message": "Every next action source must resolve to an assessed item or additional finding."
+            },
+            {
+              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
+              "message": "Assessment verdict must match item statuses and additional finding severities."
+            },
+            {
+              "check": "assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
         },
@@ -767,7 +854,8 @@
           "decisions": {
             "accept": {
               "effect": "approve",
-              "label": "Accept"
+              "label": "Accept",
+              "payload": "adjudication"
             },
             "request_assessment_changes": {
               "effect": "request_changes",
@@ -780,9 +868,8 @@
               "effect": "request_changes",
               "on": "build_result",
               "label": "Send to builder",
-              "fields": {
-                "feedback": "What must the builder change?"
-              }
+              "payload": "adjudication",
+              "feedback_field": "builder_feedback"
             }
           }
         },
@@ -810,7 +897,7 @@
       "outcome": {
         "cohort_id": "brief_value.cohort_id",
         "repository_key": "input.brief.repository_key",
-        "title": "input.brief.title",
+        "title": "input.cohort.title",
         "pr_url": "latest(pr).pr_url",
         "branch": "latest(pr).branch",
         "build_result": "latest(build_result)"
@@ -822,7 +909,8 @@
         "workspace": "workspace",
         "cohorts": "list(completed_cohort)",
         "briefs": "list(brief_body)",
-        "final_merge_policy": "final_merge_policy"
+        "final_merge_policy": "final_merge_policy",
+        "requirements": "list(spec_requirement)"
       },
       "let": {
         "pr_published": "published(pr)",
@@ -842,12 +930,36 @@
           },
           "validate": [
             {
-              "check": "every(filter(flatten(map(assessment.findings, item.subjects)), item.kind == \"task\"), contains(flatten(map(flatten(map(input.briefs, item.build_items)), item.task_ids)), item.id))",
-              "message": "Integration task subjects must name tasks in applicable briefs."
+              "check": "every(assessment.item_assessments, item.subject.kind == \"requirement\")",
+              "message": "Integration assessment items must be canonical requirements."
             },
             {
-              "check": "every(filter(flatten(map(assessment.findings, item.subjects)), item.kind == \"build_item\"), contains(map(input.briefs, item.cohort_id), item.cohort_id) and contains(map(require(lookup(input.briefs, cohort_id, require(item.cohort_id))).build_items, item.id), item.id))",
-              "message": "Integration build-item subjects must name an item in the qualified cohort brief."
+              "check": "every(map(input.requirements, item.id), contains(map(assessment.item_assessments, item.subject.id), item))",
+              "message": "Every integration requirement must be assessed."
+            },
+            {
+              "check": "every(assessment.item_assessments, contains(map(input.requirements, item.id), item.subject.id))",
+              "message": "Integration assessment items must name applicable canonical requirements."
+            },
+            {
+              "check": "unique(map(assessment.item_assessments, item.subject.id))",
+              "message": "Assessment item ids must be unique."
+            },
+            {
+              "check": "unique(map(assessment.additional_findings, item.id))",
+              "message": "Additional finding ids must be unique."
+            },
+            {
+              "check": "every(assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(assessment.additional_findings, item.id), item.source.id)))",
+              "message": "Every next action source must resolve to an assessed item or additional finding."
+            },
+            {
+              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
+              "message": "Assessment verdict must match item statuses and additional finding severities."
+            },
+            {
+              "check": "assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
         },
@@ -878,7 +990,8 @@
           "inputs": {
             "repository": "input.repository",
             "cohorts": "input.cohorts",
-            "briefs": "input.briefs"
+            "briefs": "input.briefs",
+            "requirements": "input.requirements"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -925,16 +1038,21 @@
             "briefs": "input.briefs",
             "assessment": "latest(assessment)",
             "pr": "latest(pr)",
-            "pr_state": "latest(pr_state)"
+            "pr_state": "latest(pr_state)",
+            "requirements": "input.requirements"
           },
           "decisions": {
-            "set": "accept_or_request",
-            "overrides": {
-              "request_changes": {
-                "fields": {
-                  "feedback": "What must the integration change?"
-                }
-              }
+            "accept": {
+              "effect": "approve",
+              "label": "Accept",
+              "payload": "adjudication"
+            },
+            "request_changes": {
+              "effect": "request_changes",
+              "label": "Send to integrator",
+              "payload": "adjudication",
+              "feedback_field": "builder_feedback",
+              "on": "assessment"
             }
           }
         },

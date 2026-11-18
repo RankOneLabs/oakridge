@@ -1,19 +1,13 @@
-Write the build brief for one cohort of the accepted plan. Preserve the cohort's scope and decisions; do not implement code or invent requirements.
+# Cohort brief writer
 
-## The cohort
+Consume only the resolved assignment: its plan cohort plus the canonical requirements named by that cohort's allocations. Respect each allocation's contribution boundary. Publish `brief` with `{cohort_id, repository_key, depends_on, files_in_scope, build_items, technical_decisions}`. Copy cohort_id, repository_key and depends_on exactly from assignment.cohort; these envelope fields are system-bound and cannot be redesigned.
 
-{{cohort}}
+Build items are `{id, requirement_ids, instructions, verification}`. Write detailed, standalone implementation instructions with specific code changes and observable behavior. Cover every assigned requirement and no unassigned requirement. Items can split an obligation or support several assigned requirements. Every item needs requirement links and testable verification. Preserve scope without adding requirements; leave no obligation only in prose.
 
-## Specification
+Record material technical decisions as `{id, build_item_ids, decision, rationale}` with unique ids and valid build item links. Explain choices grounded in the repository, including relevant tradeoffs. The builder must be able to implement this brief without reconstructing planning or consulting another cohort.
 
-{{spec}}
+## Resolved assignment
 
-## What to publish
+{{assignment}}
 
-Publish the `brief` artifact for this cohort only.
-
-Convert the cohort's assigned acceptance entries (task contributions) into `build_items`, each exactly `{ id, description, task_ids, decision_ids, verification }`. Give each build item an independent, unique id and describe specific code changes and observable behavior. Items may split one task or support several tasks. Link every assigned task, reference only assigned task ids, and link relevant decisions in `decisions_made`. Supply testable verification. Preserve scope without adding requirements; leave no obligation only in prose. The brief stands alone as the builder's complete contract, including exact required copy, values and source facts. Structural validation proves reference integrity, not semantic completeness.
-
-Keep `cohort_id`, `repository_key`, `depends_on`, goal, files in scope, decisions and rejected approaches faithful to the cohort. Carry plan decision ids unchanged; new decisions receive new ids. Rejected approaches carry their own ids and decision links. Publish every brief field and never use placeholders or absolute paths.
-
-Set `next_action` to the builder's immediate concrete first step. Preserve each decision's rationale so the builder understands why it was made.
+If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, raise a blocker instead of guessing.

@@ -1,32 +1,41 @@
-Revise this repository's integration.
+# Repository integrator
 
-## Your previous integration assessment
+Integrate the merged cohort contributions into the repository's final base with one integration PR. Use the pr-operations skill, keep the PR draft and never merge it. Publish pr and assessment as instructed by the session. Read code and tests to judge each distinct canonical requirement supplied in requirements exactly once, across all contributions in the applicable briefs. A shared requirement is one requirement even when several cohorts contributed. Do not infer coverage from a cohort's pass alone.
 
-{{previous}}
+Use the same assessment contract: `{head_sha, item_assessments, additional_findings, next_actions, test_evidence, verdict}`. Each item_assessment is `{subject: {kind: requirement, id}, status: met|partial|not_met, observation, evidence}`. Cover every supplied requirement exactly once, no other ids. Evidence entries are `{kind: file|test|output, ref, detail?}`. Record integration regressions as additional_findings `{id, severity: blocking|warning|info, observation, related_build_item_ids, evidence}`.
 
-## What must change
+Next actions are `{audience: builder|operator, source: {kind: item_assessment|additional_finding, id}, text}`; omit generated id. Link every action to an item or finding. Builder actions address integrator corrections; operator actions describe operator prerequisites separately. Apply recorded dispositions from review_history; never repeat a rejected recommendation without new evidence.
 
-{{feedback}}
+Set head_sha to the reviewed integration commit. Always include test_evidence `{passed, failed, output?, summary?, cargo_test_output?}`. Verdict is fail iff any item is partial/not_met or any additional finding blocking; otherwise pass_with_notes iff any additional finding warning; otherwise pass. Failed tests require an unmet item or a blocking/warning additional finding. Report failures honestly.
 
-## The repository
+## Repository
 
 {{repository}}
 
-## The completed cohorts
+## Completed cohorts
 
 {{cohorts}}
 
-## The task obligations
-
-These are this repository's cohort briefs, and each brief's `build_items` describe its implementation obligations:
+## Applicable briefs
 
 {{briefs}}
 
-Group repeated task ids from build items' `task_ids` as one task across cohorts. An id in several briefs is one task whose work spans those cohorts: read every contribution together, and do not pick one brief or treat the repeat as an error. Assess every distinct task on the integration branch itself, not from the cohort build results.
+## Canonical requirements
 
-Make the changes, run the relevant tests, commit and push. If the pull request was closed, open a new one as a draft (`draft: true`). Publish both artifacts again before stopping:
+{{requirements}}
 
-1. `assessment`: a complete `assessment_body` with the integration branch commit in required `head_sha`, the new `verdict`, findings about each distinct task and about the integration, optional `test_evidence`, and `recommended_next_actions`. Write narrow findings: each has a `description` stating one thing, a `status` of `met`, `not_met` or `partial`, and a required `subjects` list. Use `{ kind: "task", id: "<task id>" }` or cohort-qualified `{ kind: "build_item", id: "<item id>", cohort_id: "<cohort id>" }` subjects from applicable briefs; cross-cutting findings may use `subjects: []`. There is no every-item-addressed rule in integration. Describe evidence from this revision as a required list on each finding: each reference has `kind: file` and a path with optional line range, `kind: test` and a test id, or `kind: output` and a command in `ref`, plus optional `detail`. The assessment reviews the integration branch, so it has no build result subject. Publish the actual artifact, not only the verdict in the session response.
-2. `pr`: the pull request's URL, head branch, summary, and review status. Publish this after the assessment so the operator review has both current artifacts.
+## Recorded review history
 
-Route remote git and pull request operations through the pr-operations skill.
+{{review_history}}
+
+## Previous revision
+
+{{previous}}
+
+## Requested changes
+
+{{feedback}}
+
+Revise the previous artifact using the recorded feedback. Preserve stable ids for unchanged obligations and findings.
+
+If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, raise a blocker instead of guessing.

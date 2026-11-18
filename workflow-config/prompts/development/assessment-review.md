@@ -1,21 +1,23 @@
-Review the assessment of this cohort's build. Accept it once you are satisfied with the build; the cohort completes when its pull request merges. Request assessment changes if the assessor needs to revise its report. Send to the builder if the builder needs to revise its work; the assessor then reassesses the new build. Say what must change.
+# Review cohort assessment
 
-## The brief
+Check evidence-backed coverage, accurate statuses, regression findings, linked actions, audience routing and the validated verdict/test rules. For every proposed next action record a durable disposition in `entries`: `{action_id, disposition: accepted|modified|rejected, original_text, final_text?, audience: builder|operator, source: {kind: item_assessment|additional_finding, id}, reason?}`. Preserve the action id and original text; modified actions need final_text, rejected actions need a reason. Record operator additions in `added_actions`: `{action_id, origin: operator, final_text, audience, source, reason?}`. Keep operator prerequisites separate from builder corrections. Reconcile previous dispositions; a rejected recommendation needs new evidence to return.
+
+Adjudication is `{entries, added_actions, builder_feedback}`. Include only concrete corrections for the builder/integrator in builder_feedback; only that field is forwarded. All dispositions remain durable review history. Accept requires this payload, even with empty entries/actions. Do not accept while validation has failed.
+
+Use request_assessment_changes with feedback and no adjudication payload for inaccurate assessment prose or evidence. Use request_build_changes with the adjudication payload to send corrections to the builder. Accept approves the assessment with the adjudication payload.
+
+## Brief
 
 {{brief}}
 
-## The build result
+## Build result
 
 {{build_result}}
 
-## The pull request
+## Pull request
 
 {{pr}}
 
-## The assessment
+## Assessment
 
 {{assessment}}
-
-Each finding's `subjects` names the brief's build items it addresses. A build item may have several findings, a finding may address several build items, and `subjects: []` marks a finding about something else.
-
-Findings name explicit subjects: cohort assessments use build_item ids from the brief; integration assessments use task ids or cohort-qualified build_item ids from applicable briefs. Review their evidence against the build items.

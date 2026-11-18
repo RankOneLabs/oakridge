@@ -21,15 +21,65 @@ bundle's prompt keys through it.
 The PWA's definition editor authors a workflow source as JSON; the authority
 compiles it against these prompts and pins it.
 
-## Task contracts in the development workflow
+## Development contract
 
-Plan cohorts retain `task_acceptance { id, text, decision_ids }`, allocating approved tasks. Briefs carry `build_items { id, description, task_ids, decision_ids, verification }` as the standalone implementation contract. Items can split a task or span several tasks.
+Analysis extracts canonical requirement ids with source references and nested,
+evidence-backed findings. The analysis accept guard rejects blocking findings and
+unchosen operator decisions. The editor normalizes only approved resolutions into
+one structured specification, preserving requirement ids, source links and
+observable acceptance conditions. There is no separate work-list artifact or gate.
 
-Separate brief validate checks enforce unique item ids, coverage of every allocated task, no task outside that allocation, nonempty descriptions, at least one task per item, and decision links resolving in the brief's decisions_made. Cohort identity, repository and dependency checks remain. Structural checks do not establish semantic completeness.
+Planning allocates requirements to PR-shaped cohorts with bounded contributions,
+repository keys and an acyclic depends_on graph. Oakridge resolves each writer's
+assignment to its cohort and only its allocated canonical requirements. Briefs
+bind their envelope to that plan cohort and supply detailed build_items linked to
+requirements, verification and material technical_decisions. Implementation order
+and outcome titles come from the plan.
 
-Assessment findings carry `subjects { kind: build_item | task, id, cohort_id? }`, optional status, evidence and description. Cohort checks require build_item subjects resolved in the brief, every brief item addressed, and head_sha matching the latest build result. Findings with `subjects: []` are valid for cross-cutting concerns. A failed check retains the revision and feedback, refuses approval and leaves request changes available; no synthetic finding is created.
+Cohort and integration assessments share one schema: item_assessments,
+additional_findings, audience-specific source-linked next_actions, required test
+evidence and a mechanically checked verdict. Cohorts assess each build item;
+integration assesses each distinct canonical requirement once across contributions.
+The assessment review records typed adjudication (accepted, modified or rejected
+actions, operator additions and builder_feedback). Only builder_feedback reaches
+the builder or integrator; assessors read the full implicit review_history. Every
+initial/revise prompt directs the agent to raise a blocker instead of guessing.
 
-Integration receives only the repository's applicable briefs. Task subjects must resolve in their build items' task_ids; build_item subjects must name a cohort and an item in that cohort's brief. Repeated task ids across cohorts represent one task. Integration has no every-item-addressed rule; validation failures auto-return feedback to the integrator. Verdict, test evidence and recommended next actions remain unchanged.
+The development alias now pins definition
+`110fde45d5fa48998cff802f8527bf2e130e7a8feb9d22d074f08f183290f505`.
+The previous definition
+`74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4`
+and its exact prompt objects remain addressable.
+
+Current `artifact_schema_version` values, calculated by the observation adapter
+from the compiled artifact declarations:
+
+| Artifact | Schema version |
+| --- | --- |
+| analysis | `artifact-schema/v1:4847489074cebfe24f7ecdd9024b351f26ccac021f3f10ce2c788bfa8a5d39e2` |
+| spec | `artifact-schema/v1:51e41ef9d885736919cae19794256f19dde6112647448ad07cb8c71f7d61c305` |
+| plan | `artifact-schema/v1:66a1e9afac28cdb4b4db8fa8e78c9df02da4ddba1952d189279d22025a4ef79e` |
+| brief | `artifact-schema/v1:c1303586cb5531a0c0aed8a282c0ad68917d94c94834d336705373166479951f` |
+| assessment (both stages) | `artifact-schema/v1:57f201559fcc23f712187d5d695e6b26d79a583199cc4a394df88e6a36116fc9` |
+
+Three upstream limitations remain blocking for the complete contract:
+
+- B1: the engine expression language cannot test absence of the optional
+  resolution record with a null/presence literal. The current checks conservatively
+  require a resolution to evaluate; an absent resolution cannot be accepted. The
+  schema remains optional as specified. The regression is recorded as a todo test.
+- B2: request_analysis_changes re-wants the author in revise mode, but approving
+  the changed analysis does not invalidate or re-want an already published spec.
+  The evaluator replay for the required editor rerun is recorded as a todo test.
+- B9: the adapter currently hashes named declarations, rather than their resolved
+  schema bodies. Consequently analysis, plan, brief and assessment retain the old
+  schema versions despite new shapes. Readers must also use definition_id until
+  the adapter's version calculation is corrected in its owning cohort; these
+  versions alone cannot distinguish the revised contract.
+
+The cohort changes no compiler, evaluator or adapter implementation. Integration's
+request_changes explicitly targets `on: assessment`, as the shipped engine requires
+an explicit target when feedback_field is used.
 
 ## Definition store
 

@@ -583,16 +583,13 @@ test("generation refuses an authored source that declares the removed grant", ()
   expect(storeSnapshot(root)).toEqual(snapshot);
 });
 
-interface AssessmentPromptExample { readonly recommended_next_actions: readonly { readonly text: string; readonly id?: string }[] }
 for (const name of ["assess", "assess-revise"]) {
-  test(`${name} prompts show action objects and leave generated identities to the server`, () => {
+  test(`${name} prompts link audience-specific actions and leave generated ids to the server`, () => {
     const definition = unwrap(resolveLaunchableDefinition("development"));
     const prompt = definition.prompts[`development/${name}.md`];
-    const example = prompt.match(/```json\n([\s\S]*?)\n```/)?.[1];
-    if (!example) throw new Error("assessment prompt has no artifact example");
-    const body = JSON.parse(example.replaceAll("<number>", "0")) as AssessmentPromptExample;
-    expect(body.recommended_next_actions).toEqual([{ text: "<action>" }]);
-    expect(prompt).toContain("Omit its `id`; the server generates it");
+    expect(prompt).toContain("source: {kind: item_assessment|additional_finding, id}");
+    expect(prompt).toContain("audience: builder|operator");
+    expect(prompt).toContain("Omit their id on publication; the server generates it.");
   });
 }
 
