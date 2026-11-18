@@ -7,6 +7,7 @@ import { renderModePrompt, renderSessionPreamble, renderSessionTask, withReviewH
 import { selectRunUnitView, selectRunView } from "../src/projections/run-view";
 import type { RunRead } from "../src/storage/read-store";
 import { ingressResponse } from "../src/http/ingress";
+import { schemaKey, selectDecisionPayloadType } from "../src/projections/schema-view";
 
 const started = CoreClient.start();
 if (!started.ok) throw new Error(started.error.detail.detail);
@@ -112,6 +113,21 @@ test("blocker answers use the review-decision path and reach the same worker pro
   if (!instruction) throw new Error("resume instruction absent");
   const task = renderSessionTask(instruction, { prompt_text: prompts["revise.md"], handoff_text: null, latest: [], previous_attempt: null });
   expect([instruction.action.worker, instruction.action.mode.kind, task.includes("Use the revised contract")]).toEqual(["writer", "revise", true]);
+});
+
+test("selected-field decision forms collect only the declared payload", async () => {
+  const run = await Run.create("build");
+  const decision = run.compiled.workflow.stages.build?.reviews?.result_review?.decisions.request_changes;
+  if (!decision) throw new Error("request_changes absent");
+  expect(schemaKey(selectDecisionPayloadType(decision))).toBe("{builder_feedback: text, entries: list(text)}");
+});
+
+test("every implicit blocker decision form collects only the operator answer", async () => {
+  const run = await Run.create("brief");
+  const review = run.compiled.workflow.stages.brief?.reviews?.blocker_review;
+  if (!review) throw new Error("blocker_review absent");
+  expect(Object.entries(review.decisions).map(([key, decision]) => [key, schemaKey(selectDecisionPayloadType(decision))]))
+    .toEqual([["clarify", "{answer: text}"], ["discuss", "{answer: text}"], ["override", "{answer: text}"]]);
 });
 
 test("a historical agent without a revise prompt can resume its blocker", async () => {
