@@ -2843,6 +2843,10 @@ fn w6_projection(result: &StepResult) -> Value {
             .as_object_mut()
             .unwrap()
             .remove("input_provenance");
+        wanted["resolved"]
+            .as_object_mut()
+            .unwrap()
+            .remove("review_history");
         wanted["action"]["cause"]
             .as_object_mut()
             .unwrap()
