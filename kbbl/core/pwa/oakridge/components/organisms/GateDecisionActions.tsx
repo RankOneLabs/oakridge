@@ -50,6 +50,7 @@ function mergeWarning(status: Exclude<MergeStatus, { readonly kind: "merged" }>)
 }
 
 export function GateDecisionActions(props: GateDecisionActionsProps) {
+  if (props.gate.requires_adjudication) return <p>Review and adjudicate the actions in the assessment to record a decision.</p>;
   return <GateDecisionActionsForGate key={props.gate.id} {...props} />;
 }
 

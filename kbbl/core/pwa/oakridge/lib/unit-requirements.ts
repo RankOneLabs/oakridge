@@ -22,6 +22,7 @@ export function selectUnitRequirementIds(unit: OperatorUnitView): readonly strin
     switch (parsed.value.kind) {
       case "analysis": case "spec": return parsed.value.body.requirements.map((requirement) => requirement.id);
       case "plan": return parsed.value.body.cohorts.flatMap((cohort) => cohort.allocations.map((entry) => entry.requirement_id));
+      case "assessment": return parsed.value.body.item_assessments.flatMap(item => item.subject.kind === "requirement" ? [item.subject.id] : []);
       case "brief": return parsed.value.body.build_items.flatMap((entry) => entry.requirement_ids);
     }
   });

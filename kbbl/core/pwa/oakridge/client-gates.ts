@@ -69,7 +69,7 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
     if (req.action === "request_revision" && decision.fields.length === 0 && req.feedback.trim())
       throw new Error(`oakridge ${gateId}: decision does not accept feedback`);
     const field = decision.fields[0];
-    const payload = field ? { [field.key]: req.feedback } : {};
+    const payload = req.adjudication ?? (field ? { [field.key]: req.feedback } : {});
     await decide(gate.runId, gate.unitId, review, decision.submit.decision, decision.submit.target_revision_id, payload, req.idempotency_key);
     invalidateCachedRunUnits(gate.runId);
     return { gate_id: gateId, resumed: true };
