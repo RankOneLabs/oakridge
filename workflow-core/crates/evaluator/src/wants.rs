@@ -322,6 +322,14 @@ pub(super) fn reviewed_output_is_current(
     if is_output_in_progress(stage, state, &unit.id, artifact) {
         return Ok(false);
     }
+    // A review that sent the latest revision's changes to another worker's
+    // artifact has spent it: the creator revises it once that is answered.
+    if pending_redirects(stage, state, &unit.id, artifact)
+        .next()
+        .is_some()
+    {
+        return Ok(false);
+    }
     for worker in &stage.workers {
         let CheckedWorker::Agent {
             creates,

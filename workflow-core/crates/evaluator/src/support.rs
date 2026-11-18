@@ -581,51 +581,72 @@ pub(super) fn parked_blocker<'a>(
     .then_some(blocker)
 }
 
-/// A review of one of `creates` that sent its changes to another artifact
-/// (`on:`) and is answered upstream: the redirected artifact has been
-/// replaced since, and no revision of the reviewed artifact has followed the
-/// decision. Its creator then revises against the new upstream. Returns the
-/// reviewed revision and the redirected decision.
-pub(super) fn redirected_request<'a>(
-    stage: &CheckedStage,
+/// Request-changes decisions recorded by a review of `artifact` since its
+/// latest revision was published that sent the changes to an artifact of
+/// another worker (`on:`), each with the redirected revision. A worker that
+/// creates both artifacts answers the request through its own revise, so
+/// such a redirect is not listed.
+pub(super) fn pending_redirects<'a>(
+    stage: &'a CheckedStage,
     state: &'a StepSnapshot,
-    unit: &UnitId,
-    creates: &[SymbolKey],
+    unit: &'a UnitId,
+    artifact: &'a SymbolKey,
+) -> impl Iterator<Item = (&'a DecisionState, &'a RevisionState)> + 'a {
+    let since = latest(state, unit, artifact).map(|revision| revision.decision_cursor as usize);
+    state
+        .decisions
+        .iter()
+        .skip(since.unwrap_or(state.decisions.len()))
+        .filter_map(move |decision| {
+            let DecisionState::Review {
+                unit: decided_unit,
+                review,
+                effect: DecisionEffect::RequestChanges { .. },
+                target,
+                ..
+            } = decision
+            else {
+                return None;
+            };
+            let redirected = state.revisions.iter().find(|r| &r.id == target)?;
+            let is_review_of_artifact = stage
+                .reviews
+                .iter()
+                .any(|candidate| candidate.key() == review && candidate.of() == artifact);
+            let is_shared_creator = stage.workers.iter().any(|worker| {
+                worker.creates().contains(artifact)
+                    && worker.creates().contains(&redirected.artifact)
+            });
+            (decided_unit == unit
+                && is_review_of_artifact
+                && redirected.artifact != *artifact
+                && !is_shared_creator)
+                .then_some((decision, redirected))
+        })
+}
+
+/// A redirected request (see `pending_redirects`) on one of `creates` that is
+/// answered upstream: the redirected artifact has been replaced since. Its
+/// creator then revises the reviewed revision against the new upstream.
+/// Returns the reviewed revision and the redirected decision.
+pub(super) fn redirected_request<'a>(
+    stage: &'a CheckedStage,
+    state: &'a StepSnapshot,
+    unit: &'a UnitId,
+    creates: &'a [SymbolKey],
 ) -> Option<(&'a RevisionState, &'a DecisionState)> {
     creates
         .iter()
         .filter(|artifact| artifact.0 != BLOCKER_ARTIFACT)
         .find_map(|artifact| {
             let reviewed = latest(state, unit, artifact)?;
-            state
-                .decisions
-                .iter()
-                .skip(reviewed.decision_cursor as usize)
-                .rev()
-                .find_map(|decision| {
-                    let DecisionState::Review {
-                        unit: decided_unit,
-                        review,
-                        effect: DecisionEffect::RequestChanges { .. },
-                        target,
-                        ..
-                    } = decision
-                    else {
-                        return None;
-                    };
-                    let redirected = state.revisions.iter().find(|r| &r.id == target)?;
-                    let is_redirected_review = stage
-                        .reviews
-                        .iter()
-                        .any(|candidate| candidate.key() == review && candidate.of() == artifact);
-                    let is_answered = latest(state, unit, &redirected.artifact)
-                        .is_some_and(|current| current.id != redirected.id);
-                    (decided_unit == unit
-                        && is_redirected_review
-                        && redirected.artifact != *artifact
-                        && is_answered)
-                        .then_some((reviewed, decision))
+            pending_redirects(stage, state, unit, artifact)
+                .filter(|(_, redirected)| {
+                    latest(state, unit, &redirected.artifact)
+                        .is_some_and(|current| current.id != redirected.id)
                 })
+                .last()
+                .map(|(decision, _)| (reviewed, decision))
         })
 }
 

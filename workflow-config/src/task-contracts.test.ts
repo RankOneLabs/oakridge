@@ -223,3 +223,18 @@ test("duplicate additional finding ids are refused", async () => {
   body.additional_findings = [finding, finding];
   expect(validationFeedback(await assessmentRun(body))).toContain("Additional finding ids must be unique.");
 });
+test("a spec sent back for analysis changes cannot be accepted until the editor republishes it", async () => {
+  const run = await specRun(spec());await run.end("spec_editor");
+  const stale = run.latest("spec").id;
+  await run.decide("spec_review", "request_analysis_changes", "spec", {feedback: "Clarify R1"});
+  expect(run.result.reviews.some(r => r.review === "spec_review")).toBe(false);
+  const refused = await run.apply({ kind: "operator_decided", unit: "run/unit", review: "spec_review", decision: "accept", target: stale, payload: {} }).then(() => null, (error: unknown) => String(error));
+  expect([refused === null ? "applied" : "refused", run.result.snapshot.units.find(u => u.id === "run/unit")?.status.kind]).toEqual(["refused", "active"]);
+  const revised = analysis(); revised.requirements[0].text = "Clarified R1";
+  await run.publish("author", "analysis", revised);await run.end("author");await run.decide("analysis_review", "accept", "analysis");
+  await run.publish("spec_editor", "spec", spec());await run.end("spec_editor");
+  const fresh = run.latest("spec").id;
+  expect([fresh !== stale, run.result.reviews.find(r => r.review === "spec_review")?.target, run.result.snapshot.units.find(u => u.id === "run/unit")?.status.kind]).toEqual([true, fresh, "active"]);
+  await run.decide("spec_review", "accept", "spec");
+  expect(run.result.snapshot.units.find(u => u.id === "run/unit")?.status.kind).toBe("done");
+});
