@@ -5,7 +5,7 @@ import { useResumeGate } from "../../hooks/useResumeGate";
 import type { MergeStatus, ParkedGate } from "../../artifact-types";
 import { fetchMergeStatus } from "../../client";
 import { randomUuid } from "../../../lib/random-uuid";
-import { REQUEST_BUILD_CHANGES } from "../../adapters/core";
+import { REQUEST_BUILD_CHANGES, selectGateDecision } from "../../adapters/core";
 import { Button } from "../../../components/atoms/Button";
 
 const decisionButtonClass = "min-h-12 w-full rounded-lg! px-4! py-[0.65rem]! md:min-h-11 md:w-auto";
@@ -27,6 +27,9 @@ function actionLabel(action: string): string {
     case "pass": return "Pass";
     case "fail": return "Mark failed";
     case "rerun": return "Run again";
+    case "clarify": return "Clarify";
+    case "discuss": return "Discuss";
+    case "override": return "Override";
     default: return action.replaceAll("_", " ");
   }
 }
@@ -35,6 +38,7 @@ function successMessage(action: string): string {
   if (action === "request_assessment_changes") return "Assessment changes requested. The assessor will revise its report.";
   if (action === REQUEST_BUILD_CHANGES) return "Build changes requested. The builder will revise its work.";
   if (action === "request_revision") return "Changes requested.";
+  if (["clarify", "discuss", "override"].includes(action)) return "Answer sent to the worker.";
   if (action === "confirm_merged") return "Merge confirmed. The cohort can continue.";
   return "Decision recorded. The cohort can continue.";
 }
@@ -67,12 +71,15 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
   // what keeps the feedback textarea from ever opening too — a disabled
   // native button never fires its onClick.
   const disabled = !gate.actionable;
+  const feedbackDecision = selectGateDecision(gate, feedbackAction);
+  const isBlocker = gate.gate_step === "blocker_review";
 
   useEffect(() => {
     return () => { isActive.current = false; };
   }, []);
 
   const submit = (action: string, decisionFeedback?: string, isOverride = false) => {
+    if (disabled || selectGateDecision(gate, action)?.is_available === false) return;
     const decisionRevisionId = artifactRevisionId ?? gate.artifact_revision_id;
     if (!decisionRevisionId) return;
     const feedbackValue = decisionFeedback?.trim() ?? "";
@@ -146,28 +153,35 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
       )}
       <div className="or-decision-actions__buttons">
         {gate.resume_actions.map((action) => {
-          const needsFeedback = action === "request_revision" || action === "request_assessment_changes" || action === REQUEST_BUILD_CHANGES
+          const decision = selectGateDecision(gate, action);
+          const needsFeedback = Boolean(decision?.fields.length) || action === "request_revision" || action === "request_assessment_changes" || action === REQUEST_BUILD_CHANGES
             || action === "rerun" || action === "reject" || action === "fail";
           const isPrimary = action === "approve" || action === "confirm_merged" || action === "pass";
           const isConfirming = action === "approve" && isConfirmingApproval;
+          const isUnavailable = decision?.is_available === false;
+          const reason = isUnavailable ? decision.disabled_reason : null;
+          const reasonId = `or-decision-disabled-${gate.id}-${action}`;
           return (
-            <Button
-              key={action}
-              variant={isPrimary ? "primary" : "secondary"}
-              className={`${decisionButtonClass} ${isPrimary ? "" : "text-[var(--text-primary)]!"}`}
-              disabled={mutation.isPending || isCheckingMerge || disabled}
-              onClick={() => choose(action, needsFeedback)}
-              onBlur={isConfirming && !mutation.isPending ? () => setIsConfirmingApproval(false) : undefined}
-              data-testid={`or-decision-${action}`}
-            >
-              {isCheckingMerge && action === "confirm_merged" ? "Checking PR…" : mutation.isPending && mutation.variables?.action === action
-                ? "Saving…" : isConfirming ? "Confirm approval" : (actionLabels[action] ?? actionLabel(action))}
-            </Button>
+            <div key={action} className="flex flex-col gap-1">
+              <Button
+                variant={isPrimary ? "primary" : "secondary"}
+                className={`${decisionButtonClass} ${isPrimary ? "" : "text-[var(--text-primary)]!"}`}
+                disabled={mutation.isPending || isCheckingMerge || disabled || isUnavailable}
+                aria-describedby={reason ? reasonId : undefined}
+                onClick={() => choose(action, needsFeedback)}
+                onBlur={isConfirming && !mutation.isPending ? () => setIsConfirmingApproval(false) : undefined}
+                data-testid={`or-decision-${action}`}
+              >
+                {isCheckingMerge && action === "confirm_merged" ? "Checking PR…" : mutation.isPending && mutation.variables?.action === action
+                  ? "Saving…" : isConfirming ? "Confirm approval" : (actionLabels[action] ?? actionLabel(action))}
+              </Button>
+              {reason && <p id={reasonId} className="text-sm text-[var(--text-secondary)]" role="status">{reason}</p>}
+            </div>
           );
         })}
       </div>
 
-      {mergeStatus && !disabled && (
+      {mergeStatus && !disabled && selectGateDecision(gate, "confirm_merged")?.is_available !== false && (
         <div className="or-decision-feedback" role="alert" data-testid="or-merge-warning">
           <p>{mergeWarning(mergeStatus)}</p>
           {gate.pr_url && <p>Pull request: <a href={gate.pr_url} target="_blank" rel="noopener noreferrer">{gate.pr_url}</a></p>}
@@ -181,20 +195,20 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
         </div>
       )}
 
-      {feedbackAction && !disabled && (
+      {feedbackAction && !disabled && feedbackDecision?.is_available !== false && (
         <div className="or-decision-feedback" data-testid="or-decision-feedback">
-          <label htmlFor={`or-decision-feedback-${gate.id}`}>What needs to change?</label>
+          <label htmlFor={`or-decision-feedback-${gate.id}`}>{isBlocker ? feedbackDecision?.fields[0]?.label ?? "Answer" : "What needs to change?"}</label>
           <TextArea
             id={`or-decision-feedback-${gate.id}`}
             value={feedback}
             onChange={(event) => setFeedback(event.target.value)}
             rows={4}
             autoFocus
-            placeholder="Describe the changes needed."
+            placeholder={isBlocker ? "Answer the worker’s question." : "Describe the changes needed."}
           />
           <div className="or-decision-feedback__buttons">
             <Button variant="secondary" className={`${decisionButtonClass} text-[var(--text-primary)]!`} onClick={() => setFeedbackAction(null)}>Cancel</Button>
-            <Button variant="danger" className={`${decisionButtonClass} border-transparent! bg-[var(--danger-fg)]! text-[var(--bg-app)]!`} disabled={disabled || !feedback.trim() || mutation.isPending} onClick={() => submit(feedbackAction, feedback)}>Send feedback</Button>
+            <Button variant="danger" className={`${decisionButtonClass} border-transparent! bg-[var(--danger-fg)]! text-[var(--bg-app)]!`} disabled={disabled || !feedback.trim() || mutation.isPending} onClick={() => submit(feedbackAction, feedback)}>{isBlocker ? "Send answer" : "Send feedback"}</Button>
           </div>
         </div>
       )}

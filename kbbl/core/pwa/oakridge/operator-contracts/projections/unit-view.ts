@@ -2,12 +2,15 @@
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
 import type { OperatorAttemptStatus, OperatorCause, OperatorDeclaredDecisionEffect, OperatorMode, OperatorUnitStatus } from "../core-client/core-types";
-import type { OperatorEngineInputs, OperatorPinnedPrompt } from "../domain/effect-instruction";
+import type { OperatorPinnedPrompt } from "../domain/effect-instruction";
 import type { OperatorJsonValue } from "../domain/primitives";
 import type { OperatorInputProvenanceView } from "../domain/unit-status";
+import type { OperatorReviewHistoryEngineInputs } from "../effects/session-prompt";
 import type { OperatorAttention } from "./attention";
+import type { OperatorBlockerHistory } from "./history-view";
 
 export interface OperatorUnitView {
+  readonly blocker?: OperatorBlockerHistory | null;
   readonly input_provenance: OperatorInputProvenanceView;
   readonly unit_id: string;
   readonly run_id: string;
@@ -61,6 +64,8 @@ export interface OperatorAttemptView {
 }
 
 export interface OperatorDecisionDefinition {
+  readonly is_available?: boolean;
+  readonly disabled_reason?: string | null;
   /** Unique within the unit: the decision key, `<review>:<decision>` where a stage reuses a key across reviews, `retry:<worker>`, or `cancel`. */
   readonly key: string;
   readonly label: string;
@@ -110,7 +115,7 @@ export interface OperatorAttemptFailure { readonly code: string; readonly detail
 export interface OperatorAttemptIntentView {
   readonly input_provenance: OperatorInputProvenanceView;
   readonly inputs: OperatorBodyValue;
-  readonly engine_inputs: OperatorEngineInputs;
+  readonly engine_inputs: OperatorReviewHistoryEngineInputs;
   readonly prompt: OperatorPinnedPrompt | null;
 }
 

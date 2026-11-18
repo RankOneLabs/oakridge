@@ -104,14 +104,14 @@ function aliasSchemas(name: string, aliases: Aliases): readonly Schema[] {
 
 /**
  * A review decision's payload type. `payload` is what the core checks; `fields`
- * name text fields to collect, and a `request_changes` decision must carry
- * `feedback` (the core refuses one without it).
+ * name text fields to collect. `request_changes` collects conventional
+ * `feedback` unless the decision forwards a named payload field instead.
  */
 export function selectDecisionPayloadType(decision: ParsedReviewDecision): TypeNode {
   const declared = decision.payload == null ? null : typeNode(decision.payload);
   const fields = new Map<string, TypeNode>(declared?.kind === "record" ? declared.fields : []);
   for (const key of Object.keys(decision.fields ?? {})) if (!fields.has(key)) fields.set(key, { kind: "primitive", name: "text" });
-  if (decision.effect === "request_changes" && !fields.has("feedback")) fields.set("feedback", { kind: "primitive", name: "text" });
+  if (decision.effect === "request_changes" && decision.feedback_field == null && !fields.has("feedback")) fields.set("feedback", { kind: "primitive", name: "text" });
   if (declared && declared.kind !== "record") return declared;
   return { kind: "record", fields: [...fields].sort(([left], [right]) => left.localeCompare(right)) };
 }

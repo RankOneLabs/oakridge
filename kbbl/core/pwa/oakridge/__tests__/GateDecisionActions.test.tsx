@@ -82,6 +82,38 @@ function mockMerge(status: unknown, post: (init?: RequestInit) => Promise<Respon
 }
 
 describe("GateDecisionActions", () => {
+  it("disables a guarded decision with its reason while leaving other decisions available", () => {
+    const unit = unitFor("unit-a", "revision-a");
+    const gates = reviewToGates({ ...unit, decisions: unit.decisions.map((decision) => ({ ...decision,
+      is_available: decision.submit.kind !== "review" || decision.submit.effect !== "approve",
+      disabled_reason: decision.submit.kind === "review" && decision.submit.effect === "approve" ? "Resolve blocking findings" : null })) });
+    if (!gates.ok || !gates.value[0]) throw new Error("review gate absent");
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    render(wrapper(client, { ...gates.value[0], resume_actions: ["approve", "request_build_changes"] }));
+
+    const button = screen.getByTestId("or-decision-approve") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent).toBe("Resolve blocking findings");
+    expect((screen.getByTestId("or-decision-request_build_changes") as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(button);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a decision that became unavailable after the gate was displayed", async () => {
+    const fetch = mockV2([{
+      ...unitFor("unit-a", "revision-a"), decisions: unitFor("unit-a", "revision-a").decisions.map((decision) => ({
+        ...decision, is_available: false, disabled_reason: "New blocking findings" })) }], async () =>
+      json({ kind: "committed", run_id: "run-1", event_id: "unexpected" }));
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    render(wrapper(client, gate(compositeId({ kind: "gate", runId: "run-1", unitId: "unit-a", name: "assessment_review" }), "revision-a")));
+
+    fireEvent.click(screen.getByTestId("or-decision-approve"));
+    fireEvent.click(screen.getByTestId("or-decision-approve"));
+    expect((await screen.findByRole("alert")).textContent).toContain("New blocking findings");
+    expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
   it("checks the live PR and warns before allowing an override for an open PR", async () => {
     const fetchMock = mockMerge({ kind: "not_merged", pr_url: mergeGate.pr_url, state: "open" }, async () =>
       json({ kind: "committed", run_id: mergeGate.run_id, event_id: "decided" }));

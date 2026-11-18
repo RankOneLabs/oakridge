@@ -25,3 +25,11 @@ export function retryUnit(unitId: string): OperatorUnitView {
 export function withUnitFields(unit: OperatorUnitView, fields: Partial<OperatorUnitView>): OperatorUnitView {
   return { ...unit, ...fields };
 }
+
+/** Mirrors the engine's implicit blocker_review operator contract. */
+export function blockerUnit(): OperatorUnitView {
+  return { ...sampleCohort, run_id: "run-1", unit_id: "unit-a", artifacts: [],
+    decisions: ["clarify", "discuss", "override"].map((decision) => ({ key: decision, label: decision,
+      is_available: true, disabled_reason: null, payload_schema: "{answer: text}", fields: [{ key: "answer", label: "Answer" }],
+      submit: { kind: "review", review: "blocker_review", decision, effect: "request_changes", target_revision_id: "blocker-revision" } })) };
+}

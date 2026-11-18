@@ -1,7 +1,7 @@
 // Generated from oakridge-dbos/src/http/operator-api.ts. Run bun kbbl/scripts/generate-operator-contracts.ts.
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
-import type { OperatorEvent, OperatorWriter } from "../core-client/core-types";
+import type { OperatorEvent, OperatorResolvedDecision, OperatorWriter } from "../core-client/core-types";
 import type { OperatorAttemptView } from "./unit-view";
 import type { OperatorAuthorityEffectStatus } from "../storage/db-types";
 
@@ -13,6 +13,15 @@ export interface OperatorUnitDiagnostics {
   readonly effects: readonly OperatorEffectDiagnostic[];
   /** Events step refused for this unit. */
   readonly rejected: readonly OperatorRejectedEvent[];
+}
+
+export interface OperatorBlockerHistory {
+  readonly available_decisions: readonly OperatorResolvedDecision[];
+  readonly is_open: boolean;
+  readonly latest: OperatorBlockerRevision;
+  readonly revisions: readonly OperatorBlockerRevision[];
+  readonly decisions: readonly OperatorBlockerAnswer[];
+  readonly history: readonly OperatorBlockerHistoryEntry[];
 }
 
 export interface OperatorEventHistory {
@@ -36,3 +45,23 @@ export interface OperatorEffectDiagnostic {
 }
 
 export interface OperatorRejectedEvent { readonly ingress_id: string; readonly reason: string }
+
+export interface OperatorBlockerRevision {
+  readonly revision_id: string;
+  readonly text: string;
+  readonly suggested_choices: readonly string[] | null;
+  readonly created_at: string;
+}
+
+export interface OperatorBlockerAnswer {
+  readonly id: string;
+  readonly target_revision_id: string;
+  readonly decision: string;
+  readonly answer: string;
+  readonly actor: OperatorWriter | null;
+  readonly created_at: string;
+}
+
+export type OperatorBlockerHistoryEntry =
+  | { readonly kind: "revision"; readonly revision: OperatorBlockerRevision }
+  | { readonly kind: "decision"; readonly decision: OperatorBlockerAnswer };

@@ -18,7 +18,7 @@ import { actionOf, executor, launch, openAuthority, submitter, unitOf, type Auth
  */
 // Keep the runtime field assertion exhaustive at typecheck time as RunView evolves.
 const RUN_VIEW_FIELDS = {
-  archived_at: true, config_error: true, created_at: true, definition_id: true,
+  open_blockers: true, archived_at: true, config_error: true, created_at: true, definition_id: true,
   pr_integration: true, pr_skill_digest: true, repository_keys: true, run_id: true,
   status: true, title: true, units: true, updated_at: true,
 } satisfies Record<keyof RunView, true>;
@@ -28,15 +28,15 @@ const DEFINITION_DETAIL_FIELDS = {
 const CONTRACT_FIELDS = {
   RunView: Object.keys(RUN_VIEW_FIELDS).sort(),
   RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
-  UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "input_provenance", "is_terminal", "label", "outcome",
+  UnitView: ["artifacts", "attempts", "attention", "blocker", "collection_key", "decisions", "depends_on", "input", "input_provenance", "is_terminal", "label", "outcome",
     "recorded_decisions", "run_id", "stage", "status", "unit_id", "unit_key"],
   AttemptView: ["cause", "created_at", "failure", "id", "intent", "is_current", "kbbl_session_id", "mode", "number", "status", "unit_id", "worker"],
   AttemptIntentView: ["engine_inputs", "input_provenance", "inputs", "prompt"],
-  EngineInputs: ["feedback", "previous", "subject"],
+  EngineInputs: ["feedback", "previous", "review_history", "subject"],
   PinnedPrompt: ["digest", "path"],
   ArtifactView: ["artifact_key", "is_editable", "is_reviewable", "latest_revision", "revision_count", "run_id", "schema", "unit_id"],
   ArtifactRevisionView: ["artifact_key", "attempt_id", "body", "created_at", "id", "number", "predecessor_id", "run_id", "subject_id", "unit_id"],
-  DecisionDefinition: ["fields", "key", "label", "payload_schema", "submit"],
+  DecisionDefinition: ["disabled_reason", "fields", "is_available", "key", "label", "payload_schema", "submit"],
   DecisionField: ["key", "label"],
   RevisionDecision: ["created_at", "decision", "effect", "id", "payload", "review", "target_revision_id"],
   InboxPage: ["items", "next_cursor"],
@@ -368,7 +368,7 @@ describe("derived fields", () => {
     const publisher = view.attempts.find((attempt) => attempt.id.startsWith(`${writer}:`))?.id ?? null;
     expect(view.artifacts.map((artifact) => [artifact.artifact_key, artifact.schema, artifact.is_reviewable, artifact.is_editable, artifact.revision_count,
       artifact.latest_revision?.number ?? null, artifact.latest_revision?.attempt_id ?? null]))
-      .toEqual([["critique", "{notes: list(text)}", false, true, 0, null, null], ["draft", "{body: text, title: text}", true, true, 1, 1, publisher]]);
+      .toEqual([["blocker", "{suggested_choices: optional(list(text)), text: text}", true, false, 0, null, null], ["critique", "{notes: list(text)}", false, true, 0, null, null], ["draft", "{body: text, title: text}", true, true, 1, 1, publisher]]);
     expect(publisher).not.toBeNull();
   });
 

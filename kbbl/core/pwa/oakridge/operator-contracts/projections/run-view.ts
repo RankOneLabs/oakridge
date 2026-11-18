@@ -8,7 +8,10 @@ import type { OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinit
 
 export interface OperatorRunPage { readonly items: readonly OperatorRunView[]; readonly next_cursor: string | null }
 
-export interface OperatorRunView extends OperatorRunSummary { readonly units: readonly OperatorRunUnitSummary[] }
+export interface OperatorRunView extends OperatorRunSummary {
+  readonly open_blockers?: readonly { readonly unit_id: string; readonly revision_id: string }[];
+  readonly units: readonly OperatorRunUnitSummary[]
+}
 
 export interface OperatorRunSummary {
   /** Null only when recorded launch settings are malformed. */

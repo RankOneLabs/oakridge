@@ -89,3 +89,6 @@ pub fn decode_unique_json(bytes: &[u8]) -> CoreResult<serde_json::Value> {
         .map_err(|e| error(DomainErrorKind::UnknownConstruct, "json", e.to_string()))?;
     Ok(result.0)
 }
+
+#[cfg(test)]
+mod engine_contract_tests;

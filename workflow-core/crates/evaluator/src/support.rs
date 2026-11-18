@@ -307,7 +307,7 @@ pub(super) fn is_output_in_progress(
                 return false;
             };
             let published_count = worker
-                .creates()
+                .required_creates()
                 .iter()
                 .filter(|created| {
                     state.revisions.iter().any(|revision| {
@@ -316,7 +316,7 @@ pub(super) fn is_output_in_progress(
                     })
                 })
                 .count();
-            published_count > 0 && published_count < worker.creates().len()
+            published_count > 0 && published_count < worker.required_creates().len()
         })
 }
 /// The artifacts of a stage's watches that have not observed what they
@@ -400,19 +400,22 @@ pub(super) fn changes_requested_except<'a>(
         artifacts,
         deferred_validation,
     } = search;
-    artifacts.iter().find_map(|artifact| {
-        let latest = latest(state, unit, artifact)?;
-        state.decisions.iter().rev().find(|decision| {
-            decision.unit() == unit
-                && !(deferred_validation.contains(artifact)
-                    && matches!(decision, DecisionState::Validation { .. }))
-                && decision.target() == &latest.id
-                && matches!(
-                    decision.effect(),
-                    Some(DecisionEffect::RequestChanges { .. })
-                )
+    artifacts
+        .iter()
+        .filter(|artifact| artifact.0 != BLOCKER_ARTIFACT)
+        .find_map(|artifact| {
+            let latest = latest(state, unit, artifact)?;
+            state.decisions.iter().rev().find(|decision| {
+                decision.unit() == unit
+                    && !(deferred_validation.contains(artifact)
+                        && matches!(decision, DecisionState::Validation { .. }))
+                    && decision.target() == &latest.id
+                    && matches!(
+                        decision.effect(),
+                        Some(DecisionEffect::RequestChanges { .. })
+                    )
+            })
         })
-    })
 }
 /// The decision a revise attempt answers, with the revision it requested
 /// changes on: the one its cause names, or for a retry, which names none,
@@ -538,6 +541,44 @@ pub(super) fn checked_unit<'a>(
         .iter()
         .find(|candidate| candidate.key.0 == declaration)
         .ok_or_else(|| invalid(format!("checked unit {declaration} absent")))
+}
+
+/// The worker owning a revision, through its durable publishing attempt.
+pub(super) fn publishing_worker<'a>(
+    state: &'a StepSnapshot,
+    revision: &RevisionState,
+) -> Option<&'a WorkerKey> {
+    revision
+        .by
+        .as_ref()
+        .and_then(|action| {
+            state
+                .attempts
+                .iter()
+                .find(|attempt| &attempt.action_id == action)
+        })
+        .map(|attempt| &attempt.worker)
+}
+
+/// A blocker parks the unit until its publisher resumes and publishes normal output.
+/// Revision order is the shared durable history, not unrelated per-artifact sequences.
+pub(super) fn parked_blocker<'a>(
+    state: &'a StepSnapshot,
+    unit: &UnitId,
+) -> Option<&'a RevisionState> {
+    let (index, blocker) = state
+        .revisions
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, revision)| &revision.unit == unit && revision.artifact.0 == BLOCKER_ARTIFACT)?;
+    let publisher = publishing_worker(state, blocker)?;
+    (!state.revisions[index + 1..].iter().any(|revision| {
+        &revision.unit == unit
+            && revision.artifact.0 != BLOCKER_ARTIFACT
+            && publishing_worker(state, revision) == Some(publisher)
+    }))
+    .then_some(blocker)
 }
 
 #[cfg(test)]

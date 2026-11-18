@@ -101,6 +101,45 @@ pub fn stage_actions(
 ) -> Result<Vec<Action>, StepError> {
     let checked = checked_stage(program, unit)?;
     let mut wanted = Vec::new();
+    if let Some(revision) = parked_blocker(state, &unit.id) {
+        let blocker = &revision.id;
+        let publisher = revision
+            .by
+            .as_ref()
+            .and_then(|action| {
+                state
+                    .attempts
+                    .iter()
+                    .find(|attempt| &attempt.action_id == action)
+            })
+            .ok_or_else(|| invalid("blocker publisher absent"))?;
+        let decision = state.decisions.iter().rev().find(|decision| {
+            decision.unit() == &unit.id
+                && decision
+                    .review()
+                    .is_some_and(|review| review.0 == BLOCKER_REVIEW)
+                && decision.target() == blocker
+        });
+        if let Some(decision) = decision {
+            let cause = match can_run(state, &unit.id, &publisher.worker) {
+                Readiness::Blocked => return Ok(wanted),
+                Readiness::RetryAuthorized { event } => Cause::Retry {
+                    event,
+                    mode: Mode::Revise,
+                },
+                Readiness::Ready => Cause::ChangesRequested {
+                    decision: decision.id().clone(),
+                },
+            };
+            wanted.push(Action::RunWorker {
+                unit: unit.id.clone(),
+                worker: publisher.worker.clone(),
+                mode: Mode::Revise,
+                cause,
+            });
+        }
+        return Ok(wanted);
+    }
     for checked_worker in &checked.workers {
         let worker_key = checked_worker.key();
         let readiness = can_run(state, &unit.id, worker_key);
@@ -125,13 +164,16 @@ pub fn stage_actions(
                 let Some(subject) = latest(state, &unit.id, subject) else {
                     continue;
                 };
-                let already = creates.iter().all(|artifact| {
-                    state.revisions.iter().any(|r| {
-                        r.unit == unit.id
-                            && r.artifact == *artifact
-                            && r.subject.as_ref() == Some(&subject.id)
-                    })
-                });
+                let already = creates
+                    .iter()
+                    .filter(|artifact| artifact.0 != BLOCKER_ARTIFACT)
+                    .all(|artifact| {
+                        state.revisions.iter().any(|r| {
+                            r.unit == unit.id
+                                && r.artifact == *artifact
+                                && r.subject.as_ref() == Some(&subject.id)
+                        })
+                    });
                 if !already {
                     Some((
                         Mode::Review,
@@ -166,6 +208,7 @@ pub fn stage_actions(
             } => {
                 if creates
                     .iter()
+                    .filter(|artifact| artifact.0 != BLOCKER_ARTIFACT)
                     .any(|artifact| latest(state, &unit.id, artifact).is_none())
                 {
                     Some((Mode::Initial, Cause::Missing))
@@ -196,6 +239,7 @@ pub fn stage_actions(
             } => {
                 if creates
                     .iter()
+                    .filter(|artifact| artifact.0 != BLOCKER_ARTIFACT)
                     .any(|artifact| latest(state, &unit.id, artifact).is_none())
                 {
                     Some((Mode::Initial, Cause::Missing))
@@ -263,6 +307,12 @@ pub(super) fn reviewed_output_is_current(
     artifact: &SymbolKey,
 ) -> Result<bool, StepError> {
     let stage = checked_stage(program, unit)?;
+    if artifact.0 == BLOCKER_ARTIFACT {
+        return Ok(parked_blocker(state, &unit.id).is_some());
+    }
+    if parked_blocker(state, &unit.id).is_some() {
+        return Ok(false);
+    }
     if is_output_in_progress(stage, state, &unit.id, artifact) {
         return Ok(false);
     }
@@ -326,7 +376,16 @@ pub(super) fn resolve_reviews(
         if is_decided_by(state, &unit.id, key, &target.id) {
             continue;
         }
-        let decisions = open_decisions(state, &unit.id, key, of, decisions);
+        let decisions = open_decisions(
+            OpenDecisionScope {
+                state,
+                unit,
+                review: key,
+                of,
+                decisions,
+            },
+            context,
+        )?;
         let mut resolved_inputs = serde_json::Map::new();
         for field in inputs {
             let value = eval_expression(&field.value.expression, unit, state, None, None, context)?;
@@ -364,27 +423,77 @@ pub(super) fn has_failed_validation(state: &StepSnapshot, revision: &RevisionId)
         matches!(decision, DecisionState::Validation { target, .. } if target == revision)
     })
 }
-pub(super) fn open_decisions(
-    state: &StepSnapshot,
-    unit: &UnitId,
-    review: &SymbolKey,
-    of: &SymbolKey,
-    decisions: &BTreeMap<String, CheckedDecision>,
-) -> Vec<ResolvedDecision> {
-    decisions
-        .iter()
-        .filter_map(|(key, decision)| {
-            let target = latest(state, unit, decided_artifact(of, &decision.on))?;
-            let is_refused = decision.effect == DeclaredDecisionEffect::Approve
-                && has_failed_validation(state, &target.id);
-            (!is_refused && !is_decided_by(state, unit, review, &target.id)).then(|| {
-                ResolvedDecision {
-                    decision: SymbolKey::from(key.as_str()),
-                    target: target.id.clone(),
-                }
-            })
-        })
-        .collect()
+pub(super) struct DecisionAvailability<'a> {
+    pub guard: Option<&'a CheckedDecisionGuard>,
+    pub of: &'a SymbolKey,
+    pub unit: &'a UnitState,
+    pub state: &'a StepSnapshot,
+}
+pub(super) fn decision_disabled_reason(
+    request: DecisionAvailability<'_>,
+    context: &mut EvaluationContext<'_>,
+) -> Result<Option<String>, StepError> {
+    let DecisionAvailability {
+        guard,
+        of,
+        unit,
+        state,
+    } = request;
+    let Some(guard) = guard else {
+        return Ok(None);
+    };
+    let body = latest(state, &unit.id, of).map(|revision| (of.0.as_str(), &revision.body));
+    Ok(
+        (eval_expression(&guard.check.expression, unit, state, None, body, context)?
+            != Some(Value::Bool(true)))
+        .then(|| guard.reason.clone()),
+    )
+}
+struct OpenDecisionScope<'a> {
+    state: &'a StepSnapshot,
+    unit: &'a UnitState,
+    review: &'a SymbolKey,
+    of: &'a SymbolKey,
+    decisions: &'a BTreeMap<String, CheckedDecision>,
+}
+fn open_decisions(
+    scope: OpenDecisionScope<'_>,
+    context: &mut EvaluationContext<'_>,
+) -> Result<Vec<ResolvedDecision>, StepError> {
+    let OpenDecisionScope {
+        state,
+        unit,
+        review,
+        of,
+        decisions,
+    } = scope;
+    let mut resolved = Vec::new();
+    for (key, decision) in decisions {
+        let Some(target) = latest(state, &unit.id, decided_artifact(of, &decision.on)) else {
+            continue;
+        };
+        let is_refused = decision.effect == DeclaredDecisionEffect::Approve
+            && has_failed_validation(state, &target.id);
+        if is_refused || is_decided_by(state, &unit.id, review, &target.id) {
+            continue;
+        }
+        let disabled_reason = decision_disabled_reason(
+            DecisionAvailability {
+                guard: decision.when.as_ref(),
+                of,
+                unit,
+                state,
+            },
+            context,
+        )?;
+        resolved.push(ResolvedDecision {
+            decision: SymbolKey::from(key.as_str()),
+            target: target.id.clone(),
+            is_available: disabled_reason.is_none(),
+            disabled_reason,
+        });
+    }
+    Ok(resolved)
 }
 /// Evaluate what a wanted `RunWorker` runs with against the stepped state.
 pub(super) fn resolve_run_worker(
@@ -425,7 +534,8 @@ pub(super) fn resolve_run_worker(
         _ => None,
     };
     let (previous, feedback) = match action.mode {
-        Mode::Revise => match if matches!(action.cause, Cause::Retry { .. })
+        Mode::Revise => match if parked_blocker(state, &unit.id).is_none()
+            && matches!(action.cause, Cause::Retry { .. })
             && matches!(
                 checked,
                 CheckedWorker::Agent {
@@ -449,6 +559,19 @@ pub(super) fn resolve_run_worker(
                     .find(|revision| &revision.id == decision.target())
                     .map(|revision| (revision, decision))
             })
+        } else if let Some(blocker) = parked_blocker(state, &unit.id) {
+            state
+                .decisions
+                .iter()
+                .rev()
+                .find(|decision| {
+                    decision.unit() == &unit.id
+                        && decision
+                            .review()
+                            .is_some_and(|review| review.0 == BLOCKER_REVIEW)
+                        && decision.target() == &blocker.id
+                })
+                .map(|decision| (blocker, decision))
         } else {
             answered_decision(state, &unit.id, checked.creates(), action.cause)
         } {
@@ -469,7 +592,20 @@ pub(super) fn resolve_run_worker(
         },
         _ => (None, Vec::new()),
     };
+    let stage = checked_stage(program, unit)?;
+    let feedback = feedback
+        .into_iter()
+        .map(|entry| forward_feedback(stage, entry))
+        .collect();
+    let review_history = if matches!(checked, CheckedWorker::Agent { .. })
+        && matches!(action.mode, Mode::Revise | Mode::Review)
+    {
+        unit_review_history(state, &unit.id)
+    } else {
+        vec![]
+    };
     Ok(ResolvedRunWorker {
+        review_history,
         input_provenance: unit.input_provenance.clone(),
         action_id: action_id(&unit.id, action.worker, action.mode, action.cause),
         inputs: Value::Object(inputs),
@@ -600,13 +736,23 @@ fn reviewer_changes_requested<'a>(
         {
             continue;
         }
-        let can_request_changes = open_decisions(state, &unit.id, key, of, decisions)
-            .iter()
-            .any(|offered| {
-                let decision = &decisions[&offered.decision.0];
-                decision.effect == DeclaredDecisionEffect::RequestChanges
-                    && decided_artifact(of, &decision.on) == of
-            });
+        let can_request_changes = open_decisions(
+            OpenDecisionScope {
+                state,
+                unit,
+                review: key,
+                of,
+                decisions,
+            },
+            context,
+        )?
+        .iter()
+        .any(|offered| {
+            let decision = &decisions[&offered.decision.0];
+            offered.is_available
+                && decision.effect == DeclaredDecisionEffect::RequestChanges
+                && decided_artifact(of, &decision.on) == of
+        });
         if can_request_changes {
             deferred_validation.push(of.clone());
         }
@@ -617,4 +763,44 @@ fn reviewer_changes_requested<'a>(
         artifacts: creates,
         deferred_validation: &deferred_validation,
     }))
+}
+
+/// Select only the declared text field for delivery, leaving stored history intact.
+fn forward_feedback(stage: &CheckedStage, mut entry: FeedbackEntry) -> FeedbackEntry {
+    let field = stage.reviews.iter().find_map(|review| match review {
+        CheckedReview::Operator { key, decisions, .. } if key == &entry.review => decisions
+            .get(&entry.decision.0)
+            .and_then(|decision| decision.feedback_field.as_ref()),
+        _ => None,
+    });
+    if let Some(field) = field {
+        entry.payload = serde_json::json!({"feedback": entry.payload.get(field).cloned().unwrap_or(Value::Null)});
+    }
+    entry
+}
+
+/// All of the unit's review decisions in durable snapshot order, with original payloads.
+fn unit_review_history(state: &StepSnapshot, unit: &UnitId) -> Vec<FeedbackEntry> {
+    state
+        .decisions
+        .iter()
+        .filter_map(|record| match record {
+            DecisionState::Review {
+                id,
+                unit: owner,
+                review,
+                decision,
+                target,
+                payload,
+                ..
+            } if owner == unit => Some(FeedbackEntry {
+                id: id.clone(),
+                review: review.clone(),
+                decision: decision.clone(),
+                target: target.clone(),
+                payload: payload.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
 }

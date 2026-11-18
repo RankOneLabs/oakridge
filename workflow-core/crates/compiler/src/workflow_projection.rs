@@ -55,5 +55,28 @@ pub(super) fn workflow(declared: &Workflow, resolved: &Workflow) -> Workflow {
             }
         }
     }
+    for stage in projected.stages.values_mut() {
+        let mut has_agent = false;
+        for worker in stage.workers.values_mut() {
+            if let Worker::Agent { produces, .. } = worker {
+                produces.push(SymbolKey::from(BLOCKER_ARTIFACT));
+                has_agent = true;
+            }
+        }
+        if has_agent {
+            stage.artifacts.insert(
+                BLOCKER_ARTIFACT.into(),
+                Artifact {
+                    kind: ArtifactKind::Record,
+                    schema: blocker_schema(),
+                    edit_policy: EditPolicy::Always,
+                    validate: vec![],
+                },
+            );
+            stage
+                .reviews
+                .insert(BLOCKER_REVIEW.into(), blocker_review());
+        }
+    }
     projected
 }

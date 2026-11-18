@@ -64,7 +64,7 @@ test("the task context takes each artifact's latest revision and the most recent
     latest: [{ id: r1.id, artifact: "draft", body: r1.body }],
   }, { prompt_text: "p", handoff_text: null });
   expect({ latest: selected.latest, previous: selected.previous_attempt }).toEqual({
-    latest: [{ artifact: "draft", revision_id: r1.id, body: r1.body }],
+    latest: [{ artifact: "draft", revision_id: r1.id, body: r1.body }, { artifact: "blocker", revision_id: null, body: null }],
     previous: { mode: { kind: "revise" }, status: { kind: "failed", code: "x", detail: "y" } } });
 });
 

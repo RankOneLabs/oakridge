@@ -186,7 +186,7 @@ fn is_duration(text: &str) -> bool {
     !count.is_empty() && !count.starts_with('0') && count.bytes().all(|byte| byte.is_ascii_digit())
 }
 /// The engine inputs a mode prompt may read beside the declared inputs.
-const MODE_ENGINE_INPUTS: &[&str] = &["previous", "feedback", "subject"];
+const MODE_ENGINE_INPUTS: &[&str] = &["previous", "feedback", "subject", "review_history"];
 /// The prompt key whose template words the handoff a `session: fresh` attempt
 /// starts with, and the engine-built fields it may read beside the declared inputs.
 const HANDOFF_PROMPT: &str = "handoff";

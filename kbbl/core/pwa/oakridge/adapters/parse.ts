@@ -50,6 +50,8 @@ const recordedDecision = (value: unknown): boolean => record(value) && string(va
   && string(value.decision) && ["approve", "request_changes"].includes(String(value.effect))
   && string(value.target_revision_id) && string(value.created_at);
 const decision = (value: unknown): boolean => record(value) && string(value.key) && string(value.label)
+  && (value.is_available === undefined || typeof value.is_available === "boolean")
+  && (value.disabled_reason === undefined || nullableString(value.disabled_reason))
   && array(value.fields) && value.fields.every((field) => record(field) && string(field.key) && string(field.label))
   && submit(value.submit);
 const unit = (value: unknown): boolean => record(value) && string(value.unit_id) && string(value.run_id)

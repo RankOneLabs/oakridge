@@ -115,7 +115,12 @@ fn reduce_event(
                 .find(|u| u.id == attempt.unit)
                 .ok_or_else(|| invalid("attempt unit absent"))?;
             let definition = worker(checked_stage(program, unit)?, &attempt.worker)?;
+            let has_blocker = state.revisions.iter().any(|revision| {
+                revision.by.as_ref() == Some(&attempt.action_id)
+                    && revision.artifact.0 == BLOCKER_ARTIFACT
+            });
             let status = match result {
+                _ if has_blocker => AttemptStatus::Succeeded,
                 WorkerResult::Failed { code, detail } => AttemptStatus::Failed {
                     code: code.clone(),
                     detail: detail.clone(),
@@ -124,7 +129,7 @@ fn reduce_event(
                 // unchanged observation is a success, whatever caused the attempt.
                 WorkerResult::Succeeded
                     if !is_periodic(definition)
-                        && definition.creates().iter().any(|artifact| {
+                        && definition.required_creates().iter().any(|artifact| {
                             !state.revisions.iter().any(|r| {
                                 r.by.as_ref() == Some(&attempt.action_id) && r.artifact == *artifact
                             })
@@ -161,6 +166,22 @@ fn reduce_event(
             }
             if owner.kind.stage().is_none() {
                 return Err(rejected("unit is a group"));
+            }
+            if let Some(blocker) = parked_blocker(&state, unit) {
+                let publisher = publishing_worker(&state, blocker)
+                    .ok_or_else(|| invalid("blocker publisher absent"))?;
+                let incoming_worker = by
+                    .as_ref()
+                    .and_then(|action| {
+                        state
+                            .attempts
+                            .iter()
+                            .find(|attempt| &attempt.action_id == action)
+                    })
+                    .map(|attempt| &attempt.worker);
+                if incoming_worker != Some(publisher) {
+                    return Err(rejected("unit is parked on another worker's blocker"));
+                }
             }
             let definition = checked_stage(program, owner)?.clone();
             let artifact_definition = definition
@@ -273,6 +294,10 @@ fn reduce_event(
                 });
                 return Ok(deltas);
             }
+            let is_blocker = artifact.0 == BLOCKER_ARTIFACT;
+            if is_blocker && (by.is_none() || is_code) {
+                return Err(rejected("only an agent attempt can raise a blocker"));
+            }
             let id = revision_id(&state, unit, artifact);
             record!(Delta::PushRevision(RevisionState {
                 id: id.clone(),
@@ -292,6 +317,17 @@ fn reduce_event(
                 subject: subject.clone(),
                 by: by.clone(),
             }));
+            if is_blocker {
+                let index = attempt_index.expect("agent blocker has an attempt");
+                let attempt = state.attempts[index].clone();
+                record!(Delta::ReplaceAttempt {
+                    index,
+                    attempt: AttemptState {
+                        status: AttemptStatus::Succeeded,
+                        ..attempt
+                    }
+                });
+            }
             if !messages.is_empty() && !is_code {
                 let decision = decision_id(&state, unit);
                 record!(Delta::PushDecision(DecisionState::Validation {
@@ -347,6 +383,12 @@ fn reduce_event(
             let decision_definition = decisions
                 .get(&decision.0)
                 .ok_or_else(|| rejected("decision absent"))?;
+            if parked_blocker(&state, unit).is_some() && review.0 != BLOCKER_REVIEW {
+                return Err(rejected("unit is parked on a blocker"));
+            }
+            if review.0 == BLOCKER_REVIEW && parked_blocker(&state, unit).is_none() {
+                return Err(rejected("blocker is closed"));
+            }
             if !operator_review_is_open(program, &state, owner, when.as_ref(), context)?
                 || !reviewed_output_is_current(program, &state, owner, of)?
             {
@@ -373,14 +415,29 @@ fn reduce_event(
             {
                 return Err(rejected("target revision failed validation"));
             }
+            if let Some(reason) = decision_disabled_reason(
+                DecisionAvailability {
+                    guard: decision_definition.when.as_ref(),
+                    of,
+                    unit: owner,
+                    state: &state,
+                },
+                context,
+            )? {
+                return Err(rejected(reason));
+            }
             if let Some(ty) = &decision_definition.payload {
                 if !check_type(ty, payload) {
                     return Err(rejected("decision payload fails schema"));
                 }
             }
+            let feedback_field = decision_definition
+                .feedback_field
+                .as_deref()
+                .unwrap_or("feedback");
             if decision_definition.effect == DeclaredDecisionEffect::RequestChanges
                 && payload
-                    .get("feedback")
+                    .get(feedback_field)
                     .and_then(Value::as_str)
                     .is_none_or(str::is_empty)
             {
@@ -391,7 +448,7 @@ fn reduce_event(
                 DeclaredDecisionEffect::Approve => DecisionEffect::Approve,
                 DeclaredDecisionEffect::RequestChanges => DecisionEffect::RequestChanges {
                     feedback: payload
-                        .get("feedback")
+                        .get(feedback_field)
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_owned(),
