@@ -221,6 +221,7 @@ describe("the item pane", () => {
   it("names itself by its path", () => {
     expect(describePane(pane("/findings/1"))).toEqual({ title: "Item", subtitle: "/findings/1" });
     expect(describePane({ kind: "grading" })).toEqual({ title: "Grading", subtitle: null });
+    expect(describePane({ kind: "usage" })).toEqual({ title: "Usage", subtitle: null });
   });
 });
 

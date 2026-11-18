@@ -8,6 +8,7 @@ import {
   GRADING_PANE,
   LIST_PANE,
   OVERVIEW_PANE,
+  USAGE_PANE,
   arePanesEqual,
   isTwinView,
   type RunWorkspacePane,
@@ -38,10 +39,11 @@ const PANE_SHORTCUTS: readonly PaneShortcut[] = [
   { pane: OVERVIEW_PANE, label: "Overview", testId: "or-sidebar-pane-overview" },
   { pane: LIST_PANE, label: "Stages", testId: "or-sidebar-pane-list" },
   { pane: GRADING_PANE, label: "Grading", testId: "or-sidebar-pane-grading" },
+  { pane: USAGE_PANE, label: "Usage", testId: "or-sidebar-pane-usage" },
 ];
 
 /**
- * The run's persistent navigation: the two run-derived panes, then every
+ * The run's persistent navigation: the run-derived panes, then every
  * session and every artifact.
  *
  * Neither fetches nor

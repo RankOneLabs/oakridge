@@ -16,6 +16,7 @@ import { artifactRevisionIdOf, logicalItemIdOf } from "./grading-ids";
 import {
   DEFAULT_RUN_WORKSPACE_STATE,
   GRADING_PANE,
+  USAGE_PANE,
   LIST_PANE,
   OVERVIEW_PANE,
   arePanesEqual,
@@ -65,6 +66,8 @@ const parseStoredPane = (value: unknown): RunWorkspacePane | null => {
       return LIST_PANE;
     case "grading":
       return GRADING_PANE;
+    case "usage":
+      return USAGE_PANE;
     case "item": {
       if (!isRecord(value.selection)) return null;
       const source_revision_id = nonEmptyString(value.selection.source_revision_id);
