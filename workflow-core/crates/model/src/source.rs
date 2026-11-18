@@ -208,6 +208,12 @@ pub enum Expression {
     Len {
         value: Box<Expression>,
     },
+    /// Whether the field `key` of the record `value` is set: false when it
+    /// is omitted or null, unresolved only when `value` is.
+    Present {
+        value: Box<Expression>,
+        key: String,
+    },
     /// The items of a list of lists, in order.
     Flatten {
         value: Box<Expression>,

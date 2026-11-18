@@ -401,7 +401,7 @@
               "message": "Finding ids must be unique across the analysis."
             },
             {
-              "check": "every(flatten(map(analysis.requirements, item.findings)), require(item.resolution).kind != \"operator_decision\" or (require(item.resolution).question == default(require(item.resolution).question, \"\") and len(require(require(item.resolution).alternatives)) >= 2))",
+              "check": "every(flatten(map(analysis.requirements, item.findings)), not present(item.resolution) or require(item.resolution).kind != \"operator_decision\" or (present(require(item.resolution).question) and present(require(item.resolution).alternatives) and len(require(require(item.resolution).alternatives)) >= 2))",
               "message": "An operator_decision resolution needs a question and at least two alternatives."
             }
           ]
@@ -479,7 +479,7 @@
               "effect": "approve",
               "label": "Accept",
               "when": {
-                "check": "every(flatten(map(analysis.requirements, item.findings)), item.severity != \"blocking\" and (require(item.resolution).kind != \"operator_decision\" or (default(require(item.resolution).chosen, \"\") != \"\" and contains(map(require(require(item.resolution).alternatives), item.option), default(require(item.resolution).chosen, \"\")))))",
+                "check": "every(flatten(map(analysis.requirements, item.findings)), item.severity != \"blocking\" and (not present(item.resolution) or require(item.resolution).kind != \"operator_decision\" or (default(require(item.resolution).chosen, \"\") != \"\" and contains(map(require(require(item.resolution).alternatives), item.option), default(require(item.resolution).chosen, \"\")))))",
                 "reason": "Resolve every blocking finding and choose an option for every operator decision before accepting the analysis."
               }
             },

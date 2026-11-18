@@ -581,6 +581,97 @@ pub(super) fn parked_blocker<'a>(
     .then_some(blocker)
 }
 
+/// Request-changes decisions recorded by a review of `artifact` since its
+/// latest revision was published that sent the changes to an artifact of
+/// another worker (`on:`), each with the redirected revision. A worker that
+/// creates both artifacts answers the request through its own revise, so
+/// such a redirect is not listed.
+pub(super) fn pending_redirects<'a>(
+    stage: &'a CheckedStage,
+    state: &'a StepSnapshot,
+    unit: &'a UnitId,
+    artifact: &'a SymbolKey,
+) -> impl Iterator<Item = (&'a DecisionState, &'a RevisionState)> + 'a {
+    let since = latest(state, unit, artifact).map(|revision| revision.decision_cursor as usize);
+    state
+        .decisions
+        .iter()
+        .skip(since.unwrap_or(state.decisions.len()))
+        .filter_map(move |decision| {
+            let DecisionState::Review {
+                unit: decided_unit,
+                review,
+                effect: DecisionEffect::RequestChanges { .. },
+                target,
+                ..
+            } = decision
+            else {
+                return None;
+            };
+            let redirected = state.revisions.iter().find(|r| &r.id == target)?;
+            let is_review_of_artifact = stage
+                .reviews
+                .iter()
+                .any(|candidate| candidate.key() == review && candidate.of() == artifact);
+            let is_shared_creator = stage.workers.iter().any(|worker| {
+                worker.creates().contains(artifact)
+                    && worker.creates().contains(&redirected.artifact)
+            });
+            (decided_unit == unit
+                && is_review_of_artifact
+                && redirected.artifact != *artifact
+                && !is_shared_creator)
+                .then_some((decision, redirected))
+        })
+}
+
+/// A redirected request (see `pending_redirects`) on one of `creates` that is
+/// answered upstream: the redirected artifact has been replaced since. Its
+/// creator then revises the reviewed revision against the new upstream.
+/// Returns the reviewed revision and the redirected decision.
+pub(super) fn redirected_request<'a>(
+    stage: &'a CheckedStage,
+    state: &'a StepSnapshot,
+    unit: &'a UnitId,
+    creates: &'a [SymbolKey],
+) -> Option<(&'a RevisionState, &'a DecisionState)> {
+    creates
+        .iter()
+        .filter(|artifact| artifact.0 != BLOCKER_ARTIFACT)
+        .find_map(|artifact| {
+            let reviewed = latest(state, unit, artifact)?;
+            pending_redirects(stage, state, unit, artifact)
+                .filter(|(_, redirected)| {
+                    latest(state, unit, &redirected.artifact)
+                        .is_some_and(|current| current.id != redirected.id)
+                })
+                .last()
+                .map(|(decision, _)| (reviewed, decision))
+        })
+}
+
+/// The redirected decision as the feedback its reviewed artifact's creator
+/// revises against.
+pub(super) fn redirected_feedback(decision: &DecisionState) -> Vec<FeedbackEntry> {
+    match decision {
+        DecisionState::Review {
+            id,
+            review,
+            decision,
+            target,
+            payload,
+            ..
+        } => vec![FeedbackEntry {
+            id: id.clone(),
+            review: review.clone(),
+            decision: decision.clone(),
+            target: target.clone(),
+            payload: payload.clone(),
+        }],
+        DecisionState::Validation { .. } => vec![],
+    }
+}
+
 #[cfg(test)]
 mod feedback_tests {
     use super::*;

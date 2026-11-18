@@ -325,3 +325,28 @@ fn unique_is_a_boolean_over_a_list_and_refuses_anything_else() {
         "{error:?}"
     );
 }
+
+#[test]
+fn present_tests_an_optional_field_and_refuses_anything_else() {
+    let optional_note = |check: &str| {
+        let mut source = with_draft_check(check);
+        source["stages"]["document"]["input"]["notes"] = json!("list({note: optional(text)})");
+        source["run"]["units"]["document"]["input"]["notes"] = json!("input.notes");
+        source["input"]["notes"] = json!("list({note: optional(text)})");
+        source
+    };
+    assert!(compile(&optional_note(
+        "every(input.notes, not present(item.note) or len(require(item.note)) > 0)"
+    ))
+    .is_ok());
+    let error = compile(&with_draft_check("present(draft.title)")).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("present requires an optional field"),
+        "{error:?}"
+    );
+    let error = compile(&optional_note("present(latest(draft))")).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("present requires a field read"),
+        "{error:?}"
+    );
+}

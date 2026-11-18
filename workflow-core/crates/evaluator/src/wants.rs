@@ -31,6 +31,7 @@ pub(super) fn reads_artifact(expression: &Expression, artifact: &SymbolKey) -> b
         | Expression::Unique { value }
         | Expression::Not { value }
         | Expression::Field { value, .. }
+        | Expression::Present { value, .. }
         | Expression::Require { value } => reads(value),
         Expression::Map { source, value, .. }
         | Expression::Contains { source, value }
@@ -213,14 +214,19 @@ pub fn stage_actions(
                 {
                     Some((Mode::Initial, Cause::Missing))
                 } else {
-                    changes_requested(state, &unit.id, creates).map(|decision| {
-                        (
-                            Mode::Revise,
-                            Cause::ChangesRequested {
-                                decision: decision.id().clone(),
-                            },
-                        )
-                    })
+                    changes_requested(state, &unit.id, creates)
+                        .or_else(|| {
+                            redirected_request(checked, state, &unit.id, creates)
+                                .map(|(_, decision)| decision)
+                        })
+                        .map(|decision| {
+                            (
+                                Mode::Revise,
+                                Cause::ChangesRequested {
+                                    decision: decision.id().clone(),
+                                },
+                            )
+                        })
                 }
             }
             // Part 1 §5.2 rule 4: wanted only once its inputs resolve.
@@ -314,6 +320,14 @@ pub(super) fn reviewed_output_is_current(
         return Ok(false);
     }
     if is_output_in_progress(stage, state, &unit.id, artifact) {
+        return Ok(false);
+    }
+    // A review that sent the latest revision's changes to another worker's
+    // artifact has spent it: the creator revises it once that is answered.
+    if pending_redirects(stage, state, &unit.id, artifact)
+        .next()
+        .is_some()
+    {
         return Ok(false);
     }
     for worker in &stage.workers {
@@ -574,7 +588,21 @@ pub(super) fn resolve_run_worker(
                 .map(|decision| (blocker, decision))
         } else {
             answered_decision(state, &unit.id, checked.creates(), action.cause)
+                .filter(|(revision, _)| checked.creates().contains(&revision.artifact))
+                .or_else(|| {
+                    // A request redirected upstream: revise the reviewed
+                    // revision against the redirected decision.
+                    redirected_request(
+                        checked_stage(program, unit).ok()?,
+                        state,
+                        &unit.id,
+                        checked.creates(),
+                    )
+                })
         } {
+            Some((revision, decision)) if decision.target() != &revision.id => {
+                (Some(revision.clone()), redirected_feedback(decision))
+            }
             Some((revision, _decision)) => (
                 Some(revision.clone()),
                 feedback_on(state, &unit.id, &revision.id, revision.decision_cursor),

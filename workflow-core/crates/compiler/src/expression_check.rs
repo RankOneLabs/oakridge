@@ -170,6 +170,21 @@ pub(crate) fn infer(
             }
             Ok(boolean())
         }
+        StageExpr::Present(inner) => {
+            let ty = resolve_type(&infer(inner, scope)?, scope.aliases);
+            if !matches!(ty, Type::Optional { .. }) {
+                return Err(scope.for_expr(inner).error(
+                    CheckKind::ExpressionType,
+                    "present requires an optional field",
+                ));
+            }
+            if present_parts(&resolve(inner)).is_none() {
+                return Err(scope
+                    .for_expr(inner)
+                    .error(CheckKind::ExpressionType, "present requires a field read"));
+            }
+            Ok(boolean())
+        }
         StageExpr::Len(inner) => {
             let ty = resolve_type(&infer(inner, scope)?, scope.aliases);
             if ty != Type::Text && item_type(&ty).is_none() {

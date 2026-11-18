@@ -51,6 +51,14 @@ pub(crate) fn resolve(expression: &StageExpr) -> Expression {
                 Comparison::LessOrEqual => Expression::LessOrEqual { left, right },
             }
         }
+        StageExpr::Present(inner) => {
+            let (value, key) = present_parts(&resolve(inner))
+                .expect("the checker accepts present only over a field read");
+            Expression::Present {
+                value: Box::new(value),
+                key,
+            }
+        }
         StageExpr::Len(inner) => Expression::Len {
             value: boxed(inner),
         },
@@ -222,5 +230,25 @@ pub(crate) fn resolve(expression: &StageExpr) -> Expression {
             schema: SchemaId::from("text"),
             value: serde_json::Value::String(value.clone()),
         },
+    }
+}
+
+/// Split a resolved field read into the record holding the field and the
+/// field's key, so `present` can tell an omitted field from an unresolved
+/// record.
+pub(crate) fn present_parts(expression: &Expression) -> Option<(Expression, String)> {
+    match expression {
+        Expression::Field { value, key } => Some(((**value).clone(), key.clone())),
+        Expression::Reference { root, path } => {
+            let (key, parent) = path.split_last()?;
+            Some((
+                Expression::Reference {
+                    root: root.clone(),
+                    path: parent.to_vec(),
+                },
+                key.clone(),
+            ))
+        }
+        _ => None,
     }
 }

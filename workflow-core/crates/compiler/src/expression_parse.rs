@@ -396,8 +396,8 @@ impl Parser<'_> {
             return Err(self.error("call target must be a name"));
         }
         let count = match head.as_str() {
-            "len" | "flatten" | "unique" | "published" | "approved" | "changes_requested"
-            | "latest" | "require" => 1,
+            "len" | "present" | "flatten" | "unique" | "published" | "approved"
+            | "changes_requested" | "latest" | "require" => 1,
             "every" | "any" | "filter" | "map" | "contains" | "default" => 2,
             "lookup" | "valid_graph" => 3,
             _ => return Err(self.error(format!("unknown function {head}"))),
@@ -438,6 +438,7 @@ impl Parser<'_> {
         };
         Ok(match head.as_str() {
             "len" => StageExpr::Len(boxed),
+            "present" => StageExpr::Present(boxed),
             "flatten" => StageExpr::Flatten(boxed),
             "unique" => StageExpr::Unique(boxed),
             "require" => StageExpr::Require {
