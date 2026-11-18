@@ -1,3 +1,6 @@
+// Current readers are separate from the historical parser below; dispatch uses the pinned schema version.
+export { parseCurrentAssessment, selectItemAssessmentGroups, selectAdditionalFindings, selectAssessmentActions, selectDerivedVerdict } from "./current-assessment";
+export type { CurrentAssessment } from "./current-assessment";
 import type { CohortId } from "../run-types";
 import type { Result } from "../../lib/result";
 import type { AssessmentVerdict, CriterionStatus } from "../artifact-types";
