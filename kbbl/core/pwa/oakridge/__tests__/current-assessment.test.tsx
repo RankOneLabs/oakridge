@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { CurrentAssessmentViewer } from "../components/molecules/AssessmentViewer";
 import { CurrentBuilderHandoffPanel } from "../components/organisms/BuilderHandoffPanel";
-import { CURRENT_ASSESSMENT, NOT_MET_ASSESSMENT, RECORDED_ADJUDICATION_HISTORY } from "../__fixtures__/current-assessments";
+import { CURRENT_ASSESSMENT, MODIFIED_ADJUDICATION_HISTORY, NOT_MET_ASSESSMENT, RECORDED_ADJUDICATION_HISTORY } from "../__fixtures__/current-assessments";
 import type { ParkedGate, GateResumeRequest } from "../artifact-types";
 const mutate = vi.fn();
 vi.mock("../hooks/useResumeGate", () => ({ useResumeGate: () => ({ mutate, isPending: false, isError: false }) }));
@@ -31,7 +31,46 @@ it("rejection is Pending until authority history supplies the recorded reason", 
   fireEvent.click(within(screen.getByRole("region", { name: "builder actions" })).getByRole("button", { name: "Reject" }));
   expect(screen.getByText("Pending: rejected")).toBeTruthy();
   view.rerender(<CurrentBuilderHandoffPanel assessment={CURRENT_ASSESSMENT} revisionId="assessment:1" gate={gate} decisions={RECORDED_ADJUDICATION_HISTORY} />);
-  expect(screen.queryByText("Pending: rejected")).toBeNull(); expect(screen.getByText("Recorded")).toBeTruthy(); expect(screen.getByText("Reason: Already fixed in another change.")).toBeTruthy();
+  const builderActions = within(screen.getByRole("region", { name: "builder actions" }));
+  expect(builderActions.queryByText("Pending: rejected")).toBeNull();
+  expect(builderActions.getByText("Recorded: rejected")).toBeTruthy();
+  expect(builderActions.getByText("Original: Investigate the regression.")).toBeTruthy();
+  expect(builderActions.getByText("Reason: Already fixed in another change.")).toBeTruthy();
+  expect(builderActions.queryByRole("button", { name: "Accept" })).toBeNull();
+  expect(within(screen.getByRole("region", { name: "operator actions" })).getByText("Recorded: accepted")).toBeTruthy();
+  expect(within(screen.getByTestId("or-adjudication-history")).getByText("Reason: Already fixed in another change.")).toBeTruthy();
+});
+it("shows recorded modifications and added actions inline in their audience lists", () => {
+  render(<CurrentBuilderHandoffPanel assessment={CURRENT_ASSESSMENT} revisionId="assessment:1" gate={null} decisions={MODIFIED_ADJUDICATION_HISTORY} />);
+  const builderActions = within(screen.getByRole("region", { name: "builder actions" }));
+  const modified = within(builderActions.getAllByRole("listitem")[0]);
+  expect(modified.getByText("Recorded: modified")).toBeTruthy();
+  expect(modified.getByText("Original: Investigate the regression.")).toBeTruthy();
+  expect(modified.getByText("Final: Add a regression test.")).toBeTruthy();
+  expect(modified.getByText("Reason: Narrow the follow-up.")).toBeTruthy();
+  for (const audience of ["builder", "operator"]) {
+    const actions = within(screen.getByRole("region", { name: `${audience} actions` }));
+    expect(actions.getByText("Recorded: added")).toBeTruthy();
+    expect(actions.getByText(`Added by operator: Added ${audience} follow-up.`)).toBeTruthy();
+  }
+  expect(screen.queryByText(/Pending:/)).toBeNull();
+  expect(screen.queryByRole("region", { name: "Add action" })).toBeNull();
+});
+it("keeps dispositions pending when recorded history belongs to another revision", () => {
+  render(<CurrentBuilderHandoffPanel assessment={CURRENT_ASSESSMENT} revisionId="assessment:2" gate={null} decisions={MODIFIED_ADJUDICATION_HISTORY} />);
+  const actions = within(screen.getByRole("region", { name: "builder actions" }));
+  expect(actions.getByText("Pending: undecided")).toBeTruthy();
+  expect(actions.queryByText(/Recorded:/)).toBeNull();
+  expect(actions.queryByText(/Added by operator:/)).toBeNull();
+});
+it("waits for authority history before presenting a successful mutation as recorded dispositions", () => {
+  panel();
+  for (const button of screen.getAllByRole("button", { name: "Accept" })) fireEvent.click(button);
+  fireEvent.click(screen.getByRole("button", { name: "Accept assessment" }));
+  const callbacks = mutate.mock.calls[0]?.[1] as { onSuccess: () => void };
+  act(() => callbacks.onSuccess());
+  expect(within(screen.getByRole("region", { name: "builder actions" })).getByText("Pending: accepted")).toBeTruthy();
+  expect(screen.queryByText("Recorded: accepted")).toBeNull();
 });
 it("preview equals submitted feedback and current actions have no checkboxes", () => {
   panel();

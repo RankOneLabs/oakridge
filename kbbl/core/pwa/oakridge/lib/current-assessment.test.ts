@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { CURRENT_ASSESSMENT, MET_WITH_REGRESSION, OPERATOR_ONLY_ASSESSMENT } from "../__fixtures__/current-assessments";
+import { CURRENT_ASSESSMENT, MET_WITH_REGRESSION, MODIFIED_ADJUDICATION_HISTORY, OPERATOR_ONLY_ASSESSMENT, RECORDED_ADJUDICATION_HISTORY } from "../__fixtures__/current-assessments";
 import { parseCurrentAssessment, selectAdditionalFindings, selectAssessmentActions, selectDerivedVerdict, selectItemAssessmentGroups } from "./assessment";
-import { addAction, initialAdjudication, selectAdjudicationPayload, selectBuilderPreview, selectSendability, setDisposition } from "./assessment-handoff";
+import { addAction, initialAdjudication, selectAdjudicationPayload, selectBuilderPreview, selectRecordedAssessmentDecision, selectSendability, setDisposition } from "./assessment-handoff";
 
 describe("current assessment selectors", () => {
   it("parses the declared contract", () => expect(parseCurrentAssessment(CURRENT_ASSESSMENT).ok).toBe(true));
@@ -30,4 +30,13 @@ describe("pending adjudication", () => {
     expect([selectBuilderPreview(state), selectSendability(state, "request_build_changes").kind, selectSendability(state, "accept").kind]).toEqual(["", "blocked", "sendable"]);
   });
   it("operator-only accepted actions do not appear in the preview", () => expect(selectBuilderPreview(setDisposition(initialAdjudication(OPERATOR_ONLY_ASSESSMENT), operator, { kind: "accept" }))).toBe(""));
+});
+describe("recorded adjudication", () => {
+  it("selects the latest matching assessment decision despite a redirected effect target", () => {
+    expect(selectRecordedAssessmentDecision([...RECORDED_ADJUDICATION_HISTORY, ...MODIFIED_ADJUDICATION_HISTORY], "assessment:1"))
+      .toBe(MODIFIED_ADJUDICATION_HISTORY[0]);
+  });
+  it("leaves a new revision without recorded dispositions", () => {
+    expect(selectRecordedAssessmentDecision(MODIFIED_ADJUDICATION_HISTORY, "assessment:2")).toBeNull();
+  });
 });

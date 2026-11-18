@@ -24,3 +24,14 @@ export const RECORDED_ADJUDICATION: OperatorAdjudication = (() => {
 })();
 export const RECORDED_ADJUDICATION_HISTORY: readonly OperatorRevisionDecision[] = [{ id: "decision:1", review: "assessment_review", decision: "accept", effect: "approve", target_revision_id: "assessment:1",
   payload: JSON.parse(JSON.stringify(RECORDED_ADJUDICATION)) as OperatorBodyValue, adjudication: RECORDED_ADJUDICATION, actor: { kind: "operator", subject: "operator:fixture" }, created_at: "2026-11-18T00:00:00Z" }];
+export const MODIFIED_ADJUDICATION_HISTORY: readonly OperatorRevisionDecision[] = (() => {
+  const entries = RECORDED_ADJUDICATION.entries.map(entry => entry.audience === "builder"
+    ? { ...entry, disposition: "modified" as const, final_text: "Add a regression test.", reason: "Narrow the follow-up." } : entry);
+  const added_actions: OperatorAdjudication["added_actions"] = (["builder", "operator"] as const).map((audience, index) => ({
+    action_id: `00000000-0000-4000-8000-00000000000${index + 3}`, origin: "operator", audience,
+    source: { kind: "item_assessment", id: "B1" }, final_text: `Added ${audience} follow-up.`, reason: "Support the rollout.",
+  }));
+  const adjudication: OperatorAdjudication = { entries, added_actions, builder_feedback: composeBuilderFeedback(entries, added_actions) };
+  return [{ ...RECORDED_ADJUDICATION_HISTORY[0], target_revision_id: "build:1", assessment_revision_id: "assessment:1",
+    payload: JSON.parse(JSON.stringify(adjudication)) as OperatorBodyValue, adjudication }];
+})();

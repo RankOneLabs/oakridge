@@ -96,6 +96,12 @@ import type { OperatorAdjudication, OperatorAddedActionEntry, OperatorDispositio
 import type { OperatorActionSource } from "../operator-contracts/domain/assessment";
 import { composeBuilderFeedback } from "../operator-contracts/domain/builder-feedback";
 import { randomUuid } from "../../lib/random-uuid";
+import type { OperatorRevisionDecision } from "../operator-contracts/projections/unit-view";
+/** Unit history is oldest first; dispositions belong only to the displayed revision. */
+export function selectRecordedAssessmentDecision(decisions: readonly OperatorRevisionDecision[], revisionId: string): OperatorRevisionDecision | null {
+  return decisions.reduce<OperatorRevisionDecision | null>((latest, decision) =>
+    (decision.assessment_revision_id ?? decision.target_revision_id) === revisionId ? decision : latest, null);
+}
 export type PendingDisposition =
   | { readonly action_id: string; readonly kind: "undecided" }
   | { readonly action_id: string; readonly kind: "decided"; readonly disposition: OperatorDisposition; readonly final_text?: string; readonly reason?: string };
