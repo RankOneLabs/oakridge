@@ -3,6 +3,11 @@
 import type { RepositoryKey, RunState, WorktreeMetadata } from "./run-types";
 import type { OperatorDecisionDefinition } from "./operator-contracts/projections/unit-view";
 export interface ArtifactRevision {
+  current_read?: import("./lib/versioned-body").CurrentArtifactRead;
+  context?: import("./lib/current-context").CurrentArtifactContext;
+  received_context?: import("./lib/received-context").ReceivedContext | null;
+  artifact_schema_version?: string | null;
+  component_id?: string | null;
   id: string;
   status: ArtifactRevisionStatus;
   created_at: string;
@@ -66,6 +71,10 @@ export interface ArtifactSource {
 }
 
 export interface ArtifactDetail {
+  schema?: string;
+  artifact_schema_version?: string | null;
+  context?: import("./lib/current-context").CurrentArtifactContext;
+  received_context?: import("./lib/received-context").ReceivedContext | null;
   id: string;
   type_id: string;
   component_id: string | null;
@@ -80,6 +89,8 @@ export interface ArtifactDetail {
 }
 
 export interface ParkedGate {
+  blocker?: import("./operator-contracts/projections/history-view").OperatorBlockerHistory | null;
+  requirement_ids?: readonly string[];
   id: string;
   gate_type: string;
   gate_step: string | null;

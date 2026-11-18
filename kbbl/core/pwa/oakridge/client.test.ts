@@ -189,7 +189,7 @@ describe("v2 Oakridge client", () => {
     expect([artifact.component_id, artifact.label]).toEqual(["dev-build-result-viewer", "a"]);
     expect(fetch.mock.calls.map(([path]) => String(path))).toEqual([
       `/oakridge/api/api/runs/${runId}/units/${encodeURIComponent(cohort.unit_id)}/artifacts/build_result`,
-      `/oakridge/api/api/runs/${runId}/units?input_fields=brief,cohort,repositories,repository,repository_key,title,workspace`,
+      `/oakridge/api/api/runs/${runId}/units?input_fields=assignment,spec,brief,cohort,repositories,repository,repository_key,title,workspace`,
     ]);
   });
 

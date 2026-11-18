@@ -34,6 +34,7 @@ export interface ContractConfig {
   readonly prefix: string;
   readonly brands: BrandMode;
   readonly header: string;
+  readonly additionalFiles?: ReadonlyMap<string, string>;
 }
 
 type Declaration = ts.InterfaceDeclaration | ts.TypeAliasDeclaration;
@@ -180,7 +181,7 @@ export function generateContracts(config: ContractConfig): ReadonlyMap<string, s
   return new Map([...contracts].map(([file, blocks]) => {
     const imports = importsOf(file, blocks);
     return [file, config.header + (imports.length ? `${imports.join("\n")}\n\n` : "") + blocks.map((block) => block.text).join("\n\n") + "\n"] as const;
-  }));
+  }).concat([...(config.additionalFiles ?? [])]));
 }
 
 /** `--check` fails on any drift without writing; otherwise the output directory is replaced. */

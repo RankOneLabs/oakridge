@@ -1,0 +1,144 @@
+{
+  "requirements": [
+    {
+      "id": "R1",
+      "text": "Render canonical requirements",
+      "source_refs": [
+        "\u00a71"
+      ],
+      "findings": [
+        {
+          "id": "F1",
+          "severity": "blocking",
+          "observation": "Observation F1",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "src/shared.ts",
+              "detail": "Existing implementation"
+            }
+          ],
+          "expected_change_locations": [
+            {
+              "path": "src/shared.ts",
+              "symbol": "shared"
+            }
+          ]
+        },
+        {
+          "id": "F2",
+          "severity": "blocking",
+          "observation": "Observation F2",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "src/shared.ts",
+              "detail": "Existing implementation"
+            }
+          ],
+          "expected_change_locations": [
+            {
+              "path": "src/shared.ts",
+              "symbol": "shared"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "text": "Keep historical artifacts",
+      "source_refs": [
+        "\u00a72"
+      ],
+      "findings": [
+        {
+          "id": "F3",
+          "severity": "warning",
+          "observation": "Observation F3",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "src/shared.ts",
+              "detail": "Existing implementation"
+            }
+          ],
+          "expected_change_locations": [
+            {
+              "path": "src/shared.ts",
+              "symbol": "shared"
+            }
+          ]
+        },
+        {
+          "id": "F4",
+          "severity": "info",
+          "observation": "Observation F4",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "src/shared.ts",
+              "detail": "Existing implementation"
+            }
+          ],
+          "expected_change_locations": [
+            {
+              "path": "src/shared.ts",
+              "symbol": "shared"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "R3",
+      "text": "Choose display",
+      "source_refs": [
+        "\u00a73"
+      ],
+      "findings": [
+        {
+          "id": "F5",
+          "severity": "info",
+          "observation": "Observation F5",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "src/shared.ts",
+              "detail": "Existing implementation"
+            }
+          ],
+          "expected_change_locations": [
+            {
+              "path": "src/shared.ts",
+              "symbol": "shared"
+            }
+          ],
+          "resolution": {
+            "kind": "operator_decision",
+            "text": "Choose a display",
+            "question": "Which display?",
+            "alternatives": [
+              {
+                "option": "Compact",
+                "consequence": "Less space"
+              },
+              {
+                "option": "Expanded",
+                "consequence": "More detail"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "R4",
+      "text": "Unanalyzed",
+      "source_refs": [
+        "\u00a74"
+      ],
+      "findings": []
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "cohorts": [
+    {
+      "id": "A",
+      "repository_key": "oakridge",
+      "title": "Cohort A",
+      "scope": "Bounded scope A",
+      "allocations": [
+        {
+          "requirement_id": "R1",
+          "contribution": "Contribution A"
+        }
+      ],
+      "depends_on": [],
+      "rationale": "Reason A"
+    },
+    {
+      "id": "B",
+      "repository_key": "oakridge",
+      "title": "Cohort B",
+      "scope": "Bounded scope B",
+      "allocations": [
+        {
+          "requirement_id": "R1",
+          "contribution": "Contribution B"
+        }
+      ],
+      "depends_on": [],
+      "rationale": "Reason B"
+    },
+    {
+      "id": "C",
+      "repository_key": "oakridge",
+      "title": "Cohort C",
+      "scope": "Bounded scope C",
+      "allocations": [
+        {
+          "requirement_id": "R1",
+          "contribution": "Contribution C"
+        }
+      ],
+      "depends_on": [
+        "A",
+        "B"
+      ],
+      "rationale": "Reason C"
+    }
+  ]
+}

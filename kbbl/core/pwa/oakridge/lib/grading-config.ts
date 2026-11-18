@@ -74,7 +74,7 @@ export function definitionSummaries(definitions: readonly Json[]): readonly Defi
     const targets = jsonList(definition.targets).map((target) => ({ artifact: jsonText(jsonObject(target).artifact), selector: jsonText(jsonObject(target).selector) }));
     const evidence = jsonList(definition.evidence).map((reference) => typeof reference === "string" ? reference : jsonText(jsonObject(reference).capability));
     const evaluators = jsonList(definition.evaluators).map((entry) => ({ runner: jsonText(jsonObject(entry).runner), model: jsonText(jsonObject(entry).model) }));
-    return { index, id: jsonText(definition.id) || `Definition ${index + 1}`, scope: definition.scope === "per_task" ? `per_task (${definition.task_source === "resolved_assesses" ? "resolved_assesses" : "task_ids pointer"})` : jsonText(definition.scope),
+    return { index, id: jsonText(definition.id) || `Definition ${index + 1}`, scope: definition.scope === "per_task" ? `per_task (${definition.task_source === "resolved_assesses" ? "resolved_assesses" : `${gradingIdentityField(value)} pointer`})` : jsonText(definition.scope),
       targets,
       evidence,
       text: jsonText(question.text) || "No question text", allowedValues: JSON.stringify(question.values ?? null),
@@ -160,7 +160,7 @@ export const evaluatorWithRunner = (entry: Json, runner: Json): Json => {
 export function definitionWithTaskSource(definition: Json, source: Json): Json {
   const { task_ids, task_source, ...fields } = jsonObject(definition);
   return source === "resolved_assesses" ? { ...fields, scope: "per_task", task_source: "resolved_assesses" }
-    : { ...fields, scope: "per_task", task_ids: task_ids ?? "" };
+    : { ...fields, scope: "per_task", task_ids: source === "requirement_ids" ? "/requirement_ids" : task_ids ?? "" };
 }
 
 export interface DefinitionSelectorEntry { index: number; id: string; scope: string; is_selected: boolean }
@@ -173,4 +173,15 @@ export interface GradingDefinitionSelectionTarget { index: number | null; id: st
 export function selectGradingDefinitionSelection(summaries: readonly DefinitionSummary[], target: GradingDefinitionSelectionTarget): GradingDefinitionSelection {
   return { summary: target.index === null ? null : summaries[target.index] ?? null,
     is_target_missing: Boolean(target.id) && !summaries.some(summary => summary.id === target.id) };
+}
+
+/** Current configurations keep the existing per_task scope and use requirement_ids pointers. */
+export function gradingIdentityField(definition: Json): "task_ids" | "requirement_ids" {
+  return jsonText(jsonObject(definition).task_ids).endsWith("/requirement_ids") ? "requirement_ids" : "task_ids";
+}
+export function selectGradingIdentityIds(definition: Json, item: Json): readonly string[] {
+  const pointer = jsonText(jsonObject(definition).task_ids);
+  if (!pointer.startsWith("/")) return [];
+  const selected = atPath(item, pointer.slice(1).split("/").map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~")));
+  return jsonList(selected).filter((id): id is string => typeof id === "string");
 }

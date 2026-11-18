@@ -30,7 +30,7 @@ interface CachedUnits {
 const UNIT_CACHE_FRESH_MS = 5_000;
 const unitCache = new Map<string, CachedUnits>();
 /** Every unit input field the adapters read; the rest repeats upstream artifacts in each unit. */
-const UNIT_INPUT_FIELDS = ["brief", "cohort", "repositories", "repository", "repository_key", "title", "workspace"];
+const UNIT_INPUT_FIELDS = ["assignment", "spec", "brief", "cohort", "repositories", "repository", "repository_key", "title", "workspace"];
 async function resolveArtifactId(id: string): Promise<CompositeId> {
   const parsed = parseCompositeId(id, "artifact");
   if (parsed.ok) return parsed.value;

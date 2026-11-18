@@ -1,3 +1,4 @@
+import { ReceivedContextPanel } from "../molecules/ReceivedContextPanel";
 import { EditableBriefText } from "./EditableBriefText";
 import { TaskEditControls } from "./TaskEditControls";
 import { ReviewItemResolution } from "./ReviewItemResolution";
@@ -17,7 +18,7 @@ import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { useArtifactBody } from "../../hooks/useArtifactBody";
 import { selectFindingSelections } from "../../lib/grading";
 import { settleEdit } from "../../lib/edit-outcome";
-import { resolveViewer, selectViewerItemPaths } from "../../artifactRegistry";
+import { resolveViewer, isReadableViewer, selectViewerItemPaths } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { formatRelative } from "../../../lib/time";
@@ -106,11 +107,14 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
   const artifact = query.data;
 
   // Resolve viewer: component_id → type_id → JSON fallback
-  const Viewer =
+  const CandidateViewer =
+    resolveViewer(revision?.component_id) ??
     resolveViewer(artifact.review?.viewer) ??
     resolveViewer(artifact.component_id) ??
     resolveViewer(artifact.type_id) ??
     null;
+
+  const Viewer = CandidateViewer && revision && isReadableViewer(CandidateViewer, revision.body) ? CandidateViewer : null;
 
   // Adapt oakridge CollabThread to the v1 Thread shape that ThreadSidebar/ThreadView accept
   const collabThreads = threadsQuery.data ?? [];
@@ -181,6 +185,7 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
     renderItemAction: (selection: ObservationItemAddress) => <ItemGradeAction runId={artifact.run_id} selection={selection} onOpenItem={onOpenItem} />,
     renderShowAll: (selections: readonly ObservationItemAddress[]) => <ShowAutomaticGrades selections={selections} />,
   } : undefined;
+  const receivedContext = revision?.received_context ?? artifact.received_context;
   const artifactContent = revision ? (
         <section className="or-artifact-detail__revision">
           <div className="or-revision-panel__meta">
@@ -192,11 +197,14 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
             <span className="text-sm text-[var(--text-muted)]">{formatRelative(revision.created_at)}</span>
           </div>
 
+          {receivedContext && <ReceivedContextPanel context={receivedContext} />}
           {Viewer ? (
             <Viewer
               renderEditableText={(props) => <EditableBriefText {...props} />}
               renderTaskEditControls={(props) => <TaskEditControls {...props} />}
               body={revision.body}
+              currentRead={revision.current_read}
+              context={revision.context ?? artifact.context}
               descriptor={artifact.review}
               source={{ run_id: artifact.run_id, revision_id: revision.id, label: artifact.label ?? null, producing_stage: artifact.producing_stage,
                 as_of: revision.created_at,

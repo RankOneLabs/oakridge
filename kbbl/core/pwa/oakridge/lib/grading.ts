@@ -5,7 +5,7 @@ import { formatBytes } from "./brief-notes";
 import type { ObservationAnswerCount, ObservationAnswerKey, ObservationCompositeDrilldownKey, ObservationDisagreementCount, ObservationGraderKey, ObservationItemStatusKey, ObservationStatusCount } from "../grading-contracts/grading/composite";
 import type { ObservationEvidenceReference } from "../grading-contracts/grading/evidence";
 import type { ObservationMeasurementState } from "../grading-contracts/grading/execution";
-import type { ObservationAddressedItem, ObservationAnswerRead, ObservationCompositeRead, ObservationDrilldownRowRead, ObservationHumanReadiness, ObservationItemAddress, ObservationLogicalLinkRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
+import type { ObservationAnswerRead, ObservationCompositeRead, ObservationDrilldownRowRead, ObservationHumanReadiness, ObservationItemAddress, ObservationLogicalLinkRead, ObservationStageCompositeRead } from "../grading-contracts/grading/item-reads";
 import type { ObservationGradeAnswer } from "../grading-contracts/grading/observation";
 import type { ObservationQuestionKey } from "../grading-contracts/grading/question";
 import type { ObservationAttemptRead } from "../grading-contracts/storage/execution-store";
@@ -269,12 +269,7 @@ export function selectItemText(value: unknown): string {
   return selectCapturedItemText(value) ?? "No description recorded.";
 }
 
-/** Tasks and contributions declare their spec task directly; a finding's own id is never a task link. */
-export function selectSpecTaskId(item: Pick<ObservationAddressedItem, "item_kind" | "selected_value">): string | null {
-  if (item.item_kind !== "task" && item.item_kind !== "acceptance_entry") return null;
-  const id = (item.selected_value as { readonly id?: unknown } | null)?.id;
-  return typeof id === "string" && id.trim() !== "" ? id : null;
-}
+export { selectSpecTaskId, selectRequirementGradingRows } from "./grading-identity";
 
 export const taskLinkLabel = (link: ObservationLogicalLinkRead): string => link.state === "resolved" ? link.producer_local_id : `${link.producer_local_id} (unresolved)`;
 

@@ -1,0 +1,47 @@
+{
+  "objective": "Canonical workflow",
+  "requirements": [
+    {
+      "id": "R1",
+      "text": "Render canonical requirements",
+      "acceptance_conditions": [
+        "Visible R1"
+      ],
+      "source_refs": [
+        "\u00a71"
+      ],
+      "analysis_finding_ids": [
+        "F1"
+      ]
+    },
+    {
+      "id": "R2",
+      "text": "Keep historical artifacts",
+      "acceptance_conditions": [
+        "Visible R2"
+      ],
+      "source_refs": [
+        "\u00a72"
+      ],
+      "analysis_finding_ids": [
+        "F3"
+      ]
+    },
+    {
+      "id": "R3",
+      "text": "Choose display",
+      "acceptance_conditions": [
+        "Visible R3"
+      ],
+      "source_refs": [
+        "\u00a73"
+      ],
+      "analysis_finding_ids": [
+        "F5"
+      ]
+    }
+  ],
+  "non_goals": [
+    "Assessment adjudication"
+  ]
+}

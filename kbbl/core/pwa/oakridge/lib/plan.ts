@@ -202,3 +202,5 @@ export function selectOrderedCohorts(plan: Plan): PlanCohort[] {
   const placed = new Set(ordered.map((cohort) => cohort.id));
   return [...ordered, ...plan.cohorts.filter((cohort) => !placed.has(cohort.id))];
 }
+
+export { parseCurrentPlan, type CurrentPlan, type CurrentCohort } from "./current-contract";
