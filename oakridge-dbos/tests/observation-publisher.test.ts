@@ -246,3 +246,42 @@ test("spec capture reads the publishing attempt's analysis, and operator edits r
     commit_txid: String(publication.commit_txid), was_visible_at_subscription: false }));
   expect(analyses).toEqual([`${unit}:analysis:2`, `${unit}:analysis:3`]);
 });
+
+test("spec capture pins the publishing attempt's analysis after a newer analysis is approved", async () => {
+  const source: Workflow = { workflow: "pinned_analysis", input: { topic: "text" },
+    schemas: { analysis_body: { text: "text" }, spec_body: { text: "text" } },
+    run: { units: { document: { stage: "document", input: { topic: "input.topic" } } }, outcome: { spec: "document.outcome.spec" } },
+    stages: { document: { input: { topic: "text" },
+      artifacts: { analysis: { kind: "document", schema: "analysis_body" }, spec: { kind: "document", schema: "spec_body" } },
+      workers: {
+        author: { kind: "agent", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" }, inputs: { topic: "input.topic" }, produces: ["analysis"] },
+        editor: { kind: "agent", when: "approved(analysis)", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" },
+          inputs: { topic: "input.topic", approved_analysis: "latest(analysis)" }, produces: ["spec"] },
+      },
+      reviews: {
+        analysis_review: { of: "analysis", by: "operator", prompt: "review-loop/editor.md", inputs: { topic: "input.topic", draft: "latest(analysis)", critique: "input.topic" },
+          decisions: { accept: { effect: "approve", label: "Accept" } } },
+        spec_review: { of: "spec", by: "operator", prompt: "review-loop/editor.md", inputs: { topic: "input.topic", draft: "latest(spec)", critique: "input.topic" },
+          decisions: { accept: { effect: "approve", label: "Accept" }, request_changes: { effect: "request_changes", label: "Revise" } } },
+      }, done_when: "approved(spec)", outcome: { spec: "latest(spec)" },
+    } },
+  };
+  const { definition_id } = await commitTestDefinition({ source });
+  const { run_id, result } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Pinned context" } });
+  if (!result.ok || result.value.kind !== "committed") throw new Error(JSON.stringify(result));
+  const unit = unitOf(run_id, "document"), submit = submitter(authority);
+  const author = await actionOf(authority, run_id, "author");
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "analysis", body: { text: "Old analysis" }, by: author }, writer: executor(author) });
+  const oldAnalysis = `${unit}:analysis:1`;
+  await submit({ run_id, event: { kind: "operator_decided", unit, review: "analysis_review", decision: "accept", target: oldAnalysis, payload: {} } });
+  const editor = await actionOf(authority, run_id, "editor");
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "spec", body: { text: "Old spec" }, by: editor }, writer: executor(editor) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "analysis", body: { text: "New analysis" }, predecessor: oldAnalysis } });
+  const newAnalysis = `${unit}:analysis:2`;
+  await submit({ run_id, event: { kind: "operator_decided", unit, review: "analysis_review", decision: "accept", target: newAnalysis, payload: {} } });
+  const { readPublishedAnalysisRevisionIds } = await import("../src/storage/read-store");
+  const events = await authority.db.selectFrom("authority.event").selectAll().where("run_id", "=", run_id).execute();
+  const publication = events.find((row) => row.run_id === run_id && row.payload.kind === "revision_published" && row.payload.artifact === "spec");
+  if (!publication) throw new Error("Missing committed spec publication");
+  expect(await readPublishedAnalysisRevisionIds(authority.db, { ...publication, commit_txid: String(publication.commit_txid), was_visible_at_subscription: false })).toEqual([oldAnalysis]);
+});

@@ -46,10 +46,11 @@ interface RunDetailProps {
    */
   onRunDeleted: () => void;
   onSelectArtifact: (artifactId: string) => void;
+  onOpenTask?: (id: string) => void;
   onOpenItem?: (selection: ObservationItemAddress) => void;
 }
 
-export function RunDetail({ runId, onRunDeleted, onSelectArtifact, onOpenItem }: RunDetailProps) {
+export function RunDetail({ runId, onRunDeleted, onSelectArtifact, onOpenItem, onOpenTask }: RunDetailProps) {
   const qc = useQueryClient();
   const query = useRun(runId);
   const cancelMutation = useCancelRun(runId);
@@ -253,7 +254,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact, onOpenItem }:
         </div>
       </section>
 
-      <RunParkedGateList runId={runId} />
+      <RunParkedGateList runId={runId} onOpenTask={onOpenTask} />
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import type { ArtifactSchemaVersions } from "../storage/read-store";
 import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
 import type { BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
 import type { ReviewHistoryEngineInputs } from "../effects/session-prompt";
@@ -44,6 +45,8 @@ export type AttemptStatusKind = AttemptStatus["kind"];
 export interface AttemptFailure { readonly code: string; readonly detail: string }
 
 export interface ArtifactRevisionView {
+  /** Identity of the pinned artifact contract, shared with observation capture. */
+  readonly artifact_schema_version: string | null;
   readonly id: string;
   readonly run_id: RunId;
   readonly unit_id: UnitId;
@@ -168,8 +171,15 @@ export function selectPublishingAttemptId(revision: Pick<ArtifactRevisionRecord,
 }
 
 /** One artifact's revisions, oldest first, numbered from 1. */
-export function selectRevisionViews(revisions: readonly ArtifactRevisionRecord[], attempts: readonly AttemptRecord[]): readonly ArtifactRevisionView[] {
+export interface RevisionViewsInput {
+  readonly revisions: readonly ArtifactRevisionRecord[];
+  readonly attempts: readonly AttemptRecord[];
+  readonly versions: ArtifactSchemaVersions;
+  readonly stage: string;
+}
+export function selectRevisionViews({ revisions, attempts, versions, stage }: RevisionViewsInput): readonly ArtifactRevisionView[] {
   return [...revisions].sort((left, right) => left.seq - right.seq).map((revision) => ({ id: revision.id, run_id: revision.run_id, unit_id: revision.unit_id,
+    artifact_schema_version: versions[stage]?.[revision.artifact] ?? null,
     artifact_key: revision.artifact, attempt_id: selectPublishingAttemptId(revision, attempts), body: revision.body as BodyValue,
     predecessor_id: revision.predecessor_id, subject_id: revision.subject, created_at: revision.created_at, number: revision.seq }));
 }
@@ -192,7 +202,7 @@ function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly Artifact
   const stage = unit.stage === null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
   if (!stage) return [];
   return Object.keys(stage.artifacts).sort().map((artifact) => {
-    const revisions = selectRevisionViews(revisionsOf(read.revisions, unit.id, artifact), read.attempts);
+    const revisions = selectRevisionViews({ revisions: revisionsOf(read.revisions, unit.id, artifact), attempts: read.attempts, versions: read.definition.artifact_schema_versions ?? {}, stage: unit.stage ?? "" });
     return { run_id: unit.run_id, unit_id: unit.id, artifact_key: artifact, schema: selectArtifactSchema(stage, artifact),
       is_reviewable: isReviewable(stage, artifact), is_editable: isEditable(stage, artifact),
       revision_count: revisions.length, latest_revision: revisions.at(-1) ?? null };

@@ -262,6 +262,7 @@ function PaneBody({ stage, pane, runId, overview, units, activity, onRunDeleted,
           onSelectArtifact={(artifactId) =>
             onOpenPane({ kind: "artifact", artifact_id: artifactId as ArtifactId })
           }
+          onOpenTask={openTask}
           onOpenItem={openItem}
         />
       );

@@ -35,7 +35,7 @@ const CONTRACT_FIELDS = {
   EngineInputs: ["feedback", "previous", "review_history", "subject"],
   PinnedPrompt: ["digest", "path"],
   ArtifactView: ["artifact_key", "is_editable", "is_reviewable", "latest_revision", "revision_count", "run_id", "schema", "unit_id"],
-  ArtifactRevisionView: ["artifact_key", "attempt_id", "body", "created_at", "id", "number", "predecessor_id", "run_id", "subject_id", "unit_id"],
+  ArtifactRevisionView: ["artifact_key", "artifact_schema_version", "attempt_id", "body", "created_at", "id", "number", "predecessor_id", "run_id", "subject_id", "unit_id"],
   DecisionDefinition: ["disabled_reason", "fields", "is_available", "key", "label", "payload_schema", "submit"],
   DecisionField: ["key", "label"],
   RevisionDecision: ["created_at", "decision", "effect", "id", "payload", "review", "target_revision_id"],

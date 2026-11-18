@@ -1,0 +1,42 @@
+{
+  "cohort_id": "A",
+  "repository_key": "oakridge",
+  "depends_on": [],
+  "files_in_scope": [
+    "src/shared.ts"
+  ],
+  "build_items": [
+    {
+      "id": "B1",
+      "requirement_ids": [
+        "R1",
+        "R3"
+      ],
+      "instructions": "Implement requirements",
+      "verification": [
+        "Run tests"
+      ]
+    },
+    {
+      "id": "B2",
+      "requirement_ids": [
+        "R1"
+      ],
+      "instructions": "Verify compatibility",
+      "verification": [
+        "Render legacy"
+      ]
+    }
+  ],
+  "technical_decisions": [
+    {
+      "id": "D1",
+      "build_item_ids": [
+        "B1",
+        "B2"
+      ],
+      "decision": "Preserve readers",
+      "rationale": "Historical compatibility"
+    }
+  ]
+}

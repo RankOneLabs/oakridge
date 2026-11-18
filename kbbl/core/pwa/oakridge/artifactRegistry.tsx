@@ -1,3 +1,8 @@
+import { CurrentSpecAnalysisViewer } from "./components/molecules/CurrentSpecAnalysisViewer";
+import { CurrentSpecViewer } from "./components/molecules/CurrentSpecViewer";
+import { CurrentPlanViewer } from "./components/molecules/CurrentPlanViewer";
+import { CurrentBuildBriefViewer } from "./components/molecules/CurrentBuildBriefViewer";
+import { parseCurrentAnalysis, parseCanonicalSpec, parseCurrentPlan, parseCurrentBrief } from "./lib/current-contract";
 import { SchemaContractView } from "./components/molecules/SchemaContractView";
 import type { Task } from "./lib/tasks";
 import { parseAssessment } from "./lib/assessment";
@@ -19,6 +24,8 @@ import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
 import { TasksViewer } from "./components/molecules/TasksViewer";
 
 export interface ViewerProps {
+  currentRead?: import("./lib/versioned-body").CurrentArtifactRead;
+  context?: import("./lib/current-context").CurrentArtifactContext;
   renderEditableText?: (props: { anchor: string; value: string; edit: NonNullable<ViewerProps["edit"]>; isMultiline: boolean }) => ReactNode;
   renderTaskEditControls?: (props: { task: Task; anchor: string; edit: NonNullable<ViewerProps["edit"]> }) => ReactNode;
   body: unknown;
@@ -53,6 +60,11 @@ interface RegistryEntry {
 }
 
 const REGISTRY: Record<string, RegistryEntry> = {
+  "dev-current-analysis-viewer": { Viewer: CurrentSpecAnalysisViewer },
+  "dev-current-spec-viewer": { Viewer: CurrentSpecViewer },
+  "dev-current-plan-viewer": { Viewer: CurrentPlanViewer },
+  "dev-current-brief-viewer": { Viewer: CurrentBuildBriefViewer },
+
   "dev-spec-analysis-viewer": { Viewer: SpecAnalysisViewer },
   "dev-spec-viewer": { Viewer: SpecViewer },
   "dev-plan-viewer": { Viewer: PlanViewer },
@@ -70,6 +82,10 @@ export function resolveViewer(componentId: string | null | undefined): Component
 
 /** The same contract-defined gradeable collections used by the registered viewers. */
 export function selectViewerItemPaths(Viewer: ComponentType<ViewerProps>, body: unknown): readonly string[] {
+  if (Viewer === CurrentSpecAnalysisViewer) { const parsed = parseCurrentAnalysis(body); return parsed.ok ? parsed.value.requirements.flatMap((requirement, i) => requirement.findings.map((_, j) => `/requirements/${i}/findings/${j}`)) : []; }
+  if (Viewer === CurrentSpecViewer) { const parsed = parseCanonicalSpec(body); return parsed.ok ? parsed.value.requirements.map((_, i) => `/requirements/${i}`) : []; }
+  if (Viewer === CurrentPlanViewer) { const parsed = parseCurrentPlan(body); return parsed.ok ? parsed.value.cohorts.flatMap((cohort, i) => cohort.allocations.map((_, j) => `/cohorts/${i}/allocations/${j}`)) : []; }
+  if (Viewer === CurrentBuildBriefViewer) { const parsed = parseCurrentBrief(body); return parsed.ok ? parsed.value.build_items.map((_, i) => `/build_items/${i}`) : []; }
   if (Viewer === SpecAnalysisViewer && isSpecAnalysis(body)) return body.findings.map((_, index) => `/findings/${index}`);
   if (Viewer === BuildBriefViewer) {
     const brief = readBuildBrief(body);
@@ -98,4 +114,14 @@ export interface ContractRendererProps {
 export const CONTRACT_RENDERERS: Partial<Record<import("./operator-contracts/core-client/core-types").OperatorArtifactKind, ComponentType<ContractRendererProps>>> = {};
 export function resolveContractRenderer(kind: import("./operator-contracts/core-client/core-types").OperatorArtifactKind): ComponentType<ContractRendererProps> {
   return CONTRACT_RENDERERS[kind] ?? SchemaContractView;
+}
+
+export function isReadableViewer(Viewer: ComponentType<ViewerProps>, body: unknown): boolean {
+  if (Viewer === SpecAnalysisViewer) return isSpecAnalysis(body);
+  if (Viewer === SpecViewer) return typeof body === "string";
+  if (Viewer === PlanViewer) return parsePlan(body).ok;
+  if (Viewer === TasksViewer) return parseTasks(body).ok;
+  if (Viewer === BuildBriefViewer) return readBuildBrief(body) !== null;
+  if (Viewer === AssessmentReview) return parseAssessment(body).ok;
+  return true;
 }

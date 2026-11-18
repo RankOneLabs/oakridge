@@ -1,3 +1,5 @@
+import { parseCurrentBrief, type CurrentBrief } from "./current-contract";
+import { selectVersionedComponent, type CurrentVersionRegistration } from "./artifact-version";
 import type { CohortId, RepositoryKey } from "../run-types";
 import { parsePlanCriterionList, type PlanCriterion, type PlanTraceId } from "./plan";
 
@@ -97,7 +99,14 @@ export function parseBuildBrief(body: unknown): BuildBrief | null {
   const criteria = parsePlanCriterionList(body.acceptance_criteria, "acceptance_criteria");
   return criteria.ok ? { ...body, shape: "legacy", acceptance_criteria: criteria.value } : null;
 }
-export const readBuildBrief = parseBuildBrief;
+export type CurrentBuildBrief = CurrentBrief & { shape: "current" };
+export function readBuildBrief(body: unknown, version: string, registrations?: readonly CurrentVersionRegistration[]): BuildBrief | CurrentBuildBrief | null;
+export function readBuildBrief(body: unknown): BuildBrief | null;
+export function readBuildBrief(body: unknown, version?: string, registrations?: readonly CurrentVersionRegistration[]): BuildBrief | CurrentBuildBrief | null {
+  if (selectVersionedComponent("brief_body", version, registrations) !== "dev-current-brief-viewer") return parseBuildBrief(body);
+  const parsed = parseCurrentBrief(body);
+  return parsed.ok ? { ...parsed.value, shape: "current" } : null;
+}
 /** Shape guard for raw artifact callers; parsed consumers use parseBuildBrief. */
 export function isBuildBrief(body: unknown): boolean { return parseBuildBrief(body) !== null; }
 
@@ -105,3 +114,5 @@ export function isBuildBrief(body: unknown): boolean { return parseBuildBrief(bo
 export function selectBuildItemDecisions(brief: BuildBrief, item: BuildItem) {
   return item.decision_ids.map((id) => ({ id, decision: brief.decisions_made.find((decision) => decision.id === id)?.decision ?? null }));
 }
+
+export { parseCurrentBrief, type CurrentBrief };

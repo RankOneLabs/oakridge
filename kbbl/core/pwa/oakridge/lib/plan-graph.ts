@@ -36,3 +36,31 @@ export function selectPlanGraphLayout(cohorts: PlanCohort[]): PlanGraphLayout {
     return { cohort, x: node?.x ?? 0, y: node?.y ?? 0 };
   }) };
 }
+
+export interface ParallelOrderError { readonly operation: "parallel_order"; readonly kind: "cycle" | "unknown_dependency" | "duplicate_id"; readonly cohort_ids: readonly string[] }
+/** Kahn layering: only dependencies determine waves; ties preserve plan order. */
+export function selectParallelWaves(plan: import("./current-contract").CurrentPlan): import("../../lib/result").Result<readonly (readonly import("./current-contract").CurrentCohort[])[], ParallelOrderError> {
+  const ids = new Set(plan.cohorts.map((cohort) => cohort.id));
+  if (ids.size !== plan.cohorts.length) return { ok: false, error: { operation: "parallel_order", kind: "duplicate_id", cohort_ids: plan.cohorts.map((cohort) => cohort.id) } };
+  const unknown = plan.cohorts.flatMap((cohort) => cohort.depends_on.filter((id) => !ids.has(id)));
+  if (unknown.length) return { ok: false, error: { operation: "parallel_order", kind: "unknown_dependency", cohort_ids: unknown } };
+  const done = new Set<string>();
+  const waves: import("./current-contract").CurrentCohort[][] = [];
+  while (done.size < plan.cohorts.length) {
+    const wave = plan.cohorts.filter((cohort) => !done.has(cohort.id) && cohort.depends_on.every((id) => done.has(id)));
+    if (!wave.length) return { ok: false, error: { operation: "parallel_order", kind: "cycle", cohort_ids: plan.cohorts.filter((cohort) => !done.has(cohort.id)).map((cohort) => cohort.id) } };
+    waves.push(wave);
+    wave.forEach((cohort) => done.add(cohort.id));
+  }
+  return { ok: true, value: waves };
+}
+
+export interface ParallelCohortRow { readonly cohort: import("./current-contract").CurrentCohort; readonly cohort_index: number; readonly wave_number: number | null }
+export interface ParallelPlanView { readonly rows: readonly ParallelCohortRow[]; readonly error: ParallelOrderError | null }
+export function selectParallelCohortRows(plan: import("./current-contract").CurrentPlan): ParallelPlanView {
+  const waves = selectParallelWaves(plan);
+  const waveNumbers = new Map(waves.ok ? waves.value.flatMap((wave, index) => wave.map((cohort) => [cohort.id, index + 1] as const)) : []);
+  return { error: waves.ok ? null : waves.error,
+    rows: plan.cohorts.map((cohort, cohort_index) => ({ cohort, cohort_index, wave_number: waveNumbers.get(cohort.id) ?? null })),
+  };
+}

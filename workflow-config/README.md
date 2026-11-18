@@ -68,6 +68,10 @@ blockers whose schema body is unchanged. Historical tasks-based contracts retain
 the exact v1 declaration fingerprints on replay. Nested named schemas are resolved
 before hashing v2 bodies; prompt edits and unrelated schemas do not move versions.
 
+Run `bun oakridge-dbos/scripts/generate-artifact-versions.ts` after building the core
+WASM to regenerate the backend and observation manifests, then regenerate the PWA
+operator contracts. `--check` verifies both manifests without writing them.
+
 Two upstream limitations remain blocking for the complete contract:
 
 - B1: the engine expression language cannot test absence of the optional

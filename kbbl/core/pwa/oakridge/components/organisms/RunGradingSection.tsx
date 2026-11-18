@@ -8,7 +8,7 @@ import type { ObservationItemAddress } from "../../grading-contracts/grading/ite
 import { useRunGrading } from "../../hooks/useRunGrading";
 import { useRunTasks } from "../../hooks/useRunTasks";
 import { useRunUnresolvedReferences } from "../../hooks/useRunUnresolvedReferences";
-import { selectItemText } from "../../lib/grading";
+import { selectItemText, selectRequirementGradingRows } from "../../lib/grading";
 import { useGradingVisibility } from "../../state/gradingVisibility";
 import { GradeItemButton } from "../molecules/GradeItemButton";
 import { ListPager } from "../molecules/ListPager";
@@ -34,6 +34,8 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
   const [taskPage, setTaskPage] = useState(FIRST);
   const [drill, setDrill] = useState<{ readonly key: ObservationCompositeDrilldownKey; readonly label: string } | null>(null);
   const tasks = useRunTasks({ run_id: runId, page: taskPage, nested: {} });
+  const requirementRows = selectRequirementGradingRows({ identity: tasks.identity, composites: tasks.data?.items ?? [], page: taskPage });
+  const isRequirements = tasks.identity.label === "Requirements";
   const [unresolvedPage, setUnresolvedPage] = useState(FIRST);
   const unresolved = useRunUnresolvedReferences(runId, unresolvedPage);
   return (
@@ -48,10 +50,14 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
       </header>
 
       <section className="flex flex-col gap-3" data-testid="or-grading-tasks">
-        <h3 className="m-0 text-sm font-semibold text-[var(--text-primary)]">Tasks{tasks.data ? ` (${tasks.data.total})` : ""}</h3>
+        <h3 className="m-0 text-sm font-semibold text-[var(--text-primary)]">{tasks.identity.label}{isRequirements ? ` (${tasks.identity.rows.length})` : tasks.data ? ` (${tasks.data.total})` : ""}</h3>
         {tasks.isError && <FeedbackMessage testId="or-grading-tasks-unavailable">Tasks are unavailable: {tasks.error instanceof Error ? tasks.error.message : "observation did not answer"}</FeedbackMessage>}
-        {tasks.data?.total === 0 && <p className="m-0 text-sm text-[var(--text-muted)]">This run has no tasks yet. Findings are gradeable without one.</p>}
-        {tasks.data?.items.map((task) => (
+        {requirementRows.items.map((requirement) => <div key={requirement.id} className="flex flex-col gap-2">
+          <Button variant="link" onClick={() => onOpenTask(requirement.id)}>{requirement.id}</Button><p>{requirement.text}</p>
+          {requirement.composite && <TaskStageComposites runId={runId} taskId={requirement.id} stages={requirement.composite.stages} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })} />}
+        </div>)}
+        {!isRequirements && tasks.data?.total === 0 && <p className="m-0 text-sm text-[var(--text-muted)]">This run has no tasks yet. Findings are gradeable without one.</p>}
+        {(!isRequirements ? tasks.data?.items : [])?.map((task) => (
           <div key={task.logical_item_id} className="flex flex-col gap-2" data-testid="or-grading-task" data-task={task.producer_local_id}>
             <div className="flex items-center gap-2">
               <Button variant="secondary" size="xsmall" className="text-xs!" onClick={() => onOpenTask(task.producer_local_id)} data-testid="or-grading-task-open">{task.producer_local_id}</Button>
@@ -60,7 +66,7 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
             <TaskStageComposites runId={runId} taskId={task.producer_local_id} stages={task.stages} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })} />
           </div>
         ))}
-        {tasks.data && <ListPager name="tasks" page={tasks.data} onWindow={setTaskPage} />}
+        {tasks.data && <ListPager name={isRequirements ? "requirements" : "tasks"} page={isRequirements ? requirementRows : tasks.data} onWindow={setTaskPage} />}
         {isRevealed && drill && <CompositeDrilldown runId={runId} drilldownKey={drill.key} label={drill.label} onClose={() => setDrill(null)} onOpenItem={onOpenItem} />}
       </section>
 
@@ -69,7 +75,7 @@ export function RunGradingSection({ runId, onOpenItem, onOpenTask }: Props) {
 
       {(unresolved.data?.total ?? 0) > 0 && (
         <section className="flex flex-col gap-1" data-testid="or-grading-unresolved">
-          <h3 className="m-0 text-sm font-semibold text-[var(--text-primary)]">Unresolved task references ({unresolved.data?.total})</h3>
+          <h3 className="m-0 text-sm font-semibold text-[var(--text-primary)]">Unresolved {isRequirements ? "requirement" : "task"} references ({unresolved.data?.total})</h3>
           <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
             {unresolved.data?.items.map((reference) => (
               <li key={reference.relation_id} className="flex items-start gap-2 py-1.5" data-testid="or-grading-unresolved-reference">

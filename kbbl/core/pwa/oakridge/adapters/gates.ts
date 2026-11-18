@@ -1,3 +1,4 @@
+import { selectUnitRequirementIds } from "../lib/unit-requirements";
 import type { OperatorBodyValue, OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { ParkedGate, SentReviewFeedback } from "../artifact-types";
 import { artifactRevisionId, compositeId, developmentPullRequestUrl, ok, type AdapterResult } from "./core";
@@ -48,7 +49,8 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
     const artifact = target.kind === "review" ? unit.artifacts.find((candidate) => candidate.latest_revision?.id === target.target_revision_id) : null;
     const id = compositeId({ kind: "gate", runId: unit.run_id, unitId: unit.unit_id,
       name: `${review}:${target.kind === "review" ? target.target_revision_id : "unknown"}` });
-    return { id, gate_type: review.includes("merge") ? "merge_confirmation" : artifact ? "artifact_approval" : "gate_decision",
+    return { id, blocker: review === "blocker_review" && unit.blocker?.is_open ? unit.blocker : null,
+      requirement_ids: selectUnitRequirementIds(unit), gate_type: review.includes("merge") ? "merge_confirmation" : artifact ? "artifact_approval" : "gate_decision",
       gate_step: review, run_id: unit.run_id, stage_name: session.stage, unit_id: session.unit,
       artifact_revision_id: target.kind === "review"
         ? artifact ? artifactRevisionId(artifact, target.target_revision_id) : target.target_revision_id

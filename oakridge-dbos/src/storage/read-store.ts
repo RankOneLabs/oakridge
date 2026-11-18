@@ -1,3 +1,4 @@
+import { artifactSchemaVersions } from "../adapters/observation-schema-version";
 import { CoreClient, compileDefinition } from "../core-client/client";
 import { isIdentity, launchableDefinitionIds, readLaunchableCatalog, resolveDefinition } from "../runtime/definition-store";
 import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysely";
@@ -11,7 +12,7 @@ import type { RunEventCursor } from "../projections/run-event";
 import type { OperatorEventPayload } from "../projections/operator-event";
 import type { SessionHold, SessionRunLocation } from "../projections/session-hold";
 import type { DB } from "./db-types";
-import { anyOf, type DatabaseTransaction } from "./database";
+import { anyOf, jsonText, type DatabaseTransaction } from "./database";
 import { OWED_STATUSES } from "./executor-store";
 import { ANALYSIS_LINKS_DECLARED } from "../domain/analysis-link-declaration";
 import type { CoreEvent, StallRecord, WantedWorkers } from "./json-column-types";
@@ -58,8 +59,11 @@ async function consistent<Value>(db: Kysely<DB>, read: (trx: DatabaseTransaction
 
 // ----------------------------------------------------------------- runs -----
 
+/** Contract identities computed from one pinned workflow at the read boundary. */
+export interface ArtifactSchemaVersions { readonly [stage: string]: { readonly [artifact: string]: string | null } }
+
 /** The definition a run is pinned to, as the projections read it. */
-export interface PinnedSource { readonly workflow: import("../core-client/source-types").WorkflowDefinitionDescriptor; readonly parsed_workflow: ParsedWorkflow }
+export interface PinnedSource { readonly artifact_schema_versions?: ArtifactSchemaVersions; readonly workflow: import("../core-client/source-types").WorkflowDefinitionDescriptor; readonly parsed_workflow: ParsedWorkflow }
 /** An operator retry, in the order it was requested. */
 /** An operator's retry request; `retry_id` is its ingress id, the identity an attempt's retry cause names. */
 export interface RetryRequest { readonly unit_id: UnitId; readonly worker: string; readonly retry_id: IngressId }
@@ -148,7 +152,7 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
     if (!found) return [];
     const run = found;
     const { source, checked_program } = definitions.get(run.definition_id)!;
-    return [{ run: summaryRun(run), definition: { workflow: source, parsed_workflow: checked_program.workflow },
+    return [{ run: summaryRun(run), definition: { workflow: source, parsed_workflow: checked_program.workflow, artifact_schema_versions: artifactSchemaVersions(checked_program.workflow) },
       units: of(units, run_id).map(summaryUnit), attempts: of(attempts, run_id).map(attemptRecord), revisions: of(revisions, run_id).map(revisionRef),
       retries: of(retries, run_id).flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
         ? [{ unit_id: retry.unit_id as UnitId, worker: retry.payload.worker, retry_id: retry.ingress_id as IngressId }] : []),
@@ -543,16 +547,7 @@ export async function readSpecAnalysisRevisionId(db: Reader, row: CommittedEvent
     const sequence = await readEventRevisionSequence(db, row, "analysis");
     return sequence > 0 ? `${event.unit}:analysis:${sequence}` : null;
   }
-  const analysis = await db.selectFrom("authority.attempt as attempt")
-    .innerJoin("authority.artifact_revision as revision", (join) => join
-      .onRef("revision.run_id", "=", "attempt.run_id").onRef("revision.unit_id", "=", "attempt.unit_id")
-      .on("revision.artifact", "=", "analysis").onRef("revision.created_at", "<=", "attempt.created_at"))
-    .select("revision.id").where("attempt.run_id", "=", row.run_id ?? "")
-    .where("attempt.unit_id", "=", event.unit).where("attempt.action_id", "=", event.by)
-    .where("attempt.created_at", "<=", (eb) => eb.selectFrom("authority.event").select("created_at")
-      .where("id", "=", row.id).where("run_id", "=", row.run_id ?? ""))
-    .orderBy("attempt.seq", "desc").orderBy("revision.seq", "desc").executeTakeFirst();
-  return analysis?.id ?? null;
+  return (await readPublishedAnalysisRevisionIds(db, row))?.[0] ?? null;
 }
 
 export async function readOperatorEventsAfter(db: Reader, input: { readonly after: RunEventCursor; readonly limit: number; readonly subscription_snapshot: string | null }): Promise<readonly OperatorEventDeliveryRow[]> {
@@ -623,4 +618,44 @@ export async function readUnitInputProvenance(db: Kysely<DB>, location: UnitLoca
   const row = await db.selectFrom("authority.unit").select("input_provenance")
     .where("run_id", "=", location.run_id).where("id", "=", location.unit_id).executeTakeFirst();
   return row?.input_provenance == null ? { status: "unresolved" } : { status: "recorded", entries: row.input_provenance };
+}
+
+/** Pin the analysis supplied to the publishing attempt using its saved input and
+ * the approval history at the event that opened it. Later approvals cannot move it. */
+export async function readPublishedAnalysisRevisionIds(db: Reader, row: CommittedEventRow<CoreEvent>): Promise<readonly string[] | null> {
+  const event = row.payload;
+  if (row.run_id === null || event.kind !== "revision_published" || event.artifact !== "spec") return null;
+  // Keep time comparisons in Postgres: JavaScript Dates truncate sub-millisecond ordering.
+  let cutoff_event_id = row.id;
+  let approved_analysis: unknown;
+  if (event.by) {
+    const attempt = await db.selectFrom("authority.attempt as attempt")
+      .innerJoin("authority.effect_intent as intent", (join) => join.onRef("intent.action_id", "=", "attempt.action_id").onRef("intent.seq", "=", "attempt.seq"))
+      .innerJoin("authority.event as publication", (join) => join.on("publication.id", "=", row.id))
+      .select(["attempt.seq", "intent.payload"])
+      .where("attempt.run_id", "=", row.run_id).where("attempt.unit_id", "=", event.unit).where("attempt.action_id", "=", event.by)
+      .whereRef("attempt.created_at", "<=", "publication.created_at").orderBy("attempt.seq", "desc").executeTakeFirst();
+    if (!attempt) return null;
+    const wanted = await db.selectFrom("authority.wanted_log as wanted")
+      .innerJoin("authority.event as event", "event.id", "wanted.event_id")
+      .innerJoin("authority.event as publication", (join) => join.on("publication.id", "=", row.id))
+      .innerJoin("authority.attempt as attempt", (join) => join.on("attempt.action_id", "=", event.by!).on("attempt.seq", "=", attempt.seq))
+      .select(["wanted.actions", "event.id"])
+      .where("wanted.run_id", "=", row.run_id).where("wanted.unit_id", "=", event.unit)
+      .whereRef("event.created_at", ">=", "attempt.created_at").whereRef("event.created_at", "<=", "publication.created_at")
+      .orderBy("event.created_at").orderBy("event.id").execute();
+    const opening = wanted.find((entry) => entry.actions.some((action) => action.action_id === event.by && action.attempt_seq === attempt.seq));
+    const inputs = attempt.payload.inputs;
+    if (!opening || typeof inputs !== "object" || inputs === null || !("approved_analysis" in inputs)) return null;
+    cutoff_event_id = opening.id;
+    approved_analysis = inputs.approved_analysis;
+  }
+  let query = db.selectFrom("authority.artifact_revision as analysis")
+    .innerJoin("authority.review_decision as decision", "decision.target_revision_id", "analysis.id")
+    .innerJoin("authority.event as cutoff", (join) => join.on("cutoff.id", "=", cutoff_event_id))
+    .select("analysis.id").where("analysis.run_id", "=", row.run_id).where("analysis.unit_id", "=", event.unit)
+    .where("analysis.artifact", "=", "analysis").where("decision.effect", "=", "approve").whereRef("decision.created_at", "<=", "cutoff.created_at");
+  if (event.by) query = query.where("analysis.body", "=", jsonText(approved_analysis));
+  const found = await query.orderBy("decision.created_at", "desc").orderBy("decision.id", "desc").executeTakeFirst();
+  return found ? [found.id] : null;
 }

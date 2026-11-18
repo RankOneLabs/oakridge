@@ -70,11 +70,20 @@ function usesResolvedSchemaVersions(workflow: ParsedWorkflow): boolean {
   const artifacts = Object.values(workflow.stages).map((stage) => stage.artifacts);
   return artifacts.some((stage) => stage.spec !== undefined) && artifacts.every((stage) => stage.tasks === undefined);
 }
-export function artifactSchemaVersion(definition: PinnedDefinitionRead, stage: string, artifact: string): string | null {
-  const workflow = definition.checked_program.workflow;
+export function parsedArtifactSchemaVersion(workflow: ParsedWorkflow, stage: string, artifact: string): string | null {
   const declaration = workflow.stages[stage]?.artifacts[artifact];
   if (!declaration) return null;
   if (!usesResolvedSchemaVersions(workflow)) return declarationDigest(declaration.schema);
   const resolved = resolveSchema({ type: declaration.schema, schemas: workflow.schemas ?? {}, visiting: new Set() });
   return resolved.ok ? schemaDigest(resolved.value, "v2") : null;
 }
+
+export function artifactSchemaVersion(definition: PinnedDefinitionRead, stage: string, artifact: string): string | null {
+  return parsedArtifactSchemaVersion(definition.checked_program.workflow, stage, artifact);
+}
+
+/** The same pinned versions feed every operator revision projection. */
+export const artifactSchemaVersions = (workflow: ParsedWorkflow): import("../storage/read-store").ArtifactSchemaVersions =>
+  Object.fromEntries(Object.entries(workflow.stages).map(([stage, value]) => [stage,
+    Object.fromEntries(Object.keys(value.artifacts).map((artifact) => [artifact, parsedArtifactSchemaVersion(workflow, stage, artifact)])),
+  ]));

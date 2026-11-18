@@ -1,3 +1,4 @@
+import { BlockerPanel } from "./BlockerPanel";
 import { Button } from "../../../components/atoms/Button";
 import { useRunGates } from "../../hooks/useRunGates";
 import { useRunSentFeedback } from "../../hooks/useRunSentFeedback";
@@ -13,6 +14,7 @@ const codeClass =
 
 interface GateCardProps {
   gate: ParkedGate;
+  onOpenTask?: (id: string) => void;
   onNavigateRun?: (runId: string) => void;
   onNavigateArtifact?: (artifactRevisionId: string) => void;
 }
@@ -23,7 +25,7 @@ function gateTypeLabel(gateType: string): string {
   return "Operator decision";
 }
 
-function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
+function GateCard({ gate, onNavigateRun, onNavigateArtifact, onOpenTask }: GateCardProps) {
   return (
     <div
       className={`flex flex-col gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4${gate.actionable ? "" : " or-gate-card--stranded"}`}
@@ -100,12 +102,13 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
         </div>
       )}
 
-      <GateDecisionActions gate={gate} />
+      {gate.requirement_ids && <p>Requirements: {gate.requirement_ids.map((id) => <Button variant="link" key={id} onClick={() => onOpenTask?.(id)} disabled={!onOpenTask}>{id}</Button>)}</p>}
+      {gate.blocker?.is_open ? <BlockerPanel gate={gate} blocker={gate.blocker} /> : <GateDecisionActions gate={gate} />}
     </div>
   );
 }
 
-export function RunParkedGateList({ runId }: { runId: string }) {
+export function RunParkedGateList({ runId, onOpenTask }: { runId: string; onOpenTask?: (id: string) => void }) {
   const gates = useRunGates(runId).data ?? [];
   const sentFeedback = useRunSentFeedback(runId).data ?? [];
 
@@ -115,7 +118,7 @@ export function RunParkedGateList({ runId }: { runId: string }) {
         <div className="mt-6 flex flex-col gap-3" data-testid="or-run-gate-list">
           <h3 className="mb-2 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Needs attention</h3>
           {gates.map((gate: ParkedGate) => (
-            <GateCard key={gate.id} gate={gate} />
+            <GateCard key={gate.id} gate={gate} onOpenTask={onOpenTask} />
           ))}
         </div>
       )}

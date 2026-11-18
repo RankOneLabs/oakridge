@@ -15,8 +15,8 @@ export interface CaptureSource {
   readonly definition_id: string;
   readonly predecessor_id: string | null;
   readonly subject_id: string | null;
-  readonly brief_revision_ids?: readonly string[] | null;
   readonly analysis_revision_ids?: readonly string[] | null;
+  readonly brief_revision_ids?: readonly string[] | null;
   readonly by_id?: string | null;
 }
 export interface CaptureEnvelope {
@@ -89,6 +89,7 @@ export function decodeCapture(input: unknown): Result<CaptureDelivery, CaptureEr
   if (!digest.ok) return failure("body", digest.error.detail);
   if (input.body_digest !== digest.value) return failure("body_digest", "body_digest does not match the canonical body");
   const envelope: CaptureEnvelope = { ...(input as unknown as CaptureEnvelope),
-    source: { ...(source as unknown as CaptureSource), predecessor_id: predecessor.value, subject_id: subject.value, brief_revision_ids, analysis_revision_ids } };
+    source: { ...(source as unknown as CaptureSource), predecessor_id: predecessor.value, subject_id: subject.value, brief_revision_ids,
+      ...(Object.hasOwn(source, "analysis_revision_ids") ? { analysis_revision_ids } : {}) } };
   return ok({ local_revision_id: revision_id.slice(prefix.length), envelope });
 }

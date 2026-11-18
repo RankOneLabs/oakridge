@@ -1,9 +1,15 @@
+import { parseVersionedBody } from "../lib/versioned-body";
+import { artifactType, SCHEMA_COMPONENTS } from "./artifact-descriptors";
+export { artifactType, artifactTypes } from "./artifact-descriptors";
+import { selectCurrentArtifactContext } from "../lib/current-context";
+import { selectReceivedContext, selectRevisionReceivedContext } from "../lib/received-context";
+import { artifactSchemaVersion } from "../lib/artifact-version";
 import type { OperatorUnitStatus } from "../operator-contracts/core-client/core-types";
 import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
 import type { OperatorRunEvent } from "../operator-contracts/projections/run-event";
 import type { OperatorRunView } from "../operator-contracts/projections/run-view";
 import type { OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
-import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor } from "../artifact-types";
+import type { ArtifactDetail, ArtifactRevision } from "../artifact-types";
 import type { RepositoryKey, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../run-types";
 import { isWebUrl } from "../lib/pr-summary";
 import { parseRepositoryKey } from "../repository-inputs";
@@ -32,24 +38,11 @@ export function parseCompositeId(value: string, expected: CompositeKind): Adapte
   } catch { return fail("parse composite id", "invalid encoded id component"); }
 }
 
-const SCHEMA_COMPONENTS: Readonly<Record<string, string>> = {
-  analysis_body: "dev-spec-analysis-viewer", text: "dev-spec-viewer", plan_body: "dev-plan-viewer", tasks_body: "dev-tasks-viewer", brief_body: "dev-build-brief-viewer",
-  build_body: "dev-build-result-viewer", assessment_body: "dev-assessment-viewer", pr_body: "dev-pr-summary-viewer",
-};
-const SCHEMA_TYPES: Readonly<Record<string, string>> = {
-  analysis_body: "dev.spec_analysis", text: "dev.spec", plan_body: "dev.plan", tasks_body: "dev.tasks", brief_body: "dev.build_brief",
-  build_body: "dev.build_result", assessment_body: "dev.assessment", pr_body: "dev.pr_summary",
-};
 /** Keep the prepared repository visible while hiding internal PR watch state. */
 export const isVisibleDevelopmentArtifact = (artifact: OperatorArtifactView): boolean =>
   (artifact.artifact_key === "workspace" && artifact.schema === "workspace")
     || (artifact.artifact_key === "spec" && artifact.schema === "text")
     || (artifact.schema !== "text" && Object.hasOwn(SCHEMA_COMPONENTS, artifact.schema) && artifact.artifact_key !== "manual_merge_target");
-export const artifactType = (schema: string): ArtifactTypeDescriptor => schema === "workspace"
-  ? { id: "workspace", component_id: "", capabilities: { reviewable: false, commentable: false, atom_editable: false, review_items: false }, anchor_schema: null }
-  : { id: SCHEMA_TYPES[schema] ?? schema, component_id: SCHEMA_COMPONENTS[schema] ?? "",
-    capabilities: { reviewable: true, commentable: true, atom_editable: true, review_items: true }, anchor_schema: null };
-export const artifactTypes = (): ArtifactTypeDescriptor[] => Object.keys(SCHEMA_COMPONENTS).map(artifactType);
 export const artifactId = (artifact: OperatorArtifactView): string => compositeId({ kind: "artifact", runId: artifact.run_id, unitId: artifact.unit_id, name: artifact.artifact_key });
 export const artifactRevisionId = (artifact: OperatorArtifactView, revisionId: string): string =>
   compositeId({ kind: "artifact", runId: artifact.run_id, unitId: artifact.unit_id, name: `${artifact.artifact_key}:${revisionId}` });
@@ -80,17 +73,20 @@ const worktreeOf = (unit: OperatorUnitView): StageUnit["worktree"] => {
 export const revisionToArtifact = (artifact: OperatorArtifactDetail, unit: OperatorUnitView): AdapterResult<ArtifactDetail> => {
   if (artifact.run_id !== unit.run_id || artifact.unit_id !== unit.unit_id)
     return fail("revision to artifact", "artifact does not belong to unit");
-  const descriptor = artifactType(artifact.schema);
+  const descriptor = artifactType(artifact.schema, artifactSchemaVersion(artifact.revisions.at(-1)));
   const revisions: ArtifactRevision[] = artifact.revisions.map((revision) => ({ id: compositeId({ kind: "artifact", runId: artifact.run_id,
     unitId: artifact.unit_id, name: `${artifact.artifact_key}:${revision.id}` }),
     status: artifact.decisions.some((decision) => decision.target_revision_id === revision.id && decision.effect === "request_changes") ? "rejected"
       : artifact.decisions.some((decision) => decision.target_revision_id === revision.id && decision.effect === "approve") ? "approved" : "draft",
+    context: selectCurrentArtifactContext(unit, revision.attempt_id), received_context: selectRevisionReceivedContext(unit, revision.attempt_id), artifact_schema_version: artifactSchemaVersion(revision), component_id: artifactType(artifact.schema, artifactSchemaVersion(revision)).component_id,
+    current_read: parseVersionedBody({ schema: artifact.schema, version: artifactSchemaVersion(revision), body: revision.body }),
     body: revision.body, created_at: revision.created_at, validation: null }));
   return ok({ id: compositeId({ kind: "artifact", runId: artifact.run_id, unitId: artifact.unit_id, name: artifact.artifact_key }),
-    type_id: descriptor.id, component_id: descriptor.component_id,
+    schema: artifact.schema, artifact_schema_version: artifactSchemaVersion(artifact.revisions.at(-1)),
+    context: selectCurrentArtifactContext(unit), received_context: selectReceivedContext(unit), type_id: descriptor.id, component_id: descriptor.component_id,
     capabilities: { ...descriptor.capabilities, reviewable: artifact.is_reviewable, atom_editable: artifact.is_editable },
     anchor_schema: descriptor.anchor_schema,
-    run_id: artifact.run_id, original_spec: artifact.original_spec ?? null,
+    run_id: artifact.run_id, original_spec: artifact.original_spec ?? textValue(objectValue(unit.input)?.spec),
     producing_stage: unit.stage ?? "", label: unit.collection_key ?? unit.unit_key, revisions });
 };
 
