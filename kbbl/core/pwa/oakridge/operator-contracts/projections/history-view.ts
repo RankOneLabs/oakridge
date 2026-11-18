@@ -53,6 +53,8 @@ export interface OperatorBlockerRevision {
   readonly revision_id: string;
   readonly text: string;
   readonly suggested_choices: readonly string[] | null;
+  /** Null for an operator edit, which has no publishing attempt. */
+  readonly author: OperatorBlockerAuthor | null;
   readonly created_at: string;
 }
 
@@ -68,3 +70,10 @@ export interface OperatorBlockerAnswer {
 export type OperatorBlockerHistoryEntry =
   | { readonly kind: "revision"; readonly revision: OperatorBlockerRevision }
   | { readonly kind: "decision"; readonly decision: OperatorBlockerAnswer };
+
+export interface OperatorBlockerAuthor {
+  readonly worker: string;
+  readonly action_id: string;
+  readonly attempt_seq: number;
+  readonly session_id: string | null;
+}

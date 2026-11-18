@@ -3,7 +3,7 @@ import type { Writer } from "../core-client/core-types";
 import type { ReviewDecisionRead } from "../storage/read-store";
 import type { ArtifactSchemaVersions } from "../storage/read-store";
 import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
-import type { BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
+import type { BlockerAuthor, BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
 import type { ReviewHistoryEngineInputs } from "../effects/session-prompt";
 import type { PinnedPrompt } from "../domain/effect-instruction";
 import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
@@ -172,10 +172,14 @@ export const selectAttemptId = (attempt: Pick<AttemptRecord, "action_id" | "seq"
  * The attempt that published a revision. A revision records only its action, so this is the latest attempt of that
  * action opened by then: commit stamps both under the run lock, and a retry opens after every revision written before it.
  */
+export function selectPublishingAttempt<Attempt extends Pick<AttemptRecord, "action_id" | "seq" | "created_at">>(
+  revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">, attempts: readonly Attempt[]): Attempt | null {
+  return attempts.filter((attempt) => attempt.action_id === revision.by_id && attempt.created_at.getTime() <= revision.created_at.getTime())
+    .reduce<Attempt | null>((latest, attempt) => latest === null || attempt.seq > latest.seq ? attempt : latest, null);
+}
 export function selectPublishingAttemptId(revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">,
   attempts: readonly Pick<AttemptRecord, "action_id" | "seq" | "created_at">[]): string | null {
-  const publisher = attempts.filter((attempt) => attempt.action_id === revision.by_id && attempt.created_at.getTime() <= revision.created_at.getTime())
-    .reduce<Pick<AttemptRecord, "action_id" | "seq"> | null>((latest, attempt) => latest === null || attempt.seq > latest.seq ? attempt : latest, null);
+  const publisher = selectPublishingAttempt(revision, attempts);
   return publisher === null ? null : selectAttemptId(publisher);
 }
 
@@ -288,12 +292,21 @@ function isBlockerAnswerBody(body: unknown): body is BlockerAnswerBody {
   return typeof body === "object" && body !== null && "answer" in body && typeof body.answer === "string";
 }
 
+/** The worker attempt that published a revision (see `selectPublishingAttempt`); null for an operator edit. */
+export function selectRevisionAuthor(attempts: readonly AttemptRecord[], revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">): BlockerAuthor | null {
+  if (revision.by_id === null) return null;
+  const attempt = selectPublishingAttempt(revision, attempts);
+  if (attempt === null) return null;
+  return { worker: attempt.worker, action_id: attempt.action_id, attempt_seq: attempt.seq, session_id: attempt.kbbl_session_id };
+}
+
 function selectBlockerHistory(read: RunRead, unit: UnitRecord): BlockerHistory | null {
   const revisions = read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === "blocker")
     .sort((left, right) => left.seq - right.seq).flatMap((revision): BlockerRevision[] => {
       if (!isBlockerBody(revision.body)) return [];
       return [{ revision_id: revision.id, text: revision.body.text,
-        suggested_choices: revision.body.suggested_choices ?? null, created_at: revision.created_at }];
+        suggested_choices: revision.body.suggested_choices ?? null, author: selectRevisionAuthor(read.attempts, revision),
+        created_at: revision.created_at }];
     });
   const latest = revisions.at(-1);
   if (!latest) return null;

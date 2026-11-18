@@ -57,10 +57,19 @@ export function selectUnitDiagnostics(read: UnitDiagnosticsRead): UnitDiagnostic
 }
 
 /** The reserved blocker's existing revision and decision histories. */
+/** The worker attempt that published a blocker revision. */
+export interface BlockerAuthor {
+  readonly worker: string;
+  readonly action_id: string;
+  readonly attempt_seq: number;
+  readonly session_id: string | null;
+}
 export interface BlockerRevision {
   readonly revision_id: string;
   readonly text: string;
   readonly suggested_choices: readonly string[] | null;
+  /** Null for an operator edit, which has no publishing attempt. */
+  readonly author: BlockerAuthor | null;
   readonly created_at: Date;
 }
 export interface BlockerAnswer {

@@ -23,6 +23,12 @@ test("blocker shows suggested choices and its full history in chronological orde
   expect(history?.textContent).toMatch(/blocker:1[\s\S]*Explain the width tradeoff[\s\S]*blocker:2/);
   expect(screen.getByText(/Operator steve/)).toBeTruthy();
 });
+test("each blocker revision names the worker attempt that published it", () => {
+  display();
+  const history = screen.getAllByRole("list").find((list) => list.tagName === "OL");
+  expect(history?.textContent).toMatch(/blocker:1 · writer \(attempt 1, session session-1\)/);
+  expect(history?.textContent).not.toMatch(/not projected/);
+});
 test.each(["Clarify", "Override — proceed anyway", "Discuss"])("%s posts free text through the existing decision route", async (label) => {
   const posts: { decision: string; payload: { answer: string } }[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
