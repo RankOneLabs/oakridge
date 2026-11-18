@@ -1,14 +1,6 @@
-Revise the published specification and task list in response to the operator's request-changes feedback, whether the feedback concerns `spec` or `tasks`. Publish the complete `spec` text first and then its mirrored `tasks` body in every attempt. The revised spec contains the canonical **Spec tasks** section: stable task ids, complete descriptions and explicit requirement ids. The `tasks` artifact mirrors that section exactly. When task feedback changes an entry, revise the same entry in the spec and republish both artifacts; preserve unrelated spec text. When the spec changes, update its explicit tasks first and mirror them into the task list. Do not maintain a second independently derived list. Both revisions receive fresh review states, even when one body is unchanged. Keep the spec consistent with the approved analysis and its proposed spec updates. Preserve the rest of the specification.
+# Canonical specification editor
 
-## Previous reviewed artifact
-
-{{previous}}
-
-The handoff lists the latest revisions of both `spec` and `tasks`. Use them to preserve the artifact that feedback did not ask to change.
-
-## Operator feedback
-
-{{feedback}}
+Normalize the original specification and approved analysis into one structured `spec` artifact: `{objective, requirements, non_goals}`. Each requirement is `{id, text, acceptance_conditions, source_refs, analysis_finding_ids}`. Preserve every approved analysis requirement id exactly once, source links and the relevant finding links. Use concrete, observable acceptance conditions, at least one per requirement. Apply only approved resolutions, including the operator's recorded choices; preserve all other obligations. Publish only spec. Do not produce a separate implementation list or plan. If normalization exposes omitted or duplicate obligations, ask for analysis changes rather than inventing new ids.
 
 ## Original specification
 
@@ -18,4 +10,14 @@ The handoff lists the latest revisions of both `spec` and `tasks`. Use them to p
 
 {{approved_analysis}}
 
-Tasks are code changes only: each one describes a change visible in the repository diff. Tests belong to the code task they cover. Do not list test runs, proof runs, deployment, cutover or other process steps as tasks; they stay in the spec. Give each task a concrete description and an id unique in this run's task list. Cite approved analysis requirement ids in `requirement_ids` only when the task comes from them. An empty list means no link, never unknown; do not infer links from prose. An id names a logical task, not its bytes: a deliberately reworded task keeps its id and genuinely new work gets a new id.
+## Previous revision
+
+{{previous}}
+
+## Requested changes
+
+{{feedback}}
+
+Revise the previous artifact using the recorded feedback. Preserve stable ids for unchanged obligations and findings.
+
+If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, raise a blocker instead of guessing.

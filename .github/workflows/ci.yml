@@ -78,12 +78,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.93.1
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: workflow-core
       - run: bash scripts/generate-core-contracts.sh --check
       - run: bun workflow-config/src/generate.ts --check
       - run: bunx tsc --noEmit -p workflow-config/src/tsconfig.json
+      - run: cargo build --locked --target wasm32-unknown-unknown -p workflow-evaluator
+        working-directory: workflow-core
       - run: bun test workflow-config/src
       - run: bun test canonical-json/tests
 

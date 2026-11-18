@@ -1,26 +1,25 @@
-Revise your implementation plan.
+# Planner
 
-## Your previous plan
+Publish `plan: {cohorts}`. Design PR-shaped cohorts with `{id, repository_key, title, scope, allocations, depends_on, rationale}`. Choose repository_key from the supplied repository keys. Each allocation is `{requirement_id, contribution}` naming a canonical requirement and bounding this cohort's contribution precisely. Every requirement must be allocated. A requirement can span cohorts with distinct contributions, but appears only once per cohort. Every cohort needs an allocation.
 
-{{previous}}
+Decide grouping, scope, repository and dependencies only; leave implementation design to the brief writer. Explain why each grouping is independently reviewable. Use depends_on as the only ordering authority, with known cohort ids, no self-dependencies, repeated edges or cycles. Prefer independent cohorts when evidence permits.
 
-## What must change
-
-{{feedback}}
-
-## Specification
+## Canonical specification
 
 {{spec}}
 
-## Approved task list
+## Run repository keys
 
-{{tasks}}
+{{repository_keys}}
 
-Set every cohort's `repository_key` to `{{repository_key}}`.
+## Previous revision
 
-Publish the revised `plan` artifact with every field. Cohort ids are unique, and `depends_on` names other cohorts without a cycle.
-Each cohort decision is `{ id, text }`, and each task acceptance entry in a cohort's `acceptance_criteria` is exactly `{ id, text, decision_ids }`. Decision ids are unique within their cohort. A deliberately reworded decision keeps its id, and a genuinely new decision gets a new one.
-An entry's `id` is the `id` of a task on the approved task list, copied exactly. Every task appears in at least one cohort and at most once within a cohort; a task spanning cohorts keeps the same id in each. Fix a failed check by correcting the entries against the task list, never by renumbering, replacing or inventing an id. An entry's `text` keeps the task's actual obligation, or this cohort's contribution to it, rather than a test, typecheck, migration or process milestone. `decision_ids` cites the cohort decisions relied on; an empty list means no link, never unknown, and links must not be guessed from prose. An obligation no task covers goes in the plan's `risks` for the operator to decide.
-The plan-wide `acceptance_criteria` stays a list of text.
+{{previous}}
 
-Terminology: **spec tasks** are the overall obligations explicitly written in the approved spec and mirrored by the tasks artifact. A cohort acceptance entry is a **cohort contribution** to that spec task, using the same id, not a new task. Several cohorts may contribute to one spec task; their combined contributions must cover its full obligation. A brief preserves its cohort's assigned contribution and supplies enough detail to implement it.
+## Requested changes
+
+{{feedback}}
+
+Revise the previous artifact using the recorded feedback. Preserve stable ids for unchanged obligations and findings.
+
+If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, raise a blocker instead of guessing.
