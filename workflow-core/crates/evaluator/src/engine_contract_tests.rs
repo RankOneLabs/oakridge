@@ -29,9 +29,12 @@ impl Run {
         Self::with_source(source())
     }
     fn with_source(source: Workflow) -> Self {
+        Self::with_operations(source, &[])
+    }
+    fn with_operations(source: Workflow, operations: &[CodeOperation]) -> Self {
         let program = workflow_compiler::compile_workflow(
             &source,
-            &[],
+            operations,
             &BTreeMap::from([("p".into(), String::new())]),
         )
         .unwrap();
@@ -214,6 +217,58 @@ fn blocker_is_successful_and_parks_dependants_until_normal_output_is_accepted() 
         .wanted
         .iter()
         .any(|wanted| wanted.unit.0 == "run/b"));
+}
+
+#[test]
+fn a_running_watch_keeps_observing_while_another_worker_parks_the_unit() {
+    let source: Workflow = serde_json::from_value(json!({
+        "workflow":"parked_watch", "input":{},
+        "run":{"units":{"a":{"stage":"document"}},"outcome":{}},
+        "stages":{"document":{"input":{},
+            "artifacts":{"draft":{"kind":"document","schema":"text"},
+                "observation":{"kind":"document","schema":"text"}},
+            "workers":{"writer":{"kind":"agent","prompts":{"initial":"p","revise":"p"},"inputs":{},"produces":["draft"]},
+                "observer":{"kind":"code","operation":"observe","inputs":{},"produces":["observation"],"every":"1s"}},
+            "done_when":"false","outcome":{}}}
+    }))
+    .unwrap();
+    let observe = [CodeOperation {
+        key: SymbolKey::from("observe"),
+        input_schema: TypeExpression::Record(BTreeMap::new()),
+        output_schema: TypeExpression::Name("text".into()),
+        error_codes: vec![],
+    }];
+    let mut run = Run::with_operations(source, &observe);
+    run.publish(
+        "writer",
+        BLOCKER_ARTIFACT,
+        json!({"text":"Which contract?","suggested_choices":["A","B"]}),
+    );
+    run.end("writer");
+    let watch = attempt(
+        &run.result.snapshot,
+        &UnitId::from("run/a"),
+        &WorkerKey::from("observer"),
+    )
+    .unwrap()
+    .action_id
+    .clone();
+    run.apply(Event::WorkerStarted {
+        action: watch,
+        kbbl_session_id: None,
+    })
+    .unwrap();
+    run.publish("observer", "observation", json!("PR open"));
+    run.end("observer");
+    assert!(matches!(
+        run.result
+            .blocked
+            .iter()
+            .find(|block| block.unit.0 == "run/a")
+            .unwrap()
+            .reason,
+        BlockedReason::Blocker { .. }
+    ));
 }
 
 #[test]
