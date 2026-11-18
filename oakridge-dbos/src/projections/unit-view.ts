@@ -172,10 +172,14 @@ export const selectAttemptId = (attempt: Pick<AttemptRecord, "action_id" | "seq"
  * The attempt that published a revision. A revision records only its action, so this is the latest attempt of that
  * action opened by then: commit stamps both under the run lock, and a retry opens after every revision written before it.
  */
+export function selectPublishingAttempt<Attempt extends Pick<AttemptRecord, "action_id" | "seq" | "created_at">>(
+  revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">, attempts: readonly Attempt[]): Attempt | null {
+  return attempts.filter((attempt) => attempt.action_id === revision.by_id && attempt.created_at.getTime() <= revision.created_at.getTime())
+    .reduce<Attempt | null>((latest, attempt) => latest === null || attempt.seq > latest.seq ? attempt : latest, null);
+}
 export function selectPublishingAttemptId(revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">,
   attempts: readonly Pick<AttemptRecord, "action_id" | "seq" | "created_at">[]): string | null {
-  const publisher = attempts.filter((attempt) => attempt.action_id === revision.by_id && attempt.created_at.getTime() <= revision.created_at.getTime())
-    .reduce<Pick<AttemptRecord, "action_id" | "seq"> | null>((latest, attempt) => latest === null || attempt.seq > latest.seq ? attempt : latest, null);
+  const publisher = selectPublishingAttempt(revision, attempts);
   return publisher === null ? null : selectAttemptId(publisher);
 }
 
@@ -288,11 +292,10 @@ function isBlockerAnswerBody(body: unknown): body is BlockerAnswerBody {
   return typeof body === "object" && body !== null && "answer" in body && typeof body.answer === "string";
 }
 
-/** The latest attempt of a revision's publishing action that started before it was published. */
+/** The worker attempt that published a revision (see `selectPublishingAttempt`); null for an operator edit. */
 export function selectRevisionAuthor(attempts: readonly AttemptRecord[], revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">): BlockerAuthor | null {
   if (revision.by_id === null) return null;
-  const attempt = attempts.filter((candidate) => candidate.action_id === revision.by_id && candidate.created_at <= revision.created_at)
-    .reduce<AttemptRecord | null>((latest, candidate) => latest === null || candidate.seq > latest.seq ? candidate : latest, null);
+  const attempt = selectPublishingAttempt(revision, attempts);
   if (attempt === null) return null;
   return { worker: attempt.worker, action_id: attempt.action_id, attempt_seq: attempt.seq, session_id: attempt.kbbl_session_id };
 }
