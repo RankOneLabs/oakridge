@@ -46,23 +46,21 @@ export function selectStageInspectorNavigation(
     ? selection.stage
     : overview.units.find(unit => unit.path === selectedUnit)?.stage;
   return {
-    stages: selectStageNavigation(definition).map(entry => {
-      const isMerged = selectHasMergedStageUnit(entry);
-      return {
-        stage: {
-          label: entry.name,
-          href: definitionStageHref(overview.id, entry.name),
-          isCurrent: (selection?.kind === "stage" && selection.stage === entry.name)
-            || (isMerged && selectedUnit === entry.name),
-        },
-        units: isMerged ? [] : entry.units.map(unit => ({
-          label: unit.path,
-          href: definitionUnitHref(overview.id, unit.path),
-          isCurrent: selectedUnit === unit.path,
-        })),
-        isSelected: selectedStage === entry.name,
-      };
-    }),
+    // Stage and unit routes render different detail, so a sole unit sharing its stage's
+    // name keeps its own entry; merging them would leave one route unreachable.
+    stages: selectStageNavigation(definition).map(entry => ({
+      stage: {
+        label: entry.name,
+        href: definitionStageHref(overview.id, entry.name),
+        isCurrent: selection?.kind === "stage" && selection.stage === entry.name,
+      },
+      units: entry.units.map(unit => ({
+        label: unit.path,
+        href: definitionUnitHref(overview.id, unit.path),
+        isCurrent: selectedUnit === unit.path,
+      })),
+      isSelected: selectedStage === entry.name,
+    })),
     groups: overview.groups.map(unit => ({
       label: `${unit.path} (group)`,
       href: definitionUnitHref(overview.id, unit.path),

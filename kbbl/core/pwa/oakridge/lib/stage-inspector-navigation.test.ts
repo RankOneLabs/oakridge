@@ -8,22 +8,27 @@ import { selectStageInspectorIdentity, selectStageInspectorNavigation, selectSta
 
 const detail = fixture.definition as unknown as OperatorDefinitionDetail;
 
-test("navigation preserves authored order and merges only identical sole-unit labels", () => {
+test("navigation preserves authored order and keeps a sole unit sharing its stage name", () => {
   const navigation = selectStageInspectorNavigation(detail, null);
   expect(navigation.stages.map(entry => entry.stage.label)).toEqual(detail.bundle.stages);
   expect(navigation.stages.find(entry => entry.stage.label === "prepare")).toEqual({
     stage: { label: "prepare", href: definitionStageHref(detail.definition_id, "prepare"), isCurrent: false },
-    units: [], isSelected: false,
+    units: [{ label: "prepare", href: definitionUnitHref(detail.definition_id, "prepare"), isCurrent: false }],
+    isSelected: false,
   });
   expect(navigation.stages.find(entry => entry.stage.label === "brief")?.units).toEqual([
     { label: "briefs", href: definitionUnitHref(detail.definition_id, "briefs"), isCurrent: false },
   ]);
 });
 
-test("a merged unit selection marks its stage link current", () => {
-  const navigation = selectStageInspectorNavigation(detail, { kind: "unit", path: "prepare", tab: null });
-  expect(navigation.stages.filter(entry => entry.stage.isCurrent).map(entry => entry.stage.label)).toEqual(["prepare"]);
-  expect(navigation.stages.find(entry => entry.stage.label === "prepare")?.isSelected).toBe(true);
+test("a unit sharing its stage name selects the unit entry, not the stage", () => {
+  const { selectedHref } = selectStageNavigationOptions(selectStageInspectorNavigation(detail, { kind: "unit", path: "prepare", tab: null }));
+  expect(selectedHref).toBe(definitionUnitHref(detail.definition_id, "prepare"));
+});
+
+test("a stage sharing its sole unit's name selects the stage entry, not the unit", () => {
+  const { selectedHref } = selectStageNavigationOptions(selectStageInspectorNavigation(detail, { kind: "stage", stage: "prepare", tab: null }));
+  expect(selectedHref).toBe(definitionStageHref(detail.definition_id, "prepare"));
 });
 
 test("a distinct unit marks only its unit link current and highlights its stage", () => {
