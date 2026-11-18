@@ -1,0 +1,40 @@
+{
+  "cohorts": [
+    {
+      "id": "C1",
+      "repository_key": "oakridge",
+      "title": "C1",
+      "scope": "C1",
+      "allocations": [
+        {
+          "requirement_id": "R1",
+          "contribution": "C1 contribution to R1"
+        },
+        {
+          "requirement_id": "R2",
+          "contribution": "C1 contribution to R2"
+        },
+        {
+          "requirement_id": "R3",
+          "contribution": "C1 contribution to R3"
+        }
+      ],
+      "depends_on": [],
+      "rationale": "Split work"
+    },
+    {
+      "id": "C2",
+      "repository_key": "oakridge",
+      "title": "C2",
+      "scope": "C2",
+      "allocations": [
+        {
+          "requirement_id": "R1",
+          "contribution": "C2 contribution to R1"
+        }
+      ],
+      "depends_on": [],
+      "rationale": "Split work"
+    }
+  ]
+}

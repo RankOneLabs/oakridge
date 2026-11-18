@@ -1,3 +1,4 @@
+import { selectRequirementRollup, type RequirementRollup } from "./requirement-rollup";
 import { parseRunConfig } from "../domain/run-config";
 import type { PrIntegration } from "../domain/pr-integration";
 import type { Event, UnitStatus, Writer } from "../core-client/core-types";
@@ -31,7 +32,11 @@ export interface RunSummary {
   /** The root unit's status. */
   readonly status: UnitStatus;
 }
-export interface RunView extends RunSummary { readonly units: readonly RunUnitSummary[] }
+export interface RunView extends RunSummary {
+  readonly requirement_rollup?: readonly RequirementRollup[];
+  readonly open_blockers?: readonly { readonly unit_id: UnitId; readonly revision_id: string }[];
+  readonly units: readonly RunUnitSummary[]
+}
 export interface RunPage { readonly items: readonly RunView[]; readonly next_cursor: string | null }
 
 const attentionOf = (attention: readonly UnitAttention[], unit_id: string): UnitAttention =>
@@ -57,8 +62,9 @@ export function selectRunView(read: RunSummaryRead): RunView {
   const tree = selectUnitTree(read.units, read.definition.workflow);
   const label = selectRunLaunchLabel(read.run.input);
   const config = parseRunConfig(read.run.config ?? {});
-  return { pr_integration: config?.pr_integration ?? null, config_error: config ? null : "recorded run config is malformed", pr_skill_digest: config?.pr_skill_digest ?? null, run_id: read.run.id, definition_id: read.run.definition_id,
+  return { ...("decisions" in read ? { requirement_rollup: selectRequirementRollup(read as RunRead) } : {}), pr_integration: config?.pr_integration ?? null, config_error: config ? null : "recorded run config is malformed", pr_skill_digest: config?.pr_skill_digest ?? null, run_id: read.run.id, definition_id: read.run.definition_id,
     created_at: read.run.created_at, updated_at: selectRunUpdatedAt(read), archived_at: read.run.archived_at,
+    open_blockers: read.units.flatMap((unit) => unit.blocked_reason?.kind === "blocker" ? [{ unit_id: unit.id, revision_id: unit.blocked_reason.revision }] : []),
     ...label, status: selectRootStatus(read.run, read.units),
     units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
       stage: unit.stage, status: unit.status, is_terminal: isTerminalStatus(unit.status),

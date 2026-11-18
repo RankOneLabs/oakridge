@@ -1,10 +1,12 @@
+import { readPinnedDefinition } from "../storage/read-store";
+import { declarationDigest } from "../adapters/observation-schema-version";
 import { parsePrIntegration, type PrIntegration } from "../domain/pr-integration";
 import { preflightLaunch, isPrDependent, type PrIntegrationHealth } from "../runtime/pr-launch-preflight";
 import { readSkillIndex, resolveLaunchableDefinition, type DefinitionId } from "../runtime/definition-store";
 import type { Context, Hono } from "hono";
 import { createHash } from "node:crypto";
 import type { Event, Writer } from "../core-client/core-types";
-import { selectApplicableEntries, type AnalysisLinkEntry } from "../domain/analysis-link-declaration";
+import { acceptsAnalysisLinkDeclarations, selectApplicableEntries, type AnalysisLinkEntry } from "../domain/analysis-link-declaration";
 import { err, ok, type ProjectId, type Result, type RunId } from "../domain/primitives";
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
 import { commitAnalysisLinkDeclaration, commitDecisionWithLinks, commitEvent, launchRunId, replayLaunch, type LaunchRequestContent, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
@@ -30,6 +32,8 @@ export interface LaunchRequest extends IngressRequest {
 }
 export interface DecideRequest extends IngressRequest {
   readonly decision: string; readonly target: string; readonly payload: unknown;
+  /** Assessment displayed by the operator, separate from a redirected core effect target. */
+  readonly expected_assessment_revision_id?: string;
   /** Optional explicit links, declared against the tasks revision this decision approves. Nothing requires them. */
   readonly analysis_links?: readonly AnalysisLinkEntry[];
 }
@@ -76,9 +80,12 @@ const linkEntry = ({ source_revision_id, item_path, task_ids }: AnalysisLinkEntr
 export function parseDecideRequest(raw: unknown): Parsed<DecideRequest> {
   if (!isFields(raw) || !isRequestId(raw.request_id) || !isKey(raw.decision) || !isKey(raw.target) || !("payload" in raw))
     return malformed("request_id, decision, target and payload are required");
+  if (raw.expected_assessment_revision_id !== undefined && !isKey(raw.expected_assessment_revision_id))
+    return malformed("expected_assessment_revision_id is a non-empty revision id");
   if (raw.analysis_links !== undefined && !(Array.isArray(raw.analysis_links) && raw.analysis_links.every(isLinkEntry)))
     return malformed("analysis_links is a list of { source_revision_id, item_path, task_ids }");
   return ok({ request_id: raw.request_id, decision: raw.decision, target: raw.target, payload: raw.payload,
+    ...(raw.expected_assessment_revision_id === undefined ? {} : { expected_assessment_revision_id: raw.expected_assessment_revision_id }),
     ...(raw.analysis_links ? { analysis_links: raw.analysis_links.map(linkEntry) } : {}) });
 }
 export function parsePublishRequest(raw: unknown): Parsed<PublishRequest> {
@@ -195,6 +202,13 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
   app.post("/api/runs/:run_id/cancel", operatorEvent(parseIngressRequest, () => ({ kind: "cancel_requested" })));
   app.post("/api/runs/:run_id/units/:unit_id/workers/:worker/retry", operatorEvent(parseIngressRequest, (c) =>
     ({ kind: "retry_requested", unit: param(c, "unit_id"), worker: param(c, "worker") })));
+  const analysisLinksRefused = async (run_id: string): Promise<boolean> => {
+    const definition = await readPinnedDefinition(deps.db, run_id);
+    if (!definition) return false; // The commit path reports the missing run.
+    const tasks = Object.values(definition.checked_program.workflow.stages)
+      .flatMap((stage) => stage.artifacts.tasks ? [stage.artifacts.tasks] : []);
+    return !acceptsAnalysisLinkDeclarations(tasks[0] ? declarationDigest(tasks[0].schema) : null);
+  };
   /** A decision, and any links supplied with it. Supplying none is the ordinary case and journals nothing. */
   app.post("/api/runs/:run_id/units/:unit_id/reviews/:review/decide", async (c) => {
     const raw = await requestBody(c.req.raw);
@@ -203,10 +217,13 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
     if (!parsed.ok) return errorResponse(parsed.error);
     const body = parsed.value;
     const run_id = param(c, "run_id") as RunId;
-    const request = { run_id, ingress_id: body.request_id, writer: operatorWriterFromCredential(c.req.raw), event: { kind: "operator_decided" as const, unit: param(c, "unit_id"),
+    const request = { run_id, ingress_id: body.request_id, writer: operatorWriterFromCredential(c.req.raw),
+      ...(body.expected_assessment_revision_id === undefined ? {} : { expected_assessment_revision_id: body.expected_assessment_revision_id }), event: { kind: "operator_decided" as const, unit: param(c, "unit_id"),
       review: param(c, "review"), decision: body.decision, target: body.target, payload: body.payload } };
     const entries = selectApplicableEntries(body.analysis_links ?? []);
     try {
+      if (body.analysis_links !== undefined && await analysisLinksRefused(run_id))
+        return errorResponse(new MalformedRequestError("analysis_links are not accepted for current-contract runs"));
       if (entries.length === 0) return ingressResponse(run_id, await commit(request));
       const { decision, links } = await commitDecisionWithLinks(deps, request, entries);
       const response = ingressResponse(run_id, decision);
@@ -227,8 +244,10 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
     const run_id = param(c, "run_id") as RunId;
     const { request_id, tasks_revision_id } = parsed.value;
     const entries = selectApplicableEntries(parsed.value.entries);
-    if (entries.length === 0) return Response.json({ kind: "no_declaration", run_id } satisfies NoDeclaration);
     try {
+      if (await analysisLinksRefused(run_id))
+        return errorResponse(new MalformedRequestError("analysis_links are not accepted for current-contract runs"));
+      if (entries.length === 0) return Response.json({ kind: "no_declaration", run_id } satisfies NoDeclaration);
       return ingressResponse(run_id, await commitAnalysisLinkDeclaration(deps.db, { ingress_id: request_id,
         declaration: { run_id, tasks_revision_id, entries }, writer: operatorWriterFromCredential(c.req.raw) }));
     } catch (cause) { return fault(cause); }

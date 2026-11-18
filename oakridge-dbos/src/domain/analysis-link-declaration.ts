@@ -9,6 +9,7 @@ export const ANALYSIS_ARTIFACT = "analysis";
 
 /** One original finding, addressed by its exact revision and path, and the tasks it assesses. */
 export interface AnalysisLinkEntry {
+  /** Legacy contracts only: current contracts derive finding links structurally. */
   readonly source_revision_id: string;
   readonly item_path: string;
   readonly task_ids: readonly string[];
@@ -52,4 +53,11 @@ export function selectDeclarationRefusal(declaration: AnalysisLinkDeclaration, a
     if (!findingExists(source.body, entry.item_path)) return `revision ${entry.source_revision_id} has no finding at ${entry.item_path}`;
   }
   return null;
+}
+
+/** Only legacy definitions publish a separate tasks revision. Current contracts carry
+ * canonical requirements in spec and derive analysis links structurally. The caller
+ * supplies the tasks schema version from the run's pinned definition, never its body. */
+export function acceptsAnalysisLinkDeclarations(tasks_schema_version: string | null): boolean {
+  return tasks_schema_version !== null;
 }

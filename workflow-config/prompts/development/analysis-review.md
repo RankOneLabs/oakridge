@@ -1,4 +1,6 @@
-Review the published analysis against the specification and repository evidence. Check that `proposed_spec_updates` states each intended spec edit and its reason. Request changes until its findings, proposed resolutions, and proposed edits reflect the decisions you approve. Accept the analysis only when no unresolved product decision blocks updating the specification. This approval authorizes the spec editor to apply the listed changes. Review the published revised specification separately before planning receives it.
+# Review analysis
+
+Check every original obligation is represented with stable ids and source references, findings are evidence-backed and severities precise, proposed resolutions are justified and operator alternatives describe real consequences. Resolve blocking findings and record a chosen option for every operator decision before accepting. Use request_changes with concrete feedback for missing, duplicated or misread obligations; do not approve while the accept guard is unavailable.
 
 ## Original specification
 

@@ -1,7 +1,8 @@
 // Generated from oakridge-dbos/src/http/operator-api.ts. Run bun kbbl/scripts/generate-operator-contracts.ts.
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
-import type { OperatorEvent, OperatorWriter } from "../core-client/core-types";
+import type { OperatorEvent, OperatorResolvedDecision, OperatorWriter } from "../core-client/core-types";
+import type { OperatorAdjudication } from "../domain/adjudication";
 import type { OperatorAttemptView } from "./unit-view";
 import type { OperatorAuthorityEffectStatus } from "../storage/db-types";
 
@@ -15,6 +16,15 @@ export interface OperatorUnitDiagnostics {
   readonly rejected: readonly OperatorRejectedEvent[];
 }
 
+export interface OperatorBlockerHistory {
+  readonly available_decisions: readonly OperatorResolvedDecision[];
+  readonly is_open: boolean;
+  readonly latest: OperatorBlockerRevision;
+  readonly revisions: readonly OperatorBlockerRevision[];
+  readonly decisions: readonly OperatorBlockerAnswer[];
+  readonly history: readonly OperatorBlockerHistoryEntry[];
+}
+
 export interface OperatorEventHistory {
   readonly id: string;
   /** The ingress id the event was committed under; null for an event with none. */
@@ -22,6 +32,8 @@ export interface OperatorEventHistory {
   readonly event: OperatorEvent;
   readonly writer: OperatorWriter;
   readonly created_at: string;
+  readonly adjudication?: OperatorAdjudication | null;
+  readonly assessment_revision_id?: string | null;
 }
 
 export interface OperatorEffectDiagnostic {
@@ -36,3 +48,32 @@ export interface OperatorEffectDiagnostic {
 }
 
 export interface OperatorRejectedEvent { readonly ingress_id: string; readonly reason: string }
+
+export interface OperatorBlockerRevision {
+  readonly revision_id: string;
+  readonly text: string;
+  readonly suggested_choices: readonly string[] | null;
+  /** Null for an operator edit, which has no publishing attempt. */
+  readonly author: OperatorBlockerAuthor | null;
+  readonly created_at: string;
+}
+
+export interface OperatorBlockerAnswer {
+  readonly id: string;
+  readonly target_revision_id: string;
+  readonly decision: string;
+  readonly answer: string;
+  readonly actor: OperatorWriter | null;
+  readonly created_at: string;
+}
+
+export type OperatorBlockerHistoryEntry =
+  | { readonly kind: "revision"; readonly revision: OperatorBlockerRevision }
+  | { readonly kind: "decision"; readonly decision: OperatorBlockerAnswer };
+
+export interface OperatorBlockerAuthor {
+  readonly worker: string;
+  readonly action_id: string;
+  readonly attempt_seq: number;
+  readonly session_id: string | null;
+}

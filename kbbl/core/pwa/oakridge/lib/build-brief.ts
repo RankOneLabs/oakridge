@@ -1,3 +1,5 @@
+import { parseCurrentBrief, type CurrentBrief } from "./current-contract";
+import { selectVersionedComponent, type CurrentVersionRegistration } from "./artifact-version";
 import type { CohortId, RepositoryKey } from "../run-types";
 import { parsePlanCriterionList, type PlanCriterion, type PlanTraceId } from "./plan";
 
@@ -97,7 +99,16 @@ export function parseBuildBrief(body: unknown): BuildBrief | null {
   const criteria = parsePlanCriterionList(body.acceptance_criteria, "acceptance_criteria");
   return criteria.ok ? { ...body, shape: "legacy", acceptance_criteria: criteria.value } : null;
 }
-export const readBuildBrief = parseBuildBrief;
+export type CurrentBuildBrief = CurrentBrief & { shape: "current" };
+/** The schema version a brief was published under, and the registrations that resolve it. */
+export interface BriefVersion { readonly version: string; readonly registrations?: readonly CurrentVersionRegistration[] }
+export function readBuildBrief(body: unknown, brief_version: BriefVersion): BuildBrief | CurrentBuildBrief | null;
+export function readBuildBrief(body: unknown): BuildBrief | null;
+export function readBuildBrief(body: unknown, brief_version?: BriefVersion): BuildBrief | CurrentBuildBrief | null {
+  if (selectVersionedComponent({ schema: "brief_body", version: brief_version?.version, registrations: brief_version?.registrations }) !== "dev-current-brief-viewer") return parseBuildBrief(body);
+  const parsed = parseCurrentBrief(body);
+  return parsed.ok ? { ...parsed.value, shape: "current" } : null;
+}
 /** Shape guard for raw artifact callers; parsed consumers use parseBuildBrief. */
 export function isBuildBrief(body: unknown): boolean { return parseBuildBrief(body) !== null; }
 
@@ -105,3 +116,5 @@ export function isBuildBrief(body: unknown): boolean { return parseBuildBrief(bo
 export function selectBuildItemDecisions(brief: BuildBrief, item: BuildItem) {
   return item.decision_ids.map((id) => ({ id, decision: brief.decisions_made.find((decision) => decision.id === id)?.decision ?? null }));
 }
+
+export { parseCurrentBrief, type CurrentBrief };

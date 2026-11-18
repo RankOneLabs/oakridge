@@ -29,3 +29,6 @@ pub use typing::check_type;
 pub use wants::action_id;
 pub use wants::stage_actions;
 use wants::*;
+
+#[cfg(test)]
+mod engine_contract_tests;

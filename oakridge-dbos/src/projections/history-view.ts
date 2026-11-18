@@ -1,4 +1,5 @@
-import type { Event, Writer } from "../core-client/core-types";
+import { parseAdjudication, type Adjudication } from "../domain/adjudication";
+import type { Event, ResolvedDecision, Writer } from "../core-client/core-types";
 import { ANALYSIS_LINKS_DECLARED } from "../domain/analysis-link-declaration";
 import type { UnitId } from "../domain/primitives";
 import type { AuthorityEffectStatus } from "../storage/db-types";
@@ -13,14 +14,18 @@ export interface EventHistory {
   readonly event: Event;
   readonly writer: Writer;
   readonly created_at: Date;
+  readonly adjudication?: Adjudication | null;
+  readonly assessment_revision_id?: string | null;
 }
 /** The events that addressed a unit, newest first, paged. */
 export interface UnitHistory { readonly unit_id: UnitId; readonly events: readonly EventHistory[]; readonly next_cursor: string | null }
 
 export function selectUnitHistory(unit_id: UnitId, page: HistoryPage, next_cursor: string | null): UnitHistory {
   // A declaration addresses the run and no unit, so a unit's history never holds one.
-  return { unit_id, next_cursor, events: page.items.flatMap(({ event }) => event.payload.kind === ANALYSIS_LINKS_DECLARED ? [] : [{ id: event.id, ingress_id: event.ingress_id,
-    event: event.payload, writer: event.writer, created_at: event.created_at }]) };
+  return { unit_id, next_cursor, events: page.items.flatMap(({ event, assessment_revision_id }) => event.payload.kind === ANALYSIS_LINKS_DECLARED ? [] : [{ id: event.id, ingress_id: event.ingress_id,
+    event: event.payload, writer: event.writer, created_at: event.created_at,
+    ...(event.payload.kind === "operator_decided" && ["assessment_review", "integration_review"].includes(event.payload.review) && parseAdjudication(event.payload.payload)
+      ? { adjudication: parseAdjudication(event.payload.payload), assessment_revision_id: assessment_revision_id ?? event.payload.target } : {}) }]) };
 }
 
 /** What the executor has made of one effect intent. */
@@ -49,4 +54,40 @@ export function selectUnitDiagnostics(read: UnitDiagnosticsRead): UnitDiagnostic
     effects: read.intents.map((intent) => ({ id: intent.id, action_id: intent.action_id, seq: intent.seq, status: intent.status, tries: intent.tries,
       next_try_at: intent.next_try_at, last_error: intent.last_error, updated_at: intent.updated_at })),
     rejected: read.rejected.flatMap((receipt) => receipt.result.kind === "rejected" ? [{ ingress_id: receipt.ingress_id, reason: receipt.result.reason }] : []) };
+}
+
+/** The reserved blocker's existing revision and decision histories. */
+/** The worker attempt that published a blocker revision. */
+export interface BlockerAuthor {
+  readonly worker: string;
+  readonly action_id: string;
+  readonly attempt_seq: number;
+  readonly session_id: string | null;
+}
+export interface BlockerRevision {
+  readonly revision_id: string;
+  readonly text: string;
+  readonly suggested_choices: readonly string[] | null;
+  /** Null for an operator edit, which has no publishing attempt. */
+  readonly author: BlockerAuthor | null;
+  readonly created_at: Date;
+}
+export interface BlockerAnswer {
+  readonly id: string;
+  readonly target_revision_id: string;
+  readonly decision: string;
+  readonly answer: string;
+  readonly actor: Writer | null;
+  readonly created_at: Date;
+}
+export type BlockerHistoryEntry =
+  | { readonly kind: "revision"; readonly revision: BlockerRevision }
+  | { readonly kind: "decision"; readonly decision: BlockerAnswer };
+export interface BlockerHistory {
+  readonly available_decisions: readonly ResolvedDecision[];
+  readonly is_open: boolean;
+  readonly latest: BlockerRevision;
+  readonly revisions: readonly BlockerRevision[];
+  readonly decisions: readonly BlockerAnswer[];
+  readonly history: readonly BlockerHistoryEntry[];
 }

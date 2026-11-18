@@ -25,15 +25,28 @@ export interface LogicalItemLink {
   readonly evidence_ref: string;
 }
 export type LinkReference = OccurrenceLink | LogicalItemLink;
+/** Logical identity is independent of an occurrence's local address. */
+export interface SelectedLogicalItem {
+  readonly scope: string;
+  readonly producer_local_id: string;
+}
 export interface SelectedItem {
   readonly item_kind: string;
   readonly item_selector: string;
   readonly item_id_or_path: string;
   readonly item_scope: string | null;
   readonly producer_local_id: string | null;
+  /** Omitted by historical extractors, which retain scope/local-id identity. */
+  readonly logical_item?: SelectedLogicalItem;
   readonly selected_value: JsonValue;
   readonly path: string;
   readonly links: readonly LinkReference[];
+}
+/** Preserve legacy identity inference unless the producer supplies a distinct logical identity. */
+export function logicalIdentityForItem(item: SelectedItem): SelectedLogicalItem | null {
+  if (item.logical_item) return item.logical_item;
+  return item.item_scope && item.producer_local_id
+    ? { scope: item.item_scope, producer_local_id: item.producer_local_id } : null;
 }
 export interface ExtractionFailure { readonly operation: "select_items"; readonly entity_id: string; readonly detail: string }
 export interface ExtractorDefinition {

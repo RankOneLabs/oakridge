@@ -1,7 +1,6 @@
-//! The development workflow's task contracts, driven through the real bundle,
-//! prompts and operation registry: declared plan and brief validation, the
-//! approval guard at the operator-decision boundary, and the repository's
-//! briefs reaching integration.
+//! Historical development task contracts, pinned to their definition, prompts
+//! and registry. These remain regression coverage for retained task-based runs;
+//! the current requirement contract is exercised in workflow-config/src.
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use workflow_compiler::{compile_workflow, decode_workflow};
@@ -16,22 +15,34 @@ const REPEATED_TASK: &str = "A task id may appear only once within a cohort's ac
 const BRIEF_IDS: &str = "Every assigned task must appear in a build item.";
 const REFUSED: &str = "target revision failed validation";
 
+fn task_contract_definition() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../../workflow-config/definitions/workflows/74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4.json"
+    ))
+    .unwrap()
+}
+
 fn development() -> CheckedWorkflow {
     let config = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../workflow-config");
     let read = |path: std::path::PathBuf| std::fs::read_to_string(path).expect("readable");
+    let store = config.join("definitions");
+    let definition = task_contract_definition();
+    let registry = definition["operation_registry_id"].as_str().unwrap();
     let operations: Vec<CodeOperation> =
-        serde_json::from_str(&read(config.join("operation-registry.json"))).unwrap();
-    let prompts: BTreeMap<String, String> = std::fs::read_dir(config.join("prompts/development"))
+        serde_json::from_str(&read(store.join(format!("operations/{registry}.json")))).unwrap();
+    let prompts: BTreeMap<String, String> = definition["prompts"]
+        .as_object()
         .unwrap()
-        .map(|entry| {
-            let path = entry.unwrap().path();
-            let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            (format!("development/{name}"), read(path))
+        .iter()
+        .map(|(name, digest)| {
+            let digest = digest.as_str().unwrap();
+            (
+                name.clone(),
+                read(store.join(format!("prompts/{digest}.md"))),
+            )
         })
         .collect();
-    let source =
-        decode_workflow(include_str!("../../../fixtures/bundles/development.json").as_bytes())
-            .unwrap();
+    let source = decode_workflow(&serde_json::to_vec(&definition["source"]).unwrap()).unwrap();
     compile_workflow(&source, &operations, &prompts).unwrap()
 }
 
@@ -1275,8 +1286,8 @@ fn finding_links_are_a_required_list_of_ids() {
 }
 
 fn declared_fields(schema: &str) -> Vec<String> {
-    let bundle: Value =
-        serde_json::from_str(include_str!("../../../fixtures/bundles/development.json")).unwrap();
+    let definition = task_contract_definition();
+    let bundle = &definition["source"];
     let mut fields: Vec<String> = bundle["schemas"][schema]
         .as_object()
         .unwrap()

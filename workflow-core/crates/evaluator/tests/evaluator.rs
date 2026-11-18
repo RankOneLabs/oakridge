@@ -456,7 +456,10 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
         "schemas": {
             "assessment_body": schemas["assessment_body"],
             "next_action": schemas["next_action"],
-            "assessment_finding": schemas["assessment_finding"],
+            "item_assessment": schemas["item_assessment"],
+            "additional_finding": schemas["additional_finding"],
+            "action_source": schemas["action_source"],
+            "severity": schemas["severity"],
             "assessment_subject": schemas["assessment_subject"],
             "evidence_ref": schemas["evidence_ref"],
             "test_evidence": schemas["test_evidence"]
@@ -468,31 +471,45 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
     let program = compile_workflow(&source, &[], &BTreeMap::new()).unwrap();
     let body = serde_json::json!({
         "head_sha": "abc123",
-        "verdict": "pass_with_notes",
-        "findings": [{"subjects": [], "description": "One non-blocking follow-up", "evidence": []}],
-        "recommended_next_actions": []
+        "verdict": "pass",
+        "item_assessments": [{"subject": {"kind": "build_item", "id": "item-a"},
+            "status": "met", "observation": "Verified", "evidence": [{"kind": "test", "ref": "assessment-schema"}]}],
+        "additional_findings": [],
+        "next_actions": [],
+        "test_evidence": {"passed": 1, "failed": 0}
     });
 
     assert!(check_type(&program.input, &body));
-    assert!(check_type(
-        &program.input,
-        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [], "test_evidence": null,
-            "recommended_next_actions": []})
-    ));
-    assert!(!check_type(
-        &program.input,
-        &serde_json::json!({"findings": [], "recommended_next_actions": []})
-    ));
-    assert!(!check_type(
-        &program.input,
-        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"subjects": [], "status": "unknown", "evidence": []}],
-            "recommended_next_actions": []})
-    ));
-    assert!(!check_type(
-        &program.input,
-        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"evidence": []}],
-            "recommended_next_actions": []})
-    ));
+    let mut explicit_nulls = body.clone();
+    explicit_nulls["test_evidence"] = serde_json::json!({
+        "passed": 1, "failed": 0, "output": null, "summary": null, "cargo_test_output": null
+    });
+    explicit_nulls["item_assessments"][0]["evidence"][0]["detail"] = Value::Null;
+    assert!(check_type(&program.input, &explicit_nulls));
+    for field in [
+        "head_sha",
+        "verdict",
+        "item_assessments",
+        "additional_findings",
+        "next_actions",
+        "test_evidence",
+    ] {
+        let mut missing_required = body.clone();
+        missing_required.as_object_mut().unwrap().remove(field);
+        assert!(!check_type(&program.input, &missing_required), "{field}");
+    }
+    let mut null_tests = body.clone();
+    null_tests["test_evidence"] = Value::Null;
+    assert!(!check_type(&program.input, &null_tests));
+    let mut invalid_status = body.clone();
+    invalid_status["item_assessments"][0]["status"] = serde_json::json!("unknown");
+    assert!(!check_type(&program.input, &invalid_status));
+    let mut missing_subject = body;
+    missing_subject["item_assessments"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("subject");
+    assert!(!check_type(&program.input, &missing_subject));
 }
 
 #[test]
@@ -2843,6 +2860,10 @@ fn w6_projection(result: &StepResult) -> Value {
             .as_object_mut()
             .unwrap()
             .remove("input_provenance");
+        wanted["resolved"]
+            .as_object_mut()
+            .unwrap()
+            .remove("review_history");
         wanted["action"]["cause"]
             .as_object_mut()
             .unwrap()

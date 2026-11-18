@@ -8,6 +8,24 @@ pub(super) fn compile_stage(
     operations: &[CodeOperation],
     prompts: &BTreeMap<String, String>,
 ) -> Result<(CheckedStage, TypeExpression), Vec<CompileError>> {
+    let reserved_errors: Vec<_> = stage
+        .artifacts
+        .keys()
+        .map(|key| ("artifacts", key))
+        .chain(stage.reviews.keys().map(|key| ("reviews", key)))
+        .filter(|(_, key)| matches!(key.as_str(), BLOCKER_ARTIFACT | BLOCKER_REVIEW))
+        .map(|(section, name)| {
+            CompileError::new(
+                CheckKind::Name,
+                format!("stages.{key}.{section}.{name}"),
+                SourceSpan::default(),
+                format!("reserved name {name}"),
+            )
+        })
+        .collect();
+    if !reserved_errors.is_empty() {
+        return Err(reserved_errors);
+    }
     let empty = BTreeMap::new();
     let base = Scope {
         input: &stage.input,
@@ -139,10 +157,58 @@ pub(super) fn compile_stage(
                     )
                 })
                 .transpose();
+            let decision_path = format!("{path}.decisions.{decision_key}");
+            let guard = decision.when.as_ref().and_then(|guard| {
+                if guard.reason.trim().is_empty() {
+                    state.error(
+                        CheckKind::Review,
+                        &format!("{decision_path}.when.reason"),
+                        "decision when requires a non-empty reason",
+                    );
+                }
+                let body = stage
+                    .artifacts
+                    .get(&review.of.0)
+                    .map(|artifact| (review.of.0.as_str(), &artifact.schema));
+                // Decision checks see only the reviewed body and input, not latest mutable artifacts.
+                let no_artifacts = BTreeMap::new();
+                let no_lets = BTreeMap::new();
+                let guard_scope = Scope {
+                    artifacts: &no_artifacts,
+                    lets: &no_lets,
+                    body,
+                    ..state.base.clone()
+                };
+                let check = state.capture(checked(
+                    &guard.check,
+                    &guard_scope,
+                    &format!("{decision_path}.when.check"),
+                ))?;
+                if check.value_type != Type::Boolean {
+                    state.error(
+                        CheckKind::ExpressionType,
+                        &format!("{decision_path}.when.check"),
+                        "decision when check must be boolean",
+                    );
+                }
+                Some(CheckedDecisionGuard {
+                    check,
+                    reason: guard.reason.clone(),
+                })
+            });
             if let Some(payload) = state.capture(payload) {
+                if let Some(field) = &decision.feedback_field {
+                    if decision.on.is_none()
+                        || !matches!(&payload, Some(Type::Record { fields }) if fields.get(field) == Some(&Type::Text))
+                    {
+                        state.error(CheckKind::Review, &format!("{decision_path}.feedback_field"), "feedback_field requires an on target and a text field in the payload record");
+                    }
+                }
                 decisions.insert(
                     decision_key.clone(),
                     CheckedDecision {
+                        when: guard,
+                        feedback_field: decision.feedback_field.clone(),
                         effect: decision.effect.clone(),
                         on: normalized_decision_target(decision.on.as_ref(), &review.of),
                         payload,
@@ -192,6 +258,9 @@ pub(super) fn compile_stage(
                     of: review.of.clone(),
                     when: when.expect("validated engine guard"),
                     decision: CheckedEngineDecision {
+                        when: decisions
+                            .get(decision_key)
+                            .and_then(|decision| decision.when.clone()),
                         key: SymbolKey::from(decision_key.as_str()),
                         effect: decision.effect.clone(),
                         on: normalized_decision_target(decision.on.as_ref(), &review.of),
@@ -241,6 +310,39 @@ pub(super) fn compile_stage(
     }
     let outcome = outcome.expect("valid outcome fields");
     let outcome_type = checked_record(&outcome);
+    if workers
+        .iter()
+        .any(|worker| matches!(worker, CheckedWorker::Agent { .. }))
+    {
+        artifacts.push(CheckedArtifact {
+            key: SymbolKey::from(BLOCKER_ARTIFACT),
+            schema: blocker_schema(),
+            edit_policy: EditPolicy::Always,
+            validations: vec![],
+        });
+        reviews.push(CheckedReview::Operator {
+            key: SymbolKey::from(BLOCKER_REVIEW),
+            of: SymbolKey::from(BLOCKER_ARTIFACT),
+            inputs: vec![],
+            when: None,
+            decisions: blocker_review()
+                .decisions
+                .into_iter()
+                .map(|(key, value)| {
+                    (
+                        key,
+                        CheckedDecision {
+                            effect: value.effect,
+                            on: value.on,
+                            payload: value.payload,
+                            when: None,
+                            feedback_field: value.feedback_field,
+                        },
+                    )
+                })
+                .collect(),
+        });
+    }
     Ok((
         CheckedStage {
             key: SymbolKey::from(key),

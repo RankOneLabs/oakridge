@@ -1,16 +1,13 @@
-Analyze the specification against the repository in the current directory. Publish the `analysis` artifact for operator review. Do not update the specification, plan, or implement yet.
+# Analysis author
 
-## Current specification
+Extract every obligation from the original specification into `analysis.requirements`: `{id, text, source_refs, findings}`. Publish only the analysis artifact. Cite at least one precise source reference per requirement. Nest at least one evidence-backed finding under each requirement, preserving requirement and finding ids on revision. Finding ids must be globally unique.
+
+Each finding is `{id, severity, observation, evidence, expected_change_locations, resolution?}`. Evidence entries are `{kind: file|search|test|output, ref, detail}`; change locations are `{path, symbol?}`. Ground observations in repository evidence. Use blocking for an obligation that cannot be implemented as written, warning for a material concern that does not prevent implementation, and info for contextual evidence of implementability. Do not add a summary or a separate risks section.
+
+Propose a resolution only when needed: `{kind: spec_update|operator_decision|implementation_note, text, question?, alternatives?, chosen?}`. An operator decision needs a question and at least two `{option, consequence}` alternatives. Leave chosen absent until the operator chooses. Do not invent an operator choice. Blocking findings must be resolved and every operator decision chosen before acceptance.
+
+## Original specification
 
 {{spec}}
 
-Publish the `analysis` artifact with a concise summary, specification sections relied on, findings, requirement statuses, risks, and `proposed_spec_updates`. For each proposed update, name the section, the exact change to make, why, and `finding_ids` citing the findings that caused it. Use an empty `finding_ids` list when no finding links to the update; do not infer a link from prose. Use an empty update list if the specification needs no change. Identify concrete blockers, warnings, and qualifications with code evidence and proposed resolutions. Empty arrays are valid.
-
-A finding is `blocking` only when one of these holds:
-
-1. **An operator decision is missing.** The specification leaves open a choice only the operator can make, the alternatives lead to materially different work, and a wrong guess would not be caught by tests or review.
-2. **The specified change cannot be built without breaking something.** As written, it conflicts with working behaviour, an existing contract, live data, or another requirement, and the specification does not say which side gives way.
-
-Missing code is never a blocker. Routes, operations, migrations, services, deployment wiring, configuration and tests that do not exist yet are the work the specification asks for. When the specification omits some of that work, or states a fact about the code wrongly, raise a `warning` with a proposed update that adds or corrects it. A question the specification delegates to analysis that the repository cannot answer is a `warning` carrying a recommended default, unless it meets condition 1. The test for `blocking`: could a competent builder implement this from the specification plus your proposed updates without guessing at something only the operator can decide, and without breaking something that works today? If so, it is not a blocker.
-
-Use `blocking`, `warning`, or `info` for finding severity and `implementable`, `blocked`, or `ambiguous` for each requirement. A requirement is `blocked` only when a `blocking` finding applies to it. A blocking finding must name the decision or the conflict, and state the options with the consequence of each. Do not assume an unresolved decision in a proposed update; ask the operator to resolve it through analysis review. Do not manufacture findings. The operator will approve this analysis or request changes before a separate step updates the specification. The revised specification will then receive its own operator review before planning.
+If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, raise a blocker instead of guessing.

@@ -159,3 +159,6 @@ export function selectSpecAnalysisView(analysis: SpecAnalysis): SpecAnalysisView
     },
   };
 }
+
+export { parseCurrentAnalysis, type CurrentAnalysis, type CurrentFinding } from "./current-contract";
+export { requirementStatus, selectAnalysisCounts, selectCodeHotspots, selectOperatorDecisions } from "./current-analysis";

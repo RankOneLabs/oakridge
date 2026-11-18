@@ -1,3 +1,5 @@
+import { readUnits, invalidateCachedRunUnits } from "./client-units";
+export { invalidateCachedRunUnits } from "./client-units";
 import { randomUuid } from "../lib/random-uuid";
 import { parseInstallStatus } from "./adapters/install-status";
 import type { ExecutedPromptRead } from "./lib/prompt-view";
@@ -8,29 +10,18 @@ import type { ExecutedPromptTurn } from "../../executed-prompt";
 import type { CohortPullRequestResponse, ConfirmCohortMergedRequest, ArtifactDetail, ArtifactTypeDescriptor, ReviewInbox } from "./artifact-types";
 import type { OakridgeConfig, WorkflowDefSummary } from "./project-types";
 import type { CreateRunRequest, RunSummary, RunDetail, ConfirmFinalPullRequestRequest, EpicWorkflowProfile, FinalPullRequestResponse, RepositoryKey, EpicProfileId, WorkflowRunId, RunSessionAttempt, SessionRunLocation } from "./run-types";
-import type { OperatorIngressResponse } from "./operator-contracts/http/ingress";
+import type { OperatorDecideRequest, OperatorIngressResponse } from "./operator-contracts/http/ingress";
 import type { OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary } from "./operator-contracts/projections/definition-view";
 import type { OperatorRunInboxBatch } from "./operator-contracts/projections/inbox";
 import type { OperatorRunPage, OperatorRunView } from "./operator-contracts/projections/run-view";
-import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
 import { parseDefinitionPrompts, artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, latestUnitAttemptPerSession, parseCompositeId, revisionToArtifact, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { createCollabClient } from "./client-collab";
 import { createGateClient } from "./client-gates";
 import { committed, oakridgeGet, oakridgePost, OPERATOR, runPath, unitPath } from "./client-http";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
 import { developmentLaunch } from "./adapters/launch";
-import { parseArtifactDetail, parseRunInboxBatch, parseRunView, parseUnitViews } from "./adapters/parse";
+import { parseArtifactDetail, parseRunInboxBatch, parseRunView } from "./adapters/parse";
 
-interface CachedUnits {
-  readonly promise: Promise<readonly OperatorUnitView[]>;
-  expiresAt: number;
-  isLoading: boolean;
-}
-/** Run surfaces poll every ten seconds; a settled read must expire before their next poll. */
-const UNIT_CACHE_FRESH_MS = 5_000;
-const unitCache = new Map<string, CachedUnits>();
-/** Every unit input field the adapters read; the rest repeats upstream artifacts in each unit. */
-const UNIT_INPUT_FIELDS = ["brief", "cohort", "repositories", "repository", "repository_key", "title", "workspace"];
 async function resolveArtifactId(id: string): Promise<CompositeId> {
   const parsed = parseCompositeId(id, "artifact");
   if (parsed.ok) return parsed.value;
@@ -43,30 +34,6 @@ async function resolveArtifactId(id: string): Promise<CompositeId> {
   if (matches.length !== 1) throw new Error(`oakridge ${id}: opaque artifact revision ${matches.length === 0 ? "not found" : "is ambiguous"}`);
   return matches[0];
 }
-const readUnits = (runId: string): Promise<readonly OperatorUnitView[]> => {
-  const cached = unitCache.get(runId);
-  if (cached && (cached.isLoading || cached.expiresAt > Date.now())) return cached.promise;
-  const path = `${runPath(runId)}/units?input_fields=${UNIT_INPUT_FIELDS.join(",")}`;
-  const entry: CachedUnits = {
-    expiresAt: 0,
-    isLoading: true,
-    promise: oakridgeGet<unknown>(path).then((value) => {
-      const units = unwrapAdapter(path, parseUnitViews(value));
-      entry.isLoading = false;
-      entry.expiresAt = Date.now() + UNIT_CACHE_FRESH_MS;
-      return units;
-    }).catch((error) => {
-      if (unitCache.get(runId) === entry) unitCache.delete(runId);
-      throw error;
-    }),
-  };
-  unitCache.set(runId, entry);
-  return entry.promise;
-};
-export const invalidateCachedRunUnits = (runId: string | null): void => {
-  if (runId) unitCache.delete(runId);
-  else unitCache.clear();
-};
 
 async function readRunPage(isArchived = false): Promise<OperatorRunView[]> {
   const items: OperatorRunView[] = [];
@@ -108,9 +75,9 @@ async function readRunInboxBatch(runIds: readonly string[]): Promise<OperatorRun
   return entries;
 }
 
-async function decide(runId: string, unitId: string, review: string, decision: string, target: string, payload: unknown, requestId: string): Promise<string> {
+async function decide(runId: string, unitId: string, review: string, request: OperatorDecideRequest): Promise<string> {
   const path = `${unitPath(runId, unitId)}/reviews/${encodeURIComponent(review)}/decide`;
-  return committed(await oakridgePost<OperatorIngressResponse>(path, { request_id: requestId, decision, target, payload }), path);
+  return committed(await oakridgePost<OperatorIngressResponse>(path, request), path);
 }
 
 export { parseOakridgeRunEventFrame } from "./adapters/event";
@@ -192,7 +159,7 @@ export async function confirmCohortMerged(cohortId: string, req: ConfirmCohortMe
   if (!unit) throw new Error(`oakridge ${cohortId}: unit unavailable`);
   const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.decision === "confirm_merged");
   if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${cohortId}: confirm_merged unavailable`);
-  await decide(stage.runId, unit.unit_id, decision.submit.review, decision.submit.decision, decision.submit.target_revision_id, {}, req.idempotency_key);
+  await decide(stage.runId, unit.unit_id, decision.submit.review, { decision: decision.submit.decision, target: decision.submit.target_revision_id, payload: {}, request_id: req.idempotency_key });
   invalidateCachedRunUnits(stage.runId);
   return { cohort_id: cohortId, outcome: { kind: "completed" } };
 }
@@ -261,7 +228,7 @@ export function confirmFinalPullRequest(
     const unit = units.find((candidate) => candidate.stage === "integration" && candidate.collection_key === repositoryKey);
     const decision = unit?.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.decision === "confirm_merged");
     if (!unit || !decision || decision.submit.kind !== "review") throw new Error(`oakridge ${runPath(runId)}: integration confirm_merged unavailable`);
-    await decide(runId, unit.unit_id, decision.submit.review, decision.submit.decision, decision.submit.target_revision_id, {}, request.idempotency_key);
+    await decide(runId, unit.unit_id, decision.submit.review, { decision: decision.submit.decision, target: decision.submit.target_revision_id, payload: {}, request_id: request.idempotency_key });
     invalidateCachedRunUnits(runId);
     const profile: EpicWorkflowProfile = { id: runId as EpicProfileId, workflow_run_id: runId as WorkflowRunId,
       title: "development", slug: "development", lifecycle_state: "final_integration", final_merge_policy: "external_confirmation",

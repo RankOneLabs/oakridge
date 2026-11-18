@@ -104,6 +104,15 @@ pub(super) fn parse(source: &Workflow) -> Result<ParsedWorkflow, Vec<CompileErro
         for (key, review) in &stage.reviews {
             let path = format!("{stage_path}.reviews.{key}");
             parse_fields(&review.inputs, &format!("{path}.inputs"), &mut errors);
+            for (key, decision) in &review.decisions {
+                if let Some(guard) = &decision.when {
+                    parse_text(
+                        &guard.check,
+                        format!("{path}.decisions.{key}.when.check"),
+                        &mut errors,
+                    );
+                }
+            }
             if let Some(text) = &review.when {
                 parse_text(text, format!("{path}.when"), &mut errors);
             }

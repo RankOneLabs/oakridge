@@ -378,6 +378,16 @@ pub(super) fn engine_decision(
         }
         if is_decided_by(state, &unit.id, key, &target.id)
             || !holds(Some(when), unit, state, context)?
+            || decision_disabled_reason(
+                DecisionAvailability {
+                    guard: decision.when.as_ref(),
+                    of,
+                    unit,
+                    state,
+                },
+                context,
+            )?
+            .is_some()
         {
             continue;
         }
@@ -442,6 +452,9 @@ pub(super) fn next_move(
             continue;
         }
         let move_for_unit = (|| -> Result<Option<Vec<Delta>>, StepError> {
+            if parked_blocker(state, &unit.id).is_some() {
+                return Ok(None);
+            }
             if unit.kind.stage().is_some() {
                 let definition = checked_stage(program, unit)?;
                 let unobserved = unobserved_watch_artifacts(program, state, unit, context)?;
@@ -607,8 +620,20 @@ pub(super) fn blocked_units(
     state
         .units
         .iter()
-        .filter(|unit| matches!(unit.status, UnitStatus::NotStarted))
+        .filter(|unit| {
+            matches!(unit.status, UnitStatus::NotStarted)
+                || matches!(unit.status, UnitStatus::Active)
+                    && parked_blocker(state, &unit.id).is_some()
+        })
         .map(|unit| {
+            if let Some(blocker) = parked_blocker(state, &unit.id) {
+                return Ok(Some(UnitBlock {
+                    unit: unit.id.clone(),
+                    reason: BlockedReason::Blocker {
+                        revision: blocker.id.clone(),
+                    },
+                }));
+            }
             let waiting: Vec<_> = unit
                 .after
                 .iter()

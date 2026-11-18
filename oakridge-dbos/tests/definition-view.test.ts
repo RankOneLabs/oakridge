@@ -25,9 +25,12 @@ test("development detail preserves authored uses alongside compiled declarations
     expect(prompt.body).toBe(stored);
     expect(detail.workflow.stages.cohort?.workers.pr_watch).toEqual({ template: "pr_watch" });
     expect(detail.effective_workflow.stages.cohort?.workers.pr_watch).toMatchObject({ kind: "code", operation: "pull_request.observe" });
-    const authored = detail.workflow.stages.analysis?.reviews?.analysis_review;
+    const authored = detail.workflow.stages.planning?.reviews?.plan_review;
     expect(authored && "decisions" in authored ? authored.decisions : null).toMatchObject({ set: "accept_or_request" });
-    expect(detail.effective_workflow.stages.analysis?.reviews?.analysis_review?.decisions).toHaveProperty("accept");
+    expect(detail.effective_workflow.stages.planning?.reviews?.plan_review?.decisions).toHaveProperty("accept");
+    expect(detail.effective_workflow.stages.analysis?.reviews?.analysis_review?.decisions.accept?.when).toMatchObject({
+      reason: "Resolve every blocking finding and choose an option for every operator decision before accepting the analysis.",
+    });
   } finally { core.value.close(); }
 });
 

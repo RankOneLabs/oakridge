@@ -1,3 +1,5 @@
+import { ArtifactReview } from "../../core/pwa/oakridge/components/organisms/ArtifactReview";
+import { compositeId } from "../../core/pwa/oakridge/adapters/core";
 import { useHashRoute } from "../../core/pwa/hooks/useHashRoute";
 import { definitionHref } from "../../core/pwa/oakridge/lib/definition-selection";
 import { WorkflowDefListView } from "../../core/pwa/oakridge/views/WorkflowDefListView";
@@ -18,7 +20,7 @@ function DefinitionNavigation() {
     : <WorkflowDefListView onSelect={definition => { location.hash = definitionHref(definition.id); }} />;
 }
 createRoot(container).render(<QueryClientProvider client={client}>
-  {params.has("definitions") ? <DefinitionNavigation /> : params.has("launch")
+  {params.has("artifact") ? <ArtifactReview artifactId={compositeId({ kind: "artifact", runId: "run", unitId: params.get("unit") ?? "run/analysis", name: params.get("artifact") ?? "analysis" })} /> : params.has("definitions") ? <DefinitionNavigation /> : params.has("launch")
     ? <NewRunView onBack={() => {}} onCreated={(runId) => { location.hash = `run/${runId}`; }} />
     : <RunWorkspace runId={params.get("run") ?? "run-1"} routePane={null} onBack={() => {}} />}
 </QueryClientProvider>);

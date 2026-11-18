@@ -88,3 +88,98 @@ export function selectHandoffSendability(preview: string, gate: ParkedGate): Han
   if (!gate.offered_decisions.includes(REQUEST_BUILD_CHANGES)) return { kind: "blocked", reason: "Request build changes is not offered for this review." };
   return { kind: "sendable", artifact_revision_id: gate.artifact_revision_id };
 }
+
+
+// Current-contract adjudication: local pending state never mutates the assessor's revision.
+import type { CurrentAssessment } from "./current-assessment";
+import type { OperatorAdjudication, OperatorAddedActionEntry, OperatorDisposition, OperatorProposedActionEntry } from "../operator-contracts/domain/adjudication";
+import type { OperatorActionSource } from "../operator-contracts/domain/assessment";
+import { composeBuilderFeedback } from "../operator-contracts/domain/builder-feedback";
+import { randomUuid } from "../../lib/random-uuid";
+import type { OperatorRevisionDecision } from "../operator-contracts/projections/unit-view";
+/** Unit history is oldest first; dispositions belong only to the displayed revision. */
+export function selectRecordedAssessmentDecision(decisions: readonly OperatorRevisionDecision[], revisionId: string): OperatorRevisionDecision | null {
+  return decisions.reduce<OperatorRevisionDecision | null>((latest, decision) =>
+    (decision.assessment_revision_id ?? decision.target_revision_id) === revisionId ? decision : latest, null);
+}
+export type PendingDisposition =
+  | { readonly action_id: string; readonly kind: "undecided" }
+  | { readonly action_id: string; readonly kind: "decided"; readonly disposition: OperatorDisposition; readonly final_text?: string; readonly reason?: string };
+export interface AdjudicationState { readonly assessment: CurrentAssessment; readonly dispositions: readonly PendingDisposition[]; readonly added_actions: readonly OperatorAddedActionEntry[] }
+export type DispositionChoice = { readonly kind: "accept" } | { readonly kind: "edit"; readonly final_text: string } | { readonly kind: "reject"; readonly reason?: string };
+export type AdjudicationEffect = "accept" | "request_build_changes" | "request_changes";
+export function initialAdjudication(assessment: CurrentAssessment): AdjudicationState {
+  return { assessment, dispositions: assessment.next_actions.map(action => ({ action_id: action.id, kind: "undecided" })), added_actions: [] };
+}
+export function setDisposition(state: AdjudicationState, action_id: string, choice: DispositionChoice): AdjudicationState {
+  const disposition: PendingDisposition = choice.kind === "accept" ? { action_id, kind: "decided", disposition: "accepted" }
+    : choice.kind === "edit" ? { action_id, kind: "decided", disposition: "modified", final_text: choice.final_text }
+    : { action_id, kind: "decided", disposition: "rejected", reason: choice.reason };
+  return { ...state, dispositions: state.dispositions.map(entry => entry.action_id === action_id ? disposition : entry) };
+}
+export interface AddedActionInput { readonly audience: "builder" | "operator"; readonly source: OperatorActionSource; readonly text: string; readonly reason?: string }
+export function addAction(state: AdjudicationState, input: AddedActionInput): AdjudicationState {
+  return { ...state, added_actions: [...state.added_actions, { action_id: randomUuid(), origin: "operator", final_text: input.text, audience: input.audience, source: input.source, reason: input.reason }] };
+}
+function selectDecidedEntries(state: AdjudicationState): readonly OperatorProposedActionEntry[] {
+  return state.assessment.next_actions.flatMap(action => {
+    const pending = state.dispositions.find(entry => entry.action_id === action.id);
+    return pending?.kind === "decided" ? [{ action_id: action.id, original_text: action.text, audience: action.audience, source: action.source,
+      disposition: pending.disposition, ...(pending.final_text === undefined ? {} : { final_text: pending.final_text }), ...(pending.reason === undefined ? {} : { reason: pending.reason }) }] : [];
+  });
+}
+export const selectBuilderPreview = (state: AdjudicationState): string => composeBuilderFeedback(selectDecidedEntries(state), state.added_actions);
+export type AdjudicationSendability = { readonly kind: "sendable" } | { readonly kind: "blocked"; readonly reason: string };
+export function selectSendability(state: AdjudicationState, effect: AdjudicationEffect): AdjudicationSendability {
+  if (state.dispositions.some(entry => entry.kind === "undecided")) return { kind: "blocked", reason: "Decide every assessor action before submitting." };
+  if (state.dispositions.some(entry => entry.kind === "decided" && entry.disposition === "modified" && !entry.final_text?.trim())) return { kind: "blocked", reason: "Edited actions need replacement text." };
+  if (state.added_actions.some(entry => !entry.final_text.trim())) return { kind: "blocked", reason: "Added actions need text." };
+  if (effect !== "accept" && !selectBuilderPreview(state).trim()) return { kind: "blocked", reason: "Accept, edit or add at least one builder action to request changes." };
+  return { kind: "sendable" };
+}
+export function selectAdjudicationPayload(state: AdjudicationState, effect: AdjudicationEffect): Result<OperatorAdjudication, string> {
+  const sendability = selectSendability(state, effect);
+  return sendability.kind === "blocked" ? { ok: false, error: sendability.reason } : { ok: true,
+    value: { entries: selectDecidedEntries(state), added_actions: state.added_actions, builder_feedback: selectBuilderPreview(state) } };
+}
+export interface AdjudicationSourceOption { readonly value: string; readonly label: string; readonly source: OperatorActionSource }
+export function selectAdjudicationSources(assessment: CurrentAssessment): readonly AdjudicationSourceOption[] {
+  return [...assessment.item_assessments.map(item => ({ value: `item_assessment:${item.subject.id}`, label: `${item.subject.kind}: ${item.subject.id}`, source: { kind: "item_assessment" as const, id: item.subject.id } })),
+    ...assessment.additional_findings.map(finding => ({ value: `additional_finding:${finding.id}`, label: `Finding: ${finding.id}`, source: { kind: "additional_finding" as const, id: finding.id } }))];
+}
+
+import type { OperatorDecisionDefinition } from "../operator-contracts/projections/unit-view";
+import { selectHandoffRevisionId } from "./handoff-provenance";
+export interface AdjudicationGateInput { readonly gate: ParkedGate | null; readonly revisionId: string; readonly decisions: readonly OperatorRevisionDecision[]; readonly hasSubmitted: boolean }
+export interface AdjudicationGateState { readonly revision: string; readonly recordedDecision: OperatorRevisionDecision | null; readonly isRecorded: boolean; readonly isOpen: boolean }
+/** The form records on the displayed revision only, while its review is open and before a decision exists. */
+export function selectAdjudicationGate({ gate, revisionId, decisions, hasSubmitted }: AdjudicationGateInput): AdjudicationGateState {
+  const revision = selectHandoffRevisionId(revisionId) ?? revisionId;
+  const recordedDecision = selectRecordedAssessmentDecision(decisions, revision);
+  const isRecorded = hasSubmitted || recordedDecision !== null;
+  const isOpen = gate?.actionable === true && selectHandoffRevisionId(gate.artifact_revision_id ?? undefined) === revision && !isRecorded;
+  return { revision, recordedDecision, isRecorded, isOpen };
+}
+/** Accept, then the gate's change request, keeping only those the gate offers. */
+export function selectAdjudicationEffects(gate: ParkedGate | null): readonly AdjudicationEffect[] {
+  if (!gate) return [];
+  const effects: readonly AdjudicationEffect[] = ["accept", gate.gate_step === "integration_review" ? "request_changes" : "request_build_changes"];
+  return effects.filter(effect => gate.offered_decisions.includes(effect));
+}
+export type AdjudicationDecision =
+  | { readonly kind: "available"; readonly definition: OperatorDecisionDefinition; readonly revision_id: string }
+  | { readonly kind: "unavailable"; readonly reason: string };
+/** The review decision an effect submits, refused when the gate lacks it or its guard does not hold. */
+export function selectAdjudicationDecision(gate: ParkedGate | null, effect: AdjudicationEffect): AdjudicationDecision {
+  const definition = gate?.decision_definitions?.find(candidate => candidate.submit.kind === "review" && candidate.submit.decision === effect);
+  if (!gate?.artifact_revision_id || !definition) return { kind: "unavailable", reason: NO_REVIEW_REASON };
+  if (definition.is_available === false) return { kind: "unavailable", reason: definition.disabled_reason ?? "Decision unavailable" };
+  return { kind: "available", definition, revision_id: gate.artifact_revision_id };
+}
+/** Why an effect's button is disabled: the pending adjudication first, then the decision's own guard. */
+export function selectAdjudicationBlockReason(state: AdjudicationState, gate: ParkedGate | null, effect: AdjudicationEffect): string | null {
+  const sendability = selectSendability(state, effect);
+  if (sendability.kind === "blocked") return sendability.reason;
+  const decision = selectAdjudicationDecision(gate, effect);
+  return decision.kind === "unavailable" ? decision.reason : null;
+}

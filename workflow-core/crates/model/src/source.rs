@@ -208,6 +208,12 @@ pub enum Expression {
     Len {
         value: Box<Expression>,
     },
+    /// Whether the field `key` of the record `value` is set: false when it
+    /// is omitted or null, unresolved only when `value` is.
+    Present {
+        value: Box<Expression>,
+        key: String,
+    },
     /// The items of a list of lists, in order.
     Flatten {
         value: Box<Expression>,
@@ -390,6 +396,10 @@ pub struct WorkerUse {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<DecisionGuard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feedback_field: Option<String>,
     pub label: Option<String>,
     pub on: Option<SymbolKey>,
     pub fields: Option<BTreeMap<String, String>>,
@@ -913,6 +923,10 @@ pub enum ReviewBy {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewDecision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<DecisionGuard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feedback_field: Option<String>,
     pub effect: DeclaredDecisionEffect,
     pub on: Option<SymbolKey>,
     pub label: String,
@@ -938,4 +952,61 @@ pub struct CodeOperation {
     pub output_schema: TypeExpression,
     #[serde(default)]
     pub error_codes: Vec<String>,
+}
+
+/// Availability of a decision against the reviewed revision and unit input.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionGuard {
+    pub check: String,
+    pub reason: String,
+}
+
+pub const BLOCKER_ARTIFACT: &str = "blocker";
+pub const BLOCKER_REVIEW: &str = "blocker_review";
+
+/// The reserved alternative output available to every agent.
+pub fn blocker_schema() -> Type {
+    Type::Record(BTreeMap::from([
+        ("text".into(), Type::Text),
+        (
+            "suggested_choices".into(),
+            Type::Optional {
+                value: Box::new(Type::List {
+                    item: Box::new(Type::Text),
+                }),
+            },
+        ),
+    ]))
+}
+
+pub fn blocker_review() -> Review {
+    Review {
+        of: SymbolKey::from(BLOCKER_ARTIFACT),
+        by: ReviewBy::Operator,
+        prompt: None,
+        inputs: BTreeMap::new(),
+        when: None,
+        decisions: ["clarify", "override", "discuss"]
+            .into_iter()
+            .map(|key| {
+                (
+                    key.into(),
+                    ReviewDecision {
+                        effect: DeclaredDecisionEffect::RequestChanges,
+                        on: Some(SymbolKey::from(BLOCKER_ARTIFACT)),
+                        label: key.into(),
+                        payload: Some(Type::Record(BTreeMap::from([(
+                            "answer".into(),
+                            Type::Text,
+                        )]))),
+                        fields: BTreeMap::from([("answer".into(), "Answer".into())]),
+                        feedback: None,
+                        feedback_field: Some("answer".into()),
+                        when: None,
+                    },
+                )
+            })
+            .collect(),
+    }
 }

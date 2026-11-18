@@ -22,6 +22,9 @@ describe("v2 development adapters", () => {
   it("rejects malformed unit data at the API boundary", () => {
     expect(parseUnitViews([{ ...cohort, decisions: [{ ...cohort.decisions[0], submit: { kind: "review" } }] }]).ok).toBe(false);
   });
+  it.each([{ is_available: "false" }, { disabled_reason: {} }])("rejects malformed decision availability %j", (availability) => {
+    expect(parseUnitViews([{ ...cohort, decisions: [{ ...cohort.decisions[0], ...availability }] }]).ok).toBe(false);
+  });
   it("groups units into stages with artifacts", () => {
     const stages = unitToStages(units);
     expect(stages.ok && stages.value.find((stage) => stage.name === "cohort")?.artifacts.some((artifact) => artifact.type_id === "dev.build_result")).toBe(true);

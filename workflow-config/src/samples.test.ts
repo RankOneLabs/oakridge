@@ -36,35 +36,6 @@ for (const [name, { path }] of Object.entries(WORKFLOW_SOURCES)) {
   });
 }
 
-test("development reviews analysis, specification, and tasks before planning", () => {
-  interface DevelopmentSpecFlow {
-    readonly run: { readonly units: { readonly planning: { readonly input: { readonly spec: string; readonly tasks: string;
-      readonly repositories: string; readonly repository_key: string; readonly workspace: string } };
-      readonly briefs: { readonly input: { readonly spec: string } } } };
-    readonly stages: { readonly analysis: { readonly artifacts: { readonly analysis: { readonly kind: string; readonly schema: string }; readonly spec: { readonly kind: string; readonly schema: string };
-      readonly tasks: { readonly kind: string; readonly schema: string } };
-      readonly workers: { readonly author: { readonly produces: string[] }; readonly spec_editor: { readonly when: string; readonly produces: string[] } };
-      readonly reviews: { readonly analysis_review: { readonly of: string }; readonly spec_review: { readonly of: string };
-        readonly tasks_review: { readonly of: string } };
-      readonly done_when: string; readonly outcome: { readonly spec: string; readonly tasks: string } } };
-  }
-  const workflow = YAML.parse(readFileSync(resolve(root, WORKFLOW_SOURCES.development.path), "utf8")) as DevelopmentSpecFlow;
-  const analysis = workflow.stages.analysis;
-  expect(Object.keys(analysis.workers).sort()).toEqual(["author", "spec_editor"]);
-  expect({ artifacts: analysis.artifacts, author: analysis.workers.author.produces,
-    editor: { when: analysis.workers.spec_editor.when, produces: analysis.workers.spec_editor.produces },
-    review: analysis.reviews.analysis_review.of, specReview: analysis.reviews.spec_review.of, tasksReview: analysis.reviews.tasks_review.of,
-    done_when: analysis.done_when, outcome: analysis.outcome,
-    planning: workflow.run.units.planning.input, brief: workflow.run.units.briefs.input.spec })
-    .toEqual({ artifacts: { analysis: { kind: "document", schema: "analysis_body" }, spec: { kind: "document", schema: "text" }, tasks: { kind: "record", schema: "tasks_body" } },
-      author: ["analysis"], editor: { when: "approved(analysis)", produces: ["spec", "tasks"] },
-      review: "analysis", specReview: "spec", tasksReview: "tasks",
-      done_when: "approved(analysis) and approved(spec) and approved(tasks)", outcome: { spec: "latest(spec)", tasks: "latest(tasks)" },
-      planning: { spec: "analysis.outcome.spec", tasks: "analysis.outcome.tasks", repositories: "input.repositories",
-        repository_key: "input.primary_repository_key", workspace: "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace" },
-      brief: "analysis.outcome.spec" });
-});
-
 test("a duplicate key in a sample is an error rather than a silent overwrite", () => {
   const document = YAML.parseDocument("workflow: a\nworkflow: b\n", { uniqueKeys: true });
   expect(document.errors.length).toBeGreaterThan(0);

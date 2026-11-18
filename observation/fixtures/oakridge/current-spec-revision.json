@@ -1,0 +1,46 @@
+{
+  "objective": "Canonical requirement flow",
+  "requirements": [
+    {
+      "id": "R1",
+      "text": "Requirement R1",
+      "acceptance_conditions": [
+        "Accept R1"
+      ],
+      "source_refs": [
+        "input.spec"
+      ],
+      "analysis_finding_ids": [
+        "F1",
+        "F2"
+      ]
+    },
+    {
+      "id": "R2",
+      "text": "Requirement R2",
+      "acceptance_conditions": [
+        "Accept R2"
+      ],
+      "source_refs": [
+        "input.spec"
+      ],
+      "analysis_finding_ids": [
+        "F3"
+      ]
+    },
+    {
+      "id": "R3",
+      "text": "Requirement R3",
+      "acceptance_conditions": [
+        "Accept R3"
+      ],
+      "source_refs": [
+        "input.spec"
+      ],
+      "analysis_finding_ids": [
+        "F4"
+      ]
+    }
+  ],
+  "non_goals": []
+}

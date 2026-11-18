@@ -151,13 +151,16 @@ fn renamed_template_overrides_compile_and_code_workers_cannot_evaluate() {
 #[test]
 fn the_shared_accept_or_request_set_defaults_to_each_reviews_own_artifact() {
     let program = compile(&development());
-    let analysis = program
-        .stages
-        .iter()
-        .find(|stage| stage.key.0 == "analysis")
-        .unwrap();
-    for (key, expected) in [("spec_review", "spec"), ("tasks_review", "tasks")] {
-        let review = analysis
+    for (stage_key, key, expected) in [
+        ("planning", "plan_review", "plan"),
+        ("brief", "brief_review", "brief"),
+    ] {
+        let stage = program
+            .stages
+            .iter()
+            .find(|stage| stage.key.0 == stage_key)
+            .unwrap();
+        let review = stage
             .reviews
             .iter()
             .find(|review| review.key().0 == key)

@@ -21,15 +21,72 @@ bundle's prompt keys through it.
 The PWA's definition editor authors a workflow source as JSON; the authority
 compiles it against these prompts and pins it.
 
-## Task contracts in the development workflow
+## Development contract
 
-Plan cohorts retain `task_acceptance { id, text, decision_ids }`, allocating approved tasks. Briefs carry `build_items { id, description, task_ids, decision_ids, verification }` as the standalone implementation contract. Items can split a task or span several tasks.
+Analysis extracts canonical requirement ids with source references and nested,
+evidence-backed findings. The analysis accept guard rejects blocking findings and
+unchosen operator decisions. The editor normalizes only approved resolutions into
+one structured specification, preserving requirement ids, source links and
+observable acceptance conditions. There is no separate work-list artifact or gate.
 
-Separate brief validate checks enforce unique item ids, coverage of every allocated task, no task outside that allocation, nonempty descriptions, at least one task per item, and decision links resolving in the brief's decisions_made. Cohort identity, repository and dependency checks remain. Structural checks do not establish semantic completeness.
+Planning allocates requirements to PR-shaped cohorts with bounded contributions,
+repository keys and an acyclic depends_on graph. Oakridge resolves each writer's
+assignment to its cohort and only its allocated canonical requirements. Briefs
+bind their envelope to that plan cohort and supply detailed build_items linked to
+requirements, verification and material technical_decisions. Implementation order
+and outcome titles come from the plan.
 
-Assessment findings carry `subjects { kind: build_item | task, id, cohort_id? }`, optional status, evidence and description. Cohort checks require build_item subjects resolved in the brief, every brief item addressed, and head_sha matching the latest build result. Findings with `subjects: []` are valid for cross-cutting concerns. A failed check retains the revision and feedback, refuses approval and leaves request changes available; no synthetic finding is created.
+Cohort and integration assessments share one schema: item_assessments,
+additional_findings, audience-specific source-linked next_actions, required test
+evidence and a mechanically checked verdict. Cohorts assess each build item;
+integration assesses each distinct canonical requirement once across contributions.
+The assessment review records typed adjudication (accepted, modified or rejected
+actions, operator additions and builder_feedback). Only builder_feedback reaches
+the builder or integrator; assessors read the full implicit review_history. Every
+initial/revise prompt directs the agent to raise a blocker instead of guessing.
 
-Integration receives only the repository's applicable briefs. Task subjects must resolve in their build items' task_ids; build_item subjects must name a cohort and an item in that cohort's brief. Repeated task ids across cohorts represent one task. Integration has no every-item-addressed rule; validation failures auto-return feedback to the integrator. Verdict, test evidence and recommended next actions remain unchanged.
+The development alias now pins definition
+`87dac99799b3d699b92499d4d322929a8b6a107c2cbdf7ab09bfb03874aa736b`.
+The previous definitions
+`cf39117805e56b4bdc5540fed9c4a3c2202a9c432b8e7562bf76960fe383a9a5` and
+`74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4`
+and their exact prompt objects remain addressable.
+
+Current `artifact_schema_version` values, calculated by the observation adapter
+from the resolved schema bodies in the pinned requirement contract:
+
+| Artifact | Schema version |
+| --- | --- |
+| blocker | `artifact-schema/v2:fd7d3d5480c6a7821d205607dc4277d6078ba93c8b3892de4ce4f1877acb96e4` |
+| analysis | `artifact-schema/v2:ae5a9fb9c1a0cf37fbf047000c36f234da2d338552efe6f97f8a9a59890cdbde` |
+| spec | `artifact-schema/v2:3e6831d5b78d1a4ac06096edd5901aae62889530f407b8581a71698e4e65ca58` |
+| plan | `artifact-schema/v2:532d3d3e11f8df58a07618e8093374bb8e3e4f2348fa49a980bbbecb8290174d` |
+| brief | `artifact-schema/v2:e04f77b836567abab8dc575972e28ad6c16c4fed569e0bbb3cb6653783913969` |
+| assessment (both stages) | `artifact-schema/v2:8128a3b8a1dbedf479cfe122a42e3538d84106a436cb5de25a8716def76f747b` |
+
+The spec-based requirement contract uses the v2 epoch, including for implicit
+blockers whose schema body is unchanged. Historical tasks-based contracts retain
+the exact v1 declaration fingerprints on replay. Nested named schemas are resolved
+before hashing v2 bodies; prompt edits and unrelated schemas do not move versions.
+
+Run `bun oakridge-dbos/scripts/generate-artifact-versions.ts` after building the core
+WASM to regenerate the backend and observation manifests, then regenerate the PWA
+operator contracts. `--check` verifies both manifests without writing them.
+
+Two upstream limitations remain blocking for the complete contract:
+
+- B1: the engine expression language cannot test absence of the optional
+  resolution record with a null/presence literal. The current checks conservatively
+  require a resolution to evaluate; an absent resolution cannot be accepted. The
+  schema remains optional as specified. The regression is recorded as a todo test.
+- B2: request_analysis_changes re-wants the author in revise mode, but approving
+  the changed analysis does not invalidate or re-want an already published spec.
+  The evaluator replay for the required editor rerun is recorded as a todo test.
+
+The workflow-contract cohort changes no compiler or evaluator implementation.
+Resolved observation fingerprinting is supplied by the observation-requirements cohort. Integration's
+request_changes explicitly targets `on: assessment`, as the shipped engine requires
+an explicit target when feedback_field is used.
 
 ## Definition store
 
@@ -80,6 +137,13 @@ them. Read failures stop generation before any stored objects are changed.
 `--check` reports differing or missing current output files and names every
 non-decodable retained workflow object without writing or deleting anything.
 The existing pretty-printed Rust bundle fixtures remain unchanged, and the source-less
-`r5-cohort.json` fixture has no committed definition. Run `bun test
-workflow-config/src` for the identity and store boundary tests; `bun run typecheck`
-includes this package.
+`r5-cohort.json` fixture has no committed definition. The workflow tests exercise
+the Rust evaluator through WASM as well as the identity and store boundaries.
+Build that prerequisite before running them (CI performs the same build):
+
+```bash
+cargo build --manifest-path workflow-core/Cargo.toml --locked --target wasm32-unknown-unknown -p workflow-evaluator
+bun test workflow-config/src
+```
+
+`bun run typecheck` includes this package.

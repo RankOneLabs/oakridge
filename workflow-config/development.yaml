@@ -1,19 +1,6 @@
-# The development workflow uses shared decisions, workers and inferred dependencies.
-#
-#   prepare         code worker repository.prepare per repository; creates the run's base branch on origin
-#   analysis        author discusses blockers and warnings; operator reviews the revised spec and tasks
-#   planning        planner agent + operator review; validate: cohorts, repositories, graph,
-#                   task membership and coverage, ids unique within a cohort
-#   briefs          one shared writer session across plan cohorts, with a separate review per brief;
-#                   validate: the cohort's identity and build-item references
-#   implementation  one cohort per brief, after its dependencies, four at a time:
-#                   builder, assessor reviewing the build, operator reviewing the assessment,
-#                   the PR observed until merged (D4);
-#                   a closed, unmerged PR requests build changes (D5)
-#   integration     one integration PR per repository with cohorts, into its final base (D6);
-#                   assesses every task in that repository's briefs on the integration branch
-#
-# Structured artifacts use named schemas; the approved spec is a text artifact.
+# Canonical requirements flow through analysis, spec, cohort allocations and resolved briefs.
+# Both assessment scopes share evidence, source-linked actions and typed adjudication.
+# See README.md for the remaining upstream engine/adapter blockers (B1, B2, B9).
 workflow: development
 input:
   title: text
@@ -25,69 +12,104 @@ schemas:
   final_merge_policy: enum(require_merge, allow_close_without_merge)
   repository:
     key: ident
-    preparation: { repository_path: repo_path, expected_head: optional(text) }
+    preparation:
+      repository_path: repo_path
+      expected_head: optional(text)
     forge: forge
-  forge: { owner: ident, name: ident, build_base: text, final_base: text }
-  workspace: { repository_path: repo_path, push_remote_owner: ident, head: ident, base_branch: text }
-  prepared: { key: ident, workspace: workspace }
-  pr_status: { state: "enum(open, merged, closed_unmerged)", number: integer, url: text, head_sha: optional(text), merged_at: optional(text) }
+  forge:
+    owner: ident
+    name: ident
+    build_base: text
+    final_base: text
+  workspace:
+    repository_path: repo_path
+    push_remote_owner: ident
+    head: ident
+    base_branch: text
+  prepared:
+    key: ident
+    workspace: workspace
+  pr_status:
+    state: enum(open, merged, closed_unmerged)
+    number: integer
+    url: text
+    head_sha: optional(text)
+    merged_at: optional(text)
   completed_cohort: outcome_of(cohort)
-
   severity: enum(blocking, warning, info)
-  risk: { description: text, mitigation: text }
-  issue: { description: text, severity: severity }
-
+  issue:
+    description: text
+    severity: severity
+  finding_evidence:
+    kind: enum(file, search, test, output)
+    ref: text
+    detail: text
+  change_location:
+    path: text
+    symbol: optional(text)
+  resolution:
+    kind: enum(spec_update, operator_decision, implementation_note)
+    text: text
+    question: optional(text)
+    alternatives: "optional(list({option: text, consequence: text}))"
+    chosen: optional(text)
+  analysis_finding:
+    id: ident
+    severity: severity
+    observation: text
+    evidence: list(finding_evidence)
+    expected_change_locations: list(change_location)
+    resolution: optional(resolution)
+  analysis_requirement:
+    id: ident
+    text: text
+    source_refs: list(text)
+    findings: list(analysis_finding)
   analysis_body:
-    summary: text
-    source_spec_refs: list(text)
-    findings: list(spec_finding)
-    requirements: list(requirement)
-    risks: list(risk)
-    proposed_spec_updates: list(spec_update)
-  spec_finding: { id: ident, description: text, severity: severity }
-  requirement: { id: ident, description: text, status: requirement_status }
-  spec_update: { section: text, change: text, reason: text, finding_ids: list(ident) }
-  requirement_status: enum(implementable, blocked, ambiguous)
-  task: { id: ident, description: text, requirement_ids: list(ident) }
-  tasks_body: { tasks: list(task) }
-
-  plan_body:
-    summary: text
-    cohorts: list(plan_cohort)
-    dependency_order: list(ident)
-    scope: { in_scope: list(text), out_of_scope: list(text) }
-    acceptance_criteria: list(text)
-    risks: list(risk)
+    requirements: list(analysis_requirement)
+  spec_requirement:
+    id: ident
+    text: text
+    acceptance_conditions: list(text)
+    source_refs: list(text)
+    analysis_finding_ids: list(ident)
+  spec_body:
+    objective: text
+    requirements: list(spec_requirement)
+    non_goals: list(text)
+  allocation:
+    requirement_id: ident
+    contribution: text
   plan_cohort:
     id: ident
-    repository_key: optional(ident)
+    repository_key: ident
     title: text
     scope: text
+    allocations: list(allocation)
     depends_on: list(ident)
-    description: optional(text)
-    files_in_scope: list(text)
-    decisions: list(plan_decision)
-    acceptance_criteria: list(task_acceptance)
-  plan_decision: { id: ident, text: text }
-  # id is the approved task's id: a task shared by cohorts repeats it in each.
-  task_acceptance: { id: ident, text: text, decision_ids: list(ident) }
-
-  build_item: { id: ident, description: text, task_ids: list(ident), decision_ids: list(ident), verification: list(text) }
-
+    rationale: text
+  plan_body:
+    cohorts: list(plan_cohort)
+  cohort_assignment:
+    cohort: plan_cohort
+    requirements: list(spec_requirement)
+  build_item:
+    id: ident
+    requirement_ids: list(ident)
+    instructions: text
+    verification: list(text)
+  technical_decision:
+    id: ident
+    build_item_ids: list(ident)
+    decision: text
+    rationale: text
   brief_body:
     cohort_id: ident
     repository_key: ident
-    title: text
     depends_on: list(ident)
-    goal: text
     files_in_scope: list(text)
-    decisions_made: list(brief_decision)
-    approaches_rejected: list(rejected_approach)
     build_items: list(build_item)
-    next_action: text
-  brief_decision: { id: ident, decision: text, rationale: text }
-  rejected_approach: { id: ident, approach: text, reason: text, decision_ids: list(ident) }
-
+    technical_decisions: list(technical_decision)
   build_body:
     repository_key: optional(ident)
     head_sha: text
@@ -102,116 +124,165 @@ schemas:
     output: optional(text)
     summary: optional(text)
     cargo_test_output: optional(text)
-  build_metadata: { cohort_id: optional(ident), session_id: optional(ident), branch: optional(ident) }
-
+  build_metadata:
+    cohort_id: optional(ident)
+    session_id: optional(ident)
+    branch: optional(ident)
+  assessment_subject:
+    kind: enum(build_item, requirement)
+    id: ident
+  item_assessment:
+    subject: assessment_subject
+    status: enum(met, partial, not_met)
+    observation: text
+    evidence: list(evidence_ref)
+  additional_finding:
+    id: ident
+    severity: severity
+    observation: text
+    related_build_item_ids: list(ident)
+    evidence: list(evidence_ref)
+  action_source:
+    kind: enum(item_assessment, additional_finding)
+    id: ident
+  next_action:
+    id: uuid(generated)
+    audience: enum(builder, operator)
+    source: action_source
+    text: text
   assessment_body:
     head_sha: text
+    item_assessments: list(item_assessment)
+    additional_findings: list(additional_finding)
+    next_actions: list(next_action)
+    test_evidence: test_evidence
     verdict: enum(pass, pass_with_notes, fail)
-    findings: list(assessment_finding)
-    test_evidence: optional(test_evidence)
-    recommended_next_actions: list(next_action)
-  next_action: { id: "uuid(generated)", text: text }
-  assessment_subject: { kind: "enum(build_item, task)", id: ident, cohort_id: optional(ident) }
-  assessment_finding:
-    subjects: list(assessment_subject)
-    status: optional(enum(met, not_met, partial))
-    evidence: list(evidence_ref)
-    description: optional(text)
-  evidence_ref: { kind: "enum(file, test, output)", ref: text, detail: optional(text) }
-
+  evidence_ref:
+    kind: enum(file, test, output)
+    ref: text
+    detail: optional(text)
+  action_disposition:
+    action_id: text
+    disposition: enum(accepted, modified, rejected)
+    original_text: text
+    final_text: optional(text)
+    audience: enum(builder, operator)
+    source: action_source
+    reason: optional(text)
+  added_action:
+    action_id: text
+    origin: enum(operator)
+    final_text: text
+    audience: enum(builder, operator)
+    source: action_source
+    reason: optional(text)
+  adjudication:
+    entries: list(action_disposition)
+    added_actions: list(added_action)
+    builder_feedback: text
   pr_body:
     pr_url: text
     branch: text
     summary: text
     review_status: optional(enum(draft, ready, changes_requested, approved, merged, closed))
-
 decisions:
   accept_or_request:
-    accept: { effect: approve, label: Accept }
+    accept:
+      effect: approve
+      label: Accept
     request_changes:
       effect: request_changes
       label: Request changes
-      fields: { feedback: "What must the proposed specification change?" }
-
+      fields:
+        feedback: What must the proposed specification change?
 workers:
   pr_watch:
     kind: code
     operation: pull_request.observe
-    # A pr published without a URL (branch held unpushed) has no PR to observe.
     when: pr_opened
     inputs:
       query: "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
     every: 2m
-    produces: [pr_state]
-
+    produces:
+      - pr_state
 reviews:
   pr_closed:
     of: build_result
     by: operator
     when: closed_pr
     prompt: development/pr-closed.md
-    inputs: { pr: latest(pr), pr_state: latest(pr_state) }
+    inputs:
+      pr: latest(pr)
+      pr_state: latest(pr_state)
     decisions:
-      replace_pr: { effect: request_changes, label: Replace the closed PR,
-                    fields: { feedback: "What must change in the replacement pull request?" } }
-
+      replace_pr:
+        effect: request_changes
+        label: Replace the closed PR
+        fields:
+          feedback: What must change in the replacement pull request?
 run:
-  pools: { writers: 4, builders: 4 }
+  pools:
+    writers: 4
+    builders: 4
   units:
     prepare:
       for_each: input.repositories
       key: each.key
       stage: prepare
-      input: { repository: each }
+      input:
+        repository: each
     analysis:
       stage: analysis
       input:
         spec: input.spec
-        workspace: "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
+        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
     planning:
       stage: planning
       input:
         spec: analysis.outcome.spec
-        tasks: analysis.outcome.tasks
         repositories: input.repositories
-        repository_key: input.primary_repository_key
-        workspace: "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
+        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
     briefs:
       for_each: planning.outcome.plan.cohorts
       key: each.id
       stage: brief
       pool: writers
       input:
-        cohort: each
-        spec: analysis.outcome.spec
-        workspace: "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
+        assignment: "{cohort: each, requirements: filter(analysis.outcome.spec.requirements, contains(map(each.allocations, item.requirement_id), item.id))}"
+        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
     implementation:
-      for_each: "map(briefs, briefs.outcome.brief)"
+      for_each: map(briefs, briefs.outcome.brief)
       key: each.cohort_id
-      after: each.depends_on
+      after: require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id)).depends_on
       stage: cohort
       pool: builders
       input:
         brief: each
-        repository: "require(lookup(input.repositories, key, each.repository_key))"
-        workspace: "require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace"
+        repository: require(lookup(input.repositories, key, each.repository_key))
+        workspace: require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace
+        cohort: require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id))
     integration:
-      for_each: "filter(input.repositories, contains(map(implementation, implementation.outcome.repository_key), item.key))"
+      for_each: filter(input.repositories, contains(map(implementation, implementation.outcome.repository_key), item.key))
       key: each.key
       stage: integration
       input:
         repository: each
-        workspace: "require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace"
-        cohorts: "filter(map(implementation, implementation.outcome), item.repository_key == each.key)"
-        briefs: "filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key)"
+        workspace: require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace
+        cohorts: filter(map(implementation, implementation.outcome), item.repository_key == each.key)
+        briefs: filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key)
         final_merge_policy: input.final_merge_policy
-  outcome: { cohorts: "map(implementation, implementation.outcome)", integrations: "map(integration, integration.outcome)" }
-
+        requirements: filter(analysis.outcome.spec.requirements, contains(flatten(map(filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key), flatten(map(item.build_items, item.requirement_ids)))), item.id))
+  outcome:
+    cohorts: map(implementation, implementation.outcome)
+    integrations: map(integration, integration.outcome)
 stages:
   prepare:
-    input: { repository: repository }
+    input:
+      repository: repository
     artifacts:
-      workspace: { kind: record, schema: workspace }
+      workspace:
+        kind: record
+        schema: workspace
     workers:
       git:
         kind: code
@@ -221,54 +292,119 @@ stages:
           expected_head: input.repository.preparation.expected_head
           base_branch: input.repository.forge.build_base
           integration_branch: input.repository.forge.final_base
-        produces: [workspace]
+        produces:
+          - workspace
     done_when: published(workspace)
-    outcome: { key: input.repository.key, workspace: latest(workspace) }
-
+    outcome:
+      key: input.repository.key
+      workspace: latest(workspace)
   analysis:
-    input: { spec: text, workspace: workspace }
+    input:
+      spec: text
+      workspace: workspace
     artifacts:
-      analysis: { kind: document, schema: analysis_body }
-      spec: { kind: document, schema: text }
-      tasks: { kind: record, schema: tasks_body }
+      analysis:
+        kind: document
+        schema: analysis_body
+        validate:
+          - check: unique(map(analysis.requirements, item.id))
+            message: Requirement ids must be unique.
+          - check: every(analysis.requirements, len(item.source_refs) > 0)
+            message: Every requirement must cite at least one source reference.
+          - check: every(analysis.requirements, len(item.findings) > 0)
+            message: Every requirement needs at least one finding.
+          - check: unique(map(flatten(map(analysis.requirements, item.findings)), item.id))
+            message: Finding ids must be unique across the analysis.
+          - check: 'every(flatten(map(analysis.requirements, item.findings)), not present(item.resolution) or require(item.resolution).kind != "operator_decision" or (present(require(item.resolution).question) and present(require(item.resolution).alternatives) and len(require(require(item.resolution).alternatives)) >= 2))'
+            message: An operator_decision resolution needs a question and at least two alternatives.
+      spec:
+        kind: document
+        schema: spec_body
+        validate:
+          - check: published(analysis) and unique(map(spec.requirements, item.id))
+            message: Specification requirement ids must be unique.
+          - check: published(analysis) and every(map(latest(analysis).requirements, item.id), contains(map(spec.requirements, item.id), item))
+            message: Every approved analysis requirement must appear in the specification.
+          - check: published(analysis) and every(spec.requirements, contains(map(latest(analysis).requirements, item.id), item.id))
+            message: Specification requirement ids must belong to the approved analysis.
+          - check: published(analysis) and every(flatten(map(spec.requirements, item.analysis_finding_ids)), contains(flatten(map(latest(analysis).requirements, map(item.findings, item.id))), item))
+            message: Specification finding links must name approved analysis findings.
+          - check: published(analysis) and every(spec.requirements, len(item.acceptance_conditions) > 0)
+            message: Every specification requirement needs at least one acceptance condition.
     workers:
       author:
         kind: agent
-        prompts: { initial: development/analysis.md, revise: development/analysis-revise.md }
-        inputs: { spec: input.spec }
+        prompts:
+          initial: development/analysis.md
+          revise: development/analysis-revise.md
+        inputs:
+          spec: input.spec
         workspace: repository(input.workspace)
-        produces: [analysis]
+        produces:
+          - analysis
       spec_editor:
         kind: agent
         when: approved(analysis)
-        prompts: { initial: development/analysis-to-spec.md, revise: development/analysis-to-spec-revise.md }
-        inputs: { original_spec: input.spec, approved_analysis: latest(analysis) }
+        prompts:
+          initial: development/analysis-to-spec.md
+          revise: development/analysis-to-spec-revise.md
+        inputs:
+          original_spec: input.spec
+          approved_analysis: latest(analysis)
         workspace: repository(input.workspace)
-        produces: [spec, tasks]
+        produces:
+          - spec
     reviews:
       analysis_review:
         of: analysis
         by: operator
         prompt: development/analysis-review.md
-        inputs: { original_spec: input.spec, analysis: latest(analysis) }
-        decisions: { set: accept_or_request }
+        inputs:
+          original_spec: input.spec
+          analysis: latest(analysis)
+        decisions:
+          accept:
+            effect: approve
+            label: Accept
+            when:
+              check: 'every(flatten(map(analysis.requirements, item.findings)), item.severity != "blocking" and (not present(item.resolution) or require(item.resolution).kind != "operator_decision" or (default(require(item.resolution).chosen, "") != "" and contains(map(require(require(item.resolution).alternatives), item.option), default(require(item.resolution).chosen, "")))))'
+              reason: Resolve every blocking finding and choose an option for every operator decision before accepting the analysis.
+          request_changes:
+            effect: request_changes
+            label: Request changes
+            fields:
+              feedback: What must the analysis change?
       spec_review:
         of: spec
         by: operator
         prompt: development/spec-review.md
-        inputs: { original_spec: input.spec, approved_analysis: latest(analysis), revised_spec: latest(spec) }
-        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the revised specification change?" } } } }
-      tasks_review:
-        of: tasks
-        by: operator
-        prompt: development/tasks-review.md
-        inputs: { revised_spec: latest(spec), tasks: latest(tasks) }
-        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the task list change?" } } } }
-    done_when: approved(analysis) and approved(spec) and approved(tasks)
-    outcome: { spec: latest(spec), tasks: latest(tasks) }
-
+        inputs:
+          original_spec: input.spec
+          approved_analysis: latest(analysis)
+          spec: latest(spec)
+        decisions:
+          accept:
+            effect: approve
+            label: Accept
+          request_changes:
+            effect: request_changes
+            label: Request changes
+            fields:
+              feedback: What must the canonical specification change?
+          request_analysis_changes:
+            effect: request_changes
+            on: analysis
+            label: Request analysis changes
+            fields:
+              feedback: What must the analysis change?
+    done_when: approved(analysis) and approved(spec)
+    outcome:
+      spec: latest(spec)
   planning:
-    input: { spec: text, tasks: tasks_body, repositories: list(repository), repository_key: ident, workspace: workspace }
+    input:
+      spec: spec_body
+      repositories: list(repository)
+      workspace: workspace
     artifacts:
       plan:
         kind: document
@@ -280,74 +416,107 @@ stages:
             message: Every cohort's repository_key must be the key of one of the run's repositories.
           - check: valid_graph(plan.cohorts, id, depends_on)
             message: Cohort ids must be unique idents, and each depends_on must name other cohorts without repeats or a cycle.
-          - check: every(plan.cohorts, every(item.acceptance_criteria, contains(map(input.tasks.tasks, item.id), item.id)))
-            message: Every cohort acceptance id must be the id of a task in the approved task list.
-          - check: every(map(input.tasks.tasks, item.id), contains(flatten(map(plan.cohorts, map(item.acceptance_criteria, item.id))), item))
-            message: Every task in the approved task list must appear in at least one cohort's acceptance_criteria.
-          - check: every(plan.cohorts, unique(map(item.acceptance_criteria, item.id)))
-            message: A task id may appear only once within a cohort's acceptance_criteria; repeating it in another cohort is valid.
+          - check: every(plan.cohorts, every(item.allocations, contains(map(input.spec.requirements, item.id), item.requirement_id)))
+            message: Every allocation must name a canonical specification requirement.
+          - check: every(map(input.spec.requirements, item.id), contains(flatten(map(plan.cohorts, map(item.allocations, item.requirement_id))), item))
+            message: Every specification requirement must be allocated to at least one cohort.
+          - check: every(plan.cohorts, unique(map(item.allocations, item.requirement_id)))
+            message: A requirement may be allocated only once within a cohort.
+          - check: every(plan.cohorts, len(item.allocations) > 0)
+            message: Every cohort needs at least one allocation.
     workers:
       planner:
         kind: agent
-        prompts: { initial: development/plan.md, revise: development/plan-revise.md }
-        inputs: { spec: input.spec, tasks: input.tasks, repository_key: input.repository_key }
+        prompts:
+          initial: development/plan.md
+          revise: development/plan-revise.md
+        inputs:
+          spec: input.spec
+          repository_keys: map(input.repositories, item.key)
         workspace: repository(input.workspace)
-        produces: [plan]
+        produces:
+          - plan
     reviews:
       plan_review:
         of: plan
         by: operator
         prompt: development/plan-review.md
-        inputs: { spec: input.spec, tasks: input.tasks, plan: latest(plan) }
-        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the plan change?" } } } }
+        inputs:
+          spec: input.spec
+          plan: latest(plan)
+        decisions:
+          set: accept_or_request
+          overrides:
+            request_changes:
+              fields:
+                feedback: What must the plan change?
     done_when: approved(plan)
-    outcome: { plan: latest(plan) }
-
+    outcome:
+      plan: latest(plan)
   brief:
-    input: { cohort: plan_cohort, spec: text, workspace: workspace }
+    input:
+      assignment: cohort_assignment
+      workspace: workspace
     artifacts:
       brief:
         kind: document
         schema: brief_body
         validate:
-          - check: brief.cohort_id == input.cohort.id
+          - check: brief.cohort_id == input.assignment.cohort.id
             message: The brief's cohort_id must be its plan cohort's id.
-          - check: brief.repository_key == input.cohort.repository_key
+          - check: brief.repository_key == input.assignment.cohort.repository_key
             message: The brief's repository_key must be its plan cohort's.
-          - check: brief.depends_on == input.cohort.depends_on
+          - check: brief.depends_on == input.assignment.cohort.depends_on
             message: The brief's depends_on must be its plan cohort's, in the same order.
           - check: unique(map(brief.build_items, item.id))
             message: Build-item ids must be unique.
-          - check: every(map(input.cohort.acceptance_criteria, item.id), contains(flatten(map(brief.build_items, item.task_ids)), item))
-            message: Every assigned task must appear in a build item.
-          - check: every(flatten(map(brief.build_items, item.task_ids)), contains(map(input.cohort.acceptance_criteria, item.id), item))
-            message: Build-item task ids must belong to the cohort allocation.
-          - check: every(brief.build_items, len(item.description) > 0)
-            message: Every build item must have a nonempty description.
-          - check: every(brief.build_items, len(item.task_ids) > 0)
-            message: Every build item must reference at least one task.
-          - check: every(flatten(map(brief.build_items, item.decision_ids)), contains(map(brief.decisions_made, item.id), item))
-            message: Build-item decision ids must name brief decisions.
+          - check: every(map(input.assignment.requirements, item.id), contains(flatten(map(brief.build_items, item.requirement_ids)), item))
+            message: Every assigned requirement must appear in a build item.
+          - check: every(flatten(map(brief.build_items, item.requirement_ids)), contains(map(input.assignment.requirements, item.id), item))
+            message: Build-item requirement ids must belong to the resolved assignment.
+          - check: every(brief.build_items, len(item.requirement_ids) > 0 and len(item.verification) > 0)
+            message: Every build item needs at least one requirement and one verification entry.
+          - check: every(brief.build_items, len(item.instructions) > 0)
+            message: Every build item needs nonempty instructions.
+          - check: unique(map(brief.technical_decisions, item.id))
+            message: Technical decision ids must be unique.
+          - check: every(flatten(map(brief.technical_decisions, item.build_item_ids)), contains(map(brief.build_items, item.id), item))
+            message: Technical decision links must name brief build items.
     workers:
       writer:
         kind: agent
         session: shared
-        prompts: { initial: development/brief.md, revise: development/brief-revise.md }
-        inputs: { cohort: input.cohort, spec: input.spec }
+        prompts:
+          initial: development/brief.md
+          revise: development/brief-revise.md
+        inputs:
+          assignment: input.assignment
         workspace: repository(input.workspace)
-        produces: [brief]
+        produces:
+          - brief
     reviews:
       brief_review:
         of: brief
         by: operator
         prompt: development/brief-review.md
-        inputs: { cohort: input.cohort, brief: latest(brief), spec: input.spec }
-        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the brief change?" } } } }
+        inputs:
+          assignment: input.assignment
+          brief: latest(brief)
+        decisions:
+          set: accept_or_request
+          overrides:
+            request_changes:
+              fields:
+                feedback: What must the brief change?
     done_when: approved(brief)
-    outcome: { brief: latest(brief) }
-
+    outcome:
+      brief: latest(brief)
   cohort:
-    input: { brief: brief_body, repository: repository, workspace: workspace }
+    input:
+      brief: brief_body
+      repository: repository
+      workspace: workspace
+      cohort: plan_cohort
     let:
       brief_value: input.brief
       watch_base: input.repository.forge.build_base
@@ -358,80 +527,142 @@ stages:
       closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
       merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
-      build_result: { kind: document, schema: build_body }
-      pr: { kind: external_reference, schema: pr_body }
+      build_result:
+        kind: document
+        schema: build_body
+      pr:
+        kind: external_reference
+        schema: pr_body
       assessment:
         kind: assessment
         schema: assessment_body
-        edit_policy: { kind: frozen_when_accepted }
+        edit_policy:
+          kind: frozen_when_accepted
         validate:
-          - check: every(flatten(map(assessment.findings, item.subjects)), item.kind == "build_item")
-            message: Cohort assessment subjects must be build items.
-          - check: every(flatten(map(assessment.findings, item.subjects)), contains(map(input.brief.build_items, item.id), item.id))
-            message: Cohort assessment subjects must name brief build items.
-          - check: every(map(input.brief.build_items, item.id), contains(map(flatten(map(assessment.findings, item.subjects)), item.id), item))
+          - check: every(assessment.item_assessments, item.subject.kind == "build_item")
+            message: Cohort assessment items must be build items.
+          - check: every(map(input.brief.build_items, item.id), contains(map(assessment.item_assessments, item.subject.id), item))
             message: Every brief build item must be assessed.
+          - check: every(assessment.item_assessments, contains(map(input.brief.build_items, item.id), item.subject.id))
+            message: Cohort assessment items must name brief build items.
+          - check: every(flatten(map(assessment.additional_findings, item.related_build_item_ids)), contains(map(input.brief.build_items, item.id), item))
+            message: Additional finding links must name brief build items.
           - check: published(build_result) and assessment.head_sha == latest(build_result).head_sha
             message: Assessment head_sha must match the latest build result.
-      pr_state: { kind: status_record, schema: pr_status }
-      observed_state: { kind: status_record, schema: pr_status }
+          - &a1
+            check: unique(map(assessment.item_assessments, item.subject.id))
+            message: Assessment item ids must be unique.
+          - &a2
+            check: unique(map(assessment.additional_findings, item.id))
+            message: Additional finding ids must be unique.
+          - &a3
+            check: every(assessment.next_actions, (item.source.kind == "item_assessment" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == "additional_finding" and contains(map(assessment.additional_findings, item.id), item.source.id)))
+            message: Every next action source must resolve to an assessed item or additional finding.
+          - &a4
+            check: (assessment.verdict == "fail" and (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0)) or (assessment.verdict == "pass_with_notes" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)) or (assessment.verdict == "pass" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(assessment.additional_findings, item.severity == "warning")) > 0))
+            message: Assessment verdict must match item statuses and additional finding severities.
+          - &a5
+            check: assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)
+            message: Failed tests require an unmet item or a blocking or warning additional finding.
+      pr_state:
+        kind: status_record
+        schema: pr_status
+      observed_state:
+        kind: status_record
+        schema: pr_status
     workers:
       builder:
         kind: agent
-        prompts: { initial: development/build.md, revise: development/build-revise.md }
-        inputs: { brief: brief_value, repository: input.repository, build_base: input.repository.forge.build_base }
+        prompts:
+          initial: development/build.md
+          revise: development/build-revise.md
+        inputs:
+          brief: brief_value
+          repository: input.repository
+          build_base: input.repository.forge.build_base
         workspace: repository(input.workspace)
-        produces: [build_result, pr]
+        produces:
+          - build_result
+          - pr
       assessor:
         kind: agent
-        prompts: { review: development/assess.md, revise: development/assess-revise.md }
-        inputs: { brief: brief_value, pr: latest(pr) }
+        prompts:
+          review: development/assess.md
+          revise: development/assess-revise.md
+        inputs:
+          brief: brief_value
+          pr: latest(pr)
         workspace: repository(input.workspace)
         evaluates: build_result
-        produces: [assessment]
-      pr_watch: { template: pr_watch }
-      # Keep the optional PR observation separate from the manual completion
-      # path, so an unavailable watcher cannot veto confirm_merged.
+        produces:
+          - assessment
+      pr_watch:
+        template: pr_watch
       prepare_observed_state:
         kind: code
         operation: value.publish
         when: pr_state_current
-        inputs: { value: latest(pr_state) }
+        inputs:
+          value: latest(pr_state)
         every: 2m
-        produces: [observed_state]
+        produces:
+          - observed_state
     reviews:
       assessment_review:
         of: assessment
         by: operator
         prompt: development/assessment-review.md
-        inputs: { brief: input.brief, build_result: latest(build_result), pr: latest(pr), assessment: latest(assessment) }
+        inputs:
+          brief: input.brief
+          build_result: latest(build_result)
+          pr: latest(pr)
+          assessment: latest(assessment)
         decisions:
-          accept: { effect: approve, label: Accept }
-          request_assessment_changes: { effect: request_changes, label: Request assessment changes,
-                                        fields: { feedback: "What must the assessment change?" } }
-          request_build_changes: { effect: request_changes, on: build_result, label: Send to builder,
-                                   fields: { feedback: "What must the builder change?" } }
+          accept:
+            effect: approve
+            label: Accept
+            payload: adjudication
+          request_assessment_changes:
+            effect: request_changes
+            label: Request assessment changes
+            fields:
+              feedback: What must the assessment change?
+          request_build_changes:
+            effect: request_changes
+            on: build_result
+            label: Send to builder
+            payload: adjudication
+            feedback_field: builder_feedback
       merge_confirmation:
         of: pr
         by: operator
         when: pr_published and approved(assessment) and not merged_pr and not approved(pr)
         prompt: development/merge-confirmation.md
-        inputs: { pr: latest(pr), pr_state: latest(pr_state) }
+        inputs:
+          pr: latest(pr)
+          pr_state: latest(pr_state)
         decisions:
-          confirm_merged: { effect: approve, label: Confirm merged }
-      # D5: a closed, unmerged PR counts as changes requested on the build.
-      pr_closed: { template: pr_closed }
+          confirm_merged:
+            effect: approve
+            label: Confirm merged
+      pr_closed:
+        template: pr_closed
     done_when: approved(assessment) and published(build_result) and pr_published and (merged_pr or approved(pr))
     outcome:
       cohort_id: brief_value.cohort_id
       repository_key: input.brief.repository_key
-      title: input.brief.title
+      title: input.cohort.title
       pr_url: latest(pr).pr_url
       branch: latest(pr).branch
       build_result: latest(build_result)
-
   integration:
-    input: { repository: repository, workspace: workspace, cohorts: list(completed_cohort), briefs: list(brief_body), final_merge_policy: final_merge_policy }
+    input:
+      repository: repository
+      workspace: workspace
+      cohorts: list(completed_cohort)
+      briefs: list(brief_body)
+      final_merge_policy: final_merge_policy
+      requirements: list(spec_requirement)
     let:
       pr_published: published(pr)
       pr_opened: pr_published and latest(pr).pr_url != ""
@@ -444,60 +675,107 @@ stages:
       assessment:
         kind: assessment
         schema: assessment_body
-        edit_policy: { kind: frozen_when_accepted }
+        edit_policy:
+          kind: frozen_when_accepted
         validate:
-          - check: every(filter(flatten(map(assessment.findings, item.subjects)), item.kind == "task"), contains(flatten(map(flatten(map(input.briefs, item.build_items)), item.task_ids)), item.id))
-            message: Integration task subjects must name tasks in applicable briefs.
-          - check: every(filter(flatten(map(assessment.findings, item.subjects)), item.kind == "build_item"), contains(map(input.briefs, item.cohort_id), item.cohort_id) and contains(map(require(lookup(input.briefs, cohort_id, require(item.cohort_id))).build_items, item.id), item.id))
-            message: Integration build-item subjects must name an item in the qualified cohort brief.
-      pr: { kind: external_reference, schema: pr_body }
-      pr_state: { kind: status_record, schema: pr_status }
-      manual_merge_target: { kind: external_reference, schema: pr_body }
-      observed_state: { kind: status_record, schema: pr_status }
+          - check: every(assessment.item_assessments, item.subject.kind == "requirement")
+            message: Integration assessment items must be canonical requirements.
+          - check: every(map(input.requirements, item.id), contains(map(assessment.item_assessments, item.subject.id), item))
+            message: Every integration requirement must be assessed.
+          - check: every(assessment.item_assessments, contains(map(input.requirements, item.id), item.subject.id))
+            message: Integration assessment items must name applicable canonical requirements.
+          - *a1
+          - *a2
+          - *a3
+          - *a4
+          - *a5
+      pr:
+        kind: external_reference
+        schema: pr_body
+      pr_state:
+        kind: status_record
+        schema: pr_status
+      manual_merge_target:
+        kind: external_reference
+        schema: pr_body
+      observed_state:
+        kind: status_record
+        schema: pr_status
     workers:
       integrator:
         kind: agent
-        prompts: { initial: development/integrate.md, revise: development/integrate-revise.md }
-        inputs: { repository: input.repository, cohorts: input.cohorts, briefs: input.briefs }
+        prompts:
+          initial: development/integrate.md
+          revise: development/integrate-revise.md
+        inputs:
+          repository: input.repository
+          cohorts: input.cohorts
+          briefs: input.briefs
+          requirements: input.requirements
         workspace: repository(input.workspace)
-        produces: [pr, assessment]
-      pr_watch: { template: pr_watch }
-      # Independent evidence paths allow manual merge confirmation when no PR
-      # reader is configured. Periodic copies follow revised inputs.
+        produces:
+          - pr
+          - assessment
+      pr_watch:
+        template: pr_watch
       prepare_manual_merge:
         kind: code
         operation: value.publish
         when: pr_published
-        inputs: { value: latest(pr) }
+        inputs:
+          value: latest(pr)
         every: 2m
-        produces: [manual_merge_target]
+        produces:
+          - manual_merge_target
       prepare_observed_state:
         kind: code
         operation: value.publish
         when: pr_state_current
-        inputs: { value: latest(pr_state) }
+        inputs:
+          value: latest(pr_state)
         every: 2m
-        produces: [observed_state]
+        produces:
+          - observed_state
     reviews:
       integration_review:
         of: assessment
         by: operator
         prompt: development/integration-review.md
-        inputs: { repository: input.repository, cohorts: input.cohorts, briefs: input.briefs, assessment: latest(assessment), pr: latest(pr), pr_state: latest(pr_state) }
-        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the integration change?" } } } }
+        inputs:
+          repository: input.repository
+          cohorts: input.cohorts
+          briefs: input.briefs
+          assessment: latest(assessment)
+          pr: latest(pr)
+          pr_state: latest(pr_state)
+          requirements: input.requirements
+        decisions:
+          accept:
+            effect: approve
+            label: Accept
+            payload: adjudication
+          request_changes:
+            effect: request_changes
+            label: Send to integrator
+            payload: adjudication
+            feedback_field: builder_feedback
+            on: assessment
       merge_confirmation:
         of: manual_merge_target
         by: operator
         when: published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)
         prompt: development/merge-confirmation.md
-        inputs: { pr: latest(pr), pr_state: latest(pr_state) }
+        inputs:
+          pr: latest(pr)
+          pr_state: latest(pr_state)
         decisions:
-          confirm_merged: { effect: approve, label: Confirm merged }
+          confirm_merged:
+            effect: approve
+            label: Confirm merged
       pr_closed:
         template: pr_closed
-        overrides: { of: pr }
-    # The independent evidence paths avoid reading an unobserved PR watch in the
-    # manual path; under allow_close_without_merge, an observed close suffices.
+        overrides:
+          of: pr
     done_when: approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(observed_state).state == "closed_unmerged"))))
     outcome:
       repository_key: input.repository.key

@@ -15,6 +15,7 @@ export interface CaptureSource {
   readonly definition_id: string;
   readonly predecessor_id: string | null;
   readonly subject_id: string | null;
+  readonly analysis_revision_ids?: readonly string[] | null;
   readonly brief_revision_ids?: readonly string[] | null;
   readonly by_id?: string | null;
 }
@@ -71,12 +72,24 @@ export function decodeCapture(input: unknown): Result<CaptureDelivery, CaptureEr
       brief_revision_ids.push(reference.value);
     }
   }
+  let analysis_revision_ids: string[] | null = null;
+  if (input.format === "observation.artifact-revision/v4" && source.analysis_revision_ids != null) {
+    if (!Array.isArray(source.analysis_revision_ids)) return failure("source.analysis_revision_ids", "expected revision ids or null");
+    analysis_revision_ids = [];
+    for (const id of source.analysis_revision_ids) {
+      const reference = revisionReference(id, prefix, "analysis_revision_ids");
+      if (!reference.ok) return reference;
+      if (reference.value === null) return failure("source.analysis_revision_ids", "null list entry");
+      analysis_revision_ids.push(reference.value);
+    }
+  }
   if (!nonempty(input.recorded_at) || Number.isNaN(Date.parse(input.recorded_at))) return failure("recorded_at", "valid recorded_at is required");
   if (!Object.hasOwn(input, "body") || input.body === null) return failure("body", "a non-null body is required");
   const digest = canonicalDigest(input.body);
   if (!digest.ok) return failure("body", digest.error.detail);
   if (input.body_digest !== digest.value) return failure("body_digest", "body_digest does not match the canonical body");
   const envelope: CaptureEnvelope = { ...(input as unknown as CaptureEnvelope),
-    source: { ...(source as unknown as CaptureSource), predecessor_id: predecessor.value, subject_id: subject.value, brief_revision_ids } };
+    source: { ...(source as unknown as CaptureSource), predecessor_id: predecessor.value, subject_id: subject.value, brief_revision_ids,
+      ...(Object.hasOwn(source, "analysis_revision_ids") ? { analysis_revision_ids } : {}) } };
   return ok({ local_revision_id: revision_id.slice(prefix.length), envelope });
 }

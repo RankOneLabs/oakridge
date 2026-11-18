@@ -1,10 +1,16 @@
+import { parseAdjudication, selectReviewedAssessmentId, type Adjudication } from "../domain/adjudication";
+import type { Writer } from "../core-client/core-types";
+import type { ReviewDecisionRead } from "../storage/read-store";
+import type { ArtifactSchemaVersions } from "../storage/read-store";
 import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
-import type { EngineInputs, PinnedPrompt } from "../domain/effect-instruction";
+import type { BlockerAuthor, BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
+import type { ReviewHistoryEngineInputs } from "../effects/session-prompt";
+import type { PinnedPrompt } from "../domain/effect-instruction";
 import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
 import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { RevisionRef, RunRead, RunSummaryRead, UnitSummaryRecord } from "../storage/read-store";
-import type { ArtifactRevisionRecord, AttemptRecord, ReviewDecisionRecord, UnitRecord } from "../storage/schema-records";
+import type { ArtifactRevisionRecord, AttemptRecord, UnitRecord } from "../storage/schema-records";
 import { selectAttemptWorkerKey, selectAttention, selectLatestAttempts, type Attention, type UnitAttention } from "./attention";
 import { EMPTY_PAYLOAD, schemaKey, selectDecisionPayloadType, typeSchemaKey } from "./schema-view";
 import { ROOT_UNIT_KEY, selectCollectionKey, selectUnitKey, selectUnitLabel, selectUnitTree, titleCase } from "./unit-label";
@@ -16,7 +22,7 @@ export type BodyValue = JsonValue;
 export interface AttemptIntentView {
   readonly input_provenance: InputProvenanceView;
   readonly inputs: BodyValue;
-  readonly engine_inputs: EngineInputs;
+  readonly engine_inputs: ReviewHistoryEngineInputs;
   readonly prompt: PinnedPrompt | null;
 }
 
@@ -42,6 +48,8 @@ export type AttemptStatusKind = AttemptStatus["kind"];
 export interface AttemptFailure { readonly code: string; readonly detail: string }
 
 export interface ArtifactRevisionView {
+  /** Identity of the pinned artifact contract, shared with observation capture. */
+  readonly artifact_schema_version: string | null;
   readonly id: string;
   readonly run_id: RunId;
   readonly unit_id: UnitId;
@@ -79,6 +87,8 @@ export type DecisionSubmit =
 export interface DecisionField { readonly key: string; readonly label: string }
 /** One decision the operator can make on a unit now. */
 export interface DecisionDefinition {
+  readonly is_available?: boolean;
+  readonly disabled_reason?: string | null;
   /** Unique within the unit: the decision key, `<review>:<decision>` where a stage reuses a key across reviews, `retry:<worker>`, or `cancel`. */
   readonly key: string;
   readonly label: string;
@@ -96,13 +106,20 @@ export interface RevisionDecision {
   readonly effect: DeclaredDecisionEffect;
   readonly target_revision_id: string;
   readonly payload: BodyValue;
+  readonly assessment_revision_id?: string | null;
+  readonly adjudication?: Adjudication | null;
+  readonly actor?: Writer | null;
   readonly created_at: Date;
 }
-export const selectRevisionDecision = (decision: ReviewDecisionRecord): RevisionDecision => ({
-  id: decision.id, review: decision.review, decision: decision.decision, effect: decision.effect,
-  target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue, created_at: decision.created_at });
+export function selectRevisionDecision(decision: ReviewDecisionRead, assessment_revision_id?: string | null): RevisionDecision {
+  const adjudication = ["assessment_review", "integration_review"].includes(decision.review) ? parseAdjudication(decision.payload) : null;
+  return { id: decision.id, review: decision.review, decision: decision.decision, effect: decision.effect,
+    target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue, created_at: decision.created_at,
+    ...(adjudication ? { adjudication, assessment_revision_id: assessment_revision_id ?? decision.target_revision_id, actor: decision.actor ?? null } : {}) };
+}
 
 export interface UnitView {
+  readonly blocker?: BlockerHistory | null;
   readonly input_provenance: InputProvenanceView;
   readonly unit_id: UnitId;
   readonly run_id: RunId;
@@ -155,16 +172,27 @@ export const selectAttemptId = (attempt: Pick<AttemptRecord, "action_id" | "seq"
  * The attempt that published a revision. A revision records only its action, so this is the latest attempt of that
  * action opened by then: commit stamps both under the run lock, and a retry opens after every revision written before it.
  */
+export function selectPublishingAttempt<Attempt extends Pick<AttemptRecord, "action_id" | "seq" | "created_at">>(
+  revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">, attempts: readonly Attempt[]): Attempt | null {
+  return attempts.filter((attempt) => attempt.action_id === revision.by_id && attempt.created_at.getTime() <= revision.created_at.getTime())
+    .reduce<Attempt | null>((latest, attempt) => latest === null || attempt.seq > latest.seq ? attempt : latest, null);
+}
 export function selectPublishingAttemptId(revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">,
   attempts: readonly Pick<AttemptRecord, "action_id" | "seq" | "created_at">[]): string | null {
-  const publisher = attempts.filter((attempt) => attempt.action_id === revision.by_id && attempt.created_at.getTime() <= revision.created_at.getTime())
-    .reduce<Pick<AttemptRecord, "action_id" | "seq"> | null>((latest, attempt) => latest === null || attempt.seq > latest.seq ? attempt : latest, null);
+  const publisher = selectPublishingAttempt(revision, attempts);
   return publisher === null ? null : selectAttemptId(publisher);
 }
 
 /** One artifact's revisions, oldest first, numbered from 1. */
-export function selectRevisionViews(revisions: readonly ArtifactRevisionRecord[], attempts: readonly AttemptRecord[]): readonly ArtifactRevisionView[] {
+export interface RevisionViewsInput {
+  readonly revisions: readonly ArtifactRevisionRecord[];
+  readonly attempts: readonly AttemptRecord[];
+  readonly versions: ArtifactSchemaVersions;
+  readonly stage: string;
+}
+export function selectRevisionViews({ revisions, attempts, versions, stage }: RevisionViewsInput): readonly ArtifactRevisionView[] {
   return [...revisions].sort((left, right) => left.seq - right.seq).map((revision) => ({ id: revision.id, run_id: revision.run_id, unit_id: revision.unit_id,
+    artifact_schema_version: versions[stage]?.[revision.artifact] ?? null,
     artifact_key: revision.artifact, attempt_id: selectPublishingAttemptId(revision, attempts), body: revision.body as BodyValue,
     predecessor_id: revision.predecessor_id, subject_id: revision.subject, created_at: revision.created_at, number: revision.seq }));
 }
@@ -181,13 +209,13 @@ export const isReviewable = (stage: ParsedStage, artifact: string): boolean =>
   Object.values(stage.reviews ?? {}).some((review) => review.of === artifact && review.by === "operator");
 /** The core refuses an operator's edit of an artifact a code worker creates. */
 export const isEditable = (stage: ParsedStage, artifact: string): boolean =>
-  Object.values(stage.workers).some((worker) => worker.kind === "agent" && worker.produces.includes(artifact));
+  artifact !== "blocker" && Object.values(stage.workers).some((worker) => worker.kind === "agent" && worker.produces.includes(artifact));
 
 function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly ArtifactView[] {
   const stage = unit.stage === null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
   if (!stage) return [];
   return Object.keys(stage.artifacts).sort().map((artifact) => {
-    const revisions = selectRevisionViews(revisionsOf(read.revisions, unit.id, artifact), read.attempts);
+    const revisions = selectRevisionViews({ revisions: revisionsOf(read.revisions, unit.id, artifact), attempts: read.attempts, versions: read.definition.artifact_schema_versions ?? {}, stage: unit.stage ?? "" });
     return { run_id: unit.run_id, unit_id: unit.id, artifact_key: artifact, schema: selectArtifactSchema(stage, artifact),
       is_reviewable: isReviewable(stage, artifact), is_editable: isEditable(stage, artifact),
       revision_count: revisions.length, latest_revision: revisions.at(-1) ?? null };
@@ -206,18 +234,19 @@ function reviewDecisions(stage: ParsedStage, attention: UnitAttention): readonly
     if (!review) return [];
     return Object.entries(review.decisions).sort(([left], [right]) => left.localeCompare(right)).flatMap(([key, decision]) => {
       // The core names each decision's target; a decision it does not list is not legal now.
-      const target = awaiting.decisions.find((resolved) => resolved.decision === key)?.target;
+      const resolved = awaiting.decisions.find((resolved) => resolved.decision === key);
+      const target = resolved?.target;
       if (target === undefined) return [];
-      return [{ key: decisionKey(stage, awaiting.review, key), label: decision.label, payload_schema: schemaKey(selectDecisionPayloadType(decision)),
+      return [{ is_available: resolved?.is_available ?? true, disabled_reason: resolved?.disabled_reason ?? null, key: decisionKey(stage, awaiting.review, key), label: decision.label, payload_schema: schemaKey(selectDecisionPayloadType(decision)),
         fields: Object.entries(decision.fields ?? {}).map(([field, label]) => ({ key: field, label })),
         submit: { kind: "review", review: awaiting.review, decision: key, effect: decision.effect, target_revision_id: target } }];
     });
   });
 }
 const retryDecisions = (attention: UnitAttention): readonly DecisionDefinition[] => attention.stalled.map((stalled) => ({
-  key: `retry:${stalled.worker}`, label: `Retry ${titleCase(stalled.worker)}`, payload_schema: schemaKey(EMPTY_PAYLOAD), fields: [],
+  is_available: true, disabled_reason: null, key: `retry:${stalled.worker}`, label: `Retry ${titleCase(stalled.worker)}`, payload_schema: schemaKey(EMPTY_PAYLOAD), fields: [],
   submit: { kind: "retry", worker: stalled.worker } }));
-const CANCEL: DecisionDefinition = { key: "cancel", label: "Cancel run", payload_schema: schemaKey(EMPTY_PAYLOAD), fields: [], submit: { kind: "cancel" } };
+const CANCEL: DecisionDefinition = { is_available: true, disabled_reason: null, key: "cancel", label: "Cancel run", payload_schema: schemaKey(EMPTY_PAYLOAD), fields: [], submit: { kind: "cancel" } };
 
 /** What the operator may decide on a unit now: its awaiting reviews' decisions, a retry per stalled worker, and cancel on a live run's root. */
 export function selectAvailableDecisions(read: RunSummaryRead, unit: UnitSummaryRecord, attention: UnitAttention): readonly DecisionDefinition[] {
@@ -239,13 +268,58 @@ export function selectUnitInputFields(unit: UnitView, fields: readonly string[])
 export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitAttention): UnitView {
   const tree = selectUnitTree(read.units, read.definition.workflow);
   return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
+    blocker: selectBlockerHistory(read, unit),
     input_provenance: selectInputProvenance(unit.input_provenance),
     stage: unit.stage, collection_key: selectCollectionKey(unit), input: unit.input as BodyValue,
     depends_on: read.dependencies.filter((edge) => edge.unit_id === unit.id).map((edge) => edge.depends_on_id),
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),
     attention: selectAttention(attention, read),
     decisions: selectAvailableDecisions(read, unit, attention),
-    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map(selectRevisionDecision),
+    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map(decision => selectRevisionDecision(decision, selectReviewedAssessmentId({ decision, revisions: read.revisions }))),
     attempts: selectAttemptViews(read.attempts.filter((attempt) => attempt.unit_id === unit.id), read.intents),
     artifacts: selectArtifactViews(read, unit) };
+}
+
+/** Bodies mirror the reserved blocker and answer schemas supplied by the core. */
+interface BlockerBody { readonly text: string; readonly suggested_choices?: readonly string[] | null }
+interface BlockerAnswerBody { readonly answer: string }
+function isBlockerBody(body: unknown): body is BlockerBody {
+  return typeof body === "object" && body !== null && "text" in body && typeof body.text === "string"
+    && (!("suggested_choices" in body) || body.suggested_choices === null
+      || Array.isArray(body.suggested_choices) && body.suggested_choices.every((choice: unknown) => typeof choice === "string"));
+}
+function isBlockerAnswerBody(body: unknown): body is BlockerAnswerBody {
+  return typeof body === "object" && body !== null && "answer" in body && typeof body.answer === "string";
+}
+
+/** The worker attempt that published a revision (see `selectPublishingAttempt`); null for an operator edit. */
+export function selectRevisionAuthor(attempts: readonly AttemptRecord[], revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">): BlockerAuthor | null {
+  if (revision.by_id === null) return null;
+  const attempt = selectPublishingAttempt(revision, attempts);
+  if (attempt === null) return null;
+  return { worker: attempt.worker, action_id: attempt.action_id, attempt_seq: attempt.seq, session_id: attempt.kbbl_session_id };
+}
+
+function selectBlockerHistory(read: RunRead, unit: UnitRecord): BlockerHistory | null {
+  const revisions = read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === "blocker")
+    .sort((left, right) => left.seq - right.seq).flatMap((revision): BlockerRevision[] => {
+      if (!isBlockerBody(revision.body)) return [];
+      return [{ revision_id: revision.id, text: revision.body.text,
+        suggested_choices: revision.body.suggested_choices ?? null, author: selectRevisionAuthor(read.attempts, revision),
+        created_at: revision.created_at }];
+    });
+  const latest = revisions.at(-1);
+  if (!latest) return null;
+  const decisions = read.decisions.filter((decision) => decision.unit_id === unit.id && decision.review === "blocker_review")
+    .flatMap((decision): BlockerAnswer[] => {
+      if (!isBlockerAnswerBody(decision.payload)) return [];
+      return [{ id: decision.id, target_revision_id: decision.target_revision_id, decision: decision.decision,
+        answer: decision.payload.answer, actor: decision.actor ?? null, created_at: decision.created_at }];
+    });
+  const history: BlockerHistoryEntry[] = [
+    ...revisions.map((revision): BlockerHistoryEntry => ({ kind: "revision", revision })),
+    ...decisions.map((decision): BlockerHistoryEntry => ({ kind: "decision", decision })),
+  ].sort((left, right) => (left.kind === "revision" ? left.revision.created_at : left.decision.created_at).getTime()
+    - (right.kind === "revision" ? right.revision.created_at : right.decision.created_at).getTime());
+  return { is_open: unit.blocked_reason?.kind === "blocker", available_decisions: unit.review_prompts?.blocker_review?.decisions ?? [], latest, revisions, decisions, history };
 }

@@ -36,6 +36,9 @@ pub(crate) enum StageExpr {
         right: Box<StageExpr>,
     },
     Len(Box<StageExpr>),
+    /// Whether an optional field read is set: false when the field is
+    /// omitted or null, unresolved only when the record holding it is.
+    Present(Box<StageExpr>),
     Flatten(Box<StageExpr>),
     Unique(Box<StageExpr>),
     Published(String),
@@ -126,7 +129,7 @@ mod lower;
 mod parse;
 pub(crate) use check::infer;
 pub(crate) use guaranteed_artifacts as proven_artifacts;
-use lower::resolve;
+use lower::{present_parts, resolve};
 pub(crate) use parse::parse_expression;
 pub(crate) use parse::parse_repository;
 #[cfg(test)]
@@ -328,6 +331,7 @@ fn expand_lets_bounded(
             right: Box::new(expand(*right, visiting)?),
         },
         StageExpr::Len(inner) => StageExpr::Len(Box::new(expand(*inner, visiting)?)),
+        StageExpr::Present(inner) => StageExpr::Present(Box::new(expand(*inner, visiting)?)),
         StageExpr::Flatten(inner) => StageExpr::Flatten(Box::new(expand(*inner, visiting)?)),
         StageExpr::Unique(inner) => StageExpr::Unique(Box::new(expand(*inner, visiting)?)),
         StageExpr::Every { source, predicate } => StageExpr::Every {

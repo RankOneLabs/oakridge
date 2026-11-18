@@ -1,7 +1,13 @@
 // Artifacts, review gates, cohort merges and the review inbox on the operator surface.
 
 import type { RepositoryKey, RunState, WorktreeMetadata } from "./run-types";
+import type { OperatorDecisionDefinition } from "./operator-contracts/projections/unit-view";
 export interface ArtifactRevision {
+  current_read?: import("./lib/versioned-body").CurrentArtifactRead;
+  context?: import("./lib/current-context").CurrentArtifactContext;
+  received_context?: import("./lib/received-context").ReceivedContext | null;
+  artifact_schema_version?: string | null;
+  component_id?: string | null;
   id: string;
   status: ArtifactRevisionStatus;
   created_at: string;
@@ -65,6 +71,10 @@ export interface ArtifactSource {
 }
 
 export interface ArtifactDetail {
+  schema?: string;
+  artifact_schema_version?: string | null;
+  context?: import("./lib/current-context").CurrentArtifactContext;
+  received_context?: import("./lib/received-context").ReceivedContext | null;
   id: string;
   type_id: string;
   component_id: string | null;
@@ -79,6 +89,9 @@ export interface ArtifactDetail {
 }
 
 export interface ParkedGate {
+  requires_adjudication?: boolean;
+  blocker?: import("./operator-contracts/projections/history-view").OperatorBlockerHistory | null;
+  requirement_ids?: readonly string[];
   id: string;
   gate_type: string;
   gate_step: string | null;
@@ -91,6 +104,8 @@ export interface ParkedGate {
   resume_actions: string[];
   /** Full server offer, including decisions hidden from the generic resume buttons. */
   offered_decisions: string[];
+  /** Server definitions preserve each decision's declared fields and availability. */
+  decision_definitions?: readonly OperatorDecisionDefinition[];
   pr_url?: string | null;
   /** The run's persisted state at read time — a gate stays listed whatever it is. */
   run_state: RunState;
@@ -116,6 +131,7 @@ export interface SentReviewFeedback {
 }
 
 export interface GateResumeRequest {
+  adjudication?: import("./operator-contracts/domain/adjudication").OperatorAdjudication;
   idempotency_key: string;
   artifact_revision_id: string;
   action: string;

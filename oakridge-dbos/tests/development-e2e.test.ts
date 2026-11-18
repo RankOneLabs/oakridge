@@ -1,4 +1,5 @@
 import { commitTestDefinition } from "./committed-fixture";
+import { APPROVED_ANALYSIS, REVISED_ANALYSIS, APPROVED_SPEC, COHORTS, developmentBrief, COHORT_ASSESSMENT, INTEGRATION_ASSESSMENT, ACCEPT_ADJUDICATION, INTEGRATION_REPLACEMENT_ADJUDICATION } from "./development-contract-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,13 +31,7 @@ import { replayIntoObservation, type ReplayReport } from "../scripts/observation
  */
 
 const root = resolve(import.meta.dir, "../..");
-const APPROVED_SPEC = "Approved specification from analysis.";
-const APPROVED_ANALYSIS = { summary: "Approved analysis for spec update.", source_spec_refs: ["Goal"],
-  findings: [], requirements: [{ id: "req-a", description: "Build the thing.", status: "implementable" }], risks: [], proposed_spec_updates: [
-    { section: "Goal", change: "Use the approved specification.", reason: "The analysis resolved the requirement.", finding_ids: [] },
-  ] };
-const REVISED_ANALYSIS = { ...APPROVED_ANALYSIS, summary: "Revised analysis for spec update." };
-const BODY_SCHEMAS = { spec: "text", analysis: "analysis_body", plan: "plan_body", tasks: "tasks_body", brief: "brief_body", build_result: "build_body",
+const BODY_SCHEMAS = { spec: "spec_body", analysis: "analysis_body", plan: "plan_body", brief: "brief_body", build_result: "build_body",
   assessment: "assessment_body", pr: "pr_body" } as const;
 interface DevelopmentRunOutcome {
   readonly cohorts: readonly { readonly cohort_id: string }[];
@@ -46,7 +41,6 @@ const VIEWER_COMPONENTS = {
   "dev-spec-analysis-viewer": "SpecAnalysisViewer",
   "dev-spec-viewer": "SpecViewer",
   "dev-plan-viewer": "PlanViewer",
-  "dev-tasks-viewer": "TasksViewer",
   "dev-build-brief-viewer": "BuildBriefViewer",
   "dev-build-result-viewer": "BuildResultReview",
   "dev-assessment-viewer": "AssessmentReview",
@@ -113,9 +107,6 @@ class StubForge {
 const workerOf = (turn: StubTurn): string => /worker `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
 const memberOf = (turn: StubTurn): string => (/This task belongs to unit `([^`]+)`/.exec(turn.task)?.[1]
   ?? /on unit `([^`]+)`/.exec(turn.preamble)?.[1] ?? "").split("/").at(-1) ?? "";
-const COHORTS = [{ id: "a", depends_on: [] as string[] }, { id: "b", depends_on: ["a"] }];
-const dependenciesOf = (id: string): string[] => COHORTS.find((cohort) => cohort.id === id)?.depends_on ?? [];
-
 /** The development agents: each publishes a well-formed body, and a builder or integrator opens its pull request. */
 function developmentAgents(forge: StubForge, timeline: Map<string, number>): AgentScript {
   return async (turn) => {
@@ -131,23 +122,15 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
       case "spec_editor":
         if (!turn.task.includes("analysis for spec update")) throw new Error("spec editor did not receive the approved analysis");
         await publish("spec", APPROVED_SPEC);
-        await publish("tasks", { tasks: [{ id: "task-a", description: "Build the thing.", requirement_ids: ["req-a"] }] });
         break;
       case "planner":
-        if (!turn.task.includes(APPROVED_SPEC)) throw new Error("planner did not receive the approved specification");
-        await publish("plan", { summary: "Two cohorts.", dependency_order: ["a", "b"], scope: { in_scope: ["thing"], out_of_scope: [] },
-          acceptance_criteria: ["it works"], risks: [], cohorts: COHORTS.map((cohort) => ({ ...cohort, repository_key: "app",
-            title: `Cohort ${cohort.id}`, scope: "part", description: null, files_in_scope: [],
-            decisions: [{ id: "choice", text: "Use the simple implementation." }],
-            acceptance_criteria: [{ id: "task-a", text: "it works", decision_ids: ["choice"] }] })) });
+        if (!turn.task.includes(APPROVED_SPEC.objective)) throw new Error("planner did not receive the approved specification");
+        await publish("plan", { cohorts: COHORTS });
         break;
       case "writer":
-        if (!turn.task.includes(APPROVED_SPEC)) throw new Error("brief writer did not receive the approved specification");
-        await publish("brief", { cohort_id: member, repository_key: "app", title: `Cohort ${member}`, depends_on: dependenciesOf(member),
-          goal: "Build it.", files_in_scope: [],
-          decisions_made: [{ id: "choice", decision: "Use the simple implementation.", rationale: "It meets the task." }],
-          approaches_rejected: [{ id: "alternative", approach: "Use a complex implementation.", reason: "Unneeded complexity.", decision_ids: ["choice"] }],
-          build_items: [{ id: "item-a", description: "it works", task_ids: ["task-a"], decision_ids: ["choice"], verification: ["tests"] }], next_action: "build" });
+        if (!turn.task.includes(APPROVED_SPEC.requirements[0].text) || !turn.task.includes(`Contribution ${member}`))
+          throw new Error("brief writer did not receive its resolved assignment");
+        await publish("brief", developmentBrief(member));
         break;
       case "builder": {
         timeline.set(`build:${member}`, Date.now());
@@ -158,16 +141,10 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
         break;
       }
       case "assessor":
-        await publish("assessment", { head_sha: "abc123", verdict: "pass", findings: [{ subjects: [{ kind: "build_item", id: "item-a" }], status: "met",
-          evidence: [{ kind: "test", ref: "development-e2e" }], description: "it works" }],
-          test_evidence: null, recommended_next_actions: [] }, turn.subject());
+        await publish("assessment", COHORT_ASSESSMENT, turn.subject());
         break;
       case "integrator":
-        await publish("assessment", { head_sha: "abc123", verdict: "pass", findings: [{ subjects: [], status: "met",
-          evidence: [{ kind: "test", ref: "integration suite", detail: "Both cohort changes pass together on the integration branch." }],
-          description: "Cross-cohort integration" }],
-          test_evidence: { passed: 2, failed: 0, output: null, summary: "Integration suite", cargo_test_output: null },
-          recommended_next_actions: [] });
+        await publish("assessment", INTEGRATION_ASSESSMENT);
         await publish("pr", { pr_url: forge.open("integration", "main"), branch: "integration", summary: "Both cohorts.", review_status: "ready" });
         break;
       default:
@@ -227,7 +204,7 @@ const api = async (method: string, path: string, body?: unknown): Promise<Respon
 const segment = encodeURIComponent;
 
 /** The decision the scripted operator makes on each review, and what it does after. */
-const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", spec_review: "accept", tasks_review: "accept", plan_review: "accept", brief_review: "accept",
+const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", spec_review: "accept", plan_review: "accept", brief_review: "accept",
   assessment_review: "accept", integration_review: "accept", merge_confirmation: "confirm_merged" };
 const capturedAdapterFixtures = new Set<string>();
 async function captureAdapterFixture(run_id: string, name: string): Promise<void> {
@@ -277,7 +254,7 @@ async function operate(run_id: string, decided: Set<string>, confirmation: "none
       if (review === "merge_confirmation" && unit.stage === "integration") await captureAdapterFixture(run_id, "v2-integration-merge");
       if (review === "merge_confirmation" && unit.stage === "cohort") forge.merge(`cohort-${unit.collection_key}`);
       const response = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit.id)}/reviews/${review}/decide`,
-        { request_id: crypto.randomUUID(), decision, target, payload: {} });
+        { request_id: crypto.randomUUID(), decision, target, payload: review === "assessment_review" || review === "integration_review" ? ACCEPT_ADJUDICATION : {} });
       if (response.status !== 201) throw new Error(`${review} on ${unit.id} refused: ${await response.text()}`);
       decided.add(key);
       if (review === "assessment_review" && confirmation === "none") { forge.merge(`cohort-${unit.collection_key}`); timeline.set(`merge:${unit.collection_key}`, Date.now()); }
@@ -322,7 +299,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     (await (await api("GET", `/api/runs/${segment(run_id)}/units/${segment(unit)}/artifacts/${artifact}`)).json() as { readonly schema: string }).schema;
   const schemas = {
     spec: await schemaOf(unitOf("analysis"), "spec"), analysis: await schemaOf(unitOf("analysis"), "analysis"),
-    plan: await schemaOf(unitOf("planning"), "plan"), tasks: await schemaOf(unitOf("analysis"), "tasks"),
+    plan: await schemaOf(unitOf("planning"), "plan"),
     brief: await schemaOf(unitOf("brief", "a"), "brief"), build_result: await schemaOf(unitOf("cohort", "a"), "build_result"),
     assessment: await schemaOf(unitOf("cohort", "a"), "assessment"),
     integration_assessment: await schemaOf(unitOf("integration"), "assessment"), pr: await schemaOf(unitOf("integration"), "pr"),
@@ -375,11 +352,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }],
     b_built_after_a_merged: true,
     schemas: { ...BODY_SCHEMAS, integration_assessment: "assessment_body" },
-    integration_assessment: { head_sha: "abc123", verdict: "pass", findings: [{ subjects: [], status: "met",
-      evidence: [{ kind: "test", ref: "integration suite", detail: "Both cohort changes pass together on the integration branch." }],
-      description: "Cross-cohort integration" }],
-    test_evidence: { passed: 2, failed: 0, output: null, summary: "Integration suite", cargo_test_output: null },
-    recommended_next_actions: [] },
+    integration_assessment: INTEGRATION_ASSESSMENT,
     pr_states_change: [true, true, true],
     merged_cohorts_without_confirmation: ["a", "b"],
     run_summary: ["Two cohorts", ["app"], true],
@@ -390,7 +363,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   });
 }, 150_000);
 
-test("analysis, spec, and tasks need approval after joint republication", async () => {
+test("analysis and canonical spec need approval after revision", async () => {
   const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
@@ -422,8 +395,7 @@ test("analysis, spec, and tasks need approval after joint republication", async 
   const accepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/analysis_review/decide`,
     { request_id: crypto.randomUUID(), decision: "accept", target: revised, payload: {} });
   expect(accepted.status).toBe(201);
-  await eventually("spec and tasks publication", async () =>
-    await revisionCount("spec") === 1 && await revisionCount("tasks") === 1 ? true : null);
+  await eventually("canonical spec publication", async () => await revisionCount("spec") === 1 ? true : null);
   const specTarget = await eventually("revised spec review", async () => {
     const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
     return unit?.review_prompts.spec_review?.target ?? null;
@@ -438,44 +410,19 @@ test("analysis, spec, and tasks need approval after joint republication", async 
     const target = unit?.review_prompts.spec_review?.target;
     return target && target !== specTarget ? target : null;
   });
-  await eventually("spec and tasks republication after spec changes", async () =>
-    await revisionCount("spec") === 2 && await revisionCount("tasks") === 2 ? true : null);
-  expect([await revisionCount("spec"), await revisionCount("tasks")]).toEqual([2, 2]);
+  await eventually("canonical spec republication after changes", async () => await revisionCount("spec") === 2 ? true : null);
+  expect([await revisionCount("spec"), await revisionCount("tasks")]).toEqual([2, 0]);
   const specAccepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/spec_review/decide`,
     { request_id: crypto.randomUUID(), decision: "accept", target: revisedSpecTarget, payload: {} });
   expect(specAccepted.status).toBe(201);
-  const tasksTarget = await eventually("tasks review", async () => {
-    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
-    return unit?.review_prompts.tasks_review?.target ?? null;
-  });
-  const beforeTasksApproval = await db.selectFrom("authority.unit").select("status").where("id", "=", `${run_id}/planning`).executeTakeFirst();
-  expect(beforeTasksApproval?.status.kind).toBe("not_started");
-  const tasksChange = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/tasks_review/decide`,
-    { request_id: crypto.randomUUID(), decision: "request_changes", target: tasksTarget, payload: { feedback: "Clarify the task." } });
-  expect(tasksChange.status).toBe(201);
-  const revisedTasksTarget = await eventually("revised tasks review", async () => {
-    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
-    const target = unit?.review_prompts.tasks_review?.target;
-    return target && target !== tasksTarget ? target : null;
-  });
-  expect([await revisionCount("spec"), await revisionCount("tasks")]).toEqual([3, 3]);
-  const republishedSpecTarget = await eventually("spec review after task changes", async () => {
-    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
-    const target = unit?.review_prompts.spec_review?.target;
-    return target && target !== revisedSpecTarget ? target : null;
-  });
-  const specReaccepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/spec_review/decide`,
-    { request_id: crypto.randomUUID(), decision: "accept", target: republishedSpecTarget, payload: {} });
-  expect(specReaccepted.status).toBe(201);
-  const tasksAccepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/tasks_review/decide`,
-    { request_id: crypto.randomUUID(), decision: "accept", target: revisedTasksTarget, payload: {} });
-  expect(tasksAccepted.status).toBe(201);
+  const analysisUnit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirstOrThrow();
+  expect("tasks_review" in analysisUnit.review_prompts).toBe(false);
   const planning = await eventually("planning input", async () => {
     const unit = await db.selectFrom("authority.unit").select("input").where("id", "=", `${run_id}/planning`).executeTakeFirst();
     return unit?.input && typeof unit.input === "object" && "spec" in unit.input ? unit.input : null;
   });
-  expect(planning.spec).toBe(APPROVED_SPEC);
-  expect("tasks" in planning ? planning.tasks : null).toEqual({ tasks: [{ id: "task-a", description: "Build the thing.", requirement_ids: ["req-a"] }] });
+  expect(planning.spec).toEqual(APPROVED_SPEC);
+  expect("tasks" in planning).toBe(false);
   await api("POST", `/api/runs/${segment(run_id)}/cancel`, { request_id: crypto.randomUUID() });
 }, 90_000);
 
@@ -643,7 +590,7 @@ test("merge confirmation waits for the accepted assessment and closes again for 
   expect("merge_confirmation" in cohort.review_prompts).toBe(false);
 
   const accepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(cohort.id)}/reviews/assessment_review/decide`,
-    { request_id: crypto.randomUUID(), decision: "accept", target: cohort.review_prompts.assessment_review?.target, payload: {} });
+    { request_id: crypto.randomUUID(), decision: "accept", target: cohort.review_prompts.assessment_review?.target, payload: ACCEPT_ADJUDICATION });
   expect(accepted.status).toBe(201);
   await eventually("merge confirmation after the accepted assessment", async () =>
     (await prompts(cohort.id)).merge_confirmation ?? null, 120_000);
@@ -773,7 +720,7 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   forge.withhold_integration_observation = true;
   const requested = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}/reviews/integration_review/decide`,
     { request_id: crypto.randomUUID(), decision: "request_changes", target: old_review.target,
-      payload: { feedback: "Open a new integration PR." } });
+      payload: INTEGRATION_REPLACEMENT_ADJUDICATION });
   expect(requested.status).toBe(201);
   const replacement = await eventually("replacement integration PR to publish", async () => {
     const pr = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)
@@ -826,7 +773,7 @@ test("allow_close_without_merge completes on an observed close without claiming 
 }, 150_000);
 
 test("development artifact schemas and PWA viewer component IDs align", () => {
-  // The spec uses the built-in text schema; the other bodies use named schemas.
+  // All development bodies now use named schemas, including the canonical spec.
   // Read the registry as text rather than importing across the PWA boundary.
   const registry = readFileSync(resolve(root, "kbbl/core/pwa/oakridge/artifactRegistry.tsx"), "utf8");
   const workflow = developmentWorkflow();
@@ -851,7 +798,7 @@ async function replayDevelopmentStream(start: SourceEventCursor): Promise<Replay
 }
 
 // Runs last, over every run above. Observation's tests use hand-written events,
-// so real artifact shapes (a markdown spec body) and a service started partway
+// so real artifact shapes (a structured canonical spec) and a service started partway
 // through a run (a decision on a revision it never captured) are checked here.
 test("every committed development event reaches observation, from the start and from partway through", async () => {
   const from_start = await replayDevelopmentStream(INITIAL_SOURCE_CURSOR);

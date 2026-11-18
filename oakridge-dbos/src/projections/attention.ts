@@ -87,7 +87,7 @@ interface StallSources {
  * active, its latest attempt failed, and no retry is pending for it.
  */
 export function selectStalledWorkers(sources: StallSources): readonly StalledWorker[] {
-  const active = new Set(sources.units.filter((unit) => unit.status.kind === "active" && unit.blocked_reason === null).map((unit) => unit.id));
+  const active = new Set(sources.units.filter((unit) => unit.status.kind === "active" && (unit.blocked_reason === null || unit.blocked_reason.kind === "blocker")).map((unit) => unit.id));
   return [...selectLatestAttempts(sources.attempts).values()].flatMap((attempt) => {
     if (attempt.status.kind !== "failed" || !active.has(attempt.unit_id)) return [];
     if (hasUnspentRetry(attempt, sources)) return [];
@@ -153,6 +153,7 @@ export function selectRunAttention(read: RunSummaryRead): readonly UnitAttention
 
 /** A blocked unit's reason, naming the units it waits on by their labels. */
 function blockedReason(reason: BlockedReason, read: RunSummaryRead): string {
+  if (reason.kind === "blocker") return "worker blocked: needs an operator answer";
   if (reason.kind === "capacity") return `waiting for capacity in ${reason.pool}`;
   const tree = selectUnitTree(read.units, read.definition.workflow);
   const labels = reason.units.map((id) => {
@@ -168,8 +169,11 @@ export function selectAttention(attention: UnitAttention, read: RunSummaryRead):
   if (run_stall) return { kind: "stalled", detail: selectRunStallDetail(run_stall) };
   const [stalled] = attention.stalled;
   if (stalled) return { kind: "stalled", detail: selectStalledWorkerDetail(stalled) };
+  if (attention.blocked?.kind === "blocker" && attention.awaiting.some((review) => review.review === "blocker_review"))
+    return { kind: "waiting", reason: "worker blocked: needs an operator answer" };
   const [awaiting] = attention.awaiting;
   if (awaiting) return { kind: "waiting", reason: `awaiting ${awaiting.review} review` };
+  if (attention.blocked?.kind === "blocker") return null;
   if (attention.blocked) return { kind: "waiting", reason: blockedReason(attention.blocked, read) };
   return null;
 }

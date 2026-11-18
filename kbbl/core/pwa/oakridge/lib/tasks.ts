@@ -57,3 +57,5 @@ export function parseTasks(body: unknown): Parsed<Tasks> {
   }
   return ok({ tasks });
 }
+
+export { selectRunIdentityRollup, type RunIdentityRollup } from "./requirement-rollup";

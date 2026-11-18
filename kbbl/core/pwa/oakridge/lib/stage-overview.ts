@@ -1,3 +1,4 @@
+import { selectRunIdentityRollup } from "./tasks";
 // Named selectors over the authority unit view and observation reads; no stage topology is assumed.
 import { itemSelectionKey } from "./grading";
 import type { ArtifactId, Sid } from "../../lib/ids";
@@ -79,8 +80,11 @@ export function selectStageEvaluation({ source, stages, findings, tasks, statuse
 }
 
 export interface StageRow extends Pick<OperatorUnitView, "unit_id" | "label" | "stage"> { readonly status: OperatorUnitView["status"]["kind"] }
-export const selectStageRows = (units: readonly OperatorUnitView[]): readonly StageRow[] => units.filter((unit) => unit.stage !== null)
-  .map((unit) => ({ unit_id: unit.unit_id, label: unit.label, stage: unit.stage, status: unit.status.kind }));
+export function selectStageRows(units: readonly OperatorUnitView[]): readonly StageRow[] {
+  const isRequirements = selectRunIdentityRollup(units).label === "Requirements";
+  return units.filter((unit) => unit.stage !== null && (!isRequirements || unit.stage !== "tasks"))
+    .map((unit) => ({ unit_id: unit.unit_id, label: unit.label, stage: unit.stage, status: unit.status.kind }));
+}
 
 type StageQuestionStatus = ObservationItemStatusResponse["questions"]["items"][number];
 export interface StageEvaluator extends Pick<StageQuestionStatus["machine"]["items"][number], "evaluator_definition_id" | "backend_kind" | "model"> {}
@@ -111,4 +115,11 @@ export function selectEvaluationQuestions(status: ObservationItemStatusResponse,
       evaluators: question.machine.items.map(({ evaluator_definition_id, backend_kind, model }) => ({ evaluator_definition_id, backend_kind, model })),
       machine: is_revealed ? question.machine : null, answers: is_revealed ? question.answers : null, superseded_answers: is_revealed ? question.superseded_answers : null };
   });
+}
+
+/** Run labels and display topology follow the approved identity artifact. */
+export function selectIdentityStageOverview(units: readonly OperatorUnitView[]) {
+  const identity = selectRunIdentityRollup(units);
+  const rows = selectStageRows(units);
+  return { ...identity, stages: identity.label === "Requirements" ? rows.filter((row) => row.stage !== "tasks") : rows };
 }

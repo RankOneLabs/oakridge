@@ -3,10 +3,10 @@
 
 import type { OperatorFeedbackEntry, OperatorRevisionState } from "../core-client/core-types";
 
+export interface OperatorPinnedPrompt { readonly path: string; readonly digest: string }
+
 export interface OperatorEngineInputs {
   readonly previous: OperatorRevisionState | null;
   readonly feedback: readonly OperatorFeedbackEntry[];
   readonly subject: OperatorRevisionState | null;
 }
-
-export interface OperatorPinnedPrompt { readonly path: string; readonly digest: string }

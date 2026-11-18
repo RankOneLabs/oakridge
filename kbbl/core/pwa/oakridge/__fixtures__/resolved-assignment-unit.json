@@ -1,0 +1,258 @@
+{
+  "unit_id": "run/brief/A",
+  "run_id": "run",
+  "unit_key": "briefs",
+  "label": "Cohort A",
+  "stage": "brief",
+  "collection_key": "A",
+  "input": {
+    "assignment": {
+      "cohort": {
+        "id": "A",
+        "repository_key": "oakridge",
+        "title": "Cohort A",
+        "scope": "Bounded scope A",
+        "allocations": [
+          {
+            "requirement_id": "R1",
+            "contribution": "Display"
+          },
+          {
+            "requirement_id": "R3",
+            "contribution": "Choice"
+          }
+        ],
+        "depends_on": [],
+        "rationale": "Reason A"
+      },
+      "requirements": [
+        {
+          "id": "R1",
+          "text": "Render canonical requirements",
+          "acceptance_conditions": [
+            "Visible R1"
+          ],
+          "source_refs": [
+            "\u00a71"
+          ],
+          "analysis_finding_ids": [
+            "F1"
+          ]
+        },
+        {
+          "id": "R3",
+          "text": "Choose display",
+          "acceptance_conditions": [
+            "Visible R3"
+          ],
+          "source_refs": [
+            "\u00a73"
+          ],
+          "analysis_finding_ids": [
+            "F5"
+          ]
+        }
+      ]
+    }
+  },
+  "input_provenance": {
+    "status": "recorded",
+    "entries": [
+      {
+        "input": "assignment",
+        "revision_id": "plan:1",
+        "unit": "run/planning"
+      },
+      {
+        "input": "assignment",
+        "revision_id": "spec:2",
+        "unit": "run/analysis"
+      }
+    ]
+  },
+  "depends_on": [],
+  "status": {
+    "kind": "active"
+  },
+  "outcome": null,
+  "is_terminal": false,
+  "attention": {
+    "kind": "waiting",
+    "reason": "blocker"
+  },
+  "decisions": [
+    {
+      "key": "clarify",
+      "label": "Clarify",
+      "payload_schema": "answer",
+      "fields": [
+        {
+          "key": "answer",
+          "label": "Your answer"
+        }
+      ],
+      "submit": {
+        "kind": "review",
+        "review": "blocker_review",
+        "decision": "clarify",
+        "effect": "approve",
+        "target_revision_id": "blocker:2"
+      }
+    },
+    {
+      "key": "override",
+      "label": "Override \u2014 proceed anyway",
+      "payload_schema": "answer",
+      "fields": [
+        {
+          "key": "answer",
+          "label": "Your answer"
+        }
+      ],
+      "submit": {
+        "kind": "review",
+        "review": "blocker_review",
+        "decision": "override",
+        "effect": "approve",
+        "target_revision_id": "blocker:2"
+      }
+    },
+    {
+      "key": "discuss",
+      "label": "Discuss",
+      "payload_schema": "answer",
+      "fields": [
+        {
+          "key": "answer",
+          "label": "Your answer"
+        }
+      ],
+      "submit": {
+        "kind": "review",
+        "review": "blocker_review",
+        "decision": "discuss",
+        "effect": "approve",
+        "target_revision_id": "blocker:2"
+      }
+    }
+  ],
+  "recorded_decisions": [],
+  "attempts": [],
+  "artifacts": [],
+  "blocker": {
+    "is_open": true,
+    "available_decisions": [],
+    "latest": {
+      "revision_id": "blocker:2",
+      "text": "Confirm the display width",
+      "suggested_choices": [
+        "Compact",
+        "Expanded"
+      ],
+      "author": {
+        "worker": "writer",
+        "action_id": "action-brief-writer",
+        "attempt_seq": 1,
+        "session_id": "session-1"
+      },
+      "created_at": "2026-11-17T12:00:00Z"
+    },
+    "revisions": [
+      {
+        "revision_id": "blocker:1",
+        "text": "Which display should we build?",
+        "suggested_choices": [
+          "Compact",
+          "Expanded"
+        ],
+        "author": {
+          "worker": "writer",
+          "action_id": "action-brief-writer",
+          "attempt_seq": 1,
+          "session_id": "session-1"
+        },
+        "created_at": "2026-11-17T10:00:00Z"
+      },
+      {
+        "revision_id": "blocker:2",
+        "text": "Confirm the display width",
+        "suggested_choices": [
+          "Compact",
+          "Expanded"
+        ],
+        "author": {
+          "worker": "writer",
+          "action_id": "action-brief-writer",
+          "attempt_seq": 1,
+          "session_id": "session-1"
+        },
+        "created_at": "2026-11-17T12:00:00Z"
+      }
+    ],
+    "decisions": [
+      {
+        "id": "answer:1",
+        "target_revision_id": "blocker:1",
+        "decision": "clarify",
+        "answer": "Explain the width tradeoff",
+        "actor": {
+          "kind": "operator",
+          "subject": "steve"
+        },
+        "created_at": "2026-11-17T11:00:00Z"
+      }
+    ],
+    "history": [
+      {
+        "kind": "revision",
+        "revision": {
+          "revision_id": "blocker:1",
+          "text": "Which display should we build?",
+          "suggested_choices": [
+            "Compact",
+            "Expanded"
+          ],
+          "author": {
+            "worker": "writer",
+            "action_id": "action-brief-writer",
+            "attempt_seq": 1,
+            "session_id": "session-1"
+          },
+          "created_at": "2026-11-17T10:00:00Z"
+        }
+      },
+      {
+        "kind": "decision",
+        "decision": {
+          "id": "answer:1",
+          "target_revision_id": "blocker:1",
+          "decision": "clarify",
+          "answer": "Explain the width tradeoff",
+          "actor": {
+            "kind": "operator",
+            "subject": "steve"
+          },
+          "created_at": "2026-11-17T11:00:00Z"
+        }
+      },
+      {
+        "kind": "revision",
+        "revision": {
+          "revision_id": "blocker:2",
+          "text": "Confirm the display width",
+          "suggested_choices": [
+            "Compact",
+            "Expanded"
+          ],
+          "author": {
+            "worker": "writer",
+            "action_id": "action-brief-writer",
+            "attempt_seq": 1,
+            "session_id": "session-1"
+          },
+          "created_at": "2026-11-17T12:00:00Z"
+        }
+      }
+    ]
+  }
+}

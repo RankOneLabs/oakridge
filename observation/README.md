@@ -10,6 +10,12 @@ schema on restart. It does not upgrade or adopt an older installation. Run
 `OAKRIDGE_TEST_DATABASE_URL`; the tests create and remove isolated databases.
 They do not contact a model provider.
 
+Current-contract blocker observations use the empty JSON pointer for the whole
+revision body. The baseline now permits that root pointer. Deploy this baseline
+on a fresh observation database and retain the prior database for historical
+captures, grading evidence and grades. Import and publish the current grading
+configuration as a new version after deploy; it is not applied automatically.
+
 ## Canonical JSON v1
 
 The canonicalizer emits UTF-8 JSON with no insignificant whitespace. Object keys are sorted by UTF-16 code unit; array order is retained. Strings use JSON string escaping. Finite integers within JavaScript's safe-integer range use the shortest base-10 decimal without an exponent or signed zero. Non-integers use the shortest plain decimal that round-trips within **15 significant decimal digits**, obtained from `toPrecision(15)` by removing trailing zeroes and expanding any exponent. A non-integer that cannot round-trip that representation is refused. NaN, infinity, unsafe integers, undefined, cycles, sparse arrays and non-JSON objects are refused. Digests are SHA-256 over these UTF-8 bytes and carry the tag `canonical-json/v1:<sha256 hex>`.

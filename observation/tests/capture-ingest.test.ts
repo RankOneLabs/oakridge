@@ -31,6 +31,15 @@ test("a capture's body digest and tenant prefix are checked before storage", () 
     .toMatchObject({ ok: false, error: { entity_id: "source.revision_id" } });
 });
 
+test("v4 analysis revision provenance validates every tenant-scoped reference and accepts historical omission", () => {
+  const outcome = revisionOutcome({ revision_id: "spec-1", artifact_kind: "spec", body: {}, brief_revision_ids: [] });
+  if (outcome.kind !== "artifact_revision") throw new Error("fixture is a revision");
+  expect(decodeCapture(outcome.revision).ok).toBe(true);
+  for (const analysis_revision_ids of ["analysis-1", [null], [4], ["other:space:analysis-1"]])
+    expect(decodeCapture({ ...outcome.revision, source: { ...outcome.revision.source, analysis_revision_ids } }))
+      .toMatchObject({ ok: false, error: { entity_id: "source.analysis_revision_ids" } });
+});
+
 integration("an ordered delivery captures its revision and reads back its provenance", async () => scratchDatabase(async (db) => {
   const app = createApp({ db, credentials, profile: oakridgeProfile });
   const accepted = await post(app, delivery());
@@ -147,4 +156,27 @@ integration("short brief references are normalized before journaling and identic
   await feed.send({ ...outcome, revision: { ...outcome.revision, source: { ...outcome.revision.source, brief_revision_ids: ["brief-1"] } } });
   expect(await withTenant(db, tenant, (trx) => recordedRevisionIds(trx, tenant, "short-provenance", "brief_revision_ids"))).toEqual(["brief-1"]);
   await feed.send({ ...outcome, event_id: "repeat-normalized" });
+}));
+
+test("v4 normalizes pinned analysis references and refuses cross-tenant references", () => {
+  const outcome = revisionOutcome({ revision_id: "spec-pins", artifact_kind: "spec", body: {} });
+  if (outcome.kind !== "artifact_revision") throw new Error("fixture");
+  const source = { ...outcome.revision.source, analysis_revision_ids: ["analysis-1"] };
+  const capture = { ...outcome.revision, format: "observation.artifact-revision/v4", source };
+  const decoded = decodeCapture(capture);
+  expect(decoded.ok && decoded.value.envelope.source.analysis_revision_ids).toEqual(["oakridge:grading-test:analysis-1"]);
+  expect(decodeCapture({ ...capture, source: { ...source, analysis_revision_ids: ["oakridge:other:analysis-1"] } }).ok).toBe(false);
+  expect(decodeCapture({ ...capture, source: { ...source, analysis_revision_ids: [null] } }).ok).toBe(false);
+  const legacy = decodeCapture({ ...capture, format: "observation.artifact-revision/v3" });
+  expect(legacy.ok && legacy.value.envelope.source.analysis_revision_ids).toBeNull();
+});
+
+integration("a captured spec cannot silently change its pinned analysis revision", async () => scratchDatabase(async (db) => {
+  const feed = createFeed(db);
+  const outcome = revisionOutcome({ revision_id: "spec-pins", artifact_kind: "spec", body: {} });
+  if (outcome.kind !== "artifact_revision") throw new Error("fixture");
+  const pinned = { ...outcome, revision: { ...outcome.revision, format: "observation.artifact-revision/v4" as const, source: { ...outcome.revision.source, analysis_revision_ids: ["analysis-1"] } } };
+  await feed.send(pinned);
+  await expect(feed.send({ ...pinned, event_id: "changed-pins", revision: { ...pinned.revision, source: { ...pinned.revision.source, analysis_revision_ids: ["analysis-2"] } } }))
+    .rejects.toThrow("cursor_conflict");
 }));
