@@ -26,17 +26,21 @@ test("1: run order lists authored stages with their invoking units and per-membe
   const nav = inspector.getByLabelText("Stages in authored order");
   expect(
     within(nav)
-      .getAllByRole("link")
-      .map((link) => link.textContent),
+      .getAllByRole("option")
+      .map((option) => [option.className.replace("or-definition-navigation-", ""), option.textContent?.trim()]),
   ).toEqual([
-    "prepare",
-    "analysis",
-    "planning",
-    "brief",
-    "briefs",
-    "cohort",
-    "implementation",
-    "integration",
+    ["stage", "prepare"],
+    ["unit", "prepare"],
+    ["stage", "analysis"],
+    ["unit", "analysis"],
+    ["stage", "planning"],
+    ["unit", "planning"],
+    ["stage", "brief"],
+    ["unit", "briefs"],
+    ["stage", "cohort"],
+    ["unit", "implementation"],
+    ["stage", "integration"],
+    ["unit", "integration"],
   ]);
   expect(inspector.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
 });

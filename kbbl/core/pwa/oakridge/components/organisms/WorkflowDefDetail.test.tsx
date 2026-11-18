@@ -18,7 +18,7 @@ import fanOut from "../../__fixtures__/definition-fan-out.json";
 import reviewLoop from "../../__fixtures__/definition-review-loop.json";
 import { renameStage } from "../../lib/definition-mutations.test-helpers";
 import { selectDefinitionOverview, selectAbbreviatedDefinitionId } from "../../lib/definition-overview";
-import { definitionTabHref, selectDefinitionStructureSummary, STAGE_TABS } from "../../lib/definition-selection";
+import { definitionStageHref, definitionTabHref, selectDefinitionStructureSummary, STAGE_TABS } from "../../lib/definition-selection";
 import type { DefinitionSelection } from "../../../lib/hash";
 function show(selection: DefinitionSelection | null = null) {
   return render(<WorkflowDefDetail definitionId={state.data?.definition_id ?? "d1"} selection={selection} onNavigate={() => {}} onBack={() => {}} />);
@@ -77,7 +77,7 @@ test.each([detail, fan, reviewLoop.definition as unknown as OperatorDefinitionDe
   const view = show();
   expect(screen.getByRole("heading", { name: definition.effective_workflow.workflow })).toBeTruthy();
   const nav = screen.getByLabelText("Stages in authored order");
-  expect(Array.from(nav.querySelectorAll(".or-definition-navigation-entry > a")).map(link => link.textContent)).toEqual(definition.bundle.stages);
+  expect(Array.from(nav.querySelectorAll("option.or-definition-navigation-stage")).map(option => option.textContent)).toEqual(definition.bundle.stages);
   for (const stage of definition.bundle.stages) {
     for (const tab of STAGE_TABS) {
       view.rerender(<WorkflowDefDetail definitionId={definition.definition_id} selection={{ kind: "stage", stage, tab: tab.value }} onNavigate={() => {}} onBack={() => {}} />);
@@ -86,7 +86,7 @@ test.each([detail, fan, reviewLoop.definition as unknown as OperatorDefinitionDe
       const tabs = within(screen.getByRole("tablist", { name: "Stage sections" })).getAllByRole("tab");
       expect(tabs.map(link => link.textContent)).toEqual(STAGE_TABS.map(tab => tab.label));
       expect(tabs.map(link => link.getAttribute("href"))).toEqual(STAGE_TABS.map(tab => definitionTabHref(definition.definition_id, { kind: "stage", stage, tab: null }, tab.value)));
-      expect(within(screen.getByLabelText("Stages in authored order")).getByRole("link", { name: stage })).toBeTruthy();
+      expect((screen.getByLabelText("Stages in authored order") as HTMLSelectElement).value).toBe(definitionStageHref(definition.definition_id, stage));
     }
   }
 }, 30000);
@@ -139,7 +139,7 @@ test("renamed stages replace navigation and tab destinations", () => {
   state.data = renameStage(fan, { old, name: "renamed_stage" });
   show({ kind: "stage", stage: "renamed_stage", tab: null });
   const nav = screen.getByLabelText("Stages in authored order");
-  expect(within(nav).getByRole("link", { name: "renamed_stage" })).toBeTruthy();
+  expect(within(nav).getByRole("option", { name: "renamed_stage" })).toBeTruthy();
   for (const link of Array.from(document.querySelectorAll('a[href*="/stages/"]'))) {
     expect(link.getAttribute("href")).not.toContain("/stages/" + old);
   }
@@ -209,6 +209,9 @@ test("array prerequisites remain visible and parallel dependency kinds stay sepa
   expect(within(screen.getByRole("tabpanel", { name: "Overview" })).getByText('["first"]')).toBeTruthy();
 });
 
+function selectedNavigationLabel(): string | undefined {
+  return (screen.getByLabelText("Stages in authored order") as HTMLSelectElement).selectedOptions[0]?.textContent?.trim();
+}
 test("unit artifact anchors keep unit identity through route changes", () => {
   const navigate = vi.fn();
   const view = render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation", tab: "workers" }} onNavigate={navigate} onBack={() => {}} />);
@@ -217,9 +220,17 @@ test("unit artifact anchors keep unit identity through route changes", () => {
   expect(navigate).toHaveBeenLastCalledWith(expect.stringContaining("/units/implementation#stage-cohort-artifact-build_result"));
   view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation#stage-cohort-artifact-build_result", tab: null }} onNavigate={navigate} onBack={() => {}} />);
   expect(screen.getByRole("heading", { name: "cohort · unit implementation" })).toBeTruthy();
-  expect(screen.getByLabelText("Stages in authored order").querySelector('a[aria-current="page"]')?.textContent).toBe("implementation");
+  expect(selectedNavigationLabel()).toBe("implementation");
   expect(document.activeElement?.id).toBe("stage-cohort-artifact-build_result");
 
+});
+
+test("the dropdown moves from a unit to the stage sharing its name", () => {
+  const navigate = vi.fn();
+  render(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "prepare", tab: null }} onNavigate={navigate} onBack={() => {}} />);
+  expect((screen.getByLabelText("Stages in authored order") as HTMLSelectElement).value).toBe(`#settings/workflows/${detail.definition_id}/units/prepare`);
+  fireEvent.change(screen.getByLabelText("Stages in authored order"), { target: { value: `#settings/workflows/${detail.definition_id}/stages/prepare` } });
+  expect(navigate).toHaveBeenLastCalledWith(`#settings/workflows/${detail.definition_id}/stages/prepare`);
 });
 
 test("Back and Forward route restoration keeps navigation, graph and detail selection aligned", () => {
@@ -227,7 +238,7 @@ test("Back and Forward route restoration keeps navigation, graph and detail sele
   const backSelection = { kind: "unit" as const, path: "analysis", tab: null };
   const forwardSelection = { kind: "unit" as const, path: "implementation#stage-cohort-artifact-build_result", tab: null };
   const view = render(<WorkflowDefDetail definitionId="d1" selection={backSelection} onNavigate={navigate} onBack={() => {}} />);
-  fireEvent.click(within(screen.getByLabelText("Stages in authored order")).getByRole("link", { name: "implementation" }));
+  fireEvent.change(screen.getByLabelText("Stages in authored order"), { target: { value: `#settings/workflows/${detail.definition_id}/units/implementation` } });
   expect(navigate).toHaveBeenLastCalledWith(`#settings/workflows/${detail.definition_id}/units/implementation`);
   view.rerender(<WorkflowDefDetail definitionId="d1" selection={{ kind: "unit", path: "implementation", tab: "workers" }} onNavigate={navigate} onBack={() => {}} />);
   fireEvent.click(within(screen.getByRole("region", { name: "Workers" })).getAllByRole("link", { name: "build_result" })[0] as HTMLElement);
@@ -236,7 +247,7 @@ test("Back and Forward route restoration keeps navigation, graph and detail sele
   for (const selection of [forwardSelection, backSelection, forwardSelection]) {
     view.rerender(<WorkflowDefDetail definitionId="d1" selection={selection} onNavigate={navigate} onBack={() => {}} />);
     const path = selection.path.split("#")[0];
-    expect(screen.getByLabelText("Stages in authored order").querySelector('a[aria-current="page"]')?.textContent).toBe(path);
+    expect(selectedNavigationLabel()).toBe(path);
     expect(screen.getByLabelText("Stage identity").textContent).toContain(path === "implementation" ? "cohort · unit implementation" : "analysis");
     if (selection.path.includes("#")) {
       expect(screen.getByRole("tab", { name: "Artifacts" }).getAttribute("aria-selected")).toBe("true");

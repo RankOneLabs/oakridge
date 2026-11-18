@@ -1,5 +1,5 @@
 import type { PublishedGradingContext } from "../../lib/grading-applicability";
-import { selectStageInspectorNavigation, selectStageInspectorIdentity } from "../../lib/stage-inspector-navigation";
+import { selectStageInspectorNavigation, selectStageInspectorIdentity, selectStageNavigationOptions } from "../../lib/stage-inspector-navigation";
 import { StageInspectorTabs } from "./StageInspectorTabs";
 import { selectEffectiveStageTab, STAGE_TABS } from "../../lib/definition-selection";
 import { selectDefinitionOverview, selectDefinitionSelection, type DefinitionOverview as Overview } from "../../lib/definition-overview";
@@ -13,6 +13,7 @@ import { StageWorkersSection } from "./StageWorkersSection";
 import { StagePromptsSection } from "./StagePromptsSection";
 import type { StageSectionProps } from "../../lib/stage-inspector";
 import type { ReactNode } from "react";
+import { Select } from "../../../components/atoms/Select";
 import { StageArtifactsSection } from "./StageArtifactsSection";
 import { StageReviewsSection } from "./StageReviewsSection";
 import { StageCompletionSection } from "./StageCompletionSection";
@@ -24,10 +25,11 @@ interface StageInspectorProps {
   /** Replaces the read-only Prompts tab, e.g. with an organism that adds editing. */
   renderPromptsTab?: (props: StageSectionProps) => ReactNode;
   grading?: PublishedGradingContext;
+  onNavigate: (href: string) => void;
 }
-export function StageInspector({ definition, selection, anchor, renderPromptsTab, grading }: StageInspectorProps) {
+export function StageInspector({ definition, selection, anchor, renderPromptsTab, grading, onNavigate }: StageInspectorProps) {
   const overview = selectDefinitionOverview(definition);
-  const navigation = selectStageInspectorNavigation(definition, selection);
+  const navigationOptions = selectStageNavigationOptions(selectStageInspectorNavigation(definition, selection));
   const model = selectStageInspector(definition, selection);
   const identity = selectStageInspectorIdentity(model);
   const activeTab = selectEffectiveStageTab(selection, anchor, model?.name);
@@ -36,23 +38,14 @@ export function StageInspector({ definition, selection, anchor, renderPromptsTab
       aria-label="Stage inspector"
       className="or-definition-inspector [&_h3]:mb-[.6rem] [&_h3]:text-[1.1rem] [&_h3]:font-bold [&_h4]:mt-[.6rem] [&_h4]:mb-1 [&_h4]:font-[650] [&_dd]:ml-3"
     >
-      <aside className="or-definition-navigation max-[1024px]:text-[.9rem] max-[640px]:border max-[640px]:border-[var(--border-muted)] max-[640px]:p-2" aria-label="Stages in authored order">
-        {navigation.stages.map(({ stage, units, isSelected }) => (
-          <div key={stage.label} className="or-definition-navigation-entry">
-            <a href={stage.href} aria-current={stage.isCurrent ? "page" : undefined} className={isSelected ? "font-bold" : undefined}>
-              {stage.label}
-            </a>
-            <ul>
-              {units.map(unit => (
-                <li key={unit.href}>
-                  <a href={unit.href} aria-current={unit.isCurrent ? "page" : undefined}>{unit.label}</a>
-                </li>
-              ))}
-            </ul>
-          </div>
+      <Select aria-label="Stages in authored order" value={navigationOptions.selectedHref ?? ""} onChange={event => { if (event.target.value) onNavigate(event.target.value); }}>
+        {navigationOptions.selectedHref === null && <option value="">Select a stage or unit</option>}
+        {navigationOptions.options.map(option => (
+          <option key={option.href} value={option.href} className={`or-definition-navigation-${option.kind}`}>
+            {option.kind === "unit" ? `\u00a0\u00a0\u00a0${option.label}` : option.label}
+          </option>
         ))}
-        {navigation.groups.map(group => <a key={group.href} href={group.href} aria-current={group.isCurrent ? "page" : undefined}>{group.label}</a>)}
-      </aside>
+      </Select>
       <div className="min-w-0 grid content-start gap-3">
         <div data-testid="or-def-selection">{!model && <DefinitionSelectionDetail overview={overview} selection={selection} />}</div>
         {model && selection && <>

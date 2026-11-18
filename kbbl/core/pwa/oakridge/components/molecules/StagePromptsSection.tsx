@@ -18,12 +18,12 @@ export function StagePromptsSection({ model, openPath = null, onEditPrompt, edit
       <Button disabled={!onEditPrompt} aria-label={`Edit ${row.path}`} onClick={() => onEditPrompt?.(row.path)}>Edit prompt</Button>
       <dl><dt>Used by</dt><dd>{row.owner.kind} {row.owner.key}{row.owner.template && <> from template {row.owner.template}</>}</dd>
       <dt>Mode</dt><dd>{row.mode}</dd><dt>Source</dt><dd>{row.path}</dd><dt>Digest</dt><dd>{row.digest}</dd></dl>
-      {row.body !== null && <pre>{row.body}</pre>}
+      {row.body !== null && <pre className="whitespace-pre-wrap break-words">{row.body}</pre>}
       <h5>Inputs</h5><dl>{row.inputs.map(input => <div key={input.name}><dt>inputs.{input.name}</dt><dd><LetExpression model={model} expression={input.expression} /></dd></div>)}</dl>
       <p>Produces {row.produces.map(name => <a key={name} className="mr-2" href={stageElementHref(model, {kind: "artifact", name})}>{name}</a>)}</p>
       {row.owner.kind === "review" && <p>Reviews <a href={stageElementHref(model, {kind: "artifact", name: row.owner.of})}>{row.owner.of}</a></p>}
     </article>)}
     {openPath !== null && editor}
-    {model.sources.map(({kind, name, label, content}) => <details key={kind + ":" + name} id={stageElementId({stage: model.name, kind, name})} tabIndex={-1}><summary>{label}</summary><pre>{content}</pre></details>)}
+    {model.sources.map(({kind, name, label, content}) => <details key={kind + ":" + name} id={stageElementId({stage: model.name, kind, name})} tabIndex={-1}><summary>{label}</summary><pre className="whitespace-pre-wrap break-words">{content}</pre></details>)}
   </section>;
 }

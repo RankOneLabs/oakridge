@@ -18,6 +18,15 @@ export interface StageInspectorNavigation {
   stages: StageInspectorNavigationEntry[];
   groups: StageNavigationLink[];
 }
+export type StageNavigationOptionKind = "stage" | "unit" | "group";
+export interface StageNavigationOption extends StageNavigationLink {
+  kind: StageNavigationOptionKind;
+}
+export interface StageNavigationOptions {
+  options: StageNavigationOption[];
+  /** Absent when nothing in the navigation is current. */
+  selectedHref: string | null;
+}
 export interface StageInspectorIdentity {
   title: string;
   invokers: StageNavigationLink[];
@@ -37,29 +46,39 @@ export function selectStageInspectorNavigation(
     ? selection.stage
     : overview.units.find(unit => unit.path === selectedUnit)?.stage;
   return {
-    stages: selectStageNavigation(definition).map(entry => {
-      const isMerged = selectHasMergedStageUnit(entry);
-      return {
-        stage: {
-          label: entry.name,
-          href: definitionStageHref(overview.id, entry.name),
-          isCurrent: (selection?.kind === "stage" && selection.stage === entry.name)
-            || (isMerged && selectedUnit === entry.name),
-        },
-        units: isMerged ? [] : entry.units.map(unit => ({
-          label: unit.path,
-          href: definitionUnitHref(overview.id, unit.path),
-          isCurrent: selectedUnit === unit.path,
-        })),
-        isSelected: selectedStage === entry.name,
-      };
-    }),
+    // Stage and unit routes render different detail, so a sole unit sharing its stage's
+    // name keeps its own entry; merging them would leave one route unreachable.
+    stages: selectStageNavigation(definition).map(entry => ({
+      stage: {
+        label: entry.name,
+        href: definitionStageHref(overview.id, entry.name),
+        isCurrent: selection?.kind === "stage" && selection.stage === entry.name,
+      },
+      units: entry.units.map(unit => ({
+        label: unit.path,
+        href: definitionUnitHref(overview.id, unit.path),
+        isCurrent: selectedUnit === unit.path,
+      })),
+      isSelected: selectedStage === entry.name,
+    })),
     groups: overview.groups.map(unit => ({
       label: `${unit.path} (group)`,
       href: definitionUnitHref(overview.id, unit.path),
       isCurrent: selectedUnit === unit.path,
     })),
   };
+}
+
+/** Flattens navigation into dropdown options: each stage, then its units, then groups. */
+export function selectStageNavigationOptions(navigation: StageInspectorNavigation): StageNavigationOptions {
+  const options: StageNavigationOption[] = [
+    ...navigation.stages.flatMap(({ stage, units }) => [
+      { ...stage, kind: "stage" as const },
+      ...units.map(unit => ({ ...unit, kind: "unit" as const })),
+    ]),
+    ...navigation.groups.map(group => ({ ...group, kind: "group" as const })),
+  ];
+  return { options, selectedHref: options.find(option => option.isCurrent)?.href ?? null };
 }
 
 export function selectStageInspectorIdentity(model: StageInspectorModel | null): StageInspectorIdentity | null {

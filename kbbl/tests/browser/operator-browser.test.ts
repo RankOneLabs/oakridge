@@ -140,8 +140,8 @@ test("browser navigates the committed definition list and detail", async () => {
     await page.getByRole("heading", { name: definition.effective_workflow.workflow, exact: true }).waitFor();
     expect(await page.locator(".or-page-summary").textContent()).toStartWith(selectAbbreviatedDefinitionId(definition.definition_id) + " · ");
     const stages = page.getByLabel("Stages in authored order");
-    expect(await stages.locator(".or-definition-navigation-entry > a").allTextContents()).toEqual(definition.bundle.stages);
-    expect(await stages.locator('a[aria-current="page"]').count()).toBe(0);
+    expect(await stages.locator("option.or-definition-navigation-stage").allTextContents()).toEqual(definition.bundle.stages);
+    expect(await stages.inputValue()).toBe("");
     await page.getByText("Select a stage or unit to inspect its declaration.", { exact: true }).waitFor();
     for (const name of ["Schema", "Raw definition"]) {
       expect(await page.getByRole("button", { name, exact: true }).getAttribute("aria-pressed")).toBe("false");
