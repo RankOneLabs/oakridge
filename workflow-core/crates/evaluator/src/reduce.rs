@@ -167,6 +167,7 @@ fn reduce_event(
             if owner.kind.stage().is_none() {
                 return Err(rejected("unit is a group"));
             }
+            let definition = checked_stage(program, owner)?.clone();
             if let Some(blocker) = parked_blocker(&state, unit) {
                 let publisher = publishing_worker(&state, blocker)
                     .ok_or_else(|| invalid("blocker publisher absent"))?;
@@ -179,11 +180,16 @@ fn reduce_event(
                             .find(|attempt| &attempt.action_id == action)
                     })
                     .map(|attempt| &attempt.worker);
-                if incoming_worker != Some(publisher) {
+                // A code worker (a periodic watch) keeps observing while the
+                // unit is parked: parking already stops the unit acting on
+                // what it records, and refusing would fail the watch.
+                let is_code_worker = incoming_worker.is_some_and(|key| {
+                    matches!(worker(&definition, key), Ok(CheckedWorker::Code { .. }))
+                });
+                if incoming_worker != Some(publisher) && !is_code_worker {
                     return Err(rejected("unit is parked on another worker's blocker"));
                 }
             }
-            let definition = checked_stage(program, owner)?.clone();
             let artifact_definition = definition
                 .artifacts
                 .iter()
