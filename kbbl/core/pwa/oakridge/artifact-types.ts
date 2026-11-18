@@ -1,6 +1,7 @@
 // Artifacts, review gates, cohort merges and the review inbox on the operator surface.
 
 import type { RepositoryKey, RunState, WorktreeMetadata } from "./run-types";
+import type { OperatorDecisionDefinition } from "./operator-contracts/projections/unit-view";
 export interface ArtifactRevision {
   id: string;
   status: ArtifactRevisionStatus;
@@ -91,6 +92,8 @@ export interface ParkedGate {
   resume_actions: string[];
   /** Full server offer, including decisions hidden from the generic resume buttons. */
   offered_decisions: string[];
+  /** Server definitions preserve each decision's declared fields and availability. */
+  decision_definitions?: readonly OperatorDecisionDefinition[];
   pr_url?: string | null;
   /** The run's persisted state at read time — a gate stays listed whatever it is. */
   run_state: RunState;

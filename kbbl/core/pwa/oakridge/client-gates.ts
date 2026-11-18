@@ -62,11 +62,12 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
       throw new Error(`oakridge ${gateId}: review artifact changed; refresh before deciding`);
     const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review && decisionAction(candidate) === req.action);
     if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${gateId}: decision ${req.action} unavailable`);
-    if (decision.fields.length > 1 || (decision.fields.length === 1 && decision.fields[0].key !== "feedback"))
+    if (decision.fields.length > 1)
       throw new Error(`oakridge ${gateId}: decision requires unsupported fields`);
     if (req.action === "request_revision" && decision.fields.length === 0 && req.feedback.trim())
       throw new Error(`oakridge ${gateId}: decision does not accept feedback`);
-    const payload = decision.fields.length === 1 ? { feedback: req.feedback } : {};
+    const field = decision.fields[0];
+    const payload = field ? { [field.key]: req.feedback } : {};
     await decide(gate.runId, gate.unitId, review, decision.submit.decision, decision.submit.target_revision_id, payload, req.idempotency_key);
     invalidateCachedRunUnits(gate.runId);
     return { gate_id: gateId, resumed: true };

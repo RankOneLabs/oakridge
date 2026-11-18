@@ -12,7 +12,8 @@ export const isDisplayedReviewDecision = (review: string, decision: string): boo
 export const decisionAction = (decision: OperatorDecisionDefinition): string => {
   if (decision.submit.kind === "retry") return "rerun";
   if (decision.submit.kind === "cancel") return "fail";
-  if (decision.submit.review === "assessment_review" && decision.submit.effect === "request_changes")
+  if (decision.submit.review === "blocker_review"
+      || decision.submit.review === "assessment_review" && decision.submit.effect === "request_changes")
     return decision.submit.decision;
   if (decision.submit.effect === "request_changes") return "request_revision";
   return V1_APPROVE_ACTIONS.has(decision.submit.decision) ? decision.submit.decision : "approve";
@@ -21,6 +22,8 @@ export const reviewDecisions = (unit: OperatorUnitView): GateDecision[] => unit.
   .filter((decision) => decision.submit.kind === "review"
     && isDisplayedReviewDecision(decision.submit.review, decision.submit.decision))
   .map((decision) => ({ action: decisionAction(decision), decision }));
+export const selectGateDecision = (gate: ParkedGate, action: string | null): OperatorDecisionDefinition | null =>
+  gate.decision_definitions?.find((decision) => decisionAction(decision) === action) ?? null;
 /** The frozen sidebar matches gates to sessions by stage and unit label. The
  * development cohort runs builder and assessor in separate sessions on one
  * v2 unit, so its reviews must use the session that owns the operator handoff. */
@@ -51,6 +54,7 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
         ? artifact ? artifactRevisionId(artifact, target.target_revision_id) : target.target_revision_id
         : null,
       worktree: null, offered_decisions: decisions.map((decision) => decision.submit.kind === "review" ? decision.submit.decision : ""),
+      decision_definitions: decisions,
       resume_actions: [...new Set(decisions.filter((decision) => decision.submit.kind === "review"
         && isDisplayedReviewDecision(decision.submit.review, decision.submit.decision)).map(decisionAction))],
       pr_url: review === "merge_confirmation" ? developmentPullRequestUrl(unit) : null,
