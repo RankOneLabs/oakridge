@@ -29,10 +29,10 @@ for (const c of analysisCases) test(`analysis refuses ${c.name} with its message
   const body = analysis(); c.change(body);
   expect(validationFeedback(await analysisRun(body))).toContain(c.message);
 });
-for (const state of ["blocking", "unchosen", "resolved"] as const) test(`analysis accept availability: ${state}`, async () => {
+for (const state of ["blocking", "unchosen", "blank", "unknown", "resolved"] as const) test(`analysis accept availability: ${state}`, async () => {
   const body = analysis(), finding = body.requirements[0].findings[0];
   if (state === "blocking") finding.severity = "blocking";
-  else finding.resolution = {kind: "operator_decision", text: "Choose", question: "Which?", alternatives: [{option: "A", consequence: "A"}, {option: "B", consequence: "B"}], ...(state === "resolved" ? {chosen: "A"} : {})};
+  else finding.resolution = {kind: "operator_decision", text: "Choose", question: "Which?", alternatives: [{option: "A", consequence: "A"}, {option: "B", consequence: "B"}], ...(state === "unchosen" ? {} : {chosen: state === "resolved" ? "A" : state === "blank" ? "" : "C"})};
   const run = await analysisRun(body);
   const accept = run.result.reviews.find(r => r.review === "analysis_review")?.decisions.find(d => d.decision === "accept");
   expect([accept ? accept.is_available ?? true : false, accept?.disabled_reason ?? null]).toEqual(state === "resolved" ? [true, null] : [false, guardReason]);
@@ -92,6 +92,7 @@ const briefCases: {name: string; change: (b: BriefBody) => void; message: string
   {name: "uncovered requirement", change: b => {b.build_items.pop();}, message: "Every assigned requirement must appear in a build item."},
   {name: "empty requirement links", change: b => {b.build_items[0].requirement_ids = [];}, message: "Every build item needs at least one requirement and one verification entry."},
   {name: "empty verification", change: b => {b.build_items[0].verification = [];}, message: "Every build item needs at least one requirement and one verification entry."},
+  {name: "empty instructions", change: b => {b.build_items[0].instructions = "";}, message: "Every build item needs nonempty instructions."},
   {name: "duplicate decision", change: b => {b.technical_decisions.push(b.technical_decisions[0]);}, message: "Technical decision ids must be unique."},
   {name: "unknown decision link", change: b => {b.technical_decisions[0].build_item_ids = ["unknown"];}, message: "Technical decision links must name brief build items."},
 ];

@@ -46,7 +46,7 @@ the builder or integrator; assessors read the full implicit review_history. Ever
 initial/revise prompt directs the agent to raise a blocker instead of guessing.
 
 The development alias now pins definition
-`110fde45d5fa48998cff802f8527bf2e130e7a8feb9d22d074f08f183290f505`.
+`cf39117805e56b4bdc5540fed9c4a3c2202a9c432b8e7562bf76960fe383a9a5`.
 The previous definition
 `74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4`
 and its exact prompt objects remain addressable.

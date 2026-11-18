@@ -367,7 +367,7 @@ stages:
             effect: approve
             label: Accept
             when:
-              check: 'every(flatten(map(analysis.requirements, item.findings)), item.severity != "blocking" and (require(item.resolution).kind != "operator_decision" or require(item.resolution).chosen == default(require(item.resolution).chosen, "")))'
+              check: 'every(flatten(map(analysis.requirements, item.findings)), item.severity != "blocking" and (require(item.resolution).kind != "operator_decision" or (default(require(item.resolution).chosen, "") != "" and contains(map(require(require(item.resolution).alternatives), item.option), default(require(item.resolution).chosen, "")))))'
               reason: Resolve every blocking finding and choose an option for every operator decision before accepting the analysis.
           request_changes:
             effect: request_changes
@@ -476,6 +476,8 @@ stages:
             message: Build-item requirement ids must belong to the resolved assignment.
           - check: every(brief.build_items, len(item.requirement_ids) > 0 and len(item.verification) > 0)
             message: Every build item needs at least one requirement and one verification entry.
+          - check: every(brief.build_items, len(item.instructions) > 0)
+            message: Every build item needs nonempty instructions.
           - check: unique(map(brief.technical_decisions, item.id))
             message: Technical decision ids must be unique.
           - check: every(flatten(map(brief.technical_decisions, item.build_item_ids)), contains(map(brief.build_items, item.id), item))
