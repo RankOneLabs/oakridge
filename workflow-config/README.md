@@ -52,17 +52,23 @@ The previous definition
 and its exact prompt objects remain addressable.
 
 Current `artifact_schema_version` values, calculated by the observation adapter
-from the compiled artifact declarations:
+from the resolved schema bodies in the pinned requirement contract:
 
 | Artifact | Schema version |
 | --- | --- |
-| analysis | `artifact-schema/v1:4847489074cebfe24f7ecdd9024b351f26ccac021f3f10ce2c788bfa8a5d39e2` |
-| spec | `artifact-schema/v1:51e41ef9d885736919cae19794256f19dde6112647448ad07cb8c71f7d61c305` |
-| plan | `artifact-schema/v1:66a1e9afac28cdb4b4db8fa8e78c9df02da4ddba1952d189279d22025a4ef79e` |
-| brief | `artifact-schema/v1:c1303586cb5531a0c0aed8a282c0ad68917d94c94834d336705373166479951f` |
-| assessment (both stages) | `artifact-schema/v1:57f201559fcc23f712187d5d695e6b26d79a583199cc4a394df88e6a36116fc9` |
+| blocker | `artifact-schema/v2:fd7d3d5480c6a7821d205607dc4277d6078ba93c8b3892de4ce4f1877acb96e4` |
+| analysis | `artifact-schema/v2:ae5a9fb9c1a0cf37fbf047000c36f234da2d338552efe6f97f8a9a59890cdbde` |
+| spec | `artifact-schema/v2:3e6831d5b78d1a4ac06096edd5901aae62889530f407b8581a71698e4e65ca58` |
+| plan | `artifact-schema/v2:532d3d3e11f8df58a07618e8093374bb8e3e4f2348fa49a980bbbecb8290174d` |
+| brief | `artifact-schema/v2:e04f77b836567abab8dc575972e28ad6c16c4fed569e0bbb3cb6653783913969` |
+| assessment (both stages) | `artifact-schema/v2:8128a3b8a1dbedf479cfe122a42e3538d84106a436cb5de25a8716def76f747b` |
 
-Three upstream limitations remain blocking for the complete contract:
+The spec-based requirement contract uses the v2 epoch, including for implicit
+blockers whose schema body is unchanged. Historical tasks-based contracts retain
+the exact v1 declaration fingerprints on replay. Nested named schemas are resolved
+before hashing v2 bodies; prompt edits and unrelated schemas do not move versions.
+
+Two upstream limitations remain blocking for the complete contract:
 
 - B1: the engine expression language cannot test absence of the optional
   resolution record with a null/presence literal. The current checks conservatively
@@ -71,13 +77,9 @@ Three upstream limitations remain blocking for the complete contract:
 - B2: request_analysis_changes re-wants the author in revise mode, but approving
   the changed analysis does not invalidate or re-want an already published spec.
   The evaluator replay for the required editor rerun is recorded as a todo test.
-- B9: the adapter currently hashes named declarations, rather than their resolved
-  schema bodies. Consequently analysis, plan, brief and assessment retain the old
-  schema versions despite new shapes. Readers must also use definition_id until
-  the adapter's version calculation is corrected in its owning cohort; these
-  versions alone cannot distinguish the revised contract.
 
-The cohort changes no compiler, evaluator or adapter implementation. Integration's
+The workflow-contract cohort changes no compiler or evaluator implementation.
+Resolved observation fingerprinting is supplied by the observation-requirements cohort. Integration's
 request_changes explicitly targets `on: assessment`, as the shipped engine requires
 an explicit target when feedback_field is used.
 

@@ -9,6 +9,7 @@ export interface CaptureSource {
   readonly definition_id: string;
   readonly predecessor_id: string | null; readonly subject_id: string | null;
   readonly brief_revision_ids?: readonly string[] | null;
+  readonly analysis_revision_ids?: readonly string[] | null;
   readonly by_id?: string | null;
 }
 export interface CaptureEnvelope {

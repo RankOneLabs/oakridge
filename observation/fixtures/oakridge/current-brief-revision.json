@@ -1,0 +1,41 @@
+{
+  "cohort_id": "C1",
+  "repository_key": "oakridge",
+  "depends_on": [],
+  "files_in_scope": [
+    "src/a.ts"
+  ],
+  "build_items": [
+    {
+      "id": "B1",
+      "requirement_ids": [
+        "R1",
+        "R3"
+      ],
+      "instructions": "Implement shared work",
+      "verification": [
+        "Run tests"
+      ]
+    },
+    {
+      "id": "B2",
+      "requirement_ids": [
+        "R2"
+      ],
+      "instructions": "Implement second work",
+      "verification": [
+        "Run tests"
+      ]
+    }
+  ],
+  "technical_decisions": [
+    {
+      "id": "D1",
+      "build_item_ids": [
+        "B1"
+      ],
+      "decision": "Use existing pipeline",
+      "rationale": "Preserve behavior"
+    }
+  ]
+}

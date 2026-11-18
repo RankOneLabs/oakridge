@@ -31,6 +31,15 @@ test("a capture's body digest and tenant prefix are checked before storage", () 
     .toMatchObject({ ok: false, error: { entity_id: "source.revision_id" } });
 });
 
+test("v4 analysis revision provenance validates every tenant-scoped reference and accepts historical omission", () => {
+  const outcome = revisionOutcome({ revision_id: "spec-1", artifact_kind: "spec", body: {}, brief_revision_ids: [] });
+  if (outcome.kind !== "artifact_revision") throw new Error("fixture is a revision");
+  expect(decodeCapture(outcome.revision).ok).toBe(true);
+  for (const analysis_revision_ids of ["analysis-1", [null], [4], ["other:space:analysis-1"]])
+    expect(decodeCapture({ ...outcome.revision, source: { ...outcome.revision.source, analysis_revision_ids } }))
+      .toMatchObject({ ok: false, error: { entity_id: "source.analysis_revision_ids" } });
+});
+
 integration("an ordered delivery captures its revision and reads back its provenance", async () => scratchDatabase(async (db) => {
   const app = createApp({ db, credentials, profile: oakridgeProfile });
   const accepted = await post(app, delivery());

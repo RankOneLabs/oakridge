@@ -107,3 +107,17 @@ test("v4 carries only recorded brief inputs on build and assessment revisions", 
     }
   }
 });
+
+test("current specifications carry their exact analysis revision, without reconstructing it from unit inputs", () => {
+  const original = definition({ kind: "text" });
+  const writing = original.checked_program.workflow.stages.writing!;
+  const pinned = { ...original, checked_program: { ...original.checked_program, workflow: { ...original.checked_program.workflow,
+    stages: { writing: { ...writing, artifacts: { spec: writing.artifacts.draft!, analysis: writing.artifacts.draft! } } } } } };
+  for (const analysis_revision_id of ["run-1/writing:analysis:2", null]) {
+    const result = mapObservationEvent({ row: row({ kind: "revision_published", unit: "run-1/writing", artifact: "spec", body: "text" }),
+      definition: pinned, namespace: "test", stage: "writing", revision_sequence: 1, run_config: null, analysis_revision_id });
+    expect(result).toMatchObject({ kind: "artifact_revision", revision: { source: {
+      analysis_revision_ids: analysis_revision_id ? [`oakridge:test:${analysis_revision_id}`] : null,
+    } } });
+  }
+});

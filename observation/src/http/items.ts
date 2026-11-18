@@ -76,7 +76,7 @@ export function registerItemRoutes(app: Hono, deps: SourceDependencies): void {
     if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
     const source_revision_id = c.req.query("source_revision_id");
     const item_path = c.req.query("item_path");
-    if (!source_revision_id || !item_path) return errorResponse(c, 400, "invalid_address", "source_revision_id and item_path are required");
+    if (!source_revision_id || item_path === undefined) return errorResponse(c, 400, "invalid_address", "source_revision_id and item_path are required");
     const item = await readItemAt(deps.db, credential, deps.profile.composite, { run_id: c.req.param("run_id"), source_revision_id, item_path });
     return item ? c.json(item) : errorResponse(c, 404, "not_found", "no item is captured at this revision and path");
   });

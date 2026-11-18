@@ -1,0 +1,66 @@
+{
+  "head_sha": "abc",
+  "item_assessments": [
+    {
+      "subject": {
+        "kind": "build_item",
+        "id": "B1"
+      },
+      "status": "met",
+      "observation": "B1 met",
+      "evidence": []
+    },
+    {
+      "subject": {
+        "kind": "build_item",
+        "id": "B2"
+      },
+      "status": "met",
+      "observation": "B2 met",
+      "evidence": []
+    }
+  ],
+  "additional_findings": [
+    {
+      "id": "AF1",
+      "severity": "warning",
+      "observation": "Regression",
+      "related_build_item_ids": [
+        "B1"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "AF2",
+      "severity": "warning",
+      "observation": "Regression",
+      "related_build_item_ids": [],
+      "evidence": []
+    }
+  ],
+  "next_actions": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "audience": "builder",
+      "source": {
+        "kind": "additional_finding",
+        "id": "AF1"
+      },
+      "text": "Fix regression"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "audience": "operator",
+      "source": {
+        "kind": "item_assessment",
+        "id": "B1"
+      },
+      "text": "Review implementation"
+    }
+  ],
+  "test_evidence": {
+    "passed": 2,
+    "failed": 0
+  },
+  "verdict": "pass_with_notes"
+}

@@ -140,6 +140,58 @@ async function taskDefinition({ artifact, sources }: EvidenceResolutionContext, 
   return task ? { state: "ready", revision, task } : notReady("task_unavailable", `task ${id} is absent from ${revision.revision_id}`);
 }
 
+/** Canonical requirement IDs declared by requirement, allocation and build-item subjects. */
+function currentRequirementIds(artifact: SourceArtifact): readonly string[] | null {
+  const value = objectOf(artifact.selected_value);
+  if (artifact.item_kind === "requirement") return typeof value?.id === "string" ? [value.id] : [];
+  if (artifact.item_kind === "allocation") return typeof value?.requirement_id === "string" ? [value.requirement_id] : [];
+  if (artifact.item_kind === "build_item" && Array.isArray(value?.requirement_ids))
+    return value.requirement_ids.filter((id): id is string => typeof id === "string");
+  return null;
+}
+async function currentRequirements(context: EvidenceResolutionContext): Promise<EvidenceCollection | null> {
+  const { artifact, sources } = context;
+  if (artifact.item_kind === "finding" && /^\/requirements\/\d+\/findings\/\d+$/.test(artifact.item_path)) {
+    const revision = await sources.readRevision(artifact.revision_id);
+    if (!revision) return notReady("requirements_unavailable", "the containing analysis is not captured");
+    const path = artifact.item_path.split("/").slice(0, -2).join("/");
+    const requirement = valueAtPointer(revision.body, path);
+    if (requirement === undefined || typeof objectOf(requirement)?.id !== "string")
+      return notReady("requirements_unavailable", `enclosing requirement at ${path} is absent`);
+    return ready([revisionReference("requirement:0", revision, path, requirement)]);
+  }
+  const ids = currentRequirementIds(artifact);
+  if (ids === null) return null;
+  if (ids.length === 0) return notReady("requirements_unavailable", "item has no canonical requirement ids");
+  const revision = await context.sources.readRevisionAt("spec", context.artifact.revision_id);
+  if (!revision) return notReady("requirements_unavailable", "canonical spec is not captured");
+  const references: EvidenceReference[] = [];
+  for (const [index, id] of [...new Set(ids)].entries()) {
+    const requirement = definitionAt({ revision, source: { artifact: "spec", list: "/requirements" }, id });
+    if (!requirement) return notReady("requirements_unavailable", `requirement ${id} is absent from ${revision.revision_id}`);
+    references.push(revisionReference(`requirement:${index}`, revision, requirement.item_path, requirement.value));
+  }
+  return ready(references);
+}
+async function currentBuildItemContext(context: EvidenceResolutionContext): Promise<EvidenceCollection | null> {
+  const requirements = await currentRequirements(context);
+  if (requirements === null || requirements.state === "not_ready") return requirements;
+  const { artifact, sources, question } = context;
+  const brief = await sources.readRevision(artifact.revision_id);
+  if (!brief) return notReady("brief_unavailable", "the containing brief is not captured");
+  const plan = await sources.readRevisionAt("plan", artifact.revision_id);
+  const cohorts = objectOf(plan?.body)?.cohorts;
+  const cohortId = objectOf(brief.body)?.cohort_id;
+  const index = Array.isArray(cohorts) ? cohorts.findIndex((cohort) => objectOf(cohort)?.id === cohortId) : -1;
+  if (!plan || !Array.isArray(cohorts) || index < 0) return notReady("cohort_unavailable", "plan cohort is not captured");
+  if (question.task_id === null) return notReady("task_unavailable", "build item needs a linked requirement");
+  const task = await sources.readLogicalItemAt({ logical_item_id: question.task_id, subject_revision_id: artifact.revision_id,
+    artifact_kind: "spec", item_kind: "requirement", allow_late_reference: true });
+  if (!task) return notReady("task_unavailable", "linked canonical requirement is not captured");
+  return ready([subjectReference(artifact), contextReference(task, 0), revisionReference("brief", brief, null, brief.body),
+    revisionReference("cohort", plan, `/cohorts/${index}`, cohorts[index]!), ...requirements.references]);
+}
+
 /** Type erasure stays at the registry boundary; schemas supply the resolver's actual parameter type. */
 interface CapabilityDefinition<Params> {
   readonly params: z.ZodType<Params>;
@@ -159,7 +211,10 @@ const citedSubject = { fields: ["/evidence"], task_subject: false } as const;
 
 /** Names and parameter schemas are the producer's only evidence registrations. */
 export const oakridgeCapabilities: EvidenceCapabilities = {
-  build_item_context: capability({ params: noParams, subject: { fields: ["/task_ids"], task_subject: true }, resolve: async ({ artifact, question, sources }) => {
+  build_item_context: capability({ params: noParams, subject: { fields: ["/task_ids"], task_subject: true }, resolve: async (context) => {
+    const current = await currentBuildItemContext(context);
+    if (current !== null) return current;
+    const { artifact, question, sources } = context;
     const brief = await sources.readRevision(artifact.revision_id);
     if (!brief || brief.artifact_kind !== "brief") return notReady("brief_unavailable", "the containing brief is not captured");
     const cohort_id = objectOf(brief.body)?.cohort_id;
@@ -190,7 +245,8 @@ export const oakridgeCapabilities: EvidenceCapabilities = {
   } }),
   assessed_build_items: capability({ params: noParams, subject: anySubject, resolve: async ({ artifact, sources }) => {
     // Legacy findings have no build-item subjects and retain their original evidence.
-    const subjects = objectOf(artifact.selected_value)?.subjects;
+    const value = objectOf(artifact.selected_value);
+    const subjects = artifact.item_kind === "item_assessment" ? [value?.subject ?? null] : value?.subjects;
     if (!Array.isArray(subjects)) return ready([]);
     const expected = subjects.filter((subject) => objectOf(subject)?.kind === "build_item");
     if (expected.length === 0) return ready([]);
@@ -212,6 +268,13 @@ export const oakridgeCapabilities: EvidenceCapabilities = {
     }
     return ready(items.map((item, index) => ({ source: "revision", ref: `assessed_build_item:${index}`,
       revision_id: item.revision_id, item_path: item.item_path, content: item.selected_value })));
+  } }),
+  requirement_context: capability({ params: noParams, subject: anySubject, resolve: async (context) => {
+    const current = await currentRequirements(context);
+    if (!current) return notReady("requirements_unavailable", "item has no canonical requirement references");
+    if (current.state === "not_ready") return current;
+    const canonical = current.references[0];
+    return ready([...current.references, ...(canonical ? [{ ...canonical, ref: "spec_task" }] : [])]);
   } }),
   subject: capability({ params: noParams, subject: anySubject, resolve: async ({ artifact }) => ready([subjectReference(artifact)]) }),
   spec: capability({ params: z.strictObject({ artifact: z.string().min(1).optional(), task_source: sourceSchema.optional() }), subject: anySubject, resolve: async ({ artifact, sources }, params) => {
@@ -254,10 +317,15 @@ export const oakridgeCapabilities: EvidenceCapabilities = {
         : notReady("task_unavailable", `task ${question.task_id} has no captured spec-task definition at ${artifact.revision_id}`);
     } }),
   spec_task: capability({ params: sourceSchema, subject: idSubject, resolve: async (context, params) => {
+    const current = await currentRequirements(context);
+    if (current?.state === "not_ready") return current;
+    if (current) return ready(current.references.map((reference) => ({ ...reference, ref: "spec_task" })));
     const task = await taskDefinition(context, params);
     return task.state === "not_ready" ? task : ready([revisionReference("spec_task", task.revision, task.task.item_path, task.task.value)]);
   } }),
   requirement: capability({ params: z.strictObject({ ...sourceSchema.shape, task_source: sourceSchema }), subject: idSubject, resolve: async (context, params) => {
+    const current = await currentRequirements(context);
+    if (current !== null) return current;
     const task = await taskDefinition(context, params.task_source);
     if (task.state === "not_ready") return task;
     const ids = task.task.value.requirement_ids;
