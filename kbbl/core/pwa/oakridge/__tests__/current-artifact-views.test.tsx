@@ -1,4 +1,4 @@
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import analysis from "../__fixtures__/current-analysis.json";
 import spec from "../__fixtures__/current-spec.json";
@@ -92,4 +92,13 @@ test.each(gradedViewers)("current %s offers Show automatic grades over every ite
 test("current plan draws the cohort dependency graph", () => {
   render(<CurrentPlanViewer body={plan} context={context} />);
   expect(screen.getAllByTestId("or-plan-graph-node")).toHaveLength(plan.cohorts.length);
+});
+test("selecting a cohort in the current plan graph scrolls its card into view", () => {
+  const scrolled: string[] = [];
+  // jsdom does not implement scrollIntoView; record which element is asked to scroll.
+  Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this.id); };
+  render(<CurrentPlanViewer body={plan} context={context} />);
+  fireEvent.click(screen.getAllByTestId("or-plan-graph-node")[1]);
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
+  expect(scrolled).toEqual([`cohort-${plan.cohorts[1].id}`]);
 });

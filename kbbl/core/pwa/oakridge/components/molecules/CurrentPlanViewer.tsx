@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ViewerProps } from "../../artifactRegistry";
 import { parseCurrentPlan } from "../../lib/plan";
 import { selectParallelCohortRows, selectPlanGraphLayout } from "../../lib/plan-graph";
@@ -16,6 +16,10 @@ export function CurrentPlanViewer(props: ViewerProps) {
     : props.currentRead?.value?.kind === "plan" ? { ok: true as const, value: props.currentRead.value.body } : parseCurrentPlan(props.body);
   const cohorts = parsed.ok ? parsed.value.cohorts : null;
   const layout = useMemo(() => cohorts ? selectPlanGraphLayout(cohorts) : null, [cohorts]);
+  // Selecting a cohort in the graph brings its card into view, as the legacy plan card does.
+  useEffect(() => {
+    if (selectedCohortId) document.getElementById(`cohort-${selectedCohortId}`)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  }, [selectedCohortId]);
   if (!parsed.ok) return <CurrentParseFailure body={props.body} detail={parsed.error.detail} />;
   const waves = selectParallelCohortRows(parsed.value);
   return <article className="space-y-4">
