@@ -19,6 +19,8 @@ export interface Adjudication {
 export interface AdjudicationError { readonly operation: "validate_adjudication"; readonly entity_id: string; readonly detail: string }
 export interface AdjudicationTarget { readonly id: string; readonly body: AssessmentBody }
 export type AdjudicationEffect = "accept" | "request_build_changes" | "request_changes" | "request_assessment_changes";
+/** One review decision's adjudication payload, the assessment it targets and the decision's effect. */
+export interface AdjudicationRequest { readonly payload: unknown; readonly assessment: AdjudicationTarget; readonly effect: AdjudicationEffect }
 const fields = (value: unknown): value is { readonly [key: string]: unknown } => typeof value === "object" && value !== null && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === "string";
 const optionalText = (value: unknown): value is string | null | undefined => value == null || text(value);
@@ -36,7 +38,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const sameSource = (left: ActionSource, right: ActionSource) => left.kind === right.kind && left.id === right.id;
 
 /** Entries are canonicalized to next_actions order before composing; wire order never changes the send. */
-export function validateAdjudication(payload: unknown, assessment: AdjudicationTarget, effect: AdjudicationEffect): Result<Adjudication | null, AdjudicationError> {
+export function validateAdjudication({ payload, assessment, effect }: AdjudicationRequest): Result<Adjudication | null, AdjudicationError> {
   if (effect === "request_assessment_changes") return payload == null || (typeof payload === "object" && Object.keys(payload).every((key) => key === "feedback"))
     ? { ok: true, value: null } : refuse(assessment.id, "request_assessment_changes does not accept adjudication");
   const adjudication = parseAdjudication(payload);

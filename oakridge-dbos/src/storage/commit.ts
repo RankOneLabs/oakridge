@@ -395,7 +395,7 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
       if (!assessment.ok) return reject(`${target.id}: ${assessment.error.detail}`, unit_id.value);
       const supported: readonly string[] = ["accept", "request_build_changes", "request_changes", "request_assessment_changes"];
       if (supported.includes(event.decision)) {
-        const adjudication = validateAdjudication(event.payload, { id: target.id, body: assessment.value }, event.decision as AdjudicationEffect);
+        const adjudication = validateAdjudication({ payload: event.payload, assessment: { id: target.id, body: assessment.value }, effect: event.decision as AdjudicationEffect });
         if (!adjudication.ok) return reject(`${adjudication.error.operation} ${adjudication.error.entity_id}: ${adjudication.error.detail}`, unit_id.value);
       }
     }

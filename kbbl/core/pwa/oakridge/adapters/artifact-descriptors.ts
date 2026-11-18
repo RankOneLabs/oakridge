@@ -10,6 +10,6 @@ const SCHEMA_TYPES: Readonly<Record<string, string>> = {
 };
 export const artifactType = (schema: string, version?: string | null): ArtifactTypeDescriptor => schema === "workspace"
   ? { id: "workspace", component_id: "", capabilities: { reviewable: false, commentable: false, atom_editable: false, review_items: false }, anchor_schema: null }
-  : { id: SCHEMA_TYPES[schema] ?? schema, component_id: selectVersionedComponent(schema, version) ?? SCHEMA_COMPONENTS[schema] ?? "",
+  : { id: SCHEMA_TYPES[schema] ?? schema, component_id: selectVersionedComponent({ schema, version }) ?? SCHEMA_COMPONENTS[schema] ?? "",
     capabilities: { reviewable: true, commentable: true, atom_editable: true, review_items: true }, anchor_schema: null };
 export const artifactTypes = (): ArtifactTypeDescriptor[] => [...new Map(Object.keys(SCHEMA_COMPONENTS).map((schema) => { const type = artifactType(schema); return [type.id, type]; })).values()];

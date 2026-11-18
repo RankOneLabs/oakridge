@@ -11,7 +11,7 @@ export type CurrentArtifactBody =
 export type CurrentArtifactRead = Result<CurrentArtifactBody | null, CurrentParseError>;
 /** The adapter validates current bodies before presentation. Unknown/legacy bodies stay untouched. */
 export function parseVersionedBody(input: { readonly schema: string; readonly version: string | null; readonly body: unknown }): CurrentArtifactRead {
-  switch (selectVersionedComponent(input.schema, input.version)) {
+  switch (selectVersionedComponent({ schema: input.schema, version: input.version })) {
     case "dev-current-analysis-viewer": {
       const result = parseCurrentAnalysis(input.body);
       return result.ok ? { ok: true, value: { kind: "analysis", body: result.value } } : result;

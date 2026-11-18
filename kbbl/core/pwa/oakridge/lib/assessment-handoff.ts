@@ -147,3 +147,39 @@ export function selectAdjudicationSources(assessment: CurrentAssessment): readon
   return [...assessment.item_assessments.map(item => ({ value: `item_assessment:${item.subject.id}`, label: `${item.subject.kind}: ${item.subject.id}`, source: { kind: "item_assessment" as const, id: item.subject.id } })),
     ...assessment.additional_findings.map(finding => ({ value: `additional_finding:${finding.id}`, label: `Finding: ${finding.id}`, source: { kind: "additional_finding" as const, id: finding.id } }))];
 }
+
+import type { OperatorDecisionDefinition } from "../operator-contracts/projections/unit-view";
+import { selectHandoffRevisionId } from "./handoff-provenance";
+export interface AdjudicationGateInput { readonly gate: ParkedGate | null; readonly revisionId: string; readonly decisions: readonly OperatorRevisionDecision[]; readonly hasSubmitted: boolean }
+export interface AdjudicationGateState { readonly revision: string; readonly recordedDecision: OperatorRevisionDecision | null; readonly isRecorded: boolean; readonly isOpen: boolean }
+/** The form records on the displayed revision only, while its review is open and before a decision exists. */
+export function selectAdjudicationGate({ gate, revisionId, decisions, hasSubmitted }: AdjudicationGateInput): AdjudicationGateState {
+  const revision = selectHandoffRevisionId(revisionId) ?? revisionId;
+  const recordedDecision = selectRecordedAssessmentDecision(decisions, revision);
+  const isRecorded = hasSubmitted || recordedDecision !== null;
+  const isOpen = gate?.actionable === true && selectHandoffRevisionId(gate.artifact_revision_id ?? undefined) === revision && !isRecorded;
+  return { revision, recordedDecision, isRecorded, isOpen };
+}
+/** Accept, then the gate's change request, keeping only those the gate offers. */
+export function selectAdjudicationEffects(gate: ParkedGate | null): readonly AdjudicationEffect[] {
+  if (!gate) return [];
+  const effects: readonly AdjudicationEffect[] = ["accept", gate.gate_step === "integration_review" ? "request_changes" : "request_build_changes"];
+  return effects.filter(effect => gate.offered_decisions.includes(effect));
+}
+export type AdjudicationDecision =
+  | { readonly kind: "available"; readonly definition: OperatorDecisionDefinition; readonly revision_id: string }
+  | { readonly kind: "unavailable"; readonly reason: string };
+/** The review decision an effect submits, refused when the gate lacks it or its guard does not hold. */
+export function selectAdjudicationDecision(gate: ParkedGate | null, effect: AdjudicationEffect): AdjudicationDecision {
+  const definition = gate?.decision_definitions?.find(candidate => candidate.submit.kind === "review" && candidate.submit.decision === effect);
+  if (!gate?.artifact_revision_id || !definition) return { kind: "unavailable", reason: NO_REVIEW_REASON };
+  if (definition.is_available === false) return { kind: "unavailable", reason: definition.disabled_reason ?? "Decision unavailable" };
+  return { kind: "available", definition, revision_id: gate.artifact_revision_id };
+}
+/** Why an effect's button is disabled: the pending adjudication first, then the decision's own guard. */
+export function selectAdjudicationBlockReason(state: AdjudicationState, gate: ParkedGate | null, effect: AdjudicationEffect): string | null {
+  const sendability = selectSendability(state, effect);
+  if (sendability.kind === "blocked") return sendability.reason;
+  const decision = selectAdjudicationDecision(gate, effect);
+  return decision.kind === "unavailable" ? decision.reason : null;
+}
