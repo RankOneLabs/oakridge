@@ -182,6 +182,10 @@ describe("the grading panes", () => {
     writeStoredRunWorkspace("run-g", { primary: { kind: "grading" }, secondary: { kind: "item", selection } });
     expect(readStoredRunWorkspace("run-g")).toEqual({ primary: { kind: "grading" }, secondary: { kind: "item", selection } });
   });
+  it("restores the usage pane", () => {
+    writeStoredRunWorkspace("run-g", { primary: { kind: "usage" }, secondary: null });
+    expect(readStoredRunWorkspace("run-g")).toEqual({ primary: { kind: "usage" }, secondary: null });
+  });
   it("restores an item's selected task with its revision and path", () => {
     const task_selection: ObservationItemAddress = { ...selection, task_id: "T7" as ObservationLogicalItemId };
     writeStoredRunWorkspace("run-g", { primary: { kind: "grading" }, secondary: { kind: "item", selection: task_selection } });

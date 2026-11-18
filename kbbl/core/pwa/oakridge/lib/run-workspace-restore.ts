@@ -120,7 +120,7 @@ export const indexRunEntities = ({
 
 /**
  * Whether a pane still names something the run contains. The bodiless panes —
- * overview, list and grading — derive from the run itself, so they always
+ * overview, list, grading and usage — derive from the run itself, so they always
  * resolve for a run that loaded at all. An item or task pane is the service's
  * to answer, not the run's: its own body says when it is not captured, and it
  * has nothing the run's reads could disprove.
@@ -137,6 +137,7 @@ export const isPaneResolvable = (pane: RunWorkspacePane, index: RunEntityIndex):
     case "prompt":
     case "unit":
     case "grading":
+    case "usage":
     case "item":
     case "task":
       return true;

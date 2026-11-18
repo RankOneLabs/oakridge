@@ -43,6 +43,7 @@ import { itemSelectionKey } from "../../lib/grading";
 import { ArtifactReview } from "./ArtifactReview";
 import { ItemPanel } from "./ItemPanel";
 import { RunGradingSection } from "./RunGradingSection";
+import { RunUsagePanel } from "./RunUsagePanel";
 import { TaskPanel } from "./TaskPanel";
 import { RunOverviewPane } from "../molecules/RunOverviewPane";
 import { RunSessionPane } from "./RunSessionPane";
@@ -273,6 +274,8 @@ function PaneBody({ stage, pane, runId, overview, units, activity, onRunDeleted,
       return <ArtifactReview key={`${pane.artifact_id}:${pane.revision_id ?? "latest"}`} artifactId={pane.artifact_id} revisionId={pane.revision_id} onOpenItem={openItem} onOpenTask={openTask} />;
     case "grading":
       return <RunGradingSection runId={runId} onOpenItem={openItem} onOpenTask={openTask} />;
+    case "usage":
+      return <RunUsagePanel runId={runId} />;
     case "item":
       return <ItemPanel key={`${itemSelectionKey(pane.selection)}:${pane.subject_occurrence_id ?? ""}:${pane.question?.question_id ?? ""}:${pane.question?.question_version ?? ""}`} runId={runId} selection={pane.selection} questionTarget={pane.question} subjectOccurrenceId={pane.subject_occurrence_id} onOpenTask={openTask} />;
     case "task":

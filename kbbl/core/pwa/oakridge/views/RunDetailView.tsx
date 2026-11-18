@@ -1,4 +1,3 @@
-import { RunUsagePanel } from "../components/organisms/RunUsagePanel";
 import { ManualMergeIndications } from "../components/organisms/ManualMergeIndications";
 import { RunWorkspace } from "../components/organisms/RunWorkspace";
 import type { RoutePaneTarget } from "../lib/run-workspace";
@@ -19,7 +18,6 @@ interface RunDetailViewProps {
 export function RunDetailView({ runId, routePane, onBack }: RunDetailViewProps) {
   return <div className="or-run-detail flex h-full min-h-0 flex-col overflow-hidden">
     <div className="max-h-1/3 shrink-0 overflow-y-auto">
-      <RunUsagePanel runId={runId} />
       <ManualMergeIndications runId={runId} />
     </div>
     <div className="min-h-0 flex-1">

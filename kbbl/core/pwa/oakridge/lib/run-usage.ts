@@ -25,5 +25,58 @@ export const selectUsageVerification = (usage: OperatorRunUsage) => usage.verifi
 export const selectUsageBasis = (basis: OperatorRunUsage["usd_basis"] | "provider_charged") =>
   basis === "list_price_equivalent" ? "list-price equivalent" : "provider charged";
 export const formatUsageUsd = (usd: number | null) => usd === null ? "Unreported" : `$${usd.toFixed(2)}`;
-export const formatUsageDuration = (ms: number | null) => ms === null ? "Unreported" : `${(ms / 1000).toFixed(1)}s`;
-export const formatUsageTokens = (count: number | null) => count === null ? "Unreported" : count.toLocaleString("en-US");
+/** Whole-second durations as `1h 2m 3s`, dropping leading zero units (`2m 5s`, `45s`). */
+export const formatUsageDuration = (ms: number | null) => {
+  if (ms === null) return "Unreported";
+  const total_seconds = Math.round(ms / 1000);
+  const hours = Math.floor(total_seconds / 3600);
+  const minutes = Math.floor((total_seconds % 3600) / 60);
+  const seconds = total_seconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+};
+export const formatUsageTokens = (count: number | null) => count === null ? "Unreported" : formatUsageCount(count);
+export const formatUsageCount = (count: number) => count.toLocaleString("en-US");
+
+export interface UsageStat { label: string; value: string; note: string | null }
+export type UsageStatGroupKey = "cost" | "time" | "tokens" | "coverage";
+export interface UsageStatGroup { key: UsageStatGroupKey; label: string; note: string | null; stats: UsageStat[] }
+
+const stat = (label: string, value: string, note: string | null = null): UsageStat => ({ label, value, note });
+
+/** Run totals grouped for display: cost (with its basis once), time, tokens and coverage counts. */
+export function selectUsageStatGroups(usage: OperatorRunUsage): UsageStatGroup[] {
+  const totals = selectUsageTotals(usage);
+  const coverage = selectUsageCoverage(usage);
+  const verification = selectUsageVerification(usage);
+  return [
+    { key: "cost", label: "Cost", note: selectUsageBasis(usage.usd_basis), stats: [
+      stat("Run total", formatUsageUsd(totals.usd)),
+      stat("Rework", formatUsageUsd(totals.rework.usd)),
+      ...(verification ? [stat("Verification", formatUsageUsd(verification.usd), selectUsageBasis(verification.usd_basis))] : []),
+    ] },
+    { key: "time", label: "Time", note: null, stats: [
+      stat("Agent", formatUsageDuration(totals.agent_ms)),
+      stat("Human wait", formatUsageDuration(totals.human_wait_ms)),
+      stat("External wait", formatUsageDuration(totals.external_wait_ms)),
+      stat("Elapsed", formatUsageDuration(totals.elapsed_ms)),
+    ] },
+    { key: "tokens", label: "Tokens", note: null, stats: [
+      stat("Total", formatUsageTokens(totals.tokens.total)),
+      stat("Input", formatUsageTokens(totals.tokens.input)),
+      stat("Output", formatUsageTokens(totals.tokens.output)),
+      stat("Cached read", formatUsageTokens(totals.tokens.cached_read)),
+      stat("Cached write", formatUsageTokens(totals.tokens.cached_write)),
+      stat("Thought", formatUsageTokens(totals.tokens.thought)),
+    ] },
+    { key: "coverage", label: "Coverage", note: null, stats: [
+      stat("Turns", formatUsageCount(coverage.turns)),
+      stat("Reported", formatUsageCount(coverage.reported)),
+      stat("Partial", formatUsageCount(coverage.partial)),
+      stat("Absent", formatUsageCount(coverage.absent)),
+      stat("Cost-unreported sessions", formatUsageCount(coverage.cost_unreported_sessions.length)),
+      stat("Failed sessions", formatUsageCount(coverage.failed_session_count)),
+    ] },
+  ];
+}

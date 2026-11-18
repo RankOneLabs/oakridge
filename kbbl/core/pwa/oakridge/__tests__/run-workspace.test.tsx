@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
@@ -142,6 +142,15 @@ describe("opening a pane from the sidebar", () => {
     await waitFor(() => expect(screen.getByTestId("or-run-pane-primary")).toBeTruthy());
     expect(screen.queryByTestId("or-run-overview")).toBeNull();
     expect(window.location.hash).toBe(hashBefore);
+  });
+
+  it("opens usage as a sidebar pane alongside overview, stages and grading", async () => {
+    renderWorkspace();
+    fireEvent.click(await screen.findByTestId("or-sidebar-pane-usage"));
+
+    const pane = await screen.findByTestId("or-run-pane-primary");
+    expect(within(pane).getByRole("region", { name: "Run usage" })).toBeTruthy();
+    expect(screen.queryByTestId("or-run-overview")).toBeNull();
   });
 });
 

@@ -48,6 +48,7 @@ export type RunWorkspacePane =
   | { kind: "overview" }
   | { kind: "list" }
   | { kind: "grading" }
+  | { kind: "usage" }
   /** One finding by its exact revision and path, whichever view opened it. */
   | ({ kind: "item"; selection: ObservationItemAddress } & RecordedPaneContext)
   /** One run-scoped task. Navigation only: a task is never an item's address. */
@@ -66,6 +67,7 @@ export interface RunWorkspaceState {
 export const OVERVIEW_PANE: RunWorkspacePane = { kind: "overview" };
 export const LIST_PANE: RunWorkspacePane = { kind: "list" };
 export const GRADING_PANE: RunWorkspacePane = { kind: "grading" };
+export const USAGE_PANE: RunWorkspacePane = { kind: "usage" };
 
 /** What a run shows before the operator has arranged anything. */
 export const DEFAULT_RUN_WORKSPACE_STATE: RunWorkspaceState = {
@@ -123,6 +125,8 @@ export const describePane = (pane: RunWorkspacePane): RunPaneHeading => {
       return { title: "Artifact", subtitle: pane.artifact_id.slice(0, 8) };
     case "grading":
       return { title: "Grading", subtitle: null };
+    case "usage":
+      return { title: "Usage", subtitle: null };
     case "item":
       return { title: "Item", subtitle: pane.selection.item_path };
     case "task":
