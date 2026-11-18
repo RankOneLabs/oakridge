@@ -4,6 +4,8 @@ import { requirementStatus, selectAnalysisCounts, selectCodeHotspots, selectOper
 import { Chip } from "../../../components/atoms/Chip";
 import { navigateArtifactAnchor, CurrentParseFailure, OriginalInput, SourceReferences } from "./CurrentArtifactParts";
 import { ArtifactItemGrade } from "./ArtifactItemGrade";
+import { selectFindingSelections } from "../../lib/grading";
+import { selectAnalysisItemPaths } from "../../lib/current-item-paths";
 export function CurrentSpecAnalysisViewer(props: ViewerProps) {
   const parsed = props.currentRead?.ok === false ? props.currentRead
     : props.currentRead?.value?.kind === "analysis" ? { ok: true as const, value: props.currentRead.value.body } : parseCurrentAnalysis(props.body);
@@ -12,7 +14,8 @@ export function CurrentSpecAnalysisViewer(props: ViewerProps) {
   const hotspots = selectCodeHotspots(analysis), decisions = selectOperatorDecisions(analysis);
   return <article className="space-y-5">
     <header><h3>Requirements</h3><p>{counts.requirements.map(({ status, count }) => `${count} ${status}`).join(" · ")}</p>
-      <h3>Findings</h3><p>{counts.findings.map(({ severity, count }) => `${count} ${severity}`).join(" · ")}</p></header>
+      <h3>Findings</h3><p>{counts.findings.map(({ severity, count }) => `${count} ${severity}`).join(" · ")}</p>
+      {props.itemGrading?.renderShowAll(selectFindingSelections(props.source, selectAnalysisItemPaths(analysis)))}</header>
     {analysis.requirements.map((requirement, i) => <section key={requirement.id} className="space-y-2 rounded border border-[var(--border-muted)] p-3">
       <h3><code>{requirement.id}</code> <Chip tone={requirementStatus(requirement) === "blocked" ? "danger" : "neutral"}>{requirementStatus(requirement)}</Chip></h3><p>{requirement.text}</p>
       <SourceReferences refs={requirement.source_refs} />

@@ -15,6 +15,11 @@ import { parseCurrentAnalysis, parseCanonicalSpec } from "../lib/current-contrac
 import { selectReceivedContext } from "../lib/received-context";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { ArtifactSource } from "../artifact-types";
+import type { ItemGradingSlots } from "../artifactRegistry";
+import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
+import { CurrentAssessmentViewer } from "../components/molecules/AssessmentViewer";
+import { compositeId } from "../adapters/core";
+import { CURRENT_ASSESSMENT } from "../__fixtures__/current-assessments";
 const source: ArtifactSource = { run_id: "run", revision_id: "spec:1", label: null, as_of: "2026-11-17", original_spec: "Original requirements as submitted" };
 const parsedAnalysis = parseCurrentAnalysis(analysis), parsedSpec = parseCanonicalSpec(spec);
 if (!parsedAnalysis.ok || !parsedSpec.ok) throw new Error("fixture");
@@ -63,4 +68,28 @@ test("pinned assignment panel is titled What this agent received", () => {
 test("legacy text specification keeps its exact display", () => {
   render(<SpecViewer body="Original legacy text" />);
   expect(screen.getByText("Original legacy text").tagName).toBe("ARTICLE");
+});
+
+/** Slots that print the item paths each viewer hands to "Show automatic grades" and to its per-item grade actions. */
+const recordingGrading: ItemGradingSlots = {
+  renderItemAction: (selection: ObservationItemAddress) => <span data-testid="item-action">{selection.item_path}</span>,
+  renderShowAll: (selections: readonly ObservationItemAddress[]) => <span data-testid="show-all">{selections.map((selection) => selection.item_path).join(" ")}</span>,
+};
+const gradedSource: ArtifactSource = { ...source, revision_id: compositeId({ kind: "artifact", runId: "run", unitId: "run/analysis", name: "analysis:run/analysis:analysis:1" }) };
+const gradedViewers = [
+  ["analysis", () => <CurrentSpecAnalysisViewer body={analysis} source={gradedSource} itemGrading={recordingGrading} />],
+  ["specification", () => <CurrentSpecViewer body={spec} source={gradedSource} context={context} itemGrading={recordingGrading} />],
+  ["plan", () => <CurrentPlanViewer body={plan} source={gradedSource} context={context} itemGrading={recordingGrading} />],
+  ["brief", () => <CurrentBuildBriefViewer body={brief} source={gradedSource} context={context} itemGrading={recordingGrading} />],
+  ["assessment", () => <CurrentAssessmentViewer assessment={CURRENT_ASSESSMENT} source={gradedSource} itemGrading={recordingGrading} />],
+] as const;
+test.each(gradedViewers)("current %s offers Show automatic grades over every item it grades", (_, renderViewer) => {
+  render(renderViewer());
+  const graded = screen.getAllByTestId("item-action").map((element) => element.textContent).sort().join(" ");
+  const revealed = screen.getByTestId("show-all").textContent?.split(" ").sort().join(" ");
+  expect(revealed).toBe(graded);
+});
+test("current plan draws the cohort dependency graph", () => {
+  render(<CurrentPlanViewer body={plan} context={context} />);
+  expect(screen.getAllByTestId("or-plan-graph-node")).toHaveLength(plan.cohorts.length);
 });

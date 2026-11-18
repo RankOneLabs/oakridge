@@ -1,21 +1,20 @@
 import { useId } from "react";
 import { Button } from "../../../components/atoms/Button";
-import { PLAN_GRAPH_NODE, type PlanGraphLayout } from "../../lib/plan-graph";
-import type { CohortId } from "../../run-types";
+import { PLAN_GRAPH_NODE, type PlanGraphCohort, type PlanGraphLayout } from "../../lib/plan-graph";
 
-interface Props {
-  layout: PlanGraphLayout;
-  selectedCohortId: CohortId | null;
-  onSelectCohort: (id: CohortId) => void;
+interface Props<C extends PlanGraphCohort> {
+  layout: PlanGraphLayout<C>;
+  selectedCohortId: C["id"] | null;
+  onSelectCohort: (id: C["id"]) => void;
 }
 
 /**
  * The whole cohort graph at 1:1, scrolling with the page. Wider than the pane,
  * it scrolls sideways; it never pans or zooms, so no cohort can be out of view.
  */
-export function PlanGraph({ layout, selectedCohortId, onSelectCohort }: Props) {
+export function PlanGraph<C extends PlanGraphCohort>({ layout, selectedCohortId, onSelectCohort }: Props<C>) {
   const markerId = useId();
-  const isActive = (from: CohortId, to: CohortId) => from === selectedCohortId || to === selectedCohortId;
+  const isActive = (from: C["id"], to: C["id"]) => from === selectedCohortId || to === selectedCohortId;
 
   return (
     <div className="overflow-x-auto" data-testid="or-plan-graph">
