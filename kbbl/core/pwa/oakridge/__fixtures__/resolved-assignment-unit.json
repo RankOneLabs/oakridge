@@ -149,6 +149,12 @@
         "Compact",
         "Expanded"
       ],
+      "author": {
+        "worker": "writer",
+        "action_id": "action-brief-writer",
+        "attempt_seq": 1,
+        "session_id": "session-1"
+      },
       "created_at": "2026-11-17T12:00:00Z"
     },
     "revisions": [
@@ -159,6 +165,12 @@
           "Compact",
           "Expanded"
         ],
+        "author": {
+          "worker": "writer",
+          "action_id": "action-brief-writer",
+          "attempt_seq": 1,
+          "session_id": "session-1"
+        },
         "created_at": "2026-11-17T10:00:00Z"
       },
       {
@@ -168,6 +180,12 @@
           "Compact",
           "Expanded"
         ],
+        "author": {
+          "worker": "writer",
+          "action_id": "action-brief-writer",
+          "attempt_seq": 1,
+          "session_id": "session-1"
+        },
         "created_at": "2026-11-17T12:00:00Z"
       }
     ],
@@ -194,6 +212,12 @@
             "Compact",
             "Expanded"
           ],
+          "author": {
+            "worker": "writer",
+            "action_id": "action-brief-writer",
+            "attempt_seq": 1,
+            "session_id": "session-1"
+          },
           "created_at": "2026-11-17T10:00:00Z"
         }
       },
@@ -220,6 +244,12 @@
             "Compact",
             "Expanded"
           ],
+          "author": {
+            "worker": "writer",
+            "action_id": "action-brief-writer",
+            "attempt_seq": 1,
+            "session_id": "session-1"
+          },
           "created_at": "2026-11-17T12:00:00Z"
         }
       }

@@ -21,7 +21,13 @@ import type { RunConfigWire, SourceEventCursor, SourceEventDelivery, SourceEvent
 import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
-export const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
+/** Each test creates and migrates its own scratch database, which can outrun bun's
+ * 5s default when the whole suite shares one PostgreSQL server. */
+export const INTEGRATION_TIMEOUT_MS = 30_000;
+const databaseTest = serverUrl || process.env.CI === "true" ? test : test.skip;
+export function integration(name: string, fn: () => unknown, timeout: number = INTEGRATION_TIMEOUT_MS): void {
+  databaseTest(name, fn as () => Promise<unknown>, timeout);
+}
 export const tenant: TenantScope = { producer: "oakridge", namespace: "grading-test" };
 export const SCHEMA_VERSION = "schema-1";
 export const DEFINITION_ID = "definition-1";

@@ -6,7 +6,7 @@ import type { OperatorBlockerHistory } from "../../operator-contracts/projection
 import { useResumeGate } from "../../hooks/useResumeGate";
 import { selectGateDecision } from "../../adapters/core";
 import { randomUuid } from "../../../lib/random-uuid";
-import { selectBlockerActor, selectBlockerHistory } from "../../lib/blocker";
+import { selectBlockerActor, selectBlockerAuthor, selectBlockerHistory } from "../../lib/blocker";
 interface Props { readonly gate: ParkedGate; readonly blocker: OperatorBlockerHistory }
 /** Uses the same gate mutation as every other review; refused answers remain drafts. */
 export function BlockerPanel({ gate, blocker }: Props) {
@@ -31,7 +31,7 @@ export function BlockerPanel({ gate, blocker }: Props) {
     <h3>Open blocker</h3><p className="whitespace-pre-wrap">{blocker.latest.text}</p>
     <h4>Suggested choices (optional)</h4><ul>{blocker.latest.suggested_choices?.map((suggestion, index) => <li key={index}><Button variant="secondary" size="small" disabled={mutation.isPending} aria-pressed={choice === suggestion} onClick={() => { setChoice(suggestion); setAnswer(suggestion); }}>{suggestion}</Button></li>)}</ul>
     <h4>Revision and decision history</h4><ol>{selectBlockerHistory(blocker).map((entry) => entry.kind === "revision"
-      ? <li key={`revision:${entry.revision.revision_id}`}><p>Revision {entry.revision.revision_id} (actor not projected) · <time>{entry.revision.created_at}</time></p><p>{entry.revision.text}</p><ul>{entry.revision.suggested_choices?.map((text, i) => <li key={i}>{text}</li>)}</ul></li>
+      ? <li key={`revision:${entry.revision.revision_id}`}><p>Revision {entry.revision.revision_id} · {selectBlockerAuthor(entry.revision.author)} · <time>{entry.revision.created_at}</time></p><p>{entry.revision.text}</p><ul>{entry.revision.suggested_choices?.map((text, i) => <li key={i}>{text}</li>)}</ul></li>
       : <li key={`decision:${entry.decision.id}`}><p>{selectBlockerActor(entry.decision.actor)} · <time>{entry.decision.created_at}</time> · {entry.decision.decision} · {entry.decision.target_revision_id}</p><p>{entry.decision.answer}</p></li>)}</ol>
     {isSent ? <p role="status">Answer sent.</p> : <form onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <fieldset disabled={mutation.isPending || !gate.actionable}><legend>Respond to blocker</legend>

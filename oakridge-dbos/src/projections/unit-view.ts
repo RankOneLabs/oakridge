@@ -3,7 +3,7 @@ import type { Writer } from "../core-client/core-types";
 import type { ReviewDecisionRead } from "../storage/read-store";
 import type { ArtifactSchemaVersions } from "../storage/read-store";
 import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
-import type { BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
+import type { BlockerAuthor, BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
 import type { ReviewHistoryEngineInputs } from "../effects/session-prompt";
 import type { PinnedPrompt } from "../domain/effect-instruction";
 import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
@@ -288,12 +288,22 @@ function isBlockerAnswerBody(body: unknown): body is BlockerAnswerBody {
   return typeof body === "object" && body !== null && "answer" in body && typeof body.answer === "string";
 }
 
+/** The latest attempt of a revision's publishing action that started before it was published. */
+export function selectRevisionAuthor(attempts: readonly AttemptRecord[], revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">): BlockerAuthor | null {
+  if (revision.by_id === null) return null;
+  const attempt = attempts.filter((candidate) => candidate.action_id === revision.by_id && candidate.created_at <= revision.created_at)
+    .reduce<AttemptRecord | null>((latest, candidate) => latest === null || candidate.seq > latest.seq ? candidate : latest, null);
+  if (attempt === null) return null;
+  return { worker: attempt.worker, action_id: attempt.action_id, attempt_seq: attempt.seq, session_id: attempt.kbbl_session_id };
+}
+
 function selectBlockerHistory(read: RunRead, unit: UnitRecord): BlockerHistory | null {
   const revisions = read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === "blocker")
     .sort((left, right) => left.seq - right.seq).flatMap((revision): BlockerRevision[] => {
       if (!isBlockerBody(revision.body)) return [];
       return [{ revision_id: revision.id, text: revision.body.text,
-        suggested_choices: revision.body.suggested_choices ?? null, created_at: revision.created_at }];
+        suggested_choices: revision.body.suggested_choices ?? null, author: selectRevisionAuthor(read.attempts, revision),
+        created_at: revision.created_at }];
     });
   const latest = revisions.at(-1);
   if (!latest) return null;
