@@ -35,6 +35,8 @@ export interface CommitRequest {
   readonly ingress_id: string | null;
   readonly event: Event;
   readonly writer: Writer;
+  /** Optimistic assessment identity checked under the run lock before adjudication. */
+  readonly expected_assessment_revision_id?: string;
   /** Required with `launched`: the run is created pinned to this definition. */
   readonly launch?: { readonly definition_id: DefinitionId; readonly project_id: ProjectId | null; readonly config: RunConfig | null };
   /**
@@ -141,7 +143,7 @@ function canonical(value: unknown): string {
     .map((key) => `${JSON.stringify(key)}:${canonical((value as { readonly [key: string]: unknown })[key])}`).join(",")}}`;
   return JSON.stringify(value) ?? "null";
 }
-export interface RequestDigestInput extends Pick<CommitRequest, "writer" | "publication_secret_hash" | "launch_request"> {
+export interface RequestDigestInput extends Pick<CommitRequest, "writer" | "publication_secret_hash" | "launch_request" | "expected_assessment_revision_id"> {
   readonly event: Event | AnalysisLinksDeclared;
   readonly launch?: CommitRequest["launch"] | LaunchRequestContent;
 }
@@ -150,7 +152,8 @@ export function requestDigest(request: RequestDigestInput): string {
   const { event, writer, publication_secret_hash } = request;
   const launch = request.launch_request ?? request.launch;
   return createHash("sha256").update(canonical({ event, writer, ...(publication_secret_hash ? { publication_secret_hash } : {}),
-    ...(launch ? { launch } : {}) })).digest("hex");
+    ...(launch ? { launch } : {}),
+    ...(request.expected_assessment_revision_id === undefined ? {} : { expected_assessment_revision_id: request.expected_assessment_revision_id }) })).digest("hex");
 }
 
 /**
@@ -385,6 +388,9 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
     const version = unit?.kind.kind === "stage" && reviewedArtifact ? parsedArtifactSchemaVersion(workflow, unit.kind.stage, reviewedArtifact) : null;
     if (version === DEVELOPMENT_ARTIFACT_VERSIONS.assessment_body.version) {
       if (!target) return reject(`${event.target}: reviewed assessment revision not found`, unit_id.value);
+      if ((request.expected_assessment_revision_id !== undefined || event.target !== assessmentId)
+        && request.expected_assessment_revision_id !== assessmentId)
+        return reject(`${request.expected_assessment_revision_id ?? event.target}: reviewed assessment changed; expected_assessment_revision_id must match ${assessmentId}`, unit_id.value);
       const assessment = parseAssessmentBody(target.body);
       if (!assessment.ok) return reject(`${target.id}: ${assessment.error.detail}`, unit_id.value);
       const supported: readonly string[] = ["accept", "request_build_changes", "request_changes", "request_assessment_changes"];

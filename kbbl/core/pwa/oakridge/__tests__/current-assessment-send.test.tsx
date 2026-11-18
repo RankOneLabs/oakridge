@@ -8,7 +8,7 @@ import type { OperatorAdjudication } from "../operator-contracts/domain/adjudica
 import { reviewToGates } from "../adapters/gates";
 import { artifactRevisionId } from "../adapters/core";
 import { invalidateCachedRunUnits } from "../client-units";
-interface DecisionPost { readonly decision: string; readonly target: string; readonly payload: OperatorAdjudication }
+interface DecisionPost { readonly decision: string; readonly target: string; readonly expected_assessment_revision_id: string; readonly payload: OperatorAdjudication }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 it("the real mutation sends the preview and adjudication while preserving the core's redirected target", async () => {
   const unit = currentAdjudicationUnit();
@@ -36,7 +36,7 @@ it("the real mutation sends the preview and adjudication while preserving the co
   const preview = screen.getByTestId("or-assessment-handoff-preview").textContent;
   fireEvent.click(screen.getByRole("button", { name: "Request build changes" }));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0]).toMatchObject({ decision: "request_build_changes", target: "build:1", payload: { builder_feedback: preview,
+  expect(posts[0]).toMatchObject({ decision: "request_build_changes", target: "build:1", expected_assessment_revision_id: "assessment:1", payload: { builder_feedback: preview,
     entries: [{ original_text: CURRENT_ASSESSMENT.next_actions[0].text, final_text: "Investigate and add regression coverage.", disposition: "modified" }, { disposition: "accepted", audience: "operator" }] } });
   client.clear();
 });

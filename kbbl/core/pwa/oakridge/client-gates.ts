@@ -1,3 +1,4 @@
+import type { OperatorDecideRequest } from "./operator-contracts/http/ingress";
 import type { OperatorRunView } from "./operator-contracts/projections/run-view";
 import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
 import type { GateResumeRequest, GateResumeResponse, MergeStatus, ParkedGate, SentReviewFeedback } from "./artifact-types";
@@ -9,7 +10,7 @@ interface GateClientContext {
   readUnits: (runId: string) => Promise<readonly OperatorUnitView[]>;
   unitPath: (runId: string, unitId: string) => string;
   get: <T>(path: string) => Promise<T>;
-  decide: (runId: string, unitId: string, review: string, decision: string, target: string, payload: unknown, requestId: string) => Promise<string>;
+  decide: (runId: string, unitId: string, review: string, request: OperatorDecideRequest) => Promise<string>;
   invalidateCachedRunUnits: (runId: string | null) => void;
 }
 
@@ -70,7 +71,8 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
       throw new Error(`oakridge ${gateId}: decision does not accept feedback`);
     const field = decision.fields[0];
     const payload = req.adjudication ?? (field ? { [field.key]: req.feedback } : {});
-    await decide(gate.runId, gate.unitId, review, decision.submit.decision, decision.submit.target_revision_id, payload, req.idempotency_key);
+    await decide(gate.runId, gate.unitId, review, { decision: decision.submit.decision, target: decision.submit.target_revision_id, payload, request_id: req.idempotency_key,
+      ...(req.adjudication ? { expected_assessment_revision_id: requestedTarget } : {}) });
     invalidateCachedRunUnits(gate.runId);
     return { gate_id: gateId, resumed: true };
   }

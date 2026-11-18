@@ -16,6 +16,8 @@ export interface OperatorLaunchRequest extends OperatorIngressRequest {
 
 export interface OperatorDecideRequest extends OperatorIngressRequest {
   readonly decision: string; readonly target: string; readonly payload: unknown;
+  /** Assessment displayed by the operator, separate from a redirected core effect target. */
+  readonly expected_assessment_revision_id?: string;
   /** Optional explicit links, declared against the tasks revision this decision approves. Nothing requires them. */
   readonly analysis_links?: readonly OperatorAnalysisLinkEntry[];
 }

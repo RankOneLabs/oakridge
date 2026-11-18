@@ -3,7 +3,7 @@ import { sql } from "kysely";
 import { readFileSync } from "node:fs";
 import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionId, RunId } from "../src/domain/primitives";
-import { composeBuilderFeedback, type Adjudication } from "../src/domain/adjudication";
+import { composeBuilderFeedback, validateAdjudication, type Adjudication } from "../src/domain/adjudication";
 import { browserWritePolicy } from "../src/http/browser-write-policy";
 import { createHttpApp } from "../src/http/app";
 import { commitEvent } from "../src/storage/commit";
@@ -44,12 +44,12 @@ beforeAll(async () => {
 });
 afterAll(async () => { await authority?.close(); });
 interface Parked { readonly run_id: RunId; readonly unit_id: string; readonly revision_id: string; readonly build_revision_id: string | null; readonly payload: Adjudication }
-async function parked(integration = false): Promise<Parked> {
+async function parked(integration = false, noActions = false): Promise<Parked> {
   const launched = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: "test" });
   if (!launched.result.ok || launched.result.value.kind !== "committed") throw new Error(JSON.stringify(launched.result));
   const run_id = launched.run_id;
   const unit_id = `${run_id}/${integration ? "integration" : "unit"}`;
-  const body = { ...target.body, next_actions: target.body.next_actions.map(({ id, ...action }) => action) };
+  const body = { ...target.body, next_actions: noActions ? [] : target.body.next_actions.map(({ id, ...action }) => action) };
   const attempt = await authority.db.selectFrom("authority.attempt").select("action_id").where("unit_id", "=", unit_id).executeTakeFirstOrThrow();
   if (!integration) {
     const built = await submitter(authority)({ run_id, event: { kind: "revision_published", unit: unit_id, artifact: "build_result", by: attempt.action_id,
@@ -63,13 +63,13 @@ async function parked(integration = false): Promise<Parked> {
   if (!ended.ok || ended.value.kind !== "committed") throw new Error(JSON.stringify(ended));
   const stored = revision.body as typeof target.body;
   const valid = validAdjudication();
-  const entries = valid.entries.map((entry, index) => ({ ...entry, action_id: stored.next_actions[index].id }));
+  const entries = noActions ? [] : valid.entries.map((entry, index) => ({ ...entry, action_id: stored.next_actions[index].id }));
   const build = await authority.db.selectFrom("authority.artifact_revision").select("id").where("unit_id", "=", unit_id).where("artifact", "=", "build_result").executeTakeFirst();
   return { run_id, unit_id, revision_id: revision.id, build_revision_id: build?.id ?? null, payload: { ...valid, entries, builder_feedback: composeBuilderFeedback(entries, valid.added_actions) } };
 }
 async function decide(parked: Parked, payload: unknown, decision = "accept", integration = false) {
   return app.request(`/api/runs/${parked.run_id}/units/${encodeURIComponent(parked.unit_id)}/reviews/${integration ? "integration_review" : "assessment_review"}/decide`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: crypto.randomUUID(), target: decision === "request_build_changes" ? parked.build_revision_id : parked.revision_id, decision, payload }),
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: crypto.randomUUID(), target: decision === "request_build_changes" ? parked.build_revision_id : parked.revision_id, expected_assessment_revision_id: parked.revision_id, decision, payload }),
   });
 }
 const decisions = (parked: Parked) => authority.db.selectFrom("authority.review_decision").selectAll().where("unit_id", "=", parked.unit_id).execute();
@@ -97,6 +97,45 @@ test("request_build_changes sends exactly the persisted builder_feedback to the 
   const decision = selectArtifactDetail(read, { unit_id: state.unit_id, artifact: "assessment" })?.decisions.at(-1);
   expect({ target: decision?.assessment_revision_id, payload: decision?.adjudication, effect_target: decision?.target_revision_id ?? null })
     .toEqual({ target: state.revision_id, payload: state.payload, effect_target: state.build_revision_id });
+});
+test("redirected adjudication refuses an unseen successor even when its actions still validate", async () => {
+  const state = await parked(false, true);
+  const original = await authority.db.selectFrom("authority.artifact_revision").select("body").where("id", "=", state.revision_id).executeTakeFirstOrThrow();
+  const body = original.body as typeof target.body;
+  const added_actions = state.payload.added_actions.map(entry => ({ ...entry, source: { kind: "item_assessment" as const, id: "B1" } }));
+  const payload: Adjudication = { entries: [], added_actions, builder_feedback: composeBuilderFeedback([], added_actions) };
+  // The client has read state.revision_id. An operator publishes a successor before its POST reaches the lock.
+  const published = await submitter(authority)({ run_id: state.run_id, event: { kind: "revision_published", unit: state.unit_id,
+    artifact: "assessment", predecessor: state.revision_id, body: { ...body, head_sha: "unseen-head" } } });
+  expect(published.ok && published.value.kind).toBe("committed");
+  const successor = await authority.db.selectFrom("authority.artifact_revision").selectAll().where("unit_id", "=", state.unit_id)
+    .where("artifact", "=", "assessment").orderBy("seq", "desc").executeTakeFirstOrThrow();
+  expect(validateAdjudication(payload, { id: successor.id, body: successor.body as typeof target.body }, "request_build_changes").ok).toBe(true);
+  const response = await decide(state, payload, "request_build_changes");
+  expect({ status: response.status, decisions: (await decisions(state)).length }).toEqual({ status: 409, decisions: 0 });
+  expect(await response.text()).toContain("reviewed assessment changed");
+  // The same unchanged build target is usable only after explicitly reviewing the successor.
+  expect((await decide({ ...state, revision_id: successor.id }, payload, "request_build_changes")).status).toBe(201);
+});
+test("redirected current adjudication requires an explicit expected assessment revision", async () => {
+  const state = await parked();
+  const response = await app.request(`/api/runs/${state.run_id}/units/${encodeURIComponent(state.unit_id)}/reviews/assessment_review/decide`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: crypto.randomUUID(),
+      target: state.build_revision_id, decision: "request_build_changes", payload: state.payload }),
+  });
+  expect({ status: response.status, decisions: (await decisions(state)).length }).toEqual({ status: 409, decisions: 0 });
+});
+test("assessment identity participates in decision replay identity", async () => {
+  const state = await parked();
+  const request = { run_id: state.run_id, ingress_id: crypto.randomUUID(), expected_assessment_revision_id: state.revision_id,
+    writer: { kind: "operator" as const, subject: "test" }, event: { kind: "operator_decided" as const, unit: state.unit_id,
+      review: "assessment_review", decision: "request_build_changes", target: state.build_revision_id as string, payload: state.payload } };
+  const deps = { db: authority.db, core: authority.core, wake: () => undefined };
+  const committed = await commitEvent(deps, request);
+  const replayed = await commitEvent(deps, request);
+  const changed = await commitEvent(deps, { ...request, expected_assessment_revision_id: "another-assessment" });
+  expect([committed.ok && committed.value.kind, replayed.ok && replayed.value.kind, changed.ok && changed.value.kind])
+    .toEqual(["committed", "replayed", "conflict"]);
 });
 interface Malformed { readonly name: string; readonly change: (payload: Adjudication) => unknown; readonly decision?: string }
 const malformed: Malformed[] = [

@@ -32,6 +32,8 @@ export interface LaunchRequest extends IngressRequest {
 }
 export interface DecideRequest extends IngressRequest {
   readonly decision: string; readonly target: string; readonly payload: unknown;
+  /** Assessment displayed by the operator, separate from a redirected core effect target. */
+  readonly expected_assessment_revision_id?: string;
   /** Optional explicit links, declared against the tasks revision this decision approves. Nothing requires them. */
   readonly analysis_links?: readonly AnalysisLinkEntry[];
 }
@@ -78,9 +80,12 @@ const linkEntry = ({ source_revision_id, item_path, task_ids }: AnalysisLinkEntr
 export function parseDecideRequest(raw: unknown): Parsed<DecideRequest> {
   if (!isFields(raw) || !isRequestId(raw.request_id) || !isKey(raw.decision) || !isKey(raw.target) || !("payload" in raw))
     return malformed("request_id, decision, target and payload are required");
+  if (raw.expected_assessment_revision_id !== undefined && !isKey(raw.expected_assessment_revision_id))
+    return malformed("expected_assessment_revision_id is a non-empty revision id");
   if (raw.analysis_links !== undefined && !(Array.isArray(raw.analysis_links) && raw.analysis_links.every(isLinkEntry)))
     return malformed("analysis_links is a list of { source_revision_id, item_path, task_ids }");
   return ok({ request_id: raw.request_id, decision: raw.decision, target: raw.target, payload: raw.payload,
+    ...(raw.expected_assessment_revision_id === undefined ? {} : { expected_assessment_revision_id: raw.expected_assessment_revision_id }),
     ...(raw.analysis_links ? { analysis_links: raw.analysis_links.map(linkEntry) } : {}) });
 }
 export function parsePublishRequest(raw: unknown): Parsed<PublishRequest> {
@@ -212,7 +217,8 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
     if (!parsed.ok) return errorResponse(parsed.error);
     const body = parsed.value;
     const run_id = param(c, "run_id") as RunId;
-    const request = { run_id, ingress_id: body.request_id, writer: operatorWriterFromCredential(c.req.raw), event: { kind: "operator_decided" as const, unit: param(c, "unit_id"),
+    const request = { run_id, ingress_id: body.request_id, writer: operatorWriterFromCredential(c.req.raw),
+      ...(body.expected_assessment_revision_id === undefined ? {} : { expected_assessment_revision_id: body.expected_assessment_revision_id }), event: { kind: "operator_decided" as const, unit: param(c, "unit_id"),
       review: param(c, "review"), decision: body.decision, target: body.target, payload: body.payload } };
     const entries = selectApplicableEntries(body.analysis_links ?? []);
     try {
