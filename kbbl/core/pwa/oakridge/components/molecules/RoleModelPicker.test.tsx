@@ -45,7 +45,7 @@ describe("Oakridge v2 role model choices", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Planner model").textContent).toContain("fable 5.1");
+    expect(screen.getByLabelText("Planner model").textContent).toContain("fable 5.2");
     expect(screen.getByLabelText("Planner model").textContent).toContain("sonnet 5");
     expect(screen.getByLabelText("Planner effort").textContent).toContain("max");
 
@@ -69,6 +69,8 @@ describe("Oakridge v2 role model choices", () => {
       />,
     );
 
+    expect(screen.getByLabelText("Planner model").textContent).toContain("gpt-6.2 sol");
+    expect(screen.getByLabelText("Planner model").textContent).toContain("gpt-6.2 astra");
     expect(screen.getByLabelText("Planner model").textContent).toContain("gpt-6.1 sol");
     expect(screen.getByLabelText("Planner model").textContent).toContain("gpt-6 astra");
     expect(screen.getByLabelText("Planner model").textContent).toContain("gpt-6 sol");

@@ -78,7 +78,7 @@ describe("NewSessionForm runtime model selection", () => {
 
     const modelSelect = screen.getByLabelText("Model for new session");
     expect(modelSelect).toHaveProperty("value", "opus");
-    expect(modelSelect.textContent).toContain("fable 5.1");
+    expect(modelSelect.textContent).toContain("fable 5.2");
     expect(modelSelect.textContent).toContain("sonnet 5");
     expect(modelSelect.textContent).not.toContain("gpt-6 astra");
 
@@ -87,6 +87,8 @@ describe("NewSessionForm runtime model selection", () => {
     });
 
     expect(modelSelect).toHaveProperty("value", "gpt-5.6-sol");
+    expect(modelSelect.textContent).toContain("gpt-6.2 sol");
+    expect(modelSelect.textContent).toContain("gpt-6.2 astra");
     expect(modelSelect.textContent).toContain("gpt-6.1 sol");
     expect(modelSelect.textContent).toContain("gpt-6 astra");
     expect(modelSelect.textContent).toContain("gpt-6 sol");
