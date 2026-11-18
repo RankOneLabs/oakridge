@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { CURRENT_SCHEMA_VERSIONS, currentDefinitions, definitionsForSchemaVersion, oakridgeCatalogue } from "../src/producers/oakridge/catalogue";
+import { CURRENT_SCHEMA_VERSIONS, definitionsForSchemaVersion, oakridgeCatalogue } from "../src/producers/oakridge/catalogue";
 import { selectRevision } from "../src/projection/extractor";
 import { fixtureBody } from "./grading-fixture";
 
 const current = async (kind: keyof typeof CURRENT_SCHEMA_VERSIONS, fixture = kind as string) =>
-  selectRevision(await fixtureBody(`current-${fixture}`), fixture, currentDefinitions(CURRENT_SCHEMA_VERSIONS[kind]).filter((definition) => definition.artifact_kind === kind));
+  selectRevision(await fixtureBody(`current-${fixture}`), fixture, oakridgeCatalogue(kind, CURRENT_SCHEMA_VERSIONS[kind]));
 
 for (const [kind, legacyIds, currentIds] of [
   ["analysis", ["analysis.findings", "analysis.requirement_statuses", "analysis.proposed_updates", "analysis.risks"], ["analysis.requirement_findings", "analysis.requirements"]],
@@ -15,7 +15,7 @@ for (const [kind, legacyIds, currentIds] of [
   ["assessment", ["assessment.subject_findings", "assessment.findings"], ["assessment.item_assessments", "assessment.additional_findings", "assessment.next_actions"]],
 ] as const) test(`${kind} dispatch preserves legacy addresses and selects only current extractors`, () => {
   expect(oakridgeCatalogue(kind, "development-v1").map((d) => d.extractor_id)).toEqual([...legacyIds]);
-  expect(oakridgeCatalogue(kind, CURRENT_SCHEMA_VERSIONS.spec).map((d) => d.extractor_id)).toEqual([...currentIds]);
+  expect(oakridgeCatalogue(kind, CURRENT_SCHEMA_VERSIONS[kind === "tasks" ? "spec" : kind]).map((d) => d.extractor_id)).toEqual([...currentIds]);
 });
 
 test("unknown versions select the unchanged legacy set", () => {
@@ -40,7 +40,7 @@ test("missing and non-string producer and reference ids fail at the offending pa
   const spec = oakridgeCatalogue("spec", CURRENT_SCHEMA_VERSIONS.spec)[0]!;
   expect(spec.select({ requirements: [{ text: "missing" }] })).toMatchObject({ ok: false, error: { entity_id: "/requirements/0" } });
   expect(spec.select({ requirements: [{ id: "R1", analysis_finding_ids: [3] }] })).toMatchObject({ ok: false, error: { entity_id: "/requirements/0/analysis_finding_ids" } });
-  const analysis = currentDefinitions(CURRENT_SCHEMA_VERSIONS.analysis).find((definition) => definition.extractor_id === "analysis.requirement_findings")!;
+  const analysis = oakridgeCatalogue("analysis", CURRENT_SCHEMA_VERSIONS.analysis).find((definition) => definition.extractor_id === "analysis.requirement_findings")!;
   expect(analysis.select({ requirements: [{ id: "R1", findings: [{ id: 2 }] }] })).toMatchObject({ ok: false, error: { entity_id: "/requirements/0/findings/0" } });
 });
 test("split allocations retain cohort scopes, canonical references and distinct contributions", async () => {
@@ -79,8 +79,15 @@ test("a blocker body is one gradeable item with no inferred links", async () => 
   expect(pass.items.map(({ item }) => [item.item_kind, item.path, item.links])).toEqual([["blocker", "", []]]);
 });
 
-test("ambiguous published fingerprints retain legacy extraction until the adapter versions resolved schemas", () => {
-  for (const kind of ["analysis", "plan", "brief", "assessment", "blocker"] as const)
-    expect(oakridgeCatalogue(kind, CURRENT_SCHEMA_VERSIONS[kind]).map((definition) => definition.extractor_id))
+test("historical published declaration fingerprints retain legacy extraction", () => {
+  const historical = {
+    analysis: "4847489074cebfe24f7ecdd9024b351f26ccac021f3f10ce2c788bfa8a5d39e2",
+    plan: "66a1e9afac28cdb4b4db8fa8e78c9df02da4ddba1952d189279d22025a4ef79e",
+    brief: "c1303586cb5531a0c0aed8a282c0ad68917d94c94834d336705373166479951f",
+    assessment: "57f201559fcc23f712187d5d695e6b26d79a583199cc4a394df88e6a36116fc9",
+    blocker: "fd7d3d5480c6a7821d205607dc4277d6078ba93c8b3892de4ce4f1877acb96e4",
+  };
+  for (const [kind, digest] of Object.entries(historical))
+    expect(oakridgeCatalogue(kind, `artifact-schema/v1:${digest}`).map((definition) => definition.extractor_id))
       .toEqual(oakridgeCatalogue(kind, "development-v1").map((definition) => definition.extractor_id));
 });

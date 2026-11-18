@@ -212,17 +212,16 @@ function legacyDefinitions(schemaVersion: string): readonly ExtractorDefinition[
   ];
 }
 
-/** Actual fingerprints published by the workflow-contract cohort (workflow-config/README.md).
- * Named declaration hashing currently collides with historical versions for every
- * artifact except spec. Keep those ambiguous fingerprints on legacy extraction
- * until the adapter publishes distinct versions; never reinterpret stored history. */
+/** Resolved-body v2 fingerprints emitted by the adapter for the pinned
+ * requirement contract; see workflow-config/README.md. Legacy v1 fingerprints
+ * and unknown future versions retain legacy extraction. */
 export const CURRENT_SCHEMA_VERSIONS = {
-  blocker: "artifact-schema/v1:fd7d3d5480c6a7821d205607dc4277d6078ba93c8b3892de4ce4f1877acb96e4",
-  analysis: "artifact-schema/v1:4847489074cebfe24f7ecdd9024b351f26ccac021f3f10ce2c788bfa8a5d39e2",
-  spec: "artifact-schema/v1:51e41ef9d885736919cae19794256f19dde6112647448ad07cb8c71f7d61c305",
-  plan: "artifact-schema/v1:66a1e9afac28cdb4b4db8fa8e78c9df02da4ddba1952d189279d22025a4ef79e",
-  brief: "artifact-schema/v1:c1303586cb5531a0c0aed8a282c0ad68917d94c94834d336705373166479951f",
-  assessment: "artifact-schema/v1:57f201559fcc23f712187d5d695e6b26d79a583199cc4a394df88e6a36116fc9",
+  blocker: "artifact-schema/v2:fd7d3d5480c6a7821d205607dc4277d6078ba93c8b3892de4ce4f1877acb96e4",
+  analysis: "artifact-schema/v2:ae5a9fb9c1a0cf37fbf047000c36f234da2d338552efe6f97f8a9a59890cdbde",
+  spec: "artifact-schema/v2:3e6831d5b78d1a4ac06096edd5901aae62889530f407b8581a71698e4e65ca58",
+  plan: "artifact-schema/v2:532d3d3e11f8df58a07618e8093374bb8e3e4f2348fa49a980bbbecb8290174d",
+  brief: "artifact-schema/v2:e04f77b836567abab8dc575972e28ad6c16c4fed569e0bbb3cb6653783913969",
+  assessment: "artifact-schema/v2:8128a3b8a1dbedf479cfe122a42e3538d84106a436cb5de25a8716def76f747b",
 } as const;
 
 function referenceId(value: JsonValue, field: string, path: string): Result<string, ExtractionFailure> {
@@ -333,7 +332,7 @@ export function currentDefinitions(schemaVersion: string): readonly ExtractorDef
 
 /** Unknown versions intentionally retain historical extraction. */
 export function definitionsForSchemaVersion(schemaVersion: string): readonly ExtractorDefinition[] {
-  return schemaVersion === CURRENT_SCHEMA_VERSIONS.spec
+  return (Object.values(CURRENT_SCHEMA_VERSIONS) as readonly string[]).includes(schemaVersion)
     ? currentDefinitions(schemaVersion) : legacyDefinitions(schemaVersion);
 }
 
