@@ -129,6 +129,7 @@ import { selectAdditionalFindings, selectAssessmentActions, selectDerivedVerdict
 import { CurrentBuildItemAssessmentViewer } from "./BuildItemAssessmentViewer";
 import { EvidenceRefList } from "./EvidenceRefList";
 import { ArtifactItemGrade } from "./ArtifactItemGrade";
+import { selectAssessmentItemPaths } from "../../lib/current-item-paths";
 interface CurrentAssessmentProps extends Pick<import("../../artifactRegistry").ViewerProps, "source" | "itemGrading" | "onOpenItem"> {
   assessment: CurrentAssessment; itemLabels?: readonly AssessmentItemLabel[]; handoff?: ReactNode;
 }
@@ -143,6 +144,7 @@ export function CurrentAssessmentViewer({ assessment, itemLabels, handoff, ...re
       <p>Derived verdict: <Chip tone={selectStatusTone(verdict.verdict)}>{VERDICT_LABEL[verdict.verdict]}</Chip></p>
       {verdict.has_mismatch && <p role="alert">Authored verdict ({assessment.verdict}) disagrees with the item statuses and findings.</p>}
       <div className="flex gap-2">{groups.map(group => <Chip key={group.status} tone={selectStatusTone(group.status)}>{group.count} {CRITERION_STATUS_LABEL[group.status]}</Chip>)}</div>
+      {review.itemGrading?.renderShowAll(selectFindingSelections(review.source, selectAssessmentItemPaths(assessment)))}
     </header>
     <label>Status filter <Select aria-label="Status filter" value={filter} onChange={event => setFilter(event.target.value as AssessmentStatusFilter)}>
       <option value="all">All statuses</option><option value="needs_attention">Partial / not met</option><option value="not_met">Not met</option><option value="partial">Partial</option><option value="met">Met</option>

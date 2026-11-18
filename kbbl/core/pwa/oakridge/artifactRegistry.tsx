@@ -3,6 +3,7 @@ import { CurrentSpecViewer } from "./components/molecules/CurrentSpecViewer";
 import { CurrentPlanViewer } from "./components/molecules/CurrentPlanViewer";
 import { CurrentBuildBriefViewer } from "./components/molecules/CurrentBuildBriefViewer";
 import { parseCurrentAnalysis, parseCanonicalSpec, parseCurrentPlan, parseCurrentBrief } from "./lib/current-contract";
+import { selectAnalysisItemPaths, selectSpecItemPaths, selectPlanItemPaths, selectBriefItemPaths, selectAssessmentItemPaths } from "./lib/current-item-paths";
 import { SchemaContractView } from "./components/molecules/SchemaContractView";
 import type { Task } from "./lib/tasks";
 import { parseAssessment, parseCurrentAssessment } from "./lib/assessment";
@@ -83,10 +84,10 @@ export function resolveViewer(componentId: string | null | undefined): Component
 
 /** The same contract-defined gradeable collections used by the registered viewers. */
 export function selectViewerItemPaths(Viewer: ComponentType<ViewerProps>, body: unknown): readonly string[] {
-  if (Viewer === CurrentSpecAnalysisViewer) { const parsed = parseCurrentAnalysis(body); return parsed.ok ? parsed.value.requirements.flatMap((requirement, i) => requirement.findings.map((_, j) => `/requirements/${i}/findings/${j}`)) : []; }
-  if (Viewer === CurrentSpecViewer) { const parsed = parseCanonicalSpec(body); return parsed.ok ? parsed.value.requirements.map((_, i) => `/requirements/${i}`) : []; }
-  if (Viewer === CurrentPlanViewer) { const parsed = parseCurrentPlan(body); return parsed.ok ? parsed.value.cohorts.flatMap((cohort, i) => cohort.allocations.map((_, j) => `/cohorts/${i}/allocations/${j}`)) : []; }
-  if (Viewer === CurrentBuildBriefViewer) { const parsed = parseCurrentBrief(body); return parsed.ok ? parsed.value.build_items.map((_, i) => `/build_items/${i}`) : []; }
+  if (Viewer === CurrentSpecAnalysisViewer) { const parsed = parseCurrentAnalysis(body); return parsed.ok ? selectAnalysisItemPaths(parsed.value) : []; }
+  if (Viewer === CurrentSpecViewer) { const parsed = parseCanonicalSpec(body); return parsed.ok ? selectSpecItemPaths(parsed.value) : []; }
+  if (Viewer === CurrentPlanViewer) { const parsed = parseCurrentPlan(body); return parsed.ok ? selectPlanItemPaths(parsed.value) : []; }
+  if (Viewer === CurrentBuildBriefViewer) { const parsed = parseCurrentBrief(body); return parsed.ok ? selectBriefItemPaths(parsed.value) : []; }
   if (Viewer === SpecAnalysisViewer && isSpecAnalysis(body)) return body.findings.map((_, index) => `/findings/${index}`);
   if (Viewer === BuildBriefViewer) {
     const brief = readBuildBrief(body);
@@ -94,7 +95,7 @@ export function selectViewerItemPaths(Viewer: ComponentType<ViewerProps>, body: 
   }
   if (Viewer === CurrentAssessmentReview) {
     const parsed = parseCurrentAssessment(body);
-    return parsed.ok ? [...parsed.value.item_assessments.map((_, index) => `/item_assessments/${index}`), ...parsed.value.additional_findings.map((_, index) => `/additional_findings/${index}`)] : [];
+    return parsed.ok ? selectAssessmentItemPaths(parsed.value) : [];
   }
   if (Viewer === AssessmentReview) {
     const parsed = parseAssessment(body);

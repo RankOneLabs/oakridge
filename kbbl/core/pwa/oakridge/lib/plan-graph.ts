@@ -1,33 +1,38 @@
 import { selectGraphLayout } from "./graph-layout";
-import type { CohortId } from "../run-types";
-import type { PlanCohort } from "./plan";
 
 export const PLAN_GRAPH_NODE = { width: 240, height: 92 } as const;
 
-export interface PlanGraphNode {
-  cohort: PlanCohort;
+/** What the cohort graph draws of a cohort, legacy or current: its id, title and dependencies. */
+export interface PlanGraphCohort<Id extends string = string> {
+  readonly id: Id;
+  readonly title: string;
+  readonly depends_on: readonly Id[];
+}
+
+export interface PlanGraphNode<C extends PlanGraphCohort> {
+  cohort: C;
   /** Top-left corner, in graph pixels. */
   x: number;
   y: number;
 }
 
-export interface PlanGraphEdge {
-  from: CohortId;
-  to: CohortId;
+export interface PlanGraphEdge<Id extends string> {
+  from: Id;
+  to: Id;
   /** SVG path data from the dependency to its dependent. */
   path: string;
 }
 
 /** A fixed, 1:1 layout of the whole cohort graph: no pan or zoom needed to see every cohort. */
-export interface PlanGraphLayout {
+export interface PlanGraphLayout<C extends PlanGraphCohort> {
   width: number;
   height: number;
-  nodes: PlanGraphNode[];
-  edges: PlanGraphEdge[];
+  nodes: PlanGraphNode<C>[];
+  edges: PlanGraphEdge<C["id"]>[];
 }
 
-export function selectPlanGraphLayout(cohorts: PlanCohort[]): PlanGraphLayout {
-  const layout = selectGraphLayout({
+export function selectPlanGraphLayout<C extends PlanGraphCohort>(cohorts: readonly C[]): PlanGraphLayout<C> {
+  const layout = selectGraphLayout<C["id"]>({
     nodes: cohorts.map((cohort) => ({ id: cohort.id, ...PLAN_GRAPH_NODE })),
     edges: cohorts.flatMap((cohort) => cohort.depends_on.map((from) => ({ from, to: cohort.id }))),
   });
