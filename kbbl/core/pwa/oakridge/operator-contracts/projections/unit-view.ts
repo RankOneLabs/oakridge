@@ -93,6 +93,8 @@ export type OperatorDecisionSubmit =
   | { readonly kind: "cancel" };
 
 export interface OperatorArtifactRevisionView {
+  /** Identity of the pinned artifact contract, shared with observation capture. */
+  readonly artifact_schema_version: string | null;
   readonly id: string;
   readonly run_id: string;
   readonly unit_id: string;

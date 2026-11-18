@@ -1,3 +1,4 @@
+import { artifactSchemaVersions } from "../adapters/observation-schema-version";
 import { CoreClient, compileDefinition } from "../core-client/client";
 import { isIdentity, launchableDefinitionIds, readLaunchableCatalog, resolveDefinition } from "../runtime/definition-store";
 import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysely";
@@ -58,8 +59,11 @@ async function consistent<Value>(db: Kysely<DB>, read: (trx: DatabaseTransaction
 
 // ----------------------------------------------------------------- runs -----
 
+/** Contract identities computed from one pinned workflow at the read boundary. */
+export interface ArtifactSchemaVersions { readonly [stage: string]: { readonly [artifact: string]: string | null } }
+
 /** The definition a run is pinned to, as the projections read it. */
-export interface PinnedSource { readonly workflow: import("../core-client/source-types").WorkflowDefinitionDescriptor; readonly parsed_workflow: ParsedWorkflow }
+export interface PinnedSource { readonly artifact_schema_versions?: ArtifactSchemaVersions; readonly workflow: import("../core-client/source-types").WorkflowDefinitionDescriptor; readonly parsed_workflow: ParsedWorkflow }
 /** An operator retry, in the order it was requested. */
 /** An operator's retry request; `retry_id` is its ingress id, the identity an attempt's retry cause names. */
 export interface RetryRequest { readonly unit_id: UnitId; readonly worker: string; readonly retry_id: IngressId }
@@ -148,7 +152,7 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
     if (!found) return [];
     const run = found;
     const { source, checked_program } = definitions.get(run.definition_id)!;
-    return [{ run: summaryRun(run), definition: { workflow: source, parsed_workflow: checked_program.workflow },
+    return [{ run: summaryRun(run), definition: { workflow: source, parsed_workflow: checked_program.workflow, artifact_schema_versions: artifactSchemaVersions(checked_program.workflow) },
       units: of(units, run_id).map(summaryUnit), attempts: of(attempts, run_id).map(attemptRecord), revisions: of(revisions, run_id).map(revisionRef),
       retries: of(retries, run_id).flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
         ? [{ unit_id: retry.unit_id as UnitId, worker: retry.payload.worker, retry_id: retry.ingress_id as IngressId }] : []),

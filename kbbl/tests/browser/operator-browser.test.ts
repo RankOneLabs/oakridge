@@ -1,3 +1,4 @@
+import { currentArtifactFixture } from "./current-artifact-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -175,4 +176,27 @@ test("browser navigates the committed definition list and detail", async () => {
     await page.getByRole("button", { name: "← Workflows" }).click();
     await page.getByTestId("or-def-list").waitFor();
   } finally { await context.close(); server.stop(true); }
+}, 30_000);
+
+test.each([
+  ["analysis", "Code hotspots"], ["spec", "Canonical workflow"], ["plan", "Parallel wave 2"], ["brief", "System-bound envelope"],
+] as const)("live-version %s revisions reach their current viewer through the real client", async (kind, expected) => {
+  const fixture = currentArtifactFixture(kind);
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
+    if (path === "/oakridge/api/api/runs/run/units") return Response.json([fixture.unit]);
+    if (path === `/oakridge/api/api/runs/run/units/${encodeURIComponent(fixture.unit.unit_id)}/artifacts/${kind}`) return Response.json(fixture.detail);
+    if (path.startsWith("/oakridge/")) return Response.json([]);
+    return new Response('<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>', { headers: { "content-type": "text/html" } });
+  } });
+  const page = await browser.newPage();
+  try {
+    const errors: Error[] = [];
+    page.on("pageerror", (error) => errors.push(error));
+    await page.goto(`${server.url.href}?artifact=${kind}&unit=${encodeURIComponent(fixture.unit.unit_id)}`);
+    await page.getByText(expected, { exact: true }).waitFor();
+    expect(await page.getByText(expected, { exact: true }).count()).toBe(1);
+    expect(errors).toEqual([]);
+  } finally { await page.close(); server.stop(true); }
 }, 30_000);

@@ -1,3 +1,7 @@
+import specBody from "./current-spec.json";
+import { OPERATOR_CURRENT_ARTIFACT_VERSIONS } from "../operator-contracts/artifact-versions";
+import currentParked from "./parked-blocker-unit.json";
+import currentBrief from "./current-brief.json";
 import type { OperatorRunView } from "../operator-contracts/projections/run-view";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import sample from "./v2-adapter-sample.json";
@@ -32,4 +36,18 @@ export function blockerUnit(): OperatorUnitView {
     decisions: ["clarify", "discuss", "override"].map((decision) => ({ key: decision, label: decision,
       is_available: true, disabled_reason: null, payload_schema: "{answer: text}", fields: [{ key: "answer", label: "Answer" }],
       submit: { kind: "review", review: "blocker_review", decision, effect: "request_changes", target_revision_id: "blocker-revision" } })) };
+}
+
+/** A real implementation handoff has cohort/brief inputs, not a writer assignment. */
+export function currentParkedCohort(): OperatorUnitView {
+  const unit = currentParked as unknown as OperatorUnitView;
+  return { ...unit, stage: "cohort", input: { cohort: currentParked.input.assignment.cohort, brief: currentBrief },
+    decisions: unit.decisions.map((decision) => ({ ...decision,
+      is_available: decision.key !== "override", disabled_reason: decision.key === "override" ? "Open blocking findings" : null,
+    })) };
+}
+
+export function canonicalSpecUnit(): OperatorUnitView {
+  const unit = currentParked as unknown as OperatorUnitView;
+  return { ...unit, input: {}, artifacts: [{ run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", schema: "spec_body", is_reviewable: true, is_editable: false, revision_count: 1, latest_revision: { id: "spec:1", run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", artifact_schema_version: OPERATOR_CURRENT_ARTIFACT_VERSIONS.spec_body.version, body: specBody, predecessor_id: null, subject_id: null, attempt_id: null, number: 1, created_at: "2026-11-17" } as OperatorUnitView["artifacts"][number]["latest_revision"] }], recorded_decisions: [{ id: "approve:1", review: "spec_review", decision: "approve", effect: "approve", target_revision_id: "spec:1", payload: {}, created_at: "2026-11-17" }] };
 }

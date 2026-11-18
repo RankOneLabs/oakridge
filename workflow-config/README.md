@@ -51,18 +51,23 @@ The previous definition
 `74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4`
 and its exact prompt objects remain addressable.
 
-Current `artifact_schema_version` values, calculated by the observation adapter
-from the compiled artifact declarations:
+Current `artifact_schema_version` values are derived from the artifact's compiled
+schema and its reachable named types. Operator projections and observation capture
+use the same backend function. Historical pinned definitions without the canonical
+`spec_body` contract retain their original declaration hashes.
+
+Run `bun oakridge-dbos/scripts/generate-artifact-versions.ts` after building the core
+WASM to regenerate the backend and observation manifests, then regenerate the PWA
+operator contracts. `--check` verifies both manifests without writing them.
 
 | Artifact | Schema version |
 | --- | --- |
-| analysis | `artifact-schema/v1:4847489074cebfe24f7ecdd9024b351f26ccac021f3f10ce2c788bfa8a5d39e2` |
-| spec | `artifact-schema/v1:51e41ef9d885736919cae19794256f19dde6112647448ad07cb8c71f7d61c305` |
-| plan | `artifact-schema/v1:66a1e9afac28cdb4b4db8fa8e78c9df02da4ddba1952d189279d22025a4ef79e` |
-| brief | `artifact-schema/v1:c1303586cb5531a0c0aed8a282c0ad68917d94c94834d336705373166479951f` |
-| assessment (both stages) | `artifact-schema/v1:57f201559fcc23f712187d5d695e6b26d79a583199cc4a394df88e6a36116fc9` |
+| analysis | `artifact-schema/v1:a37e55b8a965bcd6dcd6c33f2f187a38129c088966f791841c6816dbbb112cec` |
+| spec | `artifact-schema/v1:232c9288b8304d2ff718f7a1ee1b7bbbe3d3afb4a33126b97f4202275d2bc112` |
+| plan | `artifact-schema/v1:084f1f1393ab00eb24e871d698dbb4e79d97c80853e401337980ef3093146395` |
+| brief | `artifact-schema/v1:c181c54e0f573bd408eda7680475a647fe65df4441ff7b7c55b99f40cd108683` |
 
-Three upstream limitations remain blocking for the complete contract:
+Two upstream limitations remain blocking for the complete contract:
 
 - B1: the engine expression language cannot test absence of the optional
   resolution record with a null/presence literal. The current checks conservatively
@@ -71,13 +76,8 @@ Three upstream limitations remain blocking for the complete contract:
 - B2: request_analysis_changes re-wants the author in revise mode, but approving
   the changed analysis does not invalidate or re-want an already published spec.
   The evaluator replay for the required editor rerun is recorded as a todo test.
-- B9: the adapter currently hashes named declarations, rather than their resolved
-  schema bodies. Consequently analysis, plan, brief and assessment retain the old
-  schema versions despite new shapes. Readers must also use definition_id until
-  the adapter's version calculation is corrected in its owning cohort; these
-  versions alone cannot distinguish the revised contract.
 
-The cohort changes no compiler, evaluator or adapter implementation. Integration's
+The canonical contract changes no compiler or evaluator implementation. Integration's
 request_changes explicitly targets `on: assessment`, as the shipped engine requires
 an explicit target when feedback_field is used.
 

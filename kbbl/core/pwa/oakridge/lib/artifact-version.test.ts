@@ -38,12 +38,18 @@ test.each([
   ["plan_body", currentPlan, ["/cohorts/0/allocations/0", "/cohorts/1/allocations/0", "/cohorts/2/allocations/0"]],
   ["brief_body", currentBrief, ["/build_items/0", "/build_items/1"]],
 ] as const)("registered current %s viewers have contract item paths", (schema, body, paths) => {
-  const registration = [{ schema, version: "fixture-current", component_id: CURRENT_VIEWERS[schema] }];
-  const Viewer = resolveViewer(selectVersionedComponent(schema, "fixture-current", registration));
+  const version = OPERATOR_CURRENT_ARTIFACT_VERSIONS[schema].version;
+  const Viewer = resolveViewer(selectVersionedComponent(schema, version));
+  expect(artifactType(schema, version).component_id).toBe(CURRENT_VIEWERS[schema]);
   expect(Viewer && selectViewerItemPaths(Viewer, body)).toEqual(paths);
 });
-test("ambiguous upstream versions stay legacy until the authority fixes its version calculation", () => {
-  expect(["analysis_body", "plan_body", "brief_body"].map((schema) => selectVersionedComponent(schema, OPERATOR_CURRENT_ARTIFACT_VERSIONS[schema as keyof typeof OPERATOR_CURRENT_ARTIFACT_VERSIONS].version))).toEqual([null, null, null]);
+test("historical named declaration hashes retain legacy readers", () => {
+  const legacy = [
+    ["analysis_body", "artifact-schema/v1:4847489074cebfe24f7ecdd9024b351f26ccac021f3f10ce2c788bfa8a5d39e2"],
+    ["plan_body", "artifact-schema/v1:66a1e9afac28cdb4b4db8fa8e78c9df02da4ddba1952d189279d22025a4ef79e"],
+    ["brief_body", "artifact-schema/v1:c1303586cb5531a0c0aed8a282c0ad68917d94c94834d336705373166479951f"],
+  ];
+  expect(legacy.map(([schema, version]) => selectVersionedComponent(schema, version))).toEqual([null, null, null]);
 });
 test("revision metadata is preserved independently of its body", () => {
   const original = sample.artifact as unknown as OperatorArtifactDetail;

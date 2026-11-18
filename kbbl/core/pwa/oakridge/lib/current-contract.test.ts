@@ -1,3 +1,4 @@
+import { canonicalSpecUnit, withUnitFields } from "../__fixtures__/read-models";
 import { expect, test } from "vitest";
 import analysisBody from "../__fixtures__/current-analysis.json";
 import specBody from "../__fixtures__/current-spec.json";
@@ -12,7 +13,6 @@ import { selectReceivedContext } from "./received-context";
 import { selectRunIdentityRollup } from "./tasks";
 import { selectIdentityStageOverview } from "./stage-overview";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
-import { OPERATOR_CURRENT_ARTIFACT_VERSIONS } from "../operator-contracts/artifact-versions";
 import { definitionWithTaskSource, gradingIdentityField, selectGradingIdentityIds } from "./grading-config";
 const unit = unitBody as unknown as OperatorUnitView;
 const analysis = parseCurrentAnalysis(analysisBody);
@@ -71,7 +71,7 @@ test("technical decisions appear under every build item they cite", () => {
 test("received context contains exactly the pinned assignment requirements and revision ids", () => {
   expect(selectReceivedContext(unit)).toMatchObject({ assignment: { requirements: [{ id: "R1", acceptance_conditions: ["Visible R1"] }, { id: "R3", acceptance_conditions: ["Visible R3"] }] }, sources: [{ revision_id: "plan:1" }, { revision_id: "spec:2" }] });
 });
-const specUnit: OperatorUnitView = { ...unit, input: {}, artifacts: [{ run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", schema: "spec_body", is_reviewable: true, is_editable: false, revision_count: 1, latest_revision: { id: "spec:1", run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", artifact_schema_version: OPERATOR_CURRENT_ARTIFACT_VERSIONS.spec_body.version, body: specBody, predecessor_id: null, subject_id: null, attempt_id: null, number: 1, created_at: "2026-11-17" } as OperatorUnitView["artifacts"][number]["latest_revision"] }], recorded_decisions: [{ id: "approve:1", review: "spec_review", decision: "approve", effect: "approve", target_revision_id: "spec:1", payload: {}, created_at: "2026-11-17" }] };
+const specUnit = canonicalSpecUnit();
 test("approved canonical spec supplies requirement rollup identities", () => {
   expect(selectRunIdentityRollup([specUnit])).toMatchObject({ label: "Requirements", rows: [{ id: "R1" }, { id: "R2" }, { id: "R3" }] });
 });
@@ -87,6 +87,6 @@ test("switching identity retains the generated per_task wire contract and target
   expect([gradingIdentityField(config), config]).toEqual(["requirement_ids", { scope: "per_task", task_ids: "/requirement_ids" }]);
 });
 test("legacy rollup retains task rows and label", () => {
-  const legacyUnit: OperatorUnitView = { ...unit, artifacts: specUnit.artifacts.map((artifact) => ({ ...artifact, artifact_key: "tasks", schema: "tasks_body", latest_revision: artifact.latest_revision ? { ...artifact.latest_revision, body: { tasks: [{ id: "T1", description: "Legacy task", requirement_ids: ["R1"] }] } } : null })) };
+  const legacyUnit = withUnitFields(unit, { artifacts: specUnit.artifacts.map((artifact) => ({ ...artifact, artifact_key: "tasks", schema: "tasks_body", latest_revision: artifact.latest_revision ? { ...artifact.latest_revision, body: { tasks: [{ id: "T1", description: "Legacy task", requirement_ids: ["R1"] }] } } : null })) });
   expect(selectRunIdentityRollup([legacyUnit])).toEqual({ label: "Tasks", rows: [{ id: "T1", description: "Legacy task", requirement_ids: ["R1"] }] });
 });
