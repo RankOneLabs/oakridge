@@ -67,7 +67,7 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
       throw new Error(`oakridge ${gateId}: ${decision.disabled_reason ?? `decision ${req.action} unavailable`}`);
     if (decision.fields.length > 1)
       throw new Error(`oakridge ${gateId}: decision requires unsupported fields`);
-    if (req.action === "request_revision" && decision.fields.length === 0 && req.feedback.trim())
+    if (!req.adjudication && req.action === "request_revision" && decision.fields.length === 0 && req.feedback.trim())
       throw new Error(`oakridge ${gateId}: decision does not accept feedback`);
     const field = decision.fields[0];
     const payload = req.adjudication ?? (field ? { [field.key]: req.feedback } : {});
