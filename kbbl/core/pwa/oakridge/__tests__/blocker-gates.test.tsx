@@ -35,3 +35,22 @@ it.each(["clarify", "discuss", "override"])("submits a blocker %s answer through
   expect(requests[0]).toMatchObject({ decision: action, target: "blocker-revision", payload: { answer: "Use the revised contract" } });
   expect(await screen.findByText("Answer sent to the worker.")).toBeTruthy();
 });
+
+it("prevents sending an open answer when that decision becomes unavailable", () => {
+  const unit = blockerUnit();
+  const gates = reviewToGates(unit);
+  const updated = reviewToGates({ ...unit, decisions: unit.decisions.map((decision) => ({ ...decision,
+    is_available: decision.key !== "clarify", disabled_reason: decision.key === "clarify" ? "Already answered" : null })) });
+  if (!gates.ok || !updated.ok || !gates.value[0] || !updated.value[0]) throw new Error("blocker gate absent");
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+  const content = (gate: typeof gates.value[number]) => <QueryClientProvider client={client}><GateDecisionActions gate={gate} /></QueryClientProvider>;
+  const fetch = vi.spyOn(globalThis, "fetch");
+  const view = render(content(gates.value[0]));
+  fireEvent.click(screen.getByTestId("or-decision-clarify"));
+  fireEvent.change(screen.getByLabelText("Answer"), { target: { value: "Stale answer" } });
+
+  view.rerender(content(updated.value[0]));
+  expect(screen.queryByRole("button", { name: "Send answer" })).toBeNull();
+  expect(screen.getByText("Already answered")).toBeTruthy();
+  expect(fetch).not.toHaveBeenCalled();
+});

@@ -62,6 +62,8 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
       throw new Error(`oakridge ${gateId}: review artifact changed; refresh before deciding`);
     const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review && decisionAction(candidate) === req.action);
     if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${gateId}: decision ${req.action} unavailable`);
+    if (decision.is_available === false)
+      throw new Error(`oakridge ${gateId}: ${decision.disabled_reason ?? `decision ${req.action} unavailable`}`);
     if (decision.fields.length > 1)
       throw new Error(`oakridge ${gateId}: decision requires unsupported fields`);
     if (req.action === "request_revision" && decision.fields.length === 0 && req.feedback.trim())

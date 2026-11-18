@@ -79,6 +79,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
   }, []);
 
   const submit = (action: string, decisionFeedback?: string, isOverride = false) => {
+    if (disabled || selectGateDecision(gate, action)?.is_available === false) return;
     const decisionRevisionId = artifactRevisionId ?? gate.artifact_revision_id;
     if (!decisionRevisionId) return;
     const feedbackValue = decisionFeedback?.trim() ?? "";
@@ -157,24 +158,30 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
             || action === "rerun" || action === "reject" || action === "fail";
           const isPrimary = action === "approve" || action === "confirm_merged" || action === "pass";
           const isConfirming = action === "approve" && isConfirmingApproval;
+          const isUnavailable = decision?.is_available === false;
+          const reason = isUnavailable ? decision.disabled_reason : null;
+          const reasonId = `or-decision-disabled-${gate.id}-${action}`;
           return (
-            <Button
-              key={action}
-              variant={isPrimary ? "primary" : "secondary"}
-              className={`${decisionButtonClass} ${isPrimary ? "" : "text-[var(--text-primary)]!"}`}
-              disabled={mutation.isPending || isCheckingMerge || disabled}
-              onClick={() => choose(action, needsFeedback)}
-              onBlur={isConfirming && !mutation.isPending ? () => setIsConfirmingApproval(false) : undefined}
-              data-testid={`or-decision-${action}`}
-            >
-              {isCheckingMerge && action === "confirm_merged" ? "Checking PR…" : mutation.isPending && mutation.variables?.action === action
-                ? "Saving…" : isConfirming ? "Confirm approval" : (actionLabels[action] ?? actionLabel(action))}
-            </Button>
+            <div key={action} className="flex flex-col gap-1">
+              <Button
+                variant={isPrimary ? "primary" : "secondary"}
+                className={`${decisionButtonClass} ${isPrimary ? "" : "text-[var(--text-primary)]!"}`}
+                disabled={mutation.isPending || isCheckingMerge || disabled || isUnavailable}
+                aria-describedby={reason ? reasonId : undefined}
+                onClick={() => choose(action, needsFeedback)}
+                onBlur={isConfirming && !mutation.isPending ? () => setIsConfirmingApproval(false) : undefined}
+                data-testid={`or-decision-${action}`}
+              >
+                {isCheckingMerge && action === "confirm_merged" ? "Checking PR…" : mutation.isPending && mutation.variables?.action === action
+                  ? "Saving…" : isConfirming ? "Confirm approval" : (actionLabels[action] ?? actionLabel(action))}
+              </Button>
+              {reason && <p id={reasonId} className="text-sm text-[var(--text-secondary)]" role="status">{reason}</p>}
+            </div>
           );
         })}
       </div>
 
-      {mergeStatus && !disabled && (
+      {mergeStatus && !disabled && selectGateDecision(gate, "confirm_merged")?.is_available !== false && (
         <div className="or-decision-feedback" role="alert" data-testid="or-merge-warning">
           <p>{mergeWarning(mergeStatus)}</p>
           {gate.pr_url && <p>Pull request: <a href={gate.pr_url} target="_blank" rel="noopener noreferrer">{gate.pr_url}</a></p>}
@@ -188,7 +195,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
         </div>
       )}
 
-      {feedbackAction && !disabled && (
+      {feedbackAction && !disabled && feedbackDecision?.is_available !== false && (
         <div className="or-decision-feedback" data-testid="or-decision-feedback">
           <label htmlFor={`or-decision-feedback-${gate.id}`}>{isBlocker ? feedbackDecision?.fields[0]?.label ?? "Answer" : "What needs to change?"}</label>
           <TextArea
