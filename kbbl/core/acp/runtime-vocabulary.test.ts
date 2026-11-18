@@ -25,6 +25,7 @@ import type * as schema from "@agentclientprotocol/sdk";
 import {
   defaultModelForRuntime,
   isRuntimeId,
+  isCurrentRuntimeSelection,
   RUNTIME_EFFORTS,
   RUNTIME_MODELS,
   withoutContextHint,
@@ -279,4 +280,23 @@ test("an exactly advertised id never counts as a hint-dropped match", () => {
   if (!resolved.ok) return;
   expect(resolved.value?.valueId).toBe("opus[1m]");
   expect(resolved.value?.match).toEqual({ kind: "exact" });
+});
+
+
+describe("isCurrentRuntimeSelection", () => {
+  test("accepts Codex gpt-6.2-sol", () => {
+    expect(isCurrentRuntimeSelection({ runtime: "codex", model: "gpt-6.2-sol" })).toBe(true);
+  });
+
+  test("accepts Codex gpt-6.2-astra", () => {
+    expect(isCurrentRuntimeSelection({ runtime: "codex", model: "gpt-6.2-astra" })).toBe(true);
+  });
+
+  test("accepts the Claude Fable alias", () => {
+    expect(isCurrentRuntimeSelection({ runtime: "claude-code", model: "fable" })).toBe(true);
+  });
+
+  test("rejects retired Codex gpt-5.5", () => {
+    expect(isCurrentRuntimeSelection({ runtime: "codex", model: "gpt-5.5" })).toBe(false);
+  });
 });

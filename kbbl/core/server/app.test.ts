@@ -120,13 +120,15 @@ describe("GET /config", () => {
     });
     expect(body.runtimes[0]?.models).toContainEqual({
       value: "fable",
-      label: "fable 5.1",
+      label: "fable 5.2",
     });
     expect(body.runtimes[0]?.efforts).toContainEqual({ value: "max", label: "max" });
     expect(body.runtimes[1]).toMatchObject({
       id: "codex",
       label: "Codex (ACP)",
     });
+    expect(body.runtimes[1]?.models).toContainEqual({ value: "gpt-6.2-sol", label: "gpt-6.2 sol" });
+    expect(body.runtimes[1]?.models).toContainEqual({ value: "gpt-6.2-astra", label: "gpt-6.2 astra" });
     expect(body.runtimes[1]?.models).toContainEqual({
       value: "gpt-6-astra",
       label: "gpt-6 astra",

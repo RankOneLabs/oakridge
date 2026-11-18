@@ -77,9 +77,11 @@ export const ADVERTISED_AGENT_VOCABULARY: Readonly<
   "claude-code": {
     package: "@agentclientprotocol/claude-agent-acp",
     version: "0.76.0",
-    cli_version: "2.1.318",
+    cli_version: "2.1.327",
     model_option_id: "model",
     effort_option_id: "effort",
+    // Re-probed 2026-11-18 against installed CLI 2.1.327: still advertised
+    // one of the two recorded variants, so no variant was added.
     // Probed 2026-11-04 against the installed CLI (2.1.318), which is what
     // the claude-code profile now drives via CLAUDE_CODE_EXECUTABLE. The
     // four variants recorded here before that change came from the binary
@@ -130,10 +132,10 @@ export const ADVERTISED_AGENT_VOCABULARY: Readonly<
   codex: {
     package: "@agentclientprotocol/codex-acp",
     version: "1.13.0",
-    cli_version: "0.166.0",
+    cli_version: "0.170.0",
     model_option_id: "model",
     effort_option_id: "reasoning_effort",
-    // Probed 2026-11-04 with CODEX_PATH pointing at the installed codex CLI,
+    // Probed 2026-11-18 with CODEX_PATH pointing at the installed codex CLI,
     // which is what the codex profile now drives. Codex ids carry no context
     // hint, and this list comes from codex-acp's app server rather than a
     // local catalog, so it tracks the account directly — `gpt-5.5` is absent
@@ -153,11 +155,18 @@ export const ADVERTISED_AGENT_VOCABULARY: Readonly<
     // model carries it; with the stale bundled one the default model carried
     // none, which is why `advertisedOptions` building the effort selector
     // from `effort_values` must not be read as the agent always offering it.
+    // Captured 2026-11-18 with installed codex CLI 0.170.0. This variant
+    // REPLACED the previous 8-id list rather than being appended: codex-acp's
+    // model list is server-driven (fetched from its app server), and the server
+    // no longer serves the old list. Keeping it would make the picker answer
+    // to a vocabulary no live binary offers.
     model_value_variants: [
       [
+        "gpt-6.2-sol",
+        "gpt-6.2-astra",
+        "gpt-6.1-terra",
         "gpt-6.1-sol",
         "gpt-6-astra",
-        "gpt-6.1-terra",
         "gpt-6-sol",
         "gpt-6-luna",
         "gpt-5.6-sol",
