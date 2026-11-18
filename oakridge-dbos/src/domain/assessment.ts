@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { Result } from "./primitives";
 
 /** Mirrors assessment_body and its dependencies in workflow-config/development.yaml §8. */
@@ -24,19 +23,22 @@ export interface AssessmentBody {
   readonly test_evidence: AssessmentTestEvidence; readonly verdict: "pass" | "pass_with_notes" | "fail";
 }
 export interface AssessmentReadError { readonly operation: "parse_current_assessment"; readonly detail: string }
-const evidence = z.object({ kind: z.enum(["file", "test", "output"]), ref: z.string(), detail: z.string().nullish() });
-export const actionSourceSchema = z.object({ kind: z.enum(["item_assessment", "additional_finding"]), id: z.string() });
-export const assessmentSchema: z.ZodType<AssessmentBody> = z.object({
-  head_sha: z.string(),
-  item_assessments: z.array(z.object({ subject: z.object({ kind: z.enum(["build_item", "requirement"]), id: z.string() }),
-    status: z.enum(["met", "partial", "not_met"]), observation: z.string(), evidence: z.array(evidence) })),
-  additional_findings: z.array(z.object({ id: z.string(), severity: z.enum(["blocking", "warning", "info"]), observation: z.string(),
-    related_build_item_ids: z.array(z.string()), evidence: z.array(evidence) })),
-  next_actions: z.array(z.object({ id: z.string().uuid(), audience: z.enum(["builder", "operator"]), source: actionSourceSchema, text: z.string() })),
-  test_evidence: z.object({ passed: z.number().int(), failed: z.number().int(), output: z.string().nullish(), summary: z.string().nullish(), cargo_test_output: z.string().nullish() }),
-  verdict: z.enum(["pass", "pass_with_notes", "fail"]),
-});
+const fields = (value: unknown): value is { readonly [key: string]: unknown } => typeof value === "object" && value !== null && !Array.isArray(value);
+const text = (value: unknown): value is string => typeof value === "string";
+const optionalText = (value: unknown): value is string | null | undefined => value == null || text(value);
+const list = <T>(value: unknown, predicate: (entry: unknown) => entry is T): value is readonly T[] => Array.isArray(value) && value.every(predicate);
+const evidence = (value: unknown): value is AssessmentEvidence => fields(value) && ["file", "test", "output"].includes(String(value.kind)) && text(value.ref) && optionalText(value.detail);
+export const isActionSource = (value: unknown): value is ActionSource => fields(value) && (value.kind === "item_assessment" || value.kind === "additional_finding") && text(value.id);
+const item = (value: unknown): value is ItemAssessment => fields(value) && fields(value.subject) && ["build_item", "requirement"].includes(String(value.subject.kind))
+  && text(value.subject.id) && ["met", "partial", "not_met"].includes(String(value.status)) && text(value.observation) && list(value.evidence, evidence);
+const finding = (value: unknown): value is AdditionalFinding => fields(value) && text(value.id) && ["blocking", "warning", "info"].includes(String(value.severity))
+  && text(value.observation) && list(value.related_build_item_ids, text) && list(value.evidence, evidence);
+const action = (value: unknown): value is AssessmentAction => fields(value) && text(value.id) && (value.audience === "builder" || value.audience === "operator") && isActionSource(value.source) && text(value.text);
+const tests = (value: unknown): value is AssessmentTestEvidence => fields(value) && Number.isSafeInteger(value.passed) && Number.isSafeInteger(value.failed)
+  && optionalText(value.output) && optionalText(value.summary) && optionalText(value.cargo_test_output);
 export function parseAssessmentBody(body: unknown): Result<AssessmentBody, AssessmentReadError> {
-  const parsed = assessmentSchema.safeParse(body);
-  return parsed.success ? { ok: true, value: parsed.data } : { ok: false, error: { operation: "parse_current_assessment", detail: parsed.error.message } };
+  if (!fields(body) || !text(body.head_sha) || !list(body.item_assessments, item) || !list(body.additional_findings, finding) || !list(body.next_actions, action)
+      || !tests(body.test_evidence) || !["pass", "pass_with_notes", "fail"].includes(String(body.verdict))) return { ok: false,
+    error: { operation: "parse_current_assessment", detail: "body does not match assessment_body" } };
+  return { ok: true, value: body as unknown as AssessmentBody };
 }

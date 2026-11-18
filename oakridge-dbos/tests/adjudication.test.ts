@@ -1,21 +1,8 @@
 import { expect, test } from "bun:test";
-import { composeBuilderFeedback, validateAdjudication, type Adjudication, type AdjudicationTarget } from "../src/domain/adjudication";
+import { composeBuilderFeedback, validateAdjudication, type Adjudication } from "../src/domain/adjudication";
 
-export const target: AdjudicationTarget = { id: "assessment:1", body: {
-  head_sha: "head", verdict: "fail", test_evidence: { passed: 1, failed: 0 },
-  item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "partial", observation: "More work", evidence: [] }],
-  additional_findings: [{ id: "F1", severity: "warning", observation: "Note", related_build_item_ids: [], evidence: [] }],
-  next_actions: ["first", "second", "third", "operator"].map((text, index) => ({ id: `00000000-0000-4000-8000-00000000000${index}`,
-    text, audience: index === 3 ? "operator" : "builder", source: { kind: "item_assessment", id: "B1" } })),
-} };
-export function validAdjudication(): Adjudication {
-  const entries = target.body.next_actions.map((action, index) => ({ action_id: action.id, original_text: action.text,
-    audience: action.audience, source: action.source, disposition: index === 1 ? "modified" as const : index === 2 ? "rejected" as const : "accepted" as const,
-    ...(index === 1 ? { final_text: "replacement" } : {}) }));
-  const added_actions = [{ action_id: "10000000-0000-4000-8000-000000000000", origin: "operator" as const, final_text: "added",
-    audience: "builder" as const, source: { kind: "additional_finding" as const, id: "F1" } }];
-  return { entries, added_actions, builder_feedback: composeBuilderFeedback(entries, added_actions) };
-}
+import { target, validAdjudication } from "./adjudication-fixture";
+
 const validate = (payload: unknown, effect: Parameters<typeof validateAdjudication>[2] = "accept") => validateAdjudication(payload, target, effect);
 const actionId = target.body.next_actions[0].id;
 test("accepts accepted, modified, rejected and added actions across audiences", () => expect(validate(validAdjudication()).ok).toBe(true));
@@ -59,3 +46,13 @@ test("all builder actions rejected permits accept but forbids requesting changes
   expect([validate(empty).ok, validate(empty, "request_build_changes").ok, validate(empty, "request_changes").ok]).toEqual([true, false, false]);
 });
 test("assessment change feedback retains legacy fields without adjudication", () => expect(validate({ feedback: "Reassess" }, "request_assessment_changes").ok).toBe(true));
+
+import { selectReviewedAssessmentId } from "../src/domain/adjudication";
+test("redirected decisions resolve the assessment that existed when the event was recorded", () => {
+  const revisions = [
+    { id: "build:1", unit_id: "unit", artifact: "build_result", seq: 1, created_at: new Date(0) },
+    { id: "assessment:1", unit_id: "unit", artifact: "assessment", seq: 1, created_at: new Date(1) },
+    { id: "assessment:2", unit_id: "unit", artifact: "assessment", seq: 2, created_at: new Date(3) },
+  ];
+  expect(selectReviewedAssessmentId({ decision: { review: "assessment_review", unit_id: "unit", target_revision_id: "build:1", created_at: new Date(2) }, revisions })).toBe("assessment:1");
+});

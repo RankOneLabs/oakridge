@@ -2,6 +2,7 @@
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
 import type { OperatorEvent, OperatorResolvedDecision, OperatorWriter } from "../core-client/core-types";
+import type { OperatorAdjudication } from "../domain/adjudication";
 import type { OperatorAttemptView } from "./unit-view";
 import type { OperatorAuthorityEffectStatus } from "../storage/db-types";
 
@@ -31,6 +32,8 @@ export interface OperatorEventHistory {
   readonly event: OperatorEvent;
   readonly writer: OperatorWriter;
   readonly created_at: string;
+  readonly adjudication?: OperatorAdjudication | null;
+  readonly assessment_revision_id?: string | null;
 }
 
 export interface OperatorEffectDiagnostic {

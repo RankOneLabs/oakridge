@@ -1,3 +1,6 @@
+import { parseAdjudication, selectReviewedAssessmentId, type Adjudication } from "../domain/adjudication";
+import type { Writer } from "../core-client/core-types";
+import type { ReviewDecisionRead } from "../storage/read-store";
 import type { ArtifactSchemaVersions } from "../storage/read-store";
 import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
 import type { BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
@@ -7,7 +10,7 @@ import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, 
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
 import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { RevisionRef, RunRead, RunSummaryRead, UnitSummaryRecord } from "../storage/read-store";
-import type { ArtifactRevisionRecord, AttemptRecord, ReviewDecisionRecord, UnitRecord } from "../storage/schema-records";
+import type { ArtifactRevisionRecord, AttemptRecord, UnitRecord } from "../storage/schema-records";
 import { selectAttemptWorkerKey, selectAttention, selectLatestAttempts, type Attention, type UnitAttention } from "./attention";
 import { EMPTY_PAYLOAD, schemaKey, selectDecisionPayloadType, typeSchemaKey } from "./schema-view";
 import { ROOT_UNIT_KEY, selectCollectionKey, selectUnitKey, selectUnitLabel, selectUnitTree, titleCase } from "./unit-label";
@@ -103,11 +106,17 @@ export interface RevisionDecision {
   readonly effect: DeclaredDecisionEffect;
   readonly target_revision_id: string;
   readonly payload: BodyValue;
+  readonly assessment_revision_id?: string | null;
+  readonly adjudication?: Adjudication | null;
+  readonly actor?: Writer | null;
   readonly created_at: Date;
 }
-export const selectRevisionDecision = (decision: ReviewDecisionRecord): RevisionDecision => ({
-  id: decision.id, review: decision.review, decision: decision.decision, effect: decision.effect,
-  target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue, created_at: decision.created_at });
+export function selectRevisionDecision(decision: ReviewDecisionRead, assessment_revision_id?: string | null): RevisionDecision {
+  const adjudication = ["assessment_review", "integration_review"].includes(decision.review) ? parseAdjudication(decision.payload) : null;
+  return { id: decision.id, review: decision.review, decision: decision.decision, effect: decision.effect,
+    target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue, created_at: decision.created_at,
+    ...(adjudication ? { adjudication, assessment_revision_id: assessment_revision_id ?? decision.target_revision_id, actor: decision.actor ?? null } : {}) };
+}
 
 export interface UnitView {
   readonly blocker?: BlockerHistory | null;
@@ -262,7 +271,7 @@ export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitA
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),
     attention: selectAttention(attention, read),
     decisions: selectAvailableDecisions(read, unit, attention),
-    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map(selectRevisionDecision),
+    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map(decision => selectRevisionDecision(decision, selectReviewedAssessmentId({ decision, revisions: read.revisions }))),
     attempts: selectAttemptViews(read.attempts.filter((attempt) => attempt.unit_id === unit.id), read.intents),
     artifacts: selectArtifactViews(read, unit) };
 }
