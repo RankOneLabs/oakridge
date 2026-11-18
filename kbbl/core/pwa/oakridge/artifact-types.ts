@@ -89,6 +89,7 @@ export interface ArtifactDetail {
 }
 
 export interface ParkedGate {
+  requires_adjudication?: boolean;
   blocker?: import("./operator-contracts/projections/history-view").OperatorBlockerHistory | null;
   requirement_ids?: readonly string[];
   id: string;
@@ -130,6 +131,7 @@ export interface SentReviewFeedback {
 }
 
 export interface GateResumeRequest {
+  adjudication?: import("./operator-contracts/domain/adjudication").OperatorAdjudication;
   idempotency_key: string;
   artifact_revision_id: string;
   action: string;

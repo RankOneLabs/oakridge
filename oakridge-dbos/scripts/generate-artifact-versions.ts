@@ -23,6 +23,7 @@ const artifacts = [
   { schema: "spec_body", stage: "analysis", artifact: "spec" },
   { schema: "plan_body", stage: "planning", artifact: "plan" },
   { schema: "brief_body", stage: "brief", artifact: "brief" },
+  { schema: "assessment_body", stage: "cohort", artifact: "assessment" },
 ] as const;
 const versions = Object.fromEntries(artifacts.map(({ schema, stage, artifact }) => {
   const version = parsedArtifactSchemaVersion(workflow, stage, artifact);

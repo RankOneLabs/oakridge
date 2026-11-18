@@ -1,3 +1,4 @@
+import { selectReviewedAssessmentId } from "../domain/adjudication";
 import { artifactSchemaVersions } from "../adapters/observation-schema-version";
 import { CoreClient, compileDefinition } from "../core-client/client";
 import { isIdentity, launchableDefinitionIds, readLaunchableCatalog, resolveDefinition } from "../runtime/definition-store";
@@ -388,7 +389,7 @@ export async function readSessionRunLocation(db: Kysely<DB>, session_id: string)
 /** Events newest first: a run's, or one unit's. A launch or cancel names no unit, so it is in the run's history only. */
 export interface HistoryQuery { readonly run_id: string; readonly unit_id: string | null; readonly after: HistoryCursor | null; readonly limit: number }
 export interface HistoryCursor { readonly created_at: string; readonly id: string }
-export interface HistoryEntry { readonly event: EventRecord; readonly wanted: readonly { readonly unit_id: string; readonly actions: WantedWorkers }[] }
+export interface HistoryEntry { readonly assessment_revision_id?: string | null; readonly event: EventRecord; readonly wanted: readonly { readonly unit_id: string; readonly actions: WantedWorkers }[] }
 export interface HistoryPage { readonly items: readonly HistoryEntry[]; readonly next: HistoryCursor | null }
 /** Null when the named unit is not part of the run. */
 export async function readHistory(db: Kysely<DB>, query: HistoryQuery): Promise<HistoryPage | null> {
@@ -408,8 +409,11 @@ export async function readHistory(db: Kysely<DB>, query: HistoryQuery): Promise<
     const event_ids = events.map((event) => event.id);
     const wanted = event_ids.length === 0 ? [] : await trx.selectFrom("authority.wanted_log").select(["event_id", "unit_id", "actions"])
       .where("run_id", "=", query.run_id).where("event_id", "=", anyOf(event_ids)).orderBy("unit_id").execute();
+    const assessmentReviews = events.some(event => event.payload.kind === "operator_decided" && ["assessment_review", "integration_review"].includes(event.payload.review));
+    const revisions = assessmentReviews ? await trx.selectFrom("authority.artifact_revision").select(["id", "unit_id", "artifact", "seq", "created_at"]).where("run_id", "=", query.run_id).execute() : [];
     const last = rows[query.limit - 1];
-    return { items: events.map((event) => ({ event, wanted: wanted.filter((row) => row.event_id === event.id)
+    return { items: events.map((event) => ({ event,
+      ...(event.payload.kind === "operator_decided" ? { assessment_revision_id: selectReviewedAssessmentId({ decision: { review: event.payload.review, unit_id: event.payload.unit, target_revision_id: event.payload.target, created_at: event.created_at }, revisions }) } : {}), wanted: wanted.filter((row) => row.event_id === event.id)
         .filter((row) => query.unit_id === null || row.unit_id === query.unit_id).map((row) => ({ unit_id: row.unit_id, actions: row.actions })) })),
       next: rows.length > query.limit && last ? { created_at: last.cursor_created_at, id: last.id } : null };
   });

@@ -10,7 +10,7 @@ import type { ExecutedPromptTurn } from "../../executed-prompt";
 import type { CohortPullRequestResponse, ConfirmCohortMergedRequest, ArtifactDetail, ArtifactTypeDescriptor, ReviewInbox } from "./artifact-types";
 import type { OakridgeConfig, WorkflowDefSummary } from "./project-types";
 import type { CreateRunRequest, RunSummary, RunDetail, ConfirmFinalPullRequestRequest, EpicWorkflowProfile, FinalPullRequestResponse, RepositoryKey, EpicProfileId, WorkflowRunId, RunSessionAttempt, SessionRunLocation } from "./run-types";
-import type { OperatorIngressResponse } from "./operator-contracts/http/ingress";
+import type { OperatorDecideRequest, OperatorIngressResponse } from "./operator-contracts/http/ingress";
 import type { OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary } from "./operator-contracts/projections/definition-view";
 import type { OperatorRunInboxBatch } from "./operator-contracts/projections/inbox";
 import type { OperatorRunPage, OperatorRunView } from "./operator-contracts/projections/run-view";
@@ -75,9 +75,9 @@ async function readRunInboxBatch(runIds: readonly string[]): Promise<OperatorRun
   return entries;
 }
 
-async function decide(runId: string, unitId: string, review: string, decision: string, target: string, payload: unknown, requestId: string): Promise<string> {
+async function decide(runId: string, unitId: string, review: string, request: OperatorDecideRequest): Promise<string> {
   const path = `${unitPath(runId, unitId)}/reviews/${encodeURIComponent(review)}/decide`;
-  return committed(await oakridgePost<OperatorIngressResponse>(path, { request_id: requestId, decision, target, payload }), path);
+  return committed(await oakridgePost<OperatorIngressResponse>(path, request), path);
 }
 
 export { parseOakridgeRunEventFrame } from "./adapters/event";
@@ -159,7 +159,7 @@ export async function confirmCohortMerged(cohortId: string, req: ConfirmCohortMe
   if (!unit) throw new Error(`oakridge ${cohortId}: unit unavailable`);
   const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.decision === "confirm_merged");
   if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${cohortId}: confirm_merged unavailable`);
-  await decide(stage.runId, unit.unit_id, decision.submit.review, decision.submit.decision, decision.submit.target_revision_id, {}, req.idempotency_key);
+  await decide(stage.runId, unit.unit_id, decision.submit.review, { decision: decision.submit.decision, target: decision.submit.target_revision_id, payload: {}, request_id: req.idempotency_key });
   invalidateCachedRunUnits(stage.runId);
   return { cohort_id: cohortId, outcome: { kind: "completed" } };
 }
@@ -228,7 +228,7 @@ export function confirmFinalPullRequest(
     const unit = units.find((candidate) => candidate.stage === "integration" && candidate.collection_key === repositoryKey);
     const decision = unit?.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.decision === "confirm_merged");
     if (!unit || !decision || decision.submit.kind !== "review") throw new Error(`oakridge ${runPath(runId)}: integration confirm_merged unavailable`);
-    await decide(runId, unit.unit_id, decision.submit.review, decision.submit.decision, decision.submit.target_revision_id, {}, request.idempotency_key);
+    await decide(runId, unit.unit_id, decision.submit.review, { decision: decision.submit.decision, target: decision.submit.target_revision_id, payload: {}, request_id: request.idempotency_key });
     invalidateCachedRunUnits(runId);
     const profile: EpicWorkflowProfile = { id: runId as EpicProfileId, workflow_run_id: runId as WorkflowRunId,
       title: "development", slug: "development", lifecycle_state: "final_integration", final_merge_policy: "external_confirmation",

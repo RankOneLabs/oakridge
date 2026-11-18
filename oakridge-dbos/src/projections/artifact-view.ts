@@ -1,3 +1,4 @@
+import { selectReviewedAssessmentId } from "../domain/adjudication";
 import type { RunId, UnitId } from "../domain/primitives";
 import type { RunRead } from "../storage/read-store";
 import { isEditable, isReviewable, selectArtifactSchema, selectRevisionDecision, selectRevisionViews, type ArtifactRevisionView, type RevisionDecision } from "./unit-view";
@@ -37,9 +38,10 @@ export function selectArtifactDetail(read: RunRead, location: ArtifactLocation):
   if (!unit || !stage?.artifacts[location.artifact]) return null;
   const revisions = selectRevisionViews({ revisions: read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === location.artifact), attempts: read.attempts, versions: read.definition.artifact_schema_versions ?? {}, stage: unit.stage ?? "" });
   const ids = new Set(revisions.map((revision) => revision.id));
-  const decisions = read.decisions.filter((decision) => ids.has(decision.target_revision_id)).map(selectRevisionDecision);
+  const decisions = read.decisions.map(decision => selectRevisionDecision(decision, selectReviewedAssessmentId({ decision, revisions: read.revisions })))
+    .filter(decision => ids.has(decision.target_revision_id) || (decision.assessment_revision_id != null && ids.has(decision.assessment_revision_id)));
   const latest = revisions.at(-1);
-  const verdict = latest ? decisions.filter((decision) => decision.target_revision_id === latest.id).at(-1) : undefined;
+  const verdict = latest ? decisions.filter((decision) => decision.target_revision_id === latest.id || decision.assessment_revision_id === latest.id).at(-1) : undefined;
   const status = verdict === undefined ? "draft" : verdict.effect === "approve" ? "approved" : "changes_requested";
   const editPolicy = stage.artifacts[location.artifact]?.edit_policy?.kind ?? "always";
   return { run_id: unit.run_id, unit_id: unit.id, artifact_key: location.artifact, schema: selectArtifactSchema(stage, location.artifact),

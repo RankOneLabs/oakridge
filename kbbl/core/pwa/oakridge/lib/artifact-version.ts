@@ -3,7 +3,7 @@ export interface ArtifactVersionIdentity { readonly artifact_schema_version?: st
 export interface CurrentVersionRegistration { readonly schema: string; readonly version: string; readonly component_id: string }
 export const CURRENT_VIEWERS = {
   analysis_body: "dev-current-analysis-viewer", spec_body: "dev-current-spec-viewer",
-  plan_body: "dev-current-plan-viewer", brief_body: "dev-current-brief-viewer",
+  plan_body: "dev-current-plan-viewer", brief_body: "dev-current-brief-viewer", assessment_body: "dev-current-assessment-viewer",
 } as const;
 export const CURRENT_VERSIONS: readonly CurrentVersionRegistration[] = Object.entries(OPERATOR_CURRENT_ARTIFACT_VERSIONS)
   .filter(([, value]) => value.is_distinct).map(([schema, value]) => ({ schema, version: value.version, component_id: CURRENT_VIEWERS[schema as keyof typeof CURRENT_VIEWERS] }));

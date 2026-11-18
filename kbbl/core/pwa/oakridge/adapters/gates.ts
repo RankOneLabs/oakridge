@@ -1,3 +1,4 @@
+import { selectVersionedComponent } from "../lib/artifact-version";
 import { selectUnitRequirementIds } from "../lib/unit-requirements";
 import type { OperatorBodyValue, OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { ParkedGate, SentReviewFeedback } from "../artifact-types";
@@ -49,7 +50,7 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
     const artifact = target.kind === "review" ? unit.artifacts.find((candidate) => candidate.latest_revision?.id === target.target_revision_id) : null;
     const id = compositeId({ kind: "gate", runId: unit.run_id, unitId: unit.unit_id,
       name: `${review}:${target.kind === "review" ? target.target_revision_id : "unknown"}` });
-    return { id, blocker: review === "blocker_review" && unit.blocker?.is_open ? unit.blocker : null,
+    return { id, requires_adjudication: artifact?.schema === "assessment_body" && selectVersionedComponent(artifact.schema, artifact.latest_revision?.artifact_schema_version) === "dev-current-assessment-viewer", blocker: review === "blocker_review" && unit.blocker?.is_open ? unit.blocker : null,
       requirement_ids: selectUnitRequirementIds(unit), gate_type: review.includes("merge") ? "merge_confirmation" : artifact ? "artifact_approval" : "gate_decision",
       gate_step: review, run_id: unit.run_id, stage_name: session.stage, unit_id: session.unit,
       artifact_revision_id: target.kind === "review"
@@ -65,8 +66,8 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
 }
 
 const feedbackOf = (payload: OperatorBodyValue): string | null => {
-  if (typeof payload !== "object" || payload === null || !("feedback" in payload)) return null;
-  const feedback = payload.feedback;
+  if (typeof payload !== "object" || payload === null) return null;
+  const feedback = "builder_feedback" in payload ? payload.builder_feedback : "feedback" in payload ? payload.feedback : null;
   return typeof feedback === "string" && feedback.trim() ? feedback : null;
 };
 /** Changes requested on a revision that is still its artifact's latest: sent, and not yet answered by a new revision. */

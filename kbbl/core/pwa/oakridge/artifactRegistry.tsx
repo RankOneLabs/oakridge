@@ -5,7 +5,7 @@ import { CurrentBuildBriefViewer } from "./components/molecules/CurrentBuildBrie
 import { parseCurrentAnalysis, parseCanonicalSpec, parseCurrentPlan, parseCurrentBrief } from "./lib/current-contract";
 import { SchemaContractView } from "./components/molecules/SchemaContractView";
 import type { Task } from "./lib/tasks";
-import { parseAssessment } from "./lib/assessment";
+import { parseAssessment, parseCurrentAssessment } from "./lib/assessment";
 import { parsePlan } from "./lib/plan";
 import { parseTasks } from "./lib/tasks";
 import { readBuildBrief } from "./lib/build-brief";
@@ -18,7 +18,7 @@ import { SpecViewer } from "./components/molecules/SpecViewer";
 import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
 import { PlanViewer } from "./components/molecules/PlanViewer";
 import { BuildResultReview } from "./components/organisms/BuildResultReview";
-import { AssessmentReview } from "./components/organisms/AssessmentReview";
+import { AssessmentReview, CurrentAssessmentReview } from "./components/organisms/AssessmentReview";
 import { PrSummaryViewer } from "./components/molecules/PrSummaryViewer";
 import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
 import { TasksViewer } from "./components/molecules/TasksViewer";
@@ -71,6 +71,7 @@ const REGISTRY: Record<string, RegistryEntry> = {
   "dev-tasks-viewer": { Viewer: TasksViewer },
   "dev-build-brief-viewer": { Viewer: BuildBriefViewer },
   "dev-build-result-viewer": { Viewer: BuildResultReview },
+  "dev-current-assessment-viewer": { Viewer: CurrentAssessmentReview },
   "dev-assessment-viewer": { Viewer: AssessmentReview },
   "dev-pr-summary-viewer": { Viewer: PrSummaryViewer },
 };
@@ -90,6 +91,10 @@ export function selectViewerItemPaths(Viewer: ComponentType<ViewerProps>, body: 
   if (Viewer === BuildBriefViewer) {
     const brief = readBuildBrief(body);
     return brief ? brief.shape === "legacy" ? brief.acceptance_criteria.map((_, index) => `/acceptance_criteria/${index}`) : brief.build_items.map((_, index) => `/build_items/${index}`) : [];
+  }
+  if (Viewer === CurrentAssessmentReview) {
+    const parsed = parseCurrentAssessment(body);
+    return parsed.ok ? [...parsed.value.item_assessments.map((_, index) => `/item_assessments/${index}`), ...parsed.value.additional_findings.map((_, index) => `/additional_findings/${index}`)] : [];
   }
   if (Viewer === AssessmentReview) {
     const parsed = parseAssessment(body);
@@ -122,6 +127,7 @@ export function isReadableViewer(Viewer: ComponentType<ViewerProps>, body: unkno
   if (Viewer === PlanViewer) return parsePlan(body).ok;
   if (Viewer === TasksViewer) return parseTasks(body).ok;
   if (Viewer === BuildBriefViewer) return readBuildBrief(body) !== null;
+  if (Viewer === CurrentAssessmentReview) return parseCurrentAssessment(body).ok;
   if (Viewer === AssessmentReview) return parseAssessment(body).ok;
   return true;
 }

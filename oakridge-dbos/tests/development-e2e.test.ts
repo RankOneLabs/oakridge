@@ -1,5 +1,5 @@
 import { commitTestDefinition } from "./committed-fixture";
-import { APPROVED_ANALYSIS, REVISED_ANALYSIS, APPROVED_SPEC, COHORTS, developmentBrief, COHORT_ASSESSMENT, INTEGRATION_ASSESSMENT, ACCEPT_ADJUDICATION } from "./development-contract-fixture";
+import { APPROVED_ANALYSIS, REVISED_ANALYSIS, APPROVED_SPEC, COHORTS, developmentBrief, COHORT_ASSESSMENT, INTEGRATION_ASSESSMENT, ACCEPT_ADJUDICATION, INTEGRATION_REPLACEMENT_ADJUDICATION } from "./development-contract-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -720,7 +720,7 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   forge.withhold_integration_observation = true;
   const requested = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}/reviews/integration_review/decide`,
     { request_id: crypto.randomUUID(), decision: "request_changes", target: old_review.target,
-      payload: { ...ACCEPT_ADJUDICATION, builder_feedback: "Open a new integration PR." } });
+      payload: INTEGRATION_REPLACEMENT_ADJUDICATION });
   expect(requested.status).toBe(201);
   const replacement = await eventually("replacement integration PR to publish", async () => {
     const pr = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)

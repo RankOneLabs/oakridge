@@ -1,4 +1,5 @@
 import type { AnalysisBody, SpecBody, PlanCohort, BriefBody, AssessmentBody } from "../../workflow-config/src/development-test-support";
+import { composeBuilderFeedback, type Adjudication } from "../src/domain/adjudication";
 
 /** Bodies mirror the canonical contract in workflow-config/development.yaml. */
 export const APPROVED_ANALYSIS: AnalysisBody = {
@@ -43,3 +44,9 @@ export const INTEGRATION_ASSESSMENT: AssessmentBody = {
   additional_findings: [], next_actions: [], test_evidence: { passed: 2, failed: 0 },
 };
 export const ACCEPT_ADJUDICATION = { entries: [], added_actions: [], builder_feedback: "" };
+/** An operator-added builder action supports requesting changes even when the assessor proposed none. */
+export const INTEGRATION_REPLACEMENT_ADJUDICATION: Adjudication = (() => {
+  const added_actions: Adjudication["added_actions"] = [{ action_id: "00000000-0000-4000-8000-000000000001", origin: "operator",
+    audience: "builder", source: { kind: "item_assessment", id: "req-a" }, final_text: "Open a new integration PR." }];
+  return { entries: [], added_actions, builder_feedback: composeBuilderFeedback([], added_actions) };
+})();
