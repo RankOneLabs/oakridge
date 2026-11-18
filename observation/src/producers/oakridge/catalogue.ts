@@ -1,3 +1,4 @@
+import { currentDefinitions, currentItemFields, currentSchemaVersion } from "./current-catalogue";
 import type { RegisteredSelector } from "../../grading/configuration";
 import { err, ok, type JsonValue, type Result } from "../../domain/primitives";
 import { idList, listAt, objectAt, requiredId, type ExtractionFailure, type ExtractorDefinition,
@@ -182,12 +183,25 @@ function allDefinitions(schemaVersion: string): readonly ExtractorDefinition[] {
 }
 
 export function oakridgeCatalogue(artifact_kind: string, schema_version: string): readonly ExtractorDefinition[] {
-  return allDefinitions(schema_version).filter((entry) => entry.artifact_kind === artifact_kind);
+  const definitions = currentSchemaVersion(artifact_kind) === schema_version ? currentDefinitions(schema_version, TASK_SCOPE) : allDefinitions(schema_version);
+  return definitions.filter((entry) => entry.artifact_kind === artifact_kind);
 }
 
 /** Registered extractor addresses; question bindings belong to published grading configuration. */
-export const OAKRIDGE_SELECTORS: readonly RegisteredSelector[] = allDefinitions(VERSION).map(({ artifact_kind, item_selector, item_kind }) =>
-  ({ artifact_kind, item_selector, item_kind, item_fields: fieldsForItem(item_kind) }));
+function registeredSelectors(): readonly RegisteredSelector[] {
+  const legacy = allDefinitions(VERSION).map(({ artifact_kind, item_selector, item_kind }) =>
+    ({ artifact_kind, item_selector, item_kind, item_fields: fieldsForItem(item_kind) }));
+  const current = currentDefinitions(VERSION, TASK_SCOPE).map(({ artifact_kind, item_selector, item_kind }) =>
+    ({ artifact_kind, item_selector, item_kind, item_fields: currentItemFields(item_kind) }));
+  const byAddress = new Map<string, RegisteredSelector>();
+  for (const entry of [...legacy, ...current]) {
+    const key = `${entry.artifact_kind}:${entry.item_selector}`;
+    const prior = byAddress.get(key);
+    byAddress.set(key, { ...entry, item_fields: [...new Set([...(prior?.item_fields ?? []), ...entry.item_fields])] });
+  }
+  return [...byAddress.values()];
+}
+export const OAKRIDGE_SELECTORS: readonly RegisteredSelector[] = registeredSelectors();
 
 /** Fields mirrored by Task, AcceptanceEntry, AssessmentFinding and the catalogue mappings above. */
 function fieldsForItem(item_kind: string): readonly string[] {
