@@ -68,7 +68,7 @@ export const TARGET_TABLES: Readonly<Record<string, TableSpec>> = {
       "producer,namespace,logical_item_id -> logical_item(producer,namespace,logical_item_id)"],
     checks: [
       `occurrence_id ~ ${CANONICAL_DIGEST}`,
-      "json_pointer <> ''",
+      "json_pointer = '' OR json_pointer LIKE '/%'",
     ],
   },
   item_relation: {

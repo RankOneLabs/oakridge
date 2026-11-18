@@ -66,6 +66,6 @@ test("current spec captures preserve the exact analysis revision ids supplied by
   const row = { id: "event", run_id: "run", payload: { kind: "revision_published", unit: "run/analysis", artifact: "spec", body: {} },
     created_at: new Date(0) } as import("../src/storage/read-store").CommittedEventRow<import("../src/storage/json-column-types").CoreEvent>;
   const definition = { definition_id: catalog.value.development!.definition_id, checked_program: { workflow: current } } as unknown as import("../src/storage/read-store").PinnedDefinitionRead;
-  const capture = mapObservationEvent({ row, definition, namespace: "test", stage: "analysis", revision_sequence: 1, run_config: null, analysis_revision_ids: ["run/analysis:analysis:2"] });
+  const capture = mapObservationEvent({ row, definition, namespace: "test", stage: "analysis", revision_sequence: 1, run_config: null, analysis_revision_id: "run/analysis:analysis:2" });
   expect(capture.kind === "artifact_revision" && capture.revision.source.analysis_revision_ids).toEqual(["oakridge:test:run/analysis:analysis:2"]);
 });

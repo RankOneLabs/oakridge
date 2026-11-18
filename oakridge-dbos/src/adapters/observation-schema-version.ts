@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { canonicalJson, canonicalDigest } from "canonical-json";
 import type { ParsedWorkflow, Type } from "../core-client/core-types";
+import { err, ok, type Result } from "../domain/primitives";
 import type { PinnedDefinitionRead } from "../storage/read-store";
 import type { CanonicalDigest, JsonValue } from "./observation-wire";
 
@@ -11,50 +12,77 @@ function encoded(value: JsonValue): string {
 }
 
 /** Retain the stored digest's domain prefix over the shared canonical bytes. */
+function schemaDigest(declaration: JsonValue, version: "v1" | "v2"): string {
+  return `artifact-schema/${version}:${createHash("sha256").update(encoded(declaration), "utf8").digest("hex")}`;
+}
 export function declarationDigest(declaration: JsonValue): string {
-  return `artifact-schema/v1:${createHash("sha256").update(encoded(declaration), "utf8").digest("hex")}`;
+  return schemaDigest(declaration, "v1");
 }
 export function bodyDigest(body: JsonValue): CanonicalDigest {
   const result = canonicalDigest(body);
   if (!result.ok) throw new Error(`${result.error.operation}: ${result.error.entity_id}: ${result.error.detail}`);
   return result.value as CanonicalDigest;
 }
-/** Reachable named types participate in identity; unrelated schemas and prompts do not. */
-export function resolvedSchemaDigest(workflow: ParsedWorkflow, schema: Type): string | null {
-  const named = new Map<string, Type>();
-  const pending: Type[] = [schema];
-  while (pending.length) {
-    const current = pending.pop();
-    if (!current) continue;
-    switch (current.kind) {
-      case "named": {
-        if (named.has(current.schema)) break;
-        const definition = Object.hasOwn(workflow.schemas ?? {}, current.schema) ? workflow.schemas?.[current.schema] : undefined;
-        if (!definition) return null;
-        named.set(current.schema, definition);
-        pending.push(definition);
-        break;
-      }
-      case "record": pending.push(...Object.values(current.fields)); break;
-      case "list": pending.push(current.item); break;
-      case "optional": pending.push(current.value); break;
-    }
-  }
-  return declarationDigest({ schema: schema as JsonValue, schemas: Object.fromEntries(named) as JsonValue });
+interface SchemaResolution {
+  readonly type: Type;
+  readonly schemas: NonNullable<ParsedWorkflow["schemas"]>;
+  readonly visiting: ReadonlySet<string>;
 }
-/** The canonical contract introduced spec_body. Older pinned definitions retain
- * their exact v1 declaration hashes; no artifact body participates in dispatch. */
+interface SchemaResolutionFailure {
+  readonly operation: "resolve_artifact_schema"; readonly entity_id: string; readonly detail: string;
+}
+/** Expand only the artifact's transitive schema dependencies, independent of alias names. */
+function resolveSchema(input: SchemaResolution): Result<Type, SchemaResolutionFailure> {
+  const { type, schemas, visiting } = input;
+  switch (type.kind) {
+    case "named": {
+      const referenced = schemas[type.schema];
+      if (!referenced || visiting.has(type.schema)) return err({ operation: "resolve_artifact_schema",
+        entity_id: type.schema, detail: referenced ? "recursive schema reference" : "missing schema reference" });
+      return resolveSchema({ type: referenced, schemas, visiting: new Set([...visiting, type.schema]) });
+    }
+    case "record": {
+      const fields: { [key: string]: Type } = {};
+      for (const [name, field] of Object.entries(type.fields)) {
+        const resolved = resolveSchema({ ...input, type: field });
+        if (!resolved.ok) return resolved;
+        fields[name] = resolved.value;
+      }
+      return ok({ kind: "record", fields });
+    }
+    case "list": {
+      const item = resolveSchema({ ...input, type: type.item });
+      return item.ok ? ok({ kind: "list", item: item.value }) : item;
+    }
+    case "optional": {
+      const value = resolveSchema({ ...input, type: type.value });
+      return value.ok ? ok({ kind: "optional", value: value.value }) : value;
+    }
+    default: return ok(type);
+  }
+}
+/** The pinned contract's identity authority determines its versioning epoch.
+ * Historical tasks-based contracts retain their exact declaration digests,
+ * including on replay. Spec-based contracts use v2 resolved bodies. The epoch
+ * also distinguishes unchanged built-in blocker schemas across the cutover.
+ * No revision body or prompt participates in this decision. */
+function usesResolvedSchemaVersions(workflow: ParsedWorkflow): boolean {
+  const artifacts = Object.values(workflow.stages).map((stage) => stage.artifacts);
+  return artifacts.some((stage) => stage.spec !== undefined) && artifacts.every((stage) => stage.tasks === undefined);
+}
 export function parsedArtifactSchemaVersion(workflow: ParsedWorkflow, stage: string, artifact: string): string | null {
   const declaration = workflow.stages[stage]?.artifacts[artifact];
   if (!declaration) return null;
-  const isCanonicalContract = workflow.workflow === "development" && Object.hasOwn(workflow.schemas ?? {}, "spec_body");
-  return isCanonicalContract ? resolvedSchemaDigest(workflow, declaration.schema) : declarationDigest(declaration.schema as JsonValue);
+  if (!usesResolvedSchemaVersions(workflow)) return declarationDigest(declaration.schema);
+  const resolved = resolveSchema({ type: declaration.schema, schemas: workflow.schemas ?? {}, visiting: new Set() });
+  return resolved.ok ? schemaDigest(resolved.value, "v2") : null;
 }
+
 export function artifactSchemaVersion(definition: PinnedDefinitionRead, stage: string, artifact: string): string | null {
   return parsedArtifactSchemaVersion(definition.checked_program.workflow, stage, artifact);
 }
 
-/** Hash at the read boundary; projections consume these deterministic values. */
+/** The same pinned versions feed every operator revision projection. */
 export const artifactSchemaVersions = (workflow: ParsedWorkflow): import("../storage/read-store").ArtifactSchemaVersions =>
   Object.fromEntries(Object.entries(workflow.stages).map(([stage, value]) => [stage,
     Object.fromEntries(Object.keys(value.artifacts).map((artifact) => [artifact, parsedArtifactSchemaVersion(workflow, stage, artifact)])),

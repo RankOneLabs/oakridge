@@ -536,6 +536,20 @@ export async function readEventRevisionSequence(db: Reader, row: CommittedEventR
   return Number(counted.count);
 }
 
+/** Current spec editors resolve `approved_analysis: latest(analysis)` when an
+ * attempt is scheduled. Worker provenance currently records only unit inputs,
+ * so use that attempt's journaled opening boundary, never the latest revision
+ * at replay. Operator edits resolve latest(analysis) at their publication. */
+export async function readSpecAnalysisRevisionId(db: Reader, row: CommittedEventRow<CoreEvent>): Promise<string | null> {
+  const event = row.payload;
+  if (event.kind !== "revision_published" || event.artifact !== "spec") return null;
+  if (!event.by) {
+    const sequence = await readEventRevisionSequence(db, row, "analysis");
+    return sequence > 0 ? `${event.unit}:analysis:${sequence}` : null;
+  }
+  return (await readPublishedAnalysisRevisionIds(db, row))?.[0] ?? null;
+}
+
 export async function readOperatorEventsAfter(db: Reader, input: { readonly after: RunEventCursor; readonly limit: number; readonly subscription_snapshot: string | null }): Promise<readonly OperatorEventDeliveryRow[]> {
   const rows = await readCommittedEventsAfter(db, "authority.operator_event", input);
   return rows.map((row) => ({ id: row.id, payload: row.payload, commit_txid: row.commit_txid,

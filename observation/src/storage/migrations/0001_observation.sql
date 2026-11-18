@@ -86,7 +86,7 @@ CREATE TABLE observation.item_occurrence (
   FOREIGN KEY (producer, namespace, logical_item_id)
     REFERENCES observation.logical_item(producer, namespace, logical_item_id),
   CHECK (occurrence_id ~ '^canonical-json/v1:[0-9a-f]{64}$'),
-  CHECK (json_pointer <> '')
+  CHECK (json_pointer = '' OR json_pointer LIKE '/%')
 );
 CREATE INDEX item_occurrence_run_page ON observation.item_occurrence(producer, namespace, run_id, revision_id, occurrence_id);
 CREATE INDEX item_occurrence_logical ON observation.item_occurrence(producer, namespace, logical_item_id, occurrence_id);

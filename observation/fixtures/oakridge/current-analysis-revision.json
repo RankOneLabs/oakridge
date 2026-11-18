@@ -1,0 +1,63 @@
+{
+  "requirements": [
+    {
+      "id": "R1",
+      "text": "Requirement R1",
+      "source_refs": [
+        "input.spec"
+      ],
+      "findings": [
+        {
+          "id": "F1",
+          "severity": "warning",
+          "observation": "Observation F1",
+          "evidence": [],
+          "expected_change_locations": [],
+          "resolution": null
+        },
+        {
+          "id": "F2",
+          "severity": "warning",
+          "observation": "Observation F2",
+          "evidence": [],
+          "expected_change_locations": [],
+          "resolution": null
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "text": "Requirement R2",
+      "source_refs": [
+        "input.spec"
+      ],
+      "findings": [
+        {
+          "id": "F3",
+          "severity": "warning",
+          "observation": "Observation F3",
+          "evidence": [],
+          "expected_change_locations": [],
+          "resolution": null
+        }
+      ]
+    },
+    {
+      "id": "R3",
+      "text": "Requirement R3",
+      "source_refs": [
+        "input.spec"
+      ],
+      "findings": [
+        {
+          "id": "F4",
+          "severity": "warning",
+          "observation": "Observation F4",
+          "evidence": [],
+          "expected_change_locations": [],
+          "resolution": null
+        }
+      ]
+    }
+  ]
+}

@@ -219,6 +219,29 @@ describe("the approved-tasks caller", () => {
   const decisions = async (run: LinkRun) => (await authority.db.selectFrom("authority.review_decision").select(["target_revision_id", "effect"]).where("run_id", "=", run.run_id).execute());
   const entry = (run: LinkRun, task_ids: readonly string[] = ["T1"], item_path = "/findings/0") => ({ source_revision_id: run.analysis, item_path, task_ids });
 
+  test("current contracts refuse decide analysis_links, including empty declarations, before committing", async () => {
+    const current = await commitTestDefinition({ source: JSON.parse(JSON.stringify(ANALYSIS_LINK_WORKFLOW).replace(/\btasks\b/g, "spec")) });
+    const launched = await launch(authority, { definition_id: current.definition_id, request_id: crypto.randomUUID(), input: { topic: "current" } });
+    const unit = unitOf(launched.run_id, "document");
+    for (const analysis_links of [[], [{ source_revision_id: "analysis", item_path: "/findings/0", task_ids: ["R1"] }]]) {
+      const response = await app.request(`/api/runs/${launched.run_id}/units/${encodeURIComponent(unit)}/reviews/tasks_review/decide`, {
+        method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify({ request_id: crypto.randomUUID(), decision: "approve", target: `${unit}:spec:1`, payload: {}, analysis_links }),
+      });
+      expect([response.status, await response.json(), await journaled(launched.run_id)]).toEqual([400,
+        { code: "malformed_request", error: "analysis_links are not accepted for current-contract runs" }, []]);
+    }
+    expect(await authority.db.selectFrom("authority.review_decision").select("id").where("run_id", "=", launched.run_id).execute()).toEqual([]);
+  });
+  test("current contracts refuse the standalone declaration route even for empty entries", async () => {
+    const current = await commitTestDefinition({ source: JSON.parse(JSON.stringify(ANALYSIS_LINK_WORKFLOW).replace(/\btasks\b/g, "spec")) });
+    const launched = await launch(authority, { definition_id: current.definition_id, request_id: crypto.randomUUID(), input: { topic: "current" } });
+    const response = await app.request(`/api/runs/${launched.run_id}/analysis-links`, { method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ request_id: crypto.randomUUID(), tasks_revision_id: "absent", entries: [] }) });
+    expect([response.status, await response.json(), await journaled(launched.run_id)]).toEqual([400,
+      { code: "malformed_request", error: "analysis_links are not accepted for current-contract runs" }, []]);
+  });
   test("an approval naming entries journals them against the exact revision it decides", async () => {
     const run = await linkRun();
     const response = await decide(run, { analysis_links: [entry(run, ["T1", "T2"]), entry(run, [], "/findings/1")] });

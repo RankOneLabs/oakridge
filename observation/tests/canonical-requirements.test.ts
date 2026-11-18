@@ -27,7 +27,8 @@ test.each([
   const original = structuredClone(bodies[kind]);
   const pass = selectRevision(bodies[kind], kind, oakridgeCatalogue(kind, version));
   expect(pass.issues).toEqual([]);
-  expect(pass.items.map(({ item }) => item.path)).toEqual([...paths]);
+  expect(pass.items.filter(({ item }) => kind === "analysis" ? item.item_kind === "finding"
+    : kind === "brief" ? item.item_kind === "build_item" : true).map(({ item }) => item.path)).toEqual([...paths]);
   expect(bodies[kind]).toEqual(original);
 });
 test("spec ids define canonical roots and a split plan retains both contributions", () => {
@@ -44,7 +45,7 @@ test("spec ids define canonical roots and a split plan retains both contribution
 });
 test("nested analysis findings explicitly link their containing canonical requirement", () => {
   const pass = selectRevision(bodies.analysis, "analysis", oakridgeCatalogue("analysis", versions.analysis_body.version));
-  expect(pass.items[0]?.item.links).toEqual([{ target: "logical_item", type: "addresses", target_scope: TASK_SCOPE, target_local_id: "R1", evidence_ref: "/requirements/0/id" }]);
+  expect(pass.items[0]?.item.links).toEqual([{ target: "logical_item", type: "addresses", target_scope: TASK_SCOPE, target_local_id: "R1", evidence_ref: "/requirements/0/findings/0" }]);
 });
 test("per_task /requirement_ids config binds build-item grades to only the captured canonical ids", () => {
   canonicalRegistration();
@@ -98,7 +99,8 @@ integration("current capture, requirement rollups and human grades share canonic
   }
   const profile = oakridgeProfile(registration.questions);
   const rollup = await listRunComposites(db, tenant, profile.composite, "current", { limit: 50, offset: 0 });
-  expect(rollup.items.map((item) => item.producer_local_id)).toEqual(["R1", "R2", "R3"]);
+  // Observation also tracks analysis requirements; the PWA pages the approved spec ids.
+  expect(rollup.items.map((item) => item.producer_local_id)).toEqual(["R1", "R2", "R3", "R4"]);
   const item = await readItemAt(db, tenant, profile.composite, { run_id: "current", source_revision_id: "current-brief", item_path: "/build_items/0" });
   if (!item) throw new Error("Current build item was not captured");
   const sets = await readOccurrenceEvidence(db, tenant, item.occurrence_id);

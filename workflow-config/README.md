@@ -51,21 +51,26 @@ The previous definition
 `74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4`
 and its exact prompt objects remain addressable.
 
-Current `artifact_schema_version` values are derived from the artifact's compiled
-schema and its reachable named types. Operator projections and observation capture
-use the same backend function. Historical pinned definitions without the canonical
-`spec_body` contract retain their original declaration hashes.
+Current `artifact_schema_version` values, calculated by the observation adapter
+from the resolved schema bodies in the pinned requirement contract:
+
+| Artifact | Schema version |
+| --- | --- |
+| blocker | `artifact-schema/v2:fd7d3d5480c6a7821d205607dc4277d6078ba93c8b3892de4ce4f1877acb96e4` |
+| analysis | `artifact-schema/v2:ae5a9fb9c1a0cf37fbf047000c36f234da2d338552efe6f97f8a9a59890cdbde` |
+| spec | `artifact-schema/v2:3e6831d5b78d1a4ac06096edd5901aae62889530f407b8581a71698e4e65ca58` |
+| plan | `artifact-schema/v2:532d3d3e11f8df58a07618e8093374bb8e3e4f2348fa49a980bbbecb8290174d` |
+| brief | `artifact-schema/v2:e04f77b836567abab8dc575972e28ad6c16c4fed569e0bbb3cb6653783913969` |
+| assessment (both stages) | `artifact-schema/v2:8128a3b8a1dbedf479cfe122a42e3538d84106a436cb5de25a8716def76f747b` |
+
+The spec-based requirement contract uses the v2 epoch, including for implicit
+blockers whose schema body is unchanged. Historical tasks-based contracts retain
+the exact v1 declaration fingerprints on replay. Nested named schemas are resolved
+before hashing v2 bodies; prompt edits and unrelated schemas do not move versions.
 
 Run `bun oakridge-dbos/scripts/generate-artifact-versions.ts` after building the core
 WASM to regenerate the backend and observation manifests, then regenerate the PWA
 operator contracts. `--check` verifies both manifests without writing them.
-
-| Artifact | Schema version |
-| --- | --- |
-| analysis | `artifact-schema/v1:a37e55b8a965bcd6dcd6c33f2f187a38129c088966f791841c6816dbbb112cec` |
-| spec | `artifact-schema/v1:232c9288b8304d2ff718f7a1ee1b7bbbe3d3afb4a33126b97f4202275d2bc112` |
-| plan | `artifact-schema/v1:084f1f1393ab00eb24e871d698dbb4e79d97c80853e401337980ef3093146395` |
-| brief | `artifact-schema/v1:c181c54e0f573bd408eda7680475a647fe65df4441ff7b7c55b99f40cd108683` |
 
 Two upstream limitations remain blocking for the complete contract:
 
@@ -77,7 +82,8 @@ Two upstream limitations remain blocking for the complete contract:
   the changed analysis does not invalidate or re-want an already published spec.
   The evaluator replay for the required editor rerun is recorded as a todo test.
 
-The canonical contract changes no compiler or evaluator implementation. Integration's
+The workflow-contract cohort changes no compiler or evaluator implementation.
+Resolved observation fingerprinting is supplied by the observation-requirements cohort. Integration's
 request_changes explicitly targets `on: assessment`, as the shipped engine requires
 an explicit target when feedback_field is used.
 

@@ -1,4 +1,3 @@
-import { DEVELOPMENT_ARTIFACT_VERSIONS } from "./development-artifact-versions";
 import { ANALYSIS_LINKS_DECLARED } from "../domain/analysis-link-declaration";
 import type { CoreEvent } from "../storage/json-column-types";
 import type { CommittedEventRow, CommittedRunConfig, PinnedDefinitionRead } from "../storage/read-store";
@@ -13,8 +12,10 @@ type MissingEventKind = Exclude<CoreEvent["kind"], typeof MAPPED_EVENTS[number] 
 const allKindsCovered: MissingEventKind extends never ? true : never = true;
 void allKindsCovered;
 
-export interface MappingInput { readonly analysis_revision_ids?: readonly string[] | null; readonly row: CommittedEventRow<CoreEvent>; readonly definition: PinnedDefinitionRead | null;
+export interface MappingInput { readonly row: CommittedEventRow<CoreEvent>; readonly definition: PinnedDefinitionRead | null;
   readonly input_provenance?: import("../domain/unit-status").InputProvenanceView;
+  /** The analysis captured in the spec editor's frozen inputs, or at an operator edit. */
+  readonly analysis_revision_id?: string | null;
   readonly namespace: string; readonly stage: string | null; readonly revision_sequence: number | null;
   /** Read for a launch only: its config travels with its input. */
   readonly run_config: CommittedRunConfig | null }
@@ -38,8 +39,8 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
           producer: "oakridge", namespace: input.namespace, revision_id: `${prefix}${revision_id}`,
           run_id: identity.run_id, unit_id: event.unit, stage: input.stage, artifact_kind: event.artifact, artifact_schema_version: version,
           definition_id: definition.definition_id,
-          ...(event.artifact === "spec" && version === DEVELOPMENT_ARTIFACT_VERSIONS.spec_body.version
-            ? { analysis_revision_ids: input.analysis_revision_ids?.map((id) => `${prefix}${id}`) ?? null } : {}),
+          analysis_revision_ids: event.artifact === "spec" && version.startsWith("artifact-schema/v2:") && input.analysis_revision_id
+            ? [`${prefix}${input.analysis_revision_id}`] : null,
           brief_revision_ids: ["build_result", "assessment"].includes(event.artifact) && input.input_provenance?.status === "recorded"
             ? input.input_provenance.entries.filter((entry) => entry.input === "brief" || entry.input === "briefs").map((entry) => `${prefix}${entry.revision_id}`) : null,
           predecessor_id: event.predecessor ? `${prefix}${event.predecessor}` : null,
