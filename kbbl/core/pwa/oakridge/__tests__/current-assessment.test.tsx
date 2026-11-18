@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { AdjudicationHistory } from "../components/molecules/AdjudicationHistory";
 import { CurrentAssessmentViewer } from "../components/molecules/AssessmentViewer";
 import { CurrentBuilderHandoffPanel } from "../components/organisms/BuilderHandoffPanel";
 import { CURRENT_ASSESSMENT, MODIFIED_ADJUDICATION_HISTORY, NOT_MET_ASSESSMENT, RECORDED_ADJUDICATION_HISTORY } from "../__fixtures__/current-assessments";
@@ -92,4 +93,16 @@ it("editing keeps original words visible beside replacement", () => {
   panel(); fireEvent.click(within(screen.getByRole("region", { name: "builder actions" })).getByRole("button", { name: "Edit" }));
   fireEvent.change(screen.getByLabelText(`Replacement for ${CURRENT_ASSESSMENT.next_actions[0].id}`), { target: { value: "Replacement" } });
   expect(screen.getByText("Original: Investigate the regression.")).toBeTruthy(); expect(screen.getByTestId("or-assessment-handoff-preview").textContent).toContain("Replacement");
+});
+
+it.each([
+  { review: "assessment_review", decision: "accept", effect: "approve" as const, label: "Recorded builder preview", absent: "Transmitted builder feedback" },
+  { review: "assessment_review", decision: "request_build_changes", effect: "request_changes" as const, label: "Transmitted builder feedback", absent: "Recorded builder preview" },
+  { review: "integration_review", decision: "request_changes", effect: "request_changes" as const, label: "Transmitted builder feedback", absent: "Recorded builder preview" },
+])("history distinguishes $review $decision feedback from previews", ({ review, decision, effect, label, absent }) => {
+  const decisions = MODIFIED_ADJUDICATION_HISTORY.map(recorded => ({ ...recorded, review, decision, effect }));
+  render(<AdjudicationHistory decisions={decisions} revisionId="assessment:1" />);
+  expect(screen.getByText(label)).toBeTruthy();
+  expect(screen.queryByText(absent)).toBeNull();
+  expect(screen.getByTestId("or-adjudication-history").querySelector("pre")?.textContent).toBe(decisions[0].adjudication?.builder_feedback);
 });

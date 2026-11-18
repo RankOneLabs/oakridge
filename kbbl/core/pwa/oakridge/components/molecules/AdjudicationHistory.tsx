@@ -13,7 +13,7 @@ export function AdjudicationHistory({ decisions, revisionId }: Props) {
         <strong>{entry.disposition}</strong> · {entry.audience} · <code>{entry.action_id}</code>
         <p>Supporting {entry.source.kind}: {entry.source.id}</p><p>Original: {entry.original_text}</p>{entry.final_text != null && <p>Final: {entry.final_text}</p>}{entry.reason && <p>Reason: {entry.reason}</p>}
       </li>)}{decision.adjudication.added_actions.map(entry => <li key={entry.action_id}>Added by operator · {entry.audience} · {entry.final_text}{entry.reason && <p>Reason: {entry.reason}</p>}</li>)}</ul>
-      <strong>Transmitted builder feedback</strong><pre className="whitespace-pre-wrap">{decision.adjudication.builder_feedback || "No builder feedback."}</pre>
+      <strong>{decision.effect === "request_changes" ? "Transmitted builder feedback" : "Recorded builder preview"}</strong><pre className="whitespace-pre-wrap">{decision.adjudication.builder_feedback || "No builder feedback."}</pre>
     </section>)}
   </ArtifactSection>;
 }
