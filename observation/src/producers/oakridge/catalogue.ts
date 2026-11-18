@@ -20,6 +20,37 @@ export type FindingSubject = { readonly kind: "build_item"; readonly id: string;
   | { readonly kind: "task"; readonly id: string };
 export interface AssessmentFinding { readonly task_ids: readonly string[]; readonly evidence: readonly JsonValue[] }
 
+/** Current-contract item models mirror the named schemas in development.yaml. */
+export interface Requirement {
+  readonly id: string; readonly text: string; readonly acceptance_conditions: readonly string[];
+  readonly source_refs: readonly string[]; readonly analysis_finding_ids: readonly string[];
+}
+export interface Allocation { readonly requirement_id: string; readonly contribution: string }
+export interface RequirementBuildItem {
+  readonly id: string; readonly requirement_ids: readonly string[]; readonly instructions: string;
+  readonly verification: readonly string[];
+}
+export interface TechnicalDecision {
+  readonly id: string; readonly build_item_ids: readonly string[]; readonly decision: string; readonly rationale: string;
+}
+export type AssessmentSubject = { readonly kind: "build_item"; readonly id: string }
+  | { readonly kind: "requirement"; readonly id: string };
+export interface EvidenceRef { readonly kind: "file" | "test" | "output"; readonly ref: string; readonly detail?: string }
+export interface ItemAssessment {
+  readonly subject: AssessmentSubject; readonly status: "met" | "partial" | "not_met";
+  readonly observation: string; readonly evidence: readonly EvidenceRef[];
+}
+export interface AdditionalFinding {
+  readonly id: string; readonly severity: "blocking" | "warning" | "info"; readonly observation: string;
+  readonly related_build_item_ids: readonly string[]; readonly evidence: readonly EvidenceRef[];
+}
+export type ActionSource = { readonly kind: "item_assessment"; readonly id: string }
+  | { readonly kind: "additional_finding"; readonly id: string };
+export interface NextAction {
+  readonly id: string; readonly audience: "builder" | "operator"; readonly source: ActionSource; readonly text: string;
+}
+export interface Blocker { readonly text: string; readonly suggested_choices?: readonly string[] }
+
 type Mapping = (value: JsonValue, path: string) => Result<SelectedItem, ExtractionFailure>;
 
 /** Addressed by revision and path alone: the identity holds no task id. */
@@ -103,7 +134,7 @@ function definition(artifact_kind: string, schema_version: string, extractor_id:
   return { artifact_kind, schema_version, extractor_id, extractor_version: VERSION, item_kind, item_selector, select };
 }
 
-function allDefinitions(schemaVersion: string): readonly ExtractorDefinition[] {
+function legacyDefinitions(schemaVersion: string): readonly ExtractorDefinition[] {
   return [
     definition("analysis", schemaVersion, "analysis.findings", FINDING_KIND, "/findings/*",
       topList("findings", (value, path) => { const id = requiredId(value, path);
@@ -181,22 +212,156 @@ function allDefinitions(schemaVersion: string): readonly ExtractorDefinition[] {
   ];
 }
 
+/** Actual fingerprints published by the workflow-contract cohort (workflow-config/README.md).
+ * Named declaration hashing currently collides with historical versions for every
+ * artifact except spec. Keep those ambiguous fingerprints on legacy extraction
+ * until the adapter publishes distinct versions; never reinterpret stored history. */
+export const CURRENT_SCHEMA_VERSIONS = {
+  blocker: "artifact-schema/v1:fd7d3d5480c6a7821d205607dc4277d6078ba93c8b3892de4ce4f1877acb96e4",
+  analysis: "artifact-schema/v1:4847489074cebfe24f7ecdd9024b351f26ccac021f3f10ce2c788bfa8a5d39e2",
+  spec: "artifact-schema/v1:51e41ef9d885736919cae19794256f19dde6112647448ad07cb8c71f7d61c305",
+  plan: "artifact-schema/v1:66a1e9afac28cdb4b4db8fa8e78c9df02da4ddba1952d189279d22025a4ef79e",
+  brief: "artifact-schema/v1:c1303586cb5531a0c0aed8a282c0ad68917d94c94834d336705373166479951f",
+  assessment: "artifact-schema/v1:57f201559fcc23f712187d5d695e6b26d79a583199cc4a394df88e6a36116fc9",
+} as const;
+
+function referenceId(value: JsonValue, field: string, path: string): Result<string, ExtractionFailure> {
+  const object = objectAt(value, path);
+  if (!object.ok) return object;
+  const id = object.value[field];
+  return typeof id === "string" && id.length > 0 ? ok(id)
+    : err({ operation: "select_items", entity_id: `${path}/${field}`, detail: "missing reference id" });
+}
+function requirementLinks(value: JsonValue, path: string): Result<readonly LogicalItemLink[], ExtractionFailure> {
+  const ids = idList(value, "requirement_ids", path);
+  return ids.ok ? ok(ids.value.map((target_local_id, index) => ({ target: "logical_item", type: "addresses",
+    target_scope: TASK_SCOPE, target_local_id, evidence_ref: `${path}/requirement_ids/${index}` }))) : ids;
+}
+function nestedFindings(body: JsonValue): Result<readonly SelectedItem[], ExtractionFailure> {
+  const requirements = listAt(body, ["requirements"]);
+  if (!requirements.ok) return requirements;
+  const items: SelectedItem[] = [];
+  for (const [index, requirement] of requirements.value.entries()) {
+    const path = `/requirements/${index}`;
+    const requirementId = requiredId(requirement, path);
+    if (!requirementId.ok) return requirementId;
+    const findings = listAt(requirement, ["findings"]);
+    if (!findings.ok) return err({ ...findings.error, entity_id: `${path}/findings` });
+    const selected = mapped(findings.value, `${path}/findings`, (value, findingPath) => {
+      const id = requiredId(value, findingPath);
+      return id.ok ? ok(pathItem("finding", "/requirements/*/findings/*", findingPath, value,
+        [{ target: "logical_item", type: "addresses", target_scope: TASK_SCOPE,
+          target_local_id: requirementId.value, evidence_ref: findingPath }], id.value)) : id;
+    });
+    if (!selected.ok) return selected;
+    items.push(...selected.value);
+  }
+  return ok(items);
+}
+function itemAssessment(value: JsonValue, path: string): Result<SelectedItem, ExtractionFailure> {
+  const object = objectAt(value, path);
+  if (!object.ok) return object;
+  const subject = objectAt(object.value.subject ?? null, `${path}/subject`);
+  if (!subject.ok) return subject;
+  const id = requiredId(subject.value, `${path}/subject`);
+  if (!id.ok) return id;
+  const evidence_ref = `${path}/subject/id`;
+  let link: LinkReference;
+  if (subject.value.kind === "requirement") link = { target: "logical_item", type: "assesses",
+    target_scope: TASK_SCOPE, target_local_id: id.value, evidence_ref };
+  else if (subject.value.kind === "build_item") link = { target: "occurrence", type: "assesses",
+    target_artifact_kind: "brief", target_item_kind: "build_item", target_scope: null,
+    target_local_id: id.value, recorded_revisions_field: "brief_revision_ids", evidence_ref };
+  else return err({ operation: "select_items", entity_id: `${path}/subject/kind`, detail: "unknown assessment subject" });
+  return ok(pathItem("item_assessment", "/item_assessments/*", path, value, [link], id.value));
+}
+function nextAction(value: JsonValue, path: string): Result<SelectedItem, ExtractionFailure> {
+  const id = requiredId(value, path);
+  if (!id.ok) return id;
+  const object = objectAt(value, path);
+  if (!object.ok) return object;
+  const source = objectAt(object.value.source ?? null, `${path}/source`);
+  if (!source.ok) return source;
+  const sourceId = requiredId(source.value, `${path}/source`);
+  if (!sourceId.ok) return sourceId;
+  const kind = source.value.kind;
+  if (kind !== "item_assessment" && kind !== "additional_finding")
+    return err({ operation: "select_items", entity_id: `${path}/source/kind`, detail: "unknown action source" });
+  return ok(pathItem("next_action", "/next_actions/*", path, value, [{ target: "occurrence", type: "derived_from",
+    target_artifact_kind: "assessment", target_item_kind: kind, target_scope: null,
+    target_local_id: sourceId.value, evidence_ref: `${path}/source/id` }], id.value));
+}
+export function currentDefinitions(schemaVersion: string): readonly ExtractorDefinition[] {
+  return [
+    definition("analysis", schemaVersion, "analysis.requirement_findings", "finding", "/requirements/*/findings/*", nestedFindings),
+    definition("analysis", schemaVersion, "analysis.requirements", "requirement", "/requirements/*",
+      topList("requirements", (value, path) => { const id = requiredId(value, path);
+        return id.ok ? ok(taskItem("requirement", "/requirements/*", path, id.value, value)) : id; })),
+    definition("spec", schemaVersion, "spec.requirements", "requirement", "/requirements/*",
+      topList("requirements", (value, path) => { const id = requiredId(value, path);
+        if (!id.ok) return id;
+        const links = idsLink(value, "analysis_finding_ids", path, "analysis", "finding", null, "derived_from");
+        return links.ok ? ok(taskItem("requirement", "/requirements/*", path, id.value, value, links.value)) : links; })),
+    definition("plan", schemaVersion, "plan.allocations", "allocation", "/cohorts/*/allocations/*",
+      cohortList("allocations", (value, path, cohortId) => { const id = referenceId(value, "requirement_id", path);
+        return id.ok ? ok({ ...taskItem("allocation", "/cohorts/*/allocations/*", path, id.value, value),
+          item_scope: `cohort/${cohortId}/allocation`, links: [{ target: "logical_item", type: "addresses",
+            target_scope: TASK_SCOPE, target_local_id: id.value, evidence_ref: `${path}/requirement_id` }] }) : id; })),
+    definition("brief", schemaVersion, "brief.requirement_build_items", "build_item", "/build_items/*",
+      briefList("build_items", (value, path, cohortId) => { const id = requiredId(value, path);
+        if (!id.ok) return id;
+        const links = requirementLinks(value, path);
+        return links.ok ? ok({ ...pathItem("build_item", "/build_items/*", path, value, links.value, id.value),
+          item_scope: `cohort/${cohortId}/build_item` }) : links; })),
+    definition("brief", schemaVersion, "brief.technical_decisions", "technical_decision", "/technical_decisions/*",
+      briefList("technical_decisions", (value, path, cohortId) => { const id = requiredId(value, path);
+        if (!id.ok) return id;
+        const links = idsLink(value, "build_item_ids", path, "brief", "build_item", `cohort/${cohortId}/build_item`, "addresses");
+        return links.ok ? ok(idItem("technical_decision", "/technical_decisions/*", path,
+          `cohort/${cohortId}/technical_decision`, id.value, value, links.value)) : links; })),
+    definition("assessment", schemaVersion, "assessment.item_assessments", "item_assessment", "/item_assessments/*", topList("item_assessments", itemAssessment)),
+    definition("assessment", schemaVersion, "assessment.additional_findings", "additional_finding", "/additional_findings/*",
+      topList("additional_findings", (value, path) => { const id = requiredId(value, path);
+        if (!id.ok) return id;
+        const links = idsLink(value, "related_build_item_ids", path, "brief", "build_item", null, "addresses");
+        return links.ok ? ok(pathItem("additional_finding", "/additional_findings/*", path, value,
+          links.value.map((link) => ({ ...link, recorded_revisions_field: "brief_revision_ids" })), id.value)) : links; })),
+    definition("assessment", schemaVersion, "assessment.next_actions", "next_action", "/next_actions/*", topList("next_actions", nextAction)),
+    definition("blocker", schemaVersion, "blocker.body", "blocker", "/", (body) => ok([pathItem("blocker", "/", "", body)])),
+  ];
+}
+
+/** Unknown versions intentionally retain historical extraction. */
+export function definitionsForSchemaVersion(schemaVersion: string): readonly ExtractorDefinition[] {
+  return schemaVersion === CURRENT_SCHEMA_VERSIONS.spec
+    ? currentDefinitions(schemaVersion) : legacyDefinitions(schemaVersion);
+}
+
 export function oakridgeCatalogue(artifact_kind: string, schema_version: string): readonly ExtractorDefinition[] {
-  return allDefinitions(schema_version).filter((entry) => entry.artifact_kind === artifact_kind);
+  return definitionsForSchemaVersion(schema_version).filter((entry) => entry.artifact_kind === artifact_kind);
 }
 
 /** Registered extractor addresses; question bindings belong to published grading configuration. */
-export const OAKRIDGE_SELECTORS: readonly RegisteredSelector[] = allDefinitions(VERSION).map(({ artifact_kind, item_selector, item_kind }) =>
-  ({ artifact_kind, item_selector, item_kind, item_fields: fieldsForItem(item_kind) }));
+export const OAKRIDGE_SELECTORS: readonly RegisteredSelector[] = [...legacyDefinitions(VERSION), ...currentDefinitions(VERSION)].map(({ artifact_kind, item_selector, item_kind }) =>
+  ({ artifact_kind, item_selector, item_kind, item_fields: fieldsForItem(item_kind, item_selector) }));
 
 /** Fields mirrored by Task, AcceptanceEntry, AssessmentFinding and the catalogue mappings above. */
-function fieldsForItem(item_kind: string): readonly string[] {
+function fieldsForItem(item_kind: string, item_selector: string): readonly string[] {
   switch (item_kind) {
     case "task": return ["/id", "/description", "/requirement_ids"];
     case "acceptance_entry": return ["/id", "/text", "/decision_ids"];
     case "assessment_finding": return ["/task_ids", "/subjects", "/evidence"];
-    case "build_item": return ["/id", "/description", "/task_ids", "/decision_ids", "/verification"];
-    case "finding": return ["/id", "/description", "/severity"];
+    case "build_item": return ["/id", "/description", "/instructions", "/task_ids", "/requirement_ids", "/decision_ids", "/verification"];
+    case "finding": return item_selector === "/requirements/*/findings/*"
+      ? ["/id", "/severity", "/observation", "/evidence", "/expected_change_locations", "/resolution"]
+      : ["/id", "/description", "/severity"];
+    case "requirement": return ["/id", "/text", "/acceptance_conditions", "/source_refs", "/analysis_finding_ids"];
+    case "allocation": return ["/requirement_id", "/contribution"];
+    case "technical_decision": return ["/id", "/build_item_ids", "/decision", "/rationale"];
+    case "item_assessment": return ["/subject/id", "/subject", "/status", "/observation", "/evidence"];
+    case "additional_finding": return ["/id", "/severity", "/observation", "/related_build_item_ids", "/evidence"];
+    case "next_action": return ["/id", "/audience", "/source", "/text"];
+    case "blocker": return ["/text", "/suggested_choices"];
     default: return [];
   }
 }

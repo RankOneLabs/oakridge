@@ -1,0 +1,48 @@
+{
+  "head_sha": "abc",
+  "item_assessments": [
+    {
+      "subject": {
+        "kind": "requirement",
+        "id": "R1"
+      },
+      "status": "met",
+      "observation": "R1 met",
+      "evidence": []
+    },
+    {
+      "subject": {
+        "kind": "requirement",
+        "id": "R2"
+      },
+      "status": "met",
+      "observation": "R2 met",
+      "evidence": []
+    },
+    {
+      "subject": {
+        "kind": "requirement",
+        "id": "R3"
+      },
+      "status": "met",
+      "observation": "R3 met",
+      "evidence": []
+    },
+    {
+      "subject": {
+        "kind": "requirement",
+        "id": "R4"
+      },
+      "status": "met",
+      "observation": "R4 met",
+      "evidence": []
+    }
+  ],
+  "additional_findings": [],
+  "next_actions": [],
+  "test_evidence": {
+    "passed": 2,
+    "failed": 0
+  },
+  "verdict": "pass"
+}
