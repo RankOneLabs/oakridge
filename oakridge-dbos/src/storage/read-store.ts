@@ -532,6 +532,29 @@ export async function readEventRevisionSequence(db: Reader, row: CommittedEventR
   return Number(counted.count);
 }
 
+/** Current spec editors resolve `approved_analysis: latest(analysis)` when an
+ * attempt is scheduled. Worker provenance currently records only unit inputs,
+ * so use that attempt's journaled opening boundary, never the latest revision
+ * at replay. Operator edits resolve latest(analysis) at their publication. */
+export async function readSpecAnalysisRevisionId(db: Reader, row: CommittedEventRow<CoreEvent>): Promise<string | null> {
+  const event = row.payload;
+  if (event.kind !== "revision_published" || event.artifact !== "spec") return null;
+  if (!event.by) {
+    const sequence = await readEventRevisionSequence(db, row, "analysis");
+    return sequence > 0 ? `${event.unit}:analysis:${sequence}` : null;
+  }
+  const analysis = await db.selectFrom("authority.attempt as attempt")
+    .innerJoin("authority.artifact_revision as revision", (join) => join
+      .onRef("revision.run_id", "=", "attempt.run_id").onRef("revision.unit_id", "=", "attempt.unit_id")
+      .on("revision.artifact", "=", "analysis").onRef("revision.created_at", "<=", "attempt.created_at"))
+    .select("revision.id").where("attempt.run_id", "=", row.run_id ?? "")
+    .where("attempt.unit_id", "=", event.unit).where("attempt.action_id", "=", event.by)
+    .where("attempt.created_at", "<=", (eb) => eb.selectFrom("authority.event").select("created_at")
+      .where("id", "=", row.id).where("run_id", "=", row.run_id ?? ""))
+    .orderBy("attempt.seq", "desc").orderBy("revision.seq", "desc").executeTakeFirst();
+  return analysis?.id ?? null;
+}
+
 export async function readOperatorEventsAfter(db: Reader, input: { readonly after: RunEventCursor; readonly limit: number; readonly subscription_snapshot: string | null }): Promise<readonly OperatorEventDeliveryRow[]> {
   const rows = await readCommittedEventsAfter(db, "authority.operator_event", input);
   return rows.map((row) => ({ id: row.id, payload: row.payload, commit_txid: row.commit_txid,

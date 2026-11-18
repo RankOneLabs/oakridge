@@ -32,8 +32,8 @@ test("analysis links findings only to the enclosing requirement", async () => {
 test("spec requirements share canonical identity and link each named finding", async () => {
   const pass = await current("spec");
   expect(pass.items[0]?.item).toMatchObject({ item_kind: "requirement", item_scope: "task", producer_local_id: "R1", links: [
-    { type: "derived_from", target_artifact_kind: "analysis", target_local_id: "F1", evidence_ref: "/requirements/0/analysis_finding_ids/0" },
-    { type: "derived_from", target_artifact_kind: "analysis", target_local_id: "F2", evidence_ref: "/requirements/0/analysis_finding_ids/1" },
+    { type: "derived_from", target_artifact_kind: "analysis", target_local_id: "F1", recorded_revisions_field: "analysis_revision_ids", evidence_ref: "/requirements/0/analysis_finding_ids/0" },
+    { type: "derived_from", target_artifact_kind: "analysis", target_local_id: "F2", recorded_revisions_field: "analysis_revision_ids", evidence_ref: "/requirements/0/analysis_finding_ids/1" },
   ] });
 });
 test("missing and non-string producer and reference ids fail at the offending path", () => {

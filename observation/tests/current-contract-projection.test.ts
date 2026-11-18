@@ -11,7 +11,7 @@ import { withTenant } from "../src/storage/database";
 import { listRunItems } from "../src/storage/projection-store";
 import { oakridgeProfile, createFeed, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 
-integration("current extractors project three canonical requirements across all stages without tasks artifacts", async () => scratchDatabase(async (db) => {
+async function currentDefinition() {
   const core = CoreClient.start();
   if (!core.ok) throw new Error(JSON.stringify(core.error));
   const catalog = readLaunchableCatalog();
@@ -19,13 +19,19 @@ integration("current extractors project three canonical requirements across all 
   const compiled = await compileDefinition(core.value, catalog.value.development.definition_id);
   core.value.close();
   if (!compiled.ok) throw new Error(JSON.stringify(compiled.error));
+  return compiled.value;
+}
+
+integration("current extractors project three canonical requirements across all stages without tasks artifacts", async () => scratchDatabase(async (db) => {
+  const definition = await currentDefinition();
   const feed = createFeed(db);
   const stages = { analysis: "analysis", spec: "analysis", plan: "planning", brief: "brief", assessment: "cohort", blocker: "analysis" } as const;
   let sequence = 0;
   for (const kind of ["analysis", "spec", "plan", "brief", "assessment", "blocker"] as const) {
     const stage = stages[kind];
     const outcome = mapObservationEvent({
-      definition: compiled.value, namespace: tenant.namespace, stage, revision_sequence: 1, run_config: null,
+      definition, namespace: tenant.namespace, stage, revision_sequence: 1, run_config: null,
+      analysis_revision_id: kind === "spec" ? "run-1/analysis:analysis:1" : null,
       input_provenance: kind === "assessment" ? { status: "recorded", entries: [
         { input: "brief", unit: "run-1/brief", revision_id: "run-1/brief:brief:1" },
       ] } : { status: "unresolved" },
@@ -73,4 +79,39 @@ integration("current extractors project three canonical requirements across all 
   expect([...new Set(selected.map((item) => item.artifact_kind))].sort()).toEqual(["analysis", "assessment", "brief", "plan", "spec"]);
   expect(selected.filter((item) => item.item_kind === "allocation").map((item) => item.item_scope).sort()).toEqual(["cohort/C1/allocation", "cohort/C2/allocation"]);
   expect(relations.filter((relation) => relation.unresolved_target_ref !== null)).toEqual([]);
+}));
+
+for (const delayed of [false, true]) integration(`spec links use the recorded analysis revision with repeated finding IDs (${delayed ? "late" : "ordered"} capture)`, async () => scratchDatabase(async (db) => {
+  const definition = await currentDefinition();
+  const feed = createFeed(db);
+  const analysis = await fixtureBody("current-analysis");
+  const spec = await fixtureBody("current-spec");
+  const publish = async (kind: "analysis" | "spec", sequence: number) => {
+    const outcome = mapObservationEvent({ definition, namespace: tenant.namespace, stage: "analysis", revision_sequence: sequence,
+      run_config: null, analysis_revision_id: kind === "spec" ? "run-1/analysis:analysis:2" : null,
+      row: { id: `${kind}:${sequence}`, run_id: "run-1", unit_id: "run-1/analysis", commit_txid: String(sequence),
+        created_at: new Date(`2026-11-01T00:00:0${kind === "spec" ? 4 : sequence}Z`), was_visible_at_subscription: false,
+        payload: { kind: "revision_published", unit: "run-1/analysis", artifact: kind, body: kind === "spec" ? spec : analysis },
+      } });
+    await feed.send(outcome);
+    return outcome;
+  };
+  await publish("analysis", 1);
+  if (!delayed) await publish("analysis", 2);
+  await publish("analysis", 3);
+  const specification = await publish("spec", 1);
+  const targets = () => withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_relation as relation")
+    .innerJoin("observation.item_occurrence as source", "source.occurrence_id", "relation.source_occurrence_id")
+    .leftJoin("observation.item_occurrence as target", "target.occurrence_id", "relation.target_occurrence_id")
+    .select(["relation.unresolved_target_ref", "target.revision_id"])
+    .where("source.artifact_kind", "=", "spec").where("relation.type", "=", "derived_from").execute());
+  if (delayed) {
+    expect((await targets()).every((target) => target.unresolved_target_ref !== null)).toBe(true);
+    await publish("analysis", 2);
+  }
+  expect(await targets()).toEqual(Array.from({ length: 4 }, () => ({ unresolved_target_ref: null, revision_id: "run-1/analysis:analysis:2" })));
+  if (specification.kind !== "artifact_revision") throw new Error("expected mapped specification");
+  await expect(feed.send({ ...specification, event_id: "spec:conflicting-provenance", revision: { ...specification.revision,
+    source: { ...specification.revision.source, analysis_revision_ids: [`oakridge:${tenant.namespace}:run-1/analysis:analysis:1`] } } }))
+    .rejects.toThrow("cursor_conflict");
 }));

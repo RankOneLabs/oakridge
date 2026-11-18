@@ -300,7 +300,8 @@ export function currentDefinitions(schemaVersion: string): readonly ExtractorDef
       topList("requirements", (value, path) => { const id = requiredId(value, path);
         if (!id.ok) return id;
         const links = idsLink(value, "analysis_finding_ids", path, "analysis", "finding", null, "derived_from");
-        return links.ok ? ok(taskItem("requirement", "/requirements/*", path, id.value, value, links.value)) : links; })),
+        return links.ok ? ok(taskItem("requirement", "/requirements/*", path, id.value, value,
+          links.value.map((link) => ({ ...link, recorded_revisions_field: "analysis_revision_ids" })))) : links; })),
     definition("plan", schemaVersion, "plan.allocations", "allocation", "/cohorts/*/allocations/*",
       cohortList("allocations", (value, path, cohortId) => { const id = referenceId(value, "requirement_id", path);
         return id.ok ? ok({ ...taskItem("allocation", "/cohorts/*/allocations/*", path, id.value, value),

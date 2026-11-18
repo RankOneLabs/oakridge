@@ -10,12 +10,13 @@ import { migrateEmptyDatabase as migrateObservation } from "../../observation/sr
 import { publishObservationOnce, startObservationPublisher, type ObservationOptions } from "../src/adapters/observation";
 import { artifactSchemaVersion } from "../src/adapters/observation-schema-version";
 import { jsonText, openDatabase } from "../src/storage/database";
-import { readDefinition } from "../src/storage/read-store";
+import { readDefinition, readSpecAnalysisRevisionId } from "../src/storage/read-store";
 import { actionOf, executor, launch, openAuthority, sampleWorkflow, scratchDatabase, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 beforeAll(async () => { authority = await openAuthority(); });
 afterAll(async () => { await authority.close(); });
+
 
 test("adapter, Oakridge and observation outages replay committed events from the service cursor", async () => {
   const scratch = await scratchDatabase();
@@ -209,4 +210,39 @@ test("each launch delivers its committed grading choice beside its input, and a 
       expect.objectContaining({ input: { topic: "none" }, config: null })]);
     expect(launches.map((entry) => replayed[entry.run_id])).toEqual([on, off, none]);
   } finally { for (const db of services) await db.destroy(); await scratch.drop(); await replica.drop(); }
+});
+
+test("spec capture reads the publishing attempt's analysis, and operator edits retain their publication boundary on replay", async () => {
+  const review = (artifact: string) => ({ of: artifact, by: "operator" as const, prompt: "review-loop/editor.md",
+    inputs: { topic: "input.topic", draft: `latest(${artifact})`, critique: `latest(${artifact})` },
+    decisions: { accept: { effect: "approve" as const, label: "Accept" } } });
+  const source: Workflow = { workflow: "spec-provenance", input: { topic: "text" },
+    run: { units: { document: { stage: "document", input: { topic: "input.topic" } } }, outcome: { spec: "document.outcome.spec" } },
+    stages: { document: { input: { topic: "text" }, artifacts: { analysis: { kind: "document", schema: "text" }, spec: { kind: "document", schema: "text" } },
+      workers: {
+        author: { kind: "agent", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" }, inputs: { topic: "input.topic" }, produces: ["analysis"] },
+        editor: { kind: "agent", when: "approved(analysis)", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" },
+          inputs: { topic: "input.topic", approved_analysis: "latest(analysis)" }, produces: ["spec"] },
+      }, reviews: { analysis_review: review("analysis"), spec_review: review("spec") }, done_when: "approved(spec)", outcome: { spec: "latest(spec)" } } } };
+  const { definition_id } = await commitTestDefinition({ source });
+  const { run_id, result } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "provenance" } });
+  expect(result).toMatchObject({ ok: true, value: { kind: "committed" } });
+  const unit = unitOf(run_id, "document");
+  const submit = submitter(authority);
+  for (const sequence of [1, 2]) expect((await submit({ run_id, event: { kind: "revision_published", unit, artifact: "analysis",
+    body: `analysis ${sequence}`, predecessor: sequence === 2 ? `${unit}:analysis:1` : null } }))).toMatchObject({ ok: true, value: { kind: "committed" } });
+  expect((await submit({ run_id, event: { kind: "operator_decided", unit, review: "analysis_review", decision: "accept", target: `${unit}:analysis:2`, payload: {} } }))).toMatchObject({ ok: true, value: { kind: "committed" } });
+  const action = await actionOf(authority, run_id, "editor");
+  expect((await submit({ run_id, writer: executor(action), event: { kind: "worker_started", action, kbbl_session_id: "spec-provenance" } }))).toMatchObject({ ok: true, value: { kind: "committed" } });
+  expect((await submit({ run_id, event: { kind: "revision_published", unit, artifact: "analysis", body: "analysis 3", predecessor: `${unit}:analysis:2` } }))).toMatchObject({ ok: true, value: { kind: "committed" } });
+  expect((await submit({ run_id, writer: executor(action), event: { kind: "revision_published", unit, artifact: "spec", body: "spec", by: action } }))).toMatchObject({ ok: true, value: { kind: "committed" } });
+  expect((await submit({ run_id, event: { kind: "revision_published", unit, artifact: "spec", body: "operator edit", predecessor: `${unit}:spec:1` } }))).toMatchObject({ ok: true, value: { kind: "committed" } });
+  // Replay after another analysis exists must keep both the agent and operator publications pinned.
+  expect((await submit({ run_id, event: { kind: "revision_published", unit, artifact: "analysis", body: "analysis 4", predecessor: `${unit}:analysis:3` } }))).toMatchObject({ ok: true, value: { kind: "committed" } });
+  const publications = await authority.db.selectFrom("authority.event").selectAll().where("run_id", "=", run_id)
+    .where((eb) => eb(eb.ref("payload", "->>").key("artifact"), "=", "spec")).orderBy("created_at").execute();
+  const analyses = [];
+  for (const publication of publications) analyses.push(await readSpecAnalysisRevisionId(authority.db, { ...publication,
+    commit_txid: String(publication.commit_txid), was_visible_at_subscription: false }));
+  expect(analyses).toEqual([`${unit}:analysis:2`, `${unit}:analysis:3`]);
 });

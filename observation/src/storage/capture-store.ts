@@ -54,9 +54,12 @@ export async function captureInTransaction(trx: DatabaseTransaction, delivery: C
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${producer}:${namespace}:revision:${revision_id}`}, 0))`.execute(trx);
   const existing = await trx.selectFrom("observation.source_revision").selectAll()
     .where("producer", "=", producer).where("namespace", "=", namespace).where("revision_id", "=", revision_id).executeTakeFirst();
-  const stored_ids = existing ? await recordedRevisionIds(trx, { producer, namespace }, revision_id, "brief_revision_ids") : null;
-  const incoming_ids = source.brief_revision_ids?.map((id) => id.slice(prefix.length)) ?? null;
-  const same_provenance = JSON.stringify(stored_ids) === JSON.stringify(incoming_ids);
+  let same_provenance = true;
+  for (const field of ["brief_revision_ids", "analysis_revision_ids"] as const) {
+    const stored_ids = existing ? await recordedRevisionIds(trx, { producer, namespace }, revision_id, field) : null;
+    const incoming_ids = source[field]?.map((id) => id.slice(prefix.length)) ?? null;
+    if (JSON.stringify(stored_ids) !== JSON.stringify(incoming_ids)) same_provenance = false;
+  }
   if (same_provenance && existing?.body_digest === body_digest && existing.predecessor_id === predecessor_id && existing.subject_id === subject_id && existing.stage === source.stage)
     return { kind: "identical" };
   if (existing) return { kind: "revision_identity_conflict", stored_digest: existing.body_digest, incoming_digest: body_digest };
