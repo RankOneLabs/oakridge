@@ -105,7 +105,7 @@ export const RUNTIME_MODELS: Readonly<Record<RuntimeId, readonly RuntimeOption[]
   // @agentclientprotocol/claude-agent-acp 0.76.0, config option `model`.
   "claude-code": [
     { value: "opus", label: "opus 5.5" },
-    { value: "fable", label: "fable 5.1" },
+    { value: "fable", label: "fable 5.2" },
     { value: "sonnet", label: "sonnet 5.5" },
     { value: "haiku", label: "haiku 5.5" },
   ],
@@ -114,6 +114,8 @@ export const RUNTIME_MODELS: Readonly<Record<RuntimeId, readonly RuntimeOption[]
   // from its app server rather than a local catalog, and the server retired
   // the model, so the entry was a launch button that could only fail.
   codex: [
+    { value: "gpt-6.2-sol", label: "gpt-6.2 sol" },
+    { value: "gpt-6.2-astra", label: "gpt-6.2 astra" },
     { value: "gpt-6.1-sol", label: "gpt-6.1 sol" },
     { value: "gpt-6-astra", label: "gpt-6 astra" },
     { value: "gpt-6.1-terra", label: "gpt-6.1 terra" },
