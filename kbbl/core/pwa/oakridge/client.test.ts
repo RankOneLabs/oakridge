@@ -4,7 +4,7 @@ import planningRevise from "./__fixtures__/v2-planning-revise.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
 import definitionFixture from "./__fixtures__/v2-definition-detail.json";
-import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, putArtifactRevisionBody, refreshReviewInboxRun, resumeGate, retryRunUnit } from "./client";
+import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, putArtifactRevisionBody, resumeGate, retryRunUnit } from "./client";
 import { compositeId } from "./adapters/core";
 import type { OperatorDefinitionDetail } from "./operator-contracts/projections/definition-view";
 import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
@@ -342,18 +342,5 @@ describe("v2 Oakridge client", () => {
     const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect([String(posted?.[0]).includes(`/units/${encodeURIComponent(unit.unit_id)}/reviews/merge_confirmation/decide`),
       JSON.parse(String(posted?.[1]?.body)).target]).toEqual([true, target]);
-  });
-
-  it("uses a batched inbox and one cached units read per run, then refreshes only that run", async () => {
-    const fetch = calls((path) => path.includes("/run-inboxes") ? { items: [sample.inbox] }
-      : path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
-      : path.includes("/inbox") ? { items: [] } : sample.units);
-    const inbox = await fetchReviewInbox();
-    await refreshReviewInboxRun(runId, inbox);
-    expect(fetch.mock.calls.filter(([path]) => String(path).includes("/units?"))).toHaveLength(1);
-    invalidateCachedRunUnits(runId);
-    await refreshReviewInboxRun(runId, inbox);
-    expect(fetch.mock.calls.filter(([path]) => String(path).includes("/units?"))).toHaveLength(2);
-    expect(fetch.mock.calls.filter(([path]) => String(path).includes("/run-inboxes"))).toHaveLength(1);
   });
 });

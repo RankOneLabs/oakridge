@@ -1,8 +1,10 @@
 import type { OperatorInboxItem, OperatorRunInboxBatchEntry } from "../operator-contracts/projections/inbox";
-import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
+import type { OperatorArtifactView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../artifact-types";
 import { selectUnitAttentionLabel, type UnitAttentionLabelInput } from "../lib/run-attention";
 import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";
+
+const DEVELOPMENT_WORKFLOW_NAME = "development";
 
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
@@ -20,12 +22,26 @@ const DEVELOPMENT_REVIEW_SUBJECTS: Readonly<Record<string, string>> = {
   "integration:integration_review": "assessment",
 };
 
-function classify(item: OperatorInboxItem, unit: OperatorUnitView): ReviewInboxItemKind {
+interface InboxItemContext {
+  readonly stage: OperatorUnitView["stage"];
+  readonly workflow_name: InboxRunContext["workflow_name"];
+  readonly target_artifact: OperatorArtifactView | null;
+}
+
+function findTargetArtifact(unit: OperatorUnitView, target: string | null): OperatorArtifactView | null {
+  if (!target) return null;
+  return unit.artifacts.find((candidate) => candidate.latest_revision?.id === target) ?? null;
+}
+
+function classify(item: OperatorInboxItem, context: InboxItemContext): ReviewInboxItemKind {
   if (item.kind === "stalled") return "cohort_failed";
   if (item.kind === "waiting") return item.reason.includes("pull request") ? "pull_request_merge" : "cohort_blocked";
   if (item.submit.kind === "retry") return "cohort_failed";
   if (item.submit.kind !== "review") return "gate_decision";
-  return DEVELOPMENT_REVIEWS[`${unit.stage}:${item.submit.review}`] ?? "gate_decision";
+  if (context.workflow_name === DEVELOPMENT_WORKFLOW_NAME) {
+    return DEVELOPMENT_REVIEWS[`${context.stage}:${item.submit.review}`] ?? "gate_decision";
+  }
+  return context.target_artifact ? "artifact_gate" : "gate_decision";
 }
 
 function lifecycle(unit: OperatorUnitView, items: readonly OperatorInboxItem[]): CohortLifecycle {
@@ -47,7 +63,12 @@ function unitAttentionLabelInput(unit: OperatorUnitView): UnitAttentionLabelInpu
   };
 }
 
-export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, units: readonly OperatorUnitView[], runTitle: string | null = null): AdapterResult<ReviewInbox> {
+export interface InboxRunContext {
+  readonly workflow_name: string;
+  readonly run_title: string | null;
+}
+
+export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, units: readonly OperatorUnitView[], run: InboxRunContext): AdapterResult<ReviewInbox> {
   const byId = new Map(units.map((unit) => [unit.unit_id, unit]));
   const cohortUnits = units.filter((unit) => unit.stage === "cohort" || unit.stage === "integration");
   const cohorts: CohortLifecycleSummary[] = [];
@@ -62,8 +83,8 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     const review = unitItems.find((item) => item.kind === "decision" && item.submit.kind === "review");
     const reviewName = review?.kind === "decision" && review.submit.kind === "review" ? review.submit.review : null;
     const gate = reviewName ? compositeId({ kind: "gate", runId: entry.run_id, unitId: unit.unit_id, name: reviewName }) : null;
-    cohorts.push({ id: name, run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId, stage_name: unit.stage!, unit_id: name,
-      ...attention, repository_key: attention.repository_key, title: selectUnitAttentionLabel(attention), run_title: runTitle, lifecycle: lifecycle(unit, unitItems), completion: { build_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "build_result" && !!candidate.latest_revision),
+    cohorts.push({ id: name, run_id: entry.run_id, workflow_name: run.workflow_name, stage_instance_id: stageId, stage_name: unit.stage!, unit_id: name,
+      ...attention, repository_key: attention.repository_key, title: selectUnitAttentionLabel(attention), run_title: run.run_title, lifecycle: lifecycle(unit, unitItems), completion: { build_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "build_result" && !!candidate.latest_revision),
         assessment_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "assessment" && !!candidate.latest_revision) },
       artifact_revision_id: artifact?.latest_revision ? artifactRevisionId(artifact, artifact.latest_revision.id) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
@@ -92,21 +113,21 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
       if (seenReviews.has(reviewKey)) return [];
       seenReviews.add(reviewKey);
     }
-    const kind = classify(item, unit);
     const name = unit.collection_key ?? unit.unit_key;
     const attention = unitAttentionLabelInput(unit);
     const review = item.kind === "decision" && item.submit.kind === "review" ? item.submit.review : null;
     const target = item.kind === "decision" && item.submit.kind === "review" ? item.submit.target_revision_id : null;
-    const artifact = target ? unit.artifacts.find((candidate) => candidate.latest_revision?.id === target) : null;
+    const artifact = findTargetArtifact(unit, target);
+    const kind = classify(item, { stage: unit.stage, workflow_name: run.workflow_name, target_artifact: artifact });
     const gate = review ? compositeId({ kind: "gate", runId: entry.run_id, unitId: unit.unit_id, name: review }) : null;
     const stageId = compositeId({ kind: "stage", runId: entry.run_id, unitId: unit.unit_id, name: unit.stage ?? "$root" });
     const actions = review ? unit.decisions.filter((candidate) => candidate.submit.kind === "review"
       && candidate.submit.review === review
       && isDisplayedReviewDecision(candidate.submit.review, candidate.submit.decision)).map(decisionAction) : [];
     return [{ id: `${item.run_id}:${item.unit_id}:${item.kind === "decision" ? item.key : item.kind}`, kind,
-      state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId,
+      state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: run.workflow_name, stage_instance_id: stageId,
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
-      ...attention, title: selectUnitAttentionLabel(attention), run_title: runTitle, artifact_key: (review ? DEVELOPMENT_REVIEW_SUBJECTS[`${unit.stage}:${review}`] : null) ?? artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
+      ...attention, title: selectUnitAttentionLabel(attention), run_title: run.run_title, artifact_key: (review ? DEVELOPMENT_REVIEW_SUBJECTS[`${unit.stage}:${review}`] : null) ?? artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null,
       resume_actions: actions, blocked_by: unit.depends_on.map((id) => {
