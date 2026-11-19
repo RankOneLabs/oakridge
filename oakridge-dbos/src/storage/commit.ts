@@ -1,7 +1,5 @@
-import { DEVELOPMENT_ARTIFACT_VERSIONS } from "../adapters/development-artifact-versions";
-import { parsedArtifactSchemaVersion } from "../adapters/observation-schema-version";
 import { parseAssessmentBody } from "../domain/assessment";
-import { selectReviewedAssessmentId, validateAdjudication, type AdjudicationEffect } from "../domain/adjudication";
+import { selectAdjudicatedReview, selectReviewedAssessmentId, validateAdjudication } from "../domain/adjudication";
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileDefinition, selectWanted, type WantedForUnit } from "../core-client/client";
@@ -164,6 +162,34 @@ export function requestDigest(request: RequestDigestInput): string {
  * and the operator event, in one transaction. A step rejection is stored, not
  * rolled back. The executor is woken after commit.
  */
+/** A decision on a review that declares adjudication, with what the authority checks it against under the lock. */
+interface AdjudicatedDecisionCheck {
+  readonly event: Extract<Event, { readonly kind: "operator_decided" }>;
+  readonly expected_assessment_revision_id: string | undefined;
+  readonly workflow: ParsedWorkflow;
+  readonly snapshot: StepSnapshot;
+}
+/** Why the authority refuses a decision on an adjudicated review, or null when it may commit. Reviews
+ * that declare no adjudication pass through: the core checks their payloads alone. */
+function refuseAdjudication({ event, expected_assessment_revision_id, workflow, snapshot }: AdjudicatedDecisionCheck): string | null {
+  const unit = snapshot.units.find((candidate) => candidate.id === event.unit);
+  const stage = unit?.kind.kind === "stage" ? unit.kind.stage : null;
+  const review = selectAdjudicatedReview({ workflow, stage, review: event.review });
+  if (!review) return null;
+  const assessmentId = selectReviewedAssessmentId({ decision: { review: event.review, unit_id: event.unit, target_revision_id: event.target }, review,
+    revisions: snapshot.revisions.map(revision => ({ ...revision, unit_id: revision.unit })) });
+  const target = snapshot.revisions.find(revision => revision.id === assessmentId);
+  if (!target) return `${event.target}: reviewed assessment revision not found`;
+  if ((expected_assessment_revision_id !== undefined || event.target !== assessmentId) && expected_assessment_revision_id !== assessmentId)
+    return `${expected_assessment_revision_id ?? event.target}: reviewed assessment changed; expected_assessment_revision_id must match ${assessmentId}`;
+  const assessment = parseAssessmentBody(target.body);
+  if (!assessment.ok) return `${target.id}: ${assessment.error.detail}`;
+  const declared = review.decisions.find((decision) => decision.key === event.decision);
+  if (!declared) return null;
+  const adjudication = validateAdjudication({ payload: event.payload, assessment: { id: target.id, body: assessment.value }, decision: declared });
+  return adjudication.ok ? null : `${adjudication.error.operation} ${adjudication.error.entity_id}: ${adjudication.error.detail}`;
+}
+
 export async function commitEvent(deps: CommitDependencies, request: CommitRequest,
   within?: (trx: DatabaseTransaction, outcome: CommitOutcome) => Promise<void>): Promise<CommitResult> {
   const scoped = { ...request, ingress_id: scopeIngressId(request.writer, request.ingress_id) };
@@ -377,28 +403,10 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
       effectiveRequest = { ...request, event: { ...event, body: enriched.value } };
     }
   }
-  if (request.event.kind === "operator_decided" && ["assessment_review", "integration_review"].includes(request.event.review)) {
-    const event = request.event;
-    const unit = snapshot.units.find((candidate) => candidate.id === event.unit);
-    const assessmentId = selectReviewedAssessmentId({ decision: { review: event.review, unit_id: event.unit, target_revision_id: event.target },
-      revisions: snapshot.revisions.map(revision => ({ ...revision, unit_id: revision.unit })) });
-    const target = snapshot.revisions.find(revision => revision.id === assessmentId);
-    const workflow = definition.checked_program.workflow;
-    const reviewedArtifact = unit?.kind.kind === "stage" ? workflow.stages[unit.kind.stage]?.reviews?.[event.review]?.of : null;
-    const version = unit?.kind.kind === "stage" && reviewedArtifact ? parsedArtifactSchemaVersion(workflow, unit.kind.stage, reviewedArtifact) : null;
-    if (version === DEVELOPMENT_ARTIFACT_VERSIONS.assessment_body.version) {
-      if (!target) return reject(`${event.target}: reviewed assessment revision not found`, unit_id.value);
-      if ((request.expected_assessment_revision_id !== undefined || event.target !== assessmentId)
-        && request.expected_assessment_revision_id !== assessmentId)
-        return reject(`${request.expected_assessment_revision_id ?? event.target}: reviewed assessment changed; expected_assessment_revision_id must match ${assessmentId}`, unit_id.value);
-      const assessment = parseAssessmentBody(target.body);
-      if (!assessment.ok) return reject(`${target.id}: ${assessment.error.detail}`, unit_id.value);
-      const supported: readonly string[] = ["accept", "request_build_changes", "request_changes", "request_assessment_changes"];
-      if (supported.includes(event.decision)) {
-        const adjudication = validateAdjudication({ payload: event.payload, assessment: { id: target.id, body: assessment.value }, effect: event.decision as AdjudicationEffect });
-        if (!adjudication.ok) return reject(`${adjudication.error.operation} ${adjudication.error.entity_id}: ${adjudication.error.detail}`, unit_id.value);
-      }
-    }
+  if (request.event.kind === "operator_decided") {
+    const refusal = refuseAdjudication({ event: request.event, expected_assessment_revision_id: request.expected_assessment_revision_id,
+      workflow: definition.checked_program.workflow, snapshot });
+    if (refusal !== null) return reject(refusal, unit_id.value);
   }
   const incoming: Incoming = { event: effectiveRequest.event, writer: request.writer, ingress_id: request.ingress_id };
   const stepped = await stepPinned(core, { run_id, definition, snapshot, incoming });

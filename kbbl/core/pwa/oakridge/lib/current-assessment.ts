@@ -9,13 +9,17 @@ const evidence = z.object({ kind: z.enum(["file", "test", "output"]), ref: z.str
 const identifier = z.string().min(1);
 export const currentAssessmentSchema: z.ZodType<CurrentAssessment> = z.object({
   head_sha: z.string(), verdict: z.enum(["pass", "pass_with_notes", "fail"]),
-  item_assessments: z.array(z.object({ subject: z.object({ kind: z.enum(["build_item", "requirement"]), id: identifier }),
+  item_assessments: z.array(z.object({ subject: z.object({ kind: identifier, id: identifier }),
     status: z.enum(["met", "partial", "not_met"]), observation: z.string(), evidence: z.array(evidence) })),
   additional_findings: z.array(z.object({ id: identifier, severity: z.enum(["blocking", "warning", "info"]), observation: z.string(), related_build_item_ids: z.array(identifier), evidence: z.array(evidence) })),
   next_actions: z.array(z.object({ id: z.string().uuid(), audience: z.enum(["builder", "operator"]), source: z.object({ kind: z.enum(["item_assessment", "additional_finding"]), id: identifier }), text: z.string() })),
   test_evidence: z.object({ passed: z.number().int(), failed: z.number().int(), output: z.string().nullish(), summary: z.string().nullish(), cargo_test_output: z.string().nullish() }),
 });
 export const parseCurrentAssessment = (body: unknown) => parseCurrent(currentAssessmentSchema, body, "parse_current_assessment");
+const SUBJECT_KIND_LABELS: Readonly<Record<string, string>> = { build_item: "Build item", requirement: "Requirement" };
+/** Each workflow declares what its assessor grades; a kind without a set label reads as its words. */
+export const selectSubjectKindLabel = (kind: string): string =>
+  SUBJECT_KIND_LABELS[kind] ?? `${kind.charAt(0).toUpperCase()}${kind.slice(1).replaceAll("_", " ")}`;
 export interface AssessmentStatusGroup { readonly status: OperatorItemAssessment["status"]; readonly count: number; readonly items: readonly OperatorItemAssessment[] }
 export type AssessmentStatusFilter = "all" | "needs_attention" | OperatorItemAssessment["status"];
 export function selectItemAssessmentGroups(assessment: CurrentAssessment, filter: AssessmentStatusFilter = "all"): readonly AssessmentStatusGroup[] {

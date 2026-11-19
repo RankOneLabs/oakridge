@@ -73,13 +73,13 @@ const worktreeOf = (unit: OperatorUnitView): StageUnit["worktree"] => {
 export const revisionToArtifact = (artifact: OperatorArtifactDetail, unit: OperatorUnitView): AdapterResult<ArtifactDetail> => {
   if (artifact.run_id !== unit.run_id || artifact.unit_id !== unit.unit_id)
     return fail("revision to artifact", "artifact does not belong to unit");
-  const descriptor = artifactType(artifact.schema, artifactSchemaVersion(artifact.revisions.at(-1)));
+  const descriptor = artifactType(artifact.schema, artifactSchemaVersion(artifact.revisions.at(-1)), artifact.is_adjudicated);
   const revisions: ArtifactRevision[] = artifact.revisions.map((revision) => ({ id: compositeId({ kind: "artifact", runId: artifact.run_id,
     unitId: artifact.unit_id, name: `${artifact.artifact_key}:${revision.id}` }),
     status: artifact.decisions.some((decision) => decision.target_revision_id === revision.id && decision.effect === "request_changes") ? "rejected"
       : artifact.decisions.some((decision) => decision.target_revision_id === revision.id && decision.effect === "approve") ? "approved" : "draft",
-    context: selectCurrentArtifactContext(unit, revision.attempt_id), received_context: selectRevisionReceivedContext(unit, revision.attempt_id), artifact_schema_version: artifactSchemaVersion(revision), component_id: artifactType(artifact.schema, artifactSchemaVersion(revision)).component_id,
-    current_read: parseVersionedBody({ schema: artifact.schema, version: artifactSchemaVersion(revision), body: revision.body }),
+    context: selectCurrentArtifactContext(unit, revision.attempt_id), received_context: selectRevisionReceivedContext(unit, revision.attempt_id), artifact_schema_version: artifactSchemaVersion(revision), component_id: artifactType(artifact.schema, artifactSchemaVersion(revision), artifact.is_adjudicated).component_id,
+    current_read: parseVersionedBody({ schema: artifact.schema, version: artifactSchemaVersion(revision), is_adjudicated: artifact.is_adjudicated, body: revision.body }),
     body: revision.body, created_at: revision.created_at, validation: null }));
   return ok({ id: compositeId({ kind: "artifact", runId: artifact.run_id, unitId: artifact.unit_id, name: artifact.artifact_key }),
     schema: artifact.schema, artifact_schema_version: artifactSchemaVersion(artifact.revisions.at(-1)),

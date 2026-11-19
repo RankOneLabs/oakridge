@@ -1,8 +1,9 @@
 import type { Result } from "./primitives";
 
-/** Mirrors assessment_body and its dependencies in workflow-config/development.yaml §8. */
+/** Mirrors assessment_body and its dependencies, which every workflow shares except
+ * assessment_subject's kinds: each workflow declares what its assessor grades. */
 export interface AssessmentEvidence { readonly kind: "file" | "test" | "output"; readonly ref: string; readonly detail?: string | null }
-export interface AssessmentSubject { readonly kind: "build_item" | "requirement"; readonly id: string }
+export interface AssessmentSubject { readonly kind: string; readonly id: string }
 export interface ItemAssessment {
   readonly subject: AssessmentSubject; readonly status: "met" | "partial" | "not_met";
   readonly observation: string; readonly evidence: readonly AssessmentEvidence[];
@@ -29,7 +30,7 @@ const optionalText = (value: unknown): value is string | null | undefined => val
 const list = <T>(value: unknown, predicate: (entry: unknown) => entry is T): value is readonly T[] => Array.isArray(value) && value.every(predicate);
 const evidence = (value: unknown): value is AssessmentEvidence => fields(value) && ["file", "test", "output"].includes(String(value.kind)) && text(value.ref) && optionalText(value.detail);
 export const isActionSource = (value: unknown): value is ActionSource => fields(value) && (value.kind === "item_assessment" || value.kind === "additional_finding") && text(value.id);
-const item = (value: unknown): value is ItemAssessment => fields(value) && fields(value.subject) && ["build_item", "requirement"].includes(String(value.subject.kind))
+const item = (value: unknown): value is ItemAssessment => fields(value) && fields(value.subject) && text(value.subject.kind) && value.subject.kind !== ""
   && text(value.subject.id) && ["met", "partial", "not_met"].includes(String(value.status)) && text(value.observation) && list(value.evidence, evidence);
 const finding = (value: unknown): value is AdditionalFinding => fields(value) && text(value.id) && ["blocking", "warning", "info"].includes(String(value.severity))
   && text(value.observation) && list(value.related_build_item_ids, text) && list(value.evidence, evidence);

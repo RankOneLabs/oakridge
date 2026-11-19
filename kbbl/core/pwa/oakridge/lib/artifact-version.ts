@@ -11,6 +11,12 @@ export const CURRENT_VERSIONS: readonly CurrentVersionRegistration[] = Object.en
 export interface VersionedSchemaRead { readonly schema: string; readonly version: string | null | undefined; readonly registrations?: readonly CurrentVersionRegistration[] }
 export const selectVersionedComponent = ({ schema, version, registrations = CURRENT_VERSIONS }: VersionedSchemaRead): string | null =>
   registrations.find((entry) => entry.schema === schema && entry.version === version)?.component_id ?? null;
+/** The viewer that composes an operator adjudication of an assessment's next actions. */
+export const ADJUDICATION_VIEWER = "dev-current-assessment-viewer";
+/** An artifact a review adjudicates opens in the adjudication viewer, whatever workflow pinned its schema; any other dispatches on its version. */
+export interface ArtifactComponentRead extends VersionedSchemaRead { readonly is_adjudicated?: boolean }
+export const selectArtifactComponent = (read: ArtifactComponentRead): string | null =>
+  read.is_adjudicated ? ADJUDICATION_VIEWER : selectVersionedComponent(read);
 export function artifactSchemaVersion(revision: unknown): string | null {
   if (!revision || typeof revision !== "object" || !("artifact_schema_version" in revision)) return null;
   return typeof revision.artifact_schema_version === "string" ? revision.artifact_schema_version : null;

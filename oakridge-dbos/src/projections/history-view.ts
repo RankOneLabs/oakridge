@@ -1,4 +1,4 @@
-import { parseAdjudication, type Adjudication } from "../domain/adjudication";
+import { selectRecordedAdjudication, type Adjudication } from "../domain/adjudication";
 import type { Event, ResolvedDecision, Writer } from "../core-client/core-types";
 import { ANALYSIS_LINKS_DECLARED } from "../domain/analysis-link-declaration";
 import type { UnitId } from "../domain/primitives";
@@ -22,10 +22,12 @@ export interface UnitHistory { readonly unit_id: UnitId; readonly events: readon
 
 export function selectUnitHistory(unit_id: UnitId, page: HistoryPage, next_cursor: string | null): UnitHistory {
   // A declaration addresses the run and no unit, so a unit's history never holds one.
-  return { unit_id, next_cursor, events: page.items.flatMap(({ event, assessment_revision_id }) => event.payload.kind === ANALYSIS_LINKS_DECLARED ? [] : [{ id: event.id, ingress_id: event.ingress_id,
-    event: event.payload, writer: event.writer, created_at: event.created_at,
-    ...(event.payload.kind === "operator_decided" && ["assessment_review", "integration_review"].includes(event.payload.review) && parseAdjudication(event.payload.payload)
-      ? { adjudication: parseAdjudication(event.payload.payload), assessment_revision_id: assessment_revision_id ?? event.payload.target } : {}) }]) };
+  return { unit_id, next_cursor, events: page.items.flatMap(({ event, review, assessment_revision_id }) => {
+    if (event.payload.kind === ANALYSIS_LINKS_DECLARED) return [];
+    const adjudication = event.payload.kind === "operator_decided" ? selectRecordedAdjudication(review ?? null, event.payload.decision, event.payload.payload) : null;
+    return [{ id: event.id, ingress_id: event.ingress_id, event: event.payload, writer: event.writer, created_at: event.created_at,
+      ...(adjudication && event.payload.kind === "operator_decided" ? { adjudication, assessment_revision_id: assessment_revision_id ?? event.payload.target } : {}) }];
+  }) };
 }
 
 /** What the executor has made of one effect intent. */

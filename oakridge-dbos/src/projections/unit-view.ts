@@ -1,4 +1,4 @@
-import { parseAdjudication, selectReviewedAssessmentId, type Adjudication } from "../domain/adjudication";
+import { isAdjudicatedArtifact, selectAdjudicatedReview, selectRecordedAdjudication, selectReviewedAssessmentId, type Adjudication } from "../domain/adjudication";
 import type { Writer } from "../core-client/core-types";
 import type { ReviewDecisionRead } from "../storage/read-store";
 import type { ArtifactSchemaVersions } from "../storage/read-store";
@@ -73,6 +73,8 @@ export interface ArtifactView {
   readonly schema: string;
   /** An operator review of this artifact is declared. */
   readonly is_reviewable: boolean;
+  /** A review of this artifact declares an adjudication decision, so the operator adjudicates its next actions. */
+  readonly is_adjudicated: boolean;
   /** An agent creates it, so the operator may publish an edited revision. */
   readonly is_editable: boolean;
   readonly revision_count: number;
@@ -111,8 +113,12 @@ export interface RevisionDecision {
   readonly actor?: Writer | null;
   readonly created_at: Date;
 }
-export function selectRevisionDecision(decision: ReviewDecisionRead, assessment_revision_id?: string | null): RevisionDecision {
-  const adjudication = ["assessment_review", "integration_review"].includes(decision.review) ? parseAdjudication(decision.payload) : null;
+/** A recorded decision, with the adjudication and assessment its unit's declared review gives it. */
+export function selectRevisionDecision(read: Pick<RunRead, "definition" | "units" | "revisions">, decision: ReviewDecisionRead): RevisionDecision {
+  const review = selectAdjudicatedReview({ workflow: read.definition.parsed_workflow,
+    stage: read.units.find((unit) => unit.id === decision.unit_id)?.stage, review: decision.review });
+  const assessment_revision_id = selectReviewedAssessmentId({ decision, review, revisions: read.revisions });
+  const adjudication = selectRecordedAdjudication(review, decision.decision, decision.payload);
   return { id: decision.id, review: decision.review, decision: decision.decision, effect: decision.effect,
     target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue, created_at: decision.created_at,
     ...(adjudication ? { adjudication, assessment_revision_id: assessment_revision_id ?? decision.target_revision_id, actor: decision.actor ?? null } : {}) };
@@ -217,7 +223,7 @@ function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly Artifact
   return Object.keys(stage.artifacts).sort().map((artifact) => {
     const revisions = selectRevisionViews({ revisions: revisionsOf(read.revisions, unit.id, artifact), attempts: read.attempts, versions: read.definition.artifact_schema_versions ?? {}, stage: unit.stage ?? "" });
     return { run_id: unit.run_id, unit_id: unit.id, artifact_key: artifact, schema: selectArtifactSchema(stage, artifact),
-      is_reviewable: isReviewable(stage, artifact), is_editable: isEditable(stage, artifact),
+      is_reviewable: isReviewable(stage, artifact), is_adjudicated: isAdjudicatedArtifact(stage, artifact), is_editable: isEditable(stage, artifact),
       revision_count: revisions.length, latest_revision: revisions.at(-1) ?? null };
   });
 }
@@ -275,7 +281,7 @@ export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitA
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),
     attention: selectAttention(attention, read),
     decisions: selectAvailableDecisions(read, unit, attention),
-    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map(decision => selectRevisionDecision(decision, selectReviewedAssessmentId({ decision, revisions: read.revisions }))),
+    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map(decision => selectRevisionDecision(read, decision)),
     attempts: selectAttemptViews(read.attempts.filter((attempt) => attempt.unit_id === unit.id), read.intents),
     artifacts: selectArtifactViews(read, unit) };
 }
