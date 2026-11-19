@@ -307,7 +307,8 @@ function generatorFixture(): string {
   const root = mkdtempSync(resolve(tmpdir(), "oakridge-generator-"));
   temporary_stores.push(root);
   for (const path of [
-    "workflow-config/src", "workflow-config/skills", "workflow-config/prompts", "workflow-config/samples", "workflow-config/development.yaml",
+    "workflow-config/src", "workflow-config/skills", "workflow-config/prompts",
+    ...Object.values(WORKFLOW_SOURCES).map(({ path }) => path),
     "workflow-core/fixtures/bundles", "oakridge-dbos/src/operations/registry.ts", "oakridge-dbos/src/effects/provider-catalog.ts",
     "oakridge-dbos/src/core-client/source-types.ts",
   ]) {
@@ -650,7 +651,12 @@ test("development prompts use the integration-neutral skill while historical pin
 
 test("authored audiences travel with the committed definitions", () => {
   const catalog = unwrap(readLaunchableCatalog());
-  expect(Object.fromEntries(Object.entries(catalog).map(([name, entry]) => [name, entry.audience]))).toEqual({ development: "user", "fan-out": "test_fixture", "review-loop": "test_fixture" });
+  expect(Object.fromEntries(Object.entries(catalog).map(([name, entry]) => [name, entry.audience]))).toEqual({
+    development: "user",
+    study: "user",
+    "fan-out": "test_fixture",
+    "review-loop": "test_fixture",
+  });
   expect(Object.values(catalog).every((entry) => resolveDefinition(entry.definition_id).ok)).toBe(true);
 });
 for (const entry of [{ definition_id: "a".repeat(64), audience: "unknown" }, { definition_id: "a".repeat(64) }, { definition_id: "a".repeat(64), audience: "user", extra: true }, "a".repeat(64)]) {
