@@ -1,0 +1,57 @@
+# Freeze
+
+Regenerate all cases from the approved generator on mcclure using the qualification-host instructions below. Verify the generator matches `generator_digest`. Compare the regenerated fixtures with the committed slice and expansion fixtures byte for byte. Set `is_byte_identical` to reflect the comparison and raise a blocker if anything differs.
+
+Freeze the cohort files with their manifest digests and the pinned evaluator image digest. Compute `cap_cents = ceil(attempt_count × per-attempt cost in cents)` for each cohort, rounding up after multiplication. Use the measured paid-slice mean for the cohort's model when the slice measured it: sum `spend_cents` over that model's observed paid results and divide by their count. Otherwise use the model's `per_attempt_cap_cents` from the plan. Record `cost_basis` as `measured` or `per_attempt_cap`, respectively.
+
+Commit the frozen cohorts and publish `freeze` as `{build: {cohort_id: "freeze", title, head_sha, summary, changed_files}, generator_digest, image_digest, is_byte_identical, cohorts: [{id, file, digest, attempt_count, cap_cents, cost_basis}]}`. Use the pr-operations skill to push and open or update the draft PR against `build_base`, then publish `pr`.
+
+Approving the freeze does not authorize the full study's spend.
+
+## Study plan
+
+{{plan}}
+
+## Approved generator digest
+
+{{generator_digest}}
+
+## Paid slice report
+
+{{slice_report}}
+
+## Expansion results
+
+{{expansions}}
+
+## Repository
+
+{{repository}}
+
+## Build base
+
+{{build_base}}
+
+## Long steps
+
+- Publish a provisional artifact as soon as the work supports it, and publish again with the final numbers.
+- Run long commands in the foreground with a polling wait (for example a loop that checks a log or status every 30–60 seconds until done). Never leave a command running in the background across turns.
+- Before starting any long step, check that this attempt is still running. If it is not, stop.
+- Never end your turn before every artifact this step must publish has been published. Ending early fails the attempt.
+
+## Hosts
+
+- Do not run CPU-heavy commands on otto (fixture generation, qualification, docker builds, test suites over the generated fixtures). otto runs the paid cohorts. Use mcclure for that work.
+
+## Qualification hosts
+
+- Qualification runs on mcclure, never otto, with at most two scenarios at once.
+- Per run:
+  1. Image: `docker save <evaluator image> | ssh mcclure docker load`. Then `ssh mcclure docker image inspect <evaluator image> | jq -r '.[0].Id'` must equal the pinned image digest; stop otherwise.
+  2. Code: over `ssh -A mcclure`, clone or `git pull --ff-only` the study branch into ~/apps/assay. Run `uv sync --locked --group dev` in ~/apps/assay/experiments. Regenerate, and check the tree digest equals the builder's.
+  3. Logs: under ~/study-runs/<study>/ on mcclure, never under /tmp. A wake power-cycles mcclure and wipes /tmp.
+  4. Results: commit on mcclure and push back over git with the forwarded agent (`ssh -A`). Never copy fixtures or results with scp.
+- A connection timeout means mcclure suspended on idle. Wake it with `POST willie:8900/machines/mcclure/wake` and poll `GET willie:8900/machines` until it leaves `waking`.
+- mcclure shuts down only after 30 minutes with no work, so a long qualification run is safe once started.
+
+If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, raise a blocker instead of guessing.
