@@ -1,17 +1,29 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
 import YAML from "yaml";
 import { CoreClient, compileWorkflow } from "../../oakridge-dbos/src/core-client/client";
 import type { Event, StepResult, StepSnapshot, WantedWorker } from "../../oakridge-dbos/src/core-client/core-types";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import type { AuthoredWorkflow } from "./definition-objects";
 import { referencedPromptPaths } from "./definition-objects";
+import { expandPrompts } from "../../oakridge-dbos/src/runtime/prompt-includes";
 
 export const root = resolve(import.meta.dir, "../..");
 const decoded = decodeWorkflowSource(YAML.parse(readFileSync(resolve(root, "workflow-config/development.yaml"), "utf8")));
 if (!decoded) throw new Error("Invalid development source");
 export const development = decoded;
-export const prompts = Object.fromEntries(referencedPromptPaths(development).map(path => [path, readFileSync(resolve(root, "workflow-config/prompts", path), "utf8")]));
+const promptRoot = resolve(root, "workflow-config/prompts");
+const authoredPrompts = Object.fromEntries(readdirSync(promptRoot, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()).map(entry => {
+  const path = resolve(entry.parentPath, entry.name);
+  return [relative(promptRoot, path).split(sep).join("/"), readFileSync(path, "utf8")];
+}));
+/** A workflow's prompts as a session receives them: authored, with every include expanded. */
+export function expandedPrompts(workflow: AuthoredWorkflow): Readonly<Record<string, string>> {
+  const expanded = expandPrompts(referencedPromptPaths(workflow), authoredPrompts);
+  if (!expanded.ok) throw new Error(expanded.error.detail);
+  return expanded.value.prompts;
+}
+export const prompts = expandedPrompts(development);
 const started = CoreClient.start();
 if (!started.ok) throw new Error(JSON.stringify(started.error));
 export const core = started.value;

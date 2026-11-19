@@ -10,4 +10,4 @@ Normalize the original specification and approved analysis into one structured `
 
 {{approved_analysis}}
 
-If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, raise a blocker instead of guessing.
+{{> shared/raise-blocker.md}}

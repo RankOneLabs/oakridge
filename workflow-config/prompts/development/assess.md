@@ -26,4 +26,4 @@ Publish the assessment, then use pr-operations to set draft false for pass/pass_
 
 {{review_history}}
 
-If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, raise a blocker instead of guessing.
+{{> shared/raise-blocker.md}}

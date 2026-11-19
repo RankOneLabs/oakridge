@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
 import { canonicalJson } from "canonical-json";
 import type { CompileInput } from "../src/core-client/client";
 import { OPERATION_REGISTRY } from "../src/operations/registry";
-import { DEFINITION_STORE_ROOT, readLaunchableCatalog, referencedPromptPaths, type DefinitionId } from "../src/runtime/definition-store";
+import { DEFINITION_STORE_ROOT, composePrompts, readLaunchableCatalog, referencedPromptPaths, type ComposedPromptMap, type DefinitionId } from "../src/runtime/definition-store";
 
 let test_root: string | null = null;
 const previous = process.env.OAKRIDGE_DEFINITION_ROOT;
@@ -48,12 +48,17 @@ export async function commitTestDefinition(request: CommittedFixtureRequest): Pr
     writeFileSync(resolve(root, directory, `${id}.${extension}`), bytes);
     return id;
   };
-  const prompts = Object.fromEntries(referencedPromptPaths(source).map((path) => {
-    const content = edit?.path === path ? edit.content : readFileSync(resolve(import.meta.dir, "../../workflow-config/prompts", path), "utf8");
-    return [path, put("prompts", content, "md")];
-  }));
+  const authored_root = resolve(import.meta.dir, "../../workflow-config/prompts");
+  const authored = readdirSync(authored_root, { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile())
+    .map((entry) => relative(authored_root, resolve(entry.parentPath, entry.name)).split(sep).join("/"));
+  const sources = Object.fromEntries(authored.map((path) => [path, readFileSync(resolve(authored_root, path), "utf8")]));
+  const composed = composePrompts(referencedPromptPaths(source), edit ? { ...sources, [edit.path]: edit.content } : sources);
+  if (!composed.ok) throw new Error(composed.error.detail);
+  const commit = (prompts: ComposedPromptMap) => Object.fromEntries(Object.entries(prompts).map(([path, prompt]) => [path, put("prompts", prompt.text, "md")]));
+  const prompts = commit(composed.value.prompts);
+  const prompt_sources = commit(composed.value.prompt_sources);
   const operation_registry_id = put("operations", jsonBytes(operations), "json");
-  const definition_id = put("workflows", jsonBytes({ source, prompts, operation_registry_id,
+  const definition_id = put("workflows", jsonBytes({ source, prompts, prompt_sources, operation_registry_id,
     schema_names: Object.keys(source.schemas ?? {}), stage_names: Object.keys(source.stages) }), "json") as DefinitionId;
   const catalog = JSON.parse(readFileSync(resolve(root, "launchable.json"), "utf8"));
   writeFileSync(resolve(root, "launchable.json"), jsonBytes({ ...catalog, [definition_id]: { definition_id, audience: request.audience ?? "user" } }));

@@ -26,4 +26,4 @@ Make one commit per logical subgoal, with relevant tests and typecheck passing. 
 
 Revise the previous artifact using the recorded feedback. Preserve stable ids for unchanged obligations and findings.
 
-If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, raise a blocker instead of guessing.
+{{> shared/raise-blocker.md}}

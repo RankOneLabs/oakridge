@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { CoreClient } from "../src/core-client/client";
-import { DEFINITION_STORE_ROOT, readLaunchableCatalog, readPromptPointer, resolveDefinition, writeStoreFile, withPublishedPrompt, bytesIdentity } from "../src/runtime/definition-store";
+import { DEFINITION_STORE_ROOT, readLaunchableCatalog, readPromptPointer, resolveDefinition, writeStoreFile, bytesIdentity } from "../src/runtime/definition-store";
 import { listPromptVersions, savePendingPrompt, publishPrompt, validatePrompt } from "../src/runtime/prompt-versions";
 import { installPromptVersions, type PromptVersionListing, type PromptPublicationOutcome, type PromptVersionErrorKind } from "../src/http/prompt-versions";
 import { installReadModels } from "../src/http/read-models";
@@ -73,7 +73,7 @@ test("HTTP list, save, validate and publish expose the version lifecycle", async
   expect(response.status).toBe(200);
   const httpListing = await response.json() as PromptVersionListing;
   const definition = unwrap(resolveDefinition(unwrap(readLaunchableCatalog()).development.definition_id));
-  expect(httpListing).toMatchObject({ source_path: path, published: { body: definition.prompts[path], status: "published" }, pending: null,
+  expect(httpListing).toMatchObject({ source_path: path, published: { body: definition.prompt_sources[path], status: "published" }, pending: null,
     referenced_by: [{ workflow: "development", workflow_name: "development", definition_id: definition.definition_id }] });
   const request = (url: string, method: string, body: unknown) => app.request(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   expect((await request("/api/prompt-versions/pending", "PUT", { path, body: listing.published.body + "\nNew guidance.\n", expected_pending_version_id: null })).status).toBe(200);
@@ -89,14 +89,52 @@ test("HTTP list, save, validate and publish expose the version lifecycle", async
   expect((await app.request("/api/prompt-versions?path=../bad")).status).toBe(400);
   expect((await app.request("/api/prompt-versions?path=missing.md")).status).toBe(404); core.close();
 });
-test("immutable writes refuse differing bytes and the prompt transform preserves other fields", () => {
+test("immutable writes refuse differing bytes", () => {
   const { root, core } = fixture(); const bytes = Buffer.from("one"); const path = "prompts/" + bytesIdentity(bytes) + ".md";
   expect(writeStoreFile({ root, path, bytes }).ok).toBe(true);
   expect(writeStoreFile({ root, path, bytes: Buffer.from("two") }).ok).toBe(false);
-  expect(readFileSync(resolve(root, path))).toEqual(bytes);
-  const resolved = unwrap(resolveDefinition(unwrap(readLaunchableCatalog()).development.definition_id));
-  const committed = { source: resolved.source, operation_registry_id: resolved.operation_registry_id, prompts: { "a.md": bytesIdentity(bytes) }, schema_names: resolved.schema_names, stage_names: resolved.stage_names };
-  expect(withPublishedPrompt(committed, "a.md", bytesIdentity(Buffer.from("two")))).toEqual({ ...committed, prompts: { "a.md": bytesIdentity(Buffer.from("two")) } }); core.close();
+  expect(readFileSync(resolve(root, path))).toEqual(bytes); core.close();
+});
+test("publishing an included prompt moves every workflow that includes it and re-expands the prompts that do", async () => {
+  const { core } = fixture(); const path = "shared/raise-blocker.md";
+  const before = unwrap(listPromptVersions(path));
+  const body = "Raise a blocker when only the operator can settle the inputs.\n";
+  const pending = unwrap(await savePendingPrompt({ path, body, expected_pending_version_id: null }));
+  const outcome = unwrap(await publishPrompt(core, { path, expected_pending_version_id: pending.version_id, expected_published_version_id: before.published.version_id }));
+  expect(outcome.moved.map(move => move.workflow).sort()).toEqual(["development", "study"]);
+  const development = outcome.moved.find(move => move.workflow === "development");
+  if (!development) throw new Error("development did not move");
+  const old = unwrap(resolveDefinition(development.previous_definition_id));
+  const next = unwrap(resolveDefinition(development.definition_id));
+  expect({ authored: next.prompt_sources["development/build.md"], included: next.prompt_sources[path],
+    expanded: next.prompts["development/build.md"] })
+    .toEqual({ authored: old.prompt_sources["development/build.md"], included: body,
+      expanded: old.prompts["development/build.md"].replace(before.published.body.trimEnd(), body.trimEnd()) });
+  core.close();
+});
+test("a candidate that includes a missing prompt, or includes itself, is refused for every workflow it reaches", async () => {
+  const { core } = fixture(); const path = "shared/raise-blocker.md";
+  const missing = await validatePrompt(core, { path, body: "{{> shared/absent.md}}\n" });
+  const cycle = await validatePrompt(core, { path, body: "{{> shared/raise-blocker.md}}\n" });
+  expect([missing, cycle].map(result => result.ok ? null : { kind: result.error.kind, workflows: result.error.issues.map(issue => issue.workflow).sort() }))
+    .toEqual([{ kind: "invalid_prompt", workflows: ["development", "study"] }, { kind: "invalid_prompt", workflows: ["development", "study"] }]);
+  core.close();
+});
+test("an edit may include a prompt its workflow did not read before", async () => {
+  const { core } = fixture(); const path = "review-loop/write.md";
+  const before = unwrap(listPromptVersions(path));
+  const pending = unwrap(await savePendingPrompt({ path, body: before.published.body + "\n{{> shared/raise-blocker.md}}\n", expected_pending_version_id: null }));
+  const outcome = unwrap(await publishPrompt(core, { path, expected_pending_version_id: pending.version_id, expected_published_version_id: before.published.version_id }));
+  const next = unwrap(resolveDefinition(outcome.moved[0].definition_id));
+  expect(next.prompts[path].endsWith("raise a blocker instead of guessing.\n")).toBe(true);
+  expect(Object.keys(next.prompt_sources)).toContain("shared/raise-blocker.md");
+  core.close();
+});
+test("a candidate whose included text names an input its workflow does not declare fails compilation", async () => {
+  const { core } = fixture();
+  const result = await validatePrompt(core, { path: "shared/raise-blocker.md", body: "Raise a blocker about {{ nonexistent }}.\n" });
+  expect(!result.ok && result.error.issues.some(issue => issue.detail.includes("undeclared input nonexistent"))).toBe(true);
+  core.close();
 });
 
 test("all four prompt routes require the configured operator token", async () => {

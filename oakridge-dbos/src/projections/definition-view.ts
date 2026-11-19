@@ -33,8 +33,9 @@ export interface DefinitionGraph { readonly nodes: readonly DefinitionGraphNode[
 /** One committed definition with its authored workflow source. */
 export interface DefinitionPrompt { readonly body: string; readonly digest: PromptId }
 export interface DefinitionPrompts { readonly [prompt_path: string]: DefinitionPrompt }
-export function selectDefinitionPrompts(definition: Pick<ResolvedDefinition, "prompts" | "prompt_ids">): DefinitionPrompts {
-  return Object.fromEntries(Object.entries(definition.prompt_ids).map(([path, digest]) => [path, { body: definition.prompts[path], digest }]));
+/** The authored prompts, included files among them, as an operator reads and edits them; a session receives them with includes expanded. */
+export function selectDefinitionPrompts(definition: Pick<ResolvedDefinition, "prompt_sources" | "prompt_source_ids">): DefinitionPrompts {
+  return Object.fromEntries(Object.entries(definition.prompt_source_ids).map(([path, digest]) => [path, { body: definition.prompt_sources[path], digest }]));
 }
 export interface DefinitionDetail extends DefinitionSummary { readonly prompts: DefinitionPrompts; readonly workflow: Workflow | AuthoredWorkflow; readonly effective_workflow: ParsedWorkflow; readonly graph: DefinitionGraph }
 

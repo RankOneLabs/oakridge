@@ -41,6 +41,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "runtime/git-command-runner.ts",
   "runtime/github-pull-requests.ts",
   "runtime/project-identity.ts",
+  "runtime/prompt-includes.ts",
   "storage/commit.ts",
   "storage/database.ts",
   "storage/executor-store.ts",

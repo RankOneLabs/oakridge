@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { canonicalJson } from "canonical-json";
 import { DEFINITION_STORE_ROOT, launchableDefinitionIds, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, type DefinitionId } from "../src/runtime/definition-store";
 
 function fixture(check: (root: string, id: DefinitionId) => void): void {
@@ -105,3 +106,31 @@ test("user catalog pagination excludes fixtures while detail reads accept them",
     expect(detail?.definition_id).toBe(catalog.value[name].definition_id);
   }
 });
+
+/** Commit a changed copy of development's definition under its own hash, so only the prompt check can refuse it. */
+function tamperedDevelopment(root: string, change: (definition: { prompts: Record<string, string>; prompt_sources: Record<string, string> }) => void): DefinitionId {
+  const catalog = readLaunchableCatalog(root);
+  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
+  const definition = JSON.parse(readFileSync(resolve(root, "workflows", `${catalog.value.development.definition_id}.json`), "utf8"));
+  change(definition);
+  const bytes = canonicalJson(definition);
+  if (!bytes.ok) throw new Error(bytes.error.detail);
+  const id = new Bun.CryptoHasher("sha256").update(bytes.value).digest("hex") as DefinitionId;
+  writeFileSync(resolve(root, "workflows", `${id}.json`), bytes.value);
+  return id;
+}
+test("refuses a definition whose prompts are not the expansion of its sources", () => fixture((root) => {
+  const id = tamperedDevelopment(root, (definition) => { definition.prompt_sources["shared/raise-blocker.md"] = definition.prompt_sources["development/merge-confirmation.md"]; });
+  const result = resolveDefinition(id, root);
+  expect(!result.ok && [result.error.kind, result.error.detail]).toEqual(["malformed_object", "committed prompts are not the expansion of their committed sources"]);
+}));
+test("refuses a definition that omits a prompt its expansion reads", () => fixture((root) => {
+  const id = tamperedDevelopment(root, (definition) => { delete definition.prompt_sources["shared/raise-blocker.md"]; });
+  const result = resolveDefinition(id, root);
+  expect(!result.ok && result.error.kind).toBe("malformed_object");
+}));
+test("resolves a definition committed before prompts could include one another, its prompts as their own sources", () => fixture((root) => {
+  const result = resolveDefinition("46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222" as DefinitionId, root);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  expect([result.value.prompt_source_ids, result.value.prompt_sources]).toEqual([result.value.prompt_ids, result.value.prompts]);
+}));
