@@ -217,7 +217,9 @@ export type ReviewInboxItemKind =
   | "cohort_failed"
   | "pull_request_mismatch"
   | "pull_request_merge"
-  | "gate_decision";
+  | "gate_decision"
+  /** A worker parked on a blocker that needs the operator's answer, given in the unit's pane. */
+  | "blocker";
 
 export type ReviewInboxItemState = "actionable" | "blocked";
 
@@ -244,6 +246,8 @@ export interface ReviewInboxItem {
   resume_actions: string[];
   blocked_by: string[];
   pr_url?: string | null;
+  /** The unit's authority id, which opens its pane in the run. */
+  run_unit_id?: string | null;
 }
 
 /** The items list is the required-attention decision queue; completed and optional-attention history lives outside the inbox. */

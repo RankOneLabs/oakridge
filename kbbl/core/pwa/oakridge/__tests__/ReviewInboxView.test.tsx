@@ -25,11 +25,11 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-function renderInbox(data: ReviewInbox, onSelectRun = vi.fn(), onSelectArtifact = vi.fn()) {
+function renderInbox(data: ReviewInbox, onSelectRun = vi.fn(), onSelectArtifact = vi.fn(), onSelectRunUnit = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   client.setQueryData(["oakridge", "review-inbox"], data);
-  render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={onSelectRun} onSelectArtifact={onSelectArtifact} /></QueryClientProvider>);
-  return { onSelectRun, onSelectArtifact };
+  render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={onSelectRun} onSelectRunUnit={onSelectRunUnit} onSelectArtifact={onSelectArtifact} /></QueryClientProvider>);
+  return { onSelectRun, onSelectArtifact, onSelectRunUnit };
 }
 
 const inbox: ReviewInbox = {
@@ -56,6 +56,16 @@ function v2InboxFetch(items: readonly typeof sample.inbox.items[number][], after
 afterEach(() => vi.restoreAllMocks());
 
 describe("ReviewInboxView", () => {
+  it("links a blocked worker's item to the blocker in its unit's pane", () => {
+    const blocker = { ...inbox.items[0], id: "blocker-a", kind: "blocker" as const, artifact_revision_id: null, gate_id: null, resume_actions: [], run_unit_id: "run-1/briefs/a" };
+    const { onSelectRunUnit } = renderInbox({ ...inbox, items: [blocker] });
+    fireEvent.click(screen.getByTestId("or-inbox-blocker-link"));
+    expect(onSelectRunUnit.mock.calls).toEqual([["run-1", "run-1/briefs/a"]]);
+  });
+  it("does not tell the operator a blocked worker will continue on its own", () => {
+    renderInbox({ ...inbox, items: [{ ...inbox.items[0], kind: "blocker", artifact_revision_id: null, gate_id: null, resume_actions: [], run_unit_id: "run-1/briefs/a" }] });
+    expect(screen.queryByText(/continue automatically/)).toBeNull();
+  });
   it("renders the v2 run-inboxes response through the client and adapter", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = String(input);
@@ -65,7 +75,7 @@ describe("ReviewInboxView", () => {
       throw new Error(`unexpected v2 request: ${path}`);
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
+    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectRunUnit={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     expect(await screen.findByTestId("or-review-inbox")).toBeTruthy();
     expect(screen.queryByTestId("or-decision-request_build_changes")).toBeNull();
     expect(screen.getByTestId("or-decision-approve")).toBeTruthy();
@@ -132,7 +142,7 @@ describe("ReviewInboxView", () => {
     const fetchMock = v2InboxFetch([], () => { resumed = true; });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     client.setQueryData(["oakridge", "review-inbox"], inbox);
-    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
+    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectRunUnit={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     fireEvent.click(await screen.findByTestId("or-decision-approve"));
     fireEvent.click(screen.getByTestId("or-decision-approve"));
     await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => init?.method === "POST" && String(input).includes(`/units/${encodeURIComponent(v2Unit.unit_id)}/reviews/assessment_review/decide`))).toBe(true));
@@ -146,7 +156,7 @@ describe("ReviewInboxView", () => {
     const fetchMock = v2InboxFetch([]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     client.setQueryData(["oakridge", "review-inbox"], { cohorts: [], items: [inbox.items[0]] });
-    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
+    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectRunUnit={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     fireEvent.click(await screen.findByTestId("or-decision-request_assessment_changes"));
     const send = screen.getByRole("button", { name: "Send feedback" }) as HTMLButtonElement;
     expect(send.disabled).toBe(true);
@@ -237,7 +247,7 @@ describe("ReviewInboxView", () => {
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     client.setQueryData(["oakridge", "review-inbox"], { cohorts: [], items: [briefA, briefB] });
-    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
+    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectRunUnit={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     const [approve] = await screen.findAllByTestId("or-decision-approve");
     fireEvent.click(approve);
     fireEvent.click(approve);

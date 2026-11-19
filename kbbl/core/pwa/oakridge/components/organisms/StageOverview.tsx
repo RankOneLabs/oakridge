@@ -8,6 +8,9 @@ import { RelationshipLinks } from "../molecules/RelationshipLinks";
 import { StructuredValue } from "../molecules/StructuredValue";
 import { ItemGradeAction } from "./ItemGradeAction";
 import { ShowAutomaticGrades } from "./ShowAutomaticGrades";
+import { BlockerPanel } from "./BlockerPanel";
+import { selectOpenBlockerGate } from "../../adapters/gates";
+import type { ReactNode } from "react";
 import type { ObservationItemStatusResponse } from "../../grading-contracts/storage/grading-record-store";
 
 interface Props { runId: string; unitId: string; onOpenBeside: (pane: RunWorkspacePane) => void }
@@ -16,16 +19,21 @@ export function StageOverview({ runId, unitId, onOpenBeside }: Props) {
   if (read.units.isError) return <FeedbackMessage tone="danger">Stage overview unavailable.</FeedbackMessage>;
   if (!read.units.data) return <FeedbackMessage>Loading stage overview…</FeedbackMessage>;
   if (!read.source || !read.inputs || !read.execution || !read.evaluation) return <FeedbackMessage>Recorded unit unresolved: {unitId}</FeedbackMessage>;
+  const blockerGate = selectOpenBlockerGate(read.source.unit);
   return <StageOverviewContent runId={runId} label={read.source.unit.label} inputs={read.inputs} execution={read.execution} evaluation={read.evaluation}
+    blocker={blockerGate && <BlockerPanel gate={blockerGate} blocker={blockerGate.blocker} />}
     artifactState={read.artifacts.isError ? "unavailable" : read.artifacts.data ? "loaded" : "pending"} onOpenBeside={onOpenBeside} />;
 }
 interface ContentProps {
   runId: string; label: string; inputs: StageInputs; execution: StageExecution; evaluation: StageEvaluation;
   artifactState: "pending" | "unavailable" | "loaded"; onOpenBeside: Props["onOpenBeside"];
+  /** The unit's open blocker and its answer form, shown first: it is what the unit waits on. */
+  blocker?: ReactNode;
 }
-export function StageOverviewContent({ runId, label, inputs, execution, evaluation, artifactState, onOpenBeside }: ContentProps) {
+export function StageOverviewContent({ runId, label, inputs, execution, evaluation, artifactState, onOpenBeside, blocker }: ContentProps) {
   return <article className="flex flex-col gap-6 p-3" data-testid="or-stage-overview">
     <h2 className="text-lg font-semibold">{label}</h2>
+    {blocker}
     <section className="flex flex-col gap-3" aria-label="Inputs"><h3>Inputs</h3>
       <details><summary>Resolved stage input</summary><StructuredValue value={inputs.resolved_input} /></details>
       <RelationshipLinks links={inputs.links} onOpen={onOpenBeside} />
