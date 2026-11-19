@@ -8,6 +8,10 @@ import { RelationshipLinks } from "../molecules/RelationshipLinks";
 import { StructuredValue } from "../molecules/StructuredValue";
 import { ItemGradeAction } from "./ItemGradeAction";
 import { ShowAutomaticGrades } from "./ShowAutomaticGrades";
+import { BlockerPanel } from "./BlockerPanel";
+import { selectOpenBlockerGate } from "../../adapters/gates";
+import type { ReactNode } from "react";
+import type { OperatorUnitView } from "../../operator-contracts/projections/unit-view";
 import type { ObservationItemStatusResponse } from "../../grading-contracts/storage/grading-record-store";
 
 interface Props { runId: string; unitId: string; onOpenBeside: (pane: RunWorkspacePane) => void }
@@ -17,15 +21,27 @@ export function StageOverview({ runId, unitId, onOpenBeside }: Props) {
   if (!read.units.data) return <FeedbackMessage>Loading stage overview…</FeedbackMessage>;
   if (!read.source || !read.inputs || !read.execution || !read.evaluation) return <FeedbackMessage>Recorded unit unresolved: {unitId}</FeedbackMessage>;
   return <StageOverviewContent runId={runId} label={read.source.unit.label} inputs={read.inputs} execution={read.execution} evaluation={read.evaluation}
+    blocker={<UnitBlocker unit={read.source.unit} />}
     artifactState={read.artifacts.isError ? "unavailable" : read.artifacts.data ? "loaded" : "pending"} onOpenBeside={onOpenBeside} />;
+}
+/**
+ * The unit's open blocker and its answer form. Keyed by the blocker gate, which names the blocker revision, so a pane
+ * moved to another unit, or a blocker the worker revised, starts from an empty draft rather than one written for another.
+ */
+export function UnitBlocker({ unit }: { unit: OperatorUnitView }) {
+  const gate = selectOpenBlockerGate(unit);
+  return gate && <BlockerPanel key={gate.id} gate={gate} blocker={gate.blocker} />;
 }
 interface ContentProps {
   runId: string; label: string; inputs: StageInputs; execution: StageExecution; evaluation: StageEvaluation;
   artifactState: "pending" | "unavailable" | "loaded"; onOpenBeside: Props["onOpenBeside"];
+  /** The unit's open blocker and its answer form, shown first: it is what the unit waits on. */
+  blocker?: ReactNode;
 }
-export function StageOverviewContent({ runId, label, inputs, execution, evaluation, artifactState, onOpenBeside }: ContentProps) {
+export function StageOverviewContent({ runId, label, inputs, execution, evaluation, artifactState, onOpenBeside, blocker }: ContentProps) {
   return <article className="flex flex-col gap-6 p-3" data-testid="or-stage-overview">
     <h2 className="text-lg font-semibold">{label}</h2>
+    {blocker}
     <section className="flex flex-col gap-3" aria-label="Inputs"><h3>Inputs</h3>
       <details><summary>Resolved stage input</summary><StructuredValue value={inputs.resolved_input} /></details>
       <RelationshipLinks links={inputs.links} onOpen={onOpenBeside} />

@@ -6,7 +6,7 @@ import planBody from "../__fixtures__/current-plan.json";
 import briefBody from "../__fixtures__/current-brief.json";
 import unitBody from "../__fixtures__/resolved-assignment-unit.json";
 import { parseCanonicalSpec, parseCurrentAnalysis, parseCurrentPlan, parseCurrentBrief } from "./current-contract";
-import { requirementStatus, selectAnalysisCounts, selectCodeHotspots, selectOperatorDecisions, selectRequirementFindings } from "./current-analysis";
+import { requirementStatus, selectRequirementsByStatus, selectAnalysisCounts, selectCodeHotspots, selectOperatorDecisions, selectRequirementFindings } from "./current-analysis";
 import { selectParallelWaves } from "./plan-graph";
 import { selectAllocations, selectCurrentBuildItems } from "./current-brief";
 import { selectReceivedContext } from "./received-context";
@@ -89,4 +89,8 @@ test("switching identity retains the generated per_task wire contract and target
 test("legacy rollup retains task rows and label", () => {
   const legacyUnit = withUnitFields(unit, { artifacts: specUnit.artifacts.map((artifact) => ({ ...artifact, artifact_key: "tasks", schema: "tasks_body", latest_revision: artifact.latest_revision ? { ...artifact.latest_revision, body: { tasks: [{ id: "T1", description: "Legacy task", requirement_ids: ["R1"] }] } } : null })) });
   expect(selectRunIdentityRollup([legacyUnit])).toEqual({ label: "Tasks", rows: [{ id: "T1", description: "Legacy task", requirement_ids: ["R1"] }] });
+});
+test("analysis requirements list blocked first and keep their analysis positions", () => {
+  const reversed = { ...currentAnalysis, requirements: [...currentAnalysis.requirements].reverse() };
+  expect(selectRequirementsByStatus(reversed).map(({ status, index }) => [status, index])).toEqual([["blocked", 3], ["warning", 2], ["implementable", 1], ["not_analyzed", 0]]);
 });

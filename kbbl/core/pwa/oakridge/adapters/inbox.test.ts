@@ -7,6 +7,8 @@ import type { OperatorRunInboxBatchEntry } from "../operator-contracts/projectio
 import type { OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { objectValue, repositoryKeyOf, reviewToGates } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
+import { selectOpenBlockerGate } from "./gates";
+import parkedBlocker from "../__fixtures__/parked-blocker-unit.json";
 
 describe("development inbox", () => {
   it("classifies a development workflow inbox with a cohort lifecycle", () => {
@@ -58,6 +60,19 @@ describe("development inbox", () => {
     ] }, [withoutRepository, other], { workflow_name: "development", run_title: null });
     expect(result.ok && [result.value.cohorts.map((summary) => summary.unit_id), result.value.items[0]?.repository_key])
       .toEqual([[other.collection_key], null]);
+  });
+  it("lists a parked blocker once, as a blocker item that opens its unit", () => {
+    const blocked = parkedBlocker as unknown as OperatorUnitView;
+    const result = classifyDevelopmentInbox({ run_id: blocked.run_id, items: [
+      ...blocked.decisions.map((decision) => ({ kind: "decision" as const, run_id: blocked.run_id, unit_id: blocked.unit_id, key: decision.key, label: decision.label, submit: decision.submit, prompt: null })),
+      { kind: "waiting" as const, run_id: blocked.run_id, unit_id: blocked.unit_id, reason: "worker blocked: needs an operator answer", label: blocked.label },
+    ] }, [blocked], { workflow_name: "development", run_title: null });
+    expect(result.ok && result.value.items.map((item) => [item.kind, item.run_unit_id])).toEqual([["blocker", blocked.unit_id]]);
+  });
+  it("finds a unit's open blocker gate, and none once it is answered", () => {
+    const blocked = parkedBlocker as unknown as OperatorUnitView;
+    const answered = { ...blocked, blocker: blocked.blocker ? { ...blocked.blocker, is_open: false } : null };
+    expect([selectOpenBlockerGate(blocked)?.gate_step, selectOpenBlockerGate(answered)]).toEqual(["blocker_review", null]);
   });
   it("uses an analysis blocker's unit id when it has no attention label", () => {
     const analysis = units.find((unit) => unit.stage === "analysis");

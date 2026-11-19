@@ -50,6 +50,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
   }
 
   const navigateToRun = (id: string) => onNavigate(formatRunWorkspaceHash(id, null));
+  const navigateToRunUnit = (runId: string, unitId: string) => onNavigate(formatRunWorkspaceHash(runId, { kind: "unit", unit_id: unitId }));
   const navigateToArtifact = (id: string) => onNavigate(`oakridge/artifact/${encodeURIComponent(id)}`);
   const navigateToRuns = () => onNavigate("oakridge");
   const navigateToNewRun = () => onNavigate("oakridge/new-run");
@@ -74,6 +75,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
       content = (
         <ReviewInboxView
           onSelectRun={navigateToRun}
+          onSelectRunUnit={navigateToRunUnit}
           onSelectArtifact={navigateToArtifact}
         />
       );

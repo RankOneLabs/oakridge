@@ -22,6 +22,10 @@ const DEVELOPMENT_REVIEW_SUBJECTS: Readonly<Record<string, string>> = {
   "integration:integration_review": "assessment",
 };
 
+const BLOCKER_REVIEW = "blocker_review";
+const isBlockerDecision = (item: OperatorInboxItem): boolean =>
+  item.kind === "decision" && item.submit.kind === "review" && item.submit.review === BLOCKER_REVIEW;
+
 interface InboxItemContext {
   readonly stage: OperatorUnitView["stage"];
   readonly workflow_name: InboxRunContext["workflow_name"];
@@ -34,6 +38,7 @@ function findTargetArtifact(unit: OperatorUnitView, target: string | null): Oper
 }
 
 function classify(item: OperatorInboxItem, context: InboxItemContext): ReviewInboxItemKind {
+  if (isBlockerDecision(item)) return "blocker";
   if (item.kind === "stalled") return "cohort_failed";
   if (item.kind === "waiting") return item.reason.includes("pull request") ? "pull_request_merge" : "cohort_blocked";
   if (item.submit.kind === "retry") return "cohort_failed";
@@ -96,12 +101,15 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
   // The retry is the operator's one piece of work for that unit; showing the
   // diagnostic as another inbox item duplicates the same failed brief.
   const unitsWithRetry = new Set(entry.items.flatMap((item) => item.kind === "decision" && item.submit.kind === "retry" ? [item.unit_id] : []));
+  // A parked blocker asks through its blocker_review decisions; its "worker blocked" wait repeats the same ask.
+  const unitsWithBlocker = new Set(entry.items.flatMap((item) => isBlockerDecision(item) ? [item.unit_id] : []));
   const items: ReviewInboxItem[] = entry.items.flatMap((item) => {
     const unit = byId.get(item.unit_id);
     if (!unit) return [];
     if (item.kind === "decision" && item.submit.kind === "review"
       && !isDisplayedReviewDecision(item.submit.review, item.submit.decision)) return [];
     if (item.kind === "stalled" && unitsWithRetry.has(item.unit_id)) return [];
+    if (item.kind === "waiting" && unitsWithBlocker.has(item.unit_id)) return [];
     const isManualMergeAvailable = deriveStatus(statusInputOf(unit)).stage === "parked"
       && unit.decisions.some((decision) => decision.submit.kind === "review"
         && decision.submit.review === "merge_confirmation" && decision.submit.decision === "confirm_merged");
@@ -129,7 +137,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
       ...attention, title: selectUnitAttentionLabel(attention), run_title: run.run_title, artifact_key: (review ? DEVELOPMENT_REVIEW_SUBJECTS[`${unit.stage}:${review}`] : null) ?? artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
-      pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null,
+      pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null, run_unit_id: unit.unit_id,
       resume_actions: actions, blocked_by: unit.depends_on.map((id) => {
         const blocker = byId.get(id);
         return blocker ? selectUnitAttentionLabel(unitAttentionLabelInput(blocker)) || blocker.unit_id : id;

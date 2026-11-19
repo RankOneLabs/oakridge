@@ -84,3 +84,11 @@ export function sentReviewFeedback(unit: OperatorUnitView): SentReviewFeedback[]
         decision: decision.decision, feedback: feedbackOf(decision.payload), sent_at: decision.created_at };
     });
 }
+
+/** The unit's gate for its open blocker, with the blocker it answers; null when no blocker is open. */
+export function selectOpenBlockerGate(unit: OperatorUnitView): (ParkedGate & { readonly blocker: NonNullable<ParkedGate["blocker"]> }) | null {
+  const gates = reviewToGates(unit);
+  if (!gates.ok) return null;
+  const gate = gates.value.find((candidate) => candidate.gate_step === "blocker_review");
+  return gate?.blocker?.is_open ? { ...gate, blocker: gate.blocker } : null;
+}

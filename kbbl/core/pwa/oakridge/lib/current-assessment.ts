@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { OperatorAssessmentBody, OperatorItemAssessment, OperatorAdditionalFinding, OperatorAssessmentAction } from "../operator-contracts/domain/assessment";
 import { parseCurrent } from "./current-contract";
+import type { SubnavSection } from "./artifact-subnav";
 
 /** The named domain model is generated from the backend's development.yaml mirror. */
 export type CurrentAssessment = OperatorAssessmentBody;
@@ -37,3 +38,12 @@ export function selectDerivedVerdict(assessment: CurrentAssessment): DerivedAsse
     : assessment.additional_findings.some(finding => finding.severity === "warning") ? "pass_with_notes" : "pass";
   return { verdict, has_mismatch: verdict !== assessment.verdict };
 }
+
+export type AssessmentSection = "items" | "findings" | "actions" | "tests";
+/** The current assessment viewer's subnav: item assessments, additional findings, actions, then test evidence. */
+export const selectAssessmentSections = (assessment: CurrentAssessment): readonly SubnavSection<AssessmentSection>[] => [
+  { value: "items", label: "Items", count: assessment.item_assessments.length },
+  { value: "findings", label: "Findings", count: assessment.additional_findings.length },
+  { value: "actions", label: "Actions", count: assessment.next_actions.length },
+  { value: "tests", label: "Tests", count: null },
+];

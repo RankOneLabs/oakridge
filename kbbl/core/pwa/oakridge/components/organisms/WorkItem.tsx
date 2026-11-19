@@ -30,7 +30,7 @@ function itemToGate(item: ReviewInboxItem): ParkedGate | null {
   };
 }
 
-export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelectArtifact }: { item: ReviewInboxItem; cohort?: CohortLifecycleSummary; isSettled?: boolean; onSelectRun: (id: string) => void; onSelectArtifact: (id: string) => void }) {
+export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelectRunUnit, onSelectArtifact }: { item: ReviewInboxItem; cohort?: CohortLifecycleSummary; isSettled?: boolean; onSelectRun: (id: string) => void; onSelectRunUnit: (runId: string, unitId: string) => void; onSelectArtifact: (id: string) => void }) {
   const gate = isSettled ? null : itemToGate(item);
   const artifactRevisionId = item.artifact_revision_id;
   const mismatch = cohort?.pull_request_reconciliation?.mismatch;
@@ -53,12 +53,22 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
         {!isSettled && <>
         {gate && <GateDecisionActions gate={gate} />}
         {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} />}
+        {!gate && item.kind === "blocker" && <BlockerAction item={item} onSelectRunUnit={onSelectRunUnit} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch?.detail ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
-        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
+        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && item.kind !== "blocker" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
         </>}
       </div>
     </article>
   );
+}
+
+/** A worker stopped to ask the operator; the answer is given on the blocker in its unit's pane. */
+function BlockerAction({ item, onSelectRunUnit }: { item: ReviewInboxItem; onSelectRunUnit: (runId: string, unitId: string) => void }) {
+  const unitId = item.run_unit_id;
+  return <>
+    <p>The worker is blocked and waits for your answer.</p>
+    {unitId && <Button variant="secondary" onClick={() => onSelectRunUnit(item.run_id, unitId)} data-testid="or-inbox-blocker-link">Answer blocker</Button>}
+  </>;
 }
 
 /**
