@@ -26,24 +26,28 @@ function snapshot(root: string): string {
     const path = resolve(entry.parentPath, entry.name); return [path, readFileSync(path).toString("base64")];
   }).sort());
 }
-test("save and publish moves development once, preserves audience and the pinned old definition", async () => {
+test("publishing a shared prompt moves both workflows and preserves their pinned definitions", async () => {
   const { root, core } = fixture(); const path = "development/merge-confirmation.md";
   const before = unwrap(listPromptVersions(path));
   const catalogBytes = readFileSync(resolve(root, "launchable.json"));
   const pending = unwrap(await savePendingPrompt({ path, body: before.published.body + "\nAdditional guidance.\n", expected_pending_version_id: null }));
   expect(readFileSync(resolve(root, "launchable.json"))).toEqual(catalogBytes);
   const outcome = unwrap(await publishPrompt(core, { path, expected_pending_version_id: pending.version_id, expected_published_version_id: before.published.version_id }));
-  expect(outcome.moved).toHaveLength(1);
-  expect(outcome.moved[0]).toMatchObject({ workflow: "development", workflow_name: "development", audience: "user", previous_definition_id: before.referenced_by[0].definition_id });
-  expect(outcome.moved[0].definition_id).not.toBe(outcome.moved[0].previous_definition_id);
-  expect(resolveDefinition(outcome.moved[0].previous_definition_id).ok).toBe(true);
+  expect(outcome.moved.map(move => move.workflow).sort()).toEqual(["development", "study"]);
   const after = unwrap(listPromptVersions(path));
   expect(after).toMatchObject({ pending: null, published: { body: pending.body, published_at: outcome.published_at } });
   expect(after.versions).toHaveLength(2);
-  const old = unwrap(resolveDefinition(outcome.moved[0].previous_definition_id));
-  const next = unwrap(resolveDefinition(outcome.moved[0].definition_id));
-  expect(next.prompts).toEqual({ ...old.prompts, [path]: pending.body });
-  expect(unwrap(readLaunchableCatalog()).development.audience).toBe("user");
+  const catalog = unwrap(readLaunchableCatalog());
+  for (const move of outcome.moved) {
+    const previous = before.referenced_by.find(reference => reference.workflow === move.workflow);
+    expect(move).toMatchObject({ workflow_name: move.workflow, audience: "user", previous_definition_id: previous?.definition_id });
+    expect(move.definition_id).not.toBe(move.previous_definition_id);
+    const old = unwrap(resolveDefinition(move.previous_definition_id));
+    const next = unwrap(resolveDefinition(move.definition_id));
+    expect(old.prompts[path]).toBe(before.published.body);
+    expect(next.prompts).toEqual({ ...old.prompts, [path]: pending.body });
+    expect(catalog[move.workflow]).toEqual({ definition_id: move.definition_id, audience: "user" });
+  }
   core.close();
 });
 test("conflicts and invalid compilation write nothing", async () => {
