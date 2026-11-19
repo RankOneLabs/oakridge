@@ -40,6 +40,21 @@ export function blockerUnit(): OperatorUnitView {
       submit: { kind: "review", review: "blocker_review", decision, effect: "request_changes", target_revision_id: "blocker-revision" } })) };
 }
 
+/** Brief units each parked on their own blocker, raised a minute apart; `choices` per unit defaults to the fixture's. */
+export function parkedBlockerUnits(keys: readonly string[], choices?: readonly (readonly string[] | null)[]): OperatorUnitView[] {
+  const base = currentParked as unknown as OperatorUnitView;
+  if (!base.blocker) throw new Error("parked blocker fixture lacks a blocker");
+  const blocker = base.blocker;
+  return keys.map((key, index) => {
+    const revision_id = `run/brief/${key}:blocker:1`;
+    const latest = { ...blocker.latest, revision_id, text: `Blocker raised by ${key}`, created_at: `2026-11-17T12:0${index}:00Z`,
+      suggested_choices: choices?.[index] === undefined ? blocker.latest.suggested_choices : choices[index] };
+    return { ...base, unit_id: `run/brief/${key}`, collection_key: key, label: `Cohort ${key}`,
+      decisions: base.decisions.map((decision) => decision.submit.kind === "review" ? { ...decision, submit: { ...decision.submit, target_revision_id: revision_id } } : decision),
+      blocker: { ...blocker, latest, revisions: [latest] } };
+  });
+}
+
 /** A real implementation handoff has cohort/brief inputs, not a writer assignment. */
 export function currentParkedCohort(): OperatorUnitView {
   const unit = currentParked as unknown as OperatorUnitView;

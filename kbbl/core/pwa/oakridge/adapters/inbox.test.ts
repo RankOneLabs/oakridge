@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import sample from "../__fixtures__/v2-adapter-sample.json";
 import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
-import { sampleCohort as cohort, sampleRun as run, sampleUnits as units, withUnitFields } from "../__fixtures__/read-models";
+import { parkedBlockerUnits, sampleCohort as cohort, sampleRun as run, sampleUnits as units, withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorRunInboxBatchEntry } from "../operator-contracts/projections/inbox";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { objectValue, repositoryKeyOf, reviewToGates } from "./core";
@@ -58,6 +58,14 @@ describe("development inbox", () => {
     ] }, [withoutRepository, other]);
     expect(result.ok && [result.value.cohorts.map((summary) => summary.unit_id), result.value.items[0]?.repository_key])
       .toEqual([[other.collection_key], null]);
+  });
+  it("shows blockers that ask the same question as one item answering every parked unit", () => {
+    const blocked = parkedBlockerUnits(["A", "B", "C"]);
+    const result = classifyDevelopmentInbox({ run_id: "run", items: blocked.flatMap((unit) => [
+      ...unit.decisions.map((decision) => ({ kind: "decision" as const, run_id: "run", unit_id: unit.unit_id, key: decision.key, label: decision.label, submit: decision.submit, prompt: null })),
+      { kind: "waiting" as const, run_id: "run", unit_id: unit.unit_id, reason: "worker blocked: needs an operator answer", label: unit.label },
+    ]) }, blocked);
+    expect(result.ok && result.value.items.map((item) => [item.kind, item.blocker_group?.gates.map((gate) => gate.unit_id)])).toEqual([["blocker", ["A", "B", "C"]]]);
   });
   it("uses an analysis blocker's unit id when it has no attention label", () => {
     const analysis = units.find((unit) => unit.stage === "analysis");

@@ -217,7 +217,9 @@ export type ReviewInboxItemKind =
   | "cohort_failed"
   | "pull_request_mismatch"
   | "pull_request_merge"
-  | "gate_decision";
+  | "gate_decision"
+  /** Open blockers answered together; see `blocker_group`. */
+  | "blocker";
 
 export type ReviewInboxItemState = "actionable" | "blocked";
 
@@ -244,6 +246,8 @@ export interface ReviewInboxItem {
   resume_actions: string[];
   blocked_by: string[];
   pr_url?: string | null;
+  /** Set only for a `blocker` item: the open blockers one answer settles. */
+  blocker_group?: import("./lib/blocker").BlockerGroup | null;
 }
 
 /** The items list is the required-attention decision queue; completed and optional-attention history lives outside the inbox. */
