@@ -7,6 +7,7 @@ import { parseRepositoryKey } from "../repository-inputs";
 import type { ReviewInbox } from "../artifact-types";
 import type { CohortLifecycle } from "../artifact-types";
 import sample from "../__fixtures__/v2-adapter-sample.json";
+import definitionFixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { compositeId } from "../adapters/core";
 
@@ -48,6 +49,7 @@ function v2InboxFetch(items: readonly typeof sample.inbox.items[number][], after
     if (path.endsWith(`/units/${encodeURIComponent(v2Unit.unit_id)}`)) return json(v2Unit);
     if (path.includes("/units?")) return json([v2Unit]);
     if (path.includes("/run-inboxes")) return json({ items: [{ run_id: runId, items }] });
+    if (path.includes("/api/definitions/")) return json(definitionFixture.definition);
     if (path.includes("/api/runs?")) return json({ items: [v2Run], next_cursor: null });
     return json({ items: [] });
   });
@@ -59,6 +61,7 @@ describe("ReviewInboxView", () => {
   it("renders the v2 run-inboxes response through the client and adapter", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = String(input);
+      if (path.includes("/api/definitions/")) return json(definitionFixture.definition);
       if (path.includes("/api/runs?")) return json({ items: [sample.run], next_cursor: null });
       if (path.includes("/run-inboxes")) return json({ items: [sample.inbox] });
       if (path.includes("/units?")) return json(sample.units);
@@ -231,6 +234,7 @@ describe("ReviewInboxView", () => {
         kind: "decision", run_id: runId, unit_id: item.unit_id, key: "approve", label: "Approve", prompt: null,
         submit: { kind: "review", review: "assessment_review", decision: "approve", effect: "approve", target_revision_id: item.artifact_revision_id },
       })) }] });
+      if (path.includes("/api/definitions/")) return json(definitionFixture.definition);
       if (path.includes("/api/runs?")) return json({ items: [v2Run], next_cursor: null });
       if (path.includes("/units/")) return json(units.find((unit) => path.endsWith(`/units/${unit.unit_id}`)));
       return json({ items: [] });

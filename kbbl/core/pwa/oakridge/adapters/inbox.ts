@@ -47,7 +47,12 @@ function unitAttentionLabelInput(unit: OperatorUnitView): UnitAttentionLabelInpu
   };
 }
 
-export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, units: readonly OperatorUnitView[], runTitle: string | null = null): AdapterResult<ReviewInbox> {
+export interface InboxRunContext {
+  readonly workflow_name: string;
+  readonly run_title: string | null;
+}
+
+export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, units: readonly OperatorUnitView[], run: InboxRunContext): AdapterResult<ReviewInbox> {
   const byId = new Map(units.map((unit) => [unit.unit_id, unit]));
   const cohortUnits = units.filter((unit) => unit.stage === "cohort" || unit.stage === "integration");
   const cohorts: CohortLifecycleSummary[] = [];
@@ -62,8 +67,8 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     const review = unitItems.find((item) => item.kind === "decision" && item.submit.kind === "review");
     const reviewName = review?.kind === "decision" && review.submit.kind === "review" ? review.submit.review : null;
     const gate = reviewName ? compositeId({ kind: "gate", runId: entry.run_id, unitId: unit.unit_id, name: reviewName }) : null;
-    cohorts.push({ id: name, run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId, stage_name: unit.stage!, unit_id: name,
-      ...attention, repository_key: attention.repository_key, title: selectUnitAttentionLabel(attention), run_title: runTitle, lifecycle: lifecycle(unit, unitItems), completion: { build_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "build_result" && !!candidate.latest_revision),
+    cohorts.push({ id: name, run_id: entry.run_id, workflow_name: run.workflow_name, stage_instance_id: stageId, stage_name: unit.stage!, unit_id: name,
+      ...attention, repository_key: attention.repository_key, title: selectUnitAttentionLabel(attention), run_title: run.run_title, lifecycle: lifecycle(unit, unitItems), completion: { build_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "build_result" && !!candidate.latest_revision),
         assessment_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "assessment" && !!candidate.latest_revision) },
       artifact_revision_id: artifact?.latest_revision ? artifactRevisionId(artifact, artifact.latest_revision.id) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
@@ -104,9 +109,9 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
       && candidate.submit.review === review
       && isDisplayedReviewDecision(candidate.submit.review, candidate.submit.decision)).map(decisionAction) : [];
     return [{ id: `${item.run_id}:${item.unit_id}:${item.kind === "decision" ? item.key : item.kind}`, kind,
-      state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId,
+      state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: run.workflow_name, stage_instance_id: stageId,
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
-      ...attention, title: selectUnitAttentionLabel(attention), run_title: runTitle, artifact_key: (review ? DEVELOPMENT_REVIEW_SUBJECTS[`${unit.stage}:${review}`] : null) ?? artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
+      ...attention, title: selectUnitAttentionLabel(attention), run_title: run.run_title, artifact_key: (review ? DEVELOPMENT_REVIEW_SUBJECTS[`${unit.stage}:${review}`] : null) ?? artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null,
       resume_actions: actions, blocked_by: unit.depends_on.map((id) => {

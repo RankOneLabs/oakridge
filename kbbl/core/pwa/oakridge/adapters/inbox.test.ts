@@ -10,7 +10,7 @@ import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 
 describe("development inbox", () => {
   it("classifies a development workflow inbox with a cohort lifecycle", () => {
-    const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts/projections/inbox").OperatorInboxItem[] }, units);
+    const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts/projections/inbox").OperatorInboxItem[] }, units, { workflow_name: "development", run_title: null });
     expect(inbox.ok && [inbox.value.items[0].kind, inbox.value.cohorts[0].lifecycle]).toEqual(["artifact_gate", "artifact_review"]);
     expect(inbox.ok && inbox.value.items.filter((item) => item.kind === "artifact_gate")).toHaveLength(1);
     expect(inbox.ok && inbox.value.items[0].resume_actions).toEqual(["approve"]);
@@ -33,7 +33,7 @@ describe("development inbox", () => {
       { kind: "waiting", run_id: run.run_id, unit_id: planning.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
       { kind: "waiting", run_id: run.run_id, unit_id: brief.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
     ] };
-    const result = classifyDevelopmentInbox(entry, runUnits, "Ship Oakridge");
+    const result = classifyDevelopmentInbox(entry, runUnits, { workflow_name: "development", run_title: "Ship Oakridge" });
     if (!result.ok) throw new Error(result.error.detail);
     const firstItem = result.value.items.find((item) => item.unit_id === "a");
     const secondItem = result.value.items.find((item) => item.unit_id === "b");
@@ -55,7 +55,7 @@ describe("development inbox", () => {
     if (!other) throw new Error("captured fixture lacks another cohort");
     const result = classifyDevelopmentInbox({ run_id: run.run_id, items: [
       { kind: "waiting", run_id: run.run_id, unit_id: cohort.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
-    ] }, [withoutRepository, other]);
+    ] }, [withoutRepository, other], { workflow_name: "development", run_title: null });
     expect(result.ok && [result.value.cohorts.map((summary) => summary.unit_id), result.value.items[0]?.repository_key])
       .toEqual([[other.collection_key], null]);
   });
@@ -65,7 +65,7 @@ describe("development inbox", () => {
     const blocked = withUnitFields(cohort, { depends_on: [analysis.unit_id] });
     const result = classifyDevelopmentInbox({ run_id: run.run_id, items: [
       { kind: "waiting", run_id: run.run_id, unit_id: blocked.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
-    ] }, [blocked, analysis]);
+    ] }, [blocked, analysis], { workflow_name: "development", run_title: null });
     expect(result.ok && result.value.items[0]?.blocked_by).toEqual([analysis.unit_id]);
   });
   it("shows one recovery item per failed brief when each has a retry and a stalled diagnostic", () => {
@@ -78,7 +78,7 @@ describe("development inbox", () => {
         label: "Retry Writer", submit: { kind: "retry" as const, worker: "writer" }, prompt: null },
       { kind: "stalled" as const, run_id: run.run_id, unit_id: unit.unit_id, detail: "writer failed" },
     ]) };
-    const inbox = classifyDevelopmentInbox(entry, briefUnits);
+    const inbox = classifyDevelopmentInbox(entry, briefUnits, { workflow_name: "development", run_title: null });
     expect(inbox.ok && inbox.value.items.map((item) => item.unit_id)).toEqual(["first", "second"]);
   });
   it("keeps the manual merge action as the only inbox row when the optional PR watcher fails", () => {
@@ -102,7 +102,7 @@ describe("development inbox", () => {
       { kind: "stalled", run_id: stalled.run_id, unit_id: stalled.unit_id,
         detail: "pr_watch failed: no pull request reader is configured" },
     ] };
-    const inbox = classifyDevelopmentInbox(entry, [stalled]);
+    const inbox = classifyDevelopmentInbox(entry, [stalled], { workflow_name: "development", run_title: null });
     expect(inbox.ok && [inbox.value.items.map((item) => item.kind), inbox.value.cohorts[0]?.lifecycle])
       .toEqual([["merge_confirmation"], "merge_confirmation"]);
     expect(inbox.ok && inbox.value.items[0]?.pr_url).toBe("https://github.com/oakridge-e2e/app/pull/1");
@@ -110,7 +110,7 @@ describe("development inbox", () => {
     expect(gates.ok && gates.value[0]?.pr_url).toBe("https://github.com/oakridge-e2e/app/pull/1");
   });
   it("keeps both run slices when invalidate responses complete against an old inbox snapshot", () => {
-    const first = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts/projections/inbox").OperatorInboxItem[] }, units);
+    const first = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts/projections/inbox").OperatorInboxItem[] }, units, { workflow_name: "development", run_title: null });
     if (!first.ok) throw new Error(first.error.detail);
     const secondRun = "run-another";
     const second = { cohorts: first.value.cohorts.map((cohort) => ({ ...cohort, run_id: secondRun })),
@@ -126,7 +126,7 @@ describe("development inbox", () => {
     if (!integration) throw new Error("captured fixture lacks an integration unit");
     const items = integration.decisions.flatMap((decision) => decision.submit.kind === "review" ? [{ kind: "decision" as const,
       run_id: integration.run_id, unit_id: integration.unit_id, key: decision.key, label: decision.label, submit: decision.submit, prompt: null }] : []);
-    const result = classifyDevelopmentInbox({ run_id: integration.run_id, items }, [integration]);
+    const result = classifyDevelopmentInbox({ run_id: integration.run_id, items }, [integration], { workflow_name: "development", run_title: null });
     expect(result.ok && result.value.items.map((item) => [item.kind, item.artifact_key]))
       .toEqual([["artifact_gate", "assessment"], ["merge_confirmation", "pr_state"]]);
   });
