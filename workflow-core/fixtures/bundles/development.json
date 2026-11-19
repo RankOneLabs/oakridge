@@ -303,6 +303,7 @@
       "briefs": {
         "for_each": "planning.outcome.plan.cohorts",
         "key": "each.id",
+        "order": "planning.outcome.order",
         "stage": "brief",
         "pool": "writers",
         "input": {
@@ -611,7 +612,8 @@
       },
       "done_when": "approved(plan)",
       "outcome": {
-        "plan": "latest(plan)"
+        "plan": "latest(plan)",
+        "order": "levels(latest(plan).cohorts, id, depends_on)"
       }
     },
     "brief": {

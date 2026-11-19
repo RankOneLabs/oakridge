@@ -51,6 +51,8 @@ pub struct CheckedUnitCollection {
     pub source: CheckedStageExpression,
     pub key: CheckedStageExpression,
     pub after: CheckedStageExpression,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<CheckedStageExpression>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

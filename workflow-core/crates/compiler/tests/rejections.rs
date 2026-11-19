@@ -196,6 +196,45 @@ fn an_unused_outcome_type_resolves_to_the_stage_outcome() {
 }
 
 #[test]
+fn a_collection_may_order_its_members_by_dependency_levels() {
+    let compiled = compile_fan_out(|value| {
+        value["run"]["units"]["work"]["group"]["units"]["item"]["order"] =
+            "levels(input.items, key, after)".into();
+    });
+    assert!(compiled.is_ok(), "{compiled:?}");
+}
+
+#[test]
+fn only_a_collection_orders_members() {
+    let error = fan_out_compile_error(|value| {
+        value["run"]["units"]["prepare"]["order"] = "levels(input.items, key, after)".into();
+    });
+    assert!(error.detail.contains("is no collection"), "{error:?}");
+}
+
+#[test]
+fn a_group_collection_cannot_order_its_members() {
+    let error = fan_out_compile_error(|value| {
+        let work = &mut value["run"]["units"]["work"];
+        work["for_each"] = "input.items".into();
+        work["key"] = "each.key".into();
+        work["order"] = "levels(input.items, key, after)".into();
+    });
+    assert!(
+        error.detail.contains("only stage collections order"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_collection_order_must_be_a_list_of_key_lists() {
+    let error = fan_out_compile_error(|value| {
+        value["run"]["units"]["work"]["group"]["units"]["item"]["order"] = "input.items".into();
+    });
+    assert!(error.detail.contains("list of key lists"), "{error:?}");
+}
+
+#[test]
 fn a_schema_cannot_shadow_a_primitive_type() {
     for primitive in ["text", "ident", "repo_path", "integer", "boolean"] {
         let error = fan_out_compile_error(|value| {

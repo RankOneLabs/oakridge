@@ -46,7 +46,9 @@ fn read_units(expr: &StageExpr, found: &mut BTreeSet<String>) {
             read_units(value, found);
             read_units(fallback, found);
         }
-        StageExpr::ValidGraph { source, .. } => read_units(source, found),
+        StageExpr::ValidGraph { source, .. } | StageExpr::GraphLevels { source, .. } => {
+            read_units(source, found)
+        }
         StageExpr::Record(fields) => {
             for (_, value) in fields {
                 read_units(value, found);
@@ -62,6 +64,7 @@ fn inferred_after(unit: &Unit) -> BTreeSet<String> {
         .values()
         .chain(unit.for_each.iter())
         .chain(unit.key.iter())
+        .chain(unit.order.iter())
     {
         if let Ok(expression) = parse_expression(text, "") {
             read_units(&expression, &mut found);
@@ -122,6 +125,22 @@ pub(super) fn check_structure(
                 CheckKind::Collection,
                 format!("{unit_path}.key"),
                 format!("collection {key} needs key")
+            );
+        }
+        if unit.order.is_some() && unit.for_each.is_none() {
+            report!(
+                CheckKind::Collection,
+                format!("{unit_path}.order"),
+                format!("unit {key} orders members but is no collection")
+            );
+        }
+        // Order releases a level when its members' turns end; a group's turns
+        // belong to its child stages, so it would wait for the whole group.
+        if unit.order.is_some() && unit.group.is_some() {
+            report!(
+                CheckKind::Collection,
+                format!("{unit_path}.order"),
+                format!("unit {key} orders group members; only stage collections order")
             );
         }
         if let Some(pool) = &unit.pool {
@@ -299,6 +318,28 @@ pub(super) fn compile_group(
                             format!("collection {key} source is not list"),
                         )
                     })?;
+                let order = match &unit.order {
+                    Some(text) => {
+                        diagnostic_path = (format!("{group_path}.units.{key}.order")).to_string();
+                        let order = checked(text, &scope, &diagnostic_path)?;
+                        let level_key =
+                            item_type(&resolve_type(&order.value_type, &workflow.schemas))
+                                .and_then(|level| {
+                                    item_type(&resolve_type(&level, &workflow.schemas))
+                                });
+                        if !matches!(level_key, Some(Type::Ident | Type::Text)) {
+                            return Err(CompileError::new(
+                                CheckKind::Collection,
+                                &diagnostic_path,
+                                workflow_span(workflow, &diagnostic_path),
+                                "collection order must be a list of key lists",
+                            )
+                            .into());
+                        }
+                        Some(order)
+                    }
+                    None => None,
+                };
                 scope.each = Some(each);
                 diagnostic_path = (format!("{group_path}.units.{key}.key")).to_string();
                 let key_expr = checked(unit.key.as_ref().unwrap(), &scope, &diagnostic_path)?;
@@ -341,6 +382,7 @@ pub(super) fn compile_group(
                     source,
                     key: key_expr,
                     after,
+                    order,
                 })
             } else {
                 None

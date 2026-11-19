@@ -36,6 +36,70 @@ pub fn is_valid_graph(items: &[Value], key_field: &str, dependencies_field: &str
     }
     is_acyclic(&edges)
 }
+/// The keys of a valid graph grouped by depth: a key with no dependencies
+/// is in level 0, any other key one level past its deepest dependency.
+/// Keys keep their source order within a level. `None` for a graph that
+/// `valid_graph` refuses.
+#[doc(hidden)]
+pub fn graph_levels(
+    items: &[Value],
+    key_field: &str,
+    dependencies_field: &str,
+) -> Option<Vec<Vec<String>>> {
+    if !is_valid_graph(items, key_field, dependencies_field) {
+        return None;
+    }
+    let members: Vec<(&str, Vec<&str>)> = items
+        .iter()
+        .map(|item| {
+            let key = item.get(key_field).and_then(Value::as_str)?;
+            let dependencies = item
+                .get(dependencies_field)
+                .and_then(Value::as_array)?
+                .iter()
+                .map(Value::as_str)
+                .collect::<Option<Vec<_>>>()?;
+            Some((key, dependencies))
+        })
+        .collect::<Option<_>>()?;
+    // Kahn's order: a key is placed only after every dependency is, so its
+    // depth is final when it leaves the queue.
+    let mut waiting: BTreeMap<&str, usize> = members
+        .iter()
+        .map(|(key, dependencies)| (*key, dependencies.len()))
+        .collect();
+    let mut dependents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (key, dependencies) in &members {
+        for dependency in dependencies {
+            dependents.entry(dependency).or_default().push(key);
+        }
+    }
+    let mut depth: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut ready: Vec<&str> = members
+        .iter()
+        .filter(|(_, dependencies)| dependencies.is_empty())
+        .map(|(key, _)| *key)
+        .collect();
+    while let Some(key) = ready.pop() {
+        let below = depth.get(key).copied().unwrap_or(0);
+        depth.entry(key).or_insert(below);
+        for dependent in dependents.get(key).map(Vec::as_slice).unwrap_or_default() {
+            let deepest = depth.entry(dependent).or_insert(0);
+            *deepest = (*deepest).max(below + 1);
+            let count = waiting.get_mut(dependent)?;
+            *count -= 1;
+            if *count == 0 {
+                ready.push(dependent);
+            }
+        }
+    }
+    let level_count = depth.values().max().map_or(0, |deepest| deepest + 1);
+    let mut levels = vec![Vec::new(); level_count];
+    for (key, _) in &members {
+        levels[depth[key]].push((*key).to_owned());
+    }
+    Some(levels)
+}
 /// Kahn's algorithm over a ready queue, O(nodes + edges): whether every
 /// node becomes reachable from an empty prerequisite set. Every
 /// prerequisite must itself be a node.

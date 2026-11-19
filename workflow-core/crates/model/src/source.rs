@@ -280,6 +280,13 @@ pub enum Expression {
         key_field: String,
         dependencies_field: String,
     },
+    /// A valid graph's keys grouped by dependency depth: each key sits one
+    /// level past its deepest dependency. Unresolved for an invalid graph.
+    GraphLevels {
+        source: Box<Expression>,
+        key_field: String,
+        dependencies_field: String,
+    },
     Every {
         source: Box<Expression>,
         predicate: Box<Expression>,
@@ -757,6 +764,13 @@ pub struct Unit {
     pub for_each: Option<String>,
     pub key: Option<String>,
     pub pool: Option<SymbolKey>,
+    /// A stage collection's admission levels, as a list of member-key lists.
+    /// A member is admitted only once every member in an earlier level has
+    /// published a revision other than a blocker, has no blocker parked and
+    /// has no attempt in flight. Unlike `after`, it never waits for those
+    /// members to be approved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

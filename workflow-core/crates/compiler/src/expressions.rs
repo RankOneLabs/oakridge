@@ -94,6 +94,12 @@ pub(crate) enum StageExpr {
         key_field: String,
         dependencies_field: String,
     },
+    /// A valid graph's keys grouped by dependency depth.
+    GraphLevels {
+        source: Box<StageExpr>,
+        key_field: String,
+        dependencies_field: String,
+    },
     Record(Vec<(String, StageExpr)>),
     Input(Vec<String>),
     Each(Vec<String>),
@@ -387,6 +393,15 @@ fn expand_lets_bounded(
             key_field,
             dependencies_field,
         } => StageExpr::ValidGraph {
+            source: Box::new(expand(*source, visiting)?),
+            key_field,
+            dependencies_field,
+        },
+        StageExpr::GraphLevels {
+            source,
+            key_field,
+            dependencies_field,
+        } => StageExpr::GraphLevels {
             source: Box::new(expand(*source, visiting)?),
             key_field,
             dependencies_field,

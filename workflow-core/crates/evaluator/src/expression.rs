@@ -246,6 +246,18 @@ pub(super) fn eval_expression_inner(
             key_field,
             dependencies_field,
         ))),
+        Expression::GraphLevels {
+            source,
+            key_field,
+            dependencies_field,
+        } => graph_levels(&list!(source), key_field, dependencies_field).map(|levels| {
+            Value::Array(
+                levels
+                    .into_iter()
+                    .map(|level| Value::Array(level.into_iter().map(Value::String).collect()))
+                    .collect(),
+            )
+        }),
         Expression::Record { fields, .. } => {
             let mut record = serde_json::Map::new();
             for field in fields {
