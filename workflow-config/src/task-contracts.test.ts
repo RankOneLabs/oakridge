@@ -194,6 +194,39 @@ for (const scenario of scenarios) test(`compiled development scheduling: ${scena
   for (const id of scenario.waiting) expect(run.result.blocked.find(b => b.unit === `run/implementation/${id}`)?.reason.kind).toBe("waiting_on");
 });
 
+function writers(run: TestRun): string[] {
+  return run.activeWanted().filter(w => w.worker === "writer").map(w => w.unit).sort();
+}
+async function writeBrief(run: TestRun, c: PlanCohort): Promise<void> {
+  await run.publish("writer", "brief", brief(c), `run/briefs/${c.id}`);await run.end("writer", `run/briefs/${c.id}`);
+}
+const provider = cohort("provider", ["R1"]), right = cohort("right", ["R2"], ["provider"]), left = cohort("left", ["R2"], ["provider"]);
+const consumer = cohort("consumer", ["R2"], ["left", "right"]);
+test("an accepted plan stores its order as dependency levels, siblings together in plan order", async () => {
+  const run = await planRun([consumer, right, left, provider]);
+  const planning = run.result.snapshot.units.find(u => u.id === "run/planning");
+  expect(planning?.status.kind === "done" ? (planning.status.outcome as {order: string[][]}).order : null)
+    .toEqual([["provider"], ["right", "left"], ["consumer"]]);
+});
+test("briefs are written level by level, whatever their ids sort as", async () => {
+  const run = await planRun([consumer, right, left, provider]);
+  const consumer_wait = run.result.blocked.find(b => b.unit === "run/briefs/consumer")?.reason;
+  expect([writers(run), consumer_wait?.kind === "waiting_on" ? [...consumer_wait.units].sort() : consumer_wait])
+    .toEqual([["run/briefs/provider"], ["run/briefs/left", "run/briefs/provider", "run/briefs/right"]]);
+  await writeBrief(run, provider);
+  expect(writers(run)).toEqual(["run/briefs/left", "run/briefs/right"]);
+  await writeBrief(run, left);
+  expect(writers(run)).toEqual(["run/briefs/right"]);
+  await writeBrief(run, right);
+  expect(writers(run)).toEqual(["run/briefs/consumer"]);
+});
+test("a later level never waits for an earlier brief's approval", async () => {
+  const run = await planRun([consumer, right, left, provider]);
+  for (const c of [provider, left, right]) await writeBrief(run, c);
+  expect(run.result.snapshot.decisions.filter(d => d.unit.startsWith("run/briefs/"))).toEqual([]);
+  expect(writers(run)).toEqual(["run/briefs/consumer"]);
+});
+
 test("integration resolves a shared canonical requirement once across contributions", async () => {
   const cohorts = [cohort(), cohort("C2", ["R2"])];
   const run = await planRun(cohorts);

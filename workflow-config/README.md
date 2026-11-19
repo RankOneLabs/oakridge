@@ -31,7 +31,13 @@ observable acceptance conditions. There is no separate work-list artifact or gat
 
 Planning allocates requirements to PR-shaped cohorts with bounded contributions,
 repository keys and an acyclic depends_on graph. Oakridge resolves each writer's
-assignment to its cohort and only its allocated canonical requirements. Briefs
+assignment to its cohort and only its allocated canonical requirements. The engine
+computes the plan's `order` from depends_on when the plan is accepted:
+`levels(cohorts, id, depends_on)` groups cohorts by dependency depth, so cohorts
+with no path between them share a level. The briefs collection follows that
+order in one shared writer session. A brief starts once every brief in an
+earlier level has started and its writer turn has ended, without waiting for
+approval, so each brief builds on the contracts its upstream briefs wrote. Briefs
 bind their envelope to that plan cohort and supply detailed build_items linked to
 requirements, verification and material technical_decisions. Implementation order
 and outcome titles come from the plan.
@@ -46,8 +52,9 @@ the builder or integrator; assessors read the full implicit review_history. Ever
 initial/revise prompt directs the agent to raise a blocker instead of guessing.
 
 The development alias now pins definition
-`87dac99799b3d699b92499d4d322929a8b6a107c2cbdf7ab09bfb03874aa736b`.
+`e750f73b157cff44b9696ed7f10603a085145e7b79123dbf976262fdfa36c9e3`.
 The previous definitions
+`87dac99799b3d699b92499d4d322929a8b6a107c2cbdf7ab09bfb03874aa736b`,
 `cf39117805e56b4bdc5540fed9c4a3c2202a9c432b8e7562bf76960fe383a9a5` and
 `74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4`
 and their exact prompt objects remain addressable.

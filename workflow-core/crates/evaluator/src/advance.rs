@@ -538,6 +538,9 @@ pub(super) fn next_move(
             if !waiting.is_empty() {
                 return Ok(None);
             }
+            if !order_waiting(program, state, unit, context)?.is_empty() {
+                return Ok(None);
+            }
             if let Some(pool) = &unit.pool {
                 let parent_id = unit.parent.as_ref().ok_or_else(|| invalid("pooled root"))?;
                 let parent = state
@@ -612,10 +615,88 @@ pub(super) fn next_move(
     Ok(None)
 }
 
+/// The collection siblings in an earlier `order` level that a member still
+/// waits on: one not started, or started with no attempt yet or one in
+/// flight. A terminal sibling never holds a member back, and neither does
+/// a sibling whose work is done but whose review is still open.
+fn order_waiting(
+    program: &CheckedWorkflow,
+    state: &StepSnapshot,
+    unit: &UnitState,
+    context: &mut EvaluationContext<'_>,
+) -> Result<Vec<UnitId>, StepError> {
+    let Some(member) = &unit.collection_key else {
+        return Ok(Vec::new());
+    };
+    let parent_id = unit
+        .parent
+        .as_ref()
+        .ok_or_else(|| invalid("collection member has no parent"))?;
+    let parent = state
+        .units
+        .iter()
+        .find(|candidate| candidate.id == *parent_id)
+        .ok_or_else(|| invalid("parent absent"))?;
+    let declared = checked_unit(group_for(program, state, parent)?, &unit.declaration.0)?;
+    let Some(order) = declared
+        .collection
+        .as_ref()
+        .and_then(|collection| collection.order.as_ref())
+    else {
+        return Ok(Vec::new());
+    };
+    let declaration = &unit.declaration.0;
+    let levels: Vec<Vec<String>> =
+        eval_expression(&order.expression, parent, state, None, None, context)?
+            .and_then(|value| serde_json::from_value(value).ok())
+            .ok_or_else(|| rejected(format!("collection {declaration} order is unresolved")))?;
+    let level = levels
+        .iter()
+        .position(|keys| keys.contains(member))
+        .ok_or_else(|| {
+            rejected(format!(
+                "collection {declaration} member {member} is absent from its order"
+            ))
+        })?;
+    let earlier: BTreeSet<&String> = levels[..level].iter().flatten().collect();
+    Ok(state
+        .units
+        .iter()
+        .filter(|sibling| {
+            sibling.parent == unit.parent
+                && sibling.declaration == unit.declaration
+                && sibling
+                    .collection_key
+                    .as_ref()
+                    .is_some_and(|key| earlier.contains(key))
+        })
+        .filter(|sibling| match sibling.status {
+            UnitStatus::NotStarted => true,
+            UnitStatus::Active => {
+                let mut attempts = state
+                    .attempts
+                    .iter()
+                    .filter(|attempt| attempt.unit == sibling.id)
+                    .peekable();
+                attempts.peek().is_none()
+                    || attempts.any(|attempt| {
+                        matches!(
+                            attempt.status,
+                            AttemptStatus::Pending | AttemptStatus::Running
+                        )
+                    })
+            }
+            _ => false,
+        })
+        .map(|sibling| sibling.id.clone())
+        .collect())
+}
+
 /// Blocked-ness is a per-step read; it is never a stored unit status.
 pub(super) fn blocked_units(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Vec<UnitBlock>, StepError> {
     state
         .units
@@ -649,6 +730,17 @@ pub(super) fn blocked_units(
                     unit: unit.id.clone(),
                     reason: BlockedReason::WaitingOn { units: waiting },
                 }));
+            }
+            if matches!(unit.status, UnitStatus::NotStarted) {
+                let ordered_before = order_waiting(program, state, unit, context)?;
+                if !ordered_before.is_empty() {
+                    return Ok(Some(UnitBlock {
+                        unit: unit.id.clone(),
+                        reason: BlockedReason::WaitingOn {
+                            units: ordered_before,
+                        },
+                    }));
+                }
             }
             let Some(pool) = &unit.pool else {
                 return Ok(None);
