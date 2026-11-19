@@ -11,6 +11,8 @@ export interface PromptRow {
   path: string;
   body: string | null;
   digest: string | null;
+  /** The prompts this one includes directly, each editable on its own. */
+  includes: readonly string[];
   inputs: { name: string; expression: string }[];
   produces: string[];
 }
@@ -19,6 +21,7 @@ export function selectPromptRows(model: Pick<StageInspectorModel, "workers" | "r
     id: `${owner.kind}:${owner.key}:${mode}`, owner, mode, path,
     body: model.definition.prompts?.[path]?.body ?? null,
     digest: model.definition.prompts?.[path]?.digest ?? null,
+    includes: model.definition.prompts?.[path]?.includes ?? [],
     inputs: Object.entries(inputs).map(([name, expression]) => ({ name, expression })), produces,
   });
   return [

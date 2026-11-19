@@ -7,9 +7,10 @@ import { usePromptVersions } from "../../hooks/usePromptVersions";
 import { usePromptEditor } from "../../hooks/usePromptEditor";
 import { selectPromptEditorActions, selectPromptReferences, selectPromptIsShared, promptFeedbackText } from "../../lib/prompt-editor";
 import { PromptVersionHistory } from "../molecules/PromptVersionHistory";
+import { PromptIncludes } from "../molecules/PromptIncludes";
 import type { StageInspectorModel } from "../../lib/stage-inspector";
 import type { OperatorPromptVersionListing } from "../../operator-contracts/http/prompt-versions";
-interface PromptEditorProps { path: string; model: StageInspectorModel; onClose: () => void; onDirtyChange?: (isDirty: boolean) => void }
+interface PromptEditorProps { path: string; model: StageInspectorModel; onClose: () => void; onDirtyChange?: (isDirty: boolean) => void; onEditPrompt?: (path: string) => void }
 export function PromptEditor(props: PromptEditorProps) {
   const versions = usePromptVersions(props.path);
   if (versions.isPending) return <p role="status">Loading prompt versions…</p>;
@@ -18,7 +19,7 @@ export function PromptEditor(props: PromptEditorProps) {
   return <LoadedPromptEditor {...props} versions={versions.data.value} />;
 }
 interface LoadedPromptEditorProps extends PromptEditorProps {versions: OperatorPromptVersionListing}
-function LoadedPromptEditor({path, model, onClose, onDirtyChange, versions}: LoadedPromptEditorProps) {
+function LoadedPromptEditor({path, model, onClose, onDirtyChange, onEditPrompt, versions}: LoadedPromptEditorProps) {
   const editor = usePromptEditor({path, definition: model.definition, versions,
     selection: model.selected_unit ? {kind: "unit", path: model.selected_unit.path, tab: "prompts"} : {kind: "stage", stage: model.name, tab: "prompts"}, onClose});
   useEffect(() => { onDirtyChange?.(editor.state.is_dirty); }, [onDirtyChange, editor.state.is_dirty]);
@@ -35,7 +36,8 @@ function LoadedPromptEditor({path, model, onClose, onDirtyChange, versions}: Loa
     <h4>Used by</h4>
     {definitions.isPending && <p role="status">Loading prompt references…</p>}
     {definitions.error && <p role="alert">Unable to load all prompt references: {definitions.error.message}</p>}
-    <ul>{references.map(reference => <li key={[reference.definition_id, reference.stage, reference.owner_kind, reference.owner_key, reference.mode].join(":")}>{reference.workflow} › {reference.stage} › {reference.owner_key} ({reference.mode}){reference.template && <> · from template {reference.template}</>}</li>)}</ul>
+    <ul>{references.map(reference => <li key={[reference.definition_id, reference.stage, reference.owner_kind, reference.owner_key, reference.mode, reference.prompt_path].join(":")}>{reference.workflow} › {reference.stage} › {reference.owner_key} ({reference.mode}){reference.template && <> · from template {reference.template}</>}{reference.prompt_path !== path && <> · through {reference.prompt_path}</>}</li>)}</ul>
+    <PromptIncludes includes={model.definition.prompts[path]?.includes ?? []} onEditPrompt={onEditPrompt} />
     <label>Prompt body<TextArea className="block" value={editor.state.body} disabled={editor.is_busy} onChange={event => editor.edit(event.target.value)} /></label>
     <p>{editor.state.is_dirty ? "Unsaved local edits" : editor.state.pending ? `Saved pending version ${editor.state.pending.digest}` : "No pending version"}</p>
     <div className="flex flex-wrap gap-2">

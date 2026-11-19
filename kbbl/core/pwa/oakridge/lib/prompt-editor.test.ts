@@ -2,7 +2,8 @@ import { expect, test } from "vitest";
 import fixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import type { OperatorPromptVersionListing, OperatorPromptPublicationOutcome } from "../operator-contracts/http/prompt-versions";
-import { createPromptDraft, editPromptBody, pendingSaved, discardLocalEdits, selectPromptEditorActions, selectPromptReferences, selectPromptIsShared, selectPublishedDefinitionId, promptFeedbackText, type PromptFeedback } from "./prompt-editor";
+import { createPromptDraft, editPromptBody, pendingSaved, discardLocalEdits, selectIncludingPaths, selectPromptEditorActions, selectPromptReferences, selectPromptIsShared, selectPublishedDefinitionId, promptFeedbackText, type PromptFeedback } from "./prompt-editor";
+import { SHARED_PROMPT, definitionWithIncludes } from "../__fixtures__/definition-with-includes";
 const definition = fixture.definition as unknown as OperatorDefinitionDetail;
 const published = {version_id: "old", prompt_id: "prompt", source_path: "development/brief.md", body: "published", status: "published" as const, published_at: "now"};
 const versions: OperatorPromptVersionListing = {source_path: published.source_path, published, pending: null, versions: [published], referenced_by: []};
@@ -58,3 +59,16 @@ test.each<[PromptFeedback, string]>([
   [{kind: "conflict"}, "Conflict: the prompt changed since it was read. Your local edits are preserved. Reload before retrying."],
   [{kind: "transport_error", detail: "offline"}, "Request failed: offline"],
 ])("feedback copy for %j", (feedback, text) => expect(promptFeedbackText(feedback)).toBe(text));
+test("a prompt is included by every prompt that names it, directly or through another include", () => {
+  const prompts = {"a.md": {body: "", digest: "a", includes: ["b.md"]}, "b.md": {body: "", digest: "b", includes: ["c.md"]},
+    "c.md": {body: "", digest: "c", includes: []}, "d.md": {body: "", digest: "d", includes: []}};
+  expect([...selectIncludingPaths({path: "c.md", prompts})].sort()).toEqual(["a.md", "b.md", "c.md"]);
+});
+test("a shared prompt is used by every mode whose prompt includes it, through that prompt", () => {
+  const references = selectPromptReferences({path: SHARED_PROMPT, definitions: [definitionWithIncludes]});
+  expect(references.map(({stage, owner_key, mode, prompt_path}) => ({stage, owner_key, mode, prompt_path}))).toEqual([
+    {stage: "brief", owner_key: "writer", mode: "initial", prompt_path: "development/brief.md"},
+    {stage: "brief", owner_key: "writer", mode: "revise", prompt_path: "development/brief-revise.md"},
+  ]);
+  expect(selectPromptIsShared(references)).toBe(true);
+});
