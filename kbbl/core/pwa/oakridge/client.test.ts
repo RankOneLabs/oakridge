@@ -163,6 +163,13 @@ describe("v2 Oakridge client", () => {
       .rejects.toThrow("Development runs require at least one repository");
   });
 
+  it("refuses to launch a workflow other than development", async () => {
+    const study = { ...definition, bundle: { ...definition.bundle, key: "study" } };
+    const fetch = calls((path) => path.includes("/api/definitions/") ? study : sample.run);
+    await expect(createRun(createRunRequest(), "launch-study")).rejects.toThrow("the PWA cannot launch the study workflow");
+    expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
   it("accepts settings for an agent declared through a worker template", async () => {
     const templated = {
       ...definition,
@@ -313,6 +320,20 @@ describe("v2 Oakridge client", () => {
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-3", decision: "replace_pr",
       target: "revision-pr", payload: { feedback: "Open a replacement" } });
+  });
+
+  it("submits the chosen decision when a review offers several request-changes decisions", async () => {
+    const sendBack = (decision: string) => ({ key: decision, label: decision, payload_schema: "{feedback: text}",
+      fields: [{ key: "feedback", label: "What must change?" }],
+      submit: { kind: "review", review: "slice_report_review", decision, effect: "request_changes", target_revision_id: "revision-report" } });
+    const sliceReview = { ...cohort, decisions: [sendBack("send_to_builder"), sendBack("change_design")] };
+    const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-6" } : sliceReview);
+    const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "slice_report_review" });
+    await resumeGate(gateId, { idempotency_key: "decide-4", artifact_revision_id: "revision-report",
+      action: "change_design", feedback: "Narrow the slice" });
+    const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
+    expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-4", decision: "change_design",
+      target: "revision-report", payload: { feedback: "Narrow the slice" } });
   });
 
   it.each([cohortMerge, integrationMerge])("confirms merged for unit at its named revision", async (fixture) => {

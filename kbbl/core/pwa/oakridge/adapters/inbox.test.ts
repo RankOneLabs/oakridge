@@ -186,6 +186,28 @@ describe("study inbox", () => {
     });
   });
 
+  it("keeps each request-changes decision distinct when a review offers several", () => {
+    const sendBack = (decision: string): OperatorDecisionDefinition => ({ ...requestChanges, key: decision, label: decision,
+      submit: { kind: "review", review: "report_review", decision, effect: "request_changes", target_revision_id: revision.id } });
+    const sliceReview = withUnitFields(unit, { decisions: [approve, sendBack("send_to_builder"), sendBack("change_design")] });
+    const inbox = classifyDevelopmentInbox(entry, [sliceReview], { workflow_name: "study", run_title: null });
+    if (!inbox.ok) throw new Error(inbox.error.detail);
+    expect(inbox.value.items[0]?.resume_actions).toEqual(["approve", "send_to_builder", "change_design"]);
+  });
+
+  it("marks a review whose decisions carry an adjudication payload as needing adjudication", () => {
+    const adjudicated = withUnitFields(unit, { decisions: [approve, requestChanges].map((decision) => ({ ...decision, payload_schema: "adjudication" })) });
+    const inbox = classifyDevelopmentInbox(entry, [adjudicated], { workflow_name: "study", run_title: null });
+    if (!inbox.ok) throw new Error(inbox.error.detail);
+    expect(inbox.value.items[0]?.requires_adjudication).toBe(true);
+  });
+
+  it("leaves a review with plain payloads deciding from the inbox", () => {
+    const inbox = classifyDevelopmentInbox(entry, [unit], { workflow_name: "study", run_title: null });
+    if (!inbox.ok) throw new Error(inbox.error.detail);
+    expect(inbox.value.items[0]?.requires_adjudication).toBe(false);
+  });
+
   it("keeps a review with no matching artifact revision as a gate decision", () => {
     const withoutTarget = withUnitFields(unit, { artifacts: unit.artifacts.filter((artifact) => artifact.latest_revision?.id !== revision.id) });
     const inbox = classifyDevelopmentInbox(entry, [withoutTarget], { workflow_name: "study", run_title: null });

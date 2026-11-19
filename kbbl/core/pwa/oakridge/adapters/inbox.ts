@@ -5,6 +5,7 @@ import { selectUnitAttentionLabel, type UnitAttentionLabelInput } from "../lib/r
 import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";
 
 const DEVELOPMENT_WORKFLOW_NAME = "development";
+const ADJUDICATION_PAYLOAD_SCHEMA = "adjudication";
 
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
@@ -129,16 +130,18 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     const kind = classify(item, { stage: unit.stage, workflow_name: run.workflow_name, target_artifact: artifact });
     const gate = review ? compositeId({ kind: "gate", runId: entry.run_id, unitId: unit.unit_id, name: review }) : null;
     const stageId = compositeId({ kind: "stage", runId: entry.run_id, unitId: unit.unit_id, name: unit.stage ?? "$root" });
-    const actions = review ? unit.decisions.filter((candidate) => candidate.submit.kind === "review"
-      && candidate.submit.review === review
-      && isDisplayedReviewDecision(candidate.submit.review, candidate.submit.decision)).map(decisionAction) : [];
+    const reviewDecisions = review ? unit.decisions.filter((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review) : [];
+    const actions = reviewDecisions.filter((candidate) => candidate.submit.kind === "review"
+      && isDisplayedReviewDecision(candidate.submit.review, candidate.submit.decision)).map((candidate) => decisionAction(candidate, unit.decisions));
+    // An adjudication payload is recorded from the assessment view; the inbox's plain controls cannot supply it.
+    const requiresAdjudication = reviewDecisions.some((candidate) => candidate.payload_schema === ADJUDICATION_PAYLOAD_SCHEMA);
     return [{ id: `${item.run_id}:${item.unit_id}:${item.kind === "decision" ? item.key : item.kind}`, kind,
       state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: run.workflow_name, stage_instance_id: stageId,
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
       ...attention, title: selectUnitAttentionLabel(attention), run_title: run.run_title, artifact_key: (review ? DEVELOPMENT_REVIEW_SUBJECTS[`${unit.stage}:${review}`] : null) ?? artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null, run_unit_id: unit.unit_id,
-      resume_actions: actions, blocked_by: unit.depends_on.map((id) => {
+      resume_actions: actions, requires_adjudication: requiresAdjudication, blocked_by: unit.depends_on.map((id) => {
         const blocker = byId.get(id);
         return blocker ? selectUnitAttentionLabel(unitAttentionLabelInput(blocker)) || blocker.unit_id : id;
       }).filter((label) => label.length > 0) }];

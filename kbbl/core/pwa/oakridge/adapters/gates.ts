@@ -11,11 +11,17 @@ const V1_APPROVE_ACTIONS: ReadonlySet<string> = new Set(["approve", "confirm_mer
 /** The builder handoff records this decision with its next actions; the gate never offers it bare. */
 export const isDisplayedReviewDecision = (review: string, decision: string): boolean =>
   review !== "assessment_review" || decision !== REQUEST_BUILD_CHANGES;
-export const decisionAction = (decision: OperatorDecisionDefinition): string => {
+/** True when the decision's review offers more than one request-changes decision, so the shared request_revision action would be ambiguous. */
+const hasSiblingChangeRequests = (review: string, offered: readonly OperatorDecisionDefinition[]): boolean =>
+  offered.filter((candidate) => candidate.submit.kind === "review"
+    && candidate.submit.review === review && candidate.submit.effect === "request_changes").length > 1;
+/** The UI action for a decision. `offered` is the unit's or gate's decision list, so a review with several request-changes decisions keeps each one's key. */
+export const decisionAction = (decision: OperatorDecisionDefinition, offered: readonly OperatorDecisionDefinition[]): string => {
   if (decision.submit.kind === "retry") return "rerun";
   if (decision.submit.kind === "cancel") return "fail";
   if (decision.submit.review === "blocker_review"
-      || decision.submit.review === "assessment_review" && decision.submit.effect === "request_changes")
+      || decision.submit.review === "assessment_review" && decision.submit.effect === "request_changes"
+      || decision.submit.effect === "request_changes" && hasSiblingChangeRequests(decision.submit.review, offered))
     return decision.submit.decision;
   if (decision.submit.effect === "request_changes") return "request_revision";
   return V1_APPROVE_ACTIONS.has(decision.submit.decision) ? decision.submit.decision : "approve";
@@ -23,9 +29,9 @@ export const decisionAction = (decision: OperatorDecisionDefinition): string => 
 export const reviewDecisions = (unit: OperatorUnitView): GateDecision[] => unit.decisions
   .filter((decision) => decision.submit.kind === "review"
     && isDisplayedReviewDecision(decision.submit.review, decision.submit.decision))
-  .map((decision) => ({ action: decisionAction(decision), decision }));
+  .map((decision) => ({ action: decisionAction(decision, unit.decisions), decision }));
 export const selectGateDecision = (gate: ParkedGate, action: string | null): OperatorDecisionDefinition | null =>
-  gate.decision_definitions?.find((decision) => decisionAction(decision) === action) ?? null;
+  gate.decision_definitions?.find((decision) => decisionAction(decision, gate.decision_definitions ?? []) === action) ?? null;
 /** The frozen sidebar matches gates to sessions by stage and unit label. The
  * development cohort runs builder and assessor in separate sessions on one
  * v2 unit, so its reviews must use the session that owns the operator handoff. */
@@ -59,7 +65,7 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
       worktree: null, offered_decisions: decisions.map((decision) => decision.submit.kind === "review" ? decision.submit.decision : ""),
       decision_definitions: decisions,
       resume_actions: [...new Set(decisions.filter((decision) => decision.submit.kind === "review"
-        && isDisplayedReviewDecision(decision.submit.review, decision.submit.decision)).map(decisionAction))],
+        && isDisplayedReviewDecision(decision.submit.review, decision.submit.decision)).map((decision) => decisionAction(decision, decisions)))],
       pr_url: review === "merge_confirmation" ? developmentPullRequestUrl(unit) : null,
       run_state: unit.status.kind === "done" ? "succeeded" : unit.status.kind === "cancelled" ? "cancelled" : "active", actionable: true };
   }));

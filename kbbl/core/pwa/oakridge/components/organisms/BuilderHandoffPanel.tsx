@@ -151,7 +151,7 @@ function CurrentAdjudicationForm({ assessment, revisionId, gate, decisions }: Cu
     const identity = JSON.stringify({ effect, payload: payload.value });
     let key = keys.current.get(identity);
     if (!key) { key = randomUuid(); keys.current.set(identity, key); }
-    mutation.mutate({ idempotency_key: key, artifact_revision_id: decision.revision_id, action: decisionAction(decision.definition), feedback: preview, adjudication: payload.value }, { onSuccess: recorded });
+    mutation.mutate({ idempotency_key: key, artifact_revision_id: decision.revision_id, action: decisionAction(decision.definition, gate.decision_definitions ?? []), feedback: preview, adjudication: payload.value }, { onSuccess: recorded });
   }
   return <ArtifactSection title="Action adjudication" testId="or-assessment-handoff">
     {!isOpen && <FeedbackMessage>{recordedDecision ? "The decision is recorded. Dispositions appear beside each action." : hasRecorded ? "Decision submitted. Waiting for recorded dispositions." : NO_REVIEW_REASON}</FeedbackMessage>}

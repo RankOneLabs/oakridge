@@ -114,6 +114,24 @@ describe("ReviewInboxView", () => {
     expect(screen.getByTestId("or-inbox-context").textContent).toContain("Study run");
   });
 
+  it("sends a study review that needs adjudication to the assessment instead of plain controls", async () => {
+    if (!approveTarget) throw new Error("captured fixture lacks an artifact revision");
+    const accept: OperatorDecisionDefinition = {
+      key: "accept", label: "Accept", fields: [], payload_schema: "adjudication",
+      submit: { kind: "review", review: "expansion_review", decision: "accept", effect: "approve", target_revision_id: approveTarget },
+    };
+    const unit = withUnitFields(v2Unit, { stage: "expand", collection_key: "g2", unit_key: "g2", decisions: [accept], input: { repository_key: "oakridge" } });
+    const studyInbox = classifyDevelopmentInbox({ run_id: runId, items: [
+      { kind: "decision", run_id: runId, unit_id: unit.unit_id, key: accept.key, label: accept.label, submit: accept.submit, prompt: null },
+    ] }, [unit], { workflow_name: "study", run_title: "Study run" });
+    if (!studyInbox.ok) throw new Error(studyInbox.error.detail);
+
+    renderInbox(studyInbox.value);
+    expect(await screen.findByText("Review and adjudicate the actions in the assessment to record a decision.")).toBeTruthy();
+    expect(screen.queryByTestId("or-decision-approve")).toBeNull();
+    expect(screen.getByTestId("or-inbox-artifact-link")).toBeTruthy();
+  });
+
   it("puts actionable work first without duplicating it in progress", async () => {
     renderInbox(inbox);
     expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(1);
