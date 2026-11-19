@@ -40,6 +40,14 @@ export function blockerUnit(): OperatorUnitView {
       submit: { kind: "review", review: "blocker_review", decision, effect: "request_changes", target_revision_id: "blocker-revision" } })) };
 }
 
+/** The parked blocker fixture moved to another brief unit, with its blocker_review decisions aimed at that unit's blocker revision. */
+export function parkedBlockerUnitFor(key: string): OperatorUnitView {
+  const unit = currentParked as unknown as OperatorUnitView;
+  const revision_id = `run/brief/${key}:blocker:1`;
+  return { ...unit, unit_id: `run/brief/${key}`, collection_key: key,
+    decisions: unit.decisions.map((decision) => decision.submit.kind === "review" ? { ...decision, submit: { ...decision.submit, target_revision_id: revision_id } } : decision) };
+}
+
 /** A real implementation handoff has cohort/brief inputs, not a writer assignment. */
 export function currentParkedCohort(): OperatorUnitView {
   const unit = currentParked as unknown as OperatorUnitView;

@@ -10,6 +10,8 @@ import { ProgressRow } from "../components/molecules/ProgressRow";
 
 interface ReviewInboxViewProps {
   onSelectRun: (id: string) => void;
+  /** Opens one unit's pane in its run, where a blocker is answered. */
+  onSelectRunUnit: (runId: string, unitId: string) => void;
   onSelectArtifact: (id: string) => void;
 }
 
@@ -17,7 +19,7 @@ const isActionable = (item: ReviewInboxItem): boolean => item.state === "actiona
 
 interface DecisionQueueState { readonly source: ReviewInbox | null; readonly entries: readonly DecisionQueueEntry[] }
 
-export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxViewProps) {
+export function ReviewInboxView({ onSelectRun, onSelectRunUnit, onSelectArtifact }: ReviewInboxViewProps) {
   const query = useReviewInbox();
   // Decisions are clicked in quick succession, so the list must not reflow
   // under the pointer: each poll is merged into what is already on screen
@@ -48,10 +50,10 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
       <section className="or-review-section" aria-labelledby="review-decisions">
         <div className="or-review-section__heading"><h2 id="review-decisions">Needs your decision</h2><span>{actionable.length}</span></div>
         {actionable.length === 0 && <FeedbackMessage tone="empty" testId="or-review-inbox-empty">You’re caught up. Nothing needs a decision.</FeedbackMessage>}
-        {queue.entries.map((entry) => <WorkItem key={entry.item.id} item={entry.item} cohort={cohortFor(entry.item)} isSettled={entry.kind === "settled"} onSelectRun={onSelectRun} onSelectArtifact={onSelectArtifact} />)}
+        {queue.entries.map((entry) => <WorkItem key={entry.item.id} item={entry.item} cohort={cohortFor(entry.item)} isSettled={entry.kind === "settled"} onSelectRun={onSelectRun} onSelectRunUnit={onSelectRunUnit} onSelectArtifact={onSelectArtifact} />)}
       </section>
 
-      {blocked.length > 0 && <section className="or-review-section" aria-labelledby="review-blocked"><div className="or-review-section__heading"><h2 id="review-blocked">Blocked or failed</h2><span>{blocked.length}</span></div>{blocked.map((item) => <WorkItem key={item.id} item={item} cohort={cohortFor(item)} onSelectRun={onSelectRun} onSelectArtifact={onSelectArtifact} />)}</section>}
+      {blocked.length > 0 && <section className="or-review-section" aria-labelledby="review-blocked"><div className="or-review-section__heading"><h2 id="review-blocked">Blocked or failed</h2><span>{blocked.length}</span></div>{blocked.map((item) => <WorkItem key={item.id} item={item} cohort={cohortFor(item)} onSelectRun={onSelectRun} onSelectRunUnit={onSelectRunUnit} onSelectArtifact={onSelectArtifact} />)}</section>}
 
       <section className="or-review-section or-review-section--quiet" aria-labelledby="review-underway">
         <div className="or-review-section__heading"><h2 id="review-underway">Underway</h2><span>{underway.length}</span></div>
