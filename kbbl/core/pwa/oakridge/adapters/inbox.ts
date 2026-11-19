@@ -1,8 +1,10 @@
 import type { OperatorInboxItem, OperatorRunInboxBatchEntry } from "../operator-contracts/projections/inbox";
-import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
+import type { OperatorArtifactView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../artifact-types";
 import { selectUnitAttentionLabel, type UnitAttentionLabelInput } from "../lib/run-attention";
 import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";
+
+const DEVELOPMENT_WORKFLOW_NAME = "development";
 
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
@@ -20,12 +22,26 @@ const DEVELOPMENT_REVIEW_SUBJECTS: Readonly<Record<string, string>> = {
   "integration:integration_review": "assessment",
 };
 
-function classify(item: OperatorInboxItem, unit: OperatorUnitView): ReviewInboxItemKind {
+interface InboxItemContext {
+  readonly stage: OperatorUnitView["stage"];
+  readonly workflow_name: InboxRunContext["workflow_name"];
+  readonly target_artifact: OperatorArtifactView | null;
+}
+
+function findTargetArtifact(unit: OperatorUnitView, target: string | null): OperatorArtifactView | null {
+  if (!target) return null;
+  return unit.artifacts.find((candidate) => candidate.latest_revision?.id === target) ?? null;
+}
+
+function classify(item: OperatorInboxItem, context: InboxItemContext): ReviewInboxItemKind {
   if (item.kind === "stalled") return "cohort_failed";
   if (item.kind === "waiting") return item.reason.includes("pull request") ? "pull_request_merge" : "cohort_blocked";
   if (item.submit.kind === "retry") return "cohort_failed";
   if (item.submit.kind !== "review") return "gate_decision";
-  return DEVELOPMENT_REVIEWS[`${unit.stage}:${item.submit.review}`] ?? "gate_decision";
+  if (context.workflow_name === DEVELOPMENT_WORKFLOW_NAME) {
+    return DEVELOPMENT_REVIEWS[`${context.stage}:${item.submit.review}`] ?? "gate_decision";
+  }
+  return context.target_artifact ? "artifact_gate" : "gate_decision";
 }
 
 function lifecycle(unit: OperatorUnitView, items: readonly OperatorInboxItem[]): CohortLifecycle {
@@ -97,12 +113,12 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
       if (seenReviews.has(reviewKey)) return [];
       seenReviews.add(reviewKey);
     }
-    const kind = classify(item, unit);
     const name = unit.collection_key ?? unit.unit_key;
     const attention = unitAttentionLabelInput(unit);
     const review = item.kind === "decision" && item.submit.kind === "review" ? item.submit.review : null;
     const target = item.kind === "decision" && item.submit.kind === "review" ? item.submit.target_revision_id : null;
-    const artifact = target ? unit.artifacts.find((candidate) => candidate.latest_revision?.id === target) : null;
+    const artifact = findTargetArtifact(unit, target);
+    const kind = classify(item, { stage: unit.stage, workflow_name: run.workflow_name, target_artifact: artifact });
     const gate = review ? compositeId({ kind: "gate", runId: entry.run_id, unitId: unit.unit_id, name: review }) : null;
     const stageId = compositeId({ kind: "stage", runId: entry.run_id, unitId: unit.unit_id, name: unit.stage ?? "$root" });
     const actions = review ? unit.decisions.filter((candidate) => candidate.submit.kind === "review"

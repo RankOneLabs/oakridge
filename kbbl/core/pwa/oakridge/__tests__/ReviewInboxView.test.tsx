@@ -8,8 +8,10 @@ import type { ReviewInbox } from "../artifact-types";
 import type { CohortLifecycle } from "../artifact-types";
 import sample from "../__fixtures__/v2-adapter-sample.json";
 import definitionFixture from "../__fixtures__/v2-definition-detail.json";
-import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
+import type { OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { compositeId } from "../adapters/core";
+import { classifyDevelopmentInbox } from "../adapters/inbox";
+import { withUnitFields } from "../__fixtures__/read-models";
 
 const WEB_REPOSITORY_KEY = parseRepositoryKey("web")!;
 const API_REPOSITORY_KEY = parseRepositoryKey("api")!;
@@ -73,6 +75,33 @@ describe("ReviewInboxView", () => {
     expect(screen.queryByTestId("or-decision-request_build_changes")).toBeNull();
     expect(screen.getByTestId("or-decision-approve")).toBeTruthy();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/units?"))).toHaveLength(1);
+  });
+
+  it("renders decision controls for a study report review", async () => {
+    if (!approveTarget) throw new Error("captured fixture lacks an artifact revision");
+    const approve: OperatorDecisionDefinition = {
+      key: "approve", label: "Approve", fields: [], payload_schema: "{}",
+      submit: { kind: "review", review: "report_review", decision: "approve", effect: "approve", target_revision_id: approveTarget },
+    };
+    const requestChanges: OperatorDecisionDefinition = {
+      key: "request_changes", label: "Request changes", fields: [{ key: "feedback", label: "What needs to change?" }],
+      payload_schema: "{feedback: text}",
+      submit: { kind: "review", review: "report_review", decision: "request_changes", effect: "request_changes", target_revision_id: approveTarget },
+    };
+    const unit = withUnitFields(v2Unit, {
+      stage: "synthesis", collection_key: null, unit_key: "synthesis",
+      decisions: [approve, requestChanges], input: { repository_key: "oakridge" },
+    });
+    const studyInbox = classifyDevelopmentInbox({ run_id: runId, items: [
+      { kind: "decision", run_id: runId, unit_id: unit.unit_id, key: approve.key,
+        label: approve.label, submit: approve.submit, prompt: null },
+    ] }, [unit], { workflow_name: "study", run_title: "Study run" });
+    if (!studyInbox.ok) throw new Error(studyInbox.error.detail);
+
+    renderInbox(studyInbox.value);
+    expect(await screen.findByTestId("or-decision-approve")).toBeTruthy();
+    expect(screen.getByTestId("or-decision-request_revision")).toBeTruthy();
+    expect(screen.getByTestId("or-inbox-context").textContent).toContain("Study run");
   });
 
   it("puts actionable work first without duplicating it in progress", async () => {

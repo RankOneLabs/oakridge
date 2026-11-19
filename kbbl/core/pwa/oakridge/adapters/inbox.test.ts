@@ -4,7 +4,7 @@ import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import { sampleCohort as cohort, sampleRun as run, sampleUnits as units, withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorRunInboxBatchEntry } from "../operator-contracts/projections/inbox";
-import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
+import type { OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { objectValue, repositoryKeyOf, reviewToGates } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 
@@ -130,4 +130,63 @@ describe("development inbox", () => {
     expect(result.ok && result.value.items.map((item) => [item.kind, item.artifact_key]))
       .toEqual([["artifact_gate", "assessment"], ["merge_confirmation", "pr_state"]]);
   });
+});
+
+describe("study inbox", () => {
+  const revision = cohort.artifacts.find((artifact) => artifact.artifact_key === "assessment")?.latest_revision;
+  if (!revision) throw new Error("captured fixture lacks an artifact revision");
+
+  const approve: OperatorDecisionDefinition = {
+    key: "approve", label: "Approve", fields: [], payload_schema: "{}",
+    submit: { kind: "review", review: "report_review", decision: "approve", effect: "approve", target_revision_id: revision.id },
+  };
+  const requestChanges: OperatorDecisionDefinition = {
+    key: "request_changes", label: "Request changes", fields: [{ key: "feedback", label: "What needs to change?" }],
+    payload_schema: "{feedback: text}",
+    submit: { kind: "review", review: "report_review", decision: "request_changes", effect: "request_changes", target_revision_id: revision.id },
+  };
+  const unit = withUnitFields(cohort, {
+    stage: "synthesis", collection_key: null, unit_key: "synthesis",
+    decisions: [approve, requestChanges], input: { repository_key: "oakridge" },
+  });
+  const entry: OperatorRunInboxBatchEntry = { run_id: unit.run_id, items: [
+    { kind: "decision", run_id: unit.run_id, unit_id: unit.unit_id, key: approve.key,
+      label: approve.label, submit: approve.submit, prompt: null },
+  ] };
+
+  it("carries the study workflow name and title to every item", () => {
+    const inbox = classifyDevelopmentInbox(entry, [unit], { workflow_name: "study", run_title: "Study run" });
+    if (!inbox.ok) throw new Error(inbox.error.detail);
+    expect(inbox.value.items.map(({ workflow_name, run_title }) => [workflow_name, run_title])).toEqual([["study", "Study run"]]);
+  });
+
+  it("offers both decisions for a review targeting the unit's latest artifact revision", () => {
+    const inbox = classifyDevelopmentInbox(entry, [unit], { workflow_name: "study", run_title: null });
+    if (!inbox.ok) throw new Error(inbox.error.detail);
+    expect(inbox.value.items).toHaveLength(1);
+    expect(inbox.value.items[0]).toMatchObject({
+      kind: "artifact_gate", workflow_name: "study",
+      gate_id: expect.any(String), artifact_revision_id: expect.any(String),
+      resume_actions: ["approve", "request_revision"],
+    });
+  });
+
+  it("keeps a review with no matching artifact revision as a gate decision", () => {
+    const withoutTarget = withUnitFields(unit, { artifacts: unit.artifacts.filter((artifact) => artifact.latest_revision?.id !== revision.id) });
+    const inbox = classifyDevelopmentInbox(entry, [withoutTarget], { workflow_name: "study", run_title: null });
+    if (!inbox.ok) throw new Error(inbox.error.detail);
+    expect(inbox.value.items[0]).toMatchObject({ kind: "gate_decision", artifact_revision_id: null });
+  });
+});
+
+it("keeps a development cohort's PR-closed review as a gate decision even with artifact evidence", () => {
+  const decision = cohort.decisions.find((candidate) => candidate.key === "accept");
+  if (!decision || decision.submit.kind !== "review") throw new Error("captured fixture lacks a cohort review");
+  const entry: OperatorRunInboxBatchEntry = { run_id: cohort.run_id, items: [
+    { kind: "decision", run_id: cohort.run_id, unit_id: cohort.unit_id, key: decision.key,
+      label: decision.label, submit: { ...decision.submit, review: "pr_closed" }, prompt: null },
+  ] };
+  const inbox = classifyDevelopmentInbox(entry, [cohort], { workflow_name: "development", run_title: null });
+  if (!inbox.ok) throw new Error(inbox.error.detail);
+  expect(inbox.value.items[0]).toMatchObject({ kind: "gate_decision", artifact_revision_id: expect.any(String) });
 });
