@@ -385,6 +385,14 @@ stages:
             message: "Paid slice models must be plan models."
           - check: unique(map(plan.groups, item.id)) and unique(map(plan.hypotheses, item.id))
             message: "Group and hypothesis ids must be unique."
+          - check: len(plan.slice.case_ids) > 0
+            message: "The slice needs at least one case."
+          - check: len(plan.slice_paid.models) > 0
+            message: "The paid slice needs at least one model."
+          - check: plan.slice_paid.repeats > 0
+            message: "The paid slice needs at least one repeat."
+          - check: unique(map(plan.slice.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.slice.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))
+            message: "Slice criteria and iteration triggers must have distinct ids."
       slice_build:
         kind: document
         schema: slice_build_body
@@ -487,6 +495,7 @@ stages:
         when: approved(plan) and not (report_is_placeholder and not approved(spend_request) and not changes_requested(spend_request))
         inputs:
           plan: latest(plan)
+          spec: input.spec
           repository: input.repository
           build_base: input.repository.forge.build_base
           spend_approved: approved(spend_request)
@@ -775,6 +784,8 @@ stages:
             message: "Regenerated cases must match the committed fixtures byte for byte."
           - check: len(freeze.cohorts) > 0 and unique(map(freeze.cohorts, item.id))
             message: "The freeze needs uniquely identified cohorts."
+          - check: every(freeze.cohorts, not contains(map(input.plan.cases, item.id), item.id))
+            message: "Frozen cohort ids must be distinct from plan case ids."
           - check: every(freeze.cohorts, item.attempt_count > 0 and item.cap_cents > 0)
             message: "Every frozen cohort needs attempts and a cap in cents."
           - check: freeze.build.cohort_id == "freeze"

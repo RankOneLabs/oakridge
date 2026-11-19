@@ -6,6 +6,8 @@ Every attempt must publish all four artifacts (`slice_build`, `spend_request`, `
 
 ## Offline path
 
+Render the approved plan to `experiments/<area>/studies/<study>/study-plan.md` using the area and study names from the spec. Raise a blocker if either name is missing. Include the question, hypotheses, case table by group with controls marked, outcomes and their rules, the ordered decision rule, model caps and expected costs with their basis, the slice and its risk reason and criteria, the paid slice, and iteration triggers. Commit the file on the slice PR branch. On a rebuild, update it from the current approved plan.
+
 1. Generate fixtures only for the plan's `slice.case_ids`. Never generate a non-slice case.
 2. Qualify the fixtures on mcclure using the qualification-host instructions below. Verify that the reference patch passes, each omission patch fails only its own fact's tests, and control cases are replayed in fresh sandboxes. Record `{case_id, reference_passes, omissions_isolated, controls_replayed, detail}` per case.
 3. Compute `generator_digest` as one hash over the generator source, the shared visible tests, and the hidden-test templates. Record the exact files and hash command used so expansion can reproduce it. Commit the fixtures, generator and qualification work.
@@ -27,6 +29,10 @@ Publish in this order.
 2. Republish `slice_build` and `spend_request` unchanged from the committed `oakridge/slice-build.json` and `oakridge/spend-request.json`.
 3. Publish `pr` for the draft PR against `build_base`, using the pr-operations skill to update or replace it if needed.
 4. End the attempt.
+
+## Study specification
+
+{{spec}}
 
 ## Approved study plan
 

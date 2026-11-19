@@ -14,11 +14,9 @@ Every `plan_body` field is required.
 - `slice_paid` with `{models, repeats, cap_cents}`
 - `iteration_triggers` with `{id, text}` entries
 
-Use integer cents for all money. Include at most `slice_case_limit` cases in the slice, with at least one control whenever any plan case is a control. Set `slice_paid.cap_cents` above zero and at most `slice_cap_cents`. If validation refuses the plan, read the refusal and republish.
+Use integer cents for all money. Include one to `slice_case_limit` cases in the slice, with at least one control whenever any plan case is a control. Select at least one paid slice model and use positive repeats. Use distinct IDs for all slice criteria and iteration triggers. Set `slice_paid.cap_cents` above zero and at most `slice_cap_cents`. If validation refuses the plan, read the refusal and republish.
 
-Rewrite `study-plan.md` and commit it on every republish, including when a validation refusal was the only feedback.
-
-Render the published plan into `experiments/<area>/studies/<study>/study-plan.md` in `repository_key`. Use the area and study names from the spec and raise a blocker if either is missing. Include the question, hypotheses, a case table by group with controls marked, outcomes and their rules, the decision rule as an ordered table, model caps and expected costs with their basis, the slice and its risk reason and criteria, the paid slice, and the iteration triggers. Readers must be able to see the decision rule without Oakridge. Commit and push with the pr-operations skill. The slice builder opens the PR.
+Check that the spec names the experiment area and study. The slice builder uses those names when committing the approved plan. Raise a blocker if either is missing.
 
 ## Study specification
 
