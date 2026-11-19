@@ -34,7 +34,12 @@ export interface OperatorUnitDefinition {
   readonly artifacts: readonly OperatorArtifactDefinition[];
 }
 
-export interface OperatorDefinitionPrompt { readonly body: string; readonly digest: string }
+export interface OperatorDefinitionPrompt {
+  readonly body: string;
+  readonly digest: string;
+  /** The prompts this one includes directly with `{{> path}}`, each once, in the order the body names them. */
+  readonly includes: readonly string[];
+}
 
 export interface OperatorDefinitionGraphNode { readonly key: string; readonly stage: string; readonly depends_on: readonly string[] }
 

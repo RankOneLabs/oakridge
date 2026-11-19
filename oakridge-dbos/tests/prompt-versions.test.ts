@@ -285,7 +285,7 @@ test("definition detail served by the app keeps pinned prompt bodies byte-exact 
     const response = await app.request("/api/definitions/" + definition_id);
     expect(response.status).toBe(200);
     const detail = await response.json() as DefinitionDetail;
-    expect(detail.prompts[path]).toEqual({ body, digest: pending.prompt_id });
+    expect(detail.prompts[path]).toEqual({ body, digest: pending.prompt_id, includes: [] });
     const missing = await app.request("/api/definitions/" + encodeURIComponent("Authorization: Bearer SERVER_CREDENTIAL"));
     expect(missing.status).toBe(404);
     expect(JSON.stringify(await missing.json())).not.toContain("SERVER_CREDENTIAL");

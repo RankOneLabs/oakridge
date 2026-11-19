@@ -1,4 +1,4 @@
-import type { OperatorDefinitionDetail, OperatorDefinitionPrompt } from "../operator-contracts/projections/definition-view";
+import type { OperatorDefinitionDetail, OperatorDefinitionPrompt, OperatorDefinitionPrompts } from "../operator-contracts/projections/definition-view";
 import type { OperatorPromptVersionListing, OperatorPromptVersionView, OperatorPromptPublicationOutcome } from "../operator-contracts/http/prompt-versions";
 import { selectStageInspector } from "./stage-inspector";
 import { selectPromptRows } from "./prompt-inspector";
@@ -13,7 +13,7 @@ export type PromptFeedback =
   | { kind: "published"; definition_id: string | null }
   | { kind: "validation_failed"; issues: readonly { path: readonly (string | number)[]; detail: string }[] }
   | { kind: "transport_error"; detail: string };
-export function createPromptDraft({path, published, versions}: {path: string; published: OperatorDefinitionPrompt; versions: OperatorPromptVersionListing}): PromptDraftState {
+export function createPromptDraft({path, published, versions}: {path: string; published: Pick<OperatorDefinitionPrompt, "body" | "digest">; versions: OperatorPromptVersionListing}): PromptDraftState {
   return {path, published_body: published.body, published_digest: published.digest, body: versions.pending?.body ?? published.body, is_dirty: false,
     pending: versions.pending ? {digest: versions.pending.version_id, body: versions.pending.body} : null};
 }
@@ -38,17 +38,34 @@ export function promptFeedbackText(feedback: PromptFeedback): string {
     case "transport_error": return `Request failed: ${feedback.detail}`;
   }
 }
+/** A use of a prompt: a worker or review mode whose prompt is this one, or includes it. */
 export interface PromptReference {
   definition_id: string; workflow: string; stage: string; owner_kind: "worker" | "review"; owner_key: string; mode: string; template: string | null;
+  /** The prompt the owner names; it differs from the edited path when the use reaches it through an include. */
+  prompt_path: string;
+}
+/** The prompt itself and every prompt that includes it, directly or through other includes. */
+export function selectIncludingPaths({path, prompts}: {path: string; prompts: OperatorDefinitionPrompts}): ReadonlySet<string> {
+  const including = new Set([path]);
+  for (let is_growing = true; is_growing;) {
+    const size = including.size;
+    for (const [candidate, prompt] of Object.entries(prompts)) if (prompt.includes.some(include => including.has(include))) including.add(candidate);
+    is_growing = including.size > size;
+  }
+  return including;
 }
 export function selectPromptReferences({path, definitions}: {path: string; definitions: readonly OperatorDefinitionDetail[]}): PromptReference[] {
-  return definitions.flatMap(definition => !definition.prompts[path] ? [] : Object.keys(definition.effective_workflow.stages).flatMap(stage => {
-    const model = selectStageInspector(definition, {kind: "stage", stage, tab: null});
-    return model ? selectPromptRows(model).filter(row => row.path === path).map(row => ({
-      definition_id: definition.definition_id, workflow: definition.bundle.key, stage, owner_kind: row.owner.kind,
-      owner_key: row.owner.key, mode: row.mode, template: row.owner.template,
-    })) : [];
-  })).sort((a, b) => a.workflow.localeCompare(b.workflow) || a.stage.localeCompare(b.stage) || a.owner_key.localeCompare(b.owner_key) || a.mode.localeCompare(b.mode));
+  return definitions.flatMap(definition => {
+    if (!definition.prompts[path]) return [];
+    const including = selectIncludingPaths({path, prompts: definition.prompts});
+    return Object.keys(definition.effective_workflow.stages).flatMap(stage => {
+      const model = selectStageInspector(definition, {kind: "stage", stage, tab: null});
+      return model ? selectPromptRows(model).filter(row => including.has(row.path)).map(row => ({
+        definition_id: definition.definition_id, workflow: definition.bundle.key, stage, owner_kind: row.owner.kind,
+        owner_key: row.owner.key, mode: row.mode, template: row.owner.template, prompt_path: row.path,
+      })) : [];
+    });
+  }).sort((a, b) => a.workflow.localeCompare(b.workflow) || a.stage.localeCompare(b.stage) || a.owner_key.localeCompare(b.owner_key) || a.mode.localeCompare(b.mode) || a.prompt_path.localeCompare(b.prompt_path));
 }
 export const selectPromptIsShared = (references: readonly PromptReference[]): boolean => references.length > 1 || references.some(reference => reference.template !== null);
 export const selectPublishedDefinitionId = (outcome: OperatorPromptPublicationOutcome, workflow: string): string | null => outcome.moved.find(move => move.workflow === workflow)?.definition_id ?? null;

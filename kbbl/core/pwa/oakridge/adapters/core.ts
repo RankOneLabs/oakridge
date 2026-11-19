@@ -291,10 +291,11 @@ export function replaceJsonPointer(body: unknown, pointer: string, previous: unk
 
 export function parseDefinitionPrompts(value: unknown): AdapterResult<import("../operator-contracts/projections/definition-view").OperatorDefinitionPrompts> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return fail("parse definition prompts", "expected an object");
-  const prompts: { [path: string]: { body: string; digest: string } } = {};
+  const prompts: { [path: string]: import("../operator-contracts/projections/definition-view").OperatorDefinitionPrompt } = {};
   for (const [path, entry] of Object.entries(value)) {
     if (typeof entry !== "object" || entry === null || !("body" in entry) || typeof entry.body !== "string" || !("digest" in entry) || typeof entry.digest !== "string" || !/^[0-9a-f]{64}$/.test(entry.digest)) return fail("parse definition prompts", path + ": expected body text and lowercase SHA-256 digest");
-    prompts[path] = { body: entry.body, digest: entry.digest };
+    if (!("includes" in entry) || !Array.isArray(entry.includes) || !entry.includes.every((include: unknown) => typeof include === "string")) return fail("parse definition prompts", path + ": expected the included prompt paths");
+    prompts[path] = { body: entry.body, digest: entry.digest, includes: entry.includes };
   }
   return ok(prompts);
 }
