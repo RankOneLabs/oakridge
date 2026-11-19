@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionId, RunId } from "../src/domain/primitives";
 import { composeBuilderFeedback, validateAdjudication, type Adjudication } from "../src/domain/adjudication";
+const REQUEST_BUILD_CHANGES = { key: "request_build_changes", effect: "request_changes", is_adjudication: true, fields: [] } as const;
 import { browserWritePolicy } from "../src/http/browser-write-policy";
 import { createHttpApp } from "../src/http/app";
 import { commitEvent } from "../src/storage/commit";
@@ -110,7 +111,7 @@ test("redirected adjudication refuses an unseen successor even when its actions 
   expect(published.ok && published.value.kind).toBe("committed");
   const successor = await authority.db.selectFrom("authority.artifact_revision").selectAll().where("unit_id", "=", state.unit_id)
     .where("artifact", "=", "assessment").orderBy("seq", "desc").executeTakeFirstOrThrow();
-  expect(validateAdjudication({ payload, assessment: { id: successor.id, body: successor.body as typeof target.body }, effect: "request_build_changes" }).ok).toBe(true);
+  expect(validateAdjudication({ payload, assessment: { id: successor.id, body: successor.body as typeof target.body }, decision: REQUEST_BUILD_CHANGES }).ok).toBe(true);
   const response = await decide(state, payload, "request_build_changes");
   expect({ status: response.status, decisions: (await decisions(state)).length }).toEqual({ status: 409, decisions: 0 });
   expect(await response.text()).toContain("reviewed assessment changed");

@@ -54,6 +54,7 @@ export function CriterionCheckItem({ check, showBriefComparison = true, renderGr
 }
 
 import type { OperatorItemAssessment } from "../../operator-contracts/domain/assessment";
+import { selectSubjectKindLabel } from "../../lib/current-assessment";
 import type { ViewerProps } from "../../artifactRegistry";
 import { ArtifactItemGrade } from "./ArtifactItemGrade";
 interface CurrentItemProps extends Pick<ViewerProps, "source" | "itemGrading" | "onOpenItem"> {
@@ -61,7 +62,7 @@ interface CurrentItemProps extends Pick<ViewerProps, "source" | "itemGrading" | 
 }
 export function CurrentCriterionCheckItem({ item, index, source, itemGrading, onOpenItem }: CurrentItemProps) {
   return <li data-testid="or-criterion-check" data-status={item.status} className={`flex flex-col gap-2 rounded-md border p-3 ${item.status === "met" ? "border-[var(--border-decorative)]" : "border-[var(--amber-border)] bg-[var(--amber-bg)]"}`}>
-    <div className="flex items-center gap-2"><strong>{item.subject.kind === "build_item" ? "Build item" : "Requirement"} {item.subject.id}</strong>
+    <div className="flex items-center gap-2"><strong>{selectSubjectKindLabel(item.subject.kind)} {item.subject.id}</strong>
       <span aria-label="Assessor status"><Chip tone={selectStatusTone(item.status)}>{CRITERION_STATUS_LABEL[item.status]}</Chip></span></div>
     <p>{item.observation}</p>
     <EvidenceRefList refs={item.evidence.map(ref => ({ ...ref, detail: ref.detail ?? null }))} />

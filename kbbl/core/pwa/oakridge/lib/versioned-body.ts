@@ -1,6 +1,6 @@
 import { parseCurrentAssessment, type CurrentAssessment } from "./current-assessment";
 import type { Result } from "../../lib/result";
-import { selectVersionedComponent } from "./artifact-version";
+import { selectArtifactComponent } from "./artifact-version";
 import { parseCanonicalSpec, parseCurrentAnalysis, parseCurrentBrief, parseCurrentPlan, type CanonicalSpec, type CurrentAnalysis, type CurrentBrief, type CurrentPlan, type CurrentParseError } from "./current-contract";
 export type CurrentArtifactBody =
   | { readonly kind: "analysis"; readonly body: CurrentAnalysis }
@@ -10,8 +10,8 @@ export type CurrentArtifactBody =
   | { readonly kind: "assessment"; readonly body: CurrentAssessment };
 export type CurrentArtifactRead = Result<CurrentArtifactBody | null, CurrentParseError>;
 /** The adapter validates current bodies before presentation. Unknown/legacy bodies stay untouched. */
-export function parseVersionedBody(input: { readonly schema: string; readonly version: string | null; readonly body: unknown }): CurrentArtifactRead {
-  switch (selectVersionedComponent({ schema: input.schema, version: input.version })) {
+export function parseVersionedBody(input: { readonly schema: string; readonly version: string | null; readonly is_adjudicated?: boolean; readonly body: unknown }): CurrentArtifactRead {
+  switch (selectArtifactComponent(input)) {
     case "dev-current-analysis-viewer": {
       const result = parseCurrentAnalysis(input.body);
       return result.ok ? { ok: true, value: { kind: "analysis", body: result.value } } : result;
