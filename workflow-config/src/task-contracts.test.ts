@@ -226,6 +226,27 @@ test("a later level never waits for an earlier brief's approval", async () => {
   expect(run.result.snapshot.decisions.filter(d => d.unit.startsWith("run/briefs/"))).toEqual([]);
   expect(writers(run)).toEqual(["run/briefs/consumer"]);
 });
+const levelTwo = ["run/briefs/left", "run/briefs/right"];
+const isReleased = (run: TestRun, unit: string) => !run.result.blocked.some(b => b.unit === unit);
+test("a writer that fails before publishing its brief holds the next level", async () => {
+  const run = await planRun([consumer, right, left, provider]);
+  const attempt = run.result.snapshot.attempts.filter(a => a.unit === "run/briefs/provider").at(-1)!;
+  await run.apply({ kind: "worker_ended", action: attempt.action_id, result: { kind: "failed", code: "session_failed", detail: "writer exited" } });
+  expect(levelTwo.filter(unit => isReleased(run, unit))).toEqual([]);
+});
+test("a writer that raises a blocker instead of its brief holds the next level", async () => {
+  const run = await planRun([consumer, right, left, provider]);
+  await run.publish("writer", "blocker", { text: "Which store owns the cohort?" }, "run/briefs/provider");
+  await run.end("writer", "run/briefs/provider");
+  expect(levelTwo.filter(unit => isReleased(run, unit))).toEqual([]);
+});
+test("a blocker raised after an upstream brief holds the next level until answered", async () => {
+  const run = await planRun([consumer, right, left, provider]);
+  await run.publish("writer", "brief", brief(provider), "run/briefs/provider");
+  await run.publish("writer", "blocker", { text: "Which store owns the cohort?" }, "run/briefs/provider");
+  await run.end("writer", "run/briefs/provider");
+  expect(levelTwo.filter(unit => isReleased(run, unit))).toEqual([]);
+});
 
 test("integration resolves a shared canonical requirement once across contributions", async () => {
   const cohorts = [cohort(), cohort("C2", ["R2"])];

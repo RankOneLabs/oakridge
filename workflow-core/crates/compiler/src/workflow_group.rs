@@ -134,6 +134,15 @@ pub(super) fn check_structure(
                 format!("unit {key} orders members but is no collection")
             );
         }
+        // Order releases a level when its members' turns end; a group's turns
+        // belong to its child stages, so it would wait for the whole group.
+        if unit.order.is_some() && unit.group.is_some() {
+            report!(
+                CheckKind::Collection,
+                format!("{unit_path}.order"),
+                format!("unit {key} orders group members; only stage collections order")
+            );
+        }
         if let Some(pool) = &unit.pool {
             if group
                 .pools

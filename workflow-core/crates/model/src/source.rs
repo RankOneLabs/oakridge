@@ -764,10 +764,11 @@ pub struct Unit {
     pub for_each: Option<String>,
     pub key: Option<String>,
     pub pool: Option<SymbolKey>,
-    /// A collection's admission levels, as a list of member-key lists. A
-    /// member is admitted only once every member in an earlier level has
-    /// started and has no attempt in flight. Unlike `after`, it never waits
-    /// for those members to finish.
+    /// A stage collection's admission levels, as a list of member-key lists.
+    /// A member is admitted only once every member in an earlier level has
+    /// published a revision other than a blocker, has no blocker parked and
+    /// has no attempt in flight. Unlike `after`, it never waits for those
+    /// members to be approved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<String>,
 }

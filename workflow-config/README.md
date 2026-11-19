@@ -36,8 +36,9 @@ computes the plan's `order` from depends_on when the plan is accepted:
 `levels(cohorts, id, depends_on)` groups cohorts by dependency depth, so cohorts
 with no path between them share a level. The briefs collection follows that
 order in one shared writer session. A brief starts once every brief in an
-earlier level has started and its writer turn has ended, without waiting for
-approval, so each brief builds on the contracts its upstream briefs wrote. Briefs
+earlier level has been published, its writer turn has ended and it has no open
+blocker, without waiting for approval, so each brief builds on the contracts its
+upstream briefs wrote. A failed or blocked upstream writer holds its dependents. Briefs
 bind their envelope to that plan cohort and supply detailed build_items linked to
 requirements, verification and material technical_decisions. Implementation order
 and outcome titles come from the plan.

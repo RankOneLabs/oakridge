@@ -672,24 +672,29 @@ fn order_waiting(
         })
         .filter(|sibling| match sibling.status {
             UnitStatus::NotStarted => true,
-            UnitStatus::Active => {
-                let mut attempts = state
-                    .attempts
-                    .iter()
-                    .filter(|attempt| attempt.unit == sibling.id)
-                    .peekable();
-                attempts.peek().is_none()
-                    || attempts.any(|attempt| {
-                        matches!(
-                            attempt.status,
-                            AttemptStatus::Pending | AttemptStatus::Running
-                        )
-                    })
-            }
+            UnitStatus::Active => !has_settled_work(state, &sibling.id),
             _ => false,
         })
         .map(|sibling| sibling.id.clone())
         .collect())
+}
+
+/// An active member settles its work, without approval, once it has published
+/// a revision other than a blocker, no blocker of its own is parked, and no
+/// turn is in flight. A writer that failed or only asked a question has not.
+fn has_settled_work(state: &StepSnapshot, unit: &UnitId) -> bool {
+    let has_published = state
+        .revisions
+        .iter()
+        .any(|revision| &revision.unit == unit && revision.artifact.0 != BLOCKER_ARTIFACT);
+    let has_turn_in_flight = state.attempts.iter().any(|attempt| {
+        &attempt.unit == unit
+            && matches!(
+                attempt.status,
+                AttemptStatus::Pending | AttemptStatus::Running
+            )
+    });
+    has_published && !has_turn_in_flight && parked_blocker(state, unit).is_none()
 }
 
 /// Blocked-ness is a per-step read; it is never a stored unit status.

@@ -213,6 +213,20 @@ fn only_a_collection_orders_members() {
 }
 
 #[test]
+fn a_group_collection_cannot_order_its_members() {
+    let error = fan_out_compile_error(|value| {
+        let work = &mut value["run"]["units"]["work"];
+        work["for_each"] = "input.items".into();
+        work["key"] = "each.key".into();
+        work["order"] = "levels(input.items, key, after)".into();
+    });
+    assert!(
+        error.detail.contains("only stage collections order"),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn a_collection_order_must_be_a_list_of_key_lists() {
     let error = fan_out_compile_error(|value| {
         value["run"]["units"]["work"]["group"]["units"]["item"]["order"] = "input.items".into();
