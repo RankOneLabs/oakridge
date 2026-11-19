@@ -5,8 +5,14 @@ import { Button } from "../../../components/atoms/Button";
 export function CurrentParseFailure({ body, detail }: { body: unknown; detail: string }) {
   return <section><p role="alert">Could not read this artifact: {detail}</p><pre className="whitespace-pre-wrap break-words">{JSON.stringify(body, null, 2)}</pre></section>;
 }
-export function SourceReferences({ refs }: { refs: readonly string[] }) {
-  return <ul>{refs.map((ref, index) => <li key={index}><a className="underline" href={/^https?:\/\//i.test(ref) ? ref : "#original-input"} onClick={/^https?:\/\//i.test(ref) ? undefined : (event) => navigateArtifactAnchor(event, "original-input")}>{ref}</a></li>)}</ul>;
+/** A tabbed viewer passes `onOpenOriginalInput` to switch to its Original input section; otherwise the link scrolls within the page. */
+export function SourceReferences({ refs, onOpenOriginalInput }: { refs: readonly string[]; onOpenOriginalInput?: () => void }) {
+  const openOriginalInput = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!onOpenOriginalInput) return navigateArtifactAnchor(event, "original-input");
+    event.preventDefault();
+    onOpenOriginalInput();
+  };
+  return <ul>{refs.map((ref, index) => <li key={index}><a className="underline" href={/^https?:\/\//i.test(ref) ? ref : "#original-input"} onClick={/^https?:\/\//i.test(ref) ? undefined : openOriginalInput}>{ref}</a></li>)}</ul>;
 }
 export function OriginalInput({ text }: { text: string | null | undefined }) {
   return <details id="original-input" open><summary>Original input</summary><pre className="whitespace-pre-wrap break-words">{text ?? "Original input unavailable for this revision."}</pre></details>;

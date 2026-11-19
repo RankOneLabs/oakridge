@@ -179,7 +179,8 @@ test("browser navigates the committed definition list and detail", async () => {
 }, 30_000);
 
 test.each([
-  ["analysis", "Code hotspots"], ["spec", "Canonical workflow"], ["plan", "Parallel wave 2"], ["brief", "System-bound envelope"], ["assessment", "An unrelated regression needs investigation."],
+  // Each viewer opens on its first section: analysis requirements, spec requirements, the plan graph, build items, item assessments.
+  ["analysis", "Observation F1"], ["spec", "Canonical workflow"], ["plan", "Cohort A"], ["brief", "Implement requirements"], ["assessment", "The requested behavior works."],
 ] as const)("live-version %s revisions reach their current viewer through the real client", async (kind, expected) => {
   const fixture = currentArtifactFixture(kind);
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
@@ -195,8 +196,10 @@ test.each([
     const errors: Error[] = [];
     page.on("pageerror", (error) => errors.push(error));
     await page.goto(`${server.url.href}?artifact=${kind}&unit=${encodeURIComponent(fixture.unit.unit_id)}`);
-    await page.getByText(expected, { exact: true }).waitFor();
-    expect(await page.getByText(expected, { exact: true }).count()).toBe(1);
+    // Hidden sections stay mounted, so count only what the first section shows.
+    const marker = page.getByText(expected, { exact: true }).filter({ visible: true });
+    await marker.waitFor();
+    expect(await marker.count()).toBe(1);
     expect(errors).toEqual([]);
   } finally { await page.close(); server.stop(true); }
 }, 30_000);
