@@ -120,5 +120,5 @@ test("an invalid observation health response is a non-blocking failure", async (
 test("default status catalog excludes fixtures from launch blocks", async () => {
   const { definitions: _definitions, ...dependencies } = sources();
   const status = await readInstallStatus(dependencies);
-  expect(status.launch_blocks.map((block) => block.definition_name)).toEqual(["development"]);
+  expect(status.launch_blocks.map((block) => block.definition_name).sort()).toEqual(["development", "study"]);
 });
