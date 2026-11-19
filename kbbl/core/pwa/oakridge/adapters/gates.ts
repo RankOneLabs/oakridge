@@ -8,9 +8,18 @@ export interface GateDecision { readonly action: string; readonly decision: Oper
 export const REQUEST_BUILD_CHANGES = "request_build_changes";
 /** Approve-effect keys the frozen gate UI labels and styles as primary; any other key would render as its raw text. */
 const V1_APPROVE_ACTIONS: ReadonlySet<string> = new Set(["approve", "confirm_merged", "pass"]);
-/** The builder handoff records this decision with its next actions; the gate never offers it bare. */
-export const isDisplayedReviewDecision = (review: string, decision: string): boolean =>
-  review !== "assessment_review" || decision !== REQUEST_BUILD_CHANGES;
+export const ADJUDICATION_PAYLOAD_SCHEMA = "adjudication";
+/** Whether a decision records an operator adjudication, which only the assessment view can compose. */
+export const isAdjudicationDecision = (decision: OperatorDecisionDefinition): boolean =>
+  decision.submit.kind === "review" && decision.payload_schema === ADJUDICATION_PAYLOAD_SCHEMA;
+const isAdjudicatedSendBack = (decision: OperatorDecisionDefinition): boolean =>
+  isAdjudicationDecision(decision) && decision.submit.kind === "review" && decision.submit.effect === "request_changes";
+/** The pre-adjudication assessment sends its build change with plain feedback from SendToBuilder. */
+const isFeedbackBuildHandoff = (decision: OperatorDecisionDefinition): boolean =>
+  decision.submit.kind === "review" && decision.submit.review === "assessment_review" && decision.submit.decision === REQUEST_BUILD_CHANGES;
+/** A send-back is recorded with its next actions from the assessment view; plain gate controls never offer it bare. */
+export const isDisplayedReviewDecision = (decision: OperatorDecisionDefinition): boolean =>
+  !isAdjudicatedSendBack(decision) && !isFeedbackBuildHandoff(decision);
 /** True when the decision's review offers more than one request-changes decision, so the shared request_revision action would be ambiguous. */
 const hasSiblingChangeRequests = (review: string, offered: readonly OperatorDecisionDefinition[]): boolean =>
   offered.filter((candidate) => candidate.submit.kind === "review"
@@ -28,7 +37,7 @@ export const decisionAction = (decision: OperatorDecisionDefinition, offered: re
 };
 export const reviewDecisions = (unit: OperatorUnitView): GateDecision[] => unit.decisions
   .filter((decision) => decision.submit.kind === "review"
-    && isDisplayedReviewDecision(decision.submit.review, decision.submit.decision))
+    && isDisplayedReviewDecision(decision))
   .map((decision) => ({ action: decisionAction(decision, unit.decisions), decision }));
 export const selectGateDecision = (gate: ParkedGate, action: string | null): OperatorDecisionDefinition | null =>
   gate.decision_definitions?.find((decision) => decisionAction(decision, gate.decision_definitions ?? []) === action) ?? null;
@@ -65,7 +74,7 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
       worktree: null, offered_decisions: decisions.map((decision) => decision.submit.kind === "review" ? decision.submit.decision : ""),
       decision_definitions: decisions,
       resume_actions: [...new Set(decisions.filter((decision) => decision.submit.kind === "review"
-        && isDisplayedReviewDecision(decision.submit.review, decision.submit.decision)).map((decision) => decisionAction(decision, decisions)))],
+        && isDisplayedReviewDecision(decision)).map((decision) => decisionAction(decision, decisions)))],
       pr_url: review === "merge_confirmation" ? developmentPullRequestUrl(unit) : null,
       run_state: unit.status.kind === "done" ? "succeeded" : unit.status.kind === "cancelled" ? "cancelled" : "active", actionable: true };
   }));

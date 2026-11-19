@@ -2,10 +2,9 @@ import type { OperatorInboxItem, OperatorRunInboxBatchEntry } from "../operator-
 import type { OperatorArtifactView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../artifact-types";
 import { selectUnitAttentionLabel, type UnitAttentionLabelInput } from "../lib/run-attention";
-import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";
+import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isAdjudicationDecision, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";
 
 const DEVELOPMENT_WORKFLOW_NAME = "development";
-const ADJUDICATION_PAYLOAD_SCHEMA = "adjudication";
 
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
@@ -107,8 +106,8 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
   const items: ReviewInboxItem[] = entry.items.flatMap((item) => {
     const unit = byId.get(item.unit_id);
     if (!unit) return [];
-    if (item.kind === "decision" && item.submit.kind === "review"
-      && !isDisplayedReviewDecision(item.submit.review, item.submit.decision)) return [];
+    const declared = item.kind === "decision" ? unit.decisions.find((decision) => decision.key === item.key) : undefined;
+    if (declared && !isDisplayedReviewDecision(declared)) return [];
     if (item.kind === "stalled" && unitsWithRetry.has(item.unit_id)) return [];
     if (item.kind === "waiting" && unitsWithBlocker.has(item.unit_id)) return [];
     const isManualMergeAvailable = deriveStatus(statusInputOf(unit)).stage === "parked"
@@ -132,9 +131,9 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     const stageId = compositeId({ kind: "stage", runId: entry.run_id, unitId: unit.unit_id, name: unit.stage ?? "$root" });
     const reviewDecisions = review ? unit.decisions.filter((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review) : [];
     const actions = reviewDecisions.filter((candidate) => candidate.submit.kind === "review"
-      && isDisplayedReviewDecision(candidate.submit.review, candidate.submit.decision)).map((candidate) => decisionAction(candidate, unit.decisions));
+      && isDisplayedReviewDecision(candidate)).map((candidate) => decisionAction(candidate, unit.decisions));
     // An adjudication payload is recorded from the assessment view; the inbox's plain controls cannot supply it.
-    const requiresAdjudication = reviewDecisions.some((candidate) => candidate.payload_schema === ADJUDICATION_PAYLOAD_SCHEMA);
+    const requiresAdjudication = reviewDecisions.some(isAdjudicationDecision);
     return [{ id: `${item.run_id}:${item.unit_id}:${item.kind === "decision" ? item.key : item.kind}`, kind,
       state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: run.workflow_name, stage_instance_id: stageId,
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
