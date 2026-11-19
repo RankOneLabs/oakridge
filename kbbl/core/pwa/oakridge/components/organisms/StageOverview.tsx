@@ -11,6 +11,7 @@ import { ShowAutomaticGrades } from "./ShowAutomaticGrades";
 import { BlockerPanel } from "./BlockerPanel";
 import { selectOpenBlockerGate } from "../../adapters/gates";
 import type { ReactNode } from "react";
+import type { OperatorUnitView } from "../../operator-contracts/projections/unit-view";
 import type { ObservationItemStatusResponse } from "../../grading-contracts/storage/grading-record-store";
 
 interface Props { runId: string; unitId: string; onOpenBeside: (pane: RunWorkspacePane) => void }
@@ -19,10 +20,17 @@ export function StageOverview({ runId, unitId, onOpenBeside }: Props) {
   if (read.units.isError) return <FeedbackMessage tone="danger">Stage overview unavailable.</FeedbackMessage>;
   if (!read.units.data) return <FeedbackMessage>Loading stage overview…</FeedbackMessage>;
   if (!read.source || !read.inputs || !read.execution || !read.evaluation) return <FeedbackMessage>Recorded unit unresolved: {unitId}</FeedbackMessage>;
-  const blockerGate = selectOpenBlockerGate(read.source.unit);
   return <StageOverviewContent runId={runId} label={read.source.unit.label} inputs={read.inputs} execution={read.execution} evaluation={read.evaluation}
-    blocker={blockerGate && <BlockerPanel gate={blockerGate} blocker={blockerGate.blocker} />}
+    blocker={<UnitBlocker unit={read.source.unit} />}
     artifactState={read.artifacts.isError ? "unavailable" : read.artifacts.data ? "loaded" : "pending"} onOpenBeside={onOpenBeside} />;
+}
+/**
+ * The unit's open blocker and its answer form. Keyed by the blocker gate, which names the blocker revision, so a pane
+ * moved to another unit, or a blocker the worker revised, starts from an empty draft rather than one written for another.
+ */
+export function UnitBlocker({ unit }: { unit: OperatorUnitView }) {
+  const gate = selectOpenBlockerGate(unit);
+  return gate && <BlockerPanel key={gate.id} gate={gate} blocker={gate.blocker} />;
 }
 interface ContentProps {
   runId: string; label: string; inputs: StageInputs; execution: StageExecution; evaluation: StageEvaluation;
