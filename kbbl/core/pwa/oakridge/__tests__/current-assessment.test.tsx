@@ -13,13 +13,16 @@ const gate: ParkedGate = { id: "gate", run_id: "run", unit_id: "unit", stage_nam
   decision_definitions: ["accept", "request_build_changes"].map(decision => ({ key: decision, label: decision, fields: [], payload_schema: "adjudication", submit: { kind: "review", review: "assessment_review", decision, target_revision_id: "assessment:1", effect: decision === "accept" ? "approve" : "request_changes" } })) };
 it("shows additional findings when all items are met without legacy sections", () => {
   render(<CurrentAssessmentViewer assessment={CURRENT_ASSESSMENT} />);
+  fireEvent.click(screen.getByRole("tab", { name: /^Findings/ }));
   expect(screen.getByTestId("or-assessment-additional-findings").textContent).toContain("unrelated regression");
   expect(screen.queryByText("Task findings")).toBeNull(); expect(screen.queryByText("Cross-cutting findings")).toBeNull(); expect(screen.queryByText("Unresolved item references")).toBeNull();
 });
 it("observation grades remain distinct from assessor status", () => {
   render(<CurrentAssessmentViewer assessment={CURRENT_ASSESSMENT} />);
-  expect(screen.getAllByRole("region", { name: "Observation grade" }).length).toBe(2);
   expect(screen.getByLabelText("Assessor status").textContent).toBe("met");
+  const itemGrades = screen.getAllByRole("region", { name: "Observation grade" }).length;
+  fireEvent.click(screen.getByRole("tab", { name: /^Findings/ }));
+  expect(itemGrades + screen.getAllByRole("region", { name: "Observation grade" }).length).toBe(2);
 });
 it("attention status filter excludes met items", () => {
   render(<CurrentAssessmentViewer assessment={{ ...NOT_MET_ASSESSMENT, item_assessments: [...NOT_MET_ASSESSMENT.item_assessments, { ...CURRENT_ASSESSMENT.item_assessments[0], subject: { kind: "build_item", id: "B2" } }] }} />);

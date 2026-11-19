@@ -179,7 +179,8 @@ test("browser navigates the committed definition list and detail", async () => {
 }, 30_000);
 
 test.each([
-  ["analysis", "Code hotspots"], ["spec", "Canonical workflow"], ["plan", "Parallel wave 2"], ["brief", "System-bound envelope"], ["assessment", "An unrelated regression needs investigation."],
+  // Each viewer opens on its first section: analysis requirements, spec requirements, the plan graph, build items, item assessments.
+  ["analysis", "Observation F1"], ["spec", "Canonical workflow"], ["plan", "Cohort A"], ["brief", "Implement requirements"], ["assessment", "The requested behavior works."],
 ] as const)("live-version %s revisions reach their current viewer through the real client", async (kind, expected) => {
   const fixture = currentArtifactFixture(kind);
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {

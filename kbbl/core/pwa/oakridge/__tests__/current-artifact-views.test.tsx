@@ -25,38 +25,63 @@ const parsedAnalysis = parseCurrentAnalysis(analysis), parsedSpec = parseCanonic
 if (!parsedAnalysis.ok || !parsedSpec.ok) throw new Error("fixture");
 const context = { analysis: parsedAnalysis.value, spec: parsedSpec.value, requirements: parsedSpec.value.requirements };
 afterEach(cleanup);
-test("current analysis shows requirements, separate dimensions, hotspots and operator choices", () => {
+test("current analysis labels requirement statuses and finding severities", () => {
   render(<CurrentSpecAnalysisViewer body={analysis} source={source} />);
-  expect(screen.getByText("1 blocked · 1 warning · 1 implementable · 1 not_analyzed")).toBeTruthy();
-  expect(screen.getByText("2 blocking · 1 warning · 2 info")).toBeTruthy();
-  expect(screen.getByText("Code hotspots")).toBeTruthy();
-  expect(screen.getByText("Operator decisions")).toBeTruthy();
+  expect(screen.getByTestId("or-analysis-requirement-counts").textContent).toBe("Requirements1 blocked1 warning1 implementable1 not_analyzed");
+  expect(screen.getByTestId("or-analysis-finding-counts").textContent).toBe("Findings2 blocking1 warning2 info");
   expect(screen.queryByText("Proposed spec updates")).toBeNull();
 });
-test("canonical specification renders the original input, acceptance and transformation links", () => {
+test("current analysis subnav shows requirements first, then hotspots, decisions and original input", () => {
+  render(<CurrentSpecAnalysisViewer body={analysis} source={source} />);
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent?.replace(/ \(\d+\)$/, ""))).toEqual(["Requirements", "Code hotspots", "Operator decisions", "Original input"]);
+});
+test("current analysis shows one section at a time", () => {
+  render(<CurrentSpecAnalysisViewer body={analysis} source={source} />);
+  fireEvent.click(screen.getByRole("tab", { name: "Original input" }));
+  expect([screen.queryAllByTestId("or-analysis-requirement").length, screen.getByText("Original requirements as submitted").tagName]).toEqual([0, "PRE"]);
+});
+test("a hotspot link returns to the requirements and brings its finding into view", () => {
+  const scrolled: string[] = [];
+  // jsdom does not implement scrollIntoView; record which element is asked to scroll.
+  Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this.id); };
+  render(<CurrentSpecAnalysisViewer body={analysis} source={source} />);
+  fireEvent.click(screen.getByRole("tab", { name: /^Code hotspots/ }));
+  const link = screen.getAllByRole("link")[0];
+  fireEvent.click(link);
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
+  expect([screen.getByRole("tab", { selected: true }).textContent?.startsWith("Requirements"), scrolled]).toEqual([true, [link.getAttribute("href")?.slice(1)]]);
+});
+test("canonical specification renders the objective, acceptance and labelled transformation links", () => {
   render(<CurrentSpecViewer body={spec} source={source} context={context} />);
   expect(screen.getByText(spec.objective)).toBeTruthy();
   for (const requirement of spec.requirements) expect(screen.getByText(requirement.acceptance_conditions[0])).toBeTruthy();
-  expect(screen.getByText("Original requirements as submitted")).toBeTruthy();
-  expect(screen.getByText("Assessment adjudication")).toBeTruthy();
-  expect(screen.getByText("F1 · blocking")).toBeTruthy();
+  expect(screen.getAllByText("F1")[0].closest("div")?.textContent).toContain("blocking");
+});
+test("canonical specification lists non-goals in their own section", () => {
+  render(<CurrentSpecViewer body={spec} source={source} context={context} />);
+  fireEvent.click(screen.getByRole("tab", { name: /^Non-goals/ }));
+  expect(screen.getByText("Assessment adjudication").tagName).toBe("LI");
+});
+test("canonical specification keeps the original input in its own section", () => {
+  render(<CurrentSpecViewer body={spec} source={source} context={context} />);
+  fireEvent.click(screen.getByRole("tab", { name: "Original input" }));
+  expect(screen.getByText("Original requirements as submitted").tagName).toBe("PRE");
 });
 test("current plan shows each cohort's contributions and parallel wave", () => {
   render(<CurrentPlanViewer body={plan} context={context} />);
+  fireEvent.click(screen.getByRole("tab", { name: /^Cohorts/ }));
   expect(screen.getAllByText("Parallel wave 1")).toHaveLength(2);
   expect(screen.getByText("Parallel wave 2")).toBeTruthy();
   expect(screen.getByText("Contribution A")).toBeTruthy();
   expect(screen.getByText("Contribution B")).toBeTruthy();
   expect(screen.queryByText("Dependency order")).toBeNull();
 });
-test("current brief separates the system-bound envelope from authored items and decisions", () => {
+test("current brief shows build items first and keeps the plan-bound envelope in its own section", () => {
   render(<CurrentBuildBriefViewer body={brief} context={context} />);
-  expect(screen.getByText("System-bound envelope")).toBeTruthy();
-  expect(screen.getByText("Projected from the approved plan.")).toBeTruthy();
-  expect(screen.getByText("oakridge")).toBeTruthy();
-  expect(screen.getByText("Dependencies")).toBeTruthy();
   expect(screen.getByText("Run tests")).toBeTruthy();
-  expect(screen.getAllByText("D1: Preserve readers")).toHaveLength(2);
+  expect(screen.getAllByText("D1")).toHaveLength(2);
+  fireEvent.click(screen.getByRole("tab", { name: "Envelope" }));
+  expect(screen.getByTestId("or-brief-envelope").textContent).toContain("Projected from the approved plan.");
 });
 test("pinned assignment panel is titled What this agent received", () => {
   const received = selectReceivedContext(unit as unknown as OperatorUnitView);
@@ -85,7 +110,8 @@ const gradedViewers = [
 ] as const;
 test.each(gradedViewers)("current %s offers Show automatic grades over every item it grades", (_, renderViewer) => {
   render(renderViewer());
-  const graded = screen.getAllByTestId("item-action").map((element) => element.textContent).sort().join(" ");
+  // Items are graded on whichever section shows them; collect the grade actions from every section.
+  const graded = screen.getAllByRole("tab").flatMap((tab) => { fireEvent.click(tab); return screen.queryAllByTestId("item-action").map((element) => element.textContent); }).sort().join(" ");
   const revealed = screen.getByTestId("show-all").textContent?.split(" ").sort().join(" ");
   expect(revealed).toBe(graded);
 });

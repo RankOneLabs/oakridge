@@ -1,24 +1,66 @@
 import type { ViewerProps } from "../../artifactRegistry";
 import { parseCurrentBrief } from "../../lib/build-brief";
-import { selectCurrentBuildItems } from "../../lib/current-brief";
-import { CurrentParseFailure, RequirementLink } from "./CurrentArtifactParts";
-import { ArtifactItemGrade } from "./ArtifactItemGrade";
+import type { CurrentBrief } from "../../lib/current-contract";
+import { selectBriefSections, selectCurrentBuildItems, type BriefSection } from "../../lib/current-brief";
 import { selectFindingSelections } from "../../lib/grading";
 import { selectBriefItemPaths } from "../../lib/current-item-paths";
+import { Chip } from "../../../components/atoms/Chip";
+import { artifactLabelClass } from "./ArtifactSection";
+import { ArtifactItemGrade } from "./ArtifactItemGrade";
+import { ArtifactSectionTabs } from "./ArtifactSectionTabs";
+import { CurrentParseFailure, RequirementLink } from "./CurrentArtifactParts";
+
+function BuildItemsPanel({ brief, props }: { brief: CurrentBrief; props: ViewerProps }) {
+  return <div className="space-y-3">{selectCurrentBuildItems(brief).map((item, index) => <section key={item.id} className="space-y-2 rounded border border-[var(--border-muted)] p-3" data-testid="or-brief-build-item">
+    <div className="flex flex-wrap items-center gap-2">
+      <code className="or-code">{item.id}</code>
+      <span className="ml-auto"><ArtifactItemGrade source={props.source} itemPath={`/build_items/${index}`} onOpenItem={props.onOpenItem} itemGrading={props.itemGrading} /></span>
+    </div>
+    <p>{item.instructions}</p>
+    <div className={artifactLabelClass}>Requirements</div>
+    <ul>{item.requirement_ids.map((id) => <li key={id}><RequirementLink id={id} requirements={props.context?.requirements ?? []} onOpenTask={props.onOpenTask} /></li>)}</ul>
+    <div className={artifactLabelClass}>Verification</div>
+    <ul className="list-disc pl-5">{item.verification.map((step, stepIndex) => <li key={stepIndex}>{step}</li>)}</ul>
+    {item.decisions.length > 0 && <>
+      <div className={artifactLabelClass}>Technical decisions</div>
+      {item.decisions.map((decision) => <div key={decision.id} className="space-y-1">
+        <div className="flex flex-wrap items-center gap-2"><code className="or-code">{decision.id}</code><span className="font-medium">{decision.decision}</span></div>
+        <p className="text-sm text-[var(--text-secondary)]">{decision.rationale}</p>
+      </div>)}
+    </>}
+  </section>)}</div>;
+}
+
+function FilesPanel({ brief }: { brief: CurrentBrief }) {
+  if (brief.files_in_scope.length === 0) return <p className="text-sm text-[var(--text-muted)]">No files in scope.</p>;
+  return <ul className="space-y-1">{brief.files_in_scope.map((path, index) => <li key={index}><code>{path}</code></li>)}</ul>;
+}
+
+function EnvelopePanel({ brief }: { brief: CurrentBrief }) {
+  return <section className="space-y-2" data-testid="or-brief-envelope">
+    <p className="text-sm text-[var(--text-muted)]">Projected from the approved plan.</p>
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+      <dt className={artifactLabelClass}>Cohort</dt><dd><code>{brief.cohort_id}</code></dd>
+      <dt className={artifactLabelClass}>Repository</dt><dd><code>{brief.repository_key}</code></dd>
+      <dt className={artifactLabelClass}>Dependencies</dt><dd>{brief.depends_on.length > 0 ? brief.depends_on.map((id) => <code key={id} className="mr-2">{id}</code>) : "None"}</dd>
+    </dl>
+  </section>;
+}
+
 export function CurrentBuildBriefViewer(props: ViewerProps) {
   const parsed = props.currentRead?.ok === false ? props.currentRead
     : props.currentRead?.value?.kind === "brief" ? { ok: true as const, value: props.currentRead.value.body } : parseCurrentBrief(props.body);
   if (!parsed.ok) return <CurrentParseFailure body={props.body} detail={parsed.error.detail} />;
   const brief = parsed.value;
-  return <article className="space-y-5">
-    {props.itemGrading?.renderShowAll(selectFindingSelections(props.source, selectBriefItemPaths(brief)))}
-    <section className="rounded border-2 border-[var(--border-muted)] bg-[var(--bg-surface)] p-3"><h3>System-bound envelope</h3><p>Projected from the approved plan.</p><dl><dt>Cohort</dt><dd>{brief.cohort_id}</dd><dt>Repository</dt><dd>{brief.repository_key}</dd><dt>Dependencies</dt><dd>{brief.depends_on.join(", ") || "None"}</dd></dl></section>
-    <section><h3>Author content: files in scope</h3><ul>{brief.files_in_scope.map((path, i) => <li key={i}><code>{path}</code></li>)}</ul></section>
-    <section><h3>Author content: build items</h3>{selectCurrentBuildItems(brief).map((item, index) => <section key={item.id} className="space-y-2 rounded border border-[var(--border-muted)] p-3">
-      <h4>{item.id}</h4><p>{item.instructions}</p><ArtifactItemGrade source={props.source} itemPath={`/build_items/${index}`} onOpenItem={props.onOpenItem} itemGrading={props.itemGrading} />
-      <h5>Requirements</h5><ul>{item.requirement_ids.map((id) => <li key={id}><RequirementLink id={id} requirements={props.context?.requirements ?? []} onOpenTask={props.onOpenTask} /></li>)}</ul>
-      <h5>Verification</h5><ul>{item.verification.map((step, i) => <li key={i}>{step}</li>)}</ul>
-      <h5>Technical decisions</h5>{item.decisions.map((decision) => <div key={decision.id}><h6>{decision.id}: {decision.decision}</h6><p>{decision.rationale}</p></div>)}
-    </section>)}</section>
+  return <article className="space-y-4" data-testid="or-current-brief-viewer">
+    <header className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2"><span className={artifactLabelClass}>Cohort</span><code className="or-code">{brief.cohort_id}</code><Chip tone="muted">{brief.repository_key}</Chip></div>
+      {props.itemGrading?.renderShowAll(selectFindingSelections(props.source, selectBriefItemPaths(brief)))}
+    </header>
+    <ArtifactSectionTabs<BriefSection> label="Brief sections" sections={selectBriefSections(brief)} initial="build_items">{(section) => <>
+      {section.active === "build_items" && <BuildItemsPanel brief={brief} props={props} />}
+      {section.active === "files" && <FilesPanel brief={brief} />}
+      {section.active === "envelope" && <EnvelopePanel brief={brief} />}
+    </>}</ArtifactSectionTabs>
   </article>;
 }

@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type ButtonVariant = "session" | "primary" | "secondary" | "danger" | "armed" | "accent-outline" | "danger-strong" | "link" | "sidebar-row" | "pane-action" | "progress-row";
+type ButtonVariant = "session" | "primary" | "secondary" | "danger" | "armed" | "accent-outline" | "danger-strong" | "link" | "sidebar-row" | "pane-action" | "progress-row" | "subnav-tab";
 type ButtonSize = "xsmall" | "small" | "medium";
 
 const BASE_CLASS =
@@ -19,6 +19,8 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
   link: "border-0 bg-transparent p-0 text-[var(--accent-primary)] underline hover:text-[var(--text-primary)]",
   "sidebar-row": "flex flex-1 min-w-0 flex-col gap-[0.15rem] rounded-[0.4rem] border border-transparent bg-transparent px-2 py-[0.4rem] text-left text-[var(--text-secondary)] cursor-pointer hover:bg-[var(--bg-elevated)]",
   "pane-action": "rounded-[0.4rem] border border-[var(--border-subtle)] bg-transparent px-[0.45rem] py-[0.2rem] text-xs! text-[var(--text-muted)] cursor-pointer",
+  // The Settings subnav look (`or-shell__nav-item`) for section tabs: accent underline on the selected tab.
+  "subnav-tab": "inline-flex flex-none cursor-pointer items-center -mb-px min-h-[2.75rem] rounded-none border-0 border-b-2 border-transparent bg-transparent px-3 py-1 text-[0.8125rem]! text-[var(--text-secondary)] hover:text-[var(--text-primary)] aria-selected:border-[var(--accent-primary)] aria-selected:text-[var(--accent-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]",
   "progress-row": "grid w-full grid-cols-[auto_minmax(0,1fr)_minmax(10rem,auto)_auto] items-center gap-4 min-h-[4.25rem] rounded-none border-0 border-b border-b-[var(--border-decorative)] bg-[var(--bg-surface)] px-4 py-3 text-left text-[var(--text-primary)] cursor-pointer hover:bg-[var(--bg-elevated)] last:border-b-0 max-[767px]:grid-cols-[auto_minmax(0,1fr)_auto] max-[767px]:gap-3",
 };
 
@@ -29,7 +31,7 @@ const SIZE_CLASS: Record<ButtonSize, string> = {
 };
 
 // These surfaces own their complete button geometry in the utilities layer.
-const CUSTOM_SURFACE_VARIANTS: ReadonlySet<ButtonVariant> = new Set(["session", "sidebar-row", "pane-action", "progress-row"]);
+const CUSTOM_SURFACE_VARIANTS: ReadonlySet<ButtonVariant> = new Set(["session", "sidebar-row", "pane-action", "progress-row", "subnav-tab"]);
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;

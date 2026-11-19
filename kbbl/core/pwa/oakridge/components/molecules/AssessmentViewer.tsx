@@ -125,43 +125,68 @@ export function AssessmentViewer(props: Omit<Props, "assessment"> & { assessment
   return assessment.shape === "build_items" ? <BuildItemAssessmentViewer {...props} assessment={assessment} /> : <LegacyAssessmentViewer {...props} assessment={assessment} />;
 }
 
-import { selectAdditionalFindings, selectAssessmentActions, selectDerivedVerdict, selectItemAssessmentGroups, type AssessmentItemLabel, type AssessmentStatusFilter, type CurrentAssessment } from "../../lib/current-assessment";
+import { selectAdditionalFindings, selectAssessmentActions, selectAssessmentSections, selectDerivedVerdict, selectItemAssessmentGroups, type AssessmentItemLabel, type AssessmentSection, type AssessmentStatusFilter, type AttributedFinding, type CurrentAssessment } from "../../lib/current-assessment";
 import { CurrentBuildItemAssessmentViewer } from "./BuildItemAssessmentViewer";
 import { EvidenceRefList } from "./EvidenceRefList";
 import { ArtifactItemGrade } from "./ArtifactItemGrade";
+import { ArtifactSectionTabs } from "./ArtifactSectionTabs";
 import { selectAssessmentItemPaths } from "../../lib/current-item-paths";
 interface CurrentAssessmentProps extends Pick<import("../../artifactRegistry").ViewerProps, "source" | "itemGrading" | "onOpenItem"> {
   assessment: CurrentAssessment; itemLabels?: readonly AssessmentItemLabel[]; handoff?: ReactNode;
 }
-export function CurrentAssessmentViewer({ assessment, itemLabels, handoff, ...review }: CurrentAssessmentProps) {
-  const [filter, setFilter] = useState<AssessmentStatusFilter>("all");
-  const groups = selectItemAssessmentGroups(assessment);
+type AssessmentReviewSlots = Omit<CurrentAssessmentProps, "assessment" | "itemLabels" | "handoff">;
+
+function CurrentAssessmentHeader({ assessment, review }: { assessment: CurrentAssessment; review: AssessmentReviewSlots }) {
   const verdict = selectDerivedVerdict(assessment);
-  const findings = selectAdditionalFindings(assessment, itemLabels);
-  const actions = selectAssessmentActions(assessment);
-  return <article className="flex flex-col gap-5" data-testid="or-assessment-viewer">
-    <header><h2>Assessment</h2><code>{assessment.head_sha}</code>
-      <p>Derived verdict: <Chip tone={selectStatusTone(verdict.verdict)}>{VERDICT_LABEL[verdict.verdict]}</Chip></p>
-      {verdict.has_mismatch && <p role="alert">Authored verdict ({assessment.verdict}) disagrees with the item statuses and findings.</p>}
-      <div className="flex gap-2">{groups.map(group => <Chip key={group.status} tone={selectStatusTone(group.status)}>{group.count} {CRITERION_STATUS_LABEL[group.status]}</Chip>)}</div>
-      {review.itemGrading?.renderShowAll(selectFindingSelections(review.source, selectAssessmentItemPaths(assessment)))}
-    </header>
+  return <header className="flex flex-col gap-2">
+    <div className="flex flex-wrap items-center gap-2"><span className={artifactLabelClass}>Head</span><code className="or-code">{assessment.head_sha}</code>
+      <span className={artifactLabelClass}>Derived verdict</span><Chip tone={selectStatusTone(verdict.verdict)}>{VERDICT_LABEL[verdict.verdict]}</Chip></div>
+    {verdict.has_mismatch && <p role="alert">Authored verdict ({assessment.verdict}) disagrees with the item statuses and findings.</p>}
+    <div className="flex flex-wrap gap-1.5">{selectItemAssessmentGroups(assessment).map(group => <Chip key={group.status} tone={selectStatusTone(group.status)}>{group.count} {CRITERION_STATUS_LABEL[group.status]}</Chip>)}</div>
+    {review.itemGrading?.renderShowAll(selectFindingSelections(review.source, selectAssessmentItemPaths(assessment)))}
+  </header>;
+}
+
+function ItemsPanel({ assessment, review }: { assessment: CurrentAssessment; review: AssessmentReviewSlots }) {
+  const [filter, setFilter] = useState<AssessmentStatusFilter>("all");
+  return <div className="flex flex-col gap-3">
     <label>Status filter <Select aria-label="Status filter" value={filter} onChange={event => setFilter(event.target.value as AssessmentStatusFilter)}>
       <option value="all">All statuses</option><option value="needs_attention">Partial / not met</option><option value="not_met">Not met</option><option value="partial">Partial</option><option value="met">Met</option>
     </Select></label>
     <CurrentBuildItemAssessmentViewer assessment={assessment} filter={filter} {...review} />
-    <ArtifactSection title={`Additional findings (${findings.length})`} testId="or-assessment-additional-findings">
-      {findings.length === 0 && <p>No additional findings.</p>}
-      <ul className="m-0 flex list-none flex-col gap-3 p-0">{findings.map(({ finding, labels, is_unattributed }) => <li key={finding.id} className="rounded-md border border-[var(--border-decorative)] p-3">
-        <p><code>{finding.id}</code> <Chip tone={selectStatusTone(finding.severity)}>{finding.severity}</Chip></p>
-        <p>{finding.observation}</p><p>{is_unattributed ? "Unattributed" : labels.map(label => `${label.id}: ${label.label}`).join(", ")}</p>
-        <EvidenceRefList refs={finding.evidence.map(ref => ({ ...ref, detail: ref.detail ?? null }))} />
-        <section aria-label="Observation grade"><span>Observation grade</span><ArtifactItemGrade source={review.source} itemPath={`/additional_findings/${assessment.additional_findings.indexOf(finding)}`} itemGrading={review.itemGrading} onOpenItem={review.onOpenItem} /></section>
-      </li>)}</ul>
-    </ArtifactSection>
-    {handoff ?? <>{(["builder", "operator"] as const).map(audience => <ArtifactSection key={audience} title={`${audience === "builder" ? "Builder" : "Operator"} actions`} testId={`or-${audience}-actions`}>
-      <ul>{actions[audience].map(action => <li key={action.id}>{action.text}</li>)}</ul>
-    </ArtifactSection>)}</>}
-    <TestEvidenceBlock tests={{ ...assessment.test_evidence, output: assessment.test_evidence.output ?? null, summary: assessment.test_evidence.summary ?? null, cargo_test_output: assessment.test_evidence.cargo_test_output ?? null }} testId="or-assessment-tests" />
+  </div>;
+}
+
+function FindingsPanel({ assessment, findings, review }: { assessment: CurrentAssessment; findings: readonly AttributedFinding[]; review: AssessmentReviewSlots }) {
+  return <section data-testid="or-assessment-additional-findings">
+    {findings.length === 0 && <p className="text-sm text-[var(--text-muted)]">No additional findings.</p>}
+    <ul className="m-0 flex list-none flex-col gap-3 p-0">{findings.map(({ finding, labels, is_unattributed }) => <li key={finding.id} className="flex flex-col gap-2 rounded-md border border-[var(--border-decorative)] p-3">
+      <div className="flex flex-wrap items-center gap-2"><code className="or-code">{finding.id}</code><Chip tone={selectStatusTone(finding.severity)}>{finding.severity}</Chip>
+        {is_unattributed ? <Chip tone="muted">Unattributed</Chip> : labels.map(label => <Chip key={label.id} tone="neutral">{label.id}: {label.label}</Chip>)}</div>
+      <p>{finding.observation}</p>
+      <EvidenceRefList refs={finding.evidence.map(ref => ({ ...ref, detail: ref.detail ?? null }))} />
+      <section aria-label="Observation grade" className="flex items-center gap-2"><span className={artifactLabelClass}>Observation grade</span><ArtifactItemGrade source={review.source} itemPath={`/additional_findings/${assessment.additional_findings.indexOf(finding)}`} itemGrading={review.itemGrading} onOpenItem={review.onOpenItem} /></section>
+    </li>)}</ul>
+  </section>;
+}
+
+function ActionsPanel({ assessment, handoff }: { assessment: CurrentAssessment; handoff: ReactNode }) {
+  if (handoff) return <>{handoff}</>;
+  const actions = selectAssessmentActions(assessment);
+  return <>{(["builder", "operator"] as const).map(audience => <ArtifactSection key={audience} title={`${audience === "builder" ? "Builder" : "Operator"} actions (${actions[audience].length})`} testId={`or-${audience}-actions`}>
+    {actions[audience].length === 0 ? <p className="text-sm text-[var(--text-muted)]">None.</p> : <ul>{actions[audience].map(action => <li key={action.id}>{action.text}</li>)}</ul>}
+  </ArtifactSection>)}</>;
+}
+
+export function CurrentAssessmentViewer({ assessment, itemLabels, handoff, ...review }: CurrentAssessmentProps) {
+  const findings = selectAdditionalFindings(assessment, itemLabels);
+  return <article className="flex flex-col gap-4" data-testid="or-assessment-viewer">
+    <CurrentAssessmentHeader assessment={assessment} review={review} />
+    <ArtifactSectionTabs<AssessmentSection> label="Assessment sections" sections={selectAssessmentSections(assessment)} initial="items">{(section) => <>
+      {section.active === "items" && <ItemsPanel assessment={assessment} review={review} />}
+      {section.active === "findings" && <FindingsPanel assessment={assessment} findings={findings} review={review} />}
+      {section.active === "actions" && <ActionsPanel assessment={assessment} handoff={handoff} />}
+      {section.active === "tests" && <TestEvidenceBlock tests={{ ...assessment.test_evidence, output: assessment.test_evidence.output ?? null, summary: assessment.test_evidence.summary ?? null, cargo_test_output: assessment.test_evidence.cargo_test_output ?? null }} testId="or-assessment-tests" />}
+    </>}</ArtifactSectionTabs>
   </article>;
 }

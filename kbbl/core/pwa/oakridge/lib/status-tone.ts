@@ -1,6 +1,7 @@
 import type { ChipTone } from "../../components/atoms/Chip";
 import type { AssessmentVerdict, ArtifactRevisionStatus, CriterionStatus, FindingSeverity, PrReviewStatus, RequirementStatus } from "../artifact-types";
 import type { RunDisplayStatus, RunStatus, StageStatus, StageUnitStatus } from "../run-types";
+import type { CurrentRequirementStatus } from "./current-analysis";
 
 const RUN_TONE = {
   pending: "muted", running: "info", parked: "warning", failed: "danger",
@@ -35,6 +36,15 @@ const STATUS_TONE: Record<StatusToneSource, ChipTone> = {
 // Artifact viewers cast JSON strings to these unions, so an unknown value can still arrive.
 export function selectStatusTone(status: StatusToneSource): ChipTone {
   return STATUS_TONE[status] ?? "muted";
+}
+
+const CURRENT_REQUIREMENT_TONE = {
+  blocked: "danger", warning: "warning", implementable: "success", not_analyzed: "muted",
+} satisfies Record<CurrentRequirementStatus, ChipTone>;
+
+/** A current analysis requirement's status, toned as the legacy requirement statuses are. */
+export function selectCurrentRequirementTone(status: CurrentRequirementStatus): ChipTone {
+  return CURRENT_REQUIREMENT_TONE[status];
 }
 
 export function selectConditionTone(condition: import("./status-condition").StatusCondition): ChipTone {
