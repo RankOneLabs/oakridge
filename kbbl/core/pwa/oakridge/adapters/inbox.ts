@@ -2,8 +2,6 @@ import type { OperatorInboxItem, OperatorRunInboxBatchEntry } from "../operator-
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../artifact-types";
 import { selectUnitAttentionLabel, type UnitAttentionLabelInput } from "../lib/run-attention";
-import { selectBlockerGroups, type BlockerGroup } from "../lib/blocker";
-import { reviewToGates } from "./gates";
 import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";
 
 /** This table describes only the six-stage development workflow. */
@@ -37,10 +35,6 @@ function lifecycle(unit: OperatorUnitView, items: readonly OperatorInboxItem[]):
   if (items.some((item) => item.kind === "decision" && item.submit.kind === "review")) return "artifact_review";
   return unit.stage === "integration" ? "github_review" : "building";
 }
-
-const BLOCKER_REVIEW = "blocker_review";
-const isBlockerDecision = (item: OperatorInboxItem): boolean =>
-  item.kind === "decision" && item.submit.kind === "review" && item.submit.review === BLOCKER_REVIEW;
 
 function unitAttentionLabelInput(unit: OperatorUnitView): UnitAttentionLabelInput {
   const input = objectValue(unit.input);
@@ -81,16 +75,12 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
   // The retry is the operator's one piece of work for that unit; showing the
   // diagnostic as another inbox item duplicates the same failed brief.
   const unitsWithRetry = new Set(entry.items.flatMap((item) => item.kind === "decision" && item.submit.kind === "retry" ? [item.unit_id] : []));
-  // A parked blocker asks once, through its blocker_review decisions; its "worker blocked" wait repeats that ask.
-  // Blockers that offer the same choices are one decision for the operator, so they become one grouped item below.
-  const unitsWithBlocker = new Set(entry.items.flatMap((item) => isBlockerDecision(item) ? [item.unit_id] : []));
   const items: ReviewInboxItem[] = entry.items.flatMap((item) => {
     const unit = byId.get(item.unit_id);
     if (!unit) return [];
     if (item.kind === "decision" && item.submit.kind === "review"
       && !isDisplayedReviewDecision(item.submit.review, item.submit.decision)) return [];
     if (item.kind === "stalled" && unitsWithRetry.has(item.unit_id)) return [];
-    if (unitsWithBlocker.has(item.unit_id) && (isBlockerDecision(item) || item.kind === "waiting")) return [];
     const isManualMergeAvailable = deriveStatus(statusInputOf(unit)).stage === "parked"
       && unit.decisions.some((decision) => decision.submit.kind === "review"
         && decision.submit.review === "merge_confirmation" && decision.submit.decision === "confirm_merged");
@@ -124,30 +114,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
         return blocker ? selectUnitAttentionLabel(unitAttentionLabelInput(blocker)) || blocker.unit_id : id;
       }).filter((label) => label.length > 0) }];
   });
-  const blockerGates = units.filter((unit) => unitsWithBlocker.has(unit.unit_id)).flatMap((unit) => {
-    const gates = reviewToGates(unit);
-    return gates.ok ? gates.value.map((gate) => ({ gate, unit })) : [];
-  });
-  const unitByGateId = new Map(blockerGates.map(({ gate, unit }) => [gate.id, unit]));
-  const blockerItems = selectBlockerGroups(blockerGates.map(({ gate }) => gate)).flatMap((group) => {
-    const unit = unitByGateId.get(group.gates[0].id);
-    return unit ? [blockerGroupItem({ group, unit, entry, runTitle })] : [];
-  });
-  return ok({ cohorts, items: [...items, ...blockerItems] });
-}
-
-interface BlockerGroupItemInput { readonly group: BlockerGroup; readonly unit: OperatorUnitView; readonly entry: OperatorRunInboxBatchEntry; readonly runTitle: string | null }
-
-/** One inbox item for a group of blockers, labelled by the oldest one's unit; the card lists every unit it answers. */
-function blockerGroupItem({ group, unit, entry, runTitle }: BlockerGroupItemInput): ReviewInboxItem {
-  const attention = unitAttentionLabelInput(unit);
-  const [first] = group.gates;
-  return { id: `${entry.run_id}:blocker:${first.id}`, kind: "blocker", state: "actionable", run_id: entry.run_id, workflow_name: "development",
-    stage_instance_id: compositeId({ kind: "stage", runId: entry.run_id, unitId: unit.unit_id, name: unit.stage ?? "$root" }),
-    stage_name: unit.stage ?? "$root", unit_id: unit.collection_key ?? unit.unit_key,
-    lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
-    ...attention, title: selectUnitAttentionLabel(attention), run_title: runTitle, artifact_key: "blocker", artifact_revision_id: null,
-    artifact_url: null, gate_id: first.id, gate_url: null, pr_url: null, resume_actions: first.resume_actions, blocked_by: [], blocker_group: group };
+  return ok({ cohorts, items });
 }
 
 /** Apply a run's refreshed slice to the latest inbox, not to a snapshot captured before another run refreshed. */

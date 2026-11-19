@@ -1,7 +1,6 @@
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GateDecisionActions } from "./GateDecisionActions";
-import { BlockerGroupPanel } from "./BlockerGroupPanel";
 import { selectRepositoryAttentionContext, selectUnitAttentionLabel } from "../../lib/run-attention";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../artifact-types";
@@ -53,10 +52,9 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
         {isSettled && <p data-testid="or-inbox-settled">No longer needs your decision.</p>}
         {!isSettled && <>
         {gate && <GateDecisionActions gate={gate} />}
-        {!gate && item.blocker_group && <BlockerGroupPanel group={item.blocker_group} />}
         {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch?.detail ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
-        {!gate && !item.blocker_group && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
+        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
         </>}
       </div>
     </article>
