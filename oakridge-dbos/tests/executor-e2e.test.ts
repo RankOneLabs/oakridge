@@ -308,17 +308,26 @@ test("I3: cancelling mid-flight stops every live session and cancels every unit"
 
 test("I3: a failed item stalls holding its slot while its siblings run to completion, and a retry completes the run", async () => {
   const repo = await temporaryRepository();
+  const retryTurn = Promise.withResolvers<TurnEnd>();
   try {
-    const timeline = { started: new Map<string, number>(), finished: new Map<string, number>() };
     let b_tries = 0;
     const run_id = await launch(sampleWorkflow("fan-out"), { repository: { repository_path: repo.path, expected_head: null, ...BRANCHES }, items: ITEMS },
-      itemAgents(timeline, async (item) => item === "b" && ++b_tries === 1 ? "failed" : "succeeded"));
+      async (turn) => {
+        const item = itemOf(turn);
+        if (item === "b" && ++b_tries === 1) return "failed";
+        const published = await turn.publish("result", `done: ${item}`);
+        if (!published.ok) return "failed";
+        // Keep b's retry live after publication so it takes the session-stop path.
+        return item === "b" ? retryTurn.promise : "succeeded";
+      });
     await eventually("a, c and d to finish", async () => {
       const done = (await units(run_id)).filter((unit) => unit.status.kind === "done").map((unit) => unit.collection_key);
       return ["a", "c", "d"].every((key) => done.includes(key));
     });
-    await Bun.sleep(500);
     const b = await memberUnit(run_id, "b");
+    await eventually("b's first attempt to fail", async () =>
+      (await attempts(run_id, "worker")).some((attempt) =>
+        attempt.unit_id === b && attempt.status.kind === "failed" && attempt.status.code === "session_failed"));
     const stalled = await units(run_id);
     expect({ run: await runStatus(run_id), b: stalled.find((unit) => unit.id === b)?.status.kind,
       work: stalled.find((unit) => unit.unit_key === "work" && unit.collection_key === null)?.status.kind, b_tries })
@@ -330,7 +339,7 @@ test("I3: a failed item stalls holding its slot while its siblings run to comple
       const ended = (await attempts(run_id, "worker")).filter((attempt) => attempt.unit_id === b).map((attempt) => attempt.status);
       return ended.at(-1)?.kind === "running" ? null : ended.map((status) => status.kind === "failed" ? status.code : status.kind);
     })).toEqual(["session_failed", "attempt_stopped"]);
-  } finally { repo.remove(); }
+  } finally { retryTurn.resolve("succeeded"); repo.remove(); }
 }, 90_000);
 
 test("K3: sample A with every key renamed runs end to end, so a new workflow needs only config", async () => {
