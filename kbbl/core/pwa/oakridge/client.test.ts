@@ -4,7 +4,7 @@ import planningRevise from "./__fixtures__/v2-planning-revise.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
 import definitionFixture from "./__fixtures__/v2-definition-detail.json";
-import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, putArtifactRevisionBody, refreshReviewInboxRun, resumeGate, retryRunUnit } from "./client";
+import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, putArtifactRevisionBody, resumeGate, retryRunUnit } from "./client";
 import { compositeId } from "./adapters/core";
 import type { OperatorDefinitionDetail } from "./operator-contracts/projections/definition-view";
 import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
@@ -163,6 +163,13 @@ describe("v2 Oakridge client", () => {
       .rejects.toThrow("Development runs require at least one repository");
   });
 
+  it("refuses to launch a workflow other than development", async () => {
+    const study = { ...definition, bundle: { ...definition.bundle, key: "study" } };
+    const fetch = calls((path) => path.includes("/api/definitions/") ? study : sample.run);
+    await expect(createRun(createRunRequest(), "launch-study")).rejects.toThrow("the PWA cannot launch the study workflow");
+    expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
   it("accepts settings for an agent declared through a worker template", async () => {
     const templated = {
       ...definition,
@@ -315,6 +322,20 @@ describe("v2 Oakridge client", () => {
       target: "revision-pr", payload: { feedback: "Open a replacement" } });
   });
 
+  it("submits the chosen decision when a review offers several request-changes decisions", async () => {
+    const sendBack = (decision: string) => ({ key: decision, label: decision, payload_schema: "{feedback: text}",
+      fields: [{ key: "feedback", label: "What must change?" }],
+      submit: { kind: "review", review: "slice_report_review", decision, effect: "request_changes", target_revision_id: "revision-report" } });
+    const sliceReview = { ...cohort, decisions: [sendBack("send_to_builder"), sendBack("change_design")] };
+    const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-6" } : sliceReview);
+    const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "slice_report_review" });
+    await resumeGate(gateId, { idempotency_key: "decide-4", artifact_revision_id: "revision-report",
+      action: "change_design", feedback: "Narrow the slice" });
+    const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
+    expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-4", decision: "change_design",
+      target: "revision-report", payload: { feedback: "Narrow the slice" } });
+  });
+
   it.each([cohortMerge, integrationMerge])("confirms merged for unit at its named revision", async (fixture) => {
     const unit = (fixture.units as unknown as OperatorUnitView[]).find((candidate) => candidate.decisions.some((decision) => decision.key === "confirm_merged"));
     if (!unit) throw new Error("captured fixture lacks confirm_merged");
@@ -342,18 +363,5 @@ describe("v2 Oakridge client", () => {
     const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect([String(posted?.[0]).includes(`/units/${encodeURIComponent(unit.unit_id)}/reviews/merge_confirmation/decide`),
       JSON.parse(String(posted?.[1]?.body)).target]).toEqual([true, target]);
-  });
-
-  it("uses a batched inbox and one cached units read per run, then refreshes only that run", async () => {
-    const fetch = calls((path) => path.includes("/run-inboxes") ? { items: [sample.inbox] }
-      : path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
-      : path.includes("/inbox") ? { items: [] } : sample.units);
-    const inbox = await fetchReviewInbox();
-    await refreshReviewInboxRun(runId, inbox);
-    expect(fetch.mock.calls.filter(([path]) => String(path).includes("/units?"))).toHaveLength(1);
-    invalidateCachedRunUnits(runId);
-    await refreshReviewInboxRun(runId, inbox);
-    expect(fetch.mock.calls.filter(([path]) => String(path).includes("/units?"))).toHaveLength(2);
-    expect(fetch.mock.calls.filter(([path]) => String(path).includes("/run-inboxes"))).toHaveLength(1);
   });
 });

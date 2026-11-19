@@ -78,8 +78,14 @@ test("changed prompt bytes fail their content hash", () => fixture((root, id) =>
 test("audience filtering keeps fixtures resolvable", () => {
   const catalog = readLaunchableCatalog(DEFINITION_STORE_ROOT);
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  expect(launchableDefinitionIds(catalog.value, "user")).toEqual([catalog.value.development.definition_id]);
-  expect(launchableDefinitionIds(catalog.value, null).length).toBe(3);
+  const { development, study } = catalog.value;
+  const userIds = [development.definition_id, study.definition_id];
+  expect(launchableDefinitionIds(catalog.value, "user").sort()).toEqual(userIds.sort());
+  expect(launchableDefinitionIds(catalog.value, null).sort()).toEqual([
+    ...userIds,
+    catalog.value["fan-out"].definition_id,
+    catalog.value["review-loop"].definition_id,
+  ].sort());
   expect(resolveLaunchableDefinition(catalog.value["fan-out"].definition_id, DEFINITION_STORE_ROOT).ok).toBe(true);
 });
 
@@ -89,9 +95,11 @@ test("user catalog pagination excludes fixtures while detail reads accept them",
   const reader = {} as Parameters<typeof listDefinitions>[0];
   const catalog = readLaunchableCatalog(DEFINITION_STORE_ROOT);
   if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-  const page = await listDefinitions(reader, { after: null, limit: 1 });
-  expect([page.items.map((item) => item.definition_id), page.next]).toEqual([[catalog.value.development.definition_id], null]);
-  expect((await listDefinitions(reader, { after: catalog.value.development.definition_id, limit: 1 })).items).toEqual([]);
+  const [firstId, secondId] = [catalog.value.development.definition_id, catalog.value.study.definition_id].sort().reverse();
+  const firstPage = await listDefinitions(reader, { after: null, limit: 1 });
+  expect([firstPage.items.map((item) => item.definition_id), firstPage.next]).toEqual([[firstId], firstId]);
+  const secondPage = await listDefinitions(reader, { after: firstId, limit: 1 });
+  expect([secondPage.items.map((item) => item.definition_id), secondPage.next]).toEqual([[secondId], null]);
   for (const name of ["fan-out", "review-loop"]) {
     const detail = await readDefinition(reader, catalog.value[name].definition_id);
     expect(detail?.definition_id).toBe(catalog.value[name].definition_id);

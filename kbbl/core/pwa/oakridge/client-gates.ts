@@ -25,7 +25,7 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
       const reviews = new Set(unit.decisions.flatMap((decision) => decision.submit.kind === "review"
         && decision.submit.target_revision_id === target ? [decision.submit.review] : []));
       for (const review of reviews) if (unit.decisions.some((decision) => decision.submit.kind === "review"
-        && decision.submit.review === review && decisionAction(decision) === request.action)) {
+        && decision.submit.review === review && decisionAction(decision, unit.decisions) === request.action)) {
         matches.push({ kind: "gate", runId: run.run_id, unitId: unit.unit_id, name: review });
       }
     }
@@ -61,7 +61,7 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
       ? currentRevision.value.name.slice(currentRevision.value.name.indexOf(":") + 1) : currentGate?.artifact_revision_id;
     if (!currentTarget || requestedTarget !== currentTarget)
       throw new Error(`oakridge ${gateId}: review artifact changed; refresh before deciding`);
-    const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review && decisionAction(candidate) === req.action);
+    const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review && decisionAction(candidate, unit.decisions) === req.action);
     if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${gateId}: decision ${req.action} unavailable`);
     if (decision.is_available === false)
       throw new Error(`oakridge ${gateId}: ${decision.disabled_reason ?? `decision ${req.action} unavailable`}`);

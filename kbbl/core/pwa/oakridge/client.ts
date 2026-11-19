@@ -101,9 +101,13 @@ export async function fetchRuns(filter?: string): Promise<RunSummary[]> {
   return Promise.all(runs.map(async (run) => runSummary(unwrapAdapter(runPath(run.run_id), runSnapshot(run, await readUnits(run.run_id))), run)));
 }
 
+function readRunView(path: string): Promise<OperatorRunView> {
+  return oakridgeGet<unknown>(path).then((value) => unwrapAdapter(path, parseRunView(value)));
+}
+
 export async function fetchRun(id: string): Promise<RunDetail> {
   const path = runPath(id);
-  const [run, units] = await Promise.all([oakridgeGet<unknown>(path).then((value) => unwrapAdapter(path, parseRunView(value))), readUnits(id)]);
+  const [run, units] = await Promise.all([readRunView(path), readUnits(id)]);
   return unwrapAdapter(path, runSnapshot(run, units));
 }
 
@@ -130,16 +134,29 @@ export async function fetchReviewInbox(): Promise<ReviewInbox> {
   const runs = await readRunPage();
   if (runs.length === 0) return { cohorts: [], items: [] };
   const entries = await readRunInboxBatch(runs.map((run) => run.run_id));
-  const titles = new Map(runs.map((run) => [run.run_id, run.title]));
-  const slices = await Promise.all(entries.map(async (entry) => unwrapAdapter(`${runPath(entry.run_id)}/inbox`, classifyDevelopmentInbox(entry, await readUnits(entry.run_id), titles.get(entry.run_id) ?? null))));
+  const runsById = new Map(runs.map((run) => [run.run_id, run]));
+  const slices = await Promise.all(entries.map(async (entry) => {
+    const path = `${runPath(entry.run_id)}/inbox`;
+    const run = runsById.get(entry.run_id);
+    if (!run) throw new Error(`oakridge ${path}: run absent from the run page`);
+    const [units, workflow_name] = await Promise.all([readUnits(entry.run_id), readDefinitionName(run.definition_id)]);
+    return unwrapAdapter(path, classifyDevelopmentInbox(entry, units, { workflow_name, run_title: run.title ?? null }));
+  }));
   return { cohorts: slices.flatMap((slice) => slice.cohorts), items: slices.flatMap((slice) => slice.items) };
 }
 
 export async function refreshReviewInboxRun(runId: string, current: ReviewInbox): Promise<ReviewInbox> {
-  const path = `${runPath(runId)}/inbox`;
-  const page = await oakridgeGet<{ readonly items: OperatorRunInboxBatch["items"][number]["items"] }>(path);
-  const runTitle = [...current.items, ...current.cohorts].find((work) => work.run_id === runId)?.run_title ?? null;
-  const slice = unwrapAdapter(path, classifyDevelopmentInbox({ run_id: runId, items: page.items }, await readUnits(runId), runTitle));
+  const runViewPath = runPath(runId);
+  const path = `${runViewPath}/inbox`;
+  const [page, units, run] = await Promise.all([
+    oakridgeGet<{ readonly items: OperatorRunInboxBatch["items"][number]["items"] }>(path),
+    readUnits(runId),
+    readRunView(runViewPath),
+  ]);
+  const runTitle = run.title ?? [...current.items, ...current.cohorts].find((work) => work.run_id === runId)?.run_title ?? null;
+  const slice = unwrapAdapter(path, classifyDevelopmentInbox({ run_id: runId, items: page.items }, units, {
+    workflow_name: await readDefinitionName(run.definition_id), run_title: runTitle,
+  }));
   return replaceDevelopmentInboxRun(current, runId, slice);
 }
 
@@ -174,6 +191,19 @@ export function fetchWorkflowDef(id: string): Promise<OperatorDefinitionDetail> 
 
 export function fetchOperatorDefinition(id: string): Promise<OperatorDefinitionDetail> {
   return oakridgeGet<OperatorDefinitionDetail>(`${OPERATOR}/definitions/${encodeURIComponent(id)}`).then(detail => ({ ...detail, prompts: unwrapAdapter("definition", parseDefinitionPrompts(detail.prompts)) }));
+}
+
+const definitionNames = new Map<string, Promise<string>>();
+
+function readDefinitionName(definitionId: string): Promise<string> {
+  const cached = definitionNames.get(definitionId);
+  if (cached) return cached;
+  const name = fetchOperatorDefinition(definitionId).then((detail) => detail.bundle.key).catch((error) => {
+    definitionNames.delete(definitionId);
+    throw error;
+  });
+  definitionNames.set(definitionId, name);
+  return name;
 }
 
 export async function createRun(body: CreateRunRequest, idempotencyKey: string): Promise<RunSummary> {

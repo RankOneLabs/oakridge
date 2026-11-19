@@ -1,0 +1,1379 @@
+{
+  "workflow": "study",
+  "input": {
+    "title": "text",
+    "spec": "text",
+    "repositories": "list(repository)",
+    "primary_repository_key": "ident",
+    "final_merge_policy": "final_merge_policy",
+    "slice_case_limit": "integer",
+    "slice_cap_cents": "integer",
+    "approved_plan": "optional(plan_body)"
+  },
+  "schemas": {
+    "final_merge_policy": "enum(require_merge, allow_close_without_merge)",
+    "repository": {
+      "key": "ident",
+      "preparation": {
+        "repository_path": "repo_path",
+        "expected_head": "optional(text)"
+      },
+      "forge": "forge"
+    },
+    "forge": {
+      "owner": "ident",
+      "name": "ident",
+      "build_base": "text",
+      "final_base": "text"
+    },
+    "workspace": {
+      "repository_path": "repo_path",
+      "push_remote_owner": "ident",
+      "head": "ident",
+      "base_branch": "text"
+    },
+    "prepared": {
+      "key": "ident",
+      "workspace": "workspace"
+    },
+    "pr_status": {
+      "state": "enum(open, merged, closed_unmerged)",
+      "number": "integer",
+      "url": "text",
+      "head_sha": "optional(text)",
+      "merged_at": "optional(text)"
+    },
+    "severity": "enum(blocking, warning, info)",
+    "issue": {
+      "description": "text",
+      "severity": "severity"
+    },
+    "evidence_ref": {
+      "kind": "enum(file, test, output)",
+      "ref": "text",
+      "detail": "optional(text)"
+    },
+    "test_evidence": {
+      "passed": "integer",
+      "failed": "integer",
+      "output": "optional(text)",
+      "summary": "optional(text)",
+      "cargo_test_output": "optional(text)"
+    },
+    "next_action": {
+      "id": "uuid(generated)",
+      "audience": "enum(builder, operator)",
+      "source": "action_source",
+      "text": "text"
+    },
+    "action_source": {
+      "kind": "enum(item_assessment, additional_finding)",
+      "id": "ident"
+    },
+    "action_disposition": {
+      "action_id": "text",
+      "disposition": "enum(accepted, modified, rejected)",
+      "original_text": "text",
+      "final_text": "optional(text)",
+      "audience": "enum(builder, operator)",
+      "source": "action_source",
+      "reason": "optional(text)"
+    },
+    "added_action": {
+      "action_id": "text",
+      "origin": "enum(operator)",
+      "final_text": "text",
+      "audience": "enum(builder, operator)",
+      "source": "action_source",
+      "reason": "optional(text)"
+    },
+    "adjudication": {
+      "entries": "list(action_disposition)",
+      "added_actions": "list(added_action)",
+      "builder_feedback": "text"
+    },
+    "pr_body": {
+      "pr_url": "text",
+      "branch": "text",
+      "summary": "text",
+      "review_status": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
+    },
+    "cost_basis": "enum(measured, assumption)",
+    "expected_cost": {
+      "cents": "integer",
+      "basis": "cost_basis"
+    },
+    "plan_hypothesis": {
+      "id": "ident",
+      "statement": "text"
+    },
+    "plan_case": {
+      "id": "ident",
+      "group": "ident",
+      "is_control": "boolean"
+    },
+    "plan_group": {
+      "id": "ident",
+      "case_ids": "list(ident)"
+    },
+    "plan_outcome": {
+      "id": "ident",
+      "rule": "text"
+    },
+    "decision_row": {
+      "condition": "text",
+      "next_step": "text"
+    },
+    "plan_model": {
+      "id": "ident",
+      "route": "text",
+      "per_attempt_cap_cents": "integer",
+      "expected_cost_per_attempt": "expected_cost"
+    },
+    "plan_item": {
+      "id": "ident",
+      "text": "text"
+    },
+    "plan_slice": {
+      "case_ids": "list(ident)",
+      "risk_reason": "text",
+      "criteria": "list(plan_item)"
+    },
+    "slice_paid_plan": {
+      "models": "list(ident)",
+      "repeats": "integer",
+      "cap_cents": "integer"
+    },
+    "plan_body": {
+      "question": "text",
+      "hypotheses": "list(plan_hypothesis)",
+      "cases": "list(plan_case)",
+      "groups": "list(plan_group)",
+      "outcomes": "list(plan_outcome)",
+      "decision_rule": "list(decision_row)",
+      "models": "list(plan_model)",
+      "slice": "plan_slice",
+      "slice_paid": "slice_paid_plan",
+      "iteration_triggers": "list(plan_item)"
+    },
+    "build_summary": {
+      "cohort_id": "ident",
+      "title": "text",
+      "head_sha": "text",
+      "summary": "text",
+      "changed_files": "list(text)"
+    },
+    "completed_cohort": {
+      "repository_key": "ident",
+      "pr_url": "text",
+      "branch": "text",
+      "build_result": "build_summary"
+    },
+    "case_qualification": {
+      "case_id": "ident",
+      "reference_passes": "boolean",
+      "omissions_isolated": "boolean",
+      "controls_replayed": "boolean",
+      "detail": "text"
+    },
+    "slice_build_body": {
+      "build": "build_summary",
+      "generator_digest": "text",
+      "case_ids": "list(ident)",
+      "qualifications": "list(case_qualification)"
+    },
+    "spend_request_body": {
+      "cohort_file": "text",
+      "attempt_count": "integer",
+      "cap_cents": "integer",
+      "generator_digest": "text",
+      "case_ids": "list(ident)"
+    },
+    "paid_result": {
+      "model_id": "ident",
+      "case_id": "ident",
+      "outcome": "enum(scored, unscored, stopped)",
+      "detail": "text",
+      "spend_cents": "integer",
+      "launch_command": "text",
+      "store_path": "text"
+    },
+    "mark": {
+      "id": "ident",
+      "status": "enum(met, not_met)",
+      "evidence": "text"
+    },
+    "slice_report_body": {
+      "run_key": "text",
+      "generator_digest": "text",
+      "qualifications": "list(case_qualification)",
+      "paid_results": "list(paid_result)",
+      "criteria_marks": "list(mark)",
+      "trigger_marks": "list(mark)",
+      "proposed_changes": "list(text)"
+    },
+    "assessment_subject": {
+      "kind": "enum(case, criterion, trigger, cohort_file)",
+      "id": "ident"
+    },
+    "item_assessment": {
+      "subject": "assessment_subject",
+      "status": "enum(met, partial, not_met)",
+      "observation": "text",
+      "evidence": "list(evidence_ref)"
+    },
+    "additional_finding": {
+      "id": "ident",
+      "severity": "severity",
+      "observation": "text",
+      "related_build_item_ids": "list(ident)",
+      "evidence": "list(evidence_ref)"
+    },
+    "assessment_body": {
+      "head_sha": "text",
+      "item_assessments": "list(item_assessment)",
+      "additional_findings": "list(additional_finding)",
+      "next_actions": "list(next_action)",
+      "test_evidence": "test_evidence",
+      "verdict": "enum(pass, pass_with_notes, fail)"
+    },
+    "slice_assessment_body": {
+      "head_sha": "text",
+      "item_assessments": "list(item_assessment)",
+      "additional_findings": "list(additional_finding)",
+      "next_actions": "list(next_action)",
+      "test_evidence": "test_evidence",
+      "verdict": "enum(pass, pass_with_notes, fail)",
+      "run_key": "text"
+    },
+    "expansion_body": {
+      "build": "build_summary",
+      "generator_digest": "text",
+      "case_ids": "list(ident)",
+      "qualifications": "list(case_qualification)"
+    },
+    "freeze_cohort": {
+      "id": "ident",
+      "file": "text",
+      "digest": "text",
+      "attempt_count": "integer",
+      "cap_cents": "integer",
+      "cost_basis": "enum(measured, per_attempt_cap)"
+    },
+    "freeze_body": {
+      "build": "build_summary",
+      "generator_digest": "text",
+      "image_digest": "text",
+      "is_byte_identical": "boolean",
+      "cohorts": "list(freeze_cohort)"
+    }
+  },
+  "decisions": {
+    "accept_or_request": {
+      "accept": {
+        "effect": "approve",
+        "label": "Accept"
+      },
+      "request_changes": {
+        "effect": "request_changes",
+        "label": "Request changes",
+        "fields": {
+          "feedback": "What must the proposed specification change?"
+        }
+      }
+    }
+  },
+  "workers": {
+    "pr_watch": {
+      "kind": "code",
+      "operation": "pull_request.observe",
+      "when": "pr_opened",
+      "inputs": {
+        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
+      },
+      "every": "2m",
+      "produces": [
+        "pr_state"
+      ]
+    }
+  },
+  "reviews": {
+    "pr_closed": {
+      "of": "build_result",
+      "by": "operator",
+      "when": "closed_pr",
+      "prompt": "development/pr-closed.md",
+      "inputs": {
+        "pr": "latest(pr)",
+        "pr_state": "latest(pr_state)"
+      },
+      "decisions": {
+        "replace_pr": {
+          "effect": "request_changes",
+          "label": "Replace the closed PR",
+          "fields": {
+            "feedback": "What must change in the replacement pull request?"
+          }
+        }
+      }
+    }
+  },
+  "run": {
+    "pools": {
+      "expanders": 4
+    },
+    "units": {
+      "prepare": {
+        "for_each": "input.repositories",
+        "key": "each.key",
+        "stage": "prepare",
+        "input": {
+          "repository": "each"
+        }
+      },
+      "design": {
+        "stage": "design",
+        "input": {
+          "spec": "input.spec",
+          "repository": "require(lookup(input.repositories, key, input.primary_repository_key))",
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace",
+          "slice_case_limit": "input.slice_case_limit",
+          "slice_cap_cents": "input.slice_cap_cents",
+          "approved_plan": "input.approved_plan"
+        }
+      },
+      "expansion": {
+        "for_each": "filter(design.outcome.plan.groups, len(filter(item.case_ids, not contains(design.outcome.plan.slice.case_ids, item))) > 0)",
+        "key": "each.id",
+        "stage": "expand",
+        "pool": "expanders",
+        "input": {
+          "group_id": "each.id",
+          "case_ids": "filter(each.case_ids, not contains(design.outcome.plan.slice.case_ids, item))",
+          "generator_digest": "design.outcome.generator_digest",
+          "plan": "design.outcome.plan",
+          "repository": "require(lookup(input.repositories, key, input.primary_repository_key))",
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
+        }
+      },
+      "freeze": {
+        "stage": "freeze",
+        "input": {
+          "plan": "design.outcome.plan",
+          "generator_digest": "design.outcome.generator_digest",
+          "slice_report": "design.outcome.slice_report",
+          "expansions": "map(expansion, expansion.outcome)",
+          "repository": "require(lookup(input.repositories, key, input.primary_repository_key))",
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
+        }
+      },
+      "integration": {
+        "stage": "integration",
+        "input": {
+          "repository": "require(lookup(input.repositories, key, input.primary_repository_key))",
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace",
+          "slice_cohort": "design.outcome.cohort",
+          "expansion_cohorts": "map(expansion, expansion.outcome)",
+          "freeze_cohort": "freeze.outcome.cohort",
+          "cases": "design.outcome.plan.cases",
+          "freeze": "freeze.outcome.freeze",
+          "final_merge_policy": "input.final_merge_policy"
+        }
+      }
+    },
+    "outcome": {
+      "plan": "design.outcome.plan",
+      "freeze": "freeze.outcome.freeze",
+      "integration": "integration.outcome"
+    }
+  },
+  "stages": {
+    "prepare": {
+      "input": {
+        "repository": "repository"
+      },
+      "artifacts": {
+        "workspace": {
+          "kind": "record",
+          "schema": "workspace"
+        }
+      },
+      "workers": {
+        "git": {
+          "kind": "code",
+          "operation": "repository.prepare",
+          "inputs": {
+            "repository_path": "input.repository.preparation.repository_path",
+            "expected_head": "input.repository.preparation.expected_head",
+            "base_branch": "input.repository.forge.build_base",
+            "integration_branch": "input.repository.forge.final_base"
+          },
+          "produces": [
+            "workspace"
+          ]
+        }
+      },
+      "done_when": "published(workspace)",
+      "outcome": {
+        "key": "input.repository.key",
+        "workspace": "latest(workspace)"
+      }
+    },
+    "design": {
+      "input": {
+        "spec": "text",
+        "repository": "repository",
+        "workspace": "workspace",
+        "slice_case_limit": "integer",
+        "slice_cap_cents": "integer",
+        "approved_plan": "optional(plan_body)"
+      },
+      "let": {
+        "report_published": "published(slice_report)",
+        "report_is_placeholder": "published(slice_report) and len(latest(slice_report).paid_results) == 0",
+        "report_is_paid": "published(slice_report) and len(latest(slice_report).paid_results) > 0",
+        "watch_base": "input.repository.forge.build_base",
+        "pr_published": "published(pr)",
+        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
+        "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
+      },
+      "artifacts": {
+        "plan": {
+          "kind": "document",
+          "schema": "plan_body",
+          "validate": [
+            {
+              "check": "len(plan.cases) > 0 and len(plan.hypotheses) > 0",
+              "message": "The plan needs at least one case and one hypothesis."
+            },
+            {
+              "check": "every(plan.slice.case_ids, contains(map(plan.cases, item.id), item))",
+              "message": "Every slice id must be a case id."
+            },
+            {
+              "check": "len(plan.slice.case_ids) <= input.slice_case_limit",
+              "message": "The slice may hold at most the workflow's slice case limit."
+            },
+            {
+              "check": "len(filter(plan.cases, item.is_control == true)) == 0 or len(filter(plan.cases, item.is_control == true and contains(plan.slice.case_ids, item.id))) > 0",
+              "message": "When any case is a control, the slice must include a control case."
+            },
+            {
+              "check": "plan.slice_paid.cap_cents > 0 and plan.slice_paid.cap_cents <= input.slice_cap_cents",
+              "message": "The paid slice cap must be above zero and at most the workflow's slice cap."
+            },
+            {
+              "check": "unique(map(plan.cases, item.id))",
+              "message": "Case ids must be unique."
+            },
+            {
+              "check": "unique(flatten(map(plan.groups, item.case_ids)))",
+              "message": "A case may belong to only one group."
+            },
+            {
+              "check": "every(flatten(map(plan.groups, item.case_ids)), contains(map(plan.cases, item.id), item))",
+              "message": "Groups may name only plan case ids."
+            },
+            {
+              "check": "every(plan.cases, contains(map(plan.groups, item.id), item.group) and contains(require(lookup(plan.groups, id, item.group)).case_ids, item.id))",
+              "message": "Every case must be listed by the group it names."
+            },
+            {
+              "check": "every(plan.slice_paid.models, contains(map(plan.models, item.id), item))",
+              "message": "Paid slice models must be plan models."
+            },
+            {
+              "check": "unique(map(plan.groups, item.id)) and unique(map(plan.hypotheses, item.id))",
+              "message": "Group and hypothesis ids must be unique."
+            },
+            {
+              "check": "len(plan.slice.case_ids) > 0",
+              "message": "The slice needs at least one case."
+            },
+            {
+              "check": "len(plan.slice_paid.models) > 0",
+              "message": "The paid slice needs at least one model."
+            },
+            {
+              "check": "plan.slice_paid.repeats > 0",
+              "message": "The paid slice needs at least one repeat."
+            },
+            {
+              "check": "unique(map(plan.slice.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.slice.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))",
+              "message": "Slice criteria and iteration triggers must have distinct ids."
+            }
+          ]
+        },
+        "slice_build": {
+          "kind": "document",
+          "schema": "slice_build_body",
+          "validate": [
+            {
+              "check": "published(plan) and every(slice_build.case_ids, contains(latest(plan).slice.case_ids, item)) and every(latest(plan).slice.case_ids, contains(slice_build.case_ids, item))",
+              "message": "The slice build must cover exactly the plan's slice cases."
+            },
+            {
+              "check": "every(slice_build.case_ids, contains(map(slice_build.qualifications, item.case_id), item))",
+              "message": "Every slice case needs a qualification result."
+            },
+            {
+              "check": "slice_build.build.cohort_id == \"slice\"",
+              "message": "The slice build's cohort_id is slice."
+            },
+            {
+              "check": "slice_build.generator_digest != \"\"",
+              "message": "The generator digest is required."
+            }
+          ]
+        },
+        "spend_request": {
+          "kind": "document",
+          "schema": "spend_request_body",
+          "validate": [
+            {
+              "check": "published(slice_build) and spend_request.generator_digest == latest(slice_build).generator_digest",
+              "message": "The spend request's generator digest must equal the latest slice build's."
+            },
+            {
+              "check": "published(slice_build) and every(spend_request.case_ids, contains(latest(slice_build).case_ids, item)) and every(latest(slice_build).case_ids, contains(spend_request.case_ids, item))",
+              "message": "The spend request's case ids must equal the latest slice build's."
+            },
+            {
+              "check": "spend_request.attempt_count > 0 and spend_request.cap_cents > 0 and published(plan) and spend_request.cap_cents <= latest(plan).slice_paid.cap_cents",
+              "message": "The spend request needs attempts and a cap within the plan's paid slice cap."
+            }
+          ]
+        },
+        "slice_report": {
+          "kind": "document",
+          "schema": "slice_report_body",
+          "validate": [
+            {
+              "check": "len(slice_report.paid_results) > 0",
+              "message": "No paid results yet: this offline report waits for the spend request's approval."
+            },
+            {
+              "check": "len(slice_report.paid_results) == 0 or approved(spend_request)",
+              "message": "Paid results need an approved spend request."
+            },
+            {
+              "check": "published(plan) and every(map(latest(plan).slice.criteria, item.id), contains(map(slice_report.criteria_marks, item.id), item))",
+              "message": "Every plan slice criterion must be marked."
+            },
+            {
+              "check": "published(plan) and every(map(latest(plan).iteration_triggers, item.id), contains(map(slice_report.trigger_marks, item.id), item))",
+              "message": "Every plan iteration trigger must be marked."
+            },
+            {
+              "check": "published(plan) and every(map(slice_report.qualifications, item.case_id), contains(latest(plan).slice.case_ids, item)) and every(latest(plan).slice.case_ids, contains(map(slice_report.qualifications, item.case_id), item))",
+              "message": "The report's case ids must equal the plan's slice ids."
+            },
+            {
+              "check": "published(plan) and every(slice_report.paid_results, contains(latest(plan).slice.case_ids, item.case_id))",
+              "message": "Paid results may name only slice cases."
+            },
+            {
+              "check": "published(slice_build) and slice_report.generator_digest == latest(slice_build).generator_digest",
+              "message": "The report's generator digest must equal the latest slice build's."
+            },
+            {
+              "check": "len(slice_report.paid_results) == 0 or slice_report.run_key != \"\"",
+              "message": "A paid report needs its run key (the paid run's store path)."
+            }
+          ]
+        },
+        "slice_assessment": {
+          "kind": "assessment",
+          "schema": "slice_assessment_body",
+          "edit_policy": {
+            "kind": "frozen_when_accepted"
+          },
+          "validate": [
+            {
+              "check": "published(slice_report) and slice_assessment.run_key == latest(slice_report).run_key",
+              "message": "The assessment must name the latest slice report's run key."
+            },
+            {
+              "check": "published(plan) and every(map(latest(plan).slice.criteria, item.id), contains(map(filter(slice_assessment.item_assessments, item.subject.kind == \"criterion\"), item.subject.id), item))",
+              "message": "Every slice criterion must be assessed."
+            },
+            {
+              "check": "published(plan) and every(map(latest(plan).iteration_triggers, item.id), contains(map(filter(slice_assessment.item_assessments, item.subject.kind == \"trigger\"), item.subject.id), item))",
+              "message": "Every iteration trigger must be assessed."
+            },
+            {
+              "check": "unique(map(slice_assessment.item_assessments, item.subject.id))",
+              "message": "Assessment item ids must be unique."
+            },
+            {
+              "check": "unique(map(slice_assessment.additional_findings, item.id))",
+              "message": "Additional finding ids must be unique."
+            },
+            {
+              "check": "every(slice_assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(slice_assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(slice_assessment.additional_findings, item.id), item.source.id)))",
+              "message": "Every next action source must resolve to an assessed item or additional finding."
+            },
+            {
+              "check": "(slice_assessment.verdict == \"fail\" and (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (slice_assessment.verdict == \"pass_with_notes\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)) or (slice_assessment.verdict == \"pass\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0))",
+              "message": "Assessment verdict must match item statuses and additional finding severities."
+            },
+            {
+              "check": "slice_assessment.test_evidence.failed == 0 or (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "message": "Failed tests require an unmet item or a blocking or warning additional finding."
+            }
+          ]
+        },
+        "pr": {
+          "kind": "external_reference",
+          "schema": "pr_body"
+        },
+        "pr_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        },
+        "observed_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        }
+      },
+      "workers": {
+        "designer": {
+          "kind": "agent",
+          "prompts": {
+            "initial": "study/design.md",
+            "revise": "study/design-revise.md"
+          },
+          "inputs": {
+            "spec": "input.spec",
+            "approved_plan": "input.approved_plan",
+            "slice_case_limit": "input.slice_case_limit",
+            "slice_cap_cents": "input.slice_cap_cents",
+            "repository_key": "input.repository.key"
+          },
+          "workspace": "repository(input.workspace)",
+          "produces": [
+            "plan"
+          ]
+        },
+        "slice_builder": {
+          "kind": "agent",
+          "prompts": {
+            "initial": "study/slice-build.md",
+            "revise": "study/slice-build-revise.md"
+          },
+          "when": "approved(plan) and not (report_is_placeholder and not approved(spend_request) and not changes_requested(spend_request))",
+          "inputs": {
+            "plan": "latest(plan)",
+            "spec": "input.spec",
+            "repository": "input.repository",
+            "build_base": "input.repository.forge.build_base",
+            "spend_approved": "approved(spend_request)",
+            "report_is_placeholder": "report_is_placeholder"
+          },
+          "workspace": "repository(input.workspace)",
+          "produces": [
+            "slice_build",
+            "spend_request",
+            "slice_report",
+            "pr"
+          ]
+        },
+        "slice_assessor": {
+          "kind": "agent",
+          "prompts": {
+            "review": "study/slice-assess.md",
+            "revise": "study/slice-assess-revise.md"
+          },
+          "when": "report_is_paid and not changes_requested(slice_report)",
+          "inputs": {
+            "plan": "latest(plan)",
+            "slice_report": "latest(slice_report)",
+            "slice_build": "latest(slice_build)"
+          },
+          "workspace": "repository(input.workspace)",
+          "evaluates": "slice_report",
+          "produces": [
+            "slice_assessment"
+          ]
+        },
+        "pr_watch": {
+          "template": "pr_watch"
+        },
+        "prepare_observed_state": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "pr_state_current",
+          "inputs": {
+            "value": "latest(pr_state)"
+          },
+          "every": "2m",
+          "produces": [
+            "observed_state"
+          ]
+        }
+      },
+      "reviews": {
+        "plan_review": {
+          "of": "plan",
+          "by": "operator",
+          "prompt": "study/plan-review.md",
+          "inputs": {
+            "spec": "input.spec",
+            "plan": "latest(plan)"
+          },
+          "decisions": {
+            "set": "accept_or_request",
+            "overrides": {
+              "request_changes": {
+                "fields": {
+                  "feedback": "What must the plan change?"
+                }
+              }
+            }
+          }
+        },
+        "spend_request_review": {
+          "of": "spend_request",
+          "by": "operator",
+          "prompt": "study/spend-request-review.md",
+          "when": "report_is_placeholder",
+          "inputs": {
+            "plan": "latest(plan)",
+            "slice_build": "latest(slice_build)",
+            "spend_request": "latest(spend_request)"
+          },
+          "decisions": {
+            "approve": {
+              "effect": "approve",
+              "label": "Approve spend"
+            },
+            "request_changes": {
+              "effect": "request_changes",
+              "label": "Request changes",
+              "fields": {
+                "feedback": "What must the spend request change?"
+              }
+            }
+          }
+        },
+        "slice_report_review": {
+          "of": "slice_report",
+          "by": "operator",
+          "prompt": "study/slice-report-review.md",
+          "when": "report_is_paid and published(slice_assessment) and latest(slice_assessment).run_key == latest(slice_report).run_key",
+          "inputs": {
+            "plan": "latest(plan)",
+            "slice_build": "latest(slice_build)",
+            "slice_report": "latest(slice_report)",
+            "slice_assessment": "latest(slice_assessment)"
+          },
+          "decisions": {
+            "expand": {
+              "effect": "approve",
+              "label": "Expand"
+            },
+            "send_to_builder": {
+              "effect": "request_changes",
+              "label": "Send to builder",
+              "on": "slice_build",
+              "fields": {
+                "feedback": "What must the slice builder fix?"
+              }
+            },
+            "change_design": {
+              "effect": "request_changes",
+              "label": "Change design",
+              "on": "plan",
+              "fields": {
+                "feedback": "What must the plan change?"
+              }
+            }
+          }
+        },
+        "merge_confirmation": {
+          "of": "pr",
+          "by": "operator",
+          "when": "pr_published and approved(slice_report) and not merged_pr and not approved(pr)",
+          "prompt": "development/merge-confirmation.md",
+          "inputs": {
+            "pr": "latest(pr)",
+            "pr_state": "latest(pr_state)"
+          },
+          "decisions": {
+            "confirm_merged": {
+              "effect": "approve",
+              "label": "Confirm merged"
+            }
+          }
+        },
+        "pr_closed": {
+          "template": "pr_closed",
+          "overrides": {
+            "of": "pr"
+          }
+        }
+      },
+      "done_when": "approved(plan) and approved(slice_report) and published(slice_build) and pr_published and (merged_pr or approved(pr))",
+      "outcome": {
+        "plan": "latest(plan)",
+        "generator_digest": "latest(slice_build).generator_digest",
+        "slice_report": "latest(slice_report)",
+        "cohort": "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(slice_build).build}"
+      }
+    },
+    "expand": {
+      "input": {
+        "group_id": "ident",
+        "case_ids": "list(ident)",
+        "generator_digest": "text",
+        "plan": "plan_body",
+        "repository": "repository",
+        "workspace": "workspace"
+      },
+      "let": {
+        "watch_base": "input.repository.forge.build_base",
+        "pr_published": "published(pr)",
+        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
+        "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
+      },
+      "artifacts": {
+        "expansion": {
+          "kind": "document",
+          "schema": "expansion_body",
+          "validate": [
+            {
+              "check": "expansion.generator_digest == input.generator_digest",
+              "message": "The expansion's generator digest must equal the approved slice's."
+            },
+            {
+              "check": "unique(expansion.case_ids) and every(expansion.case_ids, contains(input.case_ids, item)) and every(input.case_ids, contains(expansion.case_ids, item))",
+              "message": "The expansion's case ids must be exactly its allocated cases."
+            },
+            {
+              "check": "every(input.case_ids, contains(map(expansion.qualifications, item.case_id), item))",
+              "message": "Every allocated case needs a qualification result."
+            },
+            {
+              "check": "expansion.build.cohort_id == input.group_id",
+              "message": "The expansion's cohort_id is its group id."
+            }
+          ]
+        },
+        "assessment": {
+          "kind": "assessment",
+          "schema": "assessment_body",
+          "edit_policy": {
+            "kind": "frozen_when_accepted"
+          },
+          "validate": [
+            {
+              "check": "every(assessment.item_assessments, item.subject.kind == \"case\")",
+              "message": "Expansion assessment items must be cases."
+            },
+            {
+              "check": "every(input.case_ids, contains(map(assessment.item_assessments, item.subject.id), item))",
+              "message": "Every allocated case must be assessed."
+            },
+            {
+              "check": "published(expansion) and assessment.head_sha == latest(expansion).build.head_sha",
+              "message": "Assessment head_sha must match the latest expansion build."
+            },
+            {
+              "check": "unique(map(assessment.item_assessments, item.subject.id))",
+              "message": "Assessment item ids must be unique."
+            },
+            {
+              "check": "unique(map(assessment.additional_findings, item.id))",
+              "message": "Additional finding ids must be unique."
+            },
+            {
+              "check": "every(assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(assessment.additional_findings, item.id), item.source.id)))",
+              "message": "Every next action source must resolve to an assessed item or additional finding."
+            },
+            {
+              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
+              "message": "Assessment verdict must match item statuses and additional finding severities."
+            },
+            {
+              "check": "assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "message": "Failed tests require an unmet item or a blocking or warning additional finding."
+            }
+          ]
+        },
+        "pr": {
+          "kind": "external_reference",
+          "schema": "pr_body"
+        },
+        "pr_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        },
+        "observed_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        }
+      },
+      "workers": {
+        "expander": {
+          "kind": "agent",
+          "prompts": {
+            "initial": "study/expand.md",
+            "revise": "study/expand-revise.md"
+          },
+          "inputs": {
+            "group_id": "input.group_id",
+            "case_ids": "input.case_ids",
+            "generator_digest": "input.generator_digest",
+            "plan": "input.plan",
+            "repository": "input.repository",
+            "build_base": "input.repository.forge.build_base"
+          },
+          "workspace": "repository(input.workspace)",
+          "produces": [
+            "expansion",
+            "pr"
+          ]
+        },
+        "assessor": {
+          "kind": "agent",
+          "prompts": {
+            "review": "study/expand-assess.md",
+            "revise": "study/expand-assess-revise.md"
+          },
+          "inputs": {
+            "case_ids": "input.case_ids",
+            "plan": "input.plan",
+            "pr": "latest(pr)"
+          },
+          "workspace": "repository(input.workspace)",
+          "evaluates": "expansion",
+          "produces": [
+            "assessment"
+          ]
+        },
+        "pr_watch": {
+          "template": "pr_watch"
+        },
+        "prepare_observed_state": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "pr_state_current",
+          "inputs": {
+            "value": "latest(pr_state)"
+          },
+          "every": "2m",
+          "produces": [
+            "observed_state"
+          ]
+        }
+      },
+      "reviews": {
+        "expansion_review": {
+          "of": "assessment",
+          "by": "operator",
+          "prompt": "study/expansion-review.md",
+          "inputs": {
+            "case_ids": "input.case_ids",
+            "expansion": "latest(expansion)",
+            "pr": "latest(pr)",
+            "assessment": "latest(assessment)"
+          },
+          "decisions": {
+            "accept": {
+              "effect": "approve",
+              "label": "Accept",
+              "payload": "adjudication"
+            },
+            "request_assessment_changes": {
+              "effect": "request_changes",
+              "label": "Request assessment changes",
+              "fields": {
+                "feedback": "What must the assessment change?"
+              }
+            },
+            "send_to_expander": {
+              "effect": "request_changes",
+              "on": "expansion",
+              "label": "Send to builder",
+              "payload": "adjudication",
+              "feedback_field": "builder_feedback"
+            }
+          }
+        },
+        "merge_confirmation": {
+          "of": "pr",
+          "by": "operator",
+          "when": "pr_published and approved(assessment) and not merged_pr and not approved(pr)",
+          "prompt": "development/merge-confirmation.md",
+          "inputs": {
+            "pr": "latest(pr)",
+            "pr_state": "latest(pr_state)"
+          },
+          "decisions": {
+            "confirm_merged": {
+              "effect": "approve",
+              "label": "Confirm merged"
+            }
+          }
+        },
+        "pr_closed": {
+          "template": "pr_closed",
+          "overrides": {
+            "of": "pr"
+          }
+        }
+      },
+      "done_when": "approved(assessment) and published(expansion) and pr_published and (merged_pr or approved(pr))",
+      "outcome": {
+        "repository_key": "input.repository.key",
+        "pr_url": "latest(pr).pr_url",
+        "branch": "latest(pr).branch",
+        "build_result": "latest(expansion).build"
+      }
+    },
+    "freeze": {
+      "input": {
+        "plan": "plan_body",
+        "generator_digest": "text",
+        "slice_report": "slice_report_body",
+        "expansions": "list(completed_cohort)",
+        "repository": "repository",
+        "workspace": "workspace"
+      },
+      "let": {
+        "watch_base": "input.repository.forge.build_base",
+        "pr_published": "published(pr)",
+        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
+        "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
+      },
+      "artifacts": {
+        "freeze": {
+          "kind": "document",
+          "schema": "freeze_body",
+          "validate": [
+            {
+              "check": "freeze.generator_digest == input.generator_digest",
+              "message": "The freeze must use the approved generator digest."
+            },
+            {
+              "check": "freeze.is_byte_identical == true",
+              "message": "Regenerated cases must match the committed fixtures byte for byte."
+            },
+            {
+              "check": "len(freeze.cohorts) > 0 and unique(map(freeze.cohorts, item.id))",
+              "message": "The freeze needs uniquely identified cohorts."
+            },
+            {
+              "check": "every(freeze.cohorts, not contains(map(input.plan.cases, item.id), item.id))",
+              "message": "Frozen cohort ids must be distinct from plan case ids."
+            },
+            {
+              "check": "every(freeze.cohorts, item.attempt_count > 0 and item.cap_cents > 0)",
+              "message": "Every frozen cohort needs attempts and a cap in cents."
+            },
+            {
+              "check": "freeze.build.cohort_id == \"freeze\"",
+              "message": "The freeze's cohort_id is freeze."
+            }
+          ]
+        },
+        "pr": {
+          "kind": "external_reference",
+          "schema": "pr_body"
+        },
+        "pr_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        },
+        "observed_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        }
+      },
+      "workers": {
+        "freezer": {
+          "kind": "agent",
+          "prompts": {
+            "initial": "study/freeze.md",
+            "revise": "study/freeze-revise.md"
+          },
+          "inputs": {
+            "plan": "input.plan",
+            "generator_digest": "input.generator_digest",
+            "slice_report": "input.slice_report",
+            "expansions": "input.expansions",
+            "repository": "input.repository",
+            "build_base": "input.repository.forge.build_base"
+          },
+          "workspace": "repository(input.workspace)",
+          "produces": [
+            "freeze",
+            "pr"
+          ]
+        },
+        "pr_watch": {
+          "template": "pr_watch"
+        },
+        "prepare_observed_state": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "pr_state_current",
+          "inputs": {
+            "value": "latest(pr_state)"
+          },
+          "every": "2m",
+          "produces": [
+            "observed_state"
+          ]
+        }
+      },
+      "reviews": {
+        "freeze_review": {
+          "of": "freeze",
+          "by": "operator",
+          "prompt": "study/freeze-review.md",
+          "inputs": {
+            "plan": "input.plan",
+            "slice_report": "input.slice_report",
+            "freeze": "latest(freeze)"
+          },
+          "decisions": {
+            "set": "accept_or_request",
+            "overrides": {
+              "request_changes": {
+                "fields": {
+                  "feedback": "What must the freeze change?"
+                }
+              }
+            }
+          }
+        },
+        "merge_confirmation": {
+          "of": "pr",
+          "by": "operator",
+          "when": "pr_published and approved(freeze) and not merged_pr and not approved(pr)",
+          "prompt": "development/merge-confirmation.md",
+          "inputs": {
+            "pr": "latest(pr)",
+            "pr_state": "latest(pr_state)"
+          },
+          "decisions": {
+            "confirm_merged": {
+              "effect": "approve",
+              "label": "Confirm merged"
+            }
+          }
+        },
+        "pr_closed": {
+          "template": "pr_closed",
+          "overrides": {
+            "of": "pr"
+          }
+        }
+      },
+      "done_when": "approved(freeze) and pr_published and (merged_pr or approved(pr))",
+      "outcome": {
+        "freeze": "latest(freeze)",
+        "cohort": "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(freeze).build}"
+      }
+    },
+    "integration": {
+      "input": {
+        "repository": "repository",
+        "workspace": "workspace",
+        "slice_cohort": "completed_cohort",
+        "expansion_cohorts": "list(completed_cohort)",
+        "freeze_cohort": "completed_cohort",
+        "cases": "list(plan_case)",
+        "freeze": "freeze_body",
+        "final_merge_policy": "final_merge_policy"
+      },
+      "let": {
+        "pr_published": "published(pr)",
+        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
+        "watch_base": "input.repository.forge.final_base",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
+        "final_state": "pr_state_current and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))"
+      },
+      "artifacts": {
+        "assessment": {
+          "kind": "assessment",
+          "schema": "assessment_body",
+          "edit_policy": {
+            "kind": "frozen_when_accepted"
+          },
+          "validate": [
+            {
+              "check": "every(assessment.item_assessments, item.subject.kind == \"case\" or item.subject.kind == \"cohort_file\")",
+              "message": "Integration assessment items must be cases or cohort files."
+            },
+            {
+              "check": "every(map(input.cases, item.id), contains(map(filter(assessment.item_assessments, item.subject.kind == \"case\"), item.subject.id), item))",
+              "message": "Every plan case must be assessed."
+            },
+            {
+              "check": "every(map(input.freeze.cohorts, item.id), contains(map(filter(assessment.item_assessments, item.subject.kind == \"cohort_file\"), item.subject.id), item))",
+              "message": "Every frozen cohort file must be assessed."
+            },
+            {
+              "check": "unique(map(assessment.item_assessments, item.subject.id))",
+              "message": "Assessment item ids must be unique."
+            },
+            {
+              "check": "unique(map(assessment.additional_findings, item.id))",
+              "message": "Additional finding ids must be unique."
+            },
+            {
+              "check": "every(assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(assessment.additional_findings, item.id), item.source.id)))",
+              "message": "Every next action source must resolve to an assessed item or additional finding."
+            },
+            {
+              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
+              "message": "Assessment verdict must match item statuses and additional finding severities."
+            },
+            {
+              "check": "assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "message": "Failed tests require an unmet item or a blocking or warning additional finding."
+            }
+          ]
+        },
+        "pr": {
+          "kind": "external_reference",
+          "schema": "pr_body"
+        },
+        "pr_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        },
+        "manual_merge_target": {
+          "kind": "external_reference",
+          "schema": "pr_body"
+        },
+        "observed_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        }
+      },
+      "workers": {
+        "integrator": {
+          "kind": "agent",
+          "prompts": {
+            "initial": "study/integrate.md",
+            "revise": "study/integrate-revise.md"
+          },
+          "inputs": {
+            "repository": "input.repository",
+            "slice_cohort": "input.slice_cohort",
+            "expansion_cohorts": "input.expansion_cohorts",
+            "freeze_cohort": "input.freeze_cohort",
+            "cases": "input.cases",
+            "freeze": "input.freeze"
+          },
+          "workspace": "repository(input.workspace)",
+          "produces": [
+            "pr",
+            "assessment"
+          ]
+        },
+        "pr_watch": {
+          "template": "pr_watch"
+        },
+        "prepare_manual_merge": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "pr_published",
+          "inputs": {
+            "value": "latest(pr)"
+          },
+          "every": "2m",
+          "produces": [
+            "manual_merge_target"
+          ]
+        },
+        "prepare_observed_state": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "pr_state_current",
+          "inputs": {
+            "value": "latest(pr_state)"
+          },
+          "every": "2m",
+          "produces": [
+            "observed_state"
+          ]
+        }
+      },
+      "reviews": {
+        "integration_review": {
+          "of": "assessment",
+          "by": "operator",
+          "prompt": "study/integration-review.md",
+          "inputs": {
+            "repository": "input.repository",
+            "slice_cohort": "input.slice_cohort",
+            "expansion_cohorts": "input.expansion_cohorts",
+            "freeze_cohort": "input.freeze_cohort",
+            "cases": "input.cases",
+            "freeze": "input.freeze",
+            "assessment": "latest(assessment)",
+            "pr": "latest(pr)",
+            "pr_state": "latest(pr_state)"
+          },
+          "decisions": {
+            "accept": {
+              "effect": "approve",
+              "label": "Accept",
+              "payload": "adjudication"
+            },
+            "request_changes": {
+              "effect": "request_changes",
+              "label": "Send to integrator",
+              "payload": "adjudication",
+              "feedback_field": "builder_feedback",
+              "on": "assessment"
+            }
+          }
+        },
+        "merge_confirmation": {
+          "of": "manual_merge_target",
+          "by": "operator",
+          "when": "published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)",
+          "prompt": "development/merge-confirmation.md",
+          "inputs": {
+            "pr": "latest(pr)",
+            "pr_state": "latest(pr_state)"
+          },
+          "decisions": {
+            "confirm_merged": {
+              "effect": "approve",
+              "label": "Confirm merged"
+            }
+          }
+        },
+        "pr_closed": {
+          "template": "pr_closed",
+          "overrides": {
+            "of": "pr"
+          }
+        }
+      },
+      "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
+      "outcome": {
+        "repository_key": "input.repository.key",
+        "pr_url": "latest(pr).pr_url",
+        "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
+      }
+    }
+  }
+}

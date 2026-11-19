@@ -244,6 +244,8 @@ export interface ReviewInboxItem {
   gate_id?: string | null;
   gate_url?: string | null;
   resume_actions: string[];
+  /** The review's decisions carry an adjudication payload, recorded from the assessment view rather than inbox controls. */
+  requires_adjudication?: boolean;
   blocked_by: string[];
   pr_url?: string | null;
   /** The unit's authority id, which opens its pane in the run. */

@@ -222,7 +222,7 @@ describe("v2 development adapters", () => {
     const merge = (cohortMerge.units as unknown as OperatorUnitView[])
       .flatMap((unit) => unit.decisions).find((decision) => decision.key === "confirm_merged");
     if (!accept || !merge) throw new Error("captured fixtures lack the approve decisions");
-    expect([decisionAction(accept), decisionAction(merge)]).toEqual(["approve", "confirm_merged"]);
+    expect([decisionAction(accept, []), decisionAction(merge, [])]).toEqual(["approve", "confirm_merged"]);
   });
   it("parses repository keys from untrusted unit input", () => {
     const padded = withUnitFields(cohort, { input: { repository_key: "  app  " } });

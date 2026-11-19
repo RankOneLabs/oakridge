@@ -18,7 +18,8 @@ vi.mock("../client-projects", () => ({ fetchProjects: async () => [] }));
 vi.mock("../client", () => ({
   fetchInstallStatus: async () => servedStatus,
   fetchOakridgeConfig: async () => ({ available: true, core_url: "http://oakridge.test" }),
-  fetchWorkflowDefs: async () => [{ id: definition.definition_id, name: "development" }],
+  // study is registered for users but has no PWA launch mapping yet, so the form must not offer it.
+  fetchWorkflowDefs: async () => [{ id: definition.definition_id, name: "development" }, { id: "study-def", name: "study" }],
   fetchOperatorDefinition: async () => definition,
   // The launch request is the one the real adapter sends for this form's request.
   createRun: async (body: CreateRunRequest, idempotency_key: string) => {
@@ -55,6 +56,12 @@ async function fillAndSubmit() {
   await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(submit);
 }
+
+it("offers only workflows the PWA can launch", async () => {
+  renderForm();
+  await waitFor(() => expect(document.querySelector(`option[value="${definition.definition_id}"]`)).toBeTruthy());
+  expect(document.querySelector('option[value="study-def"]')).toBeNull();
+});
 
 describe("NewRunForm automatic grading", () => {
   it("shows Automatic grading off by default with the provider disclosure", async () => {

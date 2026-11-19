@@ -1,0 +1,376 @@
+{
+  "question": "When a change needs a value added or renamed in several places, which kinds of place do models miss?",
+  "hypotheses": [
+    {
+      "id": "h_shape_vs_control",
+      "statement": "Shapes other than type_enforced are missed more often than the type-enforced control in the same task type."
+    },
+    {
+      "id": "h_import_path",
+      "statement": "sibling_only and outside_code are missed more often than reference (direct import), so losing the import path matters."
+    },
+    {
+      "id": "h_rename_vs_add",
+      "statement": "Rename tasks are missed more often than add tasks for name_only, sibling_only and outside_code."
+    }
+  ],
+  "cases": [
+    {
+      "id": "fact-shapes-stage-additive.type_enforced",
+      "group": "fact-shapes-stage-additive",
+      "is_control": true
+    },
+    {
+      "id": "fact-shapes-stage-additive.reference",
+      "group": "fact-shapes-stage-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-stage-additive.name_only",
+      "group": "fact-shapes-stage-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-stage-additive.sibling_only",
+      "group": "fact-shapes-stage-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-stage-additive.outside_code",
+      "group": "fact-shapes-stage-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-stage-additive.existing_state",
+      "group": "fact-shapes-stage-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-stage-rename.type_enforced",
+      "group": "fact-shapes-stage-rename",
+      "is_control": true
+    },
+    {
+      "id": "fact-shapes-stage-rename.reference",
+      "group": "fact-shapes-stage-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-stage-rename.name_only",
+      "group": "fact-shapes-stage-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-stage-rename.sibling_only",
+      "group": "fact-shapes-stage-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-stage-rename.outside_code",
+      "group": "fact-shapes-stage-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-stage-rename.existing_state",
+      "group": "fact-shapes-stage-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-evidence-kind-additive.type_enforced",
+      "group": "fact-shapes-evidence-kind-additive",
+      "is_control": true
+    },
+    {
+      "id": "fact-shapes-evidence-kind-additive.reference",
+      "group": "fact-shapes-evidence-kind-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-evidence-kind-additive.name_only",
+      "group": "fact-shapes-evidence-kind-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-evidence-kind-additive.sibling_only",
+      "group": "fact-shapes-evidence-kind-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-evidence-kind-additive.outside_code",
+      "group": "fact-shapes-evidence-kind-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-evidence-kind-additive.existing_state",
+      "group": "fact-shapes-evidence-kind-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-evidence-kind-rename.type_enforced",
+      "group": "fact-shapes-evidence-kind-rename",
+      "is_control": true
+    },
+    {
+      "id": "fact-shapes-evidence-kind-rename.reference",
+      "group": "fact-shapes-evidence-kind-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-evidence-kind-rename.name_only",
+      "group": "fact-shapes-evidence-kind-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-evidence-kind-rename.sibling_only",
+      "group": "fact-shapes-evidence-kind-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-evidence-kind-rename.outside_code",
+      "group": "fact-shapes-evidence-kind-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-evidence-kind-rename.existing_state",
+      "group": "fact-shapes-evidence-kind-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-route-permission-additive.type_enforced",
+      "group": "fact-shapes-route-permission-additive",
+      "is_control": true
+    },
+    {
+      "id": "fact-shapes-route-permission-additive.reference",
+      "group": "fact-shapes-route-permission-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-route-permission-additive.name_only",
+      "group": "fact-shapes-route-permission-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-route-permission-additive.sibling_only",
+      "group": "fact-shapes-route-permission-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-route-permission-additive.outside_code",
+      "group": "fact-shapes-route-permission-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-route-permission-additive.existing_state",
+      "group": "fact-shapes-route-permission-additive",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-route-permission-rename.type_enforced",
+      "group": "fact-shapes-route-permission-rename",
+      "is_control": true
+    },
+    {
+      "id": "fact-shapes-route-permission-rename.reference",
+      "group": "fact-shapes-route-permission-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-route-permission-rename.name_only",
+      "group": "fact-shapes-route-permission-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-route-permission-rename.sibling_only",
+      "group": "fact-shapes-route-permission-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-route-permission-rename.outside_code",
+      "group": "fact-shapes-route-permission-rename",
+      "is_control": false
+    },
+    {
+      "id": "fact-shapes-route-permission-rename.existing_state",
+      "group": "fact-shapes-route-permission-rename",
+      "is_control": false
+    }
+  ],
+  "groups": [
+    {
+      "id": "fact-shapes-stage-additive",
+      "case_ids": [
+        "fact-shapes-stage-additive.type_enforced",
+        "fact-shapes-stage-additive.reference",
+        "fact-shapes-stage-additive.name_only",
+        "fact-shapes-stage-additive.sibling_only",
+        "fact-shapes-stage-additive.outside_code",
+        "fact-shapes-stage-additive.existing_state"
+      ]
+    },
+    {
+      "id": "fact-shapes-stage-rename",
+      "case_ids": [
+        "fact-shapes-stage-rename.type_enforced",
+        "fact-shapes-stage-rename.reference",
+        "fact-shapes-stage-rename.name_only",
+        "fact-shapes-stage-rename.sibling_only",
+        "fact-shapes-stage-rename.outside_code",
+        "fact-shapes-stage-rename.existing_state"
+      ]
+    },
+    {
+      "id": "fact-shapes-evidence-kind-additive",
+      "case_ids": [
+        "fact-shapes-evidence-kind-additive.type_enforced",
+        "fact-shapes-evidence-kind-additive.reference",
+        "fact-shapes-evidence-kind-additive.name_only",
+        "fact-shapes-evidence-kind-additive.sibling_only",
+        "fact-shapes-evidence-kind-additive.outside_code",
+        "fact-shapes-evidence-kind-additive.existing_state"
+      ]
+    },
+    {
+      "id": "fact-shapes-evidence-kind-rename",
+      "case_ids": [
+        "fact-shapes-evidence-kind-rename.type_enforced",
+        "fact-shapes-evidence-kind-rename.reference",
+        "fact-shapes-evidence-kind-rename.name_only",
+        "fact-shapes-evidence-kind-rename.sibling_only",
+        "fact-shapes-evidence-kind-rename.outside_code",
+        "fact-shapes-evidence-kind-rename.existing_state"
+      ]
+    },
+    {
+      "id": "fact-shapes-route-permission-additive",
+      "case_ids": [
+        "fact-shapes-route-permission-additive.type_enforced",
+        "fact-shapes-route-permission-additive.reference",
+        "fact-shapes-route-permission-additive.name_only",
+        "fact-shapes-route-permission-additive.sibling_only",
+        "fact-shapes-route-permission-additive.outside_code",
+        "fact-shapes-route-permission-additive.existing_state"
+      ]
+    },
+    {
+      "id": "fact-shapes-route-permission-rename",
+      "case_ids": [
+        "fact-shapes-route-permission-rename.type_enforced",
+        "fact-shapes-route-permission-rename.reference",
+        "fact-shapes-route-permission-rename.name_only",
+        "fact-shapes-route-permission-rename.sibling_only",
+        "fact-shapes-route-permission-rename.outside_code",
+        "fact-shapes-route-permission-rename.existing_state"
+      ]
+    }
+  ],
+  "outcomes": [
+    {
+      "id": "scored",
+      "rule": "Graded; the manipulated fact and the anchor are each held or missed, read from hidden test groups titled fact:<fact id>:."
+    },
+    {
+      "id": "unscored",
+      "rule": "Graded, but a fact's tests did not run (patch failed to apply or type-check); the reason is recorded."
+    },
+    {
+      "id": "stopped",
+      "rule": "Ended by a limit before submitting (requests, output tokens, wall time or request timeout)."
+    }
+  ],
+  "decision_rule": [
+    {
+      "condition": "Any model and version has fewer than 5 dispatched attempts",
+      "next_step": "Incomplete; review the plan's halt first."
+    },
+    {
+      "condition": "No model is readable (at least 10 scored attempts in each shape and task type), or every readable model is excluded",
+      "next_step": "Stop and review."
+    },
+    {
+      "condition": "Every readable model misses nothing outside the control",
+      "next_step": "Stop; report a ceiling."
+    },
+    {
+      "condition": "Otherwise",
+      "next_step": "Read the results per shape against the control; write a shape result only when at least 2 readable models miss on the same shape."
+    }
+  ],
+  "models": [
+    {
+      "id": "sol",
+      "route": "azure/us",
+      "per_attempt_cap_cents": 200,
+      "expected_cost_per_attempt": {
+        "cents": 13,
+        "basis": "measured"
+      }
+    },
+    {
+      "id": "argon",
+      "route": "google-vertex/global",
+      "per_attempt_cap_cents": 400,
+      "expected_cost_per_attempt": {
+        "cents": 90,
+        "basis": "assumption"
+      }
+    },
+    {
+      "id": "luna",
+      "route": "azure",
+      "per_attempt_cap_cents": 100,
+      "expected_cost_per_attempt": {
+        "cents": 30,
+        "basis": "assumption"
+      }
+    }
+  ],
+  "slice": {
+    "case_ids": [
+      "fact-shapes-stage-additive.type_enforced",
+      "fact-shapes-stage-additive.reference",
+      "fact-shapes-stage-additive.name_only",
+      "fact-shapes-stage-additive.sibling_only",
+      "fact-shapes-stage-additive.outside_code",
+      "fact-shapes-stage-additive.existing_state"
+    ],
+    "risk_reason": "Job-stage add is the first task built; all six shapes run on one feature, so a broken generator, holder layout or hidden test shows up before five more tasks are built.",
+    "criteria": [
+      {
+        "id": "sc_qualified",
+        "text": "Every slice version qualifies offline."
+      },
+      {
+        "id": "sc_no_broken_version",
+        "text": "No failed paid attempt traces to a hidden test rejecting a correct change or to a cause unrelated to the task."
+      },
+      {
+        "id": "sc_models_finish",
+        "text": "Each model's limit stops are counted."
+      },
+      {
+        "id": "sc_cost_measured",
+        "text": "A measured mean cost per attempt is recorded for each model."
+      }
+    ]
+  },
+  "slice_paid": {
+    "models": [
+      "sol",
+      "argon",
+      "luna"
+    ],
+    "repeats": 2,
+    "cap_cents": 1000
+  },
+  "iteration_triggers": [
+    {
+      "id": "it_third_fact",
+      "text": "If Sol misses at most 1 of its 10 non-control manipulated facts, a written plan change makes the tasks harder before expansion."
+    },
+    {
+      "id": "it_version_fix",
+      "text": "A version is fixed and the slice rebuilt only if a hidden test rejects a correct change or an attempt failed for a reason unrelated to the task."
+    }
+  ]
+}

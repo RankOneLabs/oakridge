@@ -1,6 +1,7 @@
 import type { OperatorLaunchRequest } from "../operator-contracts/http/ingress";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
 import type { CreateRunRequest } from "../run-types";
+import type { WorkflowDefSummary } from "../project-types";
 import { selectAgentSessionTargets } from "../lib/agent-session-targets";
 import { fail, ok, type AdapterResult } from "./core";
 
@@ -17,8 +18,15 @@ interface DevelopmentInput {
   readonly final_merge_policy: "require_merge" | "allow_close_without_merge";
 }
 
+/** The only workflow whose launch input this adapter can build. */
+const DEVELOPMENT_WORKFLOW_NAME = "development";
+
+/** The launcher offers only workflows this adapter can launch; other registered workflows (study) need their own input mapping first. */
+export const isPwaLaunchable = (definition: WorkflowDefSummary): boolean => definition.name === DEVELOPMENT_WORKFLOW_NAME;
+
 /** Maps the development input and validates session choices against the pinned definition. */
 export function developmentLaunch(body: CreateRunRequest, definition: OperatorDefinitionDetail, requestId: string): AdapterResult<OperatorLaunchRequest> {
+  if (definition.bundle.key !== DEVELOPMENT_WORKFLOW_NAME) return fail("create run", `the PWA cannot launch the ${definition.bundle.key} workflow`);
   // The development workflow prepares and integrates each repository; the first row is primary.
   if (body.context.repositories.length === 0) return fail("create run", "Development runs require at least one repository");
   const repositories: DevelopmentRepository[] = [];

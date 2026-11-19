@@ -6,4 +6,5 @@ export const WORKFLOW_SOURCES = {
   "review-loop": { path: "workflow-config/samples/review-loop.yaml", audience: "test_fixture" },
   "fan-out": { path: "workflow-config/samples/fan-out.yaml", audience: "test_fixture" },
   development: { path: "workflow-config/development.yaml", audience: "user" },
+  study: { path: "workflow-config/study.yaml", audience: "user" },
 } as const;

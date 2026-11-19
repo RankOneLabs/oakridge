@@ -18,6 +18,7 @@ import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
 import { useOperatorDefinition } from "../../hooks/useOperatorDefinition";
 import { useAgentSessionSelections } from "../../hooks/useAgentSessionSelections";
 import { useCreateRun } from "../../hooks/useCreateRun";
+import { isPwaLaunchable } from "../../adapters/launch";
 import type { FinalMergePolicy, RepositoryInputDraft } from "../../run-types";
 import type { Project } from "../../project-types";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
@@ -78,7 +79,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   // Sort defs: newest version first per name, then by name. Memoized so the
   // sort only runs when the server response changes.
   const sortedDefs = useMemo(() => {
-    return sortWorkflowDefinitions(defsQuery.data ?? []);
+    return sortWorkflowDefinitions((defsQuery.data ?? []).filter(isPwaLaunchable));
   }, [defsQuery.data]);
 
   // The sorted list is newest-first within each workflow name, so its first
