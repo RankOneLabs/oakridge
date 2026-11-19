@@ -16,3 +16,13 @@ export interface SectionTabsState<Section extends string> {
   /** Show a section, then bring an element in it into view once it has rendered. */
   readonly openAnchor: (section: Section, anchor_id: string) => void;
 }
+
+/** The section a tab-row key moves to: Left/Right step and wrap, Home/End jump; null for any other key. */
+export function selectKeyedSection<Section extends string>(sections: readonly SubnavSection<Section>[], active: Section, key: string): Section | null {
+  const index = sections.findIndex((section) => section.value === active);
+  const last = sections.length - 1;
+  const target = key === "ArrowRight" ? (index + 1) % sections.length
+    : key === "ArrowLeft" ? (index - 1 + sections.length) % sections.length
+    : key === "Home" ? 0 : key === "End" ? last : null;
+  return target === null || sections.length === 0 ? null : sections[target].value;
+}

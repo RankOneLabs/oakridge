@@ -70,11 +70,11 @@ export function CurrentSpecViewer(props: ViewerProps) {
       <p>{spec.objective}</p>
       {props.itemGrading?.renderShowAll(selectFindingSelections(props.source, selectSpecItemPaths(spec)))}
     </header>
-    <ArtifactSectionTabs<SpecSection> label="Specification sections" sections={selectSpecSections(spec)} initial="requirements">{(section) => <>
-      {section.active === "requirements" && <div className="space-y-3">{spec.requirements.map((requirement, index) =>
-        <RequirementCard key={requirement.id} requirement={requirement} index={index} props={props} onOpenOriginalInput={() => section.select("original_input")} />)}</div>}
-      {section.active === "non_goals" && <NonGoalsPanel spec={spec} />}
-      {section.active === "original_input" && <OriginalInput text={props.source?.original_spec} />}
-    </>}</ArtifactSectionTabs>
+    <ArtifactSectionTabs<SpecSection> label="Specification sections" sections={selectSpecSections(spec)} initial="requirements">{(section) => ({
+      requirements: <div className="space-y-3">{spec.requirements.map((requirement, index) =>
+        <RequirementCard key={requirement.id} requirement={requirement} index={index} props={props} onOpenOriginalInput={() => section.openAnchor("original_input", "original-input")} />)}</div>,
+      non_goals: <NonGoalsPanel spec={spec} />,
+      original_input: <OriginalInput text={props.source?.original_spec} />,
+    })}</ArtifactSectionTabs>
   </article>;
 }

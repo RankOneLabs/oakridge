@@ -57,13 +57,13 @@ export function CurrentPlanViewer(props: ViewerProps) {
       {props.itemGrading?.renderShowAll(selectFindingSelections(props.source, selectPlanItemPaths(parsed.value)))}
       {waves.error && <p role="alert">Cannot order cohorts: {waves.error.kind}: {waves.error.cohort_ids.join(", ")}</p>}
     </header>
-    <ArtifactSectionTabs<PlanSection> label="Plan sections" sections={selectPlanSections(parsed.value)} initial="graph">{(section) => <>
-      {section.active === "graph" && layout && <div data-testid="or-plan-graph-section">
+    <ArtifactSectionTabs<PlanSection> label="Plan sections" sections={selectPlanSections(parsed.value)} initial="graph">{(section) => ({
+      graph: layout && <div data-testid="or-plan-graph-section">
         {/* Selecting a cohort in the graph opens its card, as the legacy plan card does. */}
         <PlanGraph layout={layout} selectedCohortId={selectedCohortId} onSelectCohort={(id) => { setSelectedCohortId(id); section.openAnchor("cohorts", `cohort-${id}`); }} />
-      </div>}
-      {section.active === "cohorts" && <div className="space-y-3">{waves.rows.map((row) =>
-        <CohortCard key={row.cohort.id} row={row} isSelected={row.cohort.id === selectedCohortId} props={props} />)}</div>}
-    </>}</ArtifactSectionTabs>
+      </div>,
+      cohorts: <div className="space-y-3">{waves.rows.map((row) =>
+        <CohortCard key={row.cohort.id} row={row} isSelected={row.cohort.id === selectedCohortId} props={props} />)}</div>,
+    })}</ArtifactSectionTabs>
   </article>;
 }

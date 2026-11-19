@@ -92,6 +92,16 @@ it("rejecting every builder action disables requesting changes", () => {
   expect((screen.getByRole("button", { name: "Request build changes" }) as HTMLButtonElement).disabled).toBe(true);
   expect((screen.getByRole("button", { name: "Accept assessment" }) as HTMLButtonElement).disabled).toBe(false);
 });
+it("an action draft survives switching assessment sections", () => {
+  render(<CurrentAssessmentViewer assessment={CURRENT_ASSESSMENT} handoff={<CurrentBuilderHandoffPanel assessment={CURRENT_ASSESSMENT} revisionId="assessment:1" gate={gate} decisions={[]} />} />);
+  const replacement = `Replacement for ${CURRENT_ASSESSMENT.next_actions[0].id}`;
+  fireEvent.click(screen.getByRole("tab", { name: /^Actions/ }));
+  fireEvent.click(within(screen.getByRole("region", { name: "builder actions" })).getByRole("button", { name: "Edit" }));
+  fireEvent.change(screen.getByLabelText(replacement), { target: { value: "Replacement" } });
+  fireEvent.click(screen.getByRole("tab", { name: "Tests" }));
+  fireEvent.click(screen.getByRole("tab", { name: /^Actions/ }));
+  expect((screen.getByLabelText(replacement) as HTMLTextAreaElement).value).toBe("Replacement");
+});
 it("editing keeps original words visible beside replacement", () => {
   panel(); fireEvent.click(within(screen.getByRole("region", { name: "builder actions" })).getByRole("button", { name: "Edit" }));
   fireEvent.change(screen.getByLabelText(`Replacement for ${CURRENT_ASSESSMENT.next_actions[0].id}`), { target: { value: "Replacement" } });

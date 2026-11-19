@@ -182,11 +182,11 @@ export function CurrentAssessmentViewer({ assessment, itemLabels, handoff, ...re
   const findings = selectAdditionalFindings(assessment, itemLabels);
   return <article className="flex flex-col gap-4" data-testid="or-assessment-viewer">
     <CurrentAssessmentHeader assessment={assessment} review={review} />
-    <ArtifactSectionTabs<AssessmentSection> label="Assessment sections" sections={selectAssessmentSections(assessment)} initial="items">{(section) => <>
-      {section.active === "items" && <ItemsPanel assessment={assessment} review={review} />}
-      {section.active === "findings" && <FindingsPanel assessment={assessment} findings={findings} review={review} />}
-      {section.active === "actions" && <ActionsPanel assessment={assessment} handoff={handoff} />}
-      {section.active === "tests" && <TestEvidenceBlock tests={{ ...assessment.test_evidence, output: assessment.test_evidence.output ?? null, summary: assessment.test_evidence.summary ?? null, cargo_test_output: assessment.test_evidence.cargo_test_output ?? null }} testId="or-assessment-tests" />}
-    </>}</ArtifactSectionTabs>
+    <ArtifactSectionTabs<AssessmentSection> label="Assessment sections" sections={selectAssessmentSections(assessment)} initial="items">{() => ({
+      items: <ItemsPanel assessment={assessment} review={review} />,
+      findings: <FindingsPanel assessment={assessment} findings={findings} review={review} />,
+      actions: <ActionsPanel assessment={assessment} handoff={handoff} />,
+      tests: <TestEvidenceBlock tests={{ ...assessment.test_evidence, output: assessment.test_evidence.output ?? null, summary: assessment.test_evidence.summary ?? null, cargo_test_output: assessment.test_evidence.cargo_test_output ?? null }} testId="or-assessment-tests" />,
+    })}</ArtifactSectionTabs>
   </article>;
 }

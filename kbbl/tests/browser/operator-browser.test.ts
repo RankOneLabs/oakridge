@@ -196,8 +196,10 @@ test.each([
     const errors: Error[] = [];
     page.on("pageerror", (error) => errors.push(error));
     await page.goto(`${server.url.href}?artifact=${kind}&unit=${encodeURIComponent(fixture.unit.unit_id)}`);
-    await page.getByText(expected, { exact: true }).waitFor();
-    expect(await page.getByText(expected, { exact: true }).count()).toBe(1);
+    // Hidden sections stay mounted, so count only what the first section shows.
+    const marker = page.getByText(expected, { exact: true }).filter({ visible: true });
+    await marker.waitFor();
+    expect(await marker.count()).toBe(1);
     expect(errors).toEqual([]);
   } finally { await page.close(); server.stop(true); }
 }, 30_000);

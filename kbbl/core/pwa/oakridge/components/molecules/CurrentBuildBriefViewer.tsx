@@ -57,10 +57,10 @@ export function CurrentBuildBriefViewer(props: ViewerProps) {
       <div className="flex flex-wrap items-center gap-2"><span className={artifactLabelClass}>Cohort</span><code className="or-code">{brief.cohort_id}</code><Chip tone="muted">{brief.repository_key}</Chip></div>
       {props.itemGrading?.renderShowAll(selectFindingSelections(props.source, selectBriefItemPaths(brief)))}
     </header>
-    <ArtifactSectionTabs<BriefSection> label="Brief sections" sections={selectBriefSections(brief)} initial="build_items">{(section) => <>
-      {section.active === "build_items" && <BuildItemsPanel brief={brief} props={props} />}
-      {section.active === "files" && <FilesPanel brief={brief} />}
-      {section.active === "envelope" && <EnvelopePanel brief={brief} />}
-    </>}</ArtifactSectionTabs>
+    <ArtifactSectionTabs<BriefSection> label="Brief sections" sections={selectBriefSections(brief)} initial="build_items">{() => ({
+      build_items: <BuildItemsPanel brief={brief} props={props} />,
+      files: <FilesPanel brief={brief} />,
+      envelope: <EnvelopePanel brief={brief} />,
+    })}</ArtifactSectionTabs>
   </article>;
 }

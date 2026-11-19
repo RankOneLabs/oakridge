@@ -38,7 +38,7 @@ test("current analysis subnav shows requirements first, then hotspots, decisions
 test("current analysis shows one section at a time", () => {
   render(<CurrentSpecAnalysisViewer body={analysis} source={source} />);
   fireEvent.click(screen.getByRole("tab", { name: "Original input" }));
-  expect([screen.queryAllByTestId("or-analysis-requirement").length, screen.getByText("Original requirements as submitted").tagName]).toEqual([0, "PRE"]);
+  expect([screen.getAllByTestId("or-analysis-requirement")[0].closest("[role=tabpanel]")?.hasAttribute("hidden"), screen.getByText("Original requirements as submitted").tagName]).toEqual([true, "PRE"]);
 });
 test("a hotspot link returns to the requirements and brings its finding into view", () => {
   const scrolled: string[] = [];
@@ -110,8 +110,8 @@ const gradedViewers = [
 ] as const;
 test.each(gradedViewers)("current %s offers Show automatic grades over every item it grades", (_, renderViewer) => {
   render(renderViewer());
-  // Items are graded on whichever section shows them; collect the grade actions from every section.
-  const graded = screen.getAllByRole("tab").flatMap((tab) => { fireEvent.click(tab); return screen.queryAllByTestId("item-action").map((element) => element.textContent); }).sort().join(" ");
+  // Every section stays mounted, so the grade actions of all sections are present at once.
+  const graded = screen.getAllByTestId("item-action").map((element) => element.textContent).sort().join(" ");
   const revealed = screen.getByTestId("show-all").textContent?.split(" ").sort().join(" ");
   expect(revealed).toBe(graded);
 });
@@ -127,4 +127,25 @@ test("selecting a cohort in the current plan graph scrolls its card into view", 
   fireEvent.click(screen.getAllByTestId("or-plan-graph-node")[1]);
   delete (Element.prototype as Partial<Element>).scrollIntoView;
   expect(scrolled).toEqual([`cohort-${plan.cohorts[1].id}`]);
+});
+test("a source reference opens the original input and brings it into view", () => {
+  const scrolled: string[] = [];
+  // jsdom does not implement scrollIntoView; record which element is asked to scroll.
+  Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this.id); };
+  render(<CurrentSpecAnalysisViewer body={analysis} source={source} />);
+  fireEvent.click(screen.getAllByRole("link").find((link) => link.getAttribute("href") === "#original-input") ?? document.body);
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
+  expect([screen.getByRole("tab", { selected: true }).textContent, scrolled]).toEqual(["Original input", ["original-input"]]);
+});
+test("arrow keys move the section selection and focus, and only the selected tab is in the Tab order", () => {
+  render(<CurrentSpecAnalysisViewer body={analysis} source={source} />);
+  fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+  const selected = screen.getByRole("tab", { selected: true });
+  expect([selected.textContent?.startsWith("Code hotspots"), document.activeElement === selected, screen.getAllByRole("tab").map((tab) => tab.tabIndex)]).toEqual([true, true, [-1, 0, -1, -1]]);
+});
+test("each section tab controls the panel that names it", () => {
+  render(<CurrentSpecAnalysisViewer body={analysis} source={source} />);
+  const tab = screen.getByRole("tab", { selected: true });
+  const panel = document.getElementById(tab.getAttribute("aria-controls") ?? "");
+  expect(panel?.getAttribute("aria-labelledby")).toBe(tab.id);
 });

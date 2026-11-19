@@ -105,12 +105,12 @@ export function CurrentSpecAnalysisViewer(props: ViewerProps) {
     </header>
     <ArtifactSectionTabs<AnalysisSection> label="Analysis sections" sections={selectAnalysisSections(analysis)} initial="requirements">{(section) => {
       const onOpenFinding: OpenFinding = (event, reference) => { event.preventDefault(); section.openAnchor("requirements", `finding-${reference.finding.id}`); };
-      return <>
-        {section.active === "requirements" && <RequirementsPanel analysis={analysis} grading={props} onOpenOriginalInput={() => section.select("original_input")} />}
-        {section.active === "hotspots" && <HotspotsPanel analysis={analysis} onOpenFinding={onOpenFinding} />}
-        {section.active === "decisions" && <DecisionsPanel analysis={analysis} onOpenFinding={onOpenFinding} />}
-        {section.active === "original_input" && <OriginalInput text={props.source?.original_spec} />}
-      </>;
+      return {
+        requirements: <RequirementsPanel analysis={analysis} grading={props} onOpenOriginalInput={() => section.openAnchor("original_input", "original-input")} />,
+        hotspots: <HotspotsPanel analysis={analysis} onOpenFinding={onOpenFinding} />,
+        decisions: <DecisionsPanel analysis={analysis} onOpenFinding={onOpenFinding} />,
+        original_input: <OriginalInput text={props.source?.original_spec} />,
+      };
     }}</ArtifactSectionTabs>
   </article>;
 }
