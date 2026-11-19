@@ -350,19 +350,25 @@ pub(crate) fn infer(
             source,
             key_field,
             dependencies_field,
+        }
+        | StageExpr::GraphLevels {
+            source,
+            key_field,
+            dependencies_field,
         } => {
-            let item = list_item(
-                &infer(source, scope)?,
-                &scope.for_expr(source),
-                "valid_graph",
-            )?;
+            let function = if matches!(expression, StageExpr::GraphLevels { .. }) {
+                "levels"
+            } else {
+                "valid_graph"
+            };
+            let item = list_item(&infer(source, scope)?, &scope.for_expr(source), function)?;
             let key = field_type(&item, &[key_field], scope.aliases)
                 .map(|ty| comparison_shape(&ty, scope))
                 .filter(is_string_like)
                 .ok_or_else(|| {
                     scope.error(
                         CheckKind::ExpressionType,
-                        format!("valid_graph key {key_field} must be text"),
+                        format!("{function} key {key_field} must be text"),
                     )
                 })?;
             let dependencies = field_type(&item, &[dependencies_field], scope.aliases)
@@ -370,16 +376,23 @@ pub(crate) fn infer(
                 .ok_or_else(|| {
                     scope.error(
                         CheckKind::ExpressionType,
-                        format!("valid_graph {dependencies_field} must be a list"),
+                        format!("{function} {dependencies_field} must be a list"),
                     )
                 })?;
             if !comparable(&key, &dependencies, scope) {
                 return Err(scope.error(
                     CheckKind::ExpressionType,
-                    "valid_graph dependencies must be keys",
+                    format!("{function} dependencies must be keys"),
                 ));
             }
-            Ok(boolean())
+            Ok(match expression {
+                StageExpr::GraphLevels { .. } => Type::List {
+                    item: Box::new(Type::List {
+                        item: Box::new(key),
+                    }),
+                },
+                _ => boolean(),
+            })
         }
         StageExpr::Record(fields) => Ok(Type::Record {
             fields: fields

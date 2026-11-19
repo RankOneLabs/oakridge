@@ -46,7 +46,9 @@ pub(super) fn reads_artifact(expression: &Expression, artifact: &SymbolKey) -> b
             source,
             predicate: value,
         } => reads(source) || reads(value),
-        Expression::CheckCollection { source, .. } => reads(source),
+        Expression::CheckCollection { source, .. } | Expression::GraphLevels { source, .. } => {
+            reads(source)
+        }
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]

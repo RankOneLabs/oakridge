@@ -399,7 +399,7 @@ impl Parser<'_> {
             "len" | "present" | "flatten" | "unique" | "published" | "approved"
             | "changes_requested" | "latest" | "require" => 1,
             "every" | "any" | "filter" | "map" | "contains" | "default" => 2,
-            "lookup" | "valid_graph" => 3,
+            "lookup" | "valid_graph" | "levels" => 3,
             _ => return Err(self.error(format!("unknown function {head}"))),
         };
         let mut args = Vec::new();
@@ -407,8 +407,8 @@ impl Parser<'_> {
             loop {
                 let is_name = match head.as_str() {
                     "published" | "approved" | "changes_requested" | "latest" => args.is_empty(),
-                    "lookup" | "valid_graph" => {
-                        args.len() == 1 || (head == "valid_graph" && args.len() == 2)
+                    "lookup" | "valid_graph" | "levels" => {
+                        args.len() == 1 || (head != "lookup" && args.len() == 2)
                     }
                     _ => false,
                 };
@@ -489,6 +489,13 @@ impl Parser<'_> {
                     .ok_or_else(|| self.error("lookup field is not a name"))?,
                 key: Box::new(args.next().unwrap()),
                 path: Vec::new(),
+            },
+            "levels" => StageExpr::GraphLevels {
+                source: boxed,
+                key_field: name(args.next().unwrap())
+                    .ok_or_else(|| self.error("levels field is not a name"))?,
+                dependencies_field: name(args.next().unwrap())
+                    .ok_or_else(|| self.error("levels field is not a name"))?,
             },
             _ => StageExpr::ValidGraph {
                 source: boxed,

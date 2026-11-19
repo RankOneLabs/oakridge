@@ -90,7 +90,7 @@ pub(super) fn advance_reduced(
         pending.extend(wants.pending);
     }
     apply_all(&mut state, context, pending);
-    let blocked = blocked_units(program, &state)?;
+    let blocked = blocked_units(program, &state, context)?;
     Ok(StepResult {
         snapshot: state,
         wanted,

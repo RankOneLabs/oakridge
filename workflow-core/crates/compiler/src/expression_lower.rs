@@ -194,6 +194,15 @@ pub(crate) fn resolve(expression: &StageExpr) -> Expression {
             key_field: key_field.clone(),
             dependencies_field: dependencies_field.clone(),
         },
+        StageExpr::GraphLevels {
+            source,
+            key_field,
+            dependencies_field,
+        } => Expression::GraphLevels {
+            source: boxed(source),
+            key_field: key_field.clone(),
+            dependencies_field: dependencies_field.clone(),
+        },
         StageExpr::Record(fields) => Expression::Record {
             fields: fields
                 .iter()

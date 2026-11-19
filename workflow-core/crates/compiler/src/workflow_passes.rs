@@ -42,6 +42,9 @@ fn parse_group(group: &Group, path: &str, errors: &mut Vec<CompileError>) {
         if let Some(text) = &unit.key {
             parse_text(text, format!("{path}.key"), errors);
         }
+        if let Some(text) = &unit.order {
+            parse_text(text, format!("{path}.order"), errors);
+        }
         if let UnitDependencies::Each(text) = &unit.after {
             parse_text(text, format!("{path}.after"), errors);
         }

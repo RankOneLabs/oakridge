@@ -96,7 +96,9 @@ fn latest_artifacts(expr: &StageExpr, found: &mut BTreeSet<String>) {
             latest_artifacts(source, found);
             latest_artifacts(key, found);
         }
-        StageExpr::ValidGraph { source, .. } => latest_artifacts(source, found),
+        StageExpr::ValidGraph { source, .. } | StageExpr::GraphLevels { source, .. } => {
+            latest_artifacts(source, found)
+        }
         StageExpr::Record(fields) => {
             for (_, value) in fields {
                 latest_artifacts(value, found);
