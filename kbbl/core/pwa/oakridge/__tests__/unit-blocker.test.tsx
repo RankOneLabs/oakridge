@@ -1,14 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import fixture from "../__fixtures__/parked-blocker-unit.json";
+import { parkedBlockerUnitFor } from "../__fixtures__/read-models";
 import { UnitBlocker } from "../components/organisms/StageOverview";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 
 afterEach(cleanup);
-const unitA = fixture as unknown as OperatorUnitView;
-const unitB: OperatorUnitView = { ...unitA, unit_id: "run/brief/B", collection_key: "B",
-  decisions: unitA.decisions.map((decision) => decision.submit.kind === "review" ? { ...decision, submit: { ...decision.submit, target_revision_id: "run/brief/B:blocker:1" } } : decision) };
+const unitA = parkedBlockerUnitFor("A"), unitB = parkedBlockerUnitFor("B");
 const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 const show = (unit: OperatorUnitView) => <QueryClientProvider client={client}><UnitBlocker unit={unit} /></QueryClientProvider>;
 
