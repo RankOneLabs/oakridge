@@ -6,8 +6,14 @@ import { formatTokens } from "./format";
 import { selectOperatorExecutionState, type OperatorExecutionState } from "./operator-state";
 import { selectOpenPermissions } from "./session-items";
 
+type PanelTranscript = Pick<SessionTranscriptState, "connection" | "history" | "open_turns" | "session_state">;
+
+export function selectPanelTranscript({ connection, history, open_turns, session_state }: SessionTranscriptState): PanelTranscript {
+  return { connection, history, open_turns, session_state };
+}
+
 export interface PanelExecutionInput {
-  transcript: SessionTranscriptState;
+  transcript: PanelTranscript;
   snapshot: SessionSnapshot | null;
   pending_sends: readonly PendingSend[];
   is_interrupting: boolean;
@@ -41,24 +47,24 @@ export function selectPanelExecution({
   });
 }
 
-function selectRunningOpenTurn({ open_turns, session_state }: SessionTranscriptState): UiOpenTurn | null {
+function selectRunningOpenTurn({ open_turns, session_state }: PanelTranscript): UiOpenTurn | null {
   return open_turns.find((turn) => turn.turnKey === session_state.active_turn) ?? null;
 }
 
-export function selectRunningTurn(transcript: SessionTranscriptState): RunningTurn | null {
+export function selectRunningTurn(transcript: PanelTranscript): RunningTurn | null {
   const turn_key = transcript.session_state.active_turn;
   if (turn_key === null) return null;
   return { turn_key, text: selectRunningOpenTurn(transcript)?.text ?? null };
 }
 
-export function selectQueuedTurns(transcript: SessionTranscriptState): UiOpenTurn[] {
+export function selectQueuedTurns(transcript: PanelTranscript): UiOpenTurn[] {
   return transcript.open_turns
     .filter((turn) => turn.source === "operator" && turn.status === "accepted")
     .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
 }
 
 export function selectElapsedStartMs(
-  transcript: SessionTranscriptState,
+  transcript: PanelTranscript,
   local_wait_started_ms: number | null,
 ): number | null {
   const turn = selectRunningOpenTurn(transcript);
@@ -71,11 +77,11 @@ export function selectUsageLabel(usage: UiUsage | null): string | null {
   return usage.size !== null ? `${used}/${formatTokens(usage.size)}` : used;
 }
 
-export function selectLatestAgentLine(transcript: SessionTranscriptState): string | null {
+export function selectLatestAgentLine(transcript: PanelTranscript): string | null {
   return transcript.session_state.latest_agent_line?.text ?? null;
 }
 
-export function selectActiveTool(transcript: SessionTranscriptState): PanelTool | null {
+export function selectActiveTool(transcript: PanelTranscript): PanelTool | null {
   const tool = transcript.session_state.active_tool;
   if (tool === null) return null;
   return {
@@ -85,10 +91,10 @@ export function selectActiveTool(transcript: SessionTranscriptState): PanelTool 
   };
 }
 
-export function selectPlanProgress(transcript: SessionTranscriptState): PlanProgress | null {
+export function selectPlanProgress(transcript: PanelTranscript): PlanProgress | null {
   return transcript.session_state.plan_progress;
 }
 
-export function selectPanelPermissions(transcript: SessionTranscriptState) {
+export function selectPanelPermissions(transcript: PanelTranscript) {
   return selectOpenPermissions(transcript.session_state);
 }

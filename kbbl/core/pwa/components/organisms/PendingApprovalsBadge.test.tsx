@@ -27,8 +27,8 @@ let stream = INITIAL_SESSION_TRANSCRIPT_STATE;
 function receivePermissions(open_permissions: readonly PermissionItem[]) {
   stream = applyIncrementalFrames(stream, [{ kind: "session_state", state: { ...EMPTY_SESSION_LIVE_STATE, open_permissions } }]);
 }
-vi.mock("../../hooks/useAcpSession", () => ({
-  useAcpSession: () => ({ historyLoaded: true, sessionState: stream.session_state }),
+vi.mock("../../hooks/useAcpSessionMetadata", () => ({
+  useAcpSessionMetadata: () => ({ historyLoaded: true, sessionState: stream.session_state }),
 }));
 vi.mock("../../hooks/usePermissionAnswer", () => ({
   usePermissionAnswer: () => ({ isPending: false, mutateAsync: answer }),

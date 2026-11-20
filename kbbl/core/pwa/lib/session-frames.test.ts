@@ -83,3 +83,10 @@ it("prepends earlier rows in sequence order and retains existing entries with du
   expect(selectOrderedItems(result).map((item) => item.seq)).toEqual([0, 1, 2, 3]);
   expect(result.items_by_id.get(current.id)).toBe(current);
 });
+
+it("reports live truncation while preserving previously received rows", () => {
+  const state = applyEpochFrame({ ...epoch, items: [message(1)] });
+  const next = applyIncrementalFrames(state, [{ kind: "history_truncated" }]);
+  expect(next.is_truncated).toBe(true);
+  expect(next.items_by_id).toBe(state.items_by_id);
+});

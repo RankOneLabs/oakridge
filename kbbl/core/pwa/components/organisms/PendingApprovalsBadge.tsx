@@ -5,7 +5,7 @@ import { useStore } from "../../state/store";
 import { selectSessionsAwaitingApproval, type ApprovalWaiter } from "../../lib/selectors";
 import { selectOpenPermissions, type TimelineItem } from "../../lib/session-items";
 import { writeHashPermissionTarget, writeHashSessionTarget } from "../../lib/hash";
-import { useAcpSession } from "../../hooks/useAcpSession";
+import { useAcpSessionMetadata } from "../../hooks/useAcpSessionMetadata";
 import { usePermissionAnswer } from "../../hooks/usePermissionAnswer";
 
 type OpenPermission = Extract<TimelineItem, { kind: "permission" }>;
@@ -54,7 +54,7 @@ function ApprovalRequest({ sid, sessionName, permission }: {
 }
 
 function SessionApprovals({ waiter }: { waiter: ApprovalWaiter }) {
-  const { sessionState, historyLoaded } = useAcpSession(waiter.sid);
+  const { sessionState, historyLoaded } = useAcpSessionMetadata(waiter.sid);
   const openPermissions = useMemo(() => selectOpenPermissions(sessionState), [sessionState]);
 
   if (!historyLoaded || openPermissions.length === 0) {

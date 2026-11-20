@@ -53,7 +53,7 @@ export interface SessionStreamErrorFrame {
 }
 
 export type SessionWireFrame = SessionEpochFrame | SessionItemFrame | SessionItemTextFrame |
-  SessionStateFrame | SessionTurnAcceptedFrame | SessionTurnFrame | SessionStreamErrorFrame;
+  { kind: "history_truncated" } | SessionStateFrame | SessionTurnAcceptedFrame | SessionTurnFrame | SessionStreamErrorFrame;
 
 interface EpochFrameInput {
   history: UiSessionHistory;
@@ -95,18 +95,21 @@ export function toWireFrames(frames: readonly StreamFrame[], items: readonly Tra
         return [{ kind: "turn_state", turn_key: frame.turn_key, state: frame.state,
           stop_reason: frame.stop_reason, detail: frame.detail }];
       case "items_evicted":
-        return [];
+        return [{ kind: "history_truncated" }];
     }
   });
 }
 
 export function createSessionFrameEncoder(epoch: SessionEpochFrame) {
+  let hasReportedTruncation = epoch.is_truncated;
   const sentItems = new Set(epoch.items.map((item) => item.id));
   return (frames: readonly StreamFrame[], items: readonly TranscriptItem[]): SessionWireFrame[] => {
     const seeded: StreamFrame[] = [];
     for (const frame of frames) {
       if (frame.kind === "items_evicted") {
         for (const id of frame.item_ids) sentItems.delete(id);
+        if (hasReportedTruncation) continue;
+        hasReportedTruncation = true;
       } else if (frame.kind === "item_upsert") {
         sentItems.add(frame.item.id);
       } else if (frame.kind === "item_text" && !sentItems.has(frame.item_id)) {

@@ -73,12 +73,23 @@ function messageDraft(event: MessageChunk): Extract<ItemDraft, { kind: TextItem[
   return { ...fields, kind: event.kind, is_streaming: !event.replayed };
 }
 
+// The status panel renders one line. Keep the prefix bounded even across many chunks.
+const PANEL_PREVIEW_LENGTH = 256;
+
+function boundPreview(line: string): string {
+  if (line.length <= PANEL_PREVIEW_LENGTH) return line;
+  let end = PANEL_PREVIEW_LENGTH - 1;
+  const last = line.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return line.slice(0, end) + "…";
+}
+
 function advanceAgentLine(previous: AgentLineCursor | null, delta: string): AgentLineCursor {
   const trimmed = delta.trimEnd();
   if (!trimmed) {
     const latest_line = previous?.latest_line ?? "";
     const trailing_whitespace = delta.includes("\n") || previous?.trailing_whitespace == null
-      ? null : previous.trailing_whitespace + delta;
+      ? null : (previous.trailing_whitespace + delta).slice(0, PANEL_PREVIEW_LENGTH);
     return { latest_line, trailing_whitespace };
   }
   const breakBeforeText = trimmed.lastIndexOf("\n");
@@ -86,7 +97,7 @@ function advanceAgentLine(previous: AgentLineCursor | null, delta: string): Agen
     ? previous.latest_line + previous.trailing_whitespace + trimmed
     : trimmed.slice(breakBeforeText + 1).trimStart();
   const trailing_whitespace = delta.lastIndexOf("\n") >= trimmed.length ? null : delta.slice(trimmed.length);
-  return { latest_line, trailing_whitespace };
+  return { latest_line: latest_line.slice(0, PANEL_PREVIEW_LENGTH + 1), trailing_whitespace: trailing_whitespace?.slice(0, PANEL_PREVIEW_LENGTH) ?? null };
 }
 
 interface TextAppend {
@@ -111,6 +122,7 @@ function appendText(previous: TextItem | undefined, retained: RetainedText | und
   if (clipped) {
     let cut = 0;
     while (bytes > MAX_TEXT_BYTES) {
+      // bytes counts the UTF-8 suffix starting at cut. A positive excess guarantees a code point here.
       const codePoint = text.codePointAt(cut)!;
       bytes -= codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
       cut += codePoint < 0x10000 ? 1 : 2;
@@ -153,7 +165,7 @@ function foldMessageChunk(buffer: TranscriptBuffer, event: MessageChunk): FoldRe
   const open_text = isPrompt ? null : { item_id: item.id, kind: item.kind, message_id: item.message_id };
   const line = appendedText.retained.agent_line?.latest_line;
   const live_state = line
-    ? { ...next.live_state, latest_agent_line: { item_id: item.id, text: line } }
+    ? { ...next.live_state, latest_agent_line: { item_id: item.id, text: boundPreview(line) } }
     : next.live_state;
   return {
     buffer: {

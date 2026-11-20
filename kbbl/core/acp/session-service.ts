@@ -1,5 +1,3 @@
-import { buildEpochFrame, createSessionFrameEncoder, type SessionEpochFrame, type SessionWireFrame } from "./session-wire";
-import { selectItemPage, type EpochChanged, type ItemPage } from "./transcript-page";
 import type { StreamEpoch, TranscriptEmission } from "./transcript-model";
 import { randomUUID } from "node:crypto";
 import { AcpSessionReads } from "#kbbl/core/acp/session-reads";
@@ -7,22 +5,17 @@ import { AcpSessionHistory } from "#kbbl/core/acp/session-history";
 export type { HistoryLease } from "#kbbl/core/acp/session-history";
 import { AcpSessionProvisioner } from "#kbbl/core/acp/session-provisioner";
 import { createSessionController } from "./session-controller";
-import { removeSessionSkills, type SessionIntegrationConfig } from "./session-integration";
+import { removeSessionSkills } from "./session-integration";
 import { sha256Hex } from "./start-spec-hash";
-import { toSnapshot, turnToOpenTurn, turnToReceipt } from "./pwa-wire";
+import { toSnapshot, turnToReceipt } from "./pwa-wire";
 // Application service used by HTTP handlers (§8.6). Routes never reach into
 // an SDK connection; everything goes through this facade. Every prompt is
 // dispatched through the controller's accepted-turn loop, so "one active
 // prompt per session, ledger as the only deferral" holds by construction.
 
-import type { AgentProfile, AgentProfileId } from "./agent-profile";
 import { resolveProfile } from "./agent-profile";
 import type { AcpSessionController } from "./controller";
 import { configOptionCategory } from "./config-option-resolver";
-import type { AcpControllerRegistry } from "./controller-registry";
-import type { AcpProcessSupervisor } from "./process-supervisor";
-import type { SessionSummaryGenerator } from "./session-summary";
-import type { AcpSessionStore } from "./store";
 import {
   acpError,
   err,
@@ -37,48 +30,22 @@ import {
   type ResumableKey,
   type Result,
   type TurnKey,
-  type WorktreeProvider,
 } from "./types";
 
-export interface AcpServiceConfig {
-  readonly default_agent: string;
-  readonly graceful_kill_ms: number;
-  readonly idle_child_ttl_ms: number;
-  readonly live_item_buffer: number;
-  readonly initial_item_window: number;
-  readonly item_page_limit: number;
-  readonly item_page_limit_max: number;
-}
-
-export interface AcpSessionServiceDeps {
-  readonly integration?: SessionIntegrationConfig;
-  readonly store: AcpSessionStore;
-  readonly controllers: AcpControllerRegistry;
-  readonly profiles: ReadonlyMap<AgentProfileId, AgentProfile>;
-  readonly supervisor: AcpProcessSupervisor;
-  readonly worktrees: WorktreeProvider;
-  readonly config: AcpServiceConfig;
-  readonly summary_generators?: readonly SessionSummaryGenerator[];
-}
-
-export interface SessionStreamLease {
-  epoch_frame: SessionEpochFrame;
-  release(): Promise<void>;
-}
-
-interface ItemPageQuery {
-  epoch: string;
-  before_seq: number;
-  limit: number;
-}
+import { AcpSessionStream } from "./session-stream";
+import type { AcpServiceConfig, AcpSessionServiceDeps } from "./session-service-config";
+export type { AcpServiceConfig, AcpSessionServiceDeps } from "./session-service-config";
+export type { SessionStreamLease } from "./session-stream";
 
 export class AcpSessionService {
+  private readonly stream: AcpSessionStream;
   private readonly reads: AcpSessionReads;
   private readonly history: AcpSessionHistory;
   private readonly provisioner: AcpSessionProvisioner;
   constructor(private readonly deps: AcpSessionServiceDeps) {
     this.reads = new AcpSessionReads(deps.store);
     this.history = new AcpSessionHistory(deps, { touchController: (sid, signal) => this.touchController(sid, signal) });
+    this.stream = new AcpSessionStream(deps, this.history);
     this.provisioner = new AcpSessionProvisioner(deps, { touchController: sid => this.touchController(sid) });
   }
   ensureResumableSession(...args: Parameters<AcpSessionProvisioner["ensureResumableSession"]>) {
@@ -94,74 +61,12 @@ export class AcpSessionService {
     return this.deps.config;
   }
 
-  async openSessionStream(
-    sid: string,
-    listener: (frames: readonly SessionWireFrame[]) => void,
-    signal?: AbortSignal,
-  ): Promise<Result<SessionStreamLease, AcpError>> {
-    let unsubscribe: (() => void) | undefined;
-    const detach = () => {
-      unsubscribe?.();
-      unsubscribe = undefined;
-      signal?.removeEventListener("abort", detach);
-    };
-    // History also releases on abort. Detach first so a display-only child
-    // is not kept alive by this stream's own subscription.
-    signal?.addEventListener("abort", detach, { once: true });
-    const acquired = await this.acquireHistory(sid, signal);
-    if (!acquired.ok) {
-      detach();
-      return acquired;
-    }
-
-    const lease = acquired.value;
-    const history = lease.history;
-    const controller = this.deps.controllers.getLive(history.sid);
-    const canSubscribe = !signal?.aborted && history.kind === "transcript" && controller?.streamEpoch === history.transcript.stream_epoch;
-    const epoch_frame = buildEpochFrame({
-      history: canSubscribe ? {
-        ...history,
-        transcript: controller.snapshotTranscript(),
-        openTurns: this.deps.store.listOpenTurns(history.sid).map(turnToOpenTurn),
-      } : history,
-      stream_epoch: controller?.streamEpoch ?? null,
-      initial_item_window: this.transcriptLimits.initial_item_window,
-    });
-    if (canSubscribe) {
-      // No asynchronous work between the snapshot and the live subscription.
-      const encode = createSessionFrameEncoder(epoch_frame);
-      const unsubscribeTranscript = controller.subscribe(({ frames }) => {
-        listener(encode(frames, controller.snapshotTranscript().items));
-      });
-      const unsubscribeAccepted = this.deps.store.subscribeTurnAccepted(history.sid, (turn) => {
-        listener([{ kind: "turn_accepted", turn: turnToOpenTurn(turn) }]);
-      });
-      unsubscribe = () => {
-        unsubscribeAccepted();
-        unsubscribeTranscript();
-      };
-    }
-    return ok({
-      epoch_frame,
-      release: () => {
-        detach();
-        return lease.release();
-      },
-    });
+  openSessionStream(...args: Parameters<AcpSessionStream["openSessionStream"]>) {
+    return this.stream.openSessionStream(...args);
   }
 
-  readItemPage(sid: string, query: ItemPageQuery): Result<ItemPage | EpochChanged, AcpError> {
-    const sessionId = sid as KbblSessionId;
-    if (!this.deps.store.getSession(sessionId)) {
-      return err(acpError("session_not_found", "service.readItemPage", `no session ${sid}`));
-    }
-    const live = this.deps.controllers.getLive(sessionId);
-    const retained = this.history.getRetainedSnapshot(sessionId);
-    const matching = live?.streamEpoch === query.epoch ? live.snapshotTranscript() : retained;
-    if (matching?.stream_epoch !== query.epoch) {
-      return ok({ kind: "epoch_changed", stream_epoch: live?.streamEpoch ?? retained?.stream_epoch ?? null });
-    }
-    return ok({ kind: "page", stream_epoch: matching.stream_epoch, ...selectItemPage({ ...query, items: matching.items }) });
+  readItemPage(...args: Parameters<AcpSessionStream["readItemPage"]>) {
+    return this.stream.readItemPage(...args);
   }
 
   /** §10.7 boot recovery sweep. Call once before serving requests. */

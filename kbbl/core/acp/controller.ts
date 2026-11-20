@@ -9,13 +9,10 @@ import { AcpControllerProcess } from "#kbbl/core/acp/controller-process";
 
 import type * as schema from "@agentclientprotocol/sdk";
 
-import type { AgentProfile } from "./agent-profile";
 import {
   projectPermissionRequest,
   projectSessionUpdate,
 } from "./event-projector";
-import type { AcpProcessSupervisor } from "./process-supervisor";
-import { AcpSessionStore } from "./store";
 import {
   acpError,
   err,
@@ -30,22 +27,8 @@ import {
   type TurnKey,
 } from "./types";
 
-export interface ControllerConfig {
-  readonly live_item_buffer: number;
-  /** Bounded wait for a session/close answer before killing the child. */
-  readonly close_grace_ms: number;
-}
-
-export interface ControllerDeps {
-  readonly prepareIntegration?: () => Result<import("./session-integration").SessionIntegrationLaunch, AcpError>;
-  readonly sid: KbblSessionId;
-  readonly profile: AgentProfile;
-  readonly store: AcpSessionStore;
-  readonly supervisor: AcpProcessSupervisor;
-  readonly config: ControllerConfig;
-  /** Called when the child dies so the registry can drop this controller. */
-  readonly onDefunct: (sid: KbblSessionId) => void;
-}
+import type { ControllerDeps } from "./controller-config";
+export type { ControllerDeps, ControllerConfig } from "./controller-config";
 
 export type ControllerStartMode =
   | { kind: "new" }

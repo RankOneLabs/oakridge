@@ -72,6 +72,7 @@ function serveThread({ hasEarlier, isTruncated }: { hasEarlier: boolean; isTrunc
   } });
   return {
     server, requests,
+    emitTruncation: () => state.live?.enqueue(encodeFrame({ kind: "history_truncated" })),
     emitItem: (number: number) => state.live?.enqueue(encodeFrame({ kind: "item", item: agentItem(number) })),
     waitForPageRequest: async (count: number) => {
       while (requests.length < count) await pageRequested.promise;
@@ -184,15 +185,20 @@ test("offers a retry after a failed history request while the sentinel stays vis
   }
 }, 30_000);
 
-test("shows the truncation notice when the server has no earlier items", async () => {
-  const fixture = serveThread({ hasEarlier: false, isTruncated: true });
+test.each([true, false])("shows retained rows and the truncation notice (truncated at open: %s)", async (isTruncated) => {
+  const fixture = serveThread({ hasEarlier: false, isTruncated });
   const page = await browser.newPage();
   try {
     await page.goto(fixture.server.url.href);
     await page.getByText("idle", { exact: true }).waitFor();
     await page.getByRole("button", { name: "Show conversation" }).click();
     const viewport = page.locator(".session-thread__viewport");
+    if (!isTruncated) {
+      expect(await viewport.getByText("Older history is no longer held").count()).toBe(0);
+      fixture.emitTruncation();
+    }
     await viewport.getByText("Older history is no longer held").waitFor({ state: "attached" });
+    await waitForVisibleRow(page, 450);
     expect(await viewport.locator(".session-thread__sentinel").count()).toBe(0);
     expect(fixture.requests).toEqual([]);
   } finally {

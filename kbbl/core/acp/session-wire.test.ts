@@ -49,7 +49,7 @@ test("summary history has no unavailable reason", () => {
   expect(frame.summary).toBe(history.summary);
 });
 
-test("wire frames preserve fold order, omit eviction and carry append-only text", () => {
+test("wire frames preserve fold order, report truncation and carry append-only text", () => {
   const item = message(3);
   const state = { kind: "session_state", state: live_state } as const;
   const turn = { kind: "turn_state", turn_key: "operator:one" as TurnKey, state: "idle", stop_reason: null, detail: null } as const;
@@ -60,7 +60,7 @@ test("wire frames preserve fold order, omit eviction and carry append-only text"
     state, turn,
   ];
   expect(toWireFrames(frames, [message(1), item])).toEqual([
-    { kind: "item", item }, { kind: "item_text", id: item.id, delta: "more", is_streaming: true }, state, turn,
+    { kind: "item", item }, { kind: "item_text", id: item.id, delta: "more", is_streaming: true }, { kind: "history_truncated" }, state, turn,
   ]);
 });
 

@@ -7,6 +7,11 @@ import { turnToOpenTurn } from "#kbbl/core/acp/pwa-wire";
 import { FinalResponseSummaryGenerator, generateSessionSummary, ManualCompactionSummaryGenerator, type SessionSummaryGenerator } from "#kbbl/core/acp/session-summary";
 import { acpError, err, ok, type AcpError, type AcpSessionRow, type KbblSessionId, type Result, type UiSessionHistory } from "#kbbl/core/acp/types";
 
+interface RetainedHistory {
+  snapshot: TranscriptSnapshot;
+  terminalRevision: string | null;
+}
+
 export interface HistoryLease {
   readonly history: UiSessionHistory;
   release(): Promise<void>;
@@ -19,7 +24,7 @@ const RETAINED_SNAPSHOT_LIMIT = 16;
 
 /** Transcript loading, display-only process ownership and terminal summary capture. */
 export class AcpSessionHistory {
-  private readonly retainedSnapshots = new Map<KbblSessionId, TranscriptSnapshot>();
+  private readonly retainedSnapshots = new Map<KbblSessionId, RetainedHistory>();
   private readonly historyConsumers = new Map<KbblSessionId, number>();
   private readonly coldHistoryLoads = new Map<KbblSessionId, AbortController>();
   private readonly summaryGenerators: readonly SessionSummaryGenerator[];
@@ -29,17 +34,18 @@ export class AcpSessionHistory {
   getRetainedSnapshot(sid: KbblSessionId): TranscriptSnapshot | null {
     const snapshot = this.retainedSnapshots.get(sid);
     if (!snapshot) return null;
-    this.retainSnapshot(sid, snapshot);
-    return snapshot;
+    this.retainedSnapshots.delete(sid);
+    this.retainedSnapshots.set(sid, snapshot);
+    return snapshot.snapshot;
   }
 
   dropRetainedSnapshot(sid: KbblSessionId): void {
     this.retainedSnapshots.delete(sid);
   }
 
-  private retainSnapshot(sid: KbblSessionId, snapshot: TranscriptSnapshot): void {
+  private retainSnapshot(sid: KbblSessionId, snapshot: TranscriptSnapshot, terminalRevision: string | null = null): void {
     this.retainedSnapshots.delete(sid);
-    this.retainedSnapshots.set(sid, snapshot);
+    this.retainedSnapshots.set(sid, { snapshot, terminalRevision });
     if (this.retainedSnapshots.size > RETAINED_SNAPSHOT_LIMIT) {
       const oldest = this.retainedSnapshots.keys().next();
       if (!oldest.done) this.retainedSnapshots.delete(oldest.value);
@@ -240,6 +246,10 @@ export class AcpSessionHistory {
         ? ok({ kind: "summary", sid: row.sid, transcript: null, openTurns, expired: true, summary })
         : ok({ kind: "unavailable", sid: row.sid, transcript: null, openTurns, expired: true, summary: null, reason });
     };
+    const terminalSnapshot = () => this.retainedSnapshots.get(row.sid)?.terminalRevision === row.updated_at
+      ? this.getRetainedSnapshot(row.sid) : null;
+    const cached = terminalSnapshot();
+    if (cached) return ok({ kind: "transcript", sid: row.sid, transcript: cached, openTurns, expired: false, summary: null });
     if (row.acp_session_id === null) return fallback("missing_acp_session_id");
     const profile = resolveProfile(this.deps.profiles, row.agent_profile);
     if (!profile.ok) return fallback("agent_history_unavailable");
@@ -253,10 +263,14 @@ export class AcpSessionHistory {
       await controller.closeChild();
       return fallback("agent_history_unavailable");
     }
-    const transcript = controller.snapshotTranscript();
     await this.captureSummary(controller);
+    const replay = controller.snapshotTranscript();
     await controller.closeChild();
-    if (this.deps.store.getSession(row.sid)) this.retainSnapshot(row.sid, transcript);
+    // Concurrent first readers may both finish replay. Publish one canonical epoch.
+    const transcript = terminalSnapshot() ?? replay;
+    if (this.deps.store.getSession(row.sid)?.updated_at === row.updated_at) {
+      this.retainSnapshot(row.sid, transcript, row.updated_at);
+    }
     return ok({
       kind: "transcript",
       sid: row.sid,

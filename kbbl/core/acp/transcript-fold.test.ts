@@ -97,7 +97,7 @@ test("oversized text keeps its newest complete UTF-8 code points and publishes a
   expect(result.buffer.is_truncated).toBe(true);
   expect(result.buffer.items).toMatchObject([{ id: itemId(0), text }]);
   expect(result.frames.map((frame) => frame.kind)).toEqual(["item_upsert", "items_evicted", "session_state"]);
-  expect(result.buffer.live_state.latest_agent_line?.text).toBe(text);
+  expect(result.buffer.live_state.latest_agent_line?.text).toBe("a".repeat(255) + "…");
 });
 
 test("a code point split across chunks still fits the exact byte budget", () => {
@@ -341,4 +341,11 @@ test("folding a deeply frozen buffer and event is pure and deterministic", () =>
   const buffer = freeze(fold([agent("one"), tool("active", "pending"), agent("two")], 2));
   const event = freeze(agent(" three"));
   expect(foldUpdate(buffer, event)).toEqual(foldUpdate(buffer, event));
+});
+
+test("a long streaming line sends only text deltas once the panel preview is full", () => {
+  const initial = fold([agent("a".repeat(1000), "line")]);
+  const next = foldUpdate(initial, agent("more", "line"));
+  expect(next.frames).toEqual([{ kind: "item_text", item_id: itemId(0), seq: transcriptSeq(0), delta: "more" }]);
+  expect(next.buffer.items[0]).toMatchObject({ text: "a".repeat(1000) + "more" });
 });

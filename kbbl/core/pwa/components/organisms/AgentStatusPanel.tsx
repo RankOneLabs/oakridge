@@ -1,8 +1,9 @@
+import { useShallow } from "zustand/react/shallow";
 import { useElapsedSeconds } from "../../hooks/useElapsedSeconds";
 import { operatorStateLabel } from "../../lib/operator-state";
 import {
   selectActiveTool, selectElapsedStartMs, selectLatestAgentLine, selectPanelExecution,
-  selectPanelPermissions, selectPlanProgress, selectQueuedTurns, selectRunningTurn, selectUsageLabel,
+  selectPanelTranscript, selectPanelPermissions, selectPlanProgress, selectQueuedTurns, selectRunningTurn, selectUsageLabel,
 } from "../../lib/session-panel";
 import { useSessionTranscript } from "../../state/session-transcript-store";
 import type { PendingSend, SessionSnapshot } from "../../types";
@@ -22,7 +23,7 @@ interface AgentStatusPanelProps {
 export function AgentStatusPanel({
   sid, snapshot, pendingSends, isInterrupting, localWaitStartedMs, sessionClosed,
 }: AgentStatusPanelProps) {
-  const transcript = useSessionTranscript(sid, (state) => state);
+  const transcript = useSessionTranscript(sid, useShallow(selectPanelTranscript));
   const execution = selectPanelExecution({
     transcript, snapshot, pending_sends: pendingSends, is_interrupting: isInterrupting,
   });

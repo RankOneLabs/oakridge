@@ -74,6 +74,9 @@ export function applyIncrementalFrames(
           : { ...item, text, is_streaming: frame.is_streaming });
         break;
       }
+      case "history_truncated":
+        if (!next.is_truncated) next = { ...next, is_truncated: true };
+        break;
       case "session_state":
         next = { ...next, session_state: frame.state };
         break;

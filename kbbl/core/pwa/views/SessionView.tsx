@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { SessionSnapshot, Status } from "../types";
-import { useAcpSession } from "../hooks/useAcpSession";
+import { useAcpSessionMetadata } from "../hooks/useAcpSessionMetadata";
 import { usePendingSends } from "../hooks/usePendingSends";
 import { readStoredThreadExpanded, writeStoredThreadExpanded } from "../lib/storage";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
 import { selectOpenPermissions } from "../lib/session-items";
-import { selectPanelExecution } from "../lib/session-panel";
-import { useSessionTranscript } from "../state/session-transcript-store";
+import { selectOperatorExecutionState } from "../lib/operator-state";
 
 import { Button } from "../components/atoms/Button";
 import { SessionTopBar } from "../components/molecules/SessionTopBar";
@@ -66,6 +65,7 @@ export function SessionView({
     isLoadingEarlier,
     loadEarlier,
     sessionState,
+    historyLoaded,
     streamStatus,
     expired,
     summary,
@@ -73,7 +73,7 @@ export function SessionView({
     streamError,
     openTurns,
     terminalTurnKeys,
-  } = useAcpSession(sid);
+  } = useAcpSessionMetadata(sid);
 
   const openPermissions = useMemo(() => selectOpenPermissions(sessionState), [sessionState]);
   const turnActive = sessionState.active_turn !== null;
@@ -117,9 +117,9 @@ export function SessionView({
   } = usePendingSends(sid, { openTurns, activeTurn: sessionState.active_turn, terminalTurnKeys, sessionStatus });
 
   const [isInterrupting, setIsInterrupting] = useState(false);
-  const transcript = useSessionTranscript(sid, (state) => state);
-  const operatorState = selectPanelExecution({
-    transcript, snapshot, pending_sends: pendingSends, is_interrupting: isInterrupting,
+  const operatorState = selectOperatorExecutionState({
+    sessionStatus, streamStatus, historyLoaded, pendingSends, isInterrupting,
+    isTurnActive: turnActive, hasOpenPermission: openPermissions.length > 0,
   });
 
   const awaitingResult =
