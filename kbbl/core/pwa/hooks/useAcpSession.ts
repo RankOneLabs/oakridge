@@ -1,71 +1,63 @@
 import { useEffect, useState } from "react";
-import { LiveSubscription } from "../lib/live-stream";
 
-import type {
-  AcpUiEvent,
-  SessionHistoryUnavailableReason,
-  Status,
-  TerminalSessionSummary,
-  UiOpenTurn,
-} from "../types";
+import { LiveSubscription } from "../lib/live-stream";
+import { applySessionFrame, EMPTY_SESSION_STREAM_STATE, type SessionStreamState } from "../lib/session-frames";
+import type { SessionWireFrame, Status } from "../types";
 
 export interface AcpSessionStream {
-  events: AcpUiEvent[];
+  items: SessionStreamState["items"];
+  sessionState: SessionStreamState["session_state"];
+  hasEarlier: boolean;
+  isTruncated: boolean;
   streamStatus: Status;
-  /** The agent could not replay this session's history (expired). */
   expired: boolean;
-  summary: TerminalSessionSummary | null;
-  unavailableReason: SessionHistoryUnavailableReason | null;
-  /** Non-null when the stream endpoint refused the session outright. */
+  summary: SessionStreamState["summary"];
+  unavailableReason: SessionStreamState["unavailable_reason"];
   streamError: string | null;
-  openTurns: readonly UiOpenTurn[];
+  openTurns: SessionStreamState["open_turns"];
   historyLoaded: boolean;
+  transcriptVersion: number;
 }
 
-// One logical subscription to /sessions/:sid/stream on the page's shared SSE
-// connection. The server opens every
-// connection with an `epoch` frame and a full replay of the projection
-// buffer, then live events — so the client holds no cross-connection
-// offset state at all: each epoch frame resets the local timeline and the
-// replay rebuilds it. Event ids only mean anything within one epoch
-// (§14.4); a respawned controller gets a fresh epoch and a fresh replay.
-//
-// Replay batching: EventSource dispatches a replay as one message task per
-// event; appending each separately would rebuild an increasingly large
-// transcript hundreds of times. Events buffer per animation frame instead.
+interface SessionStreamView {
+  state: SessionStreamState;
+  historyLoaded: boolean;
+  transcriptVersion: number;
+}
+
+const EMPTY_VIEW: SessionStreamView = {
+  state: EMPTY_SESSION_STREAM_STATE,
+  historyLoaded: false,
+  transcriptVersion: 0,
+};
+
+const LIVE_FRAME_KINDS = ["item", "item_text", "session_state", "turn_state", "stream_error"] as const;
+
 export function useAcpSession(sid: string): AcpSessionStream {
-  const [events, setEvents] = useState<AcpUiEvent[]>([]);
+  const [view, setView] = useState(EMPTY_VIEW);
   const [streamStatus, setStreamStatus] = useState<Status>("connecting");
-  const [expired, setExpired] = useState(false);
-  const [summary, setSummary] = useState<TerminalSessionSummary | null>(null);
-  const [unavailableReason, setUnavailableReason] = useState<SessionHistoryUnavailableReason | null>(null);
-  const [streamError, setStreamError] = useState<string | null>(null);
-  const [openTurns, setOpenTurns] = useState<readonly UiOpenTurn[]>([]);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   useEffect(() => {
-    setEvents([]);
-    setExpired(false);
-    setSummary(null);
-    setUnavailableReason(null);
-    setStreamError(null);
-    setOpenTurns([]);
-    setHistoryLoaded(false);
-
+    setView(EMPTY_VIEW);
     let current: LiveSubscription | null = null;
     let stopped = false;
-    let pending: AcpUiEvent[] = [];
+    let pending: SessionWireFrame[] = [];
     let pendingFrame: number | null = null;
 
-    const flushPending = () => {
+    const clearPending = () => {
+      if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
       pendingFrame = null;
+      pending = [];
+    };
+    const flushPending = () => {
       const batch = pending;
       pending = [];
-      if (batch.length > 0) setEvents((prev) => [...prev, ...batch]);
-    };
-    const enqueue = (event: AcpUiEvent) => {
-      pending.push(event);
-      if (pendingFrame === null) pendingFrame = requestAnimationFrame(flushPending);
+      pendingFrame = null;
+      setView((previous) => ({
+        ...previous,
+        state: batch.reduce(applySessionFrame, previous.state),
+        transcriptVersion: previous.transcriptVersion + 1,
+      }));
     };
 
     const connect = () => {
@@ -77,90 +69,33 @@ export function useAcpSession(sid: string): AcpSessionStream {
       es.onopen = () => setStreamStatus("connected");
       es.onerror = () => setStreamStatus("disconnected");
 
-      es.addEventListener("epoch", (e) => {
-        // Every connection replays the whole buffer after its epoch
-        // frame; drop whatever this client accumulated and rebuild.
-        if (pendingFrame !== null) {
-          cancelAnimationFrame(pendingFrame);
-          pendingFrame = null;
-        }
-        pending = [];
-        setEvents([]);
-        setStreamError(null);
+      const receive = (event: MessageEvent<string>) => {
+        let frame: SessionWireFrame;
         try {
-          const data = JSON.parse((e as MessageEvent).data) as {
-            expired?: unknown;
-            summary?: unknown;
-            unavailable_reason?: unknown;
-            open_turns?: unknown;
-          };
-          setExpired(data.expired === true);
-          setSummary(
-            typeof data.summary === "object" && data.summary !== null
-              ? data.summary as TerminalSessionSummary
-              : null,
-          );
-          setUnavailableReason(
-            data.unavailable_reason === "missing_acp_session_id" ||
-            data.unavailable_reason === "agent_history_unavailable" ||
-            data.unavailable_reason === "summary_unavailable"
-              ? data.unavailable_reason
-              : null,
-          );
-          setOpenTurns(
-            Array.isArray(data.open_turns)
-              ? (data.open_turns as UiOpenTurn[])
-              : [],
-          );
-          setHistoryLoaded(true);
+          frame = JSON.parse(event.data);
         } catch {
-          setExpired(false);
-          setSummary(null);
-          setUnavailableReason(null);
-          setOpenTurns([]);
-          setHistoryLoaded(true);
+          return;
         }
-      });
+        if (frame?.kind !== event.type) return;
+        if (frame.kind === "epoch") {
+          clearPending();
+          setView((previous) => ({
+            state: applySessionFrame(previous.state, frame),
+            historyLoaded: true,
+            transcriptVersion: previous.transcriptVersion + 1,
+          }));
+        } else {
+          pending.push(frame);
+          if (pendingFrame === null) pendingFrame = requestAnimationFrame(flushPending);
+        }
+      };
 
-      es.addEventListener("acp", (e) => {
-        try {
-          const event = JSON.parse((e as MessageEvent).data) as AcpUiEvent;
-          enqueue(event);
-          if (event.kind === "turn_state") {
-            setOpenTurns((turns) =>
-              event.state === "prompting"
-                ? turns.map((turn) =>
-                    turn.turnKey === event.turnKey
-                      ? { ...turn, status: "prompting" }
-                      : turn,
-                  )
-                : turns.filter((turn) => turn.turnKey !== event.turnKey),
-            );
-          }
-        } catch {
-          // malformed frame; ignore
-        }
-      });
-
-      es.addEventListener("stream_error", (e) => {
-        try {
-          const data = JSON.parse((e as MessageEvent).data) as {
-            error?: unknown;
-          };
-          setStreamError(
-            typeof data.error === "string" ? data.error : "stream unavailable",
-          );
-        } catch {
-          setStreamError("stream unavailable");
-        }
-      });
+      es.addEventListener("epoch", receive);
+      for (const kind of LIVE_FRAME_KINDS) es.addEventListener(kind, receive);
     };
 
     const reviveIfStale = () => {
       if (document.visibilityState !== "visible") return;
-      // Only rebuild when the browser has actually given up (CLOSED) or
-      // there's no source — a CONNECTING source is the browser's own
-      // retry/backoff in flight after a transient drop.
       if (!current || current.readyState === EventSource.CLOSED) connect();
     };
 
@@ -172,19 +107,24 @@ export function useAcpSession(sid: string): AcpSessionStream {
       stopped = true;
       document.removeEventListener("visibilitychange", reviveIfStale);
       window.removeEventListener("focus", reviveIfStale);
-      if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
+      clearPending();
       current?.close();
     };
   }, [sid]);
 
+  const { state, historyLoaded, transcriptVersion } = view;
   return {
-    events,
+    items: state.items,
+    sessionState: state.session_state,
+    hasEarlier: state.has_earlier,
+    isTruncated: state.is_truncated,
     streamStatus,
-    expired,
-    summary,
-    unavailableReason,
-    streamError,
-    openTurns,
+    expired: state.expired,
+    summary: state.summary,
+    unavailableReason: state.unavailable_reason,
+    streamError: state.stream_error,
+    openTurns: state.open_turns,
     historyLoaded,
+    transcriptVersion,
   };
 }

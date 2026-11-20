@@ -5,8 +5,7 @@ import { useAcpSession } from "../hooks/useAcpSession";
 import { usePendingSends } from "../hooks/usePendingSends";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
-import type { TimelineItem } from "../lib/acp-timeline";
-import { projectTimeline } from "../lib/acp-timeline";
+import { selectEchoedTurnKeys, selectOpenPermissions, selectTimelineItems, type TimelineItem } from "../lib/session-items";
 import {
   operatorStateLabel,
   selectOperatorExecutionState,
@@ -55,7 +54,9 @@ export function SessionView({
   const bottomBarRef = useRef<HTMLDivElement>(null);
 
   const {
-    events,
+    items,
+    sessionState,
+    transcriptVersion,
     streamStatus,
     expired,
     summary,
@@ -65,7 +66,11 @@ export function SessionView({
     historyLoaded,
   } = useAcpSession(sid);
 
-  const projection = useMemo(() => projectTimeline(events), [events]);
+  const timelineItems = useMemo(() => selectTimelineItems(items), [items]);
+  const openPermissions = useMemo(() => selectOpenPermissions(sessionState), [sessionState]);
+  const echoedTurnKeys = useMemo(() => selectEchoedTurnKeys(items), [items]);
+  const turnActive = sessionState.active_turn !== null;
+  const sessionTitle = sessionState.session_title;
   const focusedPermissionRef = useRef<string | null>(null);
   const [hashFocusVersion, setHashFocusVersion] = useState(0);
 
@@ -81,14 +86,14 @@ export function SessionView({
 
   useEffect(() => {
     const requestedId = readHashPermissionTarget();
-    const request_id = requestedId ?? (readHashSessionTarget() === "pending-permission" ? projection.openPermissions[0]?.requestId : null);
+    const request_id = requestedId ?? (readHashSessionTarget() === "pending-permission" ? openPermissions[0]?.requestId : null);
     if (!request_id || focusedPermissionRef.current === `${request_id}:${hashFocusVersion}`) return;
     const card = document.getElementById(permissionCardAnchorId(request_id));
     if (!card) return;
     focusedPermissionRef.current = `${request_id}:${hashFocusVersion}`;
     card.scrollIntoView({ behavior: "smooth", block: "center" });
     card.focus({ preventScroll: true });
-  }, [projection.openPermissions, hashFocusVersion]);
+  }, [openPermissions, hashFocusVersion]);
 
   const sessionStatus = snapshot?.status ?? null;
   const sessionClosed =
@@ -109,7 +114,7 @@ export function SessionView({
     acceptPendingSend,
     removePendingSend,
     lastPendingClientMessageId,
-  } = usePendingSends(sid, events, openTurns, sessionStatus);
+  } = usePendingSends(sid, echoedTurnKeys, openTurns, sessionStatus);
 
   const [isInterrupting, setIsInterrupting] = useState(false);
   const operatorState = selectOperatorExecutionState({
@@ -117,8 +122,8 @@ export function SessionView({
     streamStatus,
     historyLoaded,
     pendingSends,
-    isTurnActive: projection.turnActive,
-    hasOpenPermission: projection.openPermissions.length > 0,
+    isTurnActive: turnActive,
+    hasOpenPermission: openPermissions.length > 0,
     isInterrupting,
   });
 
@@ -135,7 +140,7 @@ export function SessionView({
 
   useAutoScrollAndLayout({
     sid,
-    eventsLength: events.length,
+    transcriptVersion,
     pendingLength: pendingSends.length,
     awaitingResult,
     sessionStatus,
@@ -158,17 +163,17 @@ export function SessionView({
       <SessionTopBar
         ref={topBarRef}
         sid={sid}
-        snapshot={snapshot}
+        snapshot={snapshot && sessionTitle ? { ...snapshot, name: sessionTitle } : snapshot}
         streamStatus={streamStatus}
         inboxStatus={inboxStatus}
-        usage={projection.usage}
+        usage={sessionState.usage}
         chrome={chrome}
       />
         <>
           {canInput && (
             <SessionConfigBar
               sid={sid}
-              options={projection.configOptions}
+              options={sessionState.config_options}
               disabled={awaitingResult}
             />
           )}
@@ -200,7 +205,7 @@ export function SessionView({
           <SessionTimeline
             renderPermission={renderPermission}
             sid={sid}
-            items={projection.items}
+            items={timelineItems}
             sessionClosed={sessionClosed}
           />
           {pendingSends.map((m) => (
@@ -224,11 +229,11 @@ export function SessionView({
         {canInput && (
           <InputBox
             sid={sid}
-            tools={<SkillRail sid={sid} snapshot={snapshot} commands={projection.commands} position="composer" />}
+            tools={<SkillRail sid={sid} snapshot={snapshot} commands={sessionState.commands} position="composer" />}
             onSend={addPendingSend}
             onSendAccepted={acceptPendingSend}
             onSendFailed={removePendingSend}
-            isTurnActive={projection.turnActive}
+            isTurnActive={turnActive}
             onInterruptingChange={setIsInterrupting}
           />
         )}

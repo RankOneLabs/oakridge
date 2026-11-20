@@ -14,7 +14,7 @@ import {
 
 export interface AutoScrollAndLayoutInputs {
   sid: string;
-  eventsLength: number;
+  transcriptVersion: number;
   pendingLength: number;
   awaitingResult: boolean;
   sessionStatus: SessionStatus | null;
@@ -67,7 +67,7 @@ const resolveScrollHost = (host: SessionScrollHost): ScrollHostTarget => {
 
 export function useAutoScrollAndLayout({
   sid,
-  eventsLength,
+  transcriptVersion,
   pendingLength,
   awaitingResult,
   sessionStatus,
@@ -112,7 +112,7 @@ export function useAutoScrollAndLayout({
     stickToBottomRef.current = decision.isStuckToBottom;
     prevPendingLenRef.current = pendingLength;
     if (decision.scrollTo !== null) host.scrollTo(decision.scrollTo);
-  }, [eventsLength, pendingLength, awaitingResult, scrollHost]);
+  }, [transcriptVersion, pendingLength, awaitingResult, scrollHost]);
 
   // Push the rendered top-bar / bottom-bar heights onto the surface root as
   // CSS vars so .events can pad first/last messages clear of the sticky bars.

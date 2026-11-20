@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
+import { EMPTY_SESSION_LIVE_STATE, transcriptItemId, transcriptSeq, type AgentMessageItem } from "../../acp/transcript-model";
+import type { SessionEpochFrame } from "../types";
 import { useAcpSession } from "./useAcpSession";
 
 // jsdom has no EventSource; capture instances so tests can push frames.
@@ -37,14 +39,21 @@ class MockEventSource {
 
 const SID = "aaaaaaaa-bbbb-4ccc-8ddd-000000000001";
 
-function agentFrame(text: string): string {
+function epochFrame(overrides: Partial<SessionEpochFrame> = {}): string {
   return JSON.stringify({
-    kind: "agent_message",
-    id: "m1",
-    content: [{ type: "text", text }],
-    streaming: true,
-    replayed: false,
+    kind: "epoch", stream_epoch: "e1", history_kind: "transcript", expired: false, summary: null,
+    open_turns: [], session_state: EMPTY_SESSION_LIVE_STATE, items: [], has_earlier: false, is_truncated: false,
+    ...overrides,
   });
+}
+
+function agentItem(index: number, text: string): AgentMessageItem {
+  const seq = transcriptSeq(index);
+  return { kind: "agent_message", id: transcriptItemId(seq), seq, message_id: null, text, is_streaming: true, is_replayed: false };
+}
+
+function agentFrame(seq: number, text: string): string {
+  return JSON.stringify({ kind: "item", item: agentItem(seq, text) });
 }
 
 describe("useAcpSession", () => {
@@ -68,16 +77,16 @@ describe("useAcpSession", () => {
     vi.unstubAllGlobals();
   });
 
-  it("appends acp frames after the epoch frame", async () => {
+  it("appends item frames after the epoch frame", async () => {
     const { result } = renderHook(() => useAcpSession(SID));
     act(() => {
       MockEventSource.last!.dispatch(
         "epoch",
-        JSON.stringify({ stream_epoch: "e1", expired: false }),
+        epochFrame(),
       );
-      MockEventSource.last!.dispatch("acp", agentFrame("hello"));
+      MockEventSource.last!.dispatch("item", agentFrame(0, "hello"));
     });
-    await waitFor(() => expect(result.current.events).toHaveLength(1));
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
     expect(result.current.expired).toBe(false);
   });
 
@@ -86,24 +95,21 @@ describe("useAcpSession", () => {
     act(() => {
       MockEventSource.last!.dispatch(
         "epoch",
-        JSON.stringify({ stream_epoch: "e1", expired: false }),
+        epochFrame(),
       );
-      MockEventSource.last!.dispatch("acp", agentFrame("one"));
-      MockEventSource.last!.dispatch("acp", agentFrame("two"));
+      MockEventSource.last!.dispatch("item", agentFrame(0, "one"));
+      MockEventSource.last!.dispatch("item", agentFrame(1, "two"));
     });
-    await waitFor(() => expect(result.current.events).toHaveLength(2));
+    await waitFor(() => expect(result.current.items).toHaveLength(2));
 
-    // Reconnect: the server replays the buffer after a new epoch frame.
+    // The next epoch replaces rendered items and cancels pending deltas.
     act(() => {
-      MockEventSource.last!.dispatch(
-        "epoch",
-        JSON.stringify({ stream_epoch: "e2", expired: false }),
-      );
-      MockEventSource.last!.dispatch("acp", agentFrame("one"));
-      MockEventSource.last!.dispatch("acp", agentFrame("two"));
-      MockEventSource.last!.dispatch("acp", agentFrame("three"));
+      MockEventSource.last!.dispatch("item", agentFrame(2, "discarded"));
+      MockEventSource.last!.dispatch("epoch", epochFrame({ items: [agentItem(0, "fresh")] }));
     });
-    await waitFor(() => expect(result.current.events).toHaveLength(3));
+    expect(result.current.items.map((item) => item.id)).toEqual(["item-0"]);
+    expect(result.current.items[0]).toMatchObject({ text: "fresh" });
+    expect(result.current.transcriptVersion).toBe(3);
   });
 
   it("surfaces the expired flag from the epoch frame", async () => {
@@ -111,7 +117,7 @@ describe("useAcpSession", () => {
     act(() => {
       MockEventSource.last!.dispatch(
         "epoch",
-        JSON.stringify({ stream_epoch: "e1", expired: true }),
+        epochFrame({ history_kind: "unavailable", expired: true }),
       );
     });
     await waitFor(() => expect(result.current.expired).toBe(true));
@@ -122,13 +128,13 @@ describe("useAcpSession", () => {
     act(() => {
       MockEventSource.last!.dispatch(
         "epoch",
-        JSON.stringify({
+        epochFrame({
           stream_epoch: null,
           history_kind: "summary",
           expired: true,
           summary: {
             schema_version: 1,
-            session_id: SID,
+            session_id: SID as import("../../acp/types").KbblSessionId,
             method: "final_response",
             produced_at: "2026-09-23T00:00:00.000Z",
             markdown: "Recovered result",
@@ -147,11 +153,10 @@ describe("useAcpSession", () => {
     act(() => {
       MockEventSource.last!.dispatch(
         "epoch",
-        JSON.stringify({
-          stream_epoch: "e1",
+        epochFrame({
           expired: false,
           open_turns: [{
-            turnKey: "operator:queued",
+            turnKey: "operator:queued" as import("../types").TurnKey,
             source: "operator",
             text: "queued input",
             status: "accepted",
@@ -169,7 +174,7 @@ describe("useAcpSession", () => {
     act(() => {
       MockEventSource.last!.dispatch(
         "stream_error",
-        JSON.stringify({ error: "history load failed" }),
+        JSON.stringify({ kind: "stream_error", error: "history load failed", code: "acp_session_load_failed" }),
       );
     });
     await waitFor(() => expect(result.current.streamError).toBe("history load failed"));
