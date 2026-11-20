@@ -403,6 +403,7 @@ pub struct FeedbackEntry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedRunWorker {
+    pub prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub review_history: Vec<FeedbackEntry>,
     #[serde(default)]
@@ -475,20 +476,21 @@ mod engine_serde_tests {
     use super::*;
 
     #[test]
-    fn legacy_resolved_worker_defaults_to_empty_history_without_changing_its_wire() {
-        let wire = serde_json::json!({"input_provenance":null,"action_id":"a","inputs":{},"previous":null,
+    fn legacy_resolved_worker_defaults_to_empty_history_and_serializes_a_null_prompt() {
+        let mut wire = serde_json::json!({"input_provenance":null,"action_id":"a","inputs":{},"previous":null,
             "feedback":[],"subject":null,"workspace":null});
         let resolved: ResolvedRunWorker = serde_json::from_value(wire.clone()).unwrap();
         assert!(resolved.review_history.is_empty());
+        assert!(resolved.prompt.is_none());
+        wire["prompt"] = serde_json::Value::Null;
         assert_eq!(serde_json::to_value(resolved).unwrap(), wire);
     }
 
     #[test]
-    fn historical_checked_definition_round_trips_with_no_new_default_fields() {
+    fn historical_checked_definition_requires_recompilation_for_agent_prompts() {
         let bytes = include_bytes!("../../../fixtures/development-checked-1c7d8017.json");
-        let checked: CheckedWorkflow = serde_json::from_slice(bytes).unwrap();
-        let canonical = serde_json::to_vec(&serde_json::to_value(checked).unwrap()).unwrap();
-        assert_eq!(canonical, bytes);
+        let error = serde_json::from_slice::<CheckedWorkflow>(bytes).unwrap_err();
+        assert!(error.to_string().contains("missing field `prompts`"));
     }
 
     #[test]

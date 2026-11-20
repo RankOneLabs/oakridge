@@ -8,8 +8,8 @@ fn source() -> Workflow {
         "stages":{"document":{"input":{},
             "artifacts":{"draft":{"kind":"record","schema":{"findings":"list(text)","text":"text"}},
                 "assessment":{"kind":"assessment","schema":"text"}},
-            "workers":{"writer":{"kind":"agent","prompts":{"initial":"p","revise":"p"},"inputs":{},"produces":["draft"]},
-                "assessor":{"kind":"agent","prompts":{"review":"p","revise":"p"},"inputs":{},"produces":["assessment"],"evaluates":"draft"}},
+            "workers":{"writer":{"kind":"agent","prompts":{"initial":"write","revise":"revise"},"inputs":{},"produces":["draft"]},
+                "assessor":{"kind":"agent","prompts":{"review":"review","revise":"reassess"},"inputs":{},"produces":["assessment"],"evaluates":"draft"}},
             "reviews":{"draft_review":{"of":"draft","by":"operator","prompt":"p","decisions":{
                 "accept":{"effect":"approve","label":"Accept","when":{"check":"len(draft.findings) == 0","reason":"Resolve findings first"}},
                 "request_changes":{"effect":"request_changes","label":"Fix","on":"draft","payload":{"entries":"list(text)","builder_feedback":"text"},"feedback_field":"builder_feedback"}}},
@@ -35,7 +35,10 @@ impl Run {
         let program = workflow_compiler::compile_workflow(
             &source,
             operations,
-            &BTreeMap::from([("p".into(), String::new())]),
+            &["p", "write", "revise", "review", "reassess"]
+                .into_iter()
+                .map(|path| (path.into(), String::new()))
+                .collect(),
         )
         .unwrap();
         let snapshot = StepSnapshot {
@@ -153,6 +156,90 @@ impl Run {
 }
 
 #[test]
+fn declared_prompts_resolve_for_initial_review_and_ordinary_revision() {
+    let mut run = Run::new();
+    assert_eq!(
+        run.wanted("writer").resolved.prompt.as_deref(),
+        Some("write")
+    );
+    run.publish("writer", "draft", json!({"findings": [], "text": "Draft"}));
+    run.end("writer");
+    assert_eq!(
+        run.wanted("assessor").resolved.prompt.as_deref(),
+        Some("review")
+    );
+    run.decide(
+        "draft_review",
+        "request_changes",
+        "draft",
+        json!({"entries": [], "builder_feedback": "Revise"}),
+    )
+    .unwrap();
+    assert_eq!(
+        run.wanted("writer").resolved.prompt.as_deref(),
+        Some("revise")
+    );
+}
+
+#[test]
+fn blocker_answers_resume_agents_without_revise_prompts() {
+    let mut bundle = source();
+    let stage = bundle.stages.get_mut("document").unwrap();
+    stage
+        .reviews
+        .get_mut("draft_review")
+        .unwrap()
+        .decisions
+        .remove("request_changes");
+    stage.reviews.remove("assessment_review");
+    for worker in stage.workers.values_mut() {
+        if let Worker::Agent { prompts, .. } = worker {
+            prompts.revise = None;
+        }
+    }
+    for (worker, path) in [("writer", "write"), ("assessor", "review")] {
+        let mut run = Run::with_source(bundle.clone());
+        if worker == "assessor" {
+            run.publish("writer", "draft", json!({"findings": [], "text": "Draft"}));
+            run.end("writer");
+        }
+        run.publish(worker, BLOCKER_ARTIFACT, json!({"text": "Clarify?"}));
+        run.end(worker);
+        run.decide(
+            BLOCKER_REVIEW,
+            "clarify",
+            BLOCKER_ARTIFACT,
+            json!({"answer": "Proceed"}),
+        )
+        .unwrap();
+        let wanted = run.wanted(worker);
+        assert!(matches!(
+            wanted.action,
+            Action::RunWorker {
+                mode: Mode::Revise,
+                ..
+            }
+        ));
+        assert_eq!(wanted.resolved.prompt.as_deref(), Some(path));
+    }
+}
+
+#[test]
+fn ordinary_revision_without_a_declared_prompt_does_not_fall_back() {
+    let prompts: Prompts =
+        serde_json::from_value(json!({"initial": "write", "review": "review"})).unwrap();
+    let feedback: FeedbackEntry = serde_json::from_value(json!({
+        "id": "decision", "review": "draft_review", "decision": "request_changes",
+        "target": "draft", "payload": {}
+    }))
+    .unwrap();
+    assert_eq!(
+        crate::wants::resolve_agent_prompt(&prompts, &Mode::Revise, &[feedback]),
+        None
+    );
+}
+
+#[test]
 fn blocker_is_successful_and_parks_dependants_until_normal_output_is_accepted() {
     let mut run = Run::new();
     run.publish(
@@ -239,6 +326,7 @@ fn a_running_watch_keeps_observing_while_another_worker_parks_the_unit() {
         error_codes: vec![],
     }];
     let mut run = Run::with_operations(source, &observe);
+    assert_eq!(run.wanted("observer").resolved.prompt, None);
     run.publish(
         "writer",
         BLOCKER_ARTIFACT,

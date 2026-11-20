@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { composePrompts, referencedPromptPaths } from "../src/runtime/definition-store";
+import { readFileSync, readdirSync } from "node:fs";
 import type { RunConfig } from "../src/domain/run-config";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { createScratchDatabase, type ScratchDatabase } from "../scripts/scratch-database";
-import { CoreClient } from "../src/core-client/client";
-import type { Event, Workflow, Writer } from "../src/core-client/core-types";
+import { compileWorkflow, CoreClient } from "../src/core-client/client";
+import type { Event, ParsedWorkflow, Workflow, Writer } from "../src/core-client/core-types";
 import type { DefinitionId, RunId } from "../src/domain/primitives";
 import { commitEvent, launchRunId, type CommitResult } from "../src/storage/commit";
 import { openDatabase, type Database } from "../src/storage/database";
@@ -41,6 +42,25 @@ export async function openAuthority(): Promise<Authority> {
 const root = resolve(import.meta.dir, "../..");
 export function sampleWorkflow(name: "review-loop" | "fan-out"): Workflow {
   return JSON.parse(readFileSync(resolve(root, "workflow-core/fixtures/bundles", `${name}.json`), "utf8")) as Workflow;
+}
+
+export async function compiledFixture(source: Workflow): Promise<ParsedWorkflow> {
+  const authored_root = resolve(root, "workflow-config/prompts");
+  const authored = readdirSync(authored_root, { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile())
+    .map((entry) => relative(authored_root, resolve(entry.parentPath, entry.name)).split(sep).join("/"));
+  const sources = Object.fromEntries(authored.map((path) => [path, readFileSync(resolve(authored_root, path), "utf8")]));
+  const composed = composePrompts(referencedPromptPaths(source), sources);
+  if (!composed.ok) throw new Error(composed.error.detail);
+  const prompts = Object.fromEntries(Object.entries(composed.value.prompts).map(([path, prompt]) => [path, prompt.text]));
+  const started = CoreClient.start();
+  if (!started.ok) throw new Error(started.error.detail);
+  try {
+    const compiled = await compileWorkflow(started.value, { workflow: source, prompts });
+    if (!compiled.ok) throw new Error(compiled.error.detail);
+    return compiled.value.workflow;
+  } finally {
+    started.value.close();
+  }
 }
 
 /** The smallest workflow with the addresses a declaration names: an analysis, and tasks under an operator review. */

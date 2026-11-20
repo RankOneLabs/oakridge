@@ -186,6 +186,7 @@ impl StageCheck<'_> {
                     return None;
                 }
                 Some(CheckedWorker::Agent {
+                    prompts: modes.clone(),
                     key: WorkerKey::from(key),
                     inputs: input_fields.expect("valid worker inputs"),
                     creates: produces

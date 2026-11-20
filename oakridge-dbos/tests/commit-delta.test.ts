@@ -1,7 +1,11 @@
+import { compiledFixture, sampleWorkflow } from "./authority-fixture";
 import { expect, test } from "bun:test";
 import type { StepSnapshot } from "../src/core-client/core-types";
 import { scopeIngressId, selectCommitPlan, selectDeltaViolation } from "../src/storage/commit";
 import type { IngressId, RunId } from "../src/domain/primitives";
+
+const source = sampleWorkflow("review-loop");
+const parsed_workflow = await compiledFixture(source);
 
 type Unit = StepSnapshot["units"][number];
 const unit: Unit = { id: "run/document", parent: "run", declaration: "document", kind: { kind: "stage", stage: "document" }, collection_key: null, pool: null, input: null,
@@ -42,7 +46,7 @@ test("the pure plan rejects a publication secret on an event that cannot carry o
   const plan = selectCommitPlan(before, { snapshot: before, wanted: [], reviews: [], blocked: [] }, {
     request: { run_id: "run" as RunId, ingress_id: null, event: { kind: "cancel_requested" }, writer: { kind: "engine" },
       publication_secret_hash: "hash" },
-    digest: "digest", unit_id: null, source: { workflow: "test", input: "text", run: { units: {}, outcome: {} }, stages: {} },
+    digest: "digest", unit_id: null, source, parsed_workflow,
     prompts: {}, config: null, intent_actions: [], review_rows: [], prompt_texts: new Map(), logged_wanted: new Map(),
     event_id: "event-1",
   });

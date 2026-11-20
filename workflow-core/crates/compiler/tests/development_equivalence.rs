@@ -5,7 +5,7 @@ use workflow_compiler::{compile_workflow, decode_workflow};
 use workflow_model::CodeOperation;
 
 #[test]
-fn development_checked_program_is_byte_identical_to_base_1c7d8017() {
+fn development_checked_program_matches_base_1c7d8017_in_its_original_shape() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let config = root.join("workflow-config");
     // Pin every input to the historical definition; the live development
@@ -38,7 +38,16 @@ fn development_checked_program_is_byte_identical_to_base_1c7d8017() {
         .collect();
     let program = compile_workflow(&source, &operations, &prompts).unwrap();
     // Value's maps sort keys; this program has only integral JSON numbers.
-    let canonical = serde_json::to_vec(&serde_json::to_value(program).unwrap()).unwrap();
+    let mut legacy_program = serde_json::to_value(program).unwrap();
+    // The historical wire format did not store agent prompts in checked workers.
+    for stage in legacy_program["stages"].as_array_mut().unwrap() {
+        for worker in stage["workers"].as_array_mut().unwrap() {
+            if worker["kind"] == "agent" {
+                worker.as_object_mut().unwrap().remove("prompts").unwrap();
+            }
+        }
+    }
+    let canonical = serde_json::to_vec(&legacy_program).unwrap();
     assert_eq!(
         canonical,
         std::fs::read(root.join("workflow-core/fixtures/development-checked-1c7d8017.json"))

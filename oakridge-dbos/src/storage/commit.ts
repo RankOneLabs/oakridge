@@ -3,7 +3,7 @@ import { selectAdjudicatedReview, selectReviewedAssessmentId, validateAdjudicati
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileDefinition, selectWanted, type WantedForUnit } from "../core-client/client";
-import { BLOCKER_ARTIFACT, BLOCKER_REVIEW, BLOCKER_SCHEMA, VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer } from "../core-client/core-types";
+import { BLOCKER_REVIEW, BLOCKER_REVIEW_PROMPT, VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer } from "../core-client/core-types";
 import { ANALYSIS_LINKS_DECLARED, selectDeclarationRefusal, type AnalysisLinkDeclaration, type AnalysisLinkEntry, type AnalysisLinksDeclared } from "../domain/analysis-link-declaration";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { PrIntegration } from "../domain/pr-integration";
@@ -590,7 +590,7 @@ interface CommitReadInput {
   readonly digest: string;
   readonly unit_id: string | null;
   readonly source: import("../core-client/source-types").WorkflowDefinitionDescriptor;
-  readonly parsed_workflow?: import("../core-client/core-types").ParsedWorkflow;
+  readonly parsed_workflow: ParsedWorkflow;
   readonly prompts: { readonly [path: string]: string };
   readonly config: RunConfig | null;
   readonly step: StepResult;
@@ -603,33 +603,9 @@ export interface CommitExisting extends Omit<CommitReadInput, "step"> {
   readonly logged_wanted: ReadonlyMap<string, WantedWorkers>;
   readonly event_id: string;
 }
-/** Keep implicit publications available beside the original, digest-pinned source. */
-function withBlockerArtifacts(source: CommitExisting["source"], checked: ParsedWorkflow | undefined): CommitExisting["source"] {
-  return { ...source, stages: Object.fromEntries(Object.entries(source.stages).map(([key, stage]) => [key,
-    Object.values(checked?.stages[key]?.workers ?? stage.workers).some((worker) => "kind" in worker && worker.kind === "agent")
-      ? { ...stage, artifacts: { ...stage.artifacts, [BLOCKER_ARTIFACT]: { kind: "record" as const, schema: BLOCKER_SCHEMA } } }
-      : stage])) };
-}
-
-interface BlockerResumeInput {
-  readonly existing: CommitExisting;
-  readonly stage_key: string;
-  readonly wanted: StepResult["wanted"][number];
-}
-function blockerResumeWorkflow({ existing, stage_key, wanted }: BlockerResumeInput): ParsedWorkflow | undefined {
-  const workflow = existing.parsed_workflow;
-  const stage = workflow?.stages[stage_key];
-  const worker = stage?.workers[wanted.worker];
-  const is_blocker_answer = wanted.resolved.feedback.some((entry) => entry.review === BLOCKER_REVIEW);
-  if (!workflow || !stage || worker?.kind !== "agent" || wanted.action.mode.kind !== "revise"
-      || worker.prompts.revise || !is_blocker_answer) return workflow;
-  return { ...workflow, stages: { ...workflow.stages, [stage_key]: { ...stage, workers: { ...stage.workers,
-    [wanted.worker]: { ...worker, prompts: { ...worker.prompts, revise: worker.prompts.initial ?? worker.prompts.review } } } } } };
-}
-
-interface ReviewPromptLocation { readonly workflow: ParsedWorkflow | undefined; readonly stage: string | null; readonly review: string }
+interface ReviewPromptLocation { readonly workflow: ParsedWorkflow; readonly stage: string | null; readonly review: string }
 function reviewPromptPath(location: ReviewPromptLocation): string | null {
-  return location.stage === null ? null : location.workflow?.stages[location.stage]?.reviews?.[location.review]?.prompt ?? null;
+  return location.stage === null ? null : location.workflow.stages[location.stage]?.reviews?.[location.review]?.prompt ?? null;
 }
 async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInput): Promise<CommitExisting> {
   const { request, step, source, prompts } = input;
@@ -696,7 +672,7 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
     if (known.has(action_id)) continue;
     const unit = step.snapshot.units.find((candidate) => candidate.id === worker.unit);
     if (unit?.kind.kind !== "stage") return violation(run_id, `wanted worker ${worker.unit}/${worker.worker} is not on a stage`);
-    const instruction = selectEffectInstruction({ run_id, workflow: withBlockerArtifacts(source, existing.parsed_workflow), parsed_workflow: blockerResumeWorkflow({ existing, stage_key: unit.kind.stage, wanted: worker }),
+    const instruction = selectEffectInstruction({ run_id, workflow: source, parsed_workflow: existing.parsed_workflow,
       prompts: Object.fromEntries(Object.entries(prompts).map(([path, text]) => [path, createHash("sha256").update(text).digest("hex")])), stage: unit.kind.stage, config,
       action, seq: attempt_seq, resolved });
     if (!instruction.ok) return violation(run_id, instruction.error.detail);
@@ -710,7 +686,7 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
     const kind = step.snapshot.units.find((unit) => unit.id === review.unit)?.kind;
     const stage = kind?.kind === "stage" ? kind.stage : null;
     const path = reviewPromptPath({ workflow: existing.parsed_workflow, stage, review: review.review });
-    const text = review.review === BLOCKER_REVIEW ? "The worker is blocked and needs an operator answer. Clarify, override, or discuss with a free-text answer."
+    const text = review.review === BLOCKER_REVIEW ? BLOCKER_REVIEW_PROMPT
       : path === null ? undefined : existing.prompt_texts.get(path);
     if (text === undefined) return violation(run_id, `review ${review.review} on ${review.unit} has no pinned prompt text`);
     const inputs = typeof review.inputs === "object" && review.inputs !== null ? review.inputs as { readonly [key: string]: unknown } : {};

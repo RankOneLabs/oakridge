@@ -511,6 +511,27 @@ fn open_decisions(
     }
     Ok(resolved)
 }
+pub(super) fn resolve_agent_prompt(
+    prompts: &Prompts,
+    mode: &Mode,
+    feedback: &[FeedbackEntry],
+) -> Option<String> {
+    let mode_name = match mode {
+        Mode::Initial => "initial",
+        Mode::Revise => "revise",
+        Mode::Review => "review",
+    };
+    if matches!(mode, Mode::Revise)
+        && prompts.revise.is_none()
+        && feedback
+            .iter()
+            .any(|entry| entry.review.0 == BLOCKER_REVIEW)
+    {
+        return prompts.initial.clone().or_else(|| prompts.review.clone());
+    }
+    prompts.get(mode_name).cloned()
+}
+
 /// Evaluate what a wanted `RunWorker` runs with against the stepped state.
 pub(super) fn resolve_run_worker(
     program: &CheckedWorkflow,
@@ -623,10 +644,16 @@ pub(super) fn resolve_run_worker(
         _ => (None, Vec::new()),
     };
     let stage = checked_stage(program, unit)?;
-    let feedback = feedback
+    let feedback: Vec<_> = feedback
         .into_iter()
         .map(|entry| forward_feedback(stage, entry))
         .collect();
+    let prompt = match checked {
+        CheckedWorker::Agent { prompts, .. } => {
+            resolve_agent_prompt(prompts, action.mode, &feedback)
+        }
+        CheckedWorker::Code { .. } => None,
+    };
     let review_history = if matches!(checked, CheckedWorker::Agent { .. })
         && matches!(action.mode, Mode::Revise | Mode::Review)
     {
@@ -635,6 +662,7 @@ pub(super) fn resolve_run_worker(
         vec![]
     };
     Ok(ResolvedRunWorker {
+        prompt,
         review_history,
         input_provenance: unit.input_provenance.clone(),
         action_id: action_id(&unit.id, action.worker, action.mode, action.cause),

@@ -148,6 +148,7 @@ impl CheckedReview {
 pub enum CheckedWorker {
     Agent {
         key: WorkerKey,
+        prompts: Prompts,
         inputs: Vec<CheckedNamedExpression>,
         creates: Vec<SymbolKey>,
         reviews: Option<SymbolKey>,

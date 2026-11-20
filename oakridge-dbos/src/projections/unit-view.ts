@@ -1,5 +1,5 @@
 import { isAdjudicatedArtifact, selectAdjudicatedReview, selectRecordedAdjudication, selectReviewedAssessmentId, type Adjudication } from "../domain/adjudication";
-import type { Writer } from "../core-client/core-types";
+import { BLOCKER_ARTIFACT, BLOCKER_REVIEW, type BlockerAnswerBody, type BlockerBody, type Writer } from "../core-client/core-types";
 import type { ReviewDecisionRead } from "../storage/read-store";
 import type { ArtifactSchemaVersions } from "../storage/read-store";
 import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
@@ -286,9 +286,6 @@ export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitA
     artifacts: selectArtifactViews(read, unit) };
 }
 
-/** Bodies mirror the reserved blocker and answer schemas supplied by the core. */
-interface BlockerBody { readonly text: string; readonly suggested_choices?: readonly string[] | null }
-interface BlockerAnswerBody { readonly answer: string }
 function isBlockerBody(body: unknown): body is BlockerBody {
   return typeof body === "object" && body !== null && "text" in body && typeof body.text === "string"
     && (!("suggested_choices" in body) || body.suggested_choices === null
@@ -307,7 +304,7 @@ export function selectRevisionAuthor(attempts: readonly AttemptRecord[], revisio
 }
 
 function selectBlockerHistory(read: RunRead, unit: UnitRecord): BlockerHistory | null {
-  const revisions = read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === "blocker")
+  const revisions = read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === BLOCKER_ARTIFACT)
     .sort((left, right) => left.seq - right.seq).flatMap((revision): BlockerRevision[] => {
       if (!isBlockerBody(revision.body)) return [];
       return [{ revision_id: revision.id, text: revision.body.text,
@@ -316,7 +313,7 @@ function selectBlockerHistory(read: RunRead, unit: UnitRecord): BlockerHistory |
     });
   const latest = revisions.at(-1);
   if (!latest) return null;
-  const decisions = read.decisions.filter((decision) => decision.unit_id === unit.id && decision.review === "blocker_review")
+  const decisions = read.decisions.filter((decision) => decision.unit_id === unit.id && decision.review === BLOCKER_REVIEW)
     .flatMap((decision): BlockerAnswer[] => {
       if (!isBlockerAnswerBody(decision.payload)) return [];
       return [{ id: decision.id, target_revision_id: decision.target_revision_id, decision: decision.decision,
@@ -327,5 +324,5 @@ function selectBlockerHistory(read: RunRead, unit: UnitRecord): BlockerHistory |
     ...decisions.map((decision): BlockerHistoryEntry => ({ kind: "decision", decision })),
   ].sort((left, right) => (left.kind === "revision" ? left.revision.created_at : left.decision.created_at).getTime()
     - (right.kind === "revision" ? right.revision.created_at : right.decision.created_at).getTime());
-  return { is_open: unit.blocked_reason?.kind === "blocker", available_decisions: unit.review_prompts?.blocker_review?.decisions ?? [], latest, revisions, decisions, history };
+  return { is_open: unit.blocked_reason?.kind === "blocker", available_decisions: unit.review_prompts?.[BLOCKER_REVIEW]?.decisions ?? [], latest, revisions, decisions, history };
 }
