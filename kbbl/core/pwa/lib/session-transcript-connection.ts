@@ -1,5 +1,5 @@
 import { getSessionTranscriptStore, releaseSessionTranscriptStore } from "../state/session-transcript-store";
-import type { EpochChanged, ItemPage, SessionWireFrame, Status } from "../types";
+import type { EpochChanged, ItemPage, SessionWireFrame, Status, TranscriptSeq } from "../types";
 import { LiveSubscription } from "./live-stream";
 import type { Result } from "./result";
 import { applyEpochFrame, applyIncrementalFrames, prependPage } from "./session-frames";
@@ -38,6 +38,8 @@ function openConnection(sid: string) {
   let queue: SessionWireFrame[] = [];
   let animationFrame: number | null = null;
   let pageRequest: AbortController | null = null;
+  // Reopened items can arrive before the loaded history window.
+  let beforeSeq: TranscriptSeq | null = null;
 
   function clearQueue(): void {
     if (animationFrame !== null) cancelAnimationFrame(animationFrame);
@@ -75,10 +77,9 @@ function openConnection(sid: string) {
         if (!frame) return;
         if (frame.kind === "epoch") {
           clearQueue();
-          if (store.getState().stream_epoch !== frame.stream_epoch) {
-            pageRequest?.abort();
-            pageRequest = null;
-          }
+          pageRequest?.abort();
+          pageRequest = null;
+          beforeSeq = frame.items[0]?.seq ?? null;
           store.setState((state) => applyEpochFrame(frame, state));
           return;
         }
@@ -95,13 +96,12 @@ function openConnection(sid: string) {
   async function loadEarlier(): Promise<LoadEarlierResult> {
     const state = store.getState();
     const epoch = state.stream_epoch;
-    const first = state.items_by_id.get(state.ordered_ids[0]);
-    if (state.is_loading_earlier || !state.has_earlier || epoch === null || !first) return NOOP;
-    pageRequest?.abort();
+    const cursor = beforeSeq;
+    if (state.is_loading_earlier || !state.has_earlier || epoch === null || cursor === null) return NOOP;
     const request = new AbortController();
     pageRequest = request;
     store.setState({ is_loading_earlier: true });
-    const query = new URLSearchParams({ epoch, before_seq: String(first.seq) });
+    const query = new URLSearchParams({ epoch, before_seq: String(cursor) });
     try {
       const response = await fetch(`${sessionPath}/items?${query}`, { signal: request.signal });
       const text = await response.text();
@@ -115,6 +115,7 @@ function openConnection(sid: string) {
       if (typeof body !== "object") body = null;
       if (response.ok && body && "kind" in body && body.kind === "page" && body.stream_epoch === epoch) {
         const page = body;
+        beforeSeq = page.items[0]?.seq ?? null;
         store.setState((latest) => ({
           ...prependPage(latest, page.items),
           has_earlier: page.has_earlier,
@@ -123,6 +124,7 @@ function openConnection(sid: string) {
         return { ok: true, value: "loaded" };
       }
       if (response.status === 409 && body && "kind" in body && body.kind === "epoch_changed") {
+        beforeSeq = null;
         store.setState(({ connection }) => ({
           stream_epoch: null,
           has_earlier: false,

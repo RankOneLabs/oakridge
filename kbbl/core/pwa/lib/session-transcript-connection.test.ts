@@ -123,17 +123,43 @@ it("returns the server error and allows retry", async () => {
   expect(getSessionTranscriptStore(sid).getState().is_loading_earlier).toBe(false);
 });
 
-it("discards a page response from before an epoch change", async () => {
+it.each([epoch.stream_epoch, streamEpoch("e2")])("discards an in-flight page when a snapshot for %s replaces the window", async (nextEpoch) => {
   const { loadEarlier } = acquire();
   subscriptions[0].emit(epoch);
   const response = Promise.withResolvers<Response>();
   vi.stubGlobal("fetch", vi.fn().mockReturnValue(response.promise));
   const pending = loadEarlier();
-  const newEpoch = { ...epoch, stream_epoch: streamEpoch("e2"), items: [item(7)] };
+  const newEpoch = { ...epoch, stream_epoch: nextEpoch, items: [item(7)] };
   subscriptions[0].emit(newEpoch);
   response.resolve(Response.json({ kind: "page", stream_epoch: epoch.stream_epoch, items: [item(2)], has_earlier: false }));
   expect(await pending).toEqual({ ok: true, value: "noop" });
   const state = getSessionTranscriptStore(sid).getState();
   expect(selectOrderedItems(state)).toEqual(newEpoch.items);
   expect(state.is_loading_earlier).toBe(false);
+});
+
+it("pages from the snapshot and page boundaries when live items arrive earlier", async () => {
+  const { loadEarlier } = acquire();
+  const [subscription] = subscriptions;
+  subscription.emit(epoch);
+  subscription.emit({ kind: "item", item: item(1) });
+  vi.runOnlyPendingTimers();
+  const response = Promise.withResolvers<Response>();
+  const fetchPage = vi.fn()
+    .mockReturnValueOnce(response.promise)
+    .mockResolvedValueOnce(Response.json({ kind: "page", stream_epoch: epoch.stream_epoch, items: [item(0), item(1)], has_earlier: false }));
+  vi.stubGlobal("fetch", fetchPage);
+  const pending = loadEarlier();
+  expect(fetchPage.mock.calls[0][0]).toBe("/sessions/test%2Fsession/items?epoch=e1&before_seq=5");
+  subscription.emit({ kind: "item", item: { ...item(3), text: "live text" } });
+  vi.runOnlyPendingTimers();
+  const store = getSessionTranscriptStore(sid);
+  const liveItem = store.getState().items_by_id.get(item(3).id);
+  response.resolve(Response.json({ kind: "page", stream_epoch: epoch.stream_epoch, items: [item(2), item(3), item(4)], has_earlier: true }));
+  expect(await pending).toEqual({ ok: true, value: "loaded" });
+  expect(selectOrderedItems(store.getState()).map(({ seq }) => seq)).toEqual([1, 2, 3, 4, 5]);
+  expect(store.getState().items_by_id.get(item(3).id)).toBe(liveItem);
+  expect(await loadEarlier()).toEqual({ ok: true, value: "loaded" });
+  expect(fetchPage.mock.calls[1][0]).toBe("/sessions/test%2Fsession/items?epoch=e1&before_seq=2");
+  expect(selectOrderedItems(store.getState()).map(({ seq }) => seq)).toEqual([0, 1, 2, 3, 4, 5]);
 });

@@ -99,17 +99,14 @@ export function prependPage(
   page_items: readonly TranscriptItem[],
 ): SessionTranscriptState {
   const items = new Map(state.items_by_id);
-  const earlier: TranscriptItemId[] = [];
   for (const item of page_items) {
-    if (items.has(item.id)) continue;
-    earlier.push(item.id);
-    items.set(item.id, item);
+    if (!items.has(item.id)) items.set(item.id, item);
   }
-  if (earlier.length === 0) return state;
+  if (items.size === state.items_by_id.size) return state;
   return {
     ...state,
     items_by_id: items,
-    ordered_ids: [...earlier, ...state.ordered_ids],
+    ordered_ids: [...items.values()].sort((left, right) => left.seq - right.seq).map(({ id }) => id),
     transcript_version: state.transcript_version + 1,
   };
 }
