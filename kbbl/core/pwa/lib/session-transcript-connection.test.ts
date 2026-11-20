@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { EMPTY_SESSION_LIVE_STATE, streamEpoch, transcriptItemId, transcriptSeq, type AgentMessageItem } from "../../acp/transcript-model";
 import { getSessionTranscriptStore, selectOrderedItems } from "../state/session-transcript-store";
-import type { SessionEpochFrame, SessionWireFrame } from "../types";
+import type { SessionEpochFrame, SessionWireFrame, TurnKey, UiOpenTurn } from "../types";
+import { selectElapsedStartMs, selectQueuedTurns, selectRunningTurn } from "./session-panel";
 import { acquireSessionTranscript, type SessionTranscriptHandle } from "./session-transcript-connection";
 
 const { subscriptions } = vi.hoisted(() => ({ subscriptions: [] as FakeSubscription[] }));
@@ -90,6 +91,38 @@ it("installs epoch synchronously and drops queued or malformed frames", () => {
   subscription.listeners.get("item")?.(new MessageEvent("item", { data: "{" }));
   vi.runOnlyPendingTimers();
   expect(store.getState()).toBe(snapshot);
+});
+
+it("updates the queue and running turn for a prompt accepted after the epoch", () => {
+  acquire();
+  const [subscription] = subscriptions;
+  subscription.emit({ ...epoch, items: [] });
+  const store = getSessionTranscriptStore(sid);
+  const turn: UiOpenTurn = {
+    turnKey: "operator:live" as TurnKey, text: "Run checks", source: "operator",
+    status: "accepted", createdAt: "2026-09-02T00:01:00Z",
+  };
+  const accepted = { kind: "turn_accepted", turn } as const;
+  subscription.emit(accepted);
+  subscription.emit(accepted);
+  vi.runOnlyPendingTimers();
+  expect(selectQueuedTurns(store.getState())).toEqual([turn]);
+
+  const transition = { kind: "turn_state", turn_key: turn.turnKey, stop_reason: null, detail: null } as const;
+  subscription.emit({ kind: "session_state", state: { ...EMPTY_SESSION_LIVE_STATE, active_turn: turn.turnKey } });
+  subscription.emit({ ...transition, state: "prompting" });
+  vi.runOnlyPendingTimers();
+  expect(selectQueuedTurns(store.getState())).toEqual([]);
+  expect(selectRunningTurn(store.getState())).toEqual({ turn_key: turn.turnKey, text: turn.text });
+  expect(selectElapsedStartMs(store.getState(), null)).toBe(Date.parse(turn.createdAt));
+
+  subscription.emit({ kind: "session_state", state: EMPTY_SESSION_LIVE_STATE });
+  subscription.emit({ ...transition, state: "idle" });
+  subscription.emit(accepted);
+  vi.runOnlyPendingTimers();
+  expect(store.getState().open_turns).toEqual([]);
+  expect(selectRunningTurn(store.getState())).toBeNull();
+  expect(selectOrderedItems(store.getState())).toEqual([]);
 });
 
 it("pages with the first sequence and reconnects without reusing a stale cursor on conflict", async () => {

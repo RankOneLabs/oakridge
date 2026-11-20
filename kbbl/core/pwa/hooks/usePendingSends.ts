@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { selectPendingBubbles } from "../lib/pending-bubbles";
+import { selectPendingBubbles, selectPendingTurnKey } from "../lib/pending-bubbles";
 import type {
   PendingSend,
   SessionStatus,
@@ -91,7 +91,7 @@ export function usePendingSends(
   }, []);
 
   const pendingSends = selectPendingBubbles({
-    local_sends: isClosed ? [] : localSends.filter(({ turnKey }) => turnKey === null || !terminalTurnKeys.has(turnKey)),
+    local_sends: isClosed ? [] : localSends.filter((send) => !terminalTurnKeys.has(selectPendingTurnKey(send))),
     open_turns: openTurns,
     active_turn: activeTurn,
   });

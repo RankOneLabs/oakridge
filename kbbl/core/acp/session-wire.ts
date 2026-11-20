@@ -41,6 +41,11 @@ export interface SessionTurnFrame {
   detail: string | null;
 }
 
+export interface SessionTurnAcceptedFrame {
+  kind: "turn_accepted";
+  turn: UiOpenTurn;
+}
+
 export interface SessionStreamErrorFrame {
   kind: "stream_error";
   error: string;
@@ -48,7 +53,7 @@ export interface SessionStreamErrorFrame {
 }
 
 export type SessionWireFrame = SessionEpochFrame | SessionItemFrame | SessionItemTextFrame |
-  SessionStateFrame | SessionTurnFrame | SessionStreamErrorFrame;
+  SessionStateFrame | SessionTurnAcceptedFrame | SessionTurnFrame | SessionStreamErrorFrame;
 
 interface EpochFrameInput {
   history: UiSessionHistory;

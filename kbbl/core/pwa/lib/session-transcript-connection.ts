@@ -12,7 +12,7 @@ export interface SessionTranscriptHandle {
   loadEarlier(): Promise<LoadEarlierResult>;
 }
 
-const FRAME_KINDS = ["epoch", "item", "item_text", "session_state", "turn_state", "stream_error"] as const;
+const FRAME_KINDS = ["epoch", "item", "item_text", "session_state", "turn_accepted", "turn_state", "stream_error"] as const;
 const NOOP: LoadEarlierResult = { ok: true, value: "noop" };
 
 function parseSessionFrame(event: MessageEvent<string>): SessionWireFrame | null {

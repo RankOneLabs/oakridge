@@ -53,6 +53,9 @@ describe("usePendingSends", () => {
     );
     act(() => result.current.addPendingSend(turn.text, "message"));
     rerender([turn]);
+    expect(result.current.pendingSends.map(({ status }) => status)).toEqual(["accepted"]);
+    rerender([{ ...turn, status: "prompting" }]);
+    expect(result.current.pendingSends).toEqual([]);
     rerender([]);
     act(() => result.current.acceptPendingSend("message", { turnKey: turn.turnKey, status: "accepted" }));
     expect(result.current.pendingSends).toEqual([]);
@@ -76,6 +79,7 @@ describe("usePendingSends", () => {
       { ...transition, state: "prompting" },
       { ...transition, state: "idle" },
     ]));
+    expect(result.current.pendingSends).toEqual([]);
     if (receiptTiming === "after") act(accept);
     expect(result.current.pendingSends).toEqual([]);
   });

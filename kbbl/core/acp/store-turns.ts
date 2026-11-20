@@ -18,8 +18,10 @@ export interface AcceptTurnInput {
   payload: string;
 }
 
+export type AcceptedTurnRow = AcpTurnRow & { status: "accepted" };
+
 export type AcceptTurnOutcome =
-  | { kind: "created"; row: AcpTurnRow }
+  | { kind: "created"; row: AcceptedTurnRow }
   | { kind: "existing"; row: AcpTurnRow }
   | { kind: "payload_conflict"; row: AcpTurnRow };
 
@@ -60,7 +62,7 @@ export class AcpTurnStore {
         return { kind: "existing", row: existing };
       }
       const row = this.db
-        .prepare<AcpTurnRow, [string, string, string, string, string, string]>(
+        .prepare<AcceptedTurnRow, [string, string, string, string, string, string]>(
           `INSERT INTO acp_turns (
              sid, turn_key, source, payload_hash, payload, status, created_at
            ) VALUES (?, ?, ?, ?, ?, 'accepted', ?)

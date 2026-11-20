@@ -130,9 +130,16 @@ export class AcpSessionService {
     if (canSubscribe) {
       // No asynchronous work between the snapshot and the live subscription.
       const encode = createSessionFrameEncoder(epoch_frame);
-      unsubscribe = controller.subscribe(({ frames }) => {
+      const unsubscribeTranscript = controller.subscribe(({ frames }) => {
         listener(encode(frames, controller.snapshotTranscript().items));
       });
+      const unsubscribeAccepted = this.deps.store.subscribeTurnAccepted(history.sid, (turn) => {
+        listener([{ kind: "turn_accepted", turn: turnToOpenTurn(turn) }]);
+      });
+      unsubscribe = () => {
+        unsubscribeAccepted();
+        unsubscribeTranscript();
+      };
     }
     return ok({
       epoch_frame,

@@ -6,6 +6,10 @@ interface PendingBubbleInput {
   active_turn: TurnKey | null;
 }
 
+export function selectPendingTurnKey({ turnKey, clientMessageId }: PendingSend): TurnKey {
+  return turnKey ?? (`operator:${clientMessageId}` as TurnKey);
+}
+
 export function selectPendingBubbles({ local_sends, open_turns, active_turn }: PendingBubbleInput): PendingSend[] {
   const durable = open_turns
     .filter((turn) => turn.source === "operator" && turn.status === "accepted" && turn.turnKey !== active_turn)
@@ -20,8 +24,9 @@ export function selectPendingBubbles({ local_sends, open_turns, active_turn }: P
   const promptingKeys = new Set(open_turns.filter((turn) => turn.status === "prompting").map((turn) => turn.turnKey));
   return [
     ...durable,
-    ...local_sends.filter(({ turnKey }) =>
-      turnKey === null ||
-      (turnKey !== active_turn && !durableKeys.has(turnKey) && !promptingKeys.has(turnKey))),
+    ...local_sends.filter((send) => {
+      const turnKey = selectPendingTurnKey(send);
+      return turnKey !== active_turn && !durableKeys.has(turnKey) && !promptingKeys.has(turnKey);
+    }),
   ];
 }
