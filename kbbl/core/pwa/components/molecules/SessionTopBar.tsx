@@ -4,15 +4,10 @@ import type { Ref } from "react";
 
 import type { SessionSnapshot, Status } from "../../types";
 import type { UsageState } from "../../lib/session-items";
+import { selectUsageLabel } from "../../lib/session-panel";
 import type { SessionSurfaceChrome } from "../../lib/session-surface";
-import { formatTokens, prettyEffortLabel, prettyModelLabel } from "../../lib/format";
+import { prettyEffortLabel, prettyModelLabel } from "../../lib/format";
 import { selectSessionHeaderSegments, sessionLabelTitle, workdirBasename } from "../../lib/session";
-
-function usageLabel(usage: UsageState): string | null {
-  if (usage.used === null) return null;
-  const used = formatTokens(usage.used);
-  return usage.size !== null ? `${used}/${formatTokens(usage.size)}` : used;
-}
 
 export function SessionTopBar({
   ref,
@@ -45,7 +40,7 @@ export function SessionTopBar({
   // stream status on a closed session's view is misleading.
   const shownStatus = isOpen ? streamStatus : inboxStatus;
   const segments = selectSessionHeaderSegments({ snapshot, chrome });
-  const usageText = usage !== null ? usageLabel(usage) : null;
+  const usageText = selectUsageLabel(usage);
 
   return (
     <header className="top-bar" ref={ref} data-chrome={chrome.kind}>
