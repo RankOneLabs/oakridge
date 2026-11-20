@@ -2,53 +2,14 @@ import { json, world, wrap, requireControl } from "./item-panel-harness";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { id, IMPLEMENTATION, INTEGRATION, ANALYSIS, itemStatus, paged, supportQuestion } from "../__fixtures__/grading";
-import { compositeId } from "../adapters/core";
-import { AssessmentViewer } from "../components/molecules/AssessmentViewer";
-import { SpecAnalysisViewer } from "../components/molecules/SpecAnalysisViewer";
 import { FinalIntegrationPanel } from "../components/organisms/FinalIntegrationPanel";
 import { ItemPanel } from "../components/organisms/ItemPanel";
 import { RunGradingSection } from "../components/organisms/RunGradingSection";
 import type { ObservationQuestionKey } from "../grading-contracts/grading/question";
-import { parseAssessment } from "../lib/assessment";
 import { useGradingVisibility } from "../state/gradingVisibility";
 import type { EpicWorkflowProfile } from "../run-types";
 
 describe("every entry point opens the same item", () => {
-  const revisionId = (unit: string, artifact: string, id: string) => compositeId({ kind: "artifact", runId: "run-1", unitId: unit, name: `${artifact}:${id}` });
-  const body = { head_sha: "abc", verdict: "pass", test_evidence: null, recommended_next_actions: [], findings: [
-    { task_ids: ["T1"], status: "met", evidence: [], description: "linked" }, { task_ids: [], status: "not_met", evidence: [], description: "unlinked" }] };
-  const assessment = () => { const parsed = parseAssessment(body); if (!parsed.ok) throw new Error(parsed.error.detail); return parsed.value; };
-  const missing = { kind: "missing", cohort_label: null } as const;
-  it("analysis: a finding addressed by its original index even though the view reorders it", () => {
-    const onOpenItem = vi.fn();
-    wrap(<SpecAnalysisViewer source={{ run_id: id("run-1"), revision_id: revisionId("run-1/analysis", "analysis", ANALYSIS.source_revision_id), label: null, as_of: "t" }} onOpenItem={onOpenItem}
-      body={{ summary: "s", source_spec_refs: [], requirements: [], risks: [], proposed_spec_updates: [], findings: [
-        { id: "F1", description: "info one", severity: "info" }, { id: "F2", description: "blocking one", severity: "blocking" }, { id: "F3", description: "warning one", severity: "warning" }] }} />);
-    const buttons = screen.getAllByTestId("or-grade-item");
-    expect(buttons.map((button) => button.getAttribute("data-item-path"))).toEqual(["/findings/1", "/findings/2", "/findings/0"]);
-    fireEvent.click(requireControl(buttons, 0));
-    expect(onOpenItem).toHaveBeenCalledWith({ source_revision_id: ANALYSIS.source_revision_id, item_path: "/findings/1" });
-  });
-  it("analysis: a risk or requirement gets no grade control", () => {
-    wrap(<SpecAnalysisViewer source={{ run_id: id("run-1"), revision_id: revisionId("u", "analysis", "r"), label: null, as_of: "t" }} onOpenItem={vi.fn()}
-      body={{ summary: "s", source_spec_refs: [], findings: [], proposed_spec_updates: [], requirements: [{ id: "R", description: "d", status: "implementable" }], risks: [{ description: "d", mitigation: "m" }] }} />);
-    expect(screen.queryByTestId("or-grade-item")).toBeNull();
-  });
-  it("implementation: every finding opens with no brief, cohort or link required", () => {
-    const onOpenItem = vi.fn();
-    wrap(<AssessmentViewer assessment={assessment()} brief={missing} result={missing} cohortLabel={null} source={{ revision_id: revisionId("run-1/implementation/one", "assessment", IMPLEMENTATION.source_revision_id) }} onOpenItem={onOpenItem} />);
-    fireEvent.click(screen.getByText(/Show met criteria/));
-    const buttons = screen.getAllByTestId("or-grade-item");
-    expect(buttons.map((button) => button.getAttribute("data-item-path")).sort()).toEqual(["/findings/0", "/findings/1"]);
-    fireEvent.click(requireControl(buttons, 0));
-    expect(onOpenItem).toHaveBeenCalledWith({ source_revision_id: IMPLEMENTATION.source_revision_id, item_path: "/findings/1" });
-  });
-  it("integration review: an integration finding opens with no build subject or brief", () => {
-    const onOpenItem = vi.fn();
-    wrap(<AssessmentViewer assessment={assessment()} brief={missing} result={missing} cohortLabel="final" isIntegration source={{ revision_id: revisionId("run-1/integration/final", "assessment", INTEGRATION.source_revision_id) }} onOpenItem={onOpenItem} />);
-    fireEvent.click(requireControl(screen.getAllByTestId("or-grade-item"), 0));
-    expect(onOpenItem).toHaveBeenCalledWith({ source_revision_id: INTEGRATION.source_revision_id, item_path: "/findings/1" });
-  });
   it("final integration panel: lists integration findings, unlinked included, and opens them", async () => {
     const onOpenItem = vi.fn();
     const profile = { title: "t", lifecycle_state: "integrating", final_merge_policy: "external_confirmation", base_branch: "b", repositories: [] } as unknown as EpicWorkflowProfile;

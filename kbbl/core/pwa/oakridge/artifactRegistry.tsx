@@ -5,30 +5,19 @@ import { CurrentBuildBriefViewer } from "./components/molecules/CurrentBuildBrie
 import { parseCurrentAnalysis, parseCanonicalSpec, parseCurrentPlan, parseCurrentBrief } from "./lib/current-contract";
 import { selectAnalysisItemPaths, selectSpecItemPaths, selectPlanItemPaths, selectBriefItemPaths, selectAssessmentItemPaths } from "./lib/current-item-paths";
 import { SchemaContractView } from "./components/molecules/SchemaContractView";
-import type { Task } from "./lib/tasks";
-import { parseAssessment, parseCurrentAssessment } from "./lib/assessment";
-import { parsePlan } from "./lib/plan";
-import { parseTasks } from "./lib/tasks";
-import { readBuildBrief } from "./lib/build-brief";
-import { isSpecAnalysis } from "./lib/spec-analysis";
+import { parseCurrentAssessment } from "./lib/assessment";
 import type { ComponentType, ReactNode } from "react";
 import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./artifact-types";
 import type { EditOutcome } from "./lib/edit-outcome";
 import type { ObservationItemAddress } from "./grading-contracts/grading/item-reads";
-import { SpecViewer } from "./components/molecules/SpecViewer";
-import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
-import { PlanViewer } from "./components/molecules/PlanViewer";
 import { BuildResultReview } from "./components/organisms/BuildResultReview";
-import { AssessmentReview, CurrentAssessmentReview } from "./components/organisms/AssessmentReview";
+import { CurrentAssessmentReview } from "./components/organisms/CurrentAssessmentReview";
 import { PrSummaryViewer } from "./components/molecules/PrSummaryViewer";
-import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
-import { TasksViewer } from "./components/molecules/TasksViewer";
 
 export interface ViewerProps {
   currentRead?: import("./lib/versioned-body").CurrentArtifactRead;
   context?: import("./lib/current-context").CurrentArtifactContext;
   renderEditableText?: (props: { anchor: string; value: string; edit: NonNullable<ViewerProps["edit"]>; isMultiline: boolean }) => ReactNode;
-  renderTaskEditControls?: (props: { task: Task; anchor: string; edit: NonNullable<ViewerProps["edit"]> }) => ReactNode;
   body: unknown;
   descriptor?: ArtifactReviewDescriptor | null;
   source?: ArtifactSource;
@@ -66,14 +55,8 @@ const REGISTRY: Record<string, RegistryEntry> = {
   "dev-current-plan-viewer": { Viewer: CurrentPlanViewer },
   "dev-current-brief-viewer": { Viewer: CurrentBuildBriefViewer },
 
-  "dev-spec-analysis-viewer": { Viewer: SpecAnalysisViewer },
-  "dev-spec-viewer": { Viewer: SpecViewer },
-  "dev-plan-viewer": { Viewer: PlanViewer },
-  "dev-tasks-viewer": { Viewer: TasksViewer },
-  "dev-build-brief-viewer": { Viewer: BuildBriefViewer },
   "dev-build-result-viewer": { Viewer: BuildResultReview },
   "dev-current-assessment-viewer": { Viewer: CurrentAssessmentReview },
-  "dev-assessment-viewer": { Viewer: AssessmentReview },
   "dev-pr-summary-viewer": { Viewer: PrSummaryViewer },
 };
 
@@ -88,26 +71,9 @@ export function selectViewerItemPaths(Viewer: ComponentType<ViewerProps>, body: 
   if (Viewer === CurrentSpecViewer) { const parsed = parseCanonicalSpec(body); return parsed.ok ? selectSpecItemPaths(parsed.value) : []; }
   if (Viewer === CurrentPlanViewer) { const parsed = parseCurrentPlan(body); return parsed.ok ? selectPlanItemPaths(parsed.value) : []; }
   if (Viewer === CurrentBuildBriefViewer) { const parsed = parseCurrentBrief(body); return parsed.ok ? selectBriefItemPaths(parsed.value) : []; }
-  if (Viewer === SpecAnalysisViewer && isSpecAnalysis(body)) return body.findings.map((_, index) => `/findings/${index}`);
-  if (Viewer === BuildBriefViewer) {
-    const brief = readBuildBrief(body);
-    return brief ? brief.shape === "legacy" ? brief.acceptance_criteria.map((_, index) => `/acceptance_criteria/${index}`) : brief.build_items.map((_, index) => `/build_items/${index}`) : [];
-  }
   if (Viewer === CurrentAssessmentReview) {
     const parsed = parseCurrentAssessment(body);
     return parsed.ok ? selectAssessmentItemPaths(parsed.value) : [];
-  }
-  if (Viewer === AssessmentReview) {
-    const parsed = parseAssessment(body);
-    return parsed.ok ? parsed.value.findings.map((finding) => finding.item_path) : [];
-  }
-  if (Viewer === TasksViewer) {
-    const parsed = parseTasks(body);
-    return parsed.ok ? parsed.value.tasks.map((_, index) => `/tasks/${index}`) : [];
-  }
-  if (Viewer === PlanViewer) {
-    const parsed = parsePlan(body);
-    return parsed.ok ? parsed.value.cohorts.flatMap((cohort, cohortIndex) => cohort.acceptance_criteria.map((_, index) => `/cohorts/${cohortIndex}/acceptance_criteria/${index}`)) : [];
   }
   return [];
 }
@@ -122,13 +88,12 @@ export function resolveContractRenderer(kind: import("./operator-contracts/core-
   return CONTRACT_RENDERERS[kind] ?? SchemaContractView;
 }
 
+/** A body its viewer cannot parse, such as another workflow's schema under the same name, falls back to the contract view. */
 export function isReadableViewer(Viewer: ComponentType<ViewerProps>, body: unknown): boolean {
-  if (Viewer === SpecAnalysisViewer) return isSpecAnalysis(body);
-  if (Viewer === SpecViewer) return typeof body === "string";
-  if (Viewer === PlanViewer) return parsePlan(body).ok;
-  if (Viewer === TasksViewer) return parseTasks(body).ok;
-  if (Viewer === BuildBriefViewer) return readBuildBrief(body) !== null;
+  if (Viewer === CurrentSpecAnalysisViewer) return parseCurrentAnalysis(body).ok;
+  if (Viewer === CurrentSpecViewer) return parseCanonicalSpec(body).ok;
+  if (Viewer === CurrentPlanViewer) return parseCurrentPlan(body).ok;
+  if (Viewer === CurrentBuildBriefViewer) return parseCurrentBrief(body).ok;
   if (Viewer === CurrentAssessmentReview) return parseCurrentAssessment(body).ok;
-  if (Viewer === AssessmentReview) return parseAssessment(body).ok;
   return true;
 }

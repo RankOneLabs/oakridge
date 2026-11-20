@@ -195,12 +195,4 @@ export function parsePlan(body: unknown): Parsed<Plan> {
   });
 }
 
-/** Cohorts in `dependency_order`; any cohort the order omits follows in body order. */
-export function selectOrderedCohorts(plan: Plan): PlanCohort[] {
-  const byId = new Map(plan.cohorts.map((cohort) => [cohort.id, cohort]));
-  const ordered = [...new Set(plan.dependency_order)].flatMap((id) => byId.get(id) ?? []);
-  const placed = new Set(ordered.map((cohort) => cohort.id));
-  return [...ordered, ...plan.cohorts.filter((cohort) => !placed.has(cohort.id))];
-}
-
 export { parseCurrentPlan, type CurrentPlan, type CurrentCohort } from "./current-contract";

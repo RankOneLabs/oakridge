@@ -1,11 +1,10 @@
-import { EditableBriefText } from "../components/organisms/EditableBriefText";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
+import currentBrief from "../__fixtures__/current-brief.json";
 import { ArtifactReview } from "../components/organisms/ArtifactReview";
-import { TasksViewer } from "../components/molecules/TasksViewer";
 import type { ArtifactDetail, ArtifactRevision, ParkedGate } from "../artifact-types";
 import { invalidateCachedRunUnits } from "../client";
 
@@ -141,40 +140,6 @@ describe("ArtifactReview", () => {
     expect(fetchSpy.mock.calls.some(([input]) => String(input).includes("/runs/run-1/gates"))).toBe(false);
   });
 
-  it("renders configured plan scope and risks", async () => {
-    const plan: ArtifactDetail = {
-      ...ARTIFACT_FIXTURE,
-      component_id: "dev-plan-viewer",
-      revisions: [{
-        ...REVISION_FIXTURE,
-        body: {
-          summary: "One cohort.",
-          cohorts: [{
-            id: "core", repository_key: "oakridge", title: "Core", scope: "", depends_on: [],
-            description: null, files_in_scope: [], decisions: [], acceptance_criteria: [],
-          }],
-          dependency_order: ["core"],
-          scope: { in_scope: ["core"], out_of_scope: [] },
-          acceptance_criteria: [],
-          risks: [{ description: "migration", mitigation: "Batch it." }],
-        },
-      }],
-      review: {
-        viewer: "dev-plan-viewer",
-        layout: "dag",
-        sections: ["scope", "risks"],
-        action_labels: {},
-      },
-    };
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
-      String(input).includes("/gates") ? json([]) : json(plan));
-    wrap(<ArtifactReview artifactId="art-1" />, plan);
-
-    expect(await screen.findByText("Scope")).toBeTruthy();
-    expect(screen.getByText("migration")).toBeTruthy();
-    expect(screen.queryByTestId("or-plan-cohorts")).toBeNull();
-  });
-
   it("shows error state when artifact fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
     wrap(<ArtifactReview artifactId="bad-id" />, null);
@@ -192,49 +157,6 @@ describe("navigation inside the review", () => {
 
     await screen.findByTestId("or-artifact-type");
     expect(screen.queryByText("← Back")).toBeNull();
-  });
-});
-
-describe("assessment builder handoff inside the review", () => {
-  const ASSESSMENT_BODY = { head_sha: "abc123", verdict: "pass_with_notes", findings: [], test_evidence: null, recommended_next_actions: [{"id": "00000000-0000-4000-8000-000000000001", "text": "Fix it"}] };
-  const CURRENT_ASSESSMENT_BODY = { ...ASSESSMENT_BODY, recommended_next_actions: [
-    { id: "aa32c2d6-b93c-42e5-80c8-d4cb1081fab2", text: "Fix it" }] };
-
-  it("hides controls when assessment editing is unavailable or a historical revision is selected", async () => {
-    const artifact: ArtifactDetail = {
-      ...ARTIFACT_FIXTURE, component_id: "dev-assessment-viewer", type_id: "dev.assessment",
-      producing_stage: "assessor", label: "alpha",
-      capabilities: { reviewable: true, commentable: false, atom_editable: true, review_items: false },
-      revisions: [
-        { ...REVISION_FIXTURE, body: ASSESSMENT_BODY },
-        { ...REVISION_FIXTURE, id: "rev-2", body: CURRENT_ASSESSMENT_BODY },
-      ],
-    };
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    const { unmount } = wrap(<ArtifactReview artifactId="art-1" />, artifact);
-    expect(await screen.findByTestId("or-assessment-handoff")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("or-rev-tab-0"));
-    expect(screen.queryByTestId("or-assessment-handoff")).toBeNull();
-    unmount();
-    wrap(<ArtifactReview artifactId="art-1" />, { ...artifact,
-      capabilities: { ...artifact.capabilities!, atom_editable: false } });
-    expect(screen.queryByTestId("or-assessment-handoff")).toBeNull();
-    expect(screen.getByTestId("or-assessment-next-actions")).toBeTruthy();
-  });
-});
-
-describe("task edit refusal", () => {
-  it("shows a refused task draft to the operator", async () => {
-    const onEdit = vi.fn().mockResolvedValue({ ok: false, error: "409 task revision changed" });
-    render(<TasksViewer renderEditableText={(props) => <EditableBriefText {...props} />} body={{ tasks: [{ id: "task-a", description: "Build the viewer.", requirement_ids: [] }] }}
-      edit={{ enabled: true, isPending: false, onEdit }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit tasks/0/description" }));
-    const field = screen.getByDisplayValue("Build the viewer.");
-    fireEvent.change(field, { target: { value: "Build the revised viewer." } });
-    fireEvent.blur(field);
-    await screen.findByText(/Not saved: 409 task revision changed/);
-    expect(screen.getByDisplayValue("Build the revised viewer.")).toBeTruthy();
   });
 });
 
@@ -261,11 +183,11 @@ import { compositeId } from "../adapters/core";
 import { itemStatus, supportQuestion } from "../__fixtures__/grading";
 import { useGradingVisibility } from "../state/gradingVisibility";
 
-it("keeps grade controls and blind state across presentation switches without granting structured edit access", async () => {
+it("keeps grade controls and blind state across presentation switches", async () => {
   useGradingVisibility.setState({ revealed_item_keys: new Set() });
-  const revisionId = compositeId({ kind: "artifact", runId: "run-1", unitId: "u", name: "tasks:raw-revision" });
-  const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "dev-tasks-viewer", capabilities: { atom_editable: true, commentable: false, reviewable: false, review_items: false },
-    revisions: [{ ...REVISION_FIXTURE, id: revisionId, body: { tasks: [{ id: "T1", description: "Recorded task", requirement_ids: [] }] } }] };
+  const revisionId = compositeId({ kind: "artifact", runId: "run-1", unitId: "u", name: "brief:raw-revision" });
+  const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "dev-current-brief-viewer", capabilities: { atom_editable: true, commentable: false, reviewable: false, review_items: false },
+    revisions: [{ ...REVISION_FIXTURE, id: revisionId, body: currentBrief }] };
   const status = itemStatus([supportQuestion()]);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
@@ -275,13 +197,11 @@ it("keeps grade controls and blind state across presentation switches without gr
     return json({});
   });
   wrap(<ArtifactReview artifactId="art-1" onOpenItem={() => {}} />, artifact);
-  expect(screen.getByRole("button", { name: "Edit tasks" })).toBeTruthy();
   fireEvent.click(screen.getByRole("tab", { name: "structured" }));
-  expect(screen.queryByRole("button", { name: "Edit tasks" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Open grading at /tasks/0" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Open grading at /build_items/0" })).toBeTruthy();
   expect(screen.queryAllByTestId("or-automatic-grades")).toHaveLength(0);
   fireEvent.click(screen.getByRole("button", { name: "Show automatic grades" }));
-  await waitFor(() => expect(useGradingVisibility.getState().revealed_item_keys.size).toBe(1));
+  await waitFor(() => expect(useGradingVisibility.getState().revealed_item_keys.size).toBe(currentBrief.build_items.length));
   fireEvent.click(screen.getByRole("tab", { name: "rendered" }));
   expect(screen.getByRole("button", { name: "Hide automatic grades" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Hide automatic grades" }));

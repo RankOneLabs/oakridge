@@ -7,7 +7,7 @@ export const CURRENT_VIEWERS = {
 } as const;
 export const CURRENT_VERSIONS: readonly CurrentVersionRegistration[] = Object.entries(OPERATOR_CURRENT_ARTIFACT_VERSIONS)
   .filter(([, value]) => value.is_distinct).map(([schema, value]) => ({ schema, version: value.version, component_id: CURRENT_VIEWERS[schema as keyof typeof CURRENT_VIEWERS] }));
-/** Unknown versions always retain the historical reader. No body shape detection. */
+/** A revision naming no current version opens in its schema's default viewer, and in the contract view when that cannot read it. No body shape detection. */
 export interface VersionedSchemaRead { readonly schema: string; readonly version: string | null | undefined; readonly registrations?: readonly CurrentVersionRegistration[] }
 export const selectVersionedComponent = ({ schema, version, registrations = CURRENT_VERSIONS }: VersionedSchemaRead): string | null =>
   registrations.find((entry) => entry.schema === schema && entry.version === version)?.component_id ?? null;

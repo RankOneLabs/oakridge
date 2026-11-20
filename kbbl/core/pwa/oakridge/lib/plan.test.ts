@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parsePlan, selectOrderedCohorts, type Plan } from "./plan";
+import { parsePlan, type Plan } from "./plan";
 import linkedPlan from "./__fixtures__/id-linked-plan.json";
 
 const decision = { id: "keep-small", text: "Keep it small." };
@@ -79,19 +79,5 @@ describe("parsePlan", () => {
 
   test("rejects a scope that is not split into in and out", () => {
     expect(parsePlan({ ...body, scope: { include: ["core"] } }).ok).toBe(false);
-  });
-});
-
-describe("selectOrderedCohorts", () => {
-  test("follows dependency_order rather than body order", () => {
-    expect(selectOrderedCohorts(parsed(body)).map((entry) => entry.id)).toEqual(["core", "api"]);
-  });
-
-  test("keeps cohorts the order omits, after the ordered ones", () => {
-    expect(selectOrderedCohorts(parsed({ ...body, dependency_order: ["api"] })).map((entry) => entry.id)).toEqual(["api", "core"]);
-  });
-
-  test("lists a cohort once when the order repeats it", () => {
-    expect(selectOrderedCohorts(parsed({ ...body, dependency_order: ["core", "core", "api"] })).map((entry) => entry.id)).toEqual(["core", "api"]);
   });
 });

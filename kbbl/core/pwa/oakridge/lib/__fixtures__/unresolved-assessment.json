@@ -1,7 +1,0 @@
-{
-  "head_sha": "abc123def456",
-  "verdict": "fail",
-  "findings": [{ "task_ids": ["criterion-missing"], "status": "not_met", "evidence": [] }],
-  "test_evidence": null,
-  "recommended_next_actions": []
-}

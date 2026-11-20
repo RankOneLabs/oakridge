@@ -1,7 +1,0 @@
-{
-  "head_sha": "abc123def456",
-  "verdict": "pass_with_notes",
-  "findings": [{ "task_ids": ["criterion-brief"], "status": "met", "evidence": [] }],
-  "test_evidence": null,
-  "recommended_next_actions": []
-}

@@ -38,12 +38,12 @@ interface DevelopmentRunOutcome {
   readonly integrations: readonly { readonly repository_key: string; readonly pr_url: string; readonly is_merged: boolean }[];
 }
 const VIEWER_COMPONENTS = {
-  "dev-spec-analysis-viewer": "SpecAnalysisViewer",
-  "dev-spec-viewer": "SpecViewer",
-  "dev-plan-viewer": "PlanViewer",
-  "dev-build-brief-viewer": "BuildBriefViewer",
+  "dev-current-analysis-viewer": "CurrentSpecAnalysisViewer",
+  "dev-current-spec-viewer": "CurrentSpecViewer",
+  "dev-current-plan-viewer": "CurrentPlanViewer",
+  "dev-current-brief-viewer": "CurrentBuildBriefViewer",
   "dev-build-result-viewer": "BuildResultReview",
-  "dev-assessment-viewer": "AssessmentReview",
+  "dev-current-assessment-viewer": "CurrentAssessmentReview",
   "dev-pr-summary-viewer": "PrSummaryViewer",
 } as const;
 

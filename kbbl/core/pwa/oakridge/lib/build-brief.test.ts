@@ -1,7 +1,7 @@
 import type { PlanTraceId } from "./plan";
 import buildItemsBrief from "./__fixtures__/build-items-brief.json";
 import { describe, expect, test } from "vitest";
-import { isBuildBrief, readBuildBrief, parseBuildBrief, selectBuildItemDecisions } from "./build-brief";
+import { readBuildBrief, parseBuildBrief, selectBuildItemDecisions } from "./build-brief";
 import linkedBrief from "./__fixtures__/id-linked-brief.json";
 import linkedPlan from "./__fixtures__/id-linked-plan.json";
 
@@ -18,7 +18,7 @@ const validBrief = {
   next_action: "Open the brief artifact.",
 };
 
-describe("isBuildBrief", () => {
+describe("readBuildBrief on a legacy brief", () => {
   test("accepts the linked fixture and reads its decisions", () => {
     expect(readBuildBrief(linkedBrief)?.decisions_made[1]?.decision).toBe("Add a compact trace section.");
   });
@@ -35,27 +35,6 @@ describe("isBuildBrief", () => {
     expect(brief?.approaches_rejected[1]).toMatchObject({ decision_ids: [] });
   });
 
-  test("accepts the registered artifact body", () => {
-    expect(isBuildBrief(validBrief)).toBe(true);
-  });
-
-  test.each([
-    ["a string criterion", { acceptance_criteria: ["Operator can approve the artifact."] }],
-    ["a string among object criteria", { acceptance_criteria: [...validBrief.acceptance_criteria, "Operator can approve the artifact."] }],
-    ["a criterion with no id", { acceptance_criteria: [{ text: "Approve.", decision_ids: [] }] }],
-    ["a criterion with no decision_ids", { acceptance_criteria: [{ id: "can-approve", text: "Approve." }] }],
-    ["a string decision", { decisions_made: ["Reuse v1"] }],
-    ["a decision with no id", { decisions_made: [{ decision: "Reuse v1", rationale: "It is proven." }] }],
-    ["a decision with no rationale", { decisions_made: [{ id: "reuse-v1", decision: "Reuse v1" }] }],
-    ["a rejected approach with no id", { approaches_rejected: [{ approach: "Duplicate UI", reason: "It would drift.", decision_ids: [] }] }],
-    ["a rejected approach with no decision_ids", { approaches_rejected: [{ id: "duplicate-ui", approach: "Duplicate UI", reason: "It would drift." }] }],
-  ])("refuses %s", (_, fields) => {
-    expect(isBuildBrief({ ...validBrief, ...fields })).toBe(false);
-  });
-
-  test.each(["cohort_id", "repository_key"] as const)("rejects an empty %s", (field) => {
-    expect(isBuildBrief({ ...validBrief, [field]: "   " })).toBe(false);
-  });
 });
 
 describe("readBuildBrief", () => {

@@ -3,34 +3,16 @@ import { artifactType, revisionToArtifact } from "../adapters/core";
 import { selectVersionedComponent, CURRENT_VIEWERS } from "./artifact-version";
 import { OPERATOR_CURRENT_ARTIFACT_VERSIONS } from "../operator-contracts/artifact-versions";
 import { resolveViewer, selectViewerItemPaths } from "../artifactRegistry";
-import { SpecAnalysisViewer } from "../components/molecules/SpecAnalysisViewer";
-import { TasksViewer } from "../components/molecules/TasksViewer";
-import { PlanViewer } from "../components/molecules/PlanViewer";
-import { BuildBriefViewer } from "../components/molecules/BuildBriefViewer";
-import { AssessmentReview } from "../components/organisms/AssessmentReview";
 import sample from "../__fixtures__/v2-adapter-sample.json";
-import plan from "./__fixtures__/id-linked-plan.json";
 import brief from "./__fixtures__/build-items-brief.json";
-import assessment from "./__fixtures__/id-linked-assessment.json";
 import currentAnalysis from "../__fixtures__/current-analysis.json";
 import currentSpec from "../__fixtures__/current-spec.json";
 import currentPlan from "../__fixtures__/current-plan.json";
 import currentBrief from "../__fixtures__/current-brief.json";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
-const legacyAnalysis = { summary: "Legacy", findings: [{ id: "F1", description: "Old", severity: "info" }], requirements: [], risks: [], proposed_spec_updates: [], source_spec_refs: [] };
-test.each([
-  ["analysis_body", SpecAnalysisViewer, legacyAnalysis, ["/findings/0"]],
-  ["tasks_body", TasksViewer, { tasks: [{ id: "T1", description: "Legacy task", requirement_ids: [] }] }, ["/tasks/0"]],
-  ["plan_body", PlanViewer, plan, plan.cohorts.flatMap((c, i) => c.acceptance_criteria.map((_, j) => `/cohorts/${i}/acceptance_criteria/${j}`))],
-  ["brief_body", BuildBriefViewer, brief, brief.build_items.map((_, i) => `/build_items/${i}`)],
-  ["assessment_body", AssessmentReview, assessment, ["/findings/0"]],
-] as const)("historical and unknown %s versions keep their reader and item paths", (schema, Viewer, body, paths) => {
-  const copy = structuredClone(body);
-  expect(resolveViewer(artifactType(schema).component_id)).toBe(Viewer);
-  expect(resolveViewer(artifactType(schema, "unknown").component_id)).toBe(Viewer);
-  expect(selectViewerItemPaths(Viewer, body)).toEqual(paths);
-  expect(body).toEqual(copy);
+test.each(["analysis_body", "spec_body", "plan_body", "brief_body", "assessment_body"] as const)("an unversioned or unknown %s revision opens in its current viewer", (schema) => {
+  expect([artifactType(schema).component_id, artifactType(schema, "unknown").component_id]).toEqual([CURRENT_VIEWERS[schema], CURRENT_VIEWERS[schema]]);
 });
 test.each([
   ["analysis_body", currentAnalysis, ["/requirements/0/findings/0", "/requirements/0/findings/1", "/requirements/1/findings/0", "/requirements/1/findings/1", "/requirements/2/findings/0"]],
@@ -58,10 +40,11 @@ test("revision metadata is preserved independently of its body", () => {
   const parsed = revisionToArtifact(artifact, unit);
   expect(parsed.ok && parsed.value.revisions[0]).toMatchObject({ artifact_schema_version: OPERATOR_CURRENT_ARTIFACT_VERSIONS.spec_body.version, component_id: "dev-current-spec-viewer", body: currentSpec });
 });
-test("a refused unknown body uses the raw fallback without changing the legacy reader", async () => {
+test("a body the current viewer cannot read falls back to the contract view", async () => {
   const { isReadableViewer } = await import("../artifactRegistry");
-  const Viewer = resolveViewer(artifactType("analysis_body", "unrecognized").component_id);
-  expect(Viewer && isReadableViewer(Viewer, currentAnalysis)).toBe(false);
+  const studyPlan = { question: "Which model?", hypotheses: [], cases: [], groups: [], outcomes: [], decision_rule: [], models: [] };
+  const Viewer = resolveViewer(artifactType("plan_body", "study-version").component_id);
+  expect(Viewer && isReadableViewer(Viewer, studyPlan)).toBe(false);
 });
 test("brief reader's current branch is explicit and legacy calls retain their shape", async () => {
   const { readBuildBrief } = await import("./build-brief");
