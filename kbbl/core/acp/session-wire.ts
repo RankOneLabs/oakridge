@@ -95,6 +95,32 @@ export function toWireFrames(frames: readonly StreamFrame[], items: readonly Tra
   });
 }
 
+export function createSessionFrameEncoder(epoch: SessionEpochFrame) {
+  const sentItems = new Set(epoch.items.map((item) => item.id));
+  return (frames: readonly StreamFrame[], items: readonly TranscriptItem[]): SessionWireFrame[] => {
+    const seeded: StreamFrame[] = [];
+    for (const frame of frames) {
+      if (frame.kind === "items_evicted") {
+        for (const id of frame.item_ids) sentItems.delete(id);
+      } else if (frame.kind === "item_upsert") {
+        sentItems.add(frame.item.id);
+      } else if (frame.kind === "item_text" && !sentItems.has(frame.item_id)) {
+        // A reopened run can have a sequence older than this connection's epoch window.
+        // A full upsert later in this emission already includes the delta.
+        if (frames.some((next) => next.kind === "item_upsert" && next.item.id === frame.item_id)) continue;
+        const item = items[lowerBoundItemSeq(items, frame.seq)];
+        if (item?.id === frame.item_id) {
+          sentItems.add(item.id);
+          seeded.push({ kind: "item_upsert", item });
+        }
+        continue;
+      }
+      seeded.push(frame);
+    }
+    return toWireFrames(seeded, items);
+  };
+}
+
 export function streamErrorFrame(error: AcpError): SessionStreamErrorFrame {
   return { kind: "stream_error", error: error.detail, code: error.code };
 }

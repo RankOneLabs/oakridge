@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { buildEpochFrame, toWireFrames } from "./session-wire";
+import { buildEpochFrame, createSessionFrameEncoder, toWireFrames } from "./session-wire";
+import { createTranscriptBuffer, foldUpdate } from "./transcript-fold";
 import { EMPTY_SESSION_LIVE_STATE, streamEpoch, transcriptItemId, transcriptSeq, type AgentMessageItem, type StreamFrame } from "./transcript-model";
-import type { KbblSessionId, TurnKey, UiSessionHistory } from "./types";
+import type { AcpUiEvent, KbblSessionId, TurnKey, UiSessionHistory } from "./types";
 
 const sid = "test" as KbblSessionId;
 const epoch = streamEpoch("epoch");
@@ -70,4 +71,29 @@ test("missing and user items have no streaming flag set on their deltas", () => 
   expect(toWireFrames(frames, [{ ...other, kind: "user_message", turn_key: null }])).toEqual(
     [first, other].map(({ id }) => ({ kind: "item_text", id, delta: "more", is_streaming: false })),
   );
+});
+
+test("a reconnect seeds an older open message on its first delta, then sends append-only deltas", () => {
+  const chunk = (messageId: string, text: string): AcpUiEvent => ({
+    kind: "agent_message", id: messageId, messageId, content: [{ type: "text", text }], streaming: true, replayed: false,
+  });
+  let buffer = createTranscriptBuffer({ epoch, capacity: 10 });
+  for (const update of [chunk("old", "one"), chunk("new", "newer item"), chunk("old", " two")]) {
+    buffer = foldUpdate(buffer, update).buffer;
+  }
+  const history: UiSessionHistory = {
+    ...common, kind: "transcript", expired: false, summary: null,
+    transcript: { ...buffer, stream_epoch: epoch },
+  };
+  const frame = buildEpochFrame({ history, stream_epoch: null, initial_item_window: 1 });
+  expect(frame.items.map((item) => item.id)).toEqual([message(1).id]);
+  const encode = createSessionFrameEncoder(frame);
+  const first = foldUpdate(buffer, chunk("old", " three"));
+  const second = foldUpdate(first.buffer, chunk("old", " four"));
+  expect(encode(first.frames, first.buffer.items).filter((entry) => entry.kind !== "session_state")).toEqual([
+    { kind: "item", item: { ...message(0), text: "one two three", message_id: "old" } },
+  ]);
+  expect(encode(second.frames, second.buffer.items).filter((entry) => entry.kind !== "session_state")).toEqual([
+    { kind: "item_text", id: message(0).id, delta: " four", is_streaming: true },
+  ]);
 });

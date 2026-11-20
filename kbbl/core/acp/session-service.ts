@@ -1,4 +1,4 @@
-import { buildEpochFrame, toWireFrames, type SessionEpochFrame, type SessionWireFrame } from "./session-wire";
+import { buildEpochFrame, createSessionFrameEncoder, type SessionEpochFrame, type SessionWireFrame } from "./session-wire";
 import { selectItemPage, type EpochChanged, type ItemPage } from "./transcript-page";
 import type { StreamEpoch, TranscriptEmission } from "./transcript-model";
 import { randomUUID } from "node:crypto";
@@ -115,26 +115,27 @@ export class AcpSessionService {
     }
 
     const lease = acquired.value;
-    let history = lease.history;
+    const history = lease.history;
     const controller = this.deps.controllers.getLive(history.sid);
-    if (!signal?.aborted && history.kind === "transcript" && controller?.streamEpoch === history.transcript.stream_epoch) {
-      // No asynchronous work between the snapshot and the live subscription.
-      const transcript = controller.snapshotTranscript();
-      unsubscribe = controller.subscribe(({ frames }) => {
-        listener(toWireFrames(frames, controller.snapshotTranscript().items));
-      });
-      history = {
+    const canSubscribe = !signal?.aborted && history.kind === "transcript" && controller?.streamEpoch === history.transcript.stream_epoch;
+    const epoch_frame = buildEpochFrame({
+      history: canSubscribe ? {
         ...history,
-        transcript,
+        transcript: controller.snapshotTranscript(),
         openTurns: this.deps.store.listOpenTurns(history.sid).map(turnToOpenTurn),
-      };
+      } : history,
+      stream_epoch: controller?.streamEpoch ?? null,
+      initial_item_window: this.transcriptLimits.initial_item_window,
+    });
+    if (canSubscribe) {
+      // No asynchronous work between the snapshot and the live subscription.
+      const encode = createSessionFrameEncoder(epoch_frame);
+      unsubscribe = controller.subscribe(({ frames }) => {
+        listener(encode(frames, controller.snapshotTranscript().items));
+      });
     }
     return ok({
-      epoch_frame: buildEpochFrame({
-        history,
-        stream_epoch: controller?.streamEpoch ?? null,
-        initial_item_window: this.transcriptLimits.initial_item_window,
-      }),
+      epoch_frame,
       release: () => {
         detach();
         return lease.release();
