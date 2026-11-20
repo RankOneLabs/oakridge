@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 
+import type { PendingSend } from "../../types";
 import { MessageTimestamp } from "../atoms/MessageTimestamp";
 
 export function PendingUserBubble({
@@ -13,23 +14,16 @@ export function PendingUserBubble({
   text: string;
   sentAt: number;
   isLatest: boolean;
-  status: "sending" | "accepted" | "prompting";
+  status: PendingSend["status"];
 }) {
-  // Re-render once after the 2s threshold so the label rolls from "sending"
-  // to "awaiting agent" without polling forever. The bubble is pending the
-  // whole time it is visible: the message is NOT in the conversation until the
-  // agent actually ingests it, at which point its transcript row arrives, this
-  // bubble reconciles away, and the message is inserted into the flow. So the
-  // label never claims "delivered" — delivery and insertion are the same event,
-  // and that event is this bubble disappearing.
   const [, setTick] = useState(0);
+  const slow = Date.now() - sentAt >= 2000;
   useEffect(() => {
-    const elapsed = Date.now() - sentAt;
-    const remaining = Math.max(0, 2000 - elapsed);
-    const t = setTimeout(() => setTick((x) => x + 1), remaining + 50);
-    return () => clearTimeout(t);
-  }, [sentAt]);
-  const slow = Date.now() - sentAt > 2000;
+    if (status !== "sending" || slow) return;
+    const remaining = Math.max(0, sentAt + 2000 - Date.now());
+    const timer = setTimeout(() => setTick((tick) => tick + 1), remaining);
+    return () => clearTimeout(timer);
+  }, [sentAt, slow, status]);
   return (
     <>
       {isLatest && (
@@ -41,13 +35,7 @@ export function PendingUserBubble({
         <div className="bubble bubble-user bubble-user-pending">
           {text}
           <span className="bubble-pending-tag">
-            {status === "accepted"
-              ? "queued"
-              : status === "prompting"
-                ? "starting…"
-                : slow
-                  ? "delivery uncertain…"
-                  : "sending…"}
+            {status === "accepted" ? "queued" : slow ? "delivery uncertain…" : "sending…"}
           </span>
         </div>
       </div>

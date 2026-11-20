@@ -103,10 +103,6 @@ export function selectOpenPermissions(state: SessionLiveState): Extract<Timeline
   return state.open_permissions.map(selectPermission);
 }
 
-export function selectEchoedTurnKeys(items: readonly TranscriptItem[]): ReadonlySet<string> {
-  return new Set(items.flatMap((item) => item.kind === "user_message" && item.turn_key !== null ? [item.turn_key] : []));
-}
-
 /** Config selectors grouped for the config bar (§12.3): semantic
  * categories get dedicated slots; everything else lands in overflow. */
 export interface GroupedConfigOptions {

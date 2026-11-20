@@ -1,9 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 
 import { EMPTY_SESSION_LIVE_STATE, transcriptItemId, transcriptSeq, type AgentMessageItem } from "../../acp/transcript-model";
-import type { SessionEpochFrame } from "../types";
+import { createElement, StrictMode, type ComponentProps } from "react";
+import type { SessionEpochFrame, SessionSnapshot, TurnKey } from "../types";
+import type { InputBox } from "../components/organisms/InputBox";
+import { SessionView } from "../views/SessionView";
 import { useAcpSession } from "./useAcpSession";
+
+vi.mock("../components/organisms/InputBox", () => ({
+  InputBox: ({ onSend }: ComponentProps<typeof InputBox>) =>
+    createElement("button", { onClick: () => onSend?.("network input", "local") }, "Send test input"),
+}));
 
 // jsdom has no EventSource; capture instances so tests can push frames.
 class MockEventSource {
@@ -187,6 +196,45 @@ describe("useAcpSession", () => {
     const { result } = renderHook(() => useAcpSession(SID));
     act(() => MockEventSource.last!.dispatch("stream_error", JSON.stringify(payload)));
     await waitFor(() => expect(result.current.streamError).toBe(payload.error));
+  });
+
+  it("rebinds to the live store after StrictMode remounts effects", async () => {
+    const { result } = renderHook(() => useAcpSession(SID), { wrapper: StrictMode });
+    act(() => MockEventSource.last!.dispatch("epoch", epochFrame({ items: [agentItem(1, "strict")] })));
+    await waitFor(() => expect(result.current.items[0]).toMatchObject({ text: "strict" }));
+  });
+
+  it("renders the server transcript and queued and sending inputs in SessionView", () => {
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    try {
+      const snapshot: SessionSnapshot = {
+        sid: SID, status: "idle", name: "Session", agentProfile: "claude-code", source: "acp",
+        lastActivityTs: "2026-09-02T00:00:00Z", createdAt: "2026-09-02T00:00:00Z",
+        artifactId: null, projectWorkdir: "/repo", worktreePath: "/repo", worktreeBranch: null,
+        worktreeBaseRef: null, requestedModel: null, requestedEffort: null, endReason: null,
+        fencedBy: null, archivedAt: null, pendingPermissionCount: 0, workflow: null,
+      };
+      const session = createElement(SessionView, {
+        sid: SID, snapshot, inboxStatus: "connected", chrome: { kind: "pane", stage: null },
+        onResume: async () => null,
+      });
+      render(createElement(QueryClientProvider, { client: new QueryClient() }, session));
+      act(() => MockEventSource.last!.dispatch("epoch", epochFrame({
+        items: [agentItem(1, "server response")],
+        open_turns: [{
+          turnKey: "operator:queued" as TurnKey, source: "operator", status: "accepted",
+          text: "durable input", createdAt: "2026-09-02T00:00:00Z",
+        }],
+      })));
+      fireEvent.click(screen.getByRole("button", { name: "Send test input" }));
+      expect(screen.getByText("server response")).toBeTruthy();
+      expect(screen.getByText("durable input")).toBeTruthy();
+      expect(screen.getByText("queued")).toBeTruthy();
+      expect(screen.getByText("network input")).toBeTruthy();
+      expect(screen.getByText("sending…")).toBeTruthy();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("rebuilds a CLOSED stream when the page returns to the foreground", () => {

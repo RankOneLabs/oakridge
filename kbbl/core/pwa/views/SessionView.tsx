@@ -5,7 +5,7 @@ import { useAcpSession } from "../hooks/useAcpSession";
 import { usePendingSends } from "../hooks/usePendingSends";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
-import { selectEchoedTurnKeys, selectOpenPermissions, selectSessionTimelineItems, type TimelineItem } from "../lib/session-items";
+import { selectOpenPermissions, selectSessionTimelineItems, type TimelineItem } from "../lib/session-items";
 import {
   operatorStateLabel,
   selectOperatorExecutionState,
@@ -68,7 +68,6 @@ export function SessionView({
 
   const timelineItems = useMemo(() => selectSessionTimelineItems(items, sessionState), [items, sessionState]);
   const openPermissions = useMemo(() => selectOpenPermissions(sessionState), [sessionState]);
-  const echoedTurnKeys = useMemo(() => selectEchoedTurnKeys(items), [items]);
   const turnActive = sessionState.active_turn !== null;
   const sessionTitle = sessionState.session_title;
   const focusedPermissionRef = useRef<string | null>(null);
@@ -114,7 +113,7 @@ export function SessionView({
     acceptPendingSend,
     removePendingSend,
     lastPendingClientMessageId,
-  } = usePendingSends(sid, echoedTurnKeys, openTurns, sessionStatus);
+  } = usePendingSends(sid, openTurns, sessionState.active_turn, sessionStatus);
 
   const [isInterrupting, setIsInterrupting] = useState(false);
   const operatorState = selectOperatorExecutionState({
@@ -210,7 +209,7 @@ export function SessionView({
           />
           {pendingSends.map((m) => (
             <PendingUserBubbleEntry
-              key={m.clientMessageId}
+              key={m.turnKey ?? `sending:${m.clientMessageId}`}
               text={m.text}
               sentAt={m.sentAt}
               status={m.status}
