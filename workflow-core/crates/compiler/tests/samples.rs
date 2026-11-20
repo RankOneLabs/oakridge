@@ -130,20 +130,30 @@ fn host_depth_limit_rejects_workflow_before_compilation() {
 }
 
 /// The development workflow (rescue spec R5) compiles as derived from
-/// `workflow-config/development.yaml`, with the prompts it names and the
-/// operation registry the run layer exports.
+/// `workflow-config/development.yaml`, with the committed prompts it names,
+/// includes expanded, and the operation registry the run layer exports.
 #[test]
 fn the_development_workflow_compiles_against_its_prompts_and_the_registry() {
     let config = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../workflow-config");
     let read = |path: std::path::PathBuf| std::fs::read_to_string(&path).expect("readable");
     let operations: Vec<CodeOperation> =
         serde_json::from_str(&read(config.join("operation-registry.json"))).unwrap();
-    let prompts: BTreeMap<String, String> = std::fs::read_dir(config.join("prompts/development"))
+    let store = config.join("definitions");
+    let launchable: serde_json::Value =
+        serde_json::from_str(&read(store.join("launchable.json"))).unwrap();
+    let id = launchable["development"]["definition_id"].as_str().unwrap();
+    let definition: serde_json::Value =
+        serde_json::from_str(&read(store.join(format!("workflows/{id}.json")))).unwrap();
+    let prompts: BTreeMap<String, String> = definition["prompts"]
+        .as_object()
         .unwrap()
-        .map(|entry| {
-            let path = entry.unwrap().path();
-            let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            (format!("development/{name}"), read(path))
+        .iter()
+        .map(|(path, digest)| {
+            let digest = digest.as_str().unwrap();
+            (
+                path.clone(),
+                read(store.join(format!("prompts/{digest}.md"))),
+            )
         })
         .collect();
     let source =

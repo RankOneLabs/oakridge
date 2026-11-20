@@ -20,7 +20,7 @@ test("development detail preserves authored uses alongside compiled declarations
       for (const path of paths) expect(detail.prompts[path]).toBeDefined();
     }
     const prompt = detail.prompts["development/brief.md"];
-    expect(prompt.digest).toBe(compiled.value.prompt_ids["development/brief.md"]);
+    expect(prompt.digest).toBe(compiled.value.prompt_source_ids["development/brief.md"]);
     const stored = await Bun.file(new URL("../../workflow-config/definitions/prompts/" + prompt.digest + ".md", import.meta.url)).text();
     expect(prompt.body).toBe(stored);
     expect(detail.workflow.stages.cohort?.workers.pr_watch).toEqual({ template: "pr_watch" });
@@ -34,7 +34,7 @@ test("development detail preserves authored uses alongside compiled declarations
   } finally { core.value.close(); }
 });
 
-test("launchable prompt projection preserves committed bytes and references", async () => {
+test("launchable prompt projection shows every authored prompt a workflow reads, as authored", async () => {
   const { resolveDefinition, referencedPromptPaths, bytesIdentity } = await import("../src/runtime/definition-store");
   const { selectDefinitionPrompts } = await import("../src/projections/definition-view");
   const catalog = readLaunchableCatalog();
@@ -43,10 +43,11 @@ test("launchable prompt projection preserves committed bytes and references", as
     const resolved = resolveDefinition(entry.definition_id);
     if (!resolved.ok) throw resolved.error;
     const prompts = selectDefinitionPrompts(resolved.value);
-    expect(Object.keys(prompts).sort()).toEqual([...referencedPromptPaths(resolved.value.source)].sort());
+    expect(referencedPromptPaths(resolved.value.source).every((path) => Object.hasOwn(prompts, path))).toBe(true);
+    expect(Object.keys(prompts).sort()).toEqual(Object.keys(resolved.value.prompt_source_ids).sort());
     for (const [path, prompt] of Object.entries(prompts)) {
-      expect(prompt.digest).toBe(resolved.value.prompt_ids[path]);
-      expect(prompt.body).toBe(resolved.value.prompts[path]);
+      expect(prompt.digest).toBe(resolved.value.prompt_source_ids[path]);
+      expect(prompt.body).toBe(resolved.value.prompt_sources[path]);
       expect(bytesIdentity(new TextEncoder().encode(prompt.body))).toBe(prompt.digest);
     }
   }

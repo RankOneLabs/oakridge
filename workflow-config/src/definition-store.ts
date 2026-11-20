@@ -3,7 +3,8 @@ import { resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import { decodeWorkflowSource, hasSafeWireNumbers, type TypeExpression } from "../../oakridge-dbos/src/core-client/source-types";
 import { jsonIdentity, bytesIdentity, isIdentity, type DefinitionId } from "./definition-identity";
-import { referencedPromptPaths, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type ResolvedDefinition } from "./definition-objects";
+import { referencedPromptPaths, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type PromptReferences, type PromptTexts, type ResolvedDefinition } from "./definition-objects";
+import { composePrompts } from "../../oakridge-dbos/src/runtime/definition-store";
 
 export const DEFINITION_STORE_ROOT = resolve(import.meta.dir, "../definitions");
 type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable" | "read_skill_index" | "read_skill_bundle" | "read_prompt_version" | "read_prompt_pointer";
@@ -40,13 +41,17 @@ function matchesNames(value: unknown, names: readonly string[]): value is readon
   return Array.isArray(value) && value.length === names.length && new Set(value).size === names.length
     && value.every((name) => typeof name === "string" && names.includes(name));
 }
+function isPromptReferences(value: unknown): value is PromptReferences {
+  return isObject(value) && Object.entries(value).every(([path, id]) => isPromptPath(path) && isIdentity(id));
+}
 export function isCommittedDefinition(value: unknown): value is CommittedDefinition {
-  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "schema_names", "stage_names"])) return false;
+  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "prompt_sources", "schema_names", "stage_names"])) return false;
   const source = decodeWorkflowSource(value.source);
-  if (source === null || !isIdentity(value.operation_registry_id) || !isObject(value.prompts)) return false;
-  if (!Object.entries(value.prompts).every(([path, id]) => isPromptPath(path) && isIdentity(id))) return false;
+  if (source === null || !isIdentity(value.operation_registry_id) || !isPromptReferences(value.prompts)) return false;
+  if (value.prompt_sources !== undefined && !isPromptReferences(value.prompt_sources)) return false;
   const paths = referencedPromptPaths(source);
-  return matchesNames(Object.keys(value.prompts), paths)
+  const sources = value.prompt_sources ?? value.prompts;
+  return matchesNames(Object.keys(value.prompts), paths) && paths.every((path) => Object.hasOwn(sources, path))
     && matchesNames(value.schema_names, Object.keys(source.schemas ?? {}))
     && matchesNames(value.stage_names, Object.keys(source.stages));
 }
@@ -117,17 +122,31 @@ export function resolveDefinition(definition_id: DefinitionId, store_root = DEFI
   const operations = readJson({ ...registry_context, path: resolve(store_root, "operations", `${committed.operation_registry_id}.json`) });
   if (!operations.ok) return operations;
   if (!isOperationRegistry(operations.value)) return failure("malformed_object", registry_context, "invalid operation registry shape");
-  const prompt_entries: [string, string][] = [];
-  for (const [path, prompt_id] of Object.entries(committed.prompts)) {
-    const prompt = readText({ operation: "read_prompt", identifier: prompt_id, path: resolve(store_root, "prompts", `${prompt_id}.md`) });
-    if (!prompt.ok) return prompt;
-    prompt_entries.push([path, prompt.value]);
-  }
+  const readPrompts = (references: PromptReferences): Result<PromptTexts, DefinitionStoreFailure> => {
+    const entries: [string, string][] = [];
+    for (const [path, prompt_id] of Object.entries(references)) {
+      const prompt = readText({ operation: "read_prompt", identifier: prompt_id, path: resolve(store_root, "prompts", `${prompt_id}.md`) });
+      if (!prompt.ok) return prompt;
+      entries.push([path, prompt.value]);
+    }
+    return { ok: true, value: Object.fromEntries(entries) };
+  };
+  const prompts = readPrompts(committed.prompts);
+  if (!prompts.ok) return prompts;
+  const source_ids = committed.prompt_sources ?? committed.prompts;
+  const prompt_sources = readPrompts(source_ids);
+  if (!prompt_sources.ok) return prompt_sources;
+  const recomposed = composePrompts(Object.keys(committed.prompts), prompt_sources.value);
+  if (!recomposed.ok) return failure("malformed_object", context, recomposed.error.detail);
+  if (!matchesNames(Object.keys(source_ids), Object.keys(recomposed.value.prompt_sources))
+    || Object.entries(recomposed.value.prompts).some(([path, prompt]) => prompt.id !== committed.prompts[path]))
+    return failure("malformed_object", context, "committed prompts are not the expansion of their committed sources");
   return { ok: true, value: {
     definition_id,
     source: committed.source,
     operation_registry_id: committed.operation_registry_id,
-    prompts: Object.fromEntries(prompt_entries),
+    prompts: prompts.value,
+    prompt_sources: prompt_sources.value,
     operations: operations.value,
     schema_names: committed.schema_names,
     stage_names: committed.stage_names,

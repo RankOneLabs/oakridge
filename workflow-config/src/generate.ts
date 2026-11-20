@@ -8,8 +8,9 @@ import { WORKFLOW_SOURCES } from "./workflow-sources";
 import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
-import { commitDefinition, referencedPromptPaths, type DefinitionOrder, type LaunchableCatalog, type LaunchableEntry, type PromptReferences } from "./definition-objects";
+import { commitDefinition, referencedPromptPaths, type DefinitionOrder, type LaunchableCatalog, type LaunchableEntry } from "./definition-objects";
 import { isCommittedDefinition, isPromptPath } from "./definition-store";
+import { composePrompts, promptReferences } from "../../oakridge-dbos/src/runtime/definition-store";
 
 const root = resolve(import.meta.dir, "../..");
 const isCheck = process.argv.includes("--check");
@@ -76,7 +77,7 @@ for (let index = 0; index < prompts.length; index++) {
   if (authored.id !== published.id) console.error(`prompt ${authored.path}: authored file ${authored.id} differs from published version ${published.id}; using the published version`);
   prompts[index] = published;
 }
-const promptsByPath = new Map(prompts.map((prompt) => [prompt.path, prompt]));
+const promptTexts = Object.fromEntries(prompts.map((prompt) => [prompt.path, prompt.bytes.toString("utf8")]));
 const registryId = required(jsonIdentity<OperationRegistryId>(OPERATION_REGISTRY));
 const generated: GeneratedFile[] = [
   // These pretty-printed outputs remain exactly as before this store existed.
@@ -114,12 +115,13 @@ for (const [name, { path, audience }] of Object.entries(WORKFLOW_SOURCES)) {
   const authored = document.toJS();
   const source = decodeWorkflowSource(authored);
   if (source === null) throw new Error(`${sourcePath}: invalid authored workflow shape`);
-  const references: PromptReferences = Object.fromEntries(referencedPromptPaths(source).map((path) => {
-    const prompt = promptsByPath.get(path);
-    if (!isPromptPath(path) || prompt === undefined) throw new Error(`${sourcePath}: missing or invalid prompt path ${path}`);
-    return [path, prompt.id];
-  }));
-  const definition = commitDefinition({ source, operation_registry_id: registryId, prompts: references }, order);
+  const paths = referencedPromptPaths(source);
+  for (const path of paths) if (!isPromptPath(path)) throw new Error(`${sourcePath}: invalid prompt path ${path}`);
+  // Each prompt is committed with its includes expanded, so the definition id covers every byte a session receives.
+  const composed = required(composePrompts(paths, promptTexts));
+  generated.push(...Object.values(composed.prompts).map((prompt) => ({ path: resolve(storeRoot, "prompts", `${prompt.id}.md`), bytes: Buffer.from(prompt.text) })));
+  const definition = commitDefinition({ source, operation_registry_id: registryId,
+    prompts: promptReferences(composed.prompts), prompt_sources: promptReferences(composed.prompt_sources) }, order);
   const definitionId = required(jsonIdentity<DefinitionId>(definition));
   launchableEntries.push([name, { audience, definition_id: definitionId }]);
   generated.push(

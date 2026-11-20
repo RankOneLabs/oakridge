@@ -12,4 +12,4 @@ Record material technical decisions as `{id, build_item_ids, decision, rationale
 
 {{assignment}}
 
-If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, raise a blocker instead of guessing. The upstream briefs settle their own contracts, and code that a requirement or upstream brief calls for but the repository does not have yet is work to build, not a blocker.
+{{> shared/raise-blocker.md}} The upstream briefs settle their own contracts, and code that a requirement or upstream brief calls for but the repository does not have yet is work to build, not a blocker.

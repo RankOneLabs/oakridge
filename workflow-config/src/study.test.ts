@@ -6,15 +6,12 @@ import { compileWorkflow } from "../../oakridge-dbos/src/core-client/client";
 import type { Event, StepSnapshot } from "../../oakridge-dbos/src/core-client/core-types";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import fixture from "../samples/study-fact-shapes-plan.json";
-import { referencedPromptPaths } from "./definition-objects";
-import { core, repository, root, workspace } from "./development-test-support";
+import { core, expandedPrompts, repository, root, workspace } from "./development-test-support";
 
 const study = decodeWorkflowSource(YAML.parse(readFileSync(resolve(root, "workflow-config/study.yaml"), "utf8")));
 if (!study) throw new Error("Invalid study source");
 
-const prompts = Object.fromEntries(referencedPromptPaths(study).map(path => [
-  path, readFileSync(resolve(root, "workflow-config/prompts", path), "utf8"),
-]));
+const prompts = expandedPrompts(study);
 const STAGE = "design";
 const unit = "run/unit";
 const design = study.stages[STAGE];

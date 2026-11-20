@@ -14,7 +14,13 @@ export interface LaunchableCatalog { readonly [authoring_name: string]: Launchab
 export interface CommittedDefinition {
   readonly source: AuthoredWorkflow;
   readonly operation_registry_id: OperationRegistryId;
+  /** Each prompt the workflow references, by the id of its text with every include expanded: what a session receives. */
   readonly prompts: PromptReferences;
+  /**
+   * Every authored prompt the expansion read, included files among them, by the id of its authored text: what an operator edits.
+   * Absent from a definition committed before prompts could include one another, whose prompts are their authored text.
+   */
+  readonly prompt_sources?: PromptReferences;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
 }
@@ -24,12 +30,13 @@ export interface ResolvedDefinition {
   readonly source: AuthoredWorkflow;
   readonly operation_registry_id: OperationRegistryId;
   readonly prompts: PromptTexts;
+  readonly prompt_sources: PromptTexts;
   readonly operations: OperationRegistry;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
 }
 
-export type DefinitionInputs = Pick<CommittedDefinition, "source" | "operation_registry_id" | "prompts">;
+export type DefinitionInputs = Pick<CommittedDefinition, "source" | "operation_registry_id" | "prompts" | "prompt_sources">;
 export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names">;
 
 /** Order must come from YAML mapping nodes, before toJS() reorders integer-like keys. */

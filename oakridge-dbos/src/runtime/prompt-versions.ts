@@ -2,14 +2,21 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import { compileWorkflow, type CoreClient } from "../core-client/client";
-import { bytesIdentity, jsonIdentity, isPromptPath, readLaunchableCatalog, resolveDefinition, readPromptPointer, readPromptVersion, writeStoreFile, withPublishedPrompt, DEFINITION_STORE_ROOT,
-  type PromptVersionId, type PromptPointer, type PromptVersionObject, type CommittedDefinition, type DefinitionId, type LaunchableCatalog, type ResolvedDefinition } from "./definition-store";
+import { bytesIdentity, jsonIdentity, isPromptPath, readLaunchableCatalog, resolveDefinition, readPromptPointer, readPromptVersion, writeStoreFile, composePrompts, promptReferences, DEFINITION_STORE_ROOT,
+  type PromptVersionId, type PromptPointer, type PromptVersionObject, type CommittedDefinition, type ComposedPrompts, type DefinitionId, type LaunchableCatalog, type ResolvedDefinition } from "./definition-store";
+import type { PromptSourceTexts } from "./prompt-includes";
 
 import type { PromptIssue, PromptVersionErrorKind, PromptVersionError, ValidatePromptRequest, SavePendingPromptRequest, PublishPromptRequest, PromptVersionView, PromptVersionListing, PromptValidationOutcome, PromptMove, PromptPublicationOutcome } from "../http/prompt-versions";
 export type { PromptIssue, PromptVersionErrorKind, PromptVersionError, ValidatePromptRequest, SavePendingPromptRequest, PublishPromptRequest, PromptVersionView, PromptReference, PromptVersionListing, PromptValidationOutcome, PromptMove, PromptPublicationOutcome } from "../http/prompt-versions";
 type PromptResult<T> = Result<T, PromptVersionError>;
 interface Referencing { readonly workflow: string; readonly resolved: ResolvedDefinition; readonly committed: CommittedDefinition }
-interface PromptState { readonly root: string; readonly catalog: LaunchableCatalog; readonly references: readonly Referencing[]; readonly pointer: PromptPointer; readonly seeded: PromptVersionObject }
+/**
+ * `references` are the launchable workflows whose prompts read this authored prompt, directly or through an include.
+ * `includable` holds every authored prompt the launchable workflows agree on, so an edit may include one its workflow does not yet read.
+ */
+interface PromptState { readonly root: string; readonly catalog: LaunchableCatalog; readonly references: readonly Referencing[]; readonly includable: PromptSourceTexts; readonly pointer: PromptPointer; readonly seeded: PromptVersionObject }
+/** A referencing workflow's prompts recomposed around the candidate text. */
+interface Recomposed { readonly reference: Referencing; readonly composed: ComposedPrompts }
 const storeRoot = () => process.env.OAKRIDGE_DEFINITION_ROOT ?? DEFINITION_STORE_ROOT;
 function refused(kind: PromptVersionErrorKind, path: string, detail: string, issues: readonly PromptIssue[] = []): PromptResult<never> {
   return { ok: false, error: { operation: "prompt_versions", kind, entity_id: path, detail, issues } };
@@ -20,20 +27,22 @@ function loadState(path: string): PromptResult<PromptState> {
   const catalog = readLaunchableCatalog(root);
   if (!catalog.ok) return refused("store_io", path, JSON.stringify(catalog.error));
   const references: Referencing[] = [];
+  const candidates = new Map<string, Set<string>>();
   for (const [workflow, entry] of Object.entries(catalog.value)) {
     const resolved = resolveDefinition(entry.definition_id, root);
     if (!resolved.ok) return refused("store_io", path, JSON.stringify(resolved.error));
-    if (!Object.hasOwn(resolved.value.prompts, path)) continue;
     const value = resolved.value;
+    for (const [source_path, text] of Object.entries(value.prompt_sources)) candidates.set(source_path, (candidates.get(source_path) ?? new Set()).add(text));
+    if (!Object.hasOwn(value.prompt_sources, path)) continue;
     const committed: CommittedDefinition = { source: value.source, operation_registry_id: value.operation_registry_id,
-      prompts: Object.fromEntries(Object.entries(value.prompts).map(([key, body]) => [key, bytesIdentity(Buffer.from(body))])),
-      schema_names: value.schema_names, stage_names: value.stage_names };
+      prompts: value.prompt_ids, prompt_sources: value.prompt_source_ids, schema_names: value.schema_names, stage_names: value.stage_names };
     references.push({ workflow, resolved: value, committed });
   }
   if (!references.length) return refused("unknown_prompt", path, "no launchable workflow references this prompt");
-  const ids = new Set(references.map(reference => reference.committed.prompts[path]));
+  const ids = new Set(references.map(reference => reference.resolved.prompt_source_ids[path]));
   if (ids.size !== 1) return refused("inconsistent_published_prompt", path, "launchable workflows disagree on published prompt");
-  const seeded: PromptVersionObject = { source_path: path, prompt_id: references[0].committed.prompts[path] };
+  const includable = Object.fromEntries([...candidates].flatMap(([source_path, texts]) => texts.size === 1 ? [[source_path, [...texts][0]]] : []));
+  const seeded: PromptVersionObject = { source_path: path, prompt_id: references[0].resolved.prompt_source_ids[path] };
   const identity = jsonIdentity<PromptVersionId>(seeded);
   if (!identity.ok) return refused("store_io", path, identity.error.detail);
   let pointer: PromptPointer = { source_path: path, published: identity.value, pending: null, history: [{ version_id: identity.value, published_at: null }] };
@@ -42,7 +51,7 @@ function loadState(path: string): PromptResult<PromptState> {
     if (!stored.ok) return refused("store_io", path, JSON.stringify(stored.error));
     pointer = stored.value;
   }
-  return { ok: true, value: { root, catalog: catalog.value, references, pointer, seeded } };
+  return { ok: true, value: { root, catalog: catalog.value, references, includable, pointer, seeded } };
 }
 function writeJson(state: PromptState, path: string, value: unknown, mutable = false): PromptResult<void> {
   const canonical = canonicalJson(value);
@@ -83,18 +92,26 @@ export function listPromptVersions(path: string): PromptResult<PromptVersionList
   return { ok: true, value: { source_path: path, published: published.value, pending: pending?.ok ? { ...pending.value, status: "pending" } : null,
     versions, referenced_by: value.references.map(({ workflow, resolved }) => ({ workflow, workflow_name: resolved.source.workflow, definition_id: resolved.definition_id })) } };
 }
-async function compileCandidate(core: CoreClient, state: PromptState, request: ValidatePromptRequest): Promise<PromptResult<PromptValidationOutcome>> {
+/** Recompose each referencing workflow's prompts around the candidate, expanding its includes, and compile what a session would receive. */
+async function compileCandidate(core: CoreClient, state: PromptState, request: ValidatePromptRequest): Promise<PromptResult<readonly Recomposed[]>> {
   if (typeof request.body !== "string" || Buffer.from(request.body).toString("utf8") !== request.body) return refused("invalid_prompt", request.path, "body must encode losslessly as UTF-8");
   const issues: PromptIssue[] = [];
-  for (const { workflow, resolved } of state.references) {
-    const compiled = await compileWorkflow(core, { workflow: resolved.source, operations: resolved.operations, prompts: { ...resolved.prompts, [request.path]: request.body } });
+  const recomposed: Recomposed[] = [];
+  for (const reference of state.references) {
+    const { workflow, resolved } = reference;
+    const composed = composePrompts(Object.keys(resolved.prompts), { ...state.includable, ...resolved.prompt_sources, [request.path]: request.body });
+    if (!composed.ok) { issues.push({ workflow, path: [workflow], detail: composed.error.detail }); continue; }
+    const prompts = Object.fromEntries(Object.entries(composed.value.prompts).map(([path, prompt]) => [path, prompt.text]));
+    const compiled = await compileWorkflow(core, { workflow: resolved.source, operations: resolved.operations, prompts });
     if (!compiled.ok) issues.push({ workflow, path: [workflow], detail: compiled.error.detail });
+    else recomposed.push({ reference, composed: composed.value });
   }
-  return issues.length ? refused("invalid_prompt", request.path, "candidate failed compilation", issues)
-    : { ok: true, value: { valid: true, workflows: state.references.map(reference => reference.workflow) } };
+  return issues.length ? refused("invalid_prompt", request.path, "candidate failed compilation", issues) : { ok: true, value: recomposed };
 }
 export async function validatePrompt(core: CoreClient, request: ValidatePromptRequest): Promise<PromptResult<PromptValidationOutcome>> {
-  const state = loadState(request.path); return state.ok ? compileCandidate(core, state.value, request) : state;
+  const state = loadState(request.path); if (!state.ok) return state;
+  const compiled = await compileCandidate(core, state.value, request);
+  return compiled.ok ? { ok: true, value: { valid: true, workflows: compiled.value.map(({ reference }) => reference.workflow) } } : compiled;
 }
 let mutationTail: Promise<unknown> = Promise.resolve();
 function serialized<T>(action: () => Promise<T>): Promise<T> {
@@ -134,8 +151,12 @@ export function publishPrompt(core: CoreClient, request: PublishPromptRequest): 
     const valid = await compileCandidate(core, state, { path: request.path, body: pending.value.body }); if (!valid.ok) return valid;
     const moved: PromptMove[] = [];
     const catalog = { ...state.catalog };
-    for (const reference of state.references) {
-      const committed = withPublishedPrompt(reference.committed, request.path, pending.value.prompt_id);
+    for (const { reference, composed } of valid.value) {
+      for (const prompt of [...Object.values(composed.prompts), ...Object.values(composed.prompt_sources)]) {
+        const body = writeStoreFile({ root: state.root, path: "prompts/" + prompt.id + ".md", bytes: Buffer.from(prompt.text) });
+        if (!body.ok) return refused("store_io", request.path, JSON.stringify(body.error));
+      }
+      const committed: CommittedDefinition = { ...reference.committed, prompts: promptReferences(composed.prompts), prompt_sources: promptReferences(composed.prompt_sources) };
       const identity = jsonIdentity<DefinitionId>(committed); if (!identity.ok) return refused("store_io", request.path, identity.error.detail);
       const written = writeJson(state, "workflows/" + identity.value + ".json", committed); if (!written.ok) return written;
       const entry = catalog[reference.workflow];
