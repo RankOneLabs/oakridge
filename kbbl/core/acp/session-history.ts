@@ -1,3 +1,4 @@
+import type { TranscriptSnapshot } from "./transcript-model";
 import type { AcpSessionServiceDeps } from "#kbbl/core/acp/session-service";
 import type { AcpSessionController } from "#kbbl/core/acp/controller";
 import { createSessionController } from "#kbbl/core/acp/session-controller";
@@ -14,14 +15,37 @@ export interface SessionHistoryCallbacks {
   touchController(sid: KbblSessionId, signal?: AbortSignal): Promise<Result<AcpSessionController, AcpError>>;
 }
 
+const RETAINED_SNAPSHOT_LIMIT = 16;
+
 /** Transcript loading, display-only process ownership and terminal summary capture. */
 export class AcpSessionHistory {
+  private readonly retainedSnapshots = new Map<KbblSessionId, TranscriptSnapshot>();
   private readonly historyConsumers = new Map<KbblSessionId, number>();
   private readonly coldHistoryLoads = new Map<KbblSessionId, AbortController>();
   private readonly summaryGenerators: readonly SessionSummaryGenerator[];
   constructor(private readonly deps: AcpSessionServiceDeps, private readonly callbacks: SessionHistoryCallbacks) {
     this.summaryGenerators = deps.summary_generators ?? [new ManualCompactionSummaryGenerator(), new FinalResponseSummaryGenerator()];
   }
+  getRetainedSnapshot(sid: KbblSessionId): TranscriptSnapshot | null {
+    const snapshot = this.retainedSnapshots.get(sid);
+    if (!snapshot) return null;
+    this.retainSnapshot(sid, snapshot);
+    return snapshot;
+  }
+
+  dropRetainedSnapshot(sid: KbblSessionId): void {
+    this.retainedSnapshots.delete(sid);
+  }
+
+  private retainSnapshot(sid: KbblSessionId, snapshot: TranscriptSnapshot): void {
+    this.retainedSnapshots.delete(sid);
+    this.retainedSnapshots.set(sid, snapshot);
+    if (this.retainedSnapshots.size > RETAINED_SNAPSHOT_LIMIT) {
+      const oldest = this.retainedSnapshots.keys().next();
+      if (!oldest.done) this.retainedSnapshots.delete(oldest.value);
+    }
+  }
+
   /**
    * History via the agent's own store (§10.3): live controllers answer
    * from the projection buffer; otherwise a fresh child replays
@@ -232,6 +256,7 @@ export class AcpSessionHistory {
     const transcript = controller.snapshotTranscript();
     await this.captureSummary(controller);
     await controller.closeChild();
+    if (this.deps.store.getSession(row.sid)) this.retainSnapshot(row.sid, transcript);
     return ok({
       kind: "transcript",
       sid: row.sid,
@@ -269,6 +294,7 @@ export class AcpSessionHistory {
       if (this.coldHistoryLoads.get(sid) === coldLoad) {
         this.coldHistoryLoads.delete(sid);
       }
+      this.retainSnapshot(sid, controller.snapshotTranscript());
       await controller.closeChild();
       return;
     }

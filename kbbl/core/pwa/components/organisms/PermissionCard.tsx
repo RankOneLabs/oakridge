@@ -2,7 +2,7 @@ import { Button } from "../atoms/Button";
 import { useState } from "react";
 
 import type { UiPermissionOption } from "../../types";
-import type { PermissionResolution } from "../../lib/acp-timeline";
+import type { PermissionResolution } from "../../lib/session-items";
 import { usePermissionAnswer } from "../../hooks/usePermissionAnswer";
 
 export const permissionCardAnchorId = (request_id: string): string =>

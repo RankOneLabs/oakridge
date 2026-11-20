@@ -3,7 +3,7 @@ import { Button } from "../atoms/Button";
 import type { Ref } from "react";
 
 import type { SessionSnapshot, Status } from "../../types";
-import type { UsageState } from "../../lib/acp-timeline";
+import type { UsageState } from "../../lib/session-items";
 import type { SessionSurfaceChrome } from "../../lib/session-surface";
 import { formatTokens, prettyEffortLabel, prettyModelLabel } from "../../lib/format";
 import { selectSessionHeaderSegments, sessionLabelTitle, workdirBasename } from "../../lib/session";

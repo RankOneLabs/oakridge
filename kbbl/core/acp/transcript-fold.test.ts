@@ -121,11 +121,11 @@ test("a tool update keeps the existing call, ID, sequence and nonempty title", (
   const started = fold([tool("t1", "in_progress")]);
   const update: AcpUiEvent = {
     ...tool("t1"), title: "",
-    delta: { phase: "update", title: "", kind: null, status: "completed", content: [{ type: "terminal", terminalId: "term" }], locations: null },
+    delta: { phase: "update", title: "", kind: null, status: "completed", content: [{ type: "terminal", terminalId: "term" }], locations: [{ path: "/work/file", line: 5 }] },
   };
   expect(foldUpdate(started, update).buffer.items).toMatchObject([{
     id: itemId(0), seq: transcriptSeq(0), title: "Run t1", status: { is_recognized: true, value: "completed" },
-    content: [{ type: "terminal", terminal_id: "term" }],
+    content: [{ type: "terminal", terminal_id: "term" }], locations: [{ path: "/work/file", line: 5 }],
   }]);
 });
 
@@ -274,6 +274,47 @@ test("evicted permission stays open and a late resolution still emits new sessio
   expect(buffer.live_state.open_permissions.map((item) => item.request_id)).toEqual([permissionRequestId("perm-1")]);
   const result = foldUpdate(buffer, { kind: "permission_resolved", outcome: "cancelled", requestId: "perm-1" });
   expect(result.frames).toEqual([{ kind: "session_state", state: { ...buffer.live_state, open_permissions: [] } }]);
+});
+
+test.each(["selected", "cancelled"] as const)("a %s permission resolution retires its existing card", (outcome) => {
+  const opened = fold([permission]);
+  expect(opened.items).toEqual(opened.live_state.open_permissions);
+  const event = { kind: "permission_resolved", requestId: "perm-1" } as const;
+  const result = foldUpdate(opened, outcome === "selected"
+    ? { ...event, outcome, optionId: "opt" }
+    : { ...event, outcome });
+  expect(result.buffer.live_state.open_permissions).toEqual([]);
+  expect(result.buffer.items).toMatchObject([{ id: itemId(0), kind: "permission",
+    resolution: outcome === "selected" ? { kind: outcome, option_id: "opt" } : { kind: outcome },
+  }]);
+});
+
+test("consecutive thought chunks share a card separate from agent text", () => {
+  const thought = { ...agent("first ", "same"), kind: "thought" } as const;
+  const result = foldUpdate(fold([agent("reply", "same"), thought]), { ...thought, content: content("second") });
+  expect(result.buffer.items).toMatchObject([{ kind: "agent_message", text: "reply" }, { kind: "thought", text: "first second" }]);
+});
+
+test("later config, commands, usage and session info supersede previous values", () => {
+  const config = { id: "mode", name: "Mode", category: null, type: "boolean", options: [] } as const;
+  const initial = fold([
+    { kind: "config_options", options: [{ ...config, value: false }] },
+    { kind: "commands", commands: [{ name: "old", description: null }] },
+    { kind: "usage", used: 1, size: 12 },
+    { kind: "session_info", title: "old" },
+  ]);
+  const updates: AcpUiEvent[] = [
+    { kind: "config_options", options: [{ ...config, value: true }] },
+    { kind: "commands", commands: [{ name: "new", description: null }] },
+    { kind: "usage", used: 5 },
+    { kind: "session_info", title: "new" },
+  ];
+  const updated = updates.reduce((buffer, event) => foldUpdate(buffer, event).buffer, initial);
+  expect(updated.live_state).toMatchObject({
+    config_options: [{ ...config, value: true }], commands: [{ name: "new" }],
+    usage: { used: 5, size: null, cost: null }, session_title: "new",
+  });
+  expect(updated.items).toEqual([]);
 });
 
 test("latest agent line and plan progress survive source eviction", () => {

@@ -1,5 +1,5 @@
 import { memo, type ReactNode } from "react";
-import type { TimelineItem } from "../../lib/acp-timeline";
+import type { TimelineItem } from "../../lib/session-items";
 import { AgentMessage } from "./AgentMessage";
 import { UserMessage } from "./UserMessage";
 import { ThoughtBlock } from "./ThoughtBlock";

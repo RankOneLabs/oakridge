@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type {
-  AcpUiEvent,
   PendingSend,
   SessionStatus,
   TurnKey,
@@ -24,7 +23,7 @@ export interface PendingSendsState {
 /** Projects durable operator turns plus the brief pre-receipt network window. */
 export function usePendingSends(
   sid: string,
-  events: AcpUiEvent[],
+  echoedTurnKeys: ReadonlySet<string>,
   openTurns: readonly UiOpenTurn[],
   sessionStatus: SessionStatus | null,
 ): PendingSendsState {
@@ -43,16 +42,6 @@ export function usePendingSends(
       setLocalSends([]);
     }
   }, [sessionStatus]);
-
-  const echoedTurnKeys = useMemo(
-    () =>
-      new Set(
-        events.flatMap((event) =>
-          event.kind === "user_message" ? [event.id] : [],
-        ),
-      ),
-    [events],
-  );
 
   useEffect(() => {
     setLocalSends((sends) => {

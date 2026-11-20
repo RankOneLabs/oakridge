@@ -1,12 +1,13 @@
-import { renderLegacyEvents, toWireEvent } from "#kbbl/core/acp/transcript-legacy-wire";
 // Browser-facing per-session ACP routes (§14.3–14.8). The PWA consumes
-// kbbl UI events only — raw ACP JSON-RPC never crosses this boundary
+// kbbl transcript frames only — raw ACP JSON-RPC never crosses this boundary
 // (guardrail 4). Mounted under /sessions/:sid/*.
 
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
-import { guardSseStream } from "./sse-backpressure";
+import { buildEpochFrame, streamErrorFrame, type SessionWireFrame } from "#kbbl/core/acp/session-wire";
+
+import { DEFAULT_SSE_LIMITS, guardSseStream } from "./sse-backpressure";
 
 import type { AcpSessionService } from "../../acp/session-service";
 
@@ -49,120 +50,102 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
       return c.json({ error: acquired.error.detail, code: acquired.error.code }, status);
     }
     try {
-      return c.json({
-        session_id: sid,
+      return c.json(buildEpochFrame({
+        history: acquired.value.history,
         stream_epoch: acp.streamEpoch(sid),
-        history_kind: acquired.value.history.kind,
-        expired: acquired.value.history.expired,
-        summary: acquired.value.history.summary,
-        ...(acquired.value.history.kind === "unavailable"
-          ? { unavailable_reason: acquired.value.history.reason }
-          : {}),
-        events: renderLegacyEvents(acquired.value.history.transcript),
-        open_turns: acquired.value.history.openTurns,
-      });
+        initial_item_window: acp.transcriptLimits.initial_item_window,
+      }));
     } finally {
       await acquired.value.release();
     }
   });
 
-  // Live stream (§14.4): SSE of AcpUiEvent. Event ids are offsets within
-  // one stream_epoch; a reconnect that sees a new epoch must do a fresh
-  // history load rather than pretend its old offset still means anything.
-  app.get("/sessions/:sid/stream", async (c) => {
+  app.get("/sessions/:sid/items", (c) => {
     const sid = c.req.param("sid");
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
-    const session = acp.getSession(sid);
-    if (!session) return c.json({ error: "unknown session" }, 404);
+    const epoch = c.req.query("epoch");
+    if (!epoch?.trim()) return c.json({ error: "epoch is required", code: "invalid_epoch" }, 400);
+    const cursor = c.req.query("before_seq");
+    const before_seq = Number(cursor);
+    if (!cursor?.trim() || !Number.isSafeInteger(before_seq) || before_seq < 0) {
+      return c.json({ error: "before_seq must be a non-negative integer", code: "invalid_before_seq" }, 400);
+    }
+    const rawLimit = c.req.query("limit");
+    const { item_page_limit, item_page_limit_max } = acp.transcriptLimits;
+    const limit = rawLimit === undefined ? item_page_limit : Number(rawLimit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > item_page_limit_max) {
+      return c.json({ error: `limit must be an integer between 1 and ${item_page_limit_max}`, code: "invalid_limit" }, 400);
+    }
+    const page = acp.readItemPage(sid, { epoch, before_seq, limit });
+    if (!page.ok) return c.json({ error: page.error.detail, code: page.error.code }, 404);
+    return c.json(page.value, page.value.kind === "epoch_changed" ? 409 : 200);
+  });
+
+  app.get("/sessions/:sid/stream", (c) => {
+    const sid = c.req.param("sid");
+    if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
+    if (!acp.getSession(sid)) return c.json({ error: "unknown session" }, 404);
     return streamSSE(c, async (stream) => {
-      // Flush before session/load: a cold replay may be expensive and must
-      // not leave EventSource on an empty response body.
-      await stream.write(": ready\n\n");
       const guard = guardSseStream(stream);
       let closed = false;
-      let releaseHistory: (() => Promise<void>) | null = null;
-      let unsubscribe: (() => void) | null = null;
+      let releaseHistory: (() => Promise<void>) | undefined;
       let heartbeat: ReturnType<typeof setInterval> | undefined;
-      let resolveDone: (() => void) | null = null;
-      const done = new Promise<void>((resolve) => {
-        resolveDone = resolve;
-      });
+      const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
+      const loading = new AbortController();
+      const abort = () => stream.abort();
       const finish = () => {
         if (closed) return;
         closed = true;
         if (heartbeat !== undefined) clearInterval(heartbeat);
-        unsubscribe?.();
-        unsubscribe = null;
-        const release = releaseHistory;
-        releaseHistory = null;
-        if (release) {
-          void release().catch((error: unknown) => {
+        c.req.raw.signal.removeEventListener("abort", abort);
+        if (releaseHistory) {
+          void releaseHistory().catch((error: unknown) => {
             console.error(`acp stream: sid=${sid} history release failed`, error);
           });
+        } else {
+          loading.abort();
         }
-        resolveDone?.();
+        resolveDone();
       };
       stream.onAbort(finish);
+      c.req.raw.signal.addEventListener("abort", abort, { once: true });
 
-      const acquired = await acp.acquireHistory(sid, c.req.raw.signal);
-      if (!acquired.ok) {
-        if (!closed) {
-          await stream.writeSSE({
-            event: "stream_error",
-            data: JSON.stringify({
-              error: acquired.error.detail,
-              code: acquired.error.code,
-            }),
-          }).catch(() => {});
-        }
-        finish();
-        return;
-      }
-      releaseHistory = acquired.value.release;
-      if (closed) {
-        await acquired.value.release();
-        releaseHistory = null;
-        return;
-      }
-
+      const send = (frame: SessionWireFrame) => guard.send({ event: frame.kind, data: JSON.stringify(frame) });
+      const queued: SessionWireFrame[] = [];
+      let is_initial_written = false;
       try {
-        const epoch = acp.streamEpoch(sid);
-        await stream.writeSSE({
-          event: "epoch",
-          data: JSON.stringify({
-            stream_epoch: epoch,
-            history_kind: acquired.value.history.kind,
-            expired: acquired.value.history.expired,
-            summary: acquired.value.history.summary,
-            ...(acquired.value.history.kind === "unavailable"
-              ? { unavailable_reason: acquired.value.history.reason }
-              : {}),
-            open_turns: acquired.value.history.openTurns,
-          }),
-        });
-        let eventId = 0;
-        for (const event of renderLegacyEvents(acquired.value.history.transcript)) {
-          await guard.send({
-            event: "acp",
-            id: String(eventId++),
-            data: JSON.stringify(event),
-          });
+        // Flush before session/load, which may need to spawn a replay child.
+        await stream.write(": ready\n\n");
+        if (closed || c.req.raw.signal.aborted) return;
+        const acquired = await acp.openSessionStream(sid, (frames) => {
+          if (closed) return;
+          if (is_initial_written) {
+            for (const frame of frames) void send(frame);
+          } else if (queued.length + frames.length > DEFAULT_SSE_LIMITS.max_pending_writes) {
+            stream.abort();
+          } else {
+            queued.push(...frames);
+          }
+        }, loading.signal);
+        if (!acquired.ok) {
+          if (!closed) await send(streamErrorFrame(acquired.error));
+          return;
         }
-
-        // Not awaited: the agent never waits on a reader. The guard bounds
-        // what a reader that stops reading leaves queued, and cuts it off.
-        unsubscribe = acp.subscribe(sid, ({ event }) => {
-          void guard.send({
-            event: "acp",
-            id: String(eventId++),
-            data: JSON.stringify(toWireEvent(event)),
-          });
-        });
+        if (closed) {
+          await acquired.value.release();
+          return;
+        }
+        releaseHistory = acquired.value.release;
         heartbeat = setInterval(() => {
           guard.checkStall();
-          void guard.sendRaw(": ping\n\n");
+          if (is_initial_written) void guard.sendRaw(": ping\n\n");
         }, HEARTBEAT_MS);
 
+        await send(acquired.value.epoch_frame);
+        if (closed) return;
+        for (const frame of queued) void send(frame);
+        queued.length = 0;
+        is_initial_written = true;
         await done;
       } finally {
         finish();

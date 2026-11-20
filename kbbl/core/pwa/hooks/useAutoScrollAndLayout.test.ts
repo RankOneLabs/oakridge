@@ -31,7 +31,7 @@ const elementHost = (scrollHeight: number) => {
 
 const inputsFor = (layout?: SessionSurfaceLayout) => ({
   sid: "sid-1",
-  eventsLength: 1,
+  transcriptVersion: 1,
   pendingLength: 0,
   awaitingResult: false,
   sessionStatus: null,
@@ -79,7 +79,7 @@ describe("useAutoScrollAndLayout", () => {
     const layout: SessionSurfaceLayout = {
       scrollHost: { kind: "element", container: { current: container } }, barAnchor: "surface",
     };
-    const { rerender } = renderHook((eventsLength: number) => useAutoScrollAndLayout({ ...inputsFor(layout), eventsLength }), { initialProps: 1 });
+    const { rerender } = renderHook((transcriptVersion: number) => useAutoScrollAndLayout({ ...inputsFor(layout), transcriptVersion }), { initialProps: 1 });
 
     container.dispatchEvent(new Event("scroll"));
     (container.scrollTo as ReturnType<typeof vi.fn>).mockClear();

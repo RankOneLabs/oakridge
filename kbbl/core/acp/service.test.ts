@@ -1,4 +1,4 @@
-import type { StreamFrame } from "./transcript-model";
+import type { SessionWireFrame } from "./session-wire";
 // Integration tests for the ACP substrate: real child processes running
 // the fake ACP agent over stdio, real SQLite, the full
 // service -> registry -> controller -> client -> supervisor path.
@@ -665,9 +665,19 @@ test("terminal history reads replay through a display-only ACP child", async () 
   await service.closeSession(sid);
   expect(registry.getLive(sid as KbblSessionId)).toBeNull();
 
-  const history = await service.loadHistory(sid);
-  expect(history.ok && history.value.kind).toBe("transcript");
-  expect(history.ok && history.value.transcript?.items.some((event) => event.kind === "agent_message")).toBe(true);
+  const acquired = await service.openSessionStream(sid, () => {
+    throw new Error("terminal snapshot must not subscribe");
+  });
+  if (!acquired.ok) throw new Error(acquired.error.detail);
+  const { epoch_frame, release } = acquired.value;
+  await release();
+  expect(epoch_frame.history_kind).toBe("transcript");
+  expect(epoch_frame.items.some((item) => item.kind === "agent_message")).toBe(true);
+  if (epoch_frame.stream_epoch === null) throw new Error("terminal replay did not provide an epoch");
+  const page = service.readItemPage(sid, { epoch: epoch_frame.stream_epoch, before_seq: 100, limit: 100 });
+  expect(page).toEqual({ ok: true, value: {
+    kind: "page", stream_epoch: epoch_frame.stream_epoch, items: epoch_frame.items, has_earlier: false,
+  } });
   expect(service.getSession(sid)?.status).toBe("ended");
   expect(registry.getLive(sid as KbblSessionId)).toBeNull();
 }, 15000);
@@ -1246,29 +1256,31 @@ test("subscribers see transcript updates before the corresponding turn frame", a
   await service.observeInitialTurn(sid, 8000);
   const controller = registry.getLive(sid);
   if (!controller) throw new Error("missing controller");
-  const frames: StreamFrame[] = [];
+  const frames: SessionWireFrame[] = [];
   const visiblePrompts: boolean[] = [];
-  const unsubscribe = service.subscribe(sid, (emission) => {
-    frames.push(...emission.frames);
-    if (emission.event.kind === "user_message") {
+  const stream = await service.openSessionStream(sid, (batch) => {
+    frames.push(...batch);
+    if (batch.some((frame) => frame.kind === "item" && frame.item.kind === "user_message")) {
       visiblePrompts.push(controller.snapshotTranscript().items.some((item) =>
         item.kind === "user_message" && item.turn_key === "operator:frames"));
     }
   });
+  if (!stream.ok) throw new Error(stream.error.detail);
+  expect(stream.value.epoch_frame.items).toEqual(controller.snapshotTranscript().items);
   try {
     const sent = await service.sendInput(sid, "check transcript frames", { client_message_id: "frames" });
     expect(sent.ok).toBe(true);
     await until(() => frames.some((frame) => frame.kind === "turn_state" && frame.state === "idle"));
     expect(visiblePrompts).toEqual([true]);
     expect(frames.filter((frame) =>
-      (frame.kind === "item_upsert" && frame.item.kind === "user_message") ||
+      (frame.kind === "item" && frame.item.kind === "user_message") ||
       (frame.kind === "turn_state" && frame.state === "prompting"),
-    ).map((frame) => frame.kind)).toEqual(["item_upsert", "turn_state"]);
+    ).map((frame) => frame.kind)).toEqual(["item", "turn_state"]);
     expect(controller.snapshotTranscript().items).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "user_message", turn_key: "operator:frames", text: "check transcript frames" }),
       expect.objectContaining({ kind: "agent_message", text: expect.stringContaining("check transcript frames") }),
     ]));
   } finally {
-    unsubscribe?.();
+    await stream.value.release();
   }
 }, 15000);
