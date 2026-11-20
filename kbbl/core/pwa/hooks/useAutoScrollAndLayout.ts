@@ -17,6 +17,7 @@ export interface AutoScrollAndLayoutInputs {
   transcriptVersion: number;
   pendingLength: number;
   awaitingResult: boolean;
+  isThreadExpanded?: boolean;
   sessionStatus: SessionStatus | null;
   appRef: React.RefObject<HTMLDivElement | null>;
   topBarRef: React.RefObject<HTMLElement | null>;
@@ -70,6 +71,7 @@ export function useAutoScrollAndLayout({
   transcriptVersion,
   pendingLength,
   awaitingResult,
+  isThreadExpanded = true,
   sessionStatus,
   appRef,
   topBarRef,
@@ -84,6 +86,7 @@ export function useAutoScrollAndLayout({
   // metrics from whichever host it was given and applies the decision.
   const stickToBottomRef = useRef(true);
   const prevPendingLenRef = useRef(0);
+  const wasThreadExpandedRef = useRef(isThreadExpanded);
   const scrollHost = layout.scrollHost;
 
   useEffect(() => {
@@ -101,18 +104,21 @@ export function useAutoScrollAndLayout({
   }, [scrollHost]);
 
   useLayoutEffect(() => {
+    const isOpening = isThreadExpanded && !wasThreadExpandedRef.current;
+    wasThreadExpandedRef.current = isThreadExpanded;
+    if (!isThreadExpanded) return;
     const host = resolveScrollHost(scrollHost);
     const metrics = host.readMetrics();
     const decision = nextScrollTarget({
       scrollHeight: metrics?.scrollHeight ?? 0,
-      wasStuckToBottom: stickToBottomRef.current,
+      wasStuckToBottom: isOpening || stickToBottomRef.current,
       pendingLength,
       previousPendingLength: prevPendingLenRef.current,
     });
     stickToBottomRef.current = decision.isStuckToBottom;
     prevPendingLenRef.current = pendingLength;
     if (decision.scrollTo !== null) host.scrollTo(decision.scrollTo);
-  }, [transcriptVersion, pendingLength, awaitingResult, scrollHost]);
+  }, [transcriptVersion, pendingLength, awaitingResult, isThreadExpanded, scrollHost]);
 
   // Push the rendered top-bar / bottom-bar heights onto the surface root as
   // CSS vars so .events can pad first/last messages clear of the sticky bars.

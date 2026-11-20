@@ -150,6 +150,7 @@ export function SessionView({
     transcriptVersion,
     pendingLength: pendingSends.length,
     awaitingResult,
+    isThreadExpanded,
     sessionStatus,
     appRef,
     topBarRef,
