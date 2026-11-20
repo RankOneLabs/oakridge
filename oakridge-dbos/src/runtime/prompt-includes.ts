@@ -9,7 +9,9 @@ const INCLUDE = /\{\{>\s*([^{}\s]+)\s*\}\}/g;
 
 /** Authored prompt text by its path under `workflow-config/prompts`. */
 export interface PromptSourceTexts { readonly [authored_path: string]: string }
-export type PromptIncludeFailureKind = "missing_include" | "include_cycle";
+export type PromptIncludeFailureKind = "missing_include" | "include_cycle" | "expansion_too_large";
+/** The most bytes one prompt may expand to; nested includes can otherwise double at every level. */
+export const MAX_EXPANDED_PROMPT_BYTES = 1024 * 1024;
 export interface PromptIncludeFailure {
   readonly operation: "expand_prompt";
   readonly kind: PromptIncludeFailureKind;
@@ -26,33 +28,55 @@ export interface ExpandedPrompts {
 /** One trailing newline ends an included file; the include directive's own line supplies it. */
 const includedText = (text: string): string => text.endsWith("\n") ? text.slice(0, -1) : text;
 
-function expandOne(path: string, sources: PromptSourceTexts, chain: readonly string[], read: Set<string>): Result<string, PromptIncludeFailure> {
+/** What every include in one expansion reads from and records into. */
+interface PromptExpansion {
+  readonly sources: PromptSourceTexts;
+  /** Every authored prompt read so far. */
+  readonly read: Set<string>;
+  /** Each prompt already expanded, reused wherever it is included again. */
+  readonly expanded: Map<string, string>;
+}
+
+function expandOne(path: string, chain: readonly string[], expansion: PromptExpansion): Result<string, PromptIncludeFailure> {
   const fail = (kind: PromptIncludeFailureKind, detail: string): Result<never, PromptIncludeFailure> =>
     ({ ok: false, error: { operation: "expand_prompt", kind, entity_id: chain[0] ?? path, detail } });
   if (chain.includes(path)) return fail("include_cycle", `prompt includes itself: ${[...chain, path].join(" -> ")}`);
-  if (!Object.hasOwn(sources, path)) return chain.length === 0
+  const known = expansion.expanded.get(path);
+  if (known !== undefined) return { ok: true, value: known };
+  if (!Object.hasOwn(expansion.sources, path)) return chain.length === 0
     ? fail("missing_include", `prompt ${path} is missing`)
     : fail("missing_include", `${chain.at(-1)} includes ${path}, which is missing`);
-  read.add(path);
-  let expanded = "";
+  expansion.read.add(path);
+  const source = expansion.sources[path];
+  const pieces: string[] = [];
+  let bytes = 0;
   let position = 0;
-  for (const match of sources[path].matchAll(INCLUDE)) {
-    const included = expandOne(match[1], sources, [...chain, path], read);
+  const append = (piece: string): boolean => {
+    pieces.push(piece);
+    bytes += Buffer.byteLength(piece);
+    return bytes <= MAX_EXPANDED_PROMPT_BYTES;
+  };
+  const tooLarge = () => fail("expansion_too_large", `${path} expands past ${MAX_EXPANDED_PROMPT_BYTES} bytes`);
+  for (const match of source.matchAll(INCLUDE)) {
+    const included = expandOne(match[1], [...chain, path], expansion);
     if (!included.ok) return included;
-    expanded += sources[path].slice(position, match.index) + includedText(included.value);
+    if (!append(source.slice(position, match.index)) || !append(includedText(included.value))) return tooLarge();
     position = match.index + match[0].length;
   }
-  return { ok: true, value: expanded + sources[path].slice(position) };
+  if (!append(source.slice(position))) return tooLarge();
+  const value = pieces.join("");
+  expansion.expanded.set(path, value);
+  return { ok: true, value };
 }
 
-/** Expand every `{{> path}}` in each referenced prompt, failing on a missing file or a cycle. */
+/** Expand every `{{> path}}` in each referenced prompt, failing on a missing file, a cycle, or an oversized expansion. */
 export function expandPrompts(paths: readonly string[], sources: PromptSourceTexts): Result<ExpandedPrompts, PromptIncludeFailure> {
-  const read = new Set<string>();
+  const expansion: PromptExpansion = { sources, read: new Set(), expanded: new Map() };
   const prompts: [string, string][] = [];
   for (const path of paths) {
-    const expanded = expandOne(path, sources, [], read);
+    const expanded = expandOne(path, [], expansion);
     if (!expanded.ok) return expanded;
     prompts.push([path, expanded.value]);
   }
-  return { ok: true, value: { prompts: Object.fromEntries(prompts), sources: [...read].sort() } };
+  return { ok: true, value: { prompts: Object.fromEntries(prompts), sources: [...expansion.read].sort() } };
 }

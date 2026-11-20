@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { expandPrompts } from "../src/runtime/prompt-includes";
+import { MAX_EXPANDED_PROMPT_BYTES, expandPrompts } from "../src/runtime/prompt-includes";
 import { bytesIdentity, composePrompts } from "../src/runtime/definition-store";
 
 const sources = {
@@ -30,6 +30,19 @@ test("a prompt that includes itself, through any chain, is refused", () => {
 test("a prompt may include the same file twice", () => {
   const expanded = expandPrompts(["twice.md"], { "twice.md": "{{> a.md}} and {{> a.md}}\n", "a.md": "A\n" });
   expect(expanded.ok && expanded.value.prompts["twice.md"]).toBe("A and A\n");
+});
+test("a prompt that expands past the size limit is refused, however few files it takes", () => {
+  const doubling = Object.fromEntries(Array.from({ length: 40 }, (_, level) =>
+    [`level-${level}.md`, level === 0 ? "x".repeat(64) + "\n" : `{{> level-${level - 1}.md}}{{> level-${level - 1}.md}}\n`]));
+  const expanded = expandPrompts(["level-39.md"], doubling);
+  expect(!expanded.ok && expanded.error).toMatchObject({ kind: "expansion_too_large", entity_id: "level-39.md",
+    detail: `level-14.md expands past ${MAX_EXPANDED_PROMPT_BYTES} bytes` });
+});
+test("a file included at every level of a deep doubling chain is expanded once", () => {
+  const doubling = Object.fromEntries(Array.from({ length: 60 }, (_, level) =>
+    [`level-${level}.md`, level === 0 ? "\n" : `{{> level-${level - 1}.md}}{{> level-${level - 1}.md}}\n`]));
+  const expanded = expandPrompts(["level-59.md"], doubling);
+  expect(expanded.ok && expanded.value.prompts["level-59.md"]).toBe("\n");
 });
 test("a committed prompt id covers the expanded text, and a source id the authored text", () => {
   const composed = composePrompts(["review.md"], sources);
