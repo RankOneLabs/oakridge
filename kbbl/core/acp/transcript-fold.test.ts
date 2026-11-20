@@ -82,6 +82,31 @@ test("a retained identified message reopens across an intervening item", () => {
   ]);
 });
 
+test("latest agent line follows chunked whitespace and a resumed message ID", () => {
+  const original = fold([agent("old\n  alpha  ", "a"), agent("\t", "a"), agent("other", "b")]);
+  const resumed = foldUpdate(original, agent(" beta \n\n", "a")).buffer;
+  expect(resumed.live_state.latest_agent_line).toEqual({ item_id: itemId(0), text: "alpha  \t beta" });
+  const next = foldUpdate(resumed, agent("  gamma ", "a")).buffer;
+  expect(next.live_state.latest_agent_line?.text).toBe("gamma");
+});
+
+test("oversized text keeps its newest complete UTF-8 code points and publishes a replacement", () => {
+  const initial = fold([agent("🧪" + "a".repeat(256 * 1024 - 4), "large")]);
+  const result = foldUpdate(initial, agent("z", "large"));
+  const text = "a".repeat(256 * 1024 - 4) + "z";
+  expect(result.buffer.is_truncated).toBe(true);
+  expect(result.buffer.items).toMatchObject([{ id: itemId(0), text }]);
+  expect(result.frames.map((frame) => frame.kind)).toEqual(["item_upsert", "items_evicted", "session_state"]);
+  expect(result.buffer.live_state.latest_agent_line?.text).toBe(text);
+});
+
+test("a code point split across chunks still fits the exact byte budget", () => {
+  const initial = fold([agent("a".repeat(256 * 1024 - 4) + "\ud83e", "split")]);
+  const result = foldUpdate(initial, agent("\uddea", "split"));
+  expect(result.buffer.is_truncated).toBe(false);
+  expect(result.buffer.items).toMatchObject([{ text: "a".repeat(256 * 1024 - 4) + "🧪" }]);
+});
+
 test("a dispatched prompt always gets a separate row and turn key, while replay does not", () => {
   const prompt: AcpUiEvent = { kind: "user_message", id: turnKey, messageId: null, turnKey, content: content("prompt"), replayed: false };
   const replay: AcpUiEvent = { kind: "user_message", id: "chunk", messageId: null, content: content("replay"), replayed: true };
@@ -115,6 +140,32 @@ test("an absent tool update field does not overwrite its prior value", () => {
 test("active tool falls back to the highest-sequence open tool when it completes", () => {
   const started = [tool("old", "pending"), tool("middle", "pending"), tool("new", "in_progress")];
   expect(fold([...started, tool("new")]).live_state.active_tool?.tool_call_id).toBe("middle");
+});
+
+test("ending a turn retires its open tools and late updates preserve their identity", () => {
+  const started = fold([{ kind: "turn_state", turnKey, state: "prompting" }, tool("retired", "pending")]);
+  const stopped = foldUpdate(started, { kind: "turn_state", turnKey, state: "idle" });
+  expect(stopped.buffer.live_state.active_tool).toBeNull();
+  expect(stopped.buffer.items).toMatchObject([{ id: itemId(0), status: { value: "pending" } }]);
+  const nextTurn = foldUpdate(stopped.buffer, { kind: "turn_state", turnKey: "operator:next" as TurnKey, state: "prompting" }).buffer;
+  const late = foldUpdate(nextTurn, tool("retired", "in_progress")).buffer;
+  expect(late.live_state.active_tool).toBeNull();
+  expect(late.items).toMatchObject([{ id: itemId(0), status: { value: "in_progress" } }]);
+});
+
+test("a cancelled turn releases pending tools so retention can catch up", () => {
+  const started = fold([
+    { kind: "turn_state", turnKey, state: "prompting" }, tool("first", "pending"), tool("second", "in_progress"),
+  ], 1);
+  expect(started.items).toHaveLength(2);
+  const stopped = foldUpdate(started, { kind: "turn_state", turnKey, state: "cancelled" });
+  expect(stopped.buffer.items).toMatchObject([{ kind: "turn_note" }]);
+  expect(stopped.frames).toContainEqual({ kind: "items_evicted", item_ids: [itemId(0), itemId(1)], is_truncated: true });
+  const late = foldUpdate(stopped.buffer, {
+    ...tool("first", "in_progress"),
+    delta: { phase: "update", title: null, kind: null, status: "in_progress", content: null, locations: null },
+  });
+  expect(late.buffer.live_state.active_tool).toBeNull();
 });
 
 test("a new plan replaces the retained plan in place and updates progress", () => {
@@ -167,6 +218,12 @@ test("latest-wins events emit full live state without adding items", () => {
   expect(unchanged.frames).toEqual([]);
 });
 
+test("a title-less session update keeps the last observed title", () => {
+  const named = fold([{ kind: "session_info", title: "Named" }]);
+  const update = foldUpdate(named, { kind: "session_info", title: null, updatedAt: "later" });
+  expect(update.buffer.live_state).toBe(named.live_state);
+});
+
 test("retention evicts lowest eligible sequences in ascending order and reports truncation", () => {
   let buffer = fold([], 3);
   const evictions = Array.from({ length: 5 }, (_, index) => tool(String(index))).flatMap((event) => {
@@ -193,6 +250,16 @@ test("when all items are protected, eviction waits until a tool becomes terminal
   const freed = foldUpdate(result.buffer, tool("b"));
   expect(freed.buffer.items.map((item) => item.id)).toEqual([itemId(0), itemId(2)]);
   expect(freed.frames.map((frame) => frame.kind)).toEqual(["item_upsert", "items_evicted"]);
+});
+
+test.each(["agent_message", "user_message"] as const)("retention preserves an open replayed %s until the run closes", (kind) => {
+  const messages = ["first ", "second"].map((text): AcpUiEvent => ({
+    ...agent(text), kind, streaming: false, replayed: true,
+  }));
+  const buffer = fold([tool("protected", "pending"), ...messages], 1);
+  expect(buffer.items).toMatchObject([{ kind: "tool_call" }, { kind, text: "first second" }]);
+  const result = foldUpdate(buffer, { kind: "turn_state", turnKey, state: "idle" });
+  expect(result.frames).toContainEqual({ kind: "items_evicted", item_ids: [itemId(1)], is_truncated: true });
 });
 
 test("an old in-progress tool still receives a title-less update after repeated eviction", () => {

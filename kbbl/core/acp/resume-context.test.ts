@@ -11,7 +11,7 @@ test("resume context trims and labels folded messages in sequence", () => {
   ];
   const history: UiSessionHistory = {
     kind: "transcript", sid: "parent" as KbblSessionId,
-    transcript: { stream_epoch: streamEpoch("test"), items, is_truncated: false, live_state: EMPTY_SESSION_LIVE_STATE },
+    transcript: { stream_epoch: streamEpoch("test"), items, is_truncated: false, live_state: EMPTY_SESSION_LIVE_STATE, open_text: null },
     openTurns: [], expired: false, summary: null,
   };
 

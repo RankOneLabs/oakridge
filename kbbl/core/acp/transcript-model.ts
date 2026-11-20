@@ -153,6 +153,7 @@ export interface SessionLiveState {
   readonly latest_agent_line: LatestAgentLine | null;
   readonly active_tool: ActiveTool | null;
   readonly plan_progress: PlanProgress | null;
+  readonly latest_plan: PlanItem | null;
   readonly open_permissions: readonly PermissionItem[];
 }
 
@@ -165,6 +166,7 @@ export const EMPTY_SESSION_LIVE_STATE: SessionLiveState = {
   latest_agent_line: null,
   active_tool: null,
   plan_progress: null,
+  latest_plan: null,
   open_permissions: [],
 };
 
@@ -172,6 +174,17 @@ export interface OpenTextRun {
   readonly item_id: TranscriptItemId;
   readonly kind: "user_message" | "agent_message" | "thought";
   readonly message_id: string | null;
+}
+
+export interface AgentLineCursor {
+  readonly latest_line: string;
+  readonly trailing_whitespace: string | null;
+}
+
+export interface RetainedText {
+  readonly bytes: number;
+  readonly ends_with_high_surrogate: boolean;
+  readonly agent_line: AgentLineCursor | null;
 }
 
 export interface TranscriptBuffer {
@@ -182,6 +195,8 @@ export interface TranscriptBuffer {
   readonly is_truncated: boolean;
   readonly live_state: SessionLiveState;
   readonly open_text: OpenTextRun | null;
+  readonly retained_text: Readonly<Partial<Record<TranscriptItemId, RetainedText>>>;
+  readonly tool_turns: Readonly<Partial<Record<TranscriptItemId, TurnKey | null>>>;
 }
 
 export type TurnFrameState = "prompting" | "idle" | "cancelled" | "failed" | "unknown";
@@ -203,6 +218,7 @@ export interface TranscriptSnapshot {
   readonly items: readonly TranscriptItem[];
   readonly is_truncated: boolean;
   readonly live_state: SessionLiveState;
+  readonly open_text: OpenTextRun | null;
 }
 
 export interface TranscriptEmission {

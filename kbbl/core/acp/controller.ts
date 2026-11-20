@@ -118,8 +118,8 @@ export class AcpSessionController {
   }
 
   snapshotTranscript(): TranscriptSnapshot {
-    const { epoch, items, is_truncated, live_state } = this.transcript;
-    return { stream_epoch: epoch, items, is_truncated, live_state };
+    const { epoch, items, is_truncated, live_state, open_text } = this.transcript;
+    return { stream_epoch: epoch, items, is_truncated, live_state, open_text };
   }
 
   subscribe(listener: UiEventListener): () => void {

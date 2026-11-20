@@ -28,10 +28,10 @@ test("internal projector facts do not change live wire JSON", () => {
 });
 
 function render(events: readonly AcpUiEvent[], capacity = 20): AcpUiEvent[] {
-  const { items, live_state, is_truncated } = events.reduce(
+  const { items, live_state, is_truncated, open_text } = events.reduce(
     (buffer, event) => foldUpdate(buffer, event).buffer, createTranscriptBuffer({ epoch, capacity }),
   );
-  return renderLegacyEvents({ stream_epoch: epoch, items, live_state, is_truncated });
+  return renderLegacyEvents({ stream_epoch: epoch, items, live_state, is_truncated, open_text });
 }
 
 function view(events: AcpUiEvent[]) {
@@ -76,6 +76,32 @@ test("legacy replay retains an unanswered permission after its item is evicted",
     { kind: "permission", requestId: "perm-7", title: "Allow?", options: [] }, tool,
   ];
   expect(projectTimeline(render(events, 1)).openPermissions).toMatchObject([{ requestId: "perm-7", title: "Allow?" }]);
+});
+
+test("legacy replay preserves the newest full plan after its timeline row is evicted", () => {
+  const plan = { kind: "plan", entries: [{ content: "Previous", status: "pending", priority: "low" }] } satisfies AcpUiEvent;
+  const latest = { ...plan, entries: [{ content: "Newest", status: "in_progress", priority: "high" }] };
+  const legacy = render([plan, tool, latest, { ...tool, toolCallId: "t2" }], 2);
+  expect(legacy.filter((event) => event.kind === "plan")).toEqual([latest]);
+});
+
+test("legacy replay leaves an identified streaming run open for the next live chunk", () => {
+  const streaming = { ...agent, streaming: true, replayed: false, messageId: agent.id };
+  const events: AcpUiEvent[] = [
+    { kind: "permission", requestId: "perm-7", title: "Allow?", options: [] },
+    { kind: "turn_state", turnKey, state: "failed" },
+    { kind: "turn_state", turnKey: "operator:next" as TurnKey, state: "prompting" },
+    streaming,
+    tool,
+    { ...streaming, content: [{ type: "text", text: " so" }] },
+  ];
+  const replay = render(events, 3);
+  const live = toWireEvent({ ...streaming, content: [{ type: "text", text: " far" }] });
+  const timeline = projectTimeline([...replay, live]);
+  expect(timeline.items.filter((item) => item.kind === "agent")).toMatchObject([{ text: "Done so far", streaming: true }]);
+  expect(timeline.items.some((item) => item.kind === "turn_note")).toBe(true);
+  expect(timeline.openPermissions).toMatchObject([{ requestId: "perm-7" }]);
+  expect(timeline.turnActive).toBe(true);
 });
 
 test("empty history renders no legacy events", () => {

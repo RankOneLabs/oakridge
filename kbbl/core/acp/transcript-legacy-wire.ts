@@ -80,11 +80,17 @@ function renderItem(item: TranscriptItem): AcpUiEvent[] {
 export function renderLegacyEvents(snapshot: TranscriptSnapshot | null): AcpUiEvent[] {
   if (snapshot === null) return [];
   const { live_state: state } = snapshot;
-  const events = snapshot.items.flatMap(renderItem);
+  const openItem = snapshot.items.find((item) => item.id === snapshot.open_text?.item_id);
+  // An identified streaming item can absorb the next live chunk only if the
+  // legacy timeline sees it after the last structural replay event.
+  const continuingRun = (openItem?.kind === "agent_message" || openItem?.kind === "thought") &&
+    openItem.is_streaming && openItem.message_id !== null ? openItem : null;
+  const events = snapshot.items.filter((item) => item !== continuingRun).flatMap(renderItem);
   // An outstanding permission can outlive its retained row. The legacy UI
   // still needs its request event to offer the operator a response.
   const retainedIds = new Set(snapshot.items.map((item) => item.id));
   events.push(...state.open_permissions.filter((item) => !retainedIds.has(item.id)).flatMap(renderItem));
+  if (state.latest_plan && !retainedIds.has(state.latest_plan.id)) events.push(...renderItem(state.latest_plan));
   events.push({ kind: "config_options", options: state.config_options });
   events.push({ kind: "commands", commands: state.commands });
   if (state.usage) {
@@ -97,5 +103,6 @@ export function renderLegacyEvents(snapshot: TranscriptSnapshot | null): AcpUiEv
   }
   if (state.session_title !== null) events.push({ kind: "session_info", title: state.session_title });
   if (state.active_turn !== null) events.push({ kind: "turn_state", turnKey: state.active_turn, state: "prompting" });
+  if (continuingRun) events.push(...renderItem(continuingRun));
   return events;
 }
