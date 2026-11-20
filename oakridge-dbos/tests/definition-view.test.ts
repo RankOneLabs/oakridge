@@ -23,6 +23,7 @@ test("development detail preserves authored uses alongside compiled declarations
     expect(prompt.digest).toBe(compiled.value.prompt_source_ids["development/brief.md"]);
     const stored = await Bun.file(new URL("../../workflow-config/definitions/prompts/" + prompt.digest + ".md", import.meta.url)).text();
     expect(prompt.body).toBe(stored);
+    expect([detail.prompts["development/build.md"].includes, detail.prompts["shared/raise-blocker.md"].includes]).toEqual([["shared/raise-blocker.md"], []]);
     expect(detail.workflow.stages.cohort?.workers.pr_watch).toEqual({ template: "pr_watch" });
     expect(detail.effective_workflow.stages.cohort?.workers.pr_watch).toMatchObject({ kind: "code", operation: "pull_request.observe" });
     const authored = detail.workflow.stages.planning?.reviews?.plan_review;

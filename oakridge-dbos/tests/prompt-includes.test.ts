@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { MAX_EXPANDED_PROMPT_BYTES, expandPrompts } from "../src/runtime/prompt-includes";
+import { MAX_EXPANDED_PROMPT_BYTES, expandPrompts, selectIncludes } from "../src/runtime/prompt-includes";
 import { bytesIdentity, composePrompts } from "../src/runtime/definition-store";
 
 const sources = {
@@ -54,4 +54,7 @@ test("editing an included prompt changes the id of every prompt that includes it
   const before = composePrompts(["review.md"], sources);
   const after = composePrompts(["review.md"], { ...sources, "shared/forwarding.md": "Only builder_feedback reaches the builder.\n" });
   expect(before.ok && after.ok && before.value.prompts["review.md"].id !== after.value.prompts["review.md"].id).toBe(true);
+});
+test("a prompt's direct includes are listed once each, in the order the text first names them", () => {
+  expect(selectIncludes("{{> b.md}} {{ input }} {{>a.md}} {{> b.md}}\n")).toEqual(["b.md", "a.md"]);
 });

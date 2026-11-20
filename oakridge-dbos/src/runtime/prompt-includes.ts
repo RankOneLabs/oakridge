@@ -25,6 +25,11 @@ export interface ExpandedPrompts {
   readonly sources: readonly string[];
 }
 
+/** The prompts this text includes directly, each once, in the order it first names them. */
+export function selectIncludes(text: string): readonly string[] {
+  return [...new Set([...text.matchAll(INCLUDE)].map((match) => match[1]))];
+}
+
 /** One trailing newline ends an included file; the include directive's own line supplies it. */
 const includedText = (text: string): string => text.endsWith("\n") ? text.slice(0, -1) : text;
 
