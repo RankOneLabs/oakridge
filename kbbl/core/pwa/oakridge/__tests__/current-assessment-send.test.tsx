@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { CurrentBuilderHandoffPanel } from "../components/organisms/BuilderHandoffPanel";
+import { AdjudicationHarness } from "./assessment-adjudication-harness";
 import { CURRENT_ASSESSMENT } from "../__fixtures__/current-assessments";
 import { currentAdjudicationUnit } from "../__fixtures__/read-models";
 import type { OperatorAdjudication } from "../operator-contracts/domain/adjudication";
@@ -38,13 +38,12 @@ it.each([
     throw new Error(`unexpected request: ${url}`);
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><CurrentBuilderHandoffPanel assessment={CURRENT_ASSESSMENT} revisionId={artifactRevisionId(artifact, revision.id)} gate={gate} decisions={[]} /></QueryClientProvider>);
-  const builder = screen.getByRole("region", { name: "builder actions" });
-  fireEvent.click(within(builder).getByRole("button", { name: "Edit" }));
-  fireEvent.change(screen.getByLabelText(`Replacement for ${CURRENT_ASSESSMENT.next_actions[0].id}`), { target: { value: "Investigate and add regression coverage." } });
-  fireEvent.click(within(screen.getByRole("region", { name: "operator actions" })).getByRole("button", { name: "Accept" }));
+  render(<QueryClientProvider client={client}><AdjudicationHarness assessment={CURRENT_ASSESSMENT} revisionId={artifactRevisionId(artifact, revision.id)} gate={gate} decisions={[]} /></QueryClientProvider>);
+  const builder = within(screen.getByRole("region", { name: "builder actions" }));
+  fireEvent.click(builder.getByRole("button", { name: "Edit" }));
+  fireEvent.change(builder.getByLabelText("Replacement text"), { target: { value: "Investigate and add regression coverage." } });
   const preview = screen.getByTestId("or-assessment-handoff-preview").textContent;
-  fireEvent.click(within(screen.getByRole("region", { name: "Assessment decision" })).getByRole("button", { name: button }));
+  fireEvent.click(within(screen.getByRole("region", { name: "Assessment decision" })).getByRole("button", { name: `${button} (1)` }));
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0]).toMatchObject({ decision, target, expected_assessment_revision_id: "assessment:1", payload: { builder_feedback: preview,
     entries: [{ original_text: CURRENT_ASSESSMENT.next_actions[0].text, final_text: "Investigate and add regression coverage.", disposition: "modified" }, { disposition: "accepted", audience: "operator" }] } });
@@ -75,7 +74,8 @@ it("study's expansion review posts a plain request for assessment changes", asyn
     throw new Error(`unexpected request: ${url}`);
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><CurrentBuilderHandoffPanel assessment={CURRENT_ASSESSMENT} revisionId={artifactRevisionId(artifact, revision.id)} gate={gates.value[0]} decisions={[]} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><AdjudicationHarness assessment={CURRENT_ASSESSMENT} revisionId={artifactRevisionId(artifact, revision.id)} gate={gates.value[0]} decisions={[]} /></QueryClientProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "Request assessment changes…" }));
   fireEvent.change(screen.getByLabelText("Assessment feedback"), { target: { value: "Cite the failing case." } });
   fireEvent.click(screen.getByRole("button", { name: "Request assessment changes" }));
   await waitFor(() => expect(posts).toHaveLength(1));

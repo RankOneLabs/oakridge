@@ -17,7 +17,7 @@ import type { OperatorUnitView } from "../operator-contracts/projections/unit-vi
 import type { ArtifactSource } from "../artifact-types";
 import type { ItemGradingSlots } from "../artifactRegistry";
 import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
-import { CurrentAssessmentViewer } from "../components/molecules/AssessmentViewer";
+import { CurrentAssessmentViewer } from "../components/molecules/CurrentAssessmentViewer";
 import { compositeId } from "../adapters/core";
 import { CURRENT_ASSESSMENT } from "../__fixtures__/current-assessments";
 const source: ArtifactSource = { run_id: "run", revision_id: "spec:1", label: null, as_of: "2026-11-17", original_spec: "Original requirements as submitted" };
