@@ -109,8 +109,6 @@ export function readBuildBrief(body: unknown, brief_version?: BriefVersion): Bui
   const parsed = parseCurrentBrief(body);
   return parsed.ok ? { ...parsed.value, shape: "current" } : null;
 }
-/** Shape guard for raw artifact callers; parsed consumers use parseBuildBrief. */
-export function isBuildBrief(body: unknown): boolean { return parseBuildBrief(body) !== null; }
 
 /** Resolve only decisions recorded in this brief; missing ids stay literal. */
 export function selectBuildItemDecisions(brief: BuildBrief, item: BuildItem) {

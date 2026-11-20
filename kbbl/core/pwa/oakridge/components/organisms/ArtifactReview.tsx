@@ -1,6 +1,5 @@
 import { ReceivedContextPanel } from "../molecules/ReceivedContextPanel";
 import { EditableBriefText } from "./EditableBriefText";
-import { TaskEditControls } from "./TaskEditControls";
 import { ReviewItemResolution } from "./ReviewItemResolution";
 import { selectArtifactRevision } from "../../lib/review-selection";
 import { ArtifactReviewHeader } from "../molecules/ArtifactReviewHeader";
@@ -201,7 +200,6 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
           {Viewer ? (
             <Viewer
               renderEditableText={(props) => <EditableBriefText {...props} />}
-              renderTaskEditControls={(props) => <TaskEditControls {...props} />}
               body={revision.body}
               currentRead={revision.current_read}
               context={revision.context ?? artifact.context}

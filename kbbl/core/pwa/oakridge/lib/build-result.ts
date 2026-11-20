@@ -155,9 +155,3 @@ export function selectHasBlockingIssue(issues: BuildIssue[]): boolean {
 export function selectTestEvidenceText(tests: TestEvidence): string[] {
   return [tests.summary, tests.output, tests.cargo_test_output].filter((text): text is string => text !== null && text.trim() !== "");
 }
-
-/** A build result body, or null when it breaks the contract. */
-export function readBuildResult(body: unknown): BuildResult | null {
-  const parsed = parseBuildResult(body);
-  return parsed.ok ? parsed.value : null;
-}
