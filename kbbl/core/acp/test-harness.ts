@@ -103,7 +103,7 @@ export function makeAcpTestService(
       default_agent: options.defaultAgent ?? profileIds[0] ?? "claude-code",
       graceful_kill_ms: 1000,
       idle_child_ttl_ms: 900_000,
-      live_event_buffer: 2000,
+      live_item_buffer: 5000, initial_item_window: 200, item_page_limit: 100, item_page_limit_max: 500,
     },
   });
   return { db, store, registry, service };

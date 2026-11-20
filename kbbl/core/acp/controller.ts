@@ -1,3 +1,5 @@
+import { createTranscriptBuffer, foldUpdate } from "./transcript-fold";
+import { streamEpoch, type StreamEpoch, type TranscriptBuffer, type TranscriptEmission, type TranscriptSnapshot } from "./transcript-model";
 import { AcpControllerProcess } from "#kbbl/core/acp/controller-process";
 // One controller == one kbbl session == at most one ACP child process
 // (§8.4). Owns: spawn+initialize+new/load, the live prompt mutex, turn
@@ -29,7 +31,7 @@ import {
 } from "./types";
 
 export interface ControllerConfig {
-  readonly live_event_buffer: number;
+  readonly live_item_buffer: number;
   /** Bounded wait for a session/close answer before killing the child. */
   readonly close_grace_ms: number;
 }
@@ -54,7 +56,7 @@ interface PendingPermission {
   resolve(response: schema.RequestPermissionResponse): void;
 }
 
-export type UiEventListener = (event: AcpUiEvent) => void;
+export type UiEventListener = (emission: TranscriptEmission) => void;
 
 /** The durable §12 requests a session row carries across every spawn. */
 export type RequestedSessionConfig = Pick<
@@ -64,17 +66,18 @@ export type RequestedSessionConfig = Pick<
 
 export class AcpSessionController {
   /** §14.4: SSE event ids only have meaning within one projection epoch. */
-  readonly streamEpoch: string = crypto.randomUUID();
+  readonly streamEpoch: StreamEpoch = streamEpoch(crypto.randomUUID());
   private activeTurnKey: TurnKey | null = null;
   private fenced = false;
   private permissionCounter = 0;
   private chunkCounter = 0;
   private readonly pendingPermissions = new Map<string, PendingPermission>();
-  private readonly events: AcpUiEvent[] = [];
+  private transcript: TranscriptBuffer;
   private readonly listeners = new Set<UiEventListener>();
 
   private readonly process: AcpControllerProcess;
   constructor(private readonly deps: ControllerDeps) {
+    this.transcript = createTranscriptBuffer({ epoch: this.streamEpoch, capacity: deps.config.live_item_buffer });
     this.process = new AcpControllerProcess(deps, {
       emit: event => this.emit(event),
       update: notification => this.handleUpdate(notification),
@@ -114,8 +117,9 @@ export class AcpSessionController {
     return this.listeners.size > 0;
   }
 
-  snapshotEvents(): readonly AcpUiEvent[] {
-    return [...this.events];
+  snapshotTranscript(): TranscriptSnapshot {
+    const { epoch, items, is_truncated, live_state } = this.transcript;
+    return { stream_epoch: epoch, items, is_truncated, live_state };
   }
 
   subscribe(listener: UiEventListener): () => void {
@@ -166,6 +170,8 @@ export class AcpSessionController {
     this.emit({
       kind: "user_message",
       id: turn.turn_key,
+      messageId: null,
+      turnKey: turn.turn_key,
       content: [{ type: "text", text: turn.payload }],
       replayed: false,
     });
@@ -356,10 +362,10 @@ export class AcpSessionController {
   // === internals ===
 
   private emit(event: AcpUiEvent): void {
-    this.events.push(event);
-    const overflow = this.events.length - this.deps.config.live_event_buffer;
-    if (overflow > 0) this.events.splice(0, overflow);
-    for (const listener of this.listeners) listener(event);
+    const folded = foldUpdate(this.transcript, event);
+    this.transcript = folded.buffer;
+    const emission: TranscriptEmission = { event, frames: folded.frames };
+    for (const listener of this.listeners) listener(emission);
   }
 
   private handleUpdate(notification: schema.SessionNotification): void {

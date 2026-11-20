@@ -1,3 +1,4 @@
+import { renderLegacyEvents, toWireEvent } from "#kbbl/core/acp/transcript-legacy-wire";
 // Browser-facing per-session ACP routes (§14.3–14.8). The PWA consumes
 // kbbl UI events only — raw ACP JSON-RPC never crosses this boundary
 // (guardrail 4). Mounted under /sessions/:sid/*.
@@ -57,7 +58,7 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
         ...(acquired.value.history.kind === "unavailable"
           ? { unavailable_reason: acquired.value.history.reason }
           : {}),
-        events: acquired.value.history.events,
+        events: renderLegacyEvents(acquired.value.history.transcript),
         open_turns: acquired.value.history.openTurns,
       });
     } finally {
@@ -140,7 +141,7 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
           }),
         });
         let eventId = 0;
-        for (const event of acquired.value.history.events) {
+        for (const event of renderLegacyEvents(acquired.value.history.transcript)) {
           await guard.send({
             event: "acp",
             id: String(eventId++),
@@ -150,11 +151,11 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
 
         // Not awaited: the agent never waits on a reader. The guard bounds
         // what a reader that stops reading leaves queued, and cuts it off.
-        unsubscribe = acp.subscribe(sid, (event) => {
+        unsubscribe = acp.subscribe(sid, ({ event }) => {
           void guard.send({
             event: "acp",
             id: String(eventId++),
-            data: JSON.stringify(event),
+            data: JSON.stringify(toWireEvent(event)),
           });
         });
         heartbeat = setInterval(() => {

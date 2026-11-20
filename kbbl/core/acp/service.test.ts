@@ -1,3 +1,4 @@
+import type { StreamFrame } from "./transcript-model";
 // Integration tests for the ACP substrate: real child processes running
 // the fake ACP agent over stdio, real SQLite, the full
 // service -> registry -> controller -> client -> supervisor path.
@@ -36,7 +37,7 @@ interface HarnessOptions {
   behavior?: string;
   stateDir: string;
   delayMs?: number;
-  liveEventBuffer?: number;
+  liveItemBuffer?: number;
   db?: Database;
   command?: string;
   /** Profile `sessionMode` for the fake agent(s); default null. */
@@ -99,7 +100,10 @@ function makeHarness(options: HarnessOptions): Harness {
       default_agent: "fake",
       graceful_kill_ms: 1000,
       idle_child_ttl_ms: 900000,
-      live_event_buffer: options.liveEventBuffer ?? 2000,
+      live_item_buffer: options.liveItemBuffer ?? 5000,
+      initial_item_window: Math.min(options.liveItemBuffer ?? 5000, 200),
+      item_page_limit: 100,
+      item_page_limit_max: 500,
     },
   });
   const harness: Harness = { db, store, registry, service };
@@ -304,8 +308,8 @@ test("collaboration revives an ended resumable session with its sid and transcri
   const revived = await service.reviveResumable("key-review");
   expect(revived.ok && revived.value.sid).toBe(sid);
   const history = await service.loadHistory(sid);
-  expect(history.ok && history.value.events.some((event) =>
-    event.kind === "user_message" && event.content.some((part) => part.type === "text" && part.text === "remember the first turn"))).toBe(true);
+  expect(history.ok && history.value.transcript?.items.some((event) =>
+    event.kind === "user_message" && event.text === "remember the first turn")).toBe(true);
   const sent = await service.sendInput(sid, "review this", { delivery_key: "collaboration:review" });
   expect(sent.ok).toBe(true);
   expect(store.getTurn(sid as KbblSessionId, "initial:key-review" as TurnKey)?.status).toBe("succeeded");
@@ -563,28 +567,37 @@ test("session/load rebuilds history after controller destruction", async () => {
   expect(history.ok).toBe(true);
   if (!history.ok) return;
   expect(history.value.expired).toBe(false);
-  const replayedReply = history.value.events.find(
+  const replayedReply = history.value.transcript?.items.find(
     (event) =>
       event.kind === "agent_message" &&
-      event.replayed &&
-      event.content.some((content) => content.text.includes("remember me")),
+      event.is_replayed &&
+      event.text.includes("remember me"),
   );
   expect(replayedReply).toBeDefined();
 }, 20000);
 
-test("resume loads the full transcript while the parent's display buffer is bounded", async () => {
+test("resume and live history both apply the item capacity", async () => {
   const { stateDir, workdir } = await makeDirs();
-  const { service, registry } = makeHarness({ stateDir, liveEventBuffer: 2 });
+  const { service, registry } = makeHarness({ stateDir, liveItemBuffer: 2 });
   const ensured = await service.ensureResumableSession("key-full-resume", spec(workdir, "remember the first turn"));
   if (!ensured.ok) throw new Error("ensure failed");
   const sid = ensured.value.session.sid;
   await service.observeInitialTurn(sid, 8000);
   const live = registry.getLive(sid as KbblSessionId);
-  const displayed = await service.loadHistory(sid);
-  expect(displayed.ok && displayed.value.events.some((event) => event.kind === "user_message")).toBe(false);
+  const sent = await service.sendInput(sid, "remember the second turn", { client_message_id: "second" });
+  expect(sent.ok).toBe(true);
+  await until(() => !live?.isPromptActive && live?.snapshotTranscript().items.some((item) =>
+    item.kind === "agent_message" && item.text.includes("remember the second turn")));
 
-  const resumed = await service.loadResumeHistory(sid);
-  expect(resumed.ok && resumed.value.events.some((event) => event.kind === "user_message" && event.content.some((part) => part.text.includes("remember the first turn")))).toBe(true);
+
+  for (const history of [await service.loadHistory(sid), await service.loadResumeHistory(sid)]) {
+    if (!history.ok || history.value.kind !== "transcript") throw new Error("missing transcript");
+    expect(history.value.transcript.is_truncated).toBe(true);
+    expect(history.value.transcript.items).toHaveLength(2);
+    expect(history.value.transcript.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "agent_message", text: expect.stringContaining("remember the second turn") }),
+    ]));
+  }
   expect(registry.getLive(sid as KbblSessionId)).toBe(live);
 }, 20000);
 
@@ -651,7 +664,7 @@ test("terminal history reads replay through a display-only ACP child", async () 
 
   const history = await service.loadHistory(sid);
   expect(history.ok && history.value.kind).toBe("transcript");
-  expect(history.ok && history.value.events.some((event) => event.kind === "agent_message")).toBe(true);
+  expect(history.ok && history.value.transcript?.items.some((event) => event.kind === "agent_message")).toBe(true);
   expect(service.getSession(sid)?.status).toBe("ended");
   expect(registry.getLive(sid as KbblSessionId)).toBeNull();
 }, 15000);
@@ -967,11 +980,10 @@ test("operator input whose immediate touch fails remains accepted for recovery",
   const reloaded = await healthy.service.loadHistory(sid);
   expect(reloaded.ok).toBe(true);
   if (!reloaded.ok) return;
-  const recoveredEvent = reloaded.value.events.find(
+  const recoveredEvent = reloaded.value.transcript?.items.find(
     (event) =>
-      "content" in event &&
-      Array.isArray(event.content) &&
-      event.content.some((content) => content.text.includes("recoverable")),
+      (event.kind === "user_message" || event.kind === "agent_message") &&
+      event.text.includes("recoverable"),
   );
   expect(recoveredEvent).toBeDefined();
 }, 25000);
@@ -1040,14 +1052,14 @@ test("dispatching a turn projects the prompt as a user_message UI event", async 
   const history = await service.loadHistory(sid);
   expect(history.ok).toBe(true);
   if (!history.ok) return;
-  const userEvents = history.value.events.filter(
+  const userEvents = history.value.transcript?.items.filter(
     (event) => event.kind === "user_message",
   );
   expect(userEvents).toHaveLength(1);
-  expect(userEvents[0]).toMatchObject({
-    id: "initial:key-echo",
-    content: [{ type: "text", text: "say hello" }],
-    replayed: false,
+  expect(userEvents?.[0]).toMatchObject({
+    turn_key: "initial:key-echo",
+    text: "say hello",
+    is_replayed: false,
   });
 }, 15000);
 
@@ -1061,7 +1073,7 @@ test("permission answer emits permission_resolved and drops the pending count", 
   const sid = ensured.value.session.sid;
 
   const events: AcpUiEvent[] = [];
-  await until(() => service.subscribe(sid, (event) => events.push(event)) !== null);
+  await until(() => service.subscribe(sid, ({ event }) => events.push(event)) !== null);
   const permission = await until(
     () =>
       events.find(
@@ -1104,7 +1116,7 @@ test("fence cancels pending permissions with a permission_resolved cancellation"
   const sid = ensured.value.session.sid;
 
   const events: AcpUiEvent[] = [];
-  await until(() => service.subscribe(sid, (event) => events.push(event)) !== null);
+  await until(() => service.subscribe(sid, ({ event }) => events.push(event)) !== null);
   await until(
     () => service.pendingPermissionCount(sid) > 0,
     8000,
@@ -1142,13 +1154,7 @@ test("session/load restores the requested config and re-emits its selectors", as
   expect(reloaded.ok).toBe(true);
   if (!reloaded.ok) return;
   expect(reloaded.value.expired).toBe(false);
-  const configEvents = reloaded.value.events.filter(
-    (event) => event.kind === "config_options",
-  );
-  expect(configEvents.length).toBeGreaterThan(0);
-  const lastConfigEvent = configEvents.at(-1);
-  if (!lastConfigEvent || lastConfigEvent.kind !== "config_options") throw new Error("missing config event");
-  expect(lastConfigEvent.options).toEqual(expect.arrayContaining([
+  expect(reloaded.value.transcript?.live_state.config_options).toEqual(expect.arrayContaining([
     expect.objectContaining({ category: "model", value: "fake-large" }),
     expect.objectContaining({ category: "thought_level", value: "high" }),
   ]));
@@ -1227,3 +1233,39 @@ test("sessions change feed fires on session writes and stops after unsubscribe",
   await service.ensureResumableSession("key-feed-2", spec(workdir));
   expect(ticks).toBe(afterUnsubscribe);
 }, 20000);
+
+test("subscribers see transcript updates before the corresponding turn frame", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, registry } = makeHarness({ stateDir });
+  const ensured = await service.ensureResumableSession("key-transcript-frames", spec(workdir));
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await service.observeInitialTurn(sid, 8000);
+  const controller = registry.getLive(sid);
+  if (!controller) throw new Error("missing controller");
+  const frames: StreamFrame[] = [];
+  const visiblePrompts: boolean[] = [];
+  const unsubscribe = service.subscribe(sid, (emission) => {
+    frames.push(...emission.frames);
+    if (emission.event.kind === "user_message") {
+      visiblePrompts.push(controller.snapshotTranscript().items.some((item) =>
+        item.kind === "user_message" && item.turn_key === "operator:frames"));
+    }
+  });
+  try {
+    const sent = await service.sendInput(sid, "check transcript frames", { client_message_id: "frames" });
+    expect(sent.ok).toBe(true);
+    await until(() => frames.some((frame) => frame.kind === "turn_state" && frame.state === "idle"));
+    expect(visiblePrompts).toEqual([true]);
+    expect(frames.filter((frame) =>
+      (frame.kind === "item_upsert" && frame.item.kind === "user_message") ||
+      (frame.kind === "turn_state" && frame.state === "prompting"),
+    ).map((frame) => frame.kind)).toEqual(["item_upsert", "turn_state"]);
+    expect(controller.snapshotTranscript().items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "user_message", turn_key: "operator:frames", text: "check transcript frames" }),
+      expect.objectContaining({ kind: "agent_message", text: expect.stringContaining("check transcript frames") }),
+    ]));
+  } finally {
+    unsubscribe?.();
+  }
+}, 15000);

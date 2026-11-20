@@ -1,3 +1,4 @@
+import type { StreamEpoch, TranscriptEmission } from "./transcript-model";
 import { randomUUID } from "node:crypto";
 import { AcpSessionReads } from "#kbbl/core/acp/session-reads";
 import { AcpSessionHistory } from "#kbbl/core/acp/session-history";
@@ -27,7 +28,6 @@ import {
   type AcpError,
   type AcpSessionRow,
   type AcpSessionSnapshot,
-  type AcpUiEvent,
   type AdvanceResult,
   type FenceContext,
   type InputReceipt,
@@ -42,7 +42,10 @@ export interface AcpServiceConfig {
   readonly default_agent: string;
   readonly graceful_kill_ms: number;
   readonly idle_child_ttl_ms: number;
-  readonly live_event_buffer: number;
+  readonly live_item_buffer: number;
+  readonly initial_item_window: number;
+  readonly item_page_limit: number;
+  readonly item_page_limit_max: number;
 }
 
 export interface AcpSessionServiceDeps {
@@ -372,7 +375,7 @@ export class AcpSessionService {
   }
 
   /** Live projection epoch (§14.4), or null with no live controller. */
-  streamEpoch(sid: string): string | null {
+  streamEpoch(sid: string): StreamEpoch | null {
     return this.deps.controllers.getLive(sid as KbblSessionId)?.streamEpoch ?? null;
   }
 
@@ -399,7 +402,7 @@ export class AcpSessionService {
 
   subscribe(
     sid: string,
-    listener: (event: AcpUiEvent) => void,
+    listener: (emission: TranscriptEmission) => void,
   ): (() => void) | null {
     const controller = this.deps.controllers.getLive(sid as KbblSessionId);
     return controller ? controller.subscribe(listener) : null;

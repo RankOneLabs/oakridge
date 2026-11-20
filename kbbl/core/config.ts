@@ -102,9 +102,20 @@ const AcpSchema = z
     graceful_kill_ms: z.number().int().positive().default(3000),
     hard_kill_ms: z.number().int().positive().default(5000),
     idle_child_ttl_ms: z.number().int().positive().default(900000),
-    live_event_buffer: z.number().int().positive().default(2000),
+    live_item_buffer: z.number().int().positive().default(5000),
+    initial_item_window: z.number().int().positive().default(200),
+    item_page_limit: z.number().int().positive().default(100),
+    item_page_limit_max: z.number().int().positive().max(500).default(500),
   })
-  .strict();
+  .strict()
+  .superRefine((config, context) => {
+    if (config.initial_item_window > config.live_item_buffer) {
+      context.addIssue({ code: "custom", path: ["initial_item_window"], message: "Must be at most live_item_buffer" });
+    }
+    if (config.item_page_limit > config.item_page_limit_max) {
+      context.addIssue({ code: "custom", path: ["item_page_limit"], message: "Must be at most item_page_limit_max" });
+    }
+  });
 
 export const KbblConfigSchema = z
   .object({

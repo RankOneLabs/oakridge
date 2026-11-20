@@ -11,6 +11,7 @@ import type {
   UiPlanEntry,
   UiPermissionOption,
   UiSessionConfig,
+  UiToolCallDelta,
 } from "./types";
 
 function contentBlockText(block: schema.ContentBlock): UiContent {
@@ -90,7 +91,9 @@ export function projectSessionUpdate(
     case "user_message_chunk":
       return {
         kind: "user_message",
+        turnKey: null,
         id: chunkId(update.messageId, fallbackChunkId),
+        messageId: update.messageId ?? null,
         content: [contentBlockText(update.content)],
         replayed,
       };
@@ -98,6 +101,7 @@ export function projectSessionUpdate(
       return {
         kind: "agent_message",
         id: chunkId(update.messageId, fallbackChunkId),
+        messageId: update.messageId ?? null,
         content: [contentBlockText(update.content)],
         streaming: !replayed,
         replayed,
@@ -106,34 +110,35 @@ export function projectSessionUpdate(
       return {
         kind: "thought",
         id: chunkId(update.messageId, fallbackChunkId),
+        messageId: update.messageId ?? null,
         content: [contentBlockText(update.content)],
         streaming: !replayed,
         replayed,
       };
     case "tool_call":
+    case "tool_call_update": {
+      const phase = update.sessionUpdate === "tool_call" ? "create" : "update";
+      const delta: UiToolCallDelta = {
+        phase,
+        title: update.title ?? null,
+        kind: update.kind ?? null,
+        status: update.status ?? null,
+        content: update.content ?? null,
+        locations: update.locations?.map((location) => ({
+          path: location.path,
+          line: location.line ?? null,
+        })) ?? null,
+      };
       return {
         kind: "tool_call",
         toolCallId: update.toolCallId,
-        title: update.title,
-        status: update.status ?? "pending",
-        content: update.content ?? null,
-        locations: (update.locations ?? []).map((location) => ({
-          path: location.path,
-          line: location.line ?? null,
-        })),
+        title: delta.title ?? "",
+        status: delta.status ?? (phase === "create" ? "pending" : "in_progress"),
+        content: delta.content,
+        locations: delta.locations ?? [],
+        delta,
       };
-    case "tool_call_update":
-      return {
-        kind: "tool_call",
-        toolCallId: update.toolCallId,
-        title: update.title ?? "",
-        status: update.status ?? "in_progress",
-        content: update.content ?? null,
-        locations: (update.locations ?? []).map((location) => ({
-          path: location.path,
-          line: location.line ?? null,
-        })),
-      };
+    }
     case "plan": {
       const entries: UiPlanEntry[] = update.entries.map((entry) => ({
         content: entry.content,

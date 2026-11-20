@@ -96,3 +96,18 @@ test("projectSessionUpdate maps agent chunks and returns null for unknown update
   );
   expect(unknown).toBeNull();
 });
+
+test("agent chunks retain the ACP message ID independently from the wire fallback ID", () => {
+  const update = { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hello" } } as const;
+  expect(projectSessionUpdate(update, false, "chunk-1")).toMatchObject({ id: "chunk-1", messageId: null });
+  expect(projectSessionUpdate({ ...update, messageId: "m1" }, false, "chunk-2"))
+    .toMatchObject({ id: "m1", messageId: "m1" });
+});
+
+test("tool update preserves absent fields in delta and defaults on the wire", () => {
+  expect(projectSessionUpdate({ sessionUpdate: "tool_call_update", toolCallId: "tool-1" }, false, "chunk-1"))
+    .toEqual({
+      kind: "tool_call", toolCallId: "tool-1", title: "", status: "in_progress", content: null, locations: [],
+      delta: { phase: "update", title: null, kind: null, status: null, content: null, locations: null },
+    });
+});

@@ -31,7 +31,7 @@ realTest(`real ${runtime}: pinned PR skill discovery with existing login`, async
   const service = new AcpSessionService({ store, controllers, profiles,
     supervisor: new AcpProcessSupervisor({ graceful_kill_ms: 3000, hard_kill_ms: 5000 }),
     worktrees: new GitWorktreeProvider({ worktreesRoot: join(root, "worktrees"), store }), integration,
-    config: { default_agent: runtime, graceful_kill_ms: 3000, idle_child_ttl_ms: 900000, live_event_buffer: 2000 } });
+    config: { default_agent: runtime, graceful_kill_ms: 3000, idle_child_ttl_ms: 900000, live_item_buffer: 5000, initial_item_window: 200, item_page_limit: 100, item_page_limit_max: 500 } });
   try {
     const index = JSON.parse(readFileSync(join(integration.skill_store_root, "../skills.json"), "utf8")) as { "github-cli": string };
     const identity = { run_id: "skill-smoke", unit_id: "skill-smoke/unit", worker: "builder", pr_integration: "github-cli" as const, pr_skill_digest: index["github-cli"] };
@@ -43,7 +43,7 @@ realTest(`real ${runtime}: pinned PR skill discovery with existing login`, async
     expect(observed.ok && observed.value.kind).toBe("succeeded");
     const history = await service.loadHistory(sid);
     if (!history.ok) throw new Error(history.error.detail);
-    const response = history.value.events.flatMap(event => event.kind === "agent_message" ? event.content.map(content => content.text) : []).join("");
+    const response = (history.value.transcript?.items ?? []).filter(item => item.kind === "agent_message").map(item => item.text).join("");
     console.log(`[pr-skill-smoke] runtime=${runtime} digest=${index["github-cli"]} skill_listing=${response}`);
     expect(response).toContain("pr-operations");
     const row = store.getSession(sid);
