@@ -3,13 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSnapshot, Status } from "../types";
 import { useAcpSession } from "../hooks/useAcpSession";
 import { usePendingSends } from "../hooks/usePendingSends";
-import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
 import { selectOpenPermissions, selectSessionTimelineItems, type TimelineItem } from "../lib/session-items";
-import {
-  operatorStateLabel,
-  selectOperatorExecutionState,
-} from "../lib/operator-state";
+import { selectPanelExecution } from "../lib/session-panel";
+import { useSessionTranscript } from "../state/session-transcript-store";
 
 import { SessionTopBar } from "../components/molecules/SessionTopBar";
 import { SessionTimeline } from "../components/molecules/SessionTimeline";
@@ -18,7 +15,7 @@ import { InputBox } from "../components/organisms/InputBox";
 import { PendingUserBubbleEntry } from "../components/organisms/PendingUserBubbleEntry";
 import { AgentMessage } from "../components/molecules/AgentMessage";
 import { EndedBanner } from "../components/organisms/EndedBanner";
-import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
+import { AgentStatusPanel } from "../components/organisms/AgentStatusPanel";
 import { SkillRail } from "../components/organisms/SkillRail";
 import { PermissionCard, permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import { readHashPermissionTarget, readHashSessionTarget } from "../lib/hash";
@@ -64,7 +61,6 @@ export function SessionView({
     streamError,
     openTurns,
     terminalTurnKeys,
-    historyLoaded,
   } = useAcpSession(sid);
 
   const timelineItems = useMemo(() => selectSessionTimelineItems(items, sessionState), [items, sessionState]);
@@ -103,7 +99,7 @@ export function SessionView({
 
   const renderPermission = useCallback(
     (item: Extract<TimelineItem, { kind: "permission" }>) => (
-      <PermissionCard key={item.key} sid={sid} requestId={item.requestId} title={item.title} options={item.options} resolution={item.resolution} sessionClosed={sessionClosed} />
+      <PermissionCard key={item.key} sid={sid} requestId={item.requestId} title={item.title} options={item.options} resolution={item.resolution} sessionClosed={sessionClosed} isAnchor={false} />
     ),
     [sid, sessionClosed],
   );
@@ -117,14 +113,9 @@ export function SessionView({
   } = usePendingSends(sid, { openTurns, activeTurn: sessionState.active_turn, terminalTurnKeys, sessionStatus });
 
   const [isInterrupting, setIsInterrupting] = useState(false);
-  const operatorState = selectOperatorExecutionState({
-    sessionStatus,
-    streamStatus,
-    historyLoaded,
-    pendingSends,
-    isTurnActive: turnActive,
-    hasOpenPermission: openPermissions.length > 0,
-    isInterrupting,
+  const transcript = useSessionTranscript(sid, (state) => state);
+  const operatorState = selectPanelExecution({
+    transcript, snapshot, pending_sends: pendingSends, is_interrupting: isInterrupting,
   });
 
   const awaitingResult =
@@ -136,7 +127,6 @@ export function SessionView({
   useEffect(() => {
     setTurnStartedAt((prev) => (awaitingResult ? (prev ?? Date.now()) : null));
   }, [awaitingResult]);
-  const elapsedSec = useElapsedSeconds(turnStartedAt, awaitingResult);
 
   useAutoScrollAndLayout({
     sid,
@@ -168,6 +158,14 @@ export function SessionView({
         inboxStatus={inboxStatus}
         usage={sessionState.usage}
         chrome={chrome}
+      />
+      <AgentStatusPanel
+        sid={sid}
+        snapshot={snapshot}
+        pendingSends={pendingSends}
+        isInterrupting={isInterrupting}
+        localWaitStartedMs={turnStartedAt}
+        sessionClosed={sessionClosed}
       />
         <>
           {canInput && (
@@ -217,13 +215,6 @@ export function SessionView({
               isLatest={m.clientMessageId === lastPendingClientMessageId}
             />
           ))}
-          {operatorState.kind !== "idle" && !sessionClosed && (
-            <ThinkingIndicator
-              label={operatorStateLabel(operatorState)}
-              elapsedSec={elapsedSec}
-              outputTokens={null}
-            />
-          )}
         </>
       <div className="bottom-stack" ref={bottomBarRef}>
         {canInput && (

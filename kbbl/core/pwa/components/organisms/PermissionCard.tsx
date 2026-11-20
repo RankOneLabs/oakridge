@@ -19,6 +19,7 @@ export function PermissionCard({
   options,
   resolution,
   sessionClosed,
+  isAnchor = true,
 }: {
   sid: string;
   requestId: string;
@@ -26,6 +27,7 @@ export function PermissionCard({
   options: readonly UiPermissionOption[];
   resolution: PermissionResolution | null;
   sessionClosed: boolean;
+  isAnchor?: boolean;
 }) {
   const answer = usePermissionAnswer(sid);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +70,7 @@ export function PermissionCard({
   return (
     <div
       className="card card-permission"
-      id={permissionCardAnchorId(requestId)}
+      id={isAnchor ? permissionCardAnchorId(requestId) : undefined}
       tabIndex={-1}
     >
       <div className="card-permission-header">{title}</div>

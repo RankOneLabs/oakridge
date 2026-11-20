@@ -269,6 +269,38 @@ body {
   z-index: 10;
 }
 
+.agent-status-panel {
+  position: sticky;
+  top: var(--top-bar-h, 0px);
+  z-index: 9;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.5rem 0;
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border-decorative);
+}
+
+.agent-status-panel > .row-system {
+  justify-content: flex-start;
+}
+
+.status-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.status-row__label {
+  color: var(--text-muted);
+}
+
+.status-row__value {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .back-button {
   background: var(--bg-surface);
   color: var(--text-secondary);
