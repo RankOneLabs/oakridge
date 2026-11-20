@@ -21,9 +21,9 @@ export function currentArtifactFixture(kind: CurrentArtifactKind): CurrentArtifa
     predecessor_id: null, subject_id: null, created_at: "2026-11-17T12:00:00Z" };
   return {
     unit: { ...base, unit_id, stage, input: { spec, assignment: { cohort: plan.cohorts[0], requirements: spec.requirements } },
-      artifacts: [{ run_id: "run", unit_id, artifact_key: kind, schema, is_reviewable: false, is_editable: false, revision_count: 1, latest_revision: revision }],
+      artifacts: [{ run_id: "run", unit_id, artifact_key: kind, schema, is_reviewable: false, is_adjudicated: false, is_editable: false, revision_count: 1, latest_revision: revision }],
       recorded_decisions: [], decisions: [] },
-    detail: { run_id: "run", unit_id, artifact_key: kind, schema, is_reviewable: false, is_editable: false, status: "draft",
+    detail: { run_id: "run", unit_id, artifact_key: kind, schema, is_reviewable: false, is_adjudicated: false, is_editable: false, status: "draft",
       revisions: [revision], decisions: [], original_spec: "Original operator input" },
   };
 }

@@ -1,6 +1,7 @@
 import { isActionSource, type ActionSource, type AssessmentBody } from "./assessment";
 import type { Result } from "./primitives";
 import { composeBuilderFeedback } from "./builder-feedback";
+import type { DeclaredDecisionEffect, ParsedReviewDecision, ParsedStage, ParsedWorkflow } from "../core-client/core-types";
 export { composeBuilderFeedback } from "./builder-feedback";
 
 /** Field names mirror schemas.action_disposition/added_action/adjudication in development.yaml. */
@@ -18,9 +19,42 @@ export interface Adjudication {
 }
 export interface AdjudicationError { readonly operation: "validate_adjudication"; readonly entity_id: string; readonly detail: string }
 export interface AdjudicationTarget { readonly id: string; readonly body: AssessmentBody }
-export type AdjudicationEffect = "accept" | "request_build_changes" | "request_changes" | "request_assessment_changes";
+/** A decision an adjudicated review declares: its effect, whether its payload is an
+ * adjudication, and otherwise the plain fields its payload may carry. */
+export interface AdjudicatedReviewDecision { readonly key: string; readonly effect: DeclaredDecisionEffect; readonly is_adjudication: boolean; readonly fields: readonly string[] }
+/** A review whose decisions record adjudications, as its workflow declares it. */
+export interface AdjudicatedReview {
+  /** The assessment artifact the review is of. */
+  readonly assessment_artifact: string;
+  /** Artifacts an adjudicated send-back targets in place of the assessment (`on`). */
+  readonly redirect_artifacts: readonly string[];
+  readonly decisions: readonly AdjudicatedReviewDecision[];
+}
+export const ADJUDICATION_SCHEMA = "adjudication";
+const isAdjudicationPayload = (decision: ParsedReviewDecision): boolean => decision.payload?.kind === "named" && decision.payload.schema === ADJUDICATION_SCHEMA;
+/** Mirrors selectDecisionPayloadType: declared fields, plus conventional feedback on a change request that forwards none. */
+const plainFields = (decision: ParsedReviewDecision): string[] =>
+  [...Object.keys(decision.fields ?? {}), ...(decision.effect === "request_changes" && decision.feedback_field == null ? ["feedback"] : [])];
+export interface ReviewLocation { readonly workflow: ParsedWorkflow; readonly stage: string | null | undefined; readonly review: string }
+/** The review a stage declares, when any of its decisions carries an adjudication; null otherwise. */
+export function selectAdjudicatedReview({ workflow, stage, review }: ReviewLocation): AdjudicatedReview | null {
+  const declared = stage == null ? undefined : workflow.stages[stage]?.reviews?.[review];
+  if (!declared) return null;
+  const entries = Object.entries(declared.decisions);
+  if (!entries.some(([, decision]) => isAdjudicationPayload(decision))) return null;
+  return { assessment_artifact: declared.of,
+    redirect_artifacts: [...new Set(entries.flatMap(([, decision]) => isAdjudicationPayload(decision) && decision.on != null && decision.on !== declared.of ? [decision.on] : []))],
+    decisions: entries.map(([key, decision]) => ({ key, effect: decision.effect, is_adjudication: isAdjudicationPayload(decision), fields: plainFields(decision) })) };
+}
+/** Whether an operator adjudicates the artifact: a review of it declares a decision with an adjudication payload. */
+export const isAdjudicatedArtifact = (stage: ParsedStage, artifact: string): boolean =>
+  Object.values(stage.reviews ?? {}).some((review) => review.of === artifact && Object.values(review.decisions).some(isAdjudicationPayload));
+/** The adjudication a recorded decision carries, when its review declares it with an adjudication payload. */
+export function selectRecordedAdjudication(review: AdjudicatedReview | null, decision: string, payload: unknown): Adjudication | null {
+  return review?.decisions.some((declared) => declared.key === decision && declared.is_adjudication) ? parseAdjudication(payload) : null;
+}
 /** One review decision's adjudication payload, the assessment it targets and the decision's effect. */
-export interface AdjudicationRequest { readonly payload: unknown; readonly assessment: AdjudicationTarget; readonly effect: AdjudicationEffect }
+export interface AdjudicationRequest { readonly payload: unknown; readonly assessment: AdjudicationTarget; readonly decision: AdjudicatedReviewDecision }
 const fields = (value: unknown): value is { readonly [key: string]: unknown } => typeof value === "object" && value !== null && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === "string";
 const optionalText = (value: unknown): value is string | null | undefined => value == null || text(value);
@@ -38,9 +72,9 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const sameSource = (left: ActionSource, right: ActionSource) => left.kind === right.kind && left.id === right.id;
 
 /** Entries are canonicalized to next_actions order before composing; wire order never changes the send. */
-export function validateAdjudication({ payload, assessment, effect }: AdjudicationRequest): Result<Adjudication | null, AdjudicationError> {
-  if (effect === "request_assessment_changes") return payload == null || (typeof payload === "object" && Object.keys(payload).every((key) => key === "feedback"))
-    ? { ok: true, value: null } : refuse(assessment.id, "request_assessment_changes does not accept adjudication");
+export function validateAdjudication({ payload, assessment, decision }: AdjudicationRequest): Result<Adjudication | null, AdjudicationError> {
+  if (!decision.is_adjudication) return payload == null || (typeof payload === "object" && Object.keys(payload).every((key) => decision.fields.includes(key)))
+    ? { ok: true, value: null } : refuse(assessment.id, `${decision.key} does not accept adjudication`);
   const adjudication = parseAdjudication(payload);
   if (!adjudication) {
     const invalid = fields(payload) ? [...(Array.isArray(payload.entries) ? payload.entries.filter(entry => !proposed(entry)) : []),
@@ -69,22 +103,22 @@ export function validateAdjudication({ payload, assessment, effect }: Adjudicati
   }
   const ordered = actions.flatMap((action) => adjudication.entries.filter((entry) => entry.action_id === action.id));
   const feedback = composeBuilderFeedback(ordered, adjudication.added_actions);
-  if ((effect === "request_build_changes" || effect === "request_changes") && !feedback.trim()) return refuse(assessment.id, "request changes requires non-empty builder_feedback");
+  if (decision.effect === "request_changes" && !feedback.trim()) return refuse(assessment.id, "request changes requires non-empty builder_feedback");
   if (adjudication.builder_feedback !== feedback) return refuse(assessment.id, "builder_feedback differs from composeBuilderFeedback");
   return { ok: true, value: adjudication };
 }
 
-/** The core redirects builder requests to build_result. The reviewed assessment is
- * resolved from immutable revision history under the same lock (or as of the event). */
+/** The core redirects an adjudicated send-back to its `on` artifact. The reviewed assessment
+ * is resolved from immutable revision history under the same lock (or as of the event). */
 export interface AssessmentReviewReference { readonly review: string; readonly unit_id: string; readonly target_revision_id: string; readonly created_at?: Date }
 export interface AssessmentReviewRevision { readonly id: string; readonly unit_id: string; readonly artifact: string; readonly seq: number; readonly created_at?: Date }
-export interface AssessmentReviewResolution { readonly decision: AssessmentReviewReference; readonly revisions: readonly AssessmentReviewRevision[] }
-export function selectReviewedAssessmentId({ decision, revisions }: AssessmentReviewResolution): string | null {
-  if (decision.review !== "assessment_review" && decision.review !== "integration_review") return null;
+export interface AssessmentReviewResolution { readonly decision: AssessmentReviewReference; readonly review: AdjudicatedReview | null; readonly revisions: readonly AssessmentReviewRevision[] }
+export function selectReviewedAssessmentId({ decision, review, revisions }: AssessmentReviewResolution): string | null {
+  if (!review) return null;
   const target = revisions.find(revision => revision.id === decision.target_revision_id && revision.unit_id === decision.unit_id);
-  if (target?.artifact === "assessment") return target.id;
-  if (decision.review !== "assessment_review" || target?.artifact !== "build_result") return null;
-  return revisions.filter(revision => revision.unit_id === decision.unit_id && revision.artifact === "assessment"
+  if (target?.artifact === review.assessment_artifact) return target.id;
+  if (!target || !review.redirect_artifacts.includes(target.artifact)) return null;
+  return revisions.filter(revision => revision.unit_id === decision.unit_id && revision.artifact === review.assessment_artifact
     && (!decision.created_at || !revision.created_at || revision.created_at <= decision.created_at))
     .sort((left, right) => right.seq - left.seq)[0]?.id ?? null;
 }

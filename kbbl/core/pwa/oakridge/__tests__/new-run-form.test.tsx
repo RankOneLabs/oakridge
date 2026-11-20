@@ -6,10 +6,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import definitionFixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorLaunchRequest } from "../operator-contracts/http/ingress";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
-import type { CreateRunRequest } from "../run-types";
-import { developmentLaunch } from "../adapters/launch";
+import type { CreateRunRequest } from "../launch-types";
+import { workflowLaunch } from "../adapters/launch";
 
 const definition = definitionFixture.definition as unknown as OperatorDefinitionDetail;
+const study: OperatorDefinitionDetail = { ...definition, definition_id: "study-def", bundle: { ...definition.bundle, key: "study" } };
+const definitionFor = (id: string) => id === study.definition_id ? study : definition;
 let servedStatus: OperatorInstallStatus = installStatus;
 const launches: OperatorLaunchRequest[] = [];
 
@@ -18,12 +20,12 @@ vi.mock("../client-projects", () => ({ fetchProjects: async () => [] }));
 vi.mock("../client", () => ({
   fetchInstallStatus: async () => servedStatus,
   fetchOakridgeConfig: async () => ({ available: true, core_url: "http://oakridge.test" }),
-  // study is registered for users but has no PWA launch mapping yet, so the form must not offer it.
-  fetchWorkflowDefs: async () => [{ id: definition.definition_id, name: "development" }, { id: "study-def", name: "study" }],
-  fetchOperatorDefinition: async () => definition,
+  // fan-out is a test fixture with no PWA launch mapping, so the form must not offer it.
+  fetchWorkflowDefs: async () => [{ id: definition.definition_id, name: "development" }, { id: study.definition_id, name: "study" }, { id: "fan-out-def", name: "fan-out" }],
+  fetchOperatorDefinition: async (id: string) => definitionFor(id),
   // The launch request is the one the real adapter sends for this form's request.
   createRun: async (body: CreateRunRequest, idempotency_key: string) => {
-    const mapped = developmentLaunch(body, definition, idempotency_key);
+    const mapped = workflowLaunch(body, definitionFor(body.workflow_def_id), idempotency_key);
     if (!mapped.ok) throw new Error(mapped.error.detail);
     launches.push(mapped.value);
     return { id: "run-1" };
@@ -57,10 +59,45 @@ async function fillAndSubmit() {
   fireEvent.click(submit);
 }
 
-it("offers only workflows the PWA can launch", async () => {
+it("offers development and study, and no workflow the PWA cannot launch", async () => {
   renderForm();
   await waitFor(() => expect(document.querySelector(`option[value="${definition.definition_id}"]`)).toBeTruthy());
-  expect(document.querySelector('option[value="study-def"]')).toBeNull();
+  expect([...screen.getByLabelText("Workflow Definition").querySelectorAll("option")].map((option) => option.textContent)).toEqual(["development", "study"]);
+});
+
+async function chooseStudy() {
+  await screen.findByTestId("or-new-run-automatic-grading-input");
+  await waitFor(() => expect(document.querySelector(`option[value="${study.definition_id}"]`)).toBeTruthy());
+  fireEvent.change(screen.getByLabelText("Workflow Definition"), { target: { value: study.definition_id } });
+  return await screen.findByLabelText("Slice case limit") as HTMLInputElement;
+}
+
+describe("NewRunForm study launch", () => {
+  it("asks for slice limits only when study is selected, prefilled with six cases and $10", async () => {
+    renderForm();
+    await screen.findByTestId("or-new-run-automatic-grading-input");
+    const before = screen.queryByTestId("or-new-run-study-slice");
+    const caseLimit = await chooseStudy();
+    expect([before, caseLimit.value, (screen.getByLabelText("Slice spending cap (USD)") as HTMLInputElement).value]).toEqual([null, "6", "10.00"]);
+  });
+
+  it("launches a study with its slice limits in cents and no approved plan", async () => {
+    const { onCreated } = renderForm();
+    fireEvent.change(await chooseStudy(), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Slice spending cap (USD)"), { target: { value: "2.50" } });
+    await fillAndSubmit();
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("run-1"));
+    expect(launches.map(({ definition_id, input }) => ({ definition_id, input }))).toEqual([{ definition_id: study.definition_id,
+      input: { title: "Grade it", spec: "Build it", repositories: [expect.objectContaining({ key: "repo" })], primary_repository_key: "repo", final_merge_policy: "require_merge",
+        slice_case_limit: 4, slice_cap_cents: 250, approved_plan: null } }]);
+  });
+
+  it("refuses a study whose slice case limit is not a whole number, without launching", async () => {
+    renderForm();
+    fireEvent.change(await chooseStudy(), { target: { value: "1.5" } });
+    await fillAndSubmit();
+    expect([await screen.findByText("Slice case limit must be a whole number of at least 1."), launches]).toEqual([expect.anything(), []]);
+  });
 });
 
 describe("NewRunForm automatic grading", () => {

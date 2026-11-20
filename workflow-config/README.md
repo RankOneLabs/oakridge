@@ -31,7 +31,14 @@ observable acceptance conditions. There is no separate work-list artifact or gat
 
 Planning allocates requirements to PR-shaped cohorts with bounded contributions,
 repository keys and an acyclic depends_on graph. Oakridge resolves each writer's
-assignment to its cohort and only its allocated canonical requirements. Briefs
+assignment to its cohort and only its allocated canonical requirements. The engine
+computes the plan's `order` from depends_on when the plan is accepted:
+`levels(cohorts, id, depends_on)` groups cohorts by dependency depth, so cohorts
+with no path between them share a level. The briefs collection follows that
+order in one shared writer session. A brief starts once every brief in an
+earlier level has been published, its writer turn has ended and it has no open
+blocker, without waiting for approval, so each brief builds on the contracts its
+upstream briefs wrote. A failed or blocked upstream writer holds its dependents. Briefs
 bind their envelope to that plan cohort and supply detailed build_items linked to
 requirements, verification and material technical_decisions. Implementation order
 and outcome titles come from the plan.
@@ -46,8 +53,9 @@ the builder or integrator; assessors read the full implicit review_history. Ever
 initial/revise prompt directs the agent to raise a blocker instead of guessing.
 
 The development alias now pins definition
-`87dac99799b3d699b92499d4d322929a8b6a107c2cbdf7ab09bfb03874aa736b`.
+`e750f73b157cff44b9696ed7f10603a085145e7b79123dbf976262fdfa36c9e3`.
 The previous definitions
+`87dac99799b3d699b92499d4d322929a8b6a107c2cbdf7ab09bfb03874aa736b`,
 `cf39117805e56b4bdc5540fed9c4a3c2202a9c432b8e7562bf76960fe383a9a5` and
 `74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4`
 and their exact prompt objects remain addressable.
@@ -93,9 +101,13 @@ an explicit target when feedback_field is used.
 The generator also writes the committed definition store under `definitions/`:
 
 - `workflows/<definition_id>.json` carries the authored source, one
-  `operation_registry_id`, a prompt-path-to-PromptId map, and ordered
-  `schema_names` and `stage_names` arrays.
-- `prompts/<prompt_id>.md` copies exact authoring bytes, including line endings.
+  `operation_registry_id`, two prompt-path-to-PromptId maps, and ordered
+  `schema_names` and `stage_names` arrays. `prompts` maps each referenced path
+  to its text with every include expanded, which is what a session receives;
+  `prompt_sources` maps every authored file the expansion read, included files
+  among them, to its authored text, which is what an operator edits.
+- `prompts/<prompt_id>.md` holds both authored and expanded texts, byte for byte,
+  including line endings.
 - `operations/<operation_registry_id>.json` carries the operation registry.
 - `launchable.json` maps the authoring labels `review-loop`, `fan-out`, and
   `development` to definition IDs. Labels and source paths are lookup keys;
@@ -109,6 +121,16 @@ settings cannot change those identity inputs. Every file under `prompts/` is
 copied; each workflow pins exactly the paths named in its shared declarations,
 workers, reviews, and template overrides.
 
+A prompt includes another with `{{> path}}`, the included file's path under
+`prompts/`, as `{{> shared/raise-blocker.md}}`. The included text replaces the
+directive, less one trailing newline, so a directive on its own line reads as the
+included paragraph. Includes nest; a missing file or a prompt that includes
+itself fails generation. Expansion happens when a definition is committed, so the
+compiler checks each expanded prompt's `{{ input }}` names against the worker or
+review that uses it, and an edit to an included file changes the ID of every
+definition that reads it. Shared text lives in `prompts/shared/` and, for one
+workflow, `prompts/<workflow>/shared/`.
+
 Authored order is captured from YAML mapping nodes before conversion to JavaScript
 objects, whose enumeration would sort integer-like names such as `"2"` and `"1"`.
 This order is retained through canonicalization: reordering
@@ -116,12 +138,14 @@ This order is retained through canonicalization: reordering
 definition ID. This preserves the author's schema and stage list order for later
 consumers. Other mappings, including a stage's `workers:` and an `input:` record's
 fields, have no order array: reordering their keys preserves identity. Changing
-any pinned prompt bytes or operation registry content changes the definition ID.
+any pinned prompt bytes, included files among them, or operation registry content
+changes the definition ID.
 
 `src/definition-store.ts` resolves a definition ID, or an authoring label through
 the launchable catalog, into `ResolvedDefinition`. At the file boundary it checks
 UTF-8, raw byte hashes, canonical JSON, object shapes, ordered name membership,
-and all transitive prompt and registry references. It returns `hash_mismatch`,
+all transitive prompt and registry references, and that each committed prompt is
+the expansion of its committed sources. It returns `hash_mismatch`,
 `malformed_object`, `invalid_utf8`, `missing_prompt`, or
 `missing_operation_registry` failures, each with operation, identifier, and detail;
 other filesystem errors return `store_io`. It does not normalize or repair data

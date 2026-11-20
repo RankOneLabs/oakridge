@@ -59,7 +59,7 @@ export function currentParkedCohort(): OperatorUnitView {
 
 export function canonicalSpecUnit(): OperatorUnitView {
   const unit = currentParked as unknown as OperatorUnitView;
-  return { ...unit, input: {}, artifacts: [{ run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", schema: "spec_body", is_reviewable: true, is_editable: false, revision_count: 1, latest_revision: { id: "spec:1", run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", artifact_schema_version: OPERATOR_CURRENT_ARTIFACT_VERSIONS.spec_body.version, body: specBody, predecessor_id: null, subject_id: null, attempt_id: null, number: 1, created_at: "2026-11-17" } as OperatorUnitView["artifacts"][number]["latest_revision"] }], recorded_decisions: [{ id: "approve:1", review: "spec_review", decision: "approve", effect: "approve", target_revision_id: "spec:1", payload: {}, created_at: "2026-11-17" }] };
+  return { ...unit, input: {}, artifacts: [{ run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", schema: "spec_body", is_reviewable: true, is_adjudicated: false, is_editable: false, revision_count: 1, latest_revision: { id: "spec:1", run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", artifact_schema_version: OPERATOR_CURRENT_ARTIFACT_VERSIONS.spec_body.version, body: specBody, predecessor_id: null, subject_id: null, attempt_id: null, number: 1, created_at: "2026-11-17" } as OperatorUnitView["artifacts"][number]["latest_revision"] }], recorded_decisions: [{ id: "approve:1", review: "spec_review", decision: "approve", effect: "approve", target_revision_id: "spec:1", payload: {}, created_at: "2026-11-17" }] };
 }
 
 /** Current assessment with the core's production build-result redirection. */
@@ -68,7 +68,7 @@ export function currentAdjudicationUnit(): OperatorUnitView {
   const revision = { id: "assessment:1", run_id: "run", unit_id, artifact_key: "assessment", number: 1,
     artifact_schema_version: OPERATOR_CURRENT_ARTIFACT_VERSIONS.assessment_body.version, attempt_id: null,
     body: JSON.parse(JSON.stringify(CURRENT_ASSESSMENT)) as OperatorJsonValue, predecessor_id: null, subject_id: "build:1", created_at: "2026-11-18T00:00:00Z" };
-  const artifact = { run_id: "run", unit_id, artifact_key: "assessment", schema: "assessment_body", is_reviewable: true, is_editable: true, revision_count: 1, latest_revision: revision };
+  const artifact = { run_id: "run", unit_id, artifact_key: "assessment", schema: "assessment_body", is_reviewable: true, is_adjudicated: true, is_editable: true, revision_count: 1, latest_revision: revision };
   return { ...canonicalSpecUnit(), run_id: "run", unit_id, stage: "cohort", artifacts: [artifact], recorded_decisions: [], decisions: ["accept", "request_build_changes"].map(decision => ({
     key: decision, label: decision, payload_schema: "adjudication", fields: [], submit: { kind: "review", review: "assessment_review", decision,
       target_revision_id: decision === "accept" ? "assessment:1" : "build:1", effect: decision === "accept" ? "approve" : "request_changes" },

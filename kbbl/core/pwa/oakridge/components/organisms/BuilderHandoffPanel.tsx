@@ -112,7 +112,7 @@ export function BuilderHandoffPanel({ runId, unitLabel, revisionId, assessment, 
 
 import type { CurrentAssessment } from "../../lib/current-assessment";
 import { selectAssessmentActions } from "../../lib/current-assessment";
-import { addAction, initialAdjudication, selectAdjudicationBlockReason, selectAdjudicationDecision, selectAdjudicationEffects, selectAdjudicationGate, selectAdjudicationPayload, selectAdjudicationSources, selectBuilderPreview, setDisposition, type AdjudicationEffect } from "../../lib/assessment-handoff";
+import { addAction, initialAdjudication, selectAdjudicationBlockReason, selectAdjudicationDecision, selectAdjudicationDecisions, selectAdjudicationGate, selectAdjudicationPayload, selectAdjudicationSources, selectAssessmentChangeDecision, selectBuilderPreview, setDisposition, type ReviewDecisionDefinition } from "../../lib/assessment-handoff";
 import { useResumeGate } from "../../hooks/useResumeGate";
 import type { OperatorRevisionDecision } from "../../operator-contracts/projections/unit-view";
 import { decisionAction } from "../../adapters/core";
@@ -139,16 +139,18 @@ function CurrentAdjudicationForm({ assessment, revisionId, gate, decisions }: Cu
   const preview = selectBuilderPreview(state);
   const { revision, recordedDecision, isRecorded, isOpen } = selectAdjudicationGate({ gate, revisionId, decisions, hasSubmitted: hasRecorded });
   const recordedAdjudication = recordedDecision?.adjudication;
+  const adjudicationDecisions = selectAdjudicationDecisions(gate);
+  const assessmentChange = selectAssessmentChangeDecision(gate);
   const disabled = !isOpen || mutation.isPending;
   function recorded(): void {
     setHasRecorded(true);
   }
-  function submit(effect: AdjudicationEffect): void {
+  function submit(declared: ReviewDecisionDefinition): void {
     if (!gate || disabled) return;
-    const payload = selectAdjudicationPayload(state, effect);
-    const decision = selectAdjudicationDecision(gate, effect);
+    const payload = selectAdjudicationPayload(state, declared.effect);
+    const decision = selectAdjudicationDecision(gate, declared);
     if (!payload.ok || decision.kind !== "available") return;
-    const identity = JSON.stringify({ effect, payload: payload.value });
+    const identity = JSON.stringify({ decision: declared.definition.key, payload: payload.value });
     let key = keys.current.get(identity);
     if (!key) { key = randomUuid(); keys.current.set(identity, key); }
     mutation.mutate({ idempotency_key: key, artifact_revision_id: decision.revision_id, action: decisionAction(decision.definition, gate.decision_definitions ?? []), feedback: preview, adjudication: payload.value }, { onSuccess: recorded });
@@ -173,12 +175,12 @@ function CurrentAdjudicationForm({ assessment, revisionId, gate, decisions }: Cu
       <Button size="small" disabled={disabled || !text.trim() || !source} onClick={() => { const option = sources.find(option => option.value === source); if (!option) return; setState(current => addAction(current, { audience, source: option.source, text })); setText(""); }}>Add</Button>
     </section>
     <strong>Builder preview</strong><pre className="whitespace-pre-wrap rounded-md border border-[var(--border-decorative)] p-3" data-testid="or-assessment-handoff-preview">{preview || "No builder actions selected."}</pre>
-    <div className="flex flex-wrap gap-2">{selectAdjudicationEffects(gate).map(effect => {
-      const reason = selectAdjudicationBlockReason(state, gate, effect);
-      return <div key={effect}><Button disabled={disabled || reason !== null} title={reason ?? undefined} onClick={() => submit(effect)}>{effect === "accept" ? "Accept assessment" : effect === "request_changes" ? "Request integration changes" : "Request build changes"}</Button>{reason && <FeedbackMessage>{reason}</FeedbackMessage>}</div>;
-    })}</div>
-    {gate?.offered_decisions.includes("request_assessment_changes") && <section><label>Assessment feedback<TextArea aria-label="Assessment feedback" disabled={disabled} value={assessmentFeedback} onChange={event => setAssessmentFeedback(event.target.value)} /></label>
-      <Button disabled={disabled || !assessmentFeedback.trim()} onClick={() => { if (gate.artifact_revision_id) mutation.mutate({ idempotency_key: randomUuid(), artifact_revision_id: gate.artifact_revision_id, action: "request_assessment_changes", feedback: assessmentFeedback }, { onSuccess: recorded }); }}>Request assessment changes</Button></section>}
+    <section aria-label="Assessment decision" className="flex flex-wrap gap-2">{adjudicationDecisions.map(declared => {
+      const reason = selectAdjudicationBlockReason(state, gate, declared);
+      return <div key={declared.definition.key}><Button disabled={disabled || reason !== null} title={reason ?? undefined} onClick={() => submit(declared)}>{declared.definition.label}</Button>{reason && <FeedbackMessage>{reason}</FeedbackMessage>}</div>;
+    })}</section>
+    {gate && assessmentChange && <section><label>Assessment feedback<TextArea aria-label="Assessment feedback" disabled={disabled} value={assessmentFeedback} onChange={event => setAssessmentFeedback(event.target.value)} /></label>
+      <Button disabled={disabled || !assessmentFeedback.trim()} onClick={() => { if (gate.artifact_revision_id) mutation.mutate({ idempotency_key: randomUuid(), artifact_revision_id: gate.artifact_revision_id, action: decisionAction(assessmentChange, gate.decision_definitions ?? []), feedback: assessmentFeedback }, { onSuccess: recorded }); }}>{assessmentChange.label}</Button></section>}
     </>}
     {mutation.isError && <FeedbackMessage tone="danger">{mutation.error.message}</FeedbackMessage>}
     <AdjudicationHistory decisions={decisions} revisionId={revision} />

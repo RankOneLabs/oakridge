@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { canonicalJson, type CanonicalizationError, type Result } from "canonical-json";
 import type { CodeOperation } from "../core-client/core-types";
 import { decodeWorkflowSource, hasSafeWireNumbers, type TypeExpression, type Prompts, type WorkflowDefinitionDescriptor as AuthoredSource } from "../core-client/source-types";
+import { expandPrompts, type PromptIncludeFailure, type PromptSourceTexts } from "./prompt-includes";
 export type DefinitionId = string & { readonly __brand: "DefinitionId" };
 export type PromptId = string & { readonly __brand: "PromptId" };
 export type OperationRegistryId = string & { readonly __brand: "OperationRegistryId" };
@@ -38,7 +39,13 @@ export interface LaunchableCatalog { readonly [authoring_name: string]: Launchab
 export interface CommittedDefinition {
   readonly source: AuthoredWorkflow;
   readonly operation_registry_id: OperationRegistryId;
+  /** Each prompt the workflow references, by the id of its text with every include expanded: what a session receives. */
   readonly prompts: PromptReferences;
+  /**
+   * Every authored prompt the expansion read, included files among them, by the id of its authored text: what an operator edits.
+   * Absent from a definition committed before prompts could include one another, whose prompts are their authored text.
+   */
+  readonly prompt_sources?: PromptReferences;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
 }
@@ -49,18 +56,36 @@ export interface ResolvedDefinition {
   readonly operation_registry_id: OperationRegistryId;
   readonly prompts: PromptTexts;
   readonly prompt_ids: PromptReferences;
+  readonly prompt_sources: PromptTexts;
+  readonly prompt_source_ids: PromptReferences;
   readonly operations: OperationRegistry;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
 }
 
-export type DefinitionInputs = Pick<CommittedDefinition, "source" | "operation_registry_id" | "prompts">;
+export type DefinitionInputs = Pick<CommittedDefinition, "source" | "operation_registry_id" | "prompts" | "prompt_sources">;
 export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names">;
 
 /** Order must come from YAML mapping nodes, before toJS() reorders integer-like keys. */
 export function commitDefinition(inputs: DefinitionInputs, order: DefinitionOrder): CommittedDefinition {
   return { ...inputs, ...order };
 }
+
+/** A prompt's text and the id of its UTF-8 bytes. */
+export interface ComposedPrompt { readonly id: PromptId; readonly text: string }
+export interface ComposedPromptMap { readonly [authored_path: string]: ComposedPrompt }
+/** A definition's prompts with every include expanded, and the authored prompts the expansion read. */
+export interface ComposedPrompts { readonly prompts: ComposedPromptMap; readonly prompt_sources: ComposedPromptMap }
+const composed = (texts: PromptSourceTexts, paths: readonly string[]): ComposedPromptMap =>
+  Object.fromEntries(paths.map((path) => [path, { id: bytesIdentity(Buffer.from(texts[path])), text: texts[path] }]));
+/** The one place a definition's prompt ids are derived: a committed id always covers the fully expanded text. */
+export function composePrompts(paths: readonly string[], sources: PromptSourceTexts): Result<ComposedPrompts, PromptIncludeFailure> {
+  const expanded = expandPrompts(paths, sources);
+  if (!expanded.ok) return expanded;
+  return { ok: true, value: { prompts: composed(expanded.value.prompts, paths), prompt_sources: composed(sources, expanded.value.sources) } };
+}
+export const promptReferences = (prompts: ComposedPromptMap): PromptReferences =>
+  Object.fromEntries(Object.entries(prompts).map(([path, prompt]) => [path, prompt.id]));
 
 function promptValues(prompts: Prompts | null | undefined): string[] {
   return Object.values(prompts ?? {}).filter((path): path is string => typeof path === "string");
@@ -120,13 +145,17 @@ function matchesNames(value: unknown, names: readonly string[]): value is readon
   return Array.isArray(value) && value.length === names.length && new Set(value).size === names.length
     && value.every((name) => typeof name === "string" && names.includes(name));
 }
+function isPromptReferences(value: unknown): value is PromptReferences {
+  return isObject(value) && Object.entries(value).every(([path, id]) => isPromptPath(path) && isIdentity(id));
+}
 function isCommittedDefinition(value: unknown): value is CommittedDefinition {
-  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "schema_names", "stage_names"])) return false;
+  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "prompt_sources", "schema_names", "stage_names"])) return false;
   const source = decodeWorkflowSource(value.source);
-  if (source === null || !isIdentity(value.operation_registry_id) || !isObject(value.prompts)) return false;
-  if (!Object.entries(value.prompts).every(([path, id]) => isPromptPath(path) && isIdentity(id))) return false;
+  if (source === null || !isIdentity(value.operation_registry_id) || !isPromptReferences(value.prompts)) return false;
+  if (value.prompt_sources !== undefined && !isPromptReferences(value.prompt_sources)) return false;
   const paths = referencedPromptPaths(source);
-  return matchesNames(Object.keys(value.prompts), paths)
+  const sources = value.prompt_sources ?? value.prompts;
+  return matchesNames(Object.keys(value.prompts), paths) && paths.every((path) => Object.hasOwn(sources, path))
     && matchesNames(value.schema_names, Object.keys(source.schemas ?? {}))
     && matchesNames(value.stage_names, Object.keys(source.stages));
 }
@@ -206,18 +235,33 @@ export function resolveDefinition(definition_id: DefinitionId, store_root = proc
   const operations = readJson({ ...registry_context, root: store_root, path: ["operations", `${committed.operation_registry_id}.json`].join("/") });
   if (!operations.ok) return operations;
   if (!isOperationRegistry(operations.value)) return failure("malformed_object", registry_context, "invalid operation registry shape");
-  const prompt_entries: [string, string][] = [];
-  for (const [path, prompt_id] of Object.entries(committed.prompts)) {
-    const prompt = readText({ operation: "read_prompt", identifier: prompt_id, root: store_root, path: ["prompts", `${prompt_id}.md`].join("/") });
-    if (!prompt.ok) return prompt;
-    prompt_entries.push([path, prompt.value]);
-  }
+  const readPrompts = (references: PromptReferences): Result<PromptTexts, DefinitionStoreFailure> => {
+    const entries: [string, string][] = [];
+    for (const [path, prompt_id] of Object.entries(references)) {
+      const prompt = readText({ operation: "read_prompt", identifier: prompt_id, root: store_root, path: ["prompts", `${prompt_id}.md`].join("/") });
+      if (!prompt.ok) return prompt;
+      entries.push([path, prompt.value]);
+    }
+    return { ok: true, value: Object.fromEntries(entries) };
+  };
+  const prompts = readPrompts(committed.prompts);
+  if (!prompts.ok) return prompts;
+  const source_ids = committed.prompt_sources ?? committed.prompts;
+  const prompt_sources = readPrompts(source_ids);
+  if (!prompt_sources.ok) return prompt_sources;
+  const recomposed = composePrompts(Object.keys(committed.prompts), prompt_sources.value);
+  if (!recomposed.ok) return failure("malformed_object", context, recomposed.error.detail);
+  if (!matchesNames(Object.keys(source_ids), Object.keys(recomposed.value.prompt_sources))
+    || Object.entries(recomposed.value.prompts).some(([path, prompt]) => prompt.id !== committed.prompts[path]))
+    return failure("malformed_object", context, "committed prompts are not the expansion of their committed sources");
   return { ok: true, value: {
     definition_id,
     source: committed.source,
     operation_registry_id: committed.operation_registry_id,
-    prompts: Object.fromEntries(prompt_entries),
+    prompts: prompts.value,
     prompt_ids: committed.prompts,
+    prompt_sources: prompt_sources.value,
+    prompt_source_ids: source_ids,
     operations: operations.value,
     schema_names: committed.schema_names,
     stage_names: committed.stage_names,
@@ -239,7 +283,7 @@ export function resolveLaunchableDefinition(definition_id: DefinitionId, store_r
   return resolveDefinition(definition_id, store_root);
 }
 
-/** Inspection reads the same verified objects as execution. */
+/** Inspection reads the same verified objects as execution: the authored prompts, included files among them. */
 export interface CommittedPromptSummary { readonly key: string; readonly path: string; readonly content_digest: string }
 export function listCommittedPrompts(): readonly CommittedPromptSummary[] {
   const catalog = readLaunchableCatalog();
@@ -248,7 +292,7 @@ export function listCommittedPrompts(): readonly CommittedPromptSummary[] {
   for (const id of launchableDefinitionIds(catalog.value, null)) {
     const resolved = resolveDefinition(id);
     if (!resolved.ok) throw new Error(JSON.stringify(resolved.error));
-    for (const [path, content] of Object.entries(resolved.value.prompts)) prompts.set(path, content);
+    for (const [path, content] of Object.entries(resolved.value.prompt_sources)) prompts.set(path, content);
   }
   return [...prompts].map(([path, content]) => ({ key: `workflow-config/prompts/${path}`, path: `workflow-config/prompts/${path}`,
     content_digest: createHash("sha256").update(content).digest("hex") })).sort((left, right) => left.path.localeCompare(right.path));
@@ -337,10 +381,6 @@ export function readPromptPointer(source_path: string, store_root = process.env.
   return { ok: true, value: pointer };
 }
 
-
-export function withPublishedPrompt(committed: CommittedDefinition, path: string, prompt_id: PromptId): CommittedDefinition {
-  return { ...committed, prompts: { ...committed.prompts, [path]: prompt_id } };
-}
 /** Existing objects must be byte identical; mutable indexes use same-directory rename. */
 export function writeStoreFile(request: { root: string; path: string; bytes: Uint8Array; mutable?: boolean }): Result<void, DefinitionStoreFailure> {
   const context: ReadContext = { operation: "read_prompt_version", identifier: request.path };

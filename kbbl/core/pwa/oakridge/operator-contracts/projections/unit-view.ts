@@ -40,6 +40,8 @@ export interface OperatorArtifactView {
   readonly schema: string;
   /** An operator review of this artifact is declared. */
   readonly is_reviewable: boolean;
+  /** A review of this artifact declares an adjudication decision, so the operator adjudicates its next actions. */
+  readonly is_adjudicated: boolean;
   /** An agent creates it, so the operator may publish an edited revision. */
   readonly is_editable: boolean;
   readonly revision_count: number;

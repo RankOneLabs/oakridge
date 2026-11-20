@@ -13,6 +13,6 @@ export function StagePromptsEditing({ model }: StageSectionProps) {
   }
   function close() { setDirty(false); setOpenPath(null); }
   const editor = openPath === null ? null
-    : <PromptEditor key={openPath} path={openPath} model={model} onClose={close} onDirtyChange={setDirty} />;
+    : <PromptEditor key={openPath} path={openPath} model={model} onClose={close} onDirtyChange={setDirty} onEditPrompt={requestEdit} />;
   return <StagePromptsSection model={model} openPath={openPath} onEditPrompt={requestEdit} editor={editor} />;
 }

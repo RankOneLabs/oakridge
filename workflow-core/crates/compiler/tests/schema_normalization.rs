@@ -11,16 +11,22 @@ fn compile(value: &Value) -> CheckedWorkflow {
     let operations: Vec<CodeOperation> =
         serde_json::from_slice(&std::fs::read(config.join("operation-registry.json")).unwrap())
             .unwrap();
-    let prompts: BTreeMap<String, String> = std::fs::read_dir(config.join("prompts/development"))
+    // The launchable development definition's committed prompts, includes expanded.
+    let store = config.join("definitions");
+    let read = |path: std::path::PathBuf| std::fs::read_to_string(path).unwrap();
+    let launchable: Value = serde_json::from_str(&read(store.join("launchable.json"))).unwrap();
+    let id = launchable["development"]["definition_id"].as_str().unwrap();
+    let definition: Value =
+        serde_json::from_str(&read(store.join(format!("workflows/{id}.json")))).unwrap();
+    let prompts: BTreeMap<String, String> = definition["prompts"]
+        .as_object()
         .unwrap()
-        .map(|entry| {
-            let path = entry.unwrap().path();
+        .iter()
+        .map(|(path, digest)| {
+            let digest = digest.as_str().unwrap();
             (
-                format!(
-                    "development/{}",
-                    path.file_name().unwrap().to_string_lossy()
-                ),
-                std::fs::read_to_string(&path).unwrap(),
+                path.clone(),
+                read(store.join(format!("prompts/{digest}.md"))),
             )
         })
         .collect();

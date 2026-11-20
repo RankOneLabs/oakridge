@@ -3,6 +3,7 @@ import { Button } from "../../../components/atoms/Button";
 import { stageElementHref, stageElementId, type StageSectionProps } from "../../lib/stage-inspector";
 import { selectPromptRows } from "../../lib/prompt-inspector";
 import { LetExpression } from "./LetExpression";
+import { PromptIncludes } from "./PromptIncludes";
 export interface StagePromptsSectionProps extends StageSectionProps {
   /** Path of the prompt whose editor is shown; the owning organism decides it. */
   openPath?: string | null;
@@ -18,6 +19,7 @@ export function StagePromptsSection({ model, openPath = null, onEditPrompt, edit
       <Button disabled={!onEditPrompt} aria-label={`Edit ${row.path}`} onClick={() => onEditPrompt?.(row.path)}>Edit prompt</Button>
       <dl><dt>Used by</dt><dd>{row.owner.kind} {row.owner.key}{row.owner.template && <> from template {row.owner.template}</>}</dd>
       <dt>Mode</dt><dd>{row.mode}</dd><dt>Source</dt><dd>{row.path}</dd><dt>Digest</dt><dd>{row.digest}</dd></dl>
+      <PromptIncludes includes={row.includes} onEditPrompt={onEditPrompt} />
       {row.body !== null && <pre className="whitespace-pre-wrap break-words">{row.body}</pre>}
       <h5>Inputs</h5><dl>{row.inputs.map(input => <div key={input.name}><dt>inputs.{input.name}</dt><dd><LetExpression model={model} expression={input.expression} /></dd></div>)}</dl>
       <p>Produces {row.produces.map(name => <a key={name} className="mr-2" href={stageElementHref(model, {kind: "artifact", name})}>{name}</a>)}</p>

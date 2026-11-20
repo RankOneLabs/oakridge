@@ -1,4 +1,5 @@
 import type { PromptId, ResolvedDefinition } from "../runtime/definition-store";
+import { selectIncludes } from "../runtime/prompt-includes";
 import type { AuthoredWorkflow, Group, ParsedWorkflow, Unit, Workflow } from "../core-client/core-types";
 import { selectWorkflowSchemas, typeSchemaKey, type Schema, type SchemaOrder } from "./schema-view";
 import { ROOT_UNIT_KEY, titleCase } from "./unit-label";
@@ -31,10 +32,19 @@ export interface DefinitionPage { readonly items: readonly DefinitionSummary[]; 
 export interface DefinitionGraphNode { readonly key: string; readonly stage: string; readonly depends_on: readonly string[] }
 export interface DefinitionGraph { readonly nodes: readonly DefinitionGraphNode[]; readonly edges: readonly { readonly from: string; readonly to: string }[] }
 /** One committed definition with its authored workflow source. */
-export interface DefinitionPrompt { readonly body: string; readonly digest: PromptId }
+export interface DefinitionPrompt {
+  readonly body: string;
+  readonly digest: PromptId;
+  /** The prompts this one includes directly with `{{> path}}`, each once, in the order the body names them. */
+  readonly includes: readonly string[];
+}
 export interface DefinitionPrompts { readonly [prompt_path: string]: DefinitionPrompt }
-export function selectDefinitionPrompts(definition: Pick<ResolvedDefinition, "prompts" | "prompt_ids">): DefinitionPrompts {
-  return Object.fromEntries(Object.entries(definition.prompt_ids).map(([path, digest]) => [path, { body: definition.prompts[path], digest }]));
+/** The authored prompts, included files among them, as an operator reads and edits them; a session receives them with includes expanded. */
+export function selectDefinitionPrompts(definition: Pick<ResolvedDefinition, "prompt_sources" | "prompt_source_ids">): DefinitionPrompts {
+  return Object.fromEntries(Object.entries(definition.prompt_source_ids).map(([path, digest]) => {
+    const body = definition.prompt_sources[path];
+    return [path, { body, digest, includes: selectIncludes(body) }];
+  }));
 }
 export interface DefinitionDetail extends DefinitionSummary { readonly prompts: DefinitionPrompts; readonly workflow: Workflow | AuthoredWorkflow; readonly effective_workflow: ParsedWorkflow; readonly graph: DefinitionGraph }
 

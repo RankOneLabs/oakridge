@@ -251,7 +251,7 @@ it("definition prompts validates bodies and SHA-256 digests with path context", 
   const { parseDefinitionPrompts } = await import("./core");
   const fixture = await import("../__fixtures__/v2-definition-detail.json");
   expect(parseDefinitionPrompts(fixture.definition.prompts).ok).toBe(true);
-  for (const entry of [{body: 42, digest: "a".repeat(64)}, {body: "text", digest: "ABC"}]) {
+  for (const entry of [{body: 42, digest: "a".repeat(64), includes: []}, {body: "text", digest: "ABC", includes: []}, {body: "text", digest: "a".repeat(64)}, {body: "text", digest: "a".repeat(64), includes: [3]}]) {
     const result = parseDefinitionPrompts({"x/prompt.md": entry});
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.detail).toContain("x/prompt.md");

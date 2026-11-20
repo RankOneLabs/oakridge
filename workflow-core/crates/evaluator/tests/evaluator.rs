@@ -94,6 +94,45 @@ fn valid_graph_accepts_a_long_chain_and_refuses_it_closed_into_a_cycle() {
     assert!(is_valid_graph(&chain(false), "id", "after"));
     assert!(!is_valid_graph(&chain(true), "id", "after"));
 }
+#[test]
+fn graph_levels_group_keys_by_their_deepest_dependency_in_source_order() {
+    let items = serde_json::json!([
+        {"id": "consumer", "after": ["left", "right"]},
+        {"id": "right", "after": ["provider"]},
+        {"id": "left", "after": ["provider"]},
+        {"id": "provider", "after": []},
+        {"id": "loose", "after": []}
+    ]);
+    assert_eq!(
+        graph_levels(items.as_array().unwrap(), "id", "after"),
+        Some(vec![
+            vec!["provider".to_owned(), "loose".to_owned()],
+            vec!["right".to_owned(), "left".to_owned()],
+            vec!["consumer".to_owned()],
+        ])
+    );
+}
+#[test]
+fn graph_levels_place_a_long_chain_one_key_per_level_and_refuse_a_cycle() {
+    let chain = |is_closed: bool| -> Vec<Value> {
+        (0..10_000)
+            .map(|index: usize| {
+                let previous = match index {
+                    0 if is_closed => vec![format!("k{}", 9_999)],
+                    0 => vec![],
+                    _ => vec![format!("k{}", index - 1)],
+                };
+                serde_json::json!({ "id": format!("k{index}"), "after": previous })
+            })
+            .collect()
+    };
+    let levels = graph_levels(&chain(false), "id", "after").unwrap();
+    assert_eq!(
+        (levels.len(), levels.last().cloned()),
+        (10_000, Some(vec!["k9999".to_owned()]))
+    );
+    assert_eq!(graph_levels(&chain(true), "id", "after"), None);
+}
 fn snapshot() -> StepSnapshot {
     StepSnapshot {
         run: RunState {

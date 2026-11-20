@@ -1,6 +1,6 @@
 import type { OperatorLaunchRequest } from "../operator-contracts/http/ingress";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
-import type { CreateRunRequest } from "../run-types";
+import type { CreateRunRequest, StudySliceLimits, WorkflowLaunchInput } from "../launch-types";
 import type { WorkflowDefSummary } from "../project-types";
 import { selectAgentSessionTargets } from "../lib/agent-session-targets";
 import { fail, ok, type AdapterResult } from "./core";
@@ -17,18 +17,22 @@ interface DevelopmentInput {
   readonly primary_repository_key: string;
   readonly final_merge_policy: "require_merge" | "allow_close_without_merge";
 }
+/** Mirrors study's input in workflow-config/study.yaml: development's, plus the slice limits and an approved plan the PWA never supplies. */
+interface StudyInput extends DevelopmentInput, StudySliceLimits {
+  readonly approved_plan: null;
+}
 
-/** The only workflow whose launch input this adapter can build. */
-const DEVELOPMENT_WORKFLOW_NAME = "development";
+/** The workflows whose launch input this adapter builds. */
+const PWA_LAUNCHABLE_WORKFLOWS: readonly WorkflowLaunchInput["kind"][] = ["development", "study"];
 
-/** The launcher offers only workflows this adapter can launch; other registered workflows (study) need their own input mapping first. */
-export const isPwaLaunchable = (definition: WorkflowDefSummary): boolean => definition.name === DEVELOPMENT_WORKFLOW_NAME;
+/** The launcher offers only workflows this adapter can launch. */
+export const isPwaLaunchable = (definition: WorkflowDefSummary): boolean => PWA_LAUNCHABLE_WORKFLOWS.some((kind) => kind === definition.name);
 
-/** Maps the development input and validates session choices against the pinned definition. */
-export function developmentLaunch(body: CreateRunRequest, definition: OperatorDefinitionDetail, requestId: string): AdapterResult<OperatorLaunchRequest> {
-  if (definition.bundle.key !== DEVELOPMENT_WORKFLOW_NAME) return fail("create run", `the PWA cannot launch the ${definition.bundle.key} workflow`);
-  // The development workflow prepares and integrates each repository; the first row is primary.
-  if (body.context.repositories.length === 0) return fail("create run", "Development runs require at least one repository");
+/** Maps the launch input for the pinned definition's workflow and validates session choices against it. */
+export function workflowLaunch(body: CreateRunRequest, definition: OperatorDefinitionDetail, requestId: string): AdapterResult<OperatorLaunchRequest> {
+  if (definition.bundle.key !== body.workflow_input.kind) return fail("create run", `the ${definition.bundle.key} workflow cannot launch with ${body.workflow_input.kind} input`);
+  // Both workflows prepare each repository; the first row is primary.
+  if (body.context.repositories.length === 0) return fail("create run", "A run requires at least one repository");
   const repositories: DevelopmentRepository[] = [];
   for (const repository of body.context.repositories) {
     const configured = body.epic_profile.repositories.find((item) => item.repository_key === repository.key);
@@ -51,9 +55,11 @@ export function developmentLaunch(body: CreateRunRequest, definition: OperatorDe
     }
   }
   // Brief approval is the operator's go-ahead.
-  const input: DevelopmentInput = { title: body.epic_profile.title, spec: body.context.brief_notes, repositories,
+  const shared: DevelopmentInput = { title: body.epic_profile.title, spec: body.context.brief_notes, repositories,
     primary_repository_key: repositories[0].key,
     final_merge_policy: body.epic_profile.final_merge_policy === "guarded" ? "require_merge" : "allow_close_without_merge" };
+  const input: DevelopmentInput | StudyInput = body.workflow_input.kind === "study"
+    ? { ...shared, ...body.workflow_input.slice, approved_plan: null } : shared;
   return ok({ request_id: requestId, definition_id: definition.definition_id, project_id: body.project_id, input,
     config: { sessions: body.context.session_settings, grading_enabled: body.context.grading_enabled } });
 }

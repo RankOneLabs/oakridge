@@ -1,6 +1,5 @@
 // Runs, their events, stages, epics and agent sessions on the operator surface.
 
-import type { CreateRunContext } from "./project-types";
 export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };
 
 export type CohortId = string & { readonly __brand: "CohortId" };
@@ -79,47 +78,13 @@ export type RunEvent =
 
 export type RunEventFrame = RunEvent & { readonly replayed: boolean };
 
-export interface RepositoryInputDraft {
-  key: string;
-  path: string;
-  forge_owner: string;
-  forge_name: string;
-  integration_branch: string;
-}
-
-export interface RepositoryInput {
-  key: RepositoryKey;
-  path: string;
-  /** Where this repository's base branch is cut from — `main`, typically. */
-  integration_branch: string;
-}
-
 export interface ForgeRepositoryIdentity {
   provider: "github";
   owner: string;
   name: string;
 }
 
-export interface EpicRepositoryConfig {
-  repository_key: RepositoryKey;
-  repository_path: string;
-  // Where this repository's base branch is cut from, and where its work merges
-  // back — `main`, typically. The branch the run *builds on* is the epic's, one
-  // for the whole run, and lives on EpicProfileConfig.
-  integration_branch: string;
-  forge_repository: ForgeRepositoryIdentity;
-}
-
 export type FinalMergePolicy = "guarded" | "external_confirmation";
-
-export interface EpicProfileConfig {
-  title: string;
-  slug: string;
-  final_merge_policy: FinalMergePolicy;
-  /** The one branch this epic builds on; the server defaults it to `epic/<slug>`. */
-  base_branch?: string | null;
-  repositories: EpicRepositoryConfig[];
-}
 
 export type EpicLifecycleState = "draft" | "active" | "final_integration" | "completed" | "failed";
 
@@ -174,13 +139,6 @@ export type FinalPullRequestResponse = {
     profile: EpicWorkflowProfile;
   };
 }[FinalPullRequestOutcome];
-
-export interface CreateRunRequest {
-  workflow_def_id: string;
-  project_id: string | null;
-  context: CreateRunContext;
-  epic_profile: EpicProfileConfig;
-}
 
 export type RunStatus = "pending" | "running" | "parked" | "failed" | "complete" | "cancelled";
 

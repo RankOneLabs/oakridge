@@ -19,7 +19,8 @@ import { useOperatorDefinition } from "../../hooks/useOperatorDefinition";
 import { useAgentSessionSelections } from "../../hooks/useAgentSessionSelections";
 import { useCreateRun } from "../../hooks/useCreateRun";
 import { isPwaLaunchable } from "../../adapters/launch";
-import type { FinalMergePolicy, RepositoryInputDraft } from "../../run-types";
+import type { FinalMergePolicy } from "../../run-types";
+import type { RepositoryInputDraft } from "../../launch-types";
 import type { Project } from "../../project-types";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
 import { SessionModelFields } from "../molecules/SessionModelFields";
@@ -31,6 +32,8 @@ import { randomUuid } from "../../../lib/random-uuid";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
 import { BriefNotesField } from "../molecules/BriefNotesField";
 import { AutomaticGradingField } from "../molecules/AutomaticGradingField";
+import { StudySliceFields } from "../molecules/StudySliceFields";
+import { DEFAULT_STUDY_SLICE_DRAFT, selectWorkflowLaunchInput, type StudySliceDraft } from "../../lib/workflow-launch-input";
 import { readBriefNotesFile, selectMissingBriefNotesDetail, type BriefNotesSource } from "../../lib/brief-notes";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
@@ -63,6 +66,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "", forge_owner: "", forge_name: "", integration_branch: "main" }]);
   const [projectId, setProjectId] = useState<string>("");
   const [isGradingEnabled, setIsGradingEnabled] = useState(false);
+  const [studySlice, setStudySlice] = useState<StudySliceDraft>(DEFAULT_STUDY_SLICE_DRAFT);
   const [workflowDefId, setWorkflowDefId] = useState<string>("");
   const installStatus = useInstallStatus();
   const launchBlock = selectLaunchBlock(installStatus.data, workflowDefId);
@@ -147,6 +151,8 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     if (launchBlock) { setError(launchBlock.error.detail); return; }
     if (!workflowDefId) { setError("Select a workflow definition."); return; }
     if (!definitionQuery.data || definitionQuery.data.definition_id !== workflowDefId) { setError("Wait for the workflow's agent sessions to load."); return; }
+    const workflowInput = selectWorkflowLaunchInput({ workflow_name: definitionQuery.data.bundle.key, study_slice: studySlice });
+    if (!workflowInput.ok) { setError(workflowInput.error.detail); return; }
     const sessionSettings = selectLaunchSessionSettings(sessionTargets, modelMode === "by_role"
       ? sessionSelectionsFromRoles()
       : Object.fromEntries(sessionTargets.map((target) => [target.key, sessionChoices.selectionFor(target)])));
@@ -173,6 +179,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
         project_id: projectId || null,
         context: contextResult.value,
         epic_profile: epicProfile,
+        workflow_input: workflowInput.value,
       };
       pendingLaunch.current = selectRequestIdentity(pendingLaunch.current, JSON.stringify(request), randomUuid);
       const result = await createRun.mutateAsync({ request, idempotency_key: pendingLaunch.current.idempotency_key });
@@ -253,6 +260,8 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           onFileChange={(event) => { void onBriefNotesFileChange(event); }}
           disabled={pending}
         />
+
+        {definitionQuery.data?.bundle.key === "study" && <StudySliceFields draft={studySlice} onChange={setStudySlice} disabled={pending} />}
 
         {definitionQuery.isPending && <div>Loading agent sessions…</div>}
         {definitionQuery.isError && <FeedbackMessage tone="danger">Could not load agent sessions: {definitionQuery.error.message}</FeedbackMessage>}

@@ -9,11 +9,11 @@ function stage(name: string) {
   if (!model) throw new Error(name);
   return model;
 }
-test("each worker prompt role preserves produced artifacts and stored bytes", () => {
+test("each worker prompt role preserves produced artifacts and stored bytes and includes", () => {
   const rows = selectPromptRows(stage("cohort"));
   for (const mode of ["initial", "revise"]) expect(rows.find(row => row.id === "worker:builder:" + mode)).toMatchObject({produces: ["build_result", "pr"]});
   expect(rows.filter(row => row.owner.key === "assessor").map(row => row.id).sort()).toEqual(["worker:assessor:review", "worker:assessor:revise"]);
-  for (const row of rows) expect({body: row.body, digest: row.digest}).toEqual(detail.prompts[row.path]);
+  for (const row of rows) expect({body: row.body, digest: row.digest, includes: row.includes}).toEqual(detail.prompts[row.path]);
 });
 test("shared review prompt keeps distinct owners and reviewed artifacts", () => {
   const rows = ["cohort", "integration"].map(name => selectPromptRows(stage(name)).find(row => row.id === "review:merge_confirmation:review"));

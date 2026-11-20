@@ -10,7 +10,7 @@ import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type Operat
 import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type DefinitionOrder, type OperationRegistry } from "./definition-objects";
 import { DEFINITION_STORE_ROOT, readSkillIndex, readSkillBundle, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, isCommittedDefinition, type DefinitionStoreFailure } from "./definition-store";
 import { WORKFLOW_SOURCES } from "./workflow-sources";
-import { writeStoreFile, withPublishedPrompt, type PromptVersionObject, type PromptPointer } from "../../oakridge-dbos/src/runtime/definition-store";
+import { writeStoreFile, type PromptVersionObject, type PromptPointer } from "../../oakridge-dbos/src/runtime/definition-store";
 
 function unwrap<Value, Failure>(result: Result<Value, Failure>): Value {
   if (!result.ok) throw new Error(JSON.stringify(result.error));
@@ -55,6 +55,7 @@ function definitionId(inputs: IdentityInputs = {}): DefinitionId {
     source: authoredSource(inputs.yaml),
     operation_registry_id: unwrap(jsonIdentity<OperationRegistryId>(inputs.registry ?? operations)),
     prompts: { "write.md": bytesIdentity(inputs.prompt ?? Buffer.from("Write.\n")) },
+    prompt_sources: { "write.md": bytesIdentity(inputs.prompt ?? Buffer.from("Write.\n")) },
   }, authoredOrder(inputs.yaml))));
 }
 
@@ -131,7 +132,7 @@ function storeFixture(prompt = Buffer.from("\ufeffWrite.\r\n")): StoreFixture {
   writeFileSync(resolve(root, "operations", `${operation_registry_id}.json`), unwrap(canonicalJson(operations)));
   const prompt_id = bytesIdentity(prompt);
   writeFileSync(resolve(root, "prompts", `${prompt_id}.md`), prompt);
-  const definition = commitDefinition({ source: authoredSource(), prompts: { "write.md": prompt_id }, operation_registry_id }, authoredOrder());
+  const definition = commitDefinition({ source: authoredSource(), prompts: { "write.md": prompt_id }, prompt_sources: { "write.md": prompt_id }, operation_registry_id }, authoredOrder());
   return { root, definition, prompt_id, definition_id: writeDefinition(root, definition) };
 }
 function readFailure<Value>(result: Result<Value, DefinitionStoreFailure>): DefinitionStoreFailure {
@@ -146,6 +147,7 @@ test("the reader preserves source, authored names, prompt BOM and CRLF, and pinn
     definition_id: fixture.definition_id,
     ...fixture.definition,
     prompts: { "write.md": "\ufeffWrite.\r\n" },
+    prompt_sources: { "write.md": "\ufeffWrite.\r\n" },
     operations,
   });
 });
@@ -310,7 +312,7 @@ function generatorFixture(): string {
     "workflow-config/src", "workflow-config/skills", "workflow-config/prompts",
     ...Object.values(WORKFLOW_SOURCES).map(({ path }) => path),
     "workflow-core/fixtures/bundles", "oakridge-dbos/src/operations/registry.ts", "oakridge-dbos/src/effects/provider-catalog.ts",
-    "oakridge-dbos/src/core-client/source-types.ts",
+    "oakridge-dbos/src/core-client/source-types.ts", "oakridge-dbos/src/runtime/definition-store.ts", "oakridge-dbos/src/runtime/prompt-includes.ts",
   ]) {
     mkdirSync(dirname(resolve(root, path)), { recursive: true });
     cpSync(resolve(repository_root, path), resolve(root, path), { recursive: true });
@@ -638,7 +640,7 @@ test("development prompts use the integration-neutral skill while historical pin
   const previous = JSON.parse(readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8")) as CommittedDefinition;
   for (const name of ["build", "build-revise", "assess", "assess-revise", "integrate", "integrate-revise"]) {
     const prompt = readFileSync(resolve(import.meta.dir, "../prompts/development", `${name}.md`), "utf8");
-    const pinned = current.prompts[`development/${name}.md`];
+    const pinned = current.prompt_sources[`development/${name}.md`];
     expect(pinned).toBe(prompt);
     const historicalPrompt = readFileSync(resolve(store, "prompts", `${previous.prompts[`development/${name}.md`]}.md`), "utf8");
     expect(historicalPrompt).toContain("gated-review");
@@ -678,13 +680,13 @@ test("published prompt survives regeneration and check without altering the auth
   const authored = readFileSync(resolve(root, "workflow-config/prompts", path));
   const catalog = unwrap(readLaunchableCatalog(store));
   const committed: unknown = JSON.parse(readFileSync(resolve(store, "workflows", catalog["review-loop"].definition_id + ".json"), "utf8"));
-  if (!isCommittedDefinition(committed)) throw new Error("invalid fixture definition");
+  if (!isCommittedDefinition(committed) || committed.prompt_sources === undefined) throw new Error("invalid fixture definition");
 
   // Match the runtime's published store layout without requiring the WASM compiler.
   // Runtime compilation and pinned-run behavior are covered by the DBOS tests.
   const body = authored.toString("utf8") + "\nAdditional guidance.\n";
   const prompt_id = bytesIdentity(Buffer.from(body));
-  const seeded: PromptVersionObject = { prompt_id: committed.prompts[path], source_path: path };
+  const seeded: PromptVersionObject = { prompt_id: committed.prompt_sources[path], source_path: path };
   const published: PromptVersionObject = { prompt_id, source_path: path };
   const seed_id = unwrap(jsonIdentity<PromptVersionId>(seeded));
   const version_id = unwrap(jsonIdentity<PromptVersionId>(published));
@@ -692,7 +694,8 @@ test("published prompt survives regeneration and check without altering the auth
     { version_id: seed_id, published_at: null },
     { version_id, published_at: "2026-11-15T00:00:00.000Z" },
   ] };
-  const definition = withPublishedPrompt(committed, path, prompt_id);
+  // The prompt includes nothing, so its expanded text is its authored text.
+  const definition = { ...committed, prompts: { ...committed.prompts, [path]: prompt_id }, prompt_sources: { ...committed.prompt_sources, [path]: prompt_id } };
   const definition_id = unwrap(jsonIdentity<DefinitionId>(definition));
   const writeObject = (path: string, value: unknown) => unwrap(writeStoreFile({
     root: store, path, bytes: Buffer.from(unwrap(canonicalJson(value))), mutable: path === "launchable.json" || path.startsWith("prompt-pointers/"),

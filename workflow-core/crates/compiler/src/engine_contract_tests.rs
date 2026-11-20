@@ -150,6 +150,32 @@ fn decision_set_overrides_retain_guard_and_forwarded_field() {
 #[test]
 fn every_historical_bundle_has_blockers_only_on_agent_workers() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    // Launchable workflows compile with their committed prompts, includes expanded;
+    // a bundle outside the store reads its authored prompt files.
+    let store = root.join("workflow-config/definitions");
+    let read_json = |path: std::path::PathBuf| -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    };
+    let committed: BTreeMap<String, String> = read_json(store.join("launchable.json"))
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|entry| {
+            let id = entry["definition_id"].as_str().unwrap();
+            let definition = read_json(store.join(format!("workflows/{id}.json")));
+            definition["prompts"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(path, digest)| {
+                    let digest = digest.as_str().unwrap();
+                    let text = std::fs::read_to_string(store.join(format!("prompts/{digest}.md")))
+                        .unwrap();
+                    (path.clone(), text)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
     for bundle in std::fs::read_dir(root.join("workflow-core/fixtures/bundles")).unwrap() {
         let source = decode_workflow(&std::fs::read(bundle.unwrap().path()).unwrap()).unwrap();
         // The bundle's referenced pinned prompts and the published operation registry are the real compile inputs.
@@ -176,9 +202,10 @@ fn every_historical_bundle_has_blockers_only_on_agent_workers() {
                     .collect::<Vec<_>>()
             })
             .map(|path| {
-                let text =
+                let text = committed.get(&path).cloned().unwrap_or_else(|| {
                     std::fs::read_to_string(root.join("workflow-config/prompts").join(&path))
-                        .unwrap_or_default();
+                        .unwrap_or_default()
+                });
                 (path, text)
             })
             .collect();
