@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { permissionRequestId, transcriptItemId, transcriptSeq, type TranscriptItem } from "../../acp/transcript-model";
+import { EMPTY_SESSION_LIVE_STATE, permissionRequestId, transcriptItemId, transcriptSeq, type PermissionItem, type PlanItem, type TranscriptItem } from "../../acp/transcript-model";
 import type { TurnKey } from "../types";
-import { groupConfigOptions, selectTimelineItems } from "./session-items";
+import { groupConfigOptions, selectSessionTimelineItems, selectTimelineItems } from "./session-items";
+
+const identity = (index: number) => ({ seq: transcriptSeq(index), id: transcriptItemId(transcriptSeq(index)) });
 
 describe("groupConfigOptions", () => {
   it("routes semantic categories to named slots and the rest to overflow", () => {
@@ -20,7 +22,6 @@ describe("groupConfigOptions", () => {
 
 
 it("maps all transcript variants to the timeline and preserves enum spellings", () => {
-  const identity = (index: number) => ({ seq: transcriptSeq(index), id: transcriptItemId(transcriptSeq(index)) });
   const turn = "operator:test" as TurnKey;
   const message = { message_id: null, is_replayed: false };
   const content = [{ type: "terminal", terminal_id: "console" }] as const;
@@ -56,3 +57,31 @@ it("maps all transcript variants to the timeline and preserves enum spellings", 
     { kind: "turn_note", key: "item-8", state: "failed", stopReason: null, detail: "details" },
   ]);
 });
+
+it("merges the latest plan and open permissions into the timeline once in sequence order", () => {
+  const permission = openPermission(0);
+  const plan: PlanItem = { ...identity(2), kind: "plan", entries: [] };
+  const visible: PlanItem = { ...identity(1), kind: "plan", entries: [] };
+  const state = { ...EMPTY_SESSION_LIVE_STATE, latest_plan: plan, open_permissions: [permission] };
+  const keys = [permission.id, visible.id, plan.id];
+  expect(selectSessionTimelineItems([visible], state).map((item) => item.key)).toEqual(keys);
+  expect(selectSessionTimelineItems([permission, visible, plan], state).map((item) => item.key)).toEqual(keys);
+});
+
+it("retires an unanswered permission when it leaves live state and preserves recorded outcomes", () => {
+  const unanswered = openPermission(0);
+  const resolved: PermissionItem = { ...openPermission(1), resolution: { kind: "cancelled" } };
+  const items = [unanswered, resolved];
+  const state = { ...EMPTY_SESSION_LIVE_STATE, open_permissions: [unanswered] };
+  expect(selectSessionTimelineItems(items, state).map((item) => item.key)).toEqual([unanswered.id, resolved.id]);
+  expect(selectSessionTimelineItems(items, EMPTY_SESSION_LIVE_STATE)).toMatchObject([
+    { key: resolved.id, resolution: { outcome: "cancelled", optionId: null } },
+  ]);
+});
+
+function openPermission(index: number): PermissionItem {
+  return {
+    ...identity(index), kind: "permission", title: "Allow?", request_id: permissionRequestId(`perm-${index}`),
+    options: [], resolution: null,
+  };
+}

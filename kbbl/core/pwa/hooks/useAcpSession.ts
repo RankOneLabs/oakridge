@@ -33,6 +33,21 @@ const EMPTY_VIEW: SessionStreamView = {
 
 const LIVE_FRAME_KINDS = ["item", "item_text", "session_state", "turn_state", "stream_error"] as const;
 
+function parseSessionFrame(event: MessageEvent<string>): SessionWireFrame | null {
+  try {
+    const payload: SessionWireFrame | null = JSON.parse(event.data);
+    if (event.type === "stream_error") {
+      // The shared live relay also emits errors without the session frame discriminator.
+      if (!payload || !("error" in payload) || typeof payload.error !== "string") return null;
+      return { kind: "stream_error", error: payload.error, code: typeof payload.code === "string" ? payload.code : "stream_error" };
+    }
+    if (!payload?.kind || payload.kind === "stream_error") return null;
+    return payload.kind === event.type ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
 export function useAcpSession(sid: string): AcpSessionStream {
   const [view, setView] = useState(EMPTY_VIEW);
   const [streamStatus, setStreamStatus] = useState<Status>("connecting");
@@ -70,13 +85,8 @@ export function useAcpSession(sid: string): AcpSessionStream {
       es.onerror = () => setStreamStatus("disconnected");
 
       const receive = (event: MessageEvent<string>) => {
-        let frame: SessionWireFrame;
-        try {
-          frame = JSON.parse(event.data);
-        } catch {
-          return;
-        }
-        if (frame?.kind !== event.type) return;
+        const frame = parseSessionFrame(event);
+        if (!frame) return;
         if (frame.kind === "epoch") {
           clearPending();
           setView((previous) => ({

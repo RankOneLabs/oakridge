@@ -180,6 +180,15 @@ describe("useAcpSession", () => {
     await waitFor(() => expect(result.current.streamError).toBe("history load failed"));
   });
 
+  it.each([
+    { error: "session not found", code: "session_not_found" },
+    { error: "upstream disconnected" },
+  ])("surfaces relay errors without a session frame kind ($error)", async (payload) => {
+    const { result } = renderHook(() => useAcpSession(SID));
+    act(() => MockEventSource.last!.dispatch("stream_error", JSON.stringify(payload)));
+    await waitFor(() => expect(result.current.streamError).toBe(payload.error));
+  });
+
   it("rebuilds a CLOSED stream when the page returns to the foreground", () => {
     renderHook(() => useAcpSession(SID));
     expect(MockEventSource.instances).toHaveLength(1);

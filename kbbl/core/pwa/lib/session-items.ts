@@ -64,6 +64,18 @@ function selectPermission(item: PermissionItem): Extract<TimelineItem, { kind: "
   };
 }
 
+export function selectSessionTimelineItems(items: readonly TranscriptItem[], state: SessionLiveState): TimelineItem[] {
+  const openPermissions = new Set(state.open_permissions.map((item) => item.id));
+  const visibleItems = items.filter((item) => item.kind !== "permission" || item.resolution !== null || openPermissions.has(item.id));
+  const visibleIds = new Set(visibleItems.map((item) => item.id));
+  const stateItems = state.latest_plan === null ? state.open_permissions : [...state.open_permissions, state.latest_plan];
+  const missingItems = stateItems.filter((item) => !visibleIds.has(item.id));
+  const timeline = missingItems.length === 0
+    ? visibleItems
+    : [...visibleItems, ...missingItems].sort((a, b) => a.seq - b.seq);
+  return selectTimelineItems(timeline);
+}
+
 export function selectTimelineItems(items: readonly TranscriptItem[]): TimelineItem[] {
   return items.map((item) => {
     const key = item.id;

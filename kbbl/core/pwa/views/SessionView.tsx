@@ -5,7 +5,7 @@ import { useAcpSession } from "../hooks/useAcpSession";
 import { usePendingSends } from "../hooks/usePendingSends";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
-import { selectEchoedTurnKeys, selectOpenPermissions, selectTimelineItems, type TimelineItem } from "../lib/session-items";
+import { selectEchoedTurnKeys, selectOpenPermissions, selectSessionTimelineItems, type TimelineItem } from "../lib/session-items";
 import {
   operatorStateLabel,
   selectOperatorExecutionState,
@@ -66,7 +66,7 @@ export function SessionView({
     historyLoaded,
   } = useAcpSession(sid);
 
-  const timelineItems = useMemo(() => selectTimelineItems(items), [items]);
+  const timelineItems = useMemo(() => selectSessionTimelineItems(items, sessionState), [items, sessionState]);
   const openPermissions = useMemo(() => selectOpenPermissions(sessionState), [sessionState]);
   const echoedTurnKeys = useMemo(() => selectEchoedTurnKeys(items), [items]);
   const turnActive = sessionState.active_turn !== null;
