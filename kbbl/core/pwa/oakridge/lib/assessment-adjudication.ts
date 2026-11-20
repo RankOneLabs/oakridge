@@ -4,11 +4,11 @@ import { randomUuid } from "../../lib/random-uuid";
 import type { ParkedGate } from "../artifact-types";
 import { isAdjudicationDecision } from "../adapters/gates";
 import type { OperatorAdjudication, OperatorAddedActionEntry, OperatorDisposition, OperatorProposedActionEntry } from "../operator-contracts/domain/adjudication";
-import type { OperatorActionSource } from "../operator-contracts/domain/assessment";
+import type { OperatorActionSource, OperatorAssessmentAction } from "../operator-contracts/domain/assessment";
 import { composeBuilderFeedback } from "../operator-contracts/domain/builder-feedback";
 import type { OperatorDeclaredDecisionEffect } from "../operator-contracts/core-client/core-types";
 import type { OperatorDecisionDefinition, OperatorRevisionDecision } from "../operator-contracts/projections/unit-view";
-import type { CurrentAssessment } from "./current-assessment";
+import { selectAssessmentActions, type CurrentAssessment } from "./current-assessment";
 import { selectHandoffRevisionId } from "./handoff-provenance";
 
 export const NO_REVIEW_REASON = "This revision has no open assessment review to record a decision on.";
@@ -18,7 +18,14 @@ export type PendingDisposition =
   | { readonly action_id: string; readonly disposition: "accepted" }
   | { readonly action_id: string; readonly disposition: "modified"; readonly final_text: string }
   | { readonly action_id: string; readonly disposition: "rejected"; readonly reason: string };
-export interface AdjudicationState { readonly assessment: CurrentAssessment; readonly dispositions: readonly PendingDisposition[]; readonly added_actions: readonly OperatorAddedActionEntry[] }
+/** What the operator has typed for one action, kept across choices so switching back to Edit or Drop restores it. */
+export interface ActionDraft { readonly action_id: string; readonly final_text: string; readonly reason: string }
+export interface AdjudicationState {
+  readonly assessment: CurrentAssessment;
+  readonly dispositions: readonly PendingDisposition[];
+  readonly drafts: readonly ActionDraft[];
+  readonly added_actions: readonly OperatorAddedActionEntry[];
+}
 export type DispositionChoice = { readonly kind: "accept" } | { readonly kind: "edit"; readonly final_text: string } | { readonly kind: "reject"; readonly reason: string };
 
 /** What the operator reads for each disposition: the control that picks it, and the word once recorded. */
@@ -27,21 +34,45 @@ export const DISPOSITION_RECORDED_LABEL: Readonly<Record<OperatorDisposition, st
 
 /** Every assessor action starts kept; the operator touches only the ones to edit or drop. */
 export function initialAdjudication(assessment: CurrentAssessment): AdjudicationState {
-  return { assessment, dispositions: assessment.next_actions.map(action => ({ action_id: action.id, disposition: "accepted" })), added_actions: [] };
+  return { assessment, dispositions: assessment.next_actions.map(action => ({ action_id: action.id, disposition: "accepted" })),
+    drafts: assessment.next_actions.map(action => ({ action_id: action.id, final_text: action.text, reason: "" })), added_actions: [] };
 }
 const toDisposition = (action_id: string, choice: DispositionChoice): PendingDisposition =>
   choice.kind === "accept" ? { action_id, disposition: "accepted" }
     : choice.kind === "edit" ? { action_id, disposition: "modified", final_text: choice.final_text }
     : { action_id, disposition: "rejected", reason: choice.reason };
+const toDraft = (draft: ActionDraft, choice: DispositionChoice): ActionDraft =>
+  choice.kind === "edit" ? { ...draft, final_text: choice.final_text } : choice.kind === "reject" ? { ...draft, reason: choice.reason } : draft;
 export function setDisposition(state: AdjudicationState, action_id: string, choice: DispositionChoice): AdjudicationState {
-  return { ...state, dispositions: state.dispositions.map(entry => entry.action_id === action_id ? toDisposition(action_id, choice) : entry) };
+  return { ...state, dispositions: state.dispositions.map(entry => entry.action_id === action_id ? toDisposition(action_id, choice) : entry),
+    drafts: state.drafts.map(draft => draft.action_id === action_id ? toDraft(draft, choice) : draft) };
 }
 export const selectPendingDisposition = (state: AdjudicationState, action_id: string): PendingDisposition =>
   state.dispositions.find(entry => entry.action_id === action_id) ?? { action_id, disposition: "accepted" };
+export const selectActionDraft = (state: AdjudicationState, action: OperatorAssessmentAction): ActionDraft =>
+  state.drafts.find(draft => draft.action_id === action.id) ?? { action_id: action.id, final_text: action.text, reason: "" };
+/** The choice a Keep, Edit or Drop click makes: Edit and Drop pick up what was typed for them before. */
+export const selectDispositionChoice = (draft: ActionDraft, disposition: OperatorDisposition): DispositionChoice =>
+  disposition === "accepted" ? { kind: "accept" } : disposition === "modified" ? { kind: "edit", final_text: draft.final_text } : { kind: "reject", reason: draft.reason };
 
 export interface AddedActionInput { readonly audience: "builder" | "operator"; readonly source: OperatorActionSource; readonly text: string }
 export function addAction(state: AdjudicationState, input: AddedActionInput): AdjudicationState {
   return { ...state, added_actions: [...state.added_actions, { action_id: randomUuid(), origin: "operator", final_text: input.text, audience: input.audience, source: input.source }] };
+}
+/** An added action is the operator's own until sent, so it can be taken back. */
+export function removeAddedAction(state: AdjudicationState, action_id: string): AdjudicationState {
+  return { ...state, added_actions: state.added_actions.filter(entry => entry.action_id !== action_id) };
+}
+
+export type ActionAudience = OperatorAssessmentAction["audience"];
+export interface AudienceRowsInput { readonly assessment: CurrentAssessment; readonly added_actions: readonly OperatorAddedActionEntry[]; readonly recorded: OperatorAdjudication | null }
+export interface ProposedActionRow { readonly action: OperatorAssessmentAction; readonly recorded: OperatorProposedActionEntry | null }
+export interface AudienceRows { readonly proposed: readonly ProposedActionRow[]; readonly added: readonly OperatorAddedActionEntry[]; readonly count: number }
+/** One audience's list: the assessor's actions with any recorded disposition, then the operator's added ones. */
+export function selectAudienceRows({ assessment, added_actions, recorded }: AudienceRowsInput, audience: ActionAudience): AudienceRows {
+  const proposed = selectAssessmentActions(assessment)[audience].map(action => ({ action, recorded: recorded?.entries.find(entry => entry.action_id === action.id) ?? null }));
+  const added = added_actions.filter(entry => entry.audience === audience);
+  return { proposed, added, count: proposed.length + added.length };
 }
 
 function selectEntries(state: AdjudicationState): readonly OperatorProposedActionEntry[] {

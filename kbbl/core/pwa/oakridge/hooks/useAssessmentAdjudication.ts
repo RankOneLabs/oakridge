@@ -3,7 +3,7 @@ import { randomUuid } from "../../lib/random-uuid";
 import type { ParkedGate } from "../artifact-types";
 import { decisionAction } from "../adapters/core";
 import type { CurrentAssessment } from "../lib/current-assessment";
-import { addAction, initialAdjudication, selectAdjudicationDecision, selectAdjudicationGate, selectAdjudicationPayload, selectBuilderPreview, setDisposition,
+import { addAction, initialAdjudication, removeAddedAction, selectAdjudicationDecision, selectAdjudicationGate, selectAdjudicationPayload, selectBuilderPreview, setDisposition,
   type AddedActionInput, type AdjudicationGateState, type AdjudicationState, type DispositionChoice, type ReviewDecisionDefinition } from "../lib/assessment-adjudication";
 import type { OperatorDecisionDefinition, OperatorRevisionDecision } from "../operator-contracts/projections/unit-view";
 import { useResumeGate } from "./useResumeGate";
@@ -16,6 +16,7 @@ export interface AssessmentAdjudication extends AdjudicationGateState {
   readonly error: Error | null;
   readonly choose: (action_id: string, choice: DispositionChoice) => void;
   readonly add: (input: AddedActionInput) => void;
+  readonly remove: (action_id: string) => void;
   readonly submit: (decision: ReviewDecisionDefinition) => void;
   readonly requestAssessmentChanges: (decision: OperatorDecisionDefinition, feedback: string) => void;
 }
@@ -49,5 +50,6 @@ export function useAssessmentAdjudication({ assessment, revisionId, gate, decisi
   return { ...gateState, state, gate, isPending: mutation.isPending, error: mutation.isError ? mutation.error : null,
     choose: (action_id, choice) => setState(current => setDisposition(current, action_id, choice)),
     add: input => setState(current => addAction(current, input)),
+    remove: action_id => setState(current => removeAddedAction(current, action_id)),
     submit, requestAssessmentChanges };
 }

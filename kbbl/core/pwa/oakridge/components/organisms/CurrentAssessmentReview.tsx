@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ViewerProps } from "../../artifactRegistry";
 import type { ParkedGate } from "../../artifact-types";
 import { useAssessmentAdjudication } from "../../hooks/useAssessmentAdjudication";
@@ -37,11 +38,14 @@ interface AdjudicatedProps {
   review: Pick<ViewerProps, "source" | "itemGrading" | "onOpenItem">;
 }
 
-/** Keyed by revision, so a new assessment starts a fresh adjudication. An open review opens on its actions. */
+/** Keyed by revision, so a new assessment starts a fresh adjudication. An open review opens on its actions, even when its gate loads late. */
 function AdjudicatedAssessment({ assessment, revisionId, gate, decisions, itemLabels, review }: AdjudicatedProps) {
   const adjudication = useAssessmentAdjudication({ assessment, revisionId, gate, decisions });
+  // Stays on actions once the review has been open, so recording a decision does not move the operator away.
+  const [wasOpen, setWasOpen] = useState(adjudication.isOpen);
+  if (adjudication.isOpen && !wasOpen) setWasOpen(true);
   return <CurrentAssessmentViewer assessment={assessment} itemLabels={itemLabels} {...review}
-    initialSection={adjudication.isOpen ? "actions" : "items"}
+    initialSection={wasOpen ? "actions" : "items"}
     decisionBar={<AssessmentDecisionBar adjudication={adjudication} />}
     handoff={<AssessmentActionsPanel assessment={assessment} adjudication={adjudication} />} />;
 }

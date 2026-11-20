@@ -1,6 +1,7 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { CurrentAssessmentViewer } from "../components/molecules/CurrentAssessmentViewer";
+import { CurrentAssessmentReview } from "../components/organisms/CurrentAssessmentReview";
 import { AssessmentActionsPanel } from "../components/organisms/AssessmentActionsPanel";
 import { AssessmentDecisionBar } from "../components/organisms/AssessmentDecisionBar";
 import { useAssessmentAdjudication } from "../hooks/useAssessmentAdjudication";
@@ -11,6 +12,8 @@ import { AdjudicationHarness } from "./assessment-adjudication-harness";
 
 const mutate = vi.fn();
 vi.mock("../hooks/useResumeGate", () => ({ useResumeGate: () => ({ mutate, isPending: false, isError: false }) }));
+vi.mock("../hooks/useCohortArtifact", () => ({ useCohortArtifact: () => ({ kind: "missing" }) }));
+vi.mock("../hooks/useAssessmentHistory", () => ({ useAssessmentHistory: () => ({ data: [], isError: false, error: null }) }));
 afterEach(() => { cleanup(); mutate.mockReset(); });
 const assessmentChanges = { key: "request_assessment_changes", label: "Request assessment changes", payload_schema: "{feedback: text}",
   fields: [{ key: "feedback", label: "What must the assessment change?" }],
@@ -107,4 +110,36 @@ it("an edit survives switching assessment sections", () => {
   fireEvent.click(screen.getByRole("tab", { name: "Tests" }));
   fireEvent.click(screen.getByRole("tab", { name: /^Actions/ }));
   expect((builderActions().getByLabelText("Replacement text") as HTMLTextAreaElement).value).toBe("Replacement");
+});
+it("an added action can be removed, which unblocks accept once every builder action is dropped", () => {
+  harness();
+  fireEvent.click(builderActions().getByRole("button", { name: "Drop" }));
+  fireEvent.click(screen.getByRole("button", { name: "+ Add action" }));
+  fireEvent.change(screen.getByLabelText("Added action text"), { target: { value: "Added by mistake." } });
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.click(builderActions().getByRole("button", { name: "Remove" }));
+  expect([builderActions().queryByText("Added by mistake."), (bar().getByRole("button", { name: "Accept" }) as HTMLButtonElement).disabled]).toEqual([null, false]);
+});
+it("switching an edited action to Keep and back restores the replacement text", () => {
+  harness();
+  fireEvent.click(builderActions().getByRole("button", { name: "Edit" }));
+  fireEvent.change(builderActions().getByLabelText("Replacement text"), { target: { value: "Replacement" } });
+  fireEvent.click(builderActions().getByRole("button", { name: "Keep" }));
+  fireEvent.click(builderActions().getByRole("button", { name: "Edit" }));
+  expect((builderActions().getByLabelText("Replacement text") as HTMLTextAreaElement).value).toBe("Replacement");
+});
+describe("a review whose gate loads after the assessment", () => {
+  const source = { run_id: "run", revision_id: "assessment:1", label: null, as_of: "2026-11-20" };
+  const actionsTab = () => screen.getByRole("tab", { name: /^Actions/ }).getAttribute("aria-selected");
+  it("opens on the actions once the gate arrives", () => {
+    const view = render(<CurrentAssessmentReview body={CURRENT_ASSESSMENT} source={source} />);
+    view.rerender(<CurrentAssessmentReview body={CURRENT_ASSESSMENT} source={source} gate={gate} />);
+    expect(actionsTab()).toBe("true");
+  });
+  it("keeps a section the operator already chose", () => {
+    const view = render(<CurrentAssessmentReview body={CURRENT_ASSESSMENT} source={source} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Tests" }));
+    view.rerender(<CurrentAssessmentReview body={CURRENT_ASSESSMENT} source={source} gate={gate} />);
+    expect(actionsTab()).toBe("false");
+  });
 });

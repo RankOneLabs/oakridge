@@ -1,13 +1,15 @@
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { TextArea } from "../../../components/atoms/TextArea";
-import { DISPOSITION_CONTROL_LABEL, DISPOSITION_RECORDED_LABEL, selectActionSourceLabel, type DispositionChoice, type PendingDisposition } from "../../lib/assessment-adjudication";
+import { DISPOSITION_CONTROL_LABEL, DISPOSITION_RECORDED_LABEL, selectActionSourceLabel, selectDispositionChoice, type ActionDraft, type DispositionChoice, type PendingDisposition } from "../../lib/assessment-adjudication";
 import type { OperatorProposedActionEntry } from "../../operator-contracts/domain/adjudication";
 import type { OperatorAssessmentAction } from "../../operator-contracts/domain/assessment";
 
 interface Props {
   action: OperatorAssessmentAction;
   pending: PendingDisposition;
+  /** What was typed for Edit and Drop, so switching back restores it. */
+  draft: ActionDraft;
   /** The disposition recorded on this revision; once present the action is read-only. */
   recorded: OperatorProposedActionEntry | null;
   disabled: boolean;
@@ -17,10 +19,7 @@ interface Props {
 const CHOICES = ["accepted", "modified", "rejected"] as const;
 
 /** One assessor action: its words, where it comes from, and Keep / Edit / Drop. */
-export function AdjudicationAction({ action, pending, recorded, disabled, onChange }: Props) {
-  const choose = (disposition: typeof CHOICES[number]): DispositionChoice => disposition === "accepted" ? { kind: "accept" }
-    : disposition === "modified" ? { kind: "edit", final_text: pending.disposition === "modified" ? pending.final_text : action.text }
-    : { kind: "reject", reason: pending.disposition === "rejected" ? pending.reason : "" };
+export function AdjudicationAction({ action, pending, draft, recorded, disabled, onChange }: Props) {
   return <li className="flex flex-col gap-2 rounded-md border border-[var(--border-decorative)] p-3" data-testid="or-adjudication-action">
     {recorded?.disposition === "modified" && recorded.final_text != null
       ? <><p>{recorded.final_text}</p><p className="text-xs text-[var(--text-muted)]">Assessor wrote: {action.text}</p></>
@@ -30,7 +29,7 @@ export function AdjudicationAction({ action, pending, recorded, disabled, onChan
       {recorded && <Chip tone={recorded.disposition === "rejected" ? "muted" : "success"}>{DISPOSITION_RECORDED_LABEL[recorded.disposition]}</Chip>}
       {!recorded && <div role="group" aria-label="Disposition" className="ml-auto flex gap-1">{CHOICES.map(disposition =>
         <Button key={disposition} size="xsmall" variant={pending.disposition === disposition ? "primary" : "secondary"} aria-pressed={pending.disposition === disposition}
-          disabled={disabled} onClick={() => onChange(choose(disposition))}>{DISPOSITION_CONTROL_LABEL[disposition]}</Button>)}</div>}
+          disabled={disabled} onClick={() => onChange(selectDispositionChoice(draft, disposition))}>{DISPOSITION_CONTROL_LABEL[disposition]}</Button>)}</div>}
     </div>
     {recorded?.reason && <p className="text-xs">Why dropped: {recorded.reason}</p>}
     {!recorded && pending.disposition === "modified" && <label className="flex flex-col gap-1 text-xs">Replacement text

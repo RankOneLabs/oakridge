@@ -13,7 +13,9 @@ interface Props<Section extends string> {
 /** An artifact viewer's section subnav, in the Settings subnav look, with one section shown below it at a time. */
 export function ArtifactSectionTabs<Section extends string>({ label, sections, initial, children }: Props<Section>) {
   const baseId = useId();
-  const [active, setActive] = useState<Section>(initial);
+  // Follows `initial` until the operator picks a section, so a default that settles after mount, such as an open review's, still applies.
+  const [chosen, setActive] = useState<Section | null>(null);
+  const active = chosen ?? initial;
   const [pendingAnchorId, setPendingAnchorId] = useState<string | null>(null);
   const tabId = (section: Section) => `${baseId}-tab-${section}`;
   const panelId = (section: Section) => `${baseId}-panel-${section}`;
