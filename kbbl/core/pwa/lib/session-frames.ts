@@ -1,64 +1,115 @@
-import { EMPTY_SESSION_LIVE_STATE } from "../../acp/transcript-model";
-import type { SessionEpochFrame, SessionHistoryUnavailableReason, SessionWireFrame, TranscriptItem } from "../types";
+import {
+  INITIAL_SESSION_TRANSCRIPT_STATE,
+  type SessionTranscriptState,
+} from "../state/session-transcript-store";
+import type { SessionEpochFrame, SessionWireFrame, TranscriptItem, TranscriptItemId } from "../types";
 
-export interface SessionStreamState extends Omit<SessionEpochFrame, "kind" | "items" | "unavailable_reason"> {
-  items: TranscriptItem[];
-  unavailable_reason: SessionHistoryUnavailableReason | null;
-  stream_error: string | null;
+export function applyEpochFrame(
+  frame: SessionEpochFrame,
+  previous = INITIAL_SESSION_TRANSCRIPT_STATE,
+): SessionTranscriptState {
+  return {
+    ...INITIAL_SESSION_TRANSCRIPT_STATE,
+    stream_epoch: frame.stream_epoch,
+    items_by_id: new Map(frame.items.map((item) => [item.id, item])),
+    ordered_ids: frame.items.map((item) => item.id),
+    has_earlier: frame.has_earlier,
+    is_truncated: frame.is_truncated,
+    session_state: frame.session_state,
+    open_turns: frame.open_turns,
+    connection: { status: previous.connection.status, stream_error: null },
+    history: {
+      kind: frame.history_kind,
+      expired: frame.expired,
+      summary: frame.summary,
+      unavailable_reason: frame.unavailable_reason ?? null,
+    },
+    transcript_version: previous.transcript_version + 1,
+  };
 }
 
-export const EMPTY_SESSION_STREAM_STATE: SessionStreamState = {
-  stream_epoch: null,
-  items: [],
-  session_state: EMPTY_SESSION_LIVE_STATE,
-  has_earlier: false,
-  is_truncated: false,
-  history_kind: "unavailable",
-  expired: false,
-  summary: null,
-  unavailable_reason: null,
-  open_turns: [],
-  stream_error: null,
-};
-
-export function applySessionFrame(state: SessionStreamState, frame: SessionWireFrame): SessionStreamState {
-  switch (frame.kind) {
-    case "epoch": {
-      const { kind, ...epoch } = frame;
-      return { ...epoch, items: [...epoch.items], unavailable_reason: epoch.unavailable_reason ?? null, stream_error: null };
-    }
-    case "item": {
-      const items = [...state.items];
-      const existing = items.findIndex((item) => item.id === frame.item.id);
-      if (existing !== -1) {
-        items[existing] = frame.item;
-      } else {
-        const next = items.findIndex((item) => item.seq > frame.item.seq);
-        items.splice(next === -1 ? items.length : next, 0, frame.item);
+export function applyIncrementalFrames(
+  state: SessionTranscriptState,
+  frames: readonly SessionWireFrame[],
+): SessionTranscriptState {
+  let next = state;
+  let items: Map<TranscriptItemId, TranscriptItem> | null = null;
+  let ordered: TranscriptItemId[] | null = null;
+  for (const frame of frames) {
+    switch (frame.kind) {
+      case "epoch":
+        break;
+      case "item": {
+        items ??= new Map(state.items_by_id);
+        const { item } = frame;
+        if (!items.has(item.id)) {
+          ordered ??= [...state.ordered_ids];
+          // Live inserts usually append. Only search when the new item belongs earlier.
+          const last = ordered.at(-1);
+          const updatedItems = items;
+          const lastItem = last === undefined ? undefined : updatedItems.get(last);
+          const index = lastItem && lastItem.seq > item.seq
+            ? ordered.findIndex((id) => {
+                const entry = updatedItems.get(id);
+                return entry !== undefined && entry.seq > item.seq;
+              })
+            : -1;
+          ordered.splice(index === -1 ? ordered.length : index, 0, item.id);
+        }
+        items.set(item.id, item);
+        break;
       }
-      return { ...state, items };
+      case "item_text": {
+        const item = (items ?? state.items_by_id).get(frame.id);
+        if (item?.kind !== "user_message" && item?.kind !== "agent_message" && item?.kind !== "thought") break;
+        const text = item.text + frame.delta;
+        items ??= new Map(state.items_by_id);
+        items.set(item.id, item.kind === "user_message"
+          ? { ...item, text }
+          : { ...item, text, is_streaming: frame.is_streaming });
+        break;
+      }
+      case "session_state":
+        next = { ...next, session_state: frame.state };
+        break;
+      case "turn_state":
+        next = {
+          ...next,
+          open_turns: frame.state === "prompting"
+            ? next.open_turns.map((turn) => turn.turnKey === frame.turn_key ? { ...turn, status: "prompting" } : turn)
+            : next.open_turns.filter((turn) => turn.turnKey !== frame.turn_key),
+        };
+        break;
+      case "stream_error":
+        next = { ...next, connection: { ...next.connection, stream_error: frame.error } };
+        break;
     }
-    case "item_text": {
-      const index = state.items.findIndex((item) => item.id === frame.id);
-      const item = state.items[index];
-      if (item?.kind !== "user_message" && item?.kind !== "agent_message" && item?.kind !== "thought") return state;
-      const items = [...state.items];
-      const text = item.text + frame.delta;
-      items[index] = item.kind === "user_message"
-        ? { ...item, text }
-        : { ...item, text, is_streaming: frame.is_streaming };
-      return { ...state, items };
-    }
-    case "session_state":
-      return { ...state, session_state: frame.state };
-    case "turn_state":
-      return {
-        ...state,
-        open_turns: frame.state === "prompting"
-          ? state.open_turns.map((turn) => turn.turnKey === frame.turn_key ? { ...turn, status: "prompting" } : turn)
-          : state.open_turns.filter((turn) => turn.turnKey !== frame.turn_key),
-      };
-    case "stream_error":
-      return { ...state, stream_error: frame.error };
   }
+  if (next === state && items === null) return state;
+  return {
+    ...next,
+    items_by_id: items ?? state.items_by_id,
+    ordered_ids: ordered ?? state.ordered_ids,
+    transcript_version: state.transcript_version + 1,
+  };
+}
+
+export function prependPage(
+  state: SessionTranscriptState,
+  page_items: readonly TranscriptItem[],
+): SessionTranscriptState {
+  const items = new Map(state.items_by_id);
+  const earlier: TranscriptItemId[] = [];
+  for (const item of page_items) {
+    if (items.has(item.id)) continue;
+    earlier.push(item.id);
+    items.set(item.id, item);
+  }
+  if (earlier.length === 0) return state;
+  return {
+    ...state,
+    items_by_id: items,
+    ordered_ids: [...earlier, ...state.ordered_ids],
+    transcript_version: state.transcript_version + 1,
+  };
 }
