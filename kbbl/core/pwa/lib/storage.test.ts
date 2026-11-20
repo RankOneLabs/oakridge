@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import {
   newSessionModelKey,
+  readStoredThreadExpanded,
+  threadExpandedKey,
+  writeStoredThreadExpanded,
   readStoredNewSessionModel,
   writeStoredNewSessionModel,
 } from "./storage";
@@ -139,5 +142,33 @@ describe("new session model storage", () => {
   test("uses Opus and Sol when no preference is stored", () => {
     expect(readStoredNewSessionModel(claudeRuntime)).toBe("opus");
     expect(readStoredNewSessionModel(codexRuntime)).toBe("gpt-5.6-sol");
+  });
+});
+
+describe("conversation expansion", () => {
+  test("defaults to collapsed for missing and unrecognized values", () => {
+    expect(readStoredThreadExpanded("a")).toBe(false);
+    localStorage.setItem(threadExpandedKey("a"), "true");
+    expect(readStoredThreadExpanded("a")).toBe(false);
+  });
+
+  test("round-trips both preferences independently per session", () => {
+    writeStoredThreadExpanded("a", true);
+    expect(localStorage.getItem("kbbl.session.threadExpanded.a")).toBe("1");
+    expect(readStoredThreadExpanded("a")).toBe(true);
+    expect(readStoredThreadExpanded("b")).toBe(false);
+
+    writeStoredThreadExpanded("a", false);
+    expect(localStorage.getItem("kbbl.session.threadExpanded.a")).toBe("0");
+    expect(readStoredThreadExpanded("a")).toBe(false);
+  });
+
+  test("treats blocked storage as collapsed and safely ignores writes", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      get() { throw new Error("storage blocked"); },
+    });
+    expect(readStoredThreadExpanded("a")).toBe(false);
+    expect(() => writeStoredThreadExpanded("a", true)).not.toThrow();
   });
 });

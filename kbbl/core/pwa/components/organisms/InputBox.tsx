@@ -3,21 +3,7 @@ import { Button } from "../atoms/Button";
 import { useState, type ReactNode, type Ref } from "react";
 import { useMutation } from "@tanstack/react-query";
 
-import { randomUuid } from "../../lib/random-uuid";
-import type { AcceptedInputReceipt } from "../../hooks/usePendingSends";
-import type { TurnKey } from "../../types";
-
-// Distinguishes a server's explicit non-OK response (which means the server
-// definitively rejected the message — safe to roll back the optimistic
-// bubble and re-show the text) from a thrown fetch (network drop, request
-// abort mid-flight — we don't know whether the server processed it, so
-// leave the bubble and warn the operator).
-class ServerRejection extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ServerRejection";
-  }
-}
+import { useSendInput, type SendInputCallbacks } from "../../hooks/useSendInput";
 
 /** Fit the composer to its draft; CSS caps its height and keeps overflow scrollable. */
 function fitToContent(field: HTMLTextAreaElement | null): void {
@@ -36,13 +22,10 @@ export function InputBox({
   onSendFailed,
   isTurnActive,
   onInterruptingChange,
-}: {
+}: SendInputCallbacks & {
   ref?: Ref<HTMLDivElement>;
   sid: string;
   tools?: ReactNode;
-  onSend: (text: string, clientMessageId: string) => void;
-  onSendAccepted: (clientMessageId: string, receipt: AcceptedInputReceipt) => void;
-  onSendFailed: (clientMessageId: string) => void;
   // True while a turn is in flight. Interrupt cancels that turn and leaves
   // the session live; session removal lives in the session listings.
   isTurnActive: boolean;
@@ -51,77 +34,20 @@ export function InputBox({
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const sendMutation = useMutation({
-    // client_message_id is the operator turn's idempotency key (§14.5),
-    // minted per message (not per request) so any retry of the same send
-    // cannot double-dispatch.
-    mutationFn: async (payload: { text: string; clientMessageId: string }) => {
-      const res = await fetch(`/sessions/${encodeURIComponent(sid)}/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          text: payload.text,
-          client_message_id: payload.clientMessageId,
-        }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: unknown;
-        } | null;
-        throw new ServerRejection(
-          typeof body?.error === "string"
-            ? body.error
-            : `server returned ${res.status}`,
-        );
-      }
-      const body = (await res.json()) as { turn_key: string; status: string };
-      if (typeof body.turn_key !== "string" || body.turn_key.length === 0) {
-        throw new ServerRejection("server returned an invalid turn key");
-      }
-      if (body.status !== "accepted" && body.status !== "prompting") {
-        throw new ServerRejection(`server returned invalid turn status ${body.status}`);
-      }
-      return {
-        turnKey: body.turn_key as TurnKey,
-        status: body.status,
-      } satisfies AcceptedInputReceipt;
-    },
-  });
+  const { send: sendInput, isPending } = useSendInput(sid, { onSend, onSendAccepted, onSendFailed });
 
   async function send() {
     const payload = text.trim();
-    if (!payload || sendMutation.isPending) return;
-    // Clear the input + add the optimistic bubble *before* the network round
-    // trip so the operator gets immediate "I sent" feedback even on a slow
-    // tailnet. Two failure modes, treated differently:
-    //  - Explicit non-OK response (4xx/5xx): server definitively rejected.
-    //    Roll the bubble back, restore the text, surface the server's
-    //    error so the operator can edit/retry without losing the message.
-    //  - Thrown fetch (network drop, server crash mid-request): we don't
-    //    know whether the server processed it. Leave the bubble in place
-    //    and warn that delivery is uncertain — re-sending could double the
-    //    command if the original actually went through.
+    if (!payload || isPending) return;
     setText("");
     setError(null);
-    const clientMessageId = randomUuid();
-    onSend(payload, clientMessageId);
-    try {
-      const receipt = await sendMutation.mutateAsync({
-        text: payload,
-        clientMessageId,
-      });
-      onSendAccepted(clientMessageId, receipt);
-    } catch (err) {
-      if (err instanceof ServerRejection) {
-        onSendFailed(clientMessageId);
-        setText(payload);
-        setError(err.message);
-      } else {
-        const msg = err instanceof Error ? err.message : "request failed";
-        setError(
-          `${msg} — delivery status unknown, check the transcript before retrying`,
-        );
-      }
+    const result = await sendInput(payload);
+    if (result.ok) return;
+    if (result.error.kind === "rejected") {
+      setText(payload);
+      setError(result.error.message);
+    } else {
+      setError(`${result.error.message} — delivery status unknown, check the transcript before retrying`);
     }
   }
 
@@ -190,7 +116,7 @@ export function InputBox({
         <Button variant="session"
           type="button"
           onClick={() => void send()}
-          disabled={sendMutation.isPending || text.trim().length === 0}
+          disabled={isPending || text.trim().length === 0}
         >
           Send
         </Button>

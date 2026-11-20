@@ -1,7 +1,7 @@
 import { AcpUsageStore } from "#kbbl/core/acp/store-usage";
 import type { TurnUsage } from "#kbbl/core/acp/usage-parsers/types";
 import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
-import { AcpTurnStore, type AcceptTurnInput, type AcceptTurnOutcome, type OpenTurnRow, type RetainedPromptTurn, type BootSweepResult } from "./store-turns";
+import { AcpTurnStore, type AcceptedTurnRow, type AcceptTurnInput, type AcceptTurnOutcome, type OpenTurnRow, type RetainedPromptTurn, type BootSweepResult } from "./store-turns";
 import { AcpSummaryStore } from "./store-summaries";
 import { AcpWorktreeStore, type ReusableWorktreeClaimInput, type ReusableWorktreeClaim, type WorktreeAssignment } from "./store-worktrees";
 import { nowIso, toAcpSessionRow, type RawAcpSessionRow } from "./store-records";
@@ -48,8 +48,11 @@ export type ClaimOutcome =
   | { kind: "existing"; row: AcpSessionRow }
   | { kind: "spec_conflict"; row: AcpSessionRow };
 
+type TurnAcceptedListener = (turn: AcceptedTurnRow) => void;
+
 export class AcpSessionStore {
   private readonly sessionsChangedListeners = new Set<() => void>();
+  private readonly turnAcceptedListeners = new Map<KbblSessionId, Set<TurnAcceptedListener>>();
 
   /** Usage rows and readings (migration 006); callers use it directly. */
   readonly usage: AcpUsageStore;
@@ -355,7 +358,22 @@ export class AcpSessionStore {
     this.notifySessionsChanged();
   }
 
-  acceptTurn(input: AcceptTurnInput): AcceptTurnOutcome { return this.turns.acceptTurn(input); }
+  subscribeTurnAccepted(sid: KbblSessionId, listener: TurnAcceptedListener): () => void {
+    const listeners = this.turnAcceptedListeners.get(sid) ?? new Set<TurnAcceptedListener>();
+    listeners.add(listener);
+    this.turnAcceptedListeners.set(sid, listeners);
+    return () => {
+      if (listeners.delete(listener) && listeners.size === 0) this.turnAcceptedListeners.delete(sid);
+    };
+  }
+
+  acceptTurn(input: AcceptTurnInput): AcceptTurnOutcome {
+    const outcome = this.turns.acceptTurn(input);
+    if (outcome.kind === "created") {
+      for (const listener of this.turnAcceptedListeners.get(input.sid) ?? []) listener(outcome.row);
+    }
+    return outcome;
+  }
   getTurn(sid: KbblSessionId, turnKey: TurnKey): AcpTurnRow | null { return this.turns.getTurn(sid, turnKey); }
   getInitialTurn(sid: KbblSessionId): AcpTurnRow | null { return this.turns.getInitialTurn(sid); }
   hasDispatchedTurns(sid: KbblSessionId): boolean { return this.turns.hasDispatchedTurns(sid); }

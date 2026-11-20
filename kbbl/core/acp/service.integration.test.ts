@@ -196,7 +196,7 @@ test("scripted Claude responses and cost snapshots survive controller turns", as
   expect(result.readings[0]).toMatchObject({
     process_seq: 0, active_turn_key: result.turns[0]?.turn_key, autonomous: true, origin_kind: "peer", cost_amount: 2.5,
   });
-  expect(harness.registry.getLive(sid)?.snapshotEvents().some(event => event.kind === "usage")).toBe(true);
+  expect(harness.registry.getLive(sid)?.snapshotTranscript().live_state.usage).toEqual({ used: 60, size: 100, cost: { amount: 2.5, currency: "USD" } });
 }, 20000);
 
 

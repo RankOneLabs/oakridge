@@ -1,3 +1,4 @@
+import type { TranscriptSnapshot } from "./transcript-model";
 import type { OperatorPrIntegration as PrIntegration } from "../pwa/oakridge/operator-contracts/domain/pr-integration";
 // Domain model for the ACP session substrate (migration spec §8–§13, §18).
 // Row shapes mirror migration 027_acp_sessions.sql; the start-spec shape
@@ -318,7 +319,7 @@ export type UiSessionHistory =
   | {
       readonly kind: "transcript";
       readonly sid: KbblSessionId;
-      readonly events: readonly AcpUiEvent[];
+      readonly transcript: TranscriptSnapshot;
       readonly openTurns: readonly UiOpenTurn[];
       readonly expired: false;
       readonly summary: null;
@@ -326,7 +327,7 @@ export type UiSessionHistory =
   | {
       readonly kind: "summary";
       readonly sid: KbblSessionId;
-      readonly events: readonly [];
+      readonly transcript: null;
       readonly openTurns: readonly UiOpenTurn[];
       readonly expired: true;
       readonly summary: TerminalSessionSummary;
@@ -334,7 +335,7 @@ export type UiSessionHistory =
   | {
       readonly kind: "unavailable";
       readonly sid: KbblSessionId;
-      readonly events: readonly [];
+      readonly transcript: null;
       readonly openTurns: readonly UiOpenTurn[];
       readonly expired: true;
       readonly summary: null;
@@ -391,11 +392,28 @@ export interface UiAvailableCommand {
   readonly description: string | null;
 }
 
+export interface UiToolCallDelta {
+  readonly phase: "create" | "update";
+  readonly title: string | null;
+  readonly kind: string | null;
+  readonly status: string | null;
+  readonly content: readonly schema.ToolCallContent[] | null;
+  readonly locations: readonly UiToolLocation[] | null;
+}
+
 export type AcpUiEvent =
-  | { kind: "user_message"; id: string; content: UiContent[]; replayed: boolean }
+  | {
+      kind: "user_message";
+      id: string;
+      messageId?: string | null;
+      turnKey?: TurnKey | null;
+      content: UiContent[];
+      replayed: boolean;
+    }
   | {
       kind: "agent_message";
       id: string;
+      messageId?: string | null;
       content: UiContent[];
       streaming: boolean;
       replayed: boolean;
@@ -403,6 +421,7 @@ export type AcpUiEvent =
   | {
       kind: "thought";
       id: string;
+      messageId?: string | null;
       content: UiContent[];
       streaming: boolean;
       replayed: boolean;
@@ -413,6 +432,7 @@ export type AcpUiEvent =
       title: string;
       status: string;
       content: unknown;
+      delta?: UiToolCallDelta;
       locations?: readonly UiToolLocation[];
     }
   | { kind: "plan"; entries: readonly UiPlanEntry[] }

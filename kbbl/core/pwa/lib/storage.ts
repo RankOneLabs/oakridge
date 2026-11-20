@@ -149,3 +149,19 @@ export function readStoredQuickActionKeys(): string[] {
 export function writeStoredQuickActionKeys(keys: string[]): void {
   try { localStorage.setItem(QUICK_ACTIONS_STORAGE_KEY, JSON.stringify(keys)); } catch {}
 }
+
+export function threadExpandedKey(sid: string): string {
+  return `kbbl.session.threadExpanded.${sid}`;
+}
+
+export function readStoredThreadExpanded(sid: string): boolean {
+  try {
+    return localStorage.getItem(threadExpandedKey(sid)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function writeStoredThreadExpanded(sid: string, expanded: boolean): void {
+  try { localStorage.setItem(threadExpandedKey(sid), expanded ? "1" : "0"); } catch {}
+}

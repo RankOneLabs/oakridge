@@ -62,7 +62,8 @@ async function fillAndSubmit() {
 it("offers development and study, and no workflow the PWA cannot launch", async () => {
   renderForm();
   await waitFor(() => expect(document.querySelector(`option[value="${definition.definition_id}"]`)).toBeTruthy());
-  expect([...screen.getByLabelText("Workflow Definition").querySelectorAll("option")].map((option) => option.textContent)).toEqual(["development", "study"]);
+  const options = screen.getByLabelText("Workflow Definition").querySelectorAll("option");
+  expect(Array.from(options, (option) => option.textContent)).toEqual(["development", "study"]);
 });
 
 async function chooseStudy() {

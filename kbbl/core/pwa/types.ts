@@ -1,8 +1,4 @@
-// PWA domain model, mirroring the server's ACP-era browser wire (§14):
-// PwaSessionSnapshot from core/acp/pwa-wire.ts and AcpUiEvent from
-// core/acp/types.ts. Provider payload shapes (CC content blocks, Codex
-// deltas) are gone with the legacy transcript surface — the browser only
-// ever sees ACP-semantic UI events.
+// Browser domain types from the ACP session snapshot and transcript wire.
 
 import type { RuntimeId } from "../runtime-interface";
 import type { TurnKey } from "../acp/types";
@@ -13,7 +9,6 @@ export type {
 } from "../acp/pwa-wire";
 export type {
   AcpSessionStatus as SessionStatus,
-  AcpUiEvent,
   UiAvailableCommand,
   UiContent,
   UiPermissionOption,
@@ -49,11 +44,23 @@ export interface RuntimeDescriptor {
 
 export type { RuntimeModelSelection } from "../runtime-interface";
 
-/** Optimistic operator send awaiting its user_message echo on the stream. */
+/** Operator input awaiting a receipt or queued for delivery. */
 export interface PendingSend {
   clientMessageId: string;
   turnKey: TurnKey | null;
   text: string;
   sentAt: number;
-  status: "sending" | "accepted" | "prompting";
+  status: "sending" | "accepted";
 }
+
+export type { SessionLiveState, StreamEpoch, TranscriptItem, TranscriptItemId, TranscriptSeq } from "../acp/transcript-model";
+export type {
+  SessionEpochFrame,
+  SessionItemFrame,
+  SessionItemTextFrame,
+  SessionStateFrame,
+  SessionStreamErrorFrame,
+  SessionTurnFrame,
+  SessionWireFrame,
+} from "../acp/session-wire";
+export type { EpochChanged, ItemPage } from "../acp/transcript-page";

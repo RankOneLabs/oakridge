@@ -1,3 +1,4 @@
+import type { TranscriptSnapshot } from "./transcript-model";
 import type { AcpSessionServiceDeps } from "#kbbl/core/acp/session-service";
 import type { AcpSessionController } from "#kbbl/core/acp/controller";
 import { createSessionController } from "#kbbl/core/acp/session-controller";
@@ -5,6 +6,11 @@ import { resolveProfile } from "#kbbl/core/acp/agent-profile";
 import { turnToOpenTurn } from "#kbbl/core/acp/pwa-wire";
 import { FinalResponseSummaryGenerator, generateSessionSummary, ManualCompactionSummaryGenerator, type SessionSummaryGenerator } from "#kbbl/core/acp/session-summary";
 import { acpError, err, ok, type AcpError, type AcpSessionRow, type KbblSessionId, type Result, type UiSessionHistory } from "#kbbl/core/acp/types";
+
+interface RetainedHistory {
+  snapshot: TranscriptSnapshot;
+  terminalRevision: string | null;
+}
 
 export interface HistoryLease {
   readonly history: UiSessionHistory;
@@ -14,14 +20,38 @@ export interface SessionHistoryCallbacks {
   touchController(sid: KbblSessionId, signal?: AbortSignal): Promise<Result<AcpSessionController, AcpError>>;
 }
 
+const RETAINED_SNAPSHOT_LIMIT = 16;
+
 /** Transcript loading, display-only process ownership and terminal summary capture. */
 export class AcpSessionHistory {
+  private readonly retainedSnapshots = new Map<KbblSessionId, RetainedHistory>();
   private readonly historyConsumers = new Map<KbblSessionId, number>();
   private readonly coldHistoryLoads = new Map<KbblSessionId, AbortController>();
   private readonly summaryGenerators: readonly SessionSummaryGenerator[];
   constructor(private readonly deps: AcpSessionServiceDeps, private readonly callbacks: SessionHistoryCallbacks) {
     this.summaryGenerators = deps.summary_generators ?? [new ManualCompactionSummaryGenerator(), new FinalResponseSummaryGenerator()];
   }
+  getRetainedSnapshot(sid: KbblSessionId): TranscriptSnapshot | null {
+    const snapshot = this.retainedSnapshots.get(sid);
+    if (!snapshot) return null;
+    this.retainedSnapshots.delete(sid);
+    this.retainedSnapshots.set(sid, snapshot);
+    return snapshot.snapshot;
+  }
+
+  dropRetainedSnapshot(sid: KbblSessionId): void {
+    this.retainedSnapshots.delete(sid);
+  }
+
+  private retainSnapshot(sid: KbblSessionId, snapshot: TranscriptSnapshot, terminalRevision: string | null = null): void {
+    this.retainedSnapshots.delete(sid);
+    this.retainedSnapshots.set(sid, { snapshot, terminalRevision });
+    if (this.retainedSnapshots.size > RETAINED_SNAPSHOT_LIMIT) {
+      const oldest = this.retainedSnapshots.keys().next();
+      if (!oldest.done) this.retainedSnapshots.delete(oldest.value);
+    }
+  }
+
   /**
    * History via the agent's own store (§10.3): live controllers answer
    * from the projection buffer; otherwise a fresh child replays
@@ -47,7 +77,7 @@ export class AcpSessionHistory {
       return ok({
         kind: "transcript",
         sid: kbblSid,
-        events: live.snapshotEvents(),
+        transcript: live.snapshotTranscript(),
         openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
         expired: false,
         summary: null,
@@ -66,7 +96,7 @@ export class AcpSessionHistory {
         return ok({
           kind: "unavailable",
           sid: kbblSid,
-          events: [],
+          transcript: null,
           openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
           expired: true,
           summary: null,
@@ -78,16 +108,15 @@ export class AcpSessionHistory {
     return ok({
       kind: "transcript",
       sid: kbblSid,
-      events: touched.value.snapshotEvents(),
+      transcript: touched.value.snapshotTranscript(),
       openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
       expired: false,
       summary: null,
     });
   }
 
-  /** Resume needs the complete ACP replay, including events evicted from a
-   * live controller's bounded display buffer. The replay child is private and
-   * never takes ownership of the parent's active session. */
+  /** Resume loads ACP history into a private, bounded transcript buffer.
+   * The replay child never takes ownership of the parent's active session. */
   async loadResumeHistory(
     sid: string,
     loadSignal?: AbortSignal,
@@ -99,15 +128,15 @@ export class AcpSessionHistory {
     const fallback = (reason: "missing_acp_session_id" | "agent_history_unavailable"): UiSessionHistory => {
       const summary = this.deps.store.getSessionSummary(kbblSid);
       return summary
-        ? { kind: "summary", sid: kbblSid, events: [], openTurns, expired: true, summary }
-        : { kind: "unavailable", sid: kbblSid, events: [], openTurns, expired: true, summary: null, reason };
+        ? { kind: "summary", sid: kbblSid, transcript: null, openTurns, expired: true, summary }
+        : { kind: "unavailable", sid: kbblSid, transcript: null, openTurns, expired: true, summary: null, reason };
     };
     if (loadSignal?.aborted) return err(acpError("acp_session_load_failed", "service.loadResumeHistory", "resume request was cancelled", kbblSid));
     if (row.acp_session_id === null) return ok(fallback("missing_acp_session_id"));
     const profile = resolveProfile(this.deps.profiles, row.agent_profile);
     if (!profile.ok) return ok(fallback("agent_history_unavailable"));
 
-    const controller = createSessionController({ row, profile: profile.value, deps: this.deps, historyOnly: true, fullReplay: true });
+    const controller = createSessionController({ row, profile: profile.value, deps: this.deps, historyOnly: true });
     try {
       const started = await controller.start(row.worktree_path, {
         kind: "load",
@@ -115,7 +144,9 @@ export class AcpSessionHistory {
       }, loadSignal);
       if (loadSignal?.aborted) return err(acpError("acp_session_load_failed", "service.loadResumeHistory", "resume request was cancelled", kbblSid));
       if (!started.ok) return ok(fallback("agent_history_unavailable"));
-      return ok({ kind: "transcript", sid: kbblSid, events: controller.snapshotEvents(), openTurns, expired: false, summary: null });
+      const transcript = controller.snapshotTranscript();
+      if (transcript.is_truncated) return ok(fallback("agent_history_unavailable"));
+      return ok({ kind: "transcript", sid: kbblSid, transcript, openTurns, expired: false, summary: null });
     } finally {
       await controller.closeChild();
     }
@@ -174,7 +205,7 @@ export class AcpSessionHistory {
     if (controller.isPromptActive) return;
     const generated = await generateSessionSummary({
       session_id: controller.sid,
-      events: controller.snapshotEvents(),
+      items: controller.snapshotTranscript().items,
       produced_at: new Date().toISOString(),
     }, this.summaryGenerators);
     if (!generated.ok) {
@@ -212,9 +243,13 @@ export class AcpSessionHistory {
     const fallback = (reason: "missing_acp_session_id" | "agent_history_unavailable"): Result<UiSessionHistory, AcpError> => {
       const summary = this.deps.store.getSessionSummary(row.sid);
       return summary
-        ? ok({ kind: "summary", sid: row.sid, events: [], openTurns, expired: true, summary })
-        : ok({ kind: "unavailable", sid: row.sid, events: [], openTurns, expired: true, summary: null, reason });
+        ? ok({ kind: "summary", sid: row.sid, transcript: null, openTurns, expired: true, summary })
+        : ok({ kind: "unavailable", sid: row.sid, transcript: null, openTurns, expired: true, summary: null, reason });
     };
+    const terminalSnapshot = () => this.retainedSnapshots.get(row.sid)?.terminalRevision === row.updated_at
+      ? this.getRetainedSnapshot(row.sid) : null;
+    const cached = terminalSnapshot();
+    if (cached) return ok({ kind: "transcript", sid: row.sid, transcript: cached, openTurns, expired: false, summary: null });
     if (row.acp_session_id === null) return fallback("missing_acp_session_id");
     const profile = resolveProfile(this.deps.profiles, row.agent_profile);
     if (!profile.ok) return fallback("agent_history_unavailable");
@@ -228,13 +263,18 @@ export class AcpSessionHistory {
       await controller.closeChild();
       return fallback("agent_history_unavailable");
     }
-    const events = controller.snapshotEvents();
     await this.captureSummary(controller);
+    const replay = controller.snapshotTranscript();
     await controller.closeChild();
+    // Concurrent first readers may both finish replay. Publish one canonical epoch.
+    const transcript = terminalSnapshot() ?? replay;
+    if (this.deps.store.getSession(row.sid)?.updated_at === row.updated_at) {
+      this.retainSnapshot(row.sid, transcript, row.updated_at);
+    }
     return ok({
       kind: "transcript",
       sid: row.sid,
-      events,
+      transcript,
       openTurns,
       expired: false,
       summary: null,
@@ -268,6 +308,7 @@ export class AcpSessionHistory {
       if (this.coldHistoryLoads.get(sid) === coldLoad) {
         this.coldHistoryLoads.delete(sid);
       }
+      this.retainSnapshot(sid, controller.snapshotTranscript());
       await controller.closeChild();
       return;
     }

@@ -1,27 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { SessionSnapshot, Status } from "../types";
-import { useAcpSession } from "../hooks/useAcpSession";
+import { useAcpSessionMetadata } from "../hooks/useAcpSessionMetadata";
 import { usePendingSends } from "../hooks/usePendingSends";
-import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
+import { readStoredThreadExpanded, writeStoredThreadExpanded } from "../lib/storage";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
-import type { TimelineItem } from "../lib/acp-timeline";
-import { projectTimeline } from "../lib/acp-timeline";
-import {
-  operatorStateLabel,
-  selectOperatorExecutionState,
-} from "../lib/operator-state";
+import { selectOpenPermissions } from "../lib/session-items";
+import { selectOperatorExecutionState } from "../lib/operator-state";
 
+import { Button } from "../components/atoms/Button";
 import { SessionTopBar } from "../components/molecules/SessionTopBar";
-import { SessionTimeline } from "../components/molecules/SessionTimeline";
+import { SessionThread } from "../components/organisms/SessionThread";
 import { SessionConfigBar } from "../components/organisms/SessionConfigBar";
 import { InputBox } from "../components/organisms/InputBox";
 import { PendingUserBubbleEntry } from "../components/organisms/PendingUserBubbleEntry";
 import { AgentMessage } from "../components/molecules/AgentMessage";
 import { EndedBanner } from "../components/organisms/EndedBanner";
-import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
+import { AgentStatusPanel } from "../components/organisms/AgentStatusPanel";
 import { SkillRail } from "../components/organisms/SkillRail";
-import { PermissionCard, permissionCardAnchorId } from "../components/organisms/PermissionCard";
+import { permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import { readHashPermissionTarget, readHashSessionTarget } from "../lib/hash";
 import {
   DOCUMENT_SESSION_SURFACE_LAYOUT,
@@ -43,29 +40,44 @@ export function SessionView({
   /** Which app-level affordances the host contributes to the top bar. */
   chrome: SessionSurfaceChrome;
   onResume: (parentSid: string) => Promise<string | null>;
-  /**
-   * Which host this view scrolls and where its input bar anchors. Defaults to
-   * the document/viewport layout, so the standalone route renders exactly as
-   * it did before anchoring became injectable.
-   */
+  /** Where the session input bar anchors. */
   layout?: SessionSurfaceLayout;
 }) {
   const appRef = useRef<HTMLDivElement>(null);
   const topBarRef = useRef<HTMLElement>(null);
   const bottomBarRef = useRef<HTMLDivElement>(null);
+  const [isThreadExpanded, setThreadExpanded] = useState(() => readStoredThreadExpanded(sid));
+  const [threadSid, setThreadSid] = useState(sid);
+  if (threadSid !== sid) {
+    setThreadSid(sid);
+    setThreadExpanded(readStoredThreadExpanded(sid));
+  }
+
+  function toggleThread() {
+    const nextExpanded = !isThreadExpanded;
+    setThreadExpanded(nextExpanded);
+    writeStoredThreadExpanded(sid, nextExpanded);
+  }
 
   const {
-    events,
+    hasEarlier,
+    isTruncated,
+    isLoadingEarlier,
+    loadEarlier,
+    sessionState,
+    historyLoaded,
     streamStatus,
     expired,
     summary,
     unavailableReason,
     streamError,
     openTurns,
-    historyLoaded,
-  } = useAcpSession(sid);
+    terminalTurnKeys,
+  } = useAcpSessionMetadata(sid);
 
-  const projection = useMemo(() => projectTimeline(events), [events]);
+  const openPermissions = useMemo(() => selectOpenPermissions(sessionState), [sessionState]);
+  const turnActive = sessionState.active_turn !== null;
+  const sessionTitle = sessionState.session_title;
   const focusedPermissionRef = useRef<string | null>(null);
   const [hashFocusVersion, setHashFocusVersion] = useState(0);
 
@@ -81,14 +93,14 @@ export function SessionView({
 
   useEffect(() => {
     const requestedId = readHashPermissionTarget();
-    const request_id = requestedId ?? (readHashSessionTarget() === "pending-permission" ? projection.openPermissions[0]?.requestId : null);
+    const request_id = requestedId ?? (readHashSessionTarget() === "pending-permission" ? openPermissions[0]?.requestId : null);
     if (!request_id || focusedPermissionRef.current === `${request_id}:${hashFocusVersion}`) return;
     const card = document.getElementById(permissionCardAnchorId(request_id));
     if (!card) return;
     focusedPermissionRef.current = `${request_id}:${hashFocusVersion}`;
     card.scrollIntoView({ behavior: "smooth", block: "center" });
     card.focus({ preventScroll: true });
-  }, [projection.openPermissions, hashFocusVersion]);
+  }, [sid, openPermissions, hashFocusVersion]);
 
   const sessionStatus = snapshot?.status ?? null;
   const sessionClosed =
@@ -96,30 +108,18 @@ export function SessionView({
     sessionStatus === "fenced" ||
     sessionStatus === "failed";
 
-  const renderPermission = useCallback(
-    (item: Extract<TimelineItem, { kind: "permission" }>) => (
-      <PermissionCard key={item.key} sid={sid} requestId={item.requestId} title={item.title} options={item.options} resolution={item.resolution} sessionClosed={sessionClosed} />
-    ),
-    [sid, sessionClosed],
-  );
-
   const {
     pendingSends,
     addPendingSend,
     acceptPendingSend,
     removePendingSend,
     lastPendingClientMessageId,
-  } = usePendingSends(sid, events, openTurns, sessionStatus);
+  } = usePendingSends(sid, { openTurns, activeTurn: sessionState.active_turn, terminalTurnKeys, sessionStatus });
 
   const [isInterrupting, setIsInterrupting] = useState(false);
   const operatorState = selectOperatorExecutionState({
-    sessionStatus,
-    streamStatus,
-    historyLoaded,
-    pendingSends,
-    isTurnActive: projection.turnActive,
-    hasOpenPermission: projection.openPermissions.length > 0,
-    isInterrupting,
+    sessionStatus, streamStatus, historyLoaded, pendingSends, isInterrupting,
+    isTurnActive: turnActive, hasOpenPermission: openPermissions.length > 0,
   });
 
   const awaitingResult =
@@ -131,19 +131,14 @@ export function SessionView({
   useEffect(() => {
     setTurnStartedAt((prev) => (awaitingResult ? (prev ?? Date.now()) : null));
   }, [awaitingResult]);
-  const elapsedSec = useElapsedSeconds(turnStartedAt, awaitingResult);
 
-  useAutoScrollAndLayout({
-    sid,
-    eventsLength: events.length,
-    pendingLength: pendingSends.length,
-    awaitingResult,
-    sessionStatus,
-    appRef,
-    topBarRef,
-    bottomBarRef,
-    layout,
-  });
+  useAutoScrollAndLayout({ appRef, topBarRef, bottomBarRef });
+
+  const sendCallbacks = {
+    onSend: addPendingSend,
+    onSendAccepted: acceptPendingSend,
+    onSendFailed: removePendingSend,
+  };
 
   const canInput = snapshot !== null && !sessionClosed;
 
@@ -158,77 +153,78 @@ export function SessionView({
       <SessionTopBar
         ref={topBarRef}
         sid={sid}
-        snapshot={snapshot}
+        snapshot={snapshot && sessionTitle ? { ...snapshot, name: sessionTitle } : snapshot}
         streamStatus={streamStatus}
         inboxStatus={inboxStatus}
-        usage={projection.usage}
+        usage={sessionState.usage}
         chrome={chrome}
       />
-        <>
-          {canInput && (
-            <SessionConfigBar
-              sid={sid}
-              options={projection.configOptions}
-              disabled={awaitingResult}
-            />
-          )}
-          {streamError !== null && (
-            <div className="row row-system">
-              <div className="notice notice-muted">stream: {streamError}</div>
-            </div>
-          )}
-          {summary !== null && (
-            <>
+      <AgentStatusPanel
+        sid={sid}
+        snapshot={snapshot}
+        pendingSends={pendingSends}
+        isInterrupting={isInterrupting}
+        localWaitStartedMs={turnStartedAt}
+        sessionClosed={sessionClosed}
+      />
+      <Button className="my-2 self-start" size="small" aria-expanded={isThreadExpanded} onClick={toggleThread}>
+        {isThreadExpanded ? "Hide conversation" : "Show conversation"}
+      </Button>
+      {canInput && (
+        <SessionConfigBar sid={sid} options={sessionState.config_options} disabled={awaitingResult} />
+      )}
+      {streamError !== null && (
+        <div className="row row-system">
+          <div className="notice notice-muted">stream: {streamError}</div>
+        </div>
+      )}
+      {isThreadExpanded && (
+        <SessionThread
+          key={sid}
+          session={{ sid, sessionClosed }}
+          sendCallbacks={sendCallbacks}
+          paging={{ hasEarlier, isTruncated, isLoadingEarlier, loadEarlier }}
+          notices={<>
+            {summary !== null && (
+              <>
+                <div className="row row-system">
+                  <div className="notice notice-muted">
+                    Recovered session summary · {summary.method.replaceAll("_", " ")} · {new Date(summary.produced_at).toLocaleString()}
+                  </div>
+                </div>
+                <AgentMessage text={summary.markdown} />
+              </>
+            )}
+            {expired && summary === null && (
               <div className="row row-system">
                 <div className="notice notice-muted">
-                  Recovered session summary · {summary.method.replaceAll("_", " ")} · {new Date(summary.produced_at).toLocaleString()}
+                  session history unavailable
+                  {unavailableReason === "missing_acp_session_id"
+                    ? " — no agent session id was recorded"
+                    : " — the agent no longer holds this session's transcript and no terminal summary was captured"}
                 </div>
               </div>
-              <AgentMessage text={summary.markdown} />
-            </>
-          )}
-          {expired && summary === null && (
-            <div className="row row-system">
-              <div className="notice notice-muted">
-                session history unavailable
-                {unavailableReason === "missing_acp_session_id"
-                  ? " — no agent session id was recorded"
-                  : " — the agent no longer holds this session's transcript and no terminal summary was captured"}
-              </div>
-            </div>
-          )}
-          <SessionTimeline
-            renderPermission={renderPermission}
-            sid={sid}
-            items={projection.items}
-            sessionClosed={sessionClosed}
-          />
+            )}
+          </>}
+        >
           {pendingSends.map((m) => (
             <PendingUserBubbleEntry
-              key={m.clientMessageId}
+              key={m.turnKey ?? `sending:${m.clientMessageId}`}
               text={m.text}
               sentAt={m.sentAt}
               status={m.status}
               isLatest={m.clientMessageId === lastPendingClientMessageId}
             />
           ))}
-          {operatorState.kind !== "idle" && !sessionClosed && (
-            <ThinkingIndicator
-              label={operatorStateLabel(operatorState)}
-              elapsedSec={elapsedSec}
-              outputTokens={null}
-            />
-          )}
-        </>
+        </SessionThread>
+      )}
       <div className="bottom-stack" ref={bottomBarRef}>
         {canInput && (
           <InputBox
             sid={sid}
-            tools={<SkillRail sid={sid} snapshot={snapshot} commands={projection.commands} position="composer" />}
-            onSend={addPendingSend}
-            onSendAccepted={acceptPendingSend}
-            onSendFailed={removePendingSend}
-            isTurnActive={projection.turnActive}
+            tools={<SkillRail sid={sid} snapshot={snapshot} commands={sessionState.commands} position="composer" />}
+            {...sendCallbacks}
+            isTurnActive={turnActive}
             onInterruptingChange={setIsInterrupting}
           />
         )}

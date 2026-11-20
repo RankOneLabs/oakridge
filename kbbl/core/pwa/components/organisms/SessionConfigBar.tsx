@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 import type { UiSessionConfig } from "../../types";
-import { groupConfigOptions } from "../../lib/acp-timeline";
+import { groupConfigOptions } from "../../lib/session-items";
 
 // Session config selectors (§12.3), rendered generically from the
 // agent's config options: model / thought_level / mode get named slots,

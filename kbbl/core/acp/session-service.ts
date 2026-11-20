@@ -1,10 +1,11 @@
+import type { StreamEpoch, TranscriptEmission } from "./transcript-model";
 import { randomUUID } from "node:crypto";
 import { AcpSessionReads } from "#kbbl/core/acp/session-reads";
 import { AcpSessionHistory } from "#kbbl/core/acp/session-history";
 export type { HistoryLease } from "#kbbl/core/acp/session-history";
 import { AcpSessionProvisioner } from "#kbbl/core/acp/session-provisioner";
 import { createSessionController } from "./session-controller";
-import { removeSessionSkills, type SessionIntegrationConfig } from "./session-integration";
+import { removeSessionSkills } from "./session-integration";
 import { sha256Hex } from "./start-spec-hash";
 import { toSnapshot, turnToReceipt } from "./pwa-wire";
 // Application service used by HTTP handlers (§8.6). Routes never reach into
@@ -12,14 +13,9 @@ import { toSnapshot, turnToReceipt } from "./pwa-wire";
 // dispatched through the controller's accepted-turn loop, so "one active
 // prompt per session, ledger as the only deferral" holds by construction.
 
-import type { AgentProfile, AgentProfileId } from "./agent-profile";
 import { resolveProfile } from "./agent-profile";
 import type { AcpSessionController } from "./controller";
 import { configOptionCategory } from "./config-option-resolver";
-import type { AcpControllerRegistry } from "./controller-registry";
-import type { AcpProcessSupervisor } from "./process-supervisor";
-import type { SessionSummaryGenerator } from "./session-summary";
-import type { AcpSessionStore } from "./store";
 import {
   acpError,
   err,
@@ -27,7 +23,6 @@ import {
   type AcpError,
   type AcpSessionRow,
   type AcpSessionSnapshot,
-  type AcpUiEvent,
   type AdvanceResult,
   type FenceContext,
   type InputReceipt,
@@ -35,34 +30,22 @@ import {
   type ResumableKey,
   type Result,
   type TurnKey,
-  type WorktreeProvider,
 } from "./types";
 
-export interface AcpServiceConfig {
-  readonly default_agent: string;
-  readonly graceful_kill_ms: number;
-  readonly idle_child_ttl_ms: number;
-  readonly live_event_buffer: number;
-}
-
-export interface AcpSessionServiceDeps {
-  readonly integration?: SessionIntegrationConfig;
-  readonly store: AcpSessionStore;
-  readonly controllers: AcpControllerRegistry;
-  readonly profiles: ReadonlyMap<AgentProfileId, AgentProfile>;
-  readonly supervisor: AcpProcessSupervisor;
-  readonly worktrees: WorktreeProvider;
-  readonly config: AcpServiceConfig;
-  readonly summary_generators?: readonly SessionSummaryGenerator[];
-}
+import { AcpSessionStream } from "./session-stream";
+import type { AcpServiceConfig, AcpSessionServiceDeps } from "./session-service-config";
+export type { AcpServiceConfig, AcpSessionServiceDeps } from "./session-service-config";
+export type { SessionStreamLease } from "./session-stream";
 
 export class AcpSessionService {
+  private readonly stream: AcpSessionStream;
   private readonly reads: AcpSessionReads;
   private readonly history: AcpSessionHistory;
   private readonly provisioner: AcpSessionProvisioner;
   constructor(private readonly deps: AcpSessionServiceDeps) {
     this.reads = new AcpSessionReads(deps.store);
     this.history = new AcpSessionHistory(deps, { touchController: (sid, signal) => this.touchController(sid, signal) });
+    this.stream = new AcpSessionStream(deps, this.history);
     this.provisioner = new AcpSessionProvisioner(deps, { touchController: sid => this.touchController(sid) });
   }
   ensureResumableSession(...args: Parameters<AcpSessionProvisioner["ensureResumableSession"]>) {
@@ -73,6 +56,18 @@ export class AcpSessionService {
   loadHistory(...args: Parameters<AcpSessionHistory["loadHistory"]>) { return this.history.loadHistory(...args); }
   loadResumeHistory(...args: Parameters<AcpSessionHistory["loadResumeHistory"]>) { return this.history.loadResumeHistory(...args); }
   acquireHistory(...args: Parameters<AcpSessionHistory["acquireHistory"]>) { return this.history.acquireHistory(...args); }
+
+  get transcriptLimits(): Readonly<Pick<AcpServiceConfig, "initial_item_window" | "item_page_limit" | "item_page_limit_max">> {
+    return this.deps.config;
+  }
+
+  openSessionStream(...args: Parameters<AcpSessionStream["openSessionStream"]>) {
+    return this.stream.openSessionStream(...args);
+  }
+
+  readItemPage(...args: Parameters<AcpSessionStream["readItemPage"]>) {
+    return this.stream.readItemPage(...args);
+  }
 
   /** §10.7 boot recovery sweep. Call once before serving requests. */
   recoverOnBoot(): void {
@@ -368,11 +363,12 @@ export class AcpSessionService {
       });
     }
     this.deps.store.deleteSession(row.sid);
+    this.history.dropRetainedSnapshot(row.sid);
     return ok(true);
   }
 
   /** Live projection epoch (§14.4), or null with no live controller. */
-  streamEpoch(sid: string): string | null {
+  streamEpoch(sid: string): StreamEpoch | null {
     return this.deps.controllers.getLive(sid as KbblSessionId)?.streamEpoch ?? null;
   }
 
@@ -399,7 +395,7 @@ export class AcpSessionService {
 
   subscribe(
     sid: string,
-    listener: (event: AcpUiEvent) => void,
+    listener: (emission: TranscriptEmission) => void,
   ): (() => void) | null {
     const controller = this.deps.controllers.getLive(sid as KbblSessionId);
     return controller ? controller.subscribe(listener) : null;

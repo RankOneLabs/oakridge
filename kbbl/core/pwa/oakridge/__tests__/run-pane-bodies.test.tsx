@@ -88,13 +88,17 @@ describe("the artifact pane", () => {
 });
 
 describe("the session pane", () => {
-  it("renders the live transcript inside the pane's own scroll container", async () => {
+  it("opens the live transcript inside the pane's own scroll container when expanded", async () => {
     await openSessionPane();
 
     const host = screen.getByTestId("or-run-pane-session");
     expect(host.getAttribute("data-session-id")).toBe("sid-c1");
-    expect(host.querySelector(".events")).toBeTruthy();
     expect(EventSourceStub.instances.some((es) => es.url.includes("sid-c1"))).toBe(true);
+    expect(within(host).getByRole("region", { name: "Agent status" })).toBeTruthy();
+    expect(host.querySelector(".events")).toBeNull();
+
+    fireEvent.click(within(host).getByRole("button", { name: "Show conversation" }));
+    expect(host.querySelector(".events")).toBeTruthy();
   });
 
   it("anchors the input bar to the surface rather than to the viewport", async () => {
