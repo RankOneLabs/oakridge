@@ -551,7 +551,7 @@ pub(super) fn resolve_run_worker(
         inputs.insert(field.key.clone(), value.unwrap_or(Value::Null));
     }
     let workspace_expression = match checked {
-        CheckedWorker::Agent { workspace, .. } => workspace.as_ref(),
+        CheckedWorker::Agent { workspace, .. } => workspace.as_deref(),
         CheckedWorker::Code { .. } => None,
     };
     let workspace = match workspace_expression {

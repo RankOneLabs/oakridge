@@ -152,7 +152,7 @@ pub enum CheckedWorker {
         inputs: Vec<CheckedNamedExpression>,
         creates: Vec<SymbolKey>,
         reviews: Option<SymbolKey>,
-        workspace: Option<CheckedStageExpression>,
+        workspace: Option<Box<CheckedStageExpression>>,
         when: Option<CheckedStageExpression>,
     },
     Code {

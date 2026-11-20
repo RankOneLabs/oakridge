@@ -195,7 +195,7 @@ impl StageCheck<'_> {
                         .chain([SymbolKey::from(BLOCKER_ARTIFACT)])
                         .collect(),
                     reviews: evaluates.clone(),
-                    workspace: workspace.expect("valid workspace"),
+                    workspace: workspace.expect("valid workspace").map(Box::new),
                     when: when.map(|(expression, _)| expression),
                 })
             }
