@@ -53,7 +53,7 @@ export async function compiledFixture(source: Workflow): Promise<ParsedWorkflow>
   if (!composed.ok) throw new Error(composed.error.detail);
   const prompts = Object.fromEntries(Object.entries(composed.value.prompts).map(([path, prompt]) => [path, prompt.text]));
   const started = CoreClient.start();
-  if (!started.ok) throw new Error(started.error.detail);
+  if (!started.ok) throw new Error(started.error.detail.detail);
   try {
     const compiled = await compileWorkflow(started.value, { workflow: source, prompts });
     if (!compiled.ok) throw new Error(compiled.error.detail);
