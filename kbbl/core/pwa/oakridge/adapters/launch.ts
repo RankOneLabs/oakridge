@@ -1,6 +1,6 @@
 import type { OperatorLaunchRequest } from "../operator-contracts/http/ingress";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
-import type { CreateRunRequest, StudySliceLimits, WorkflowLaunchInput } from "../run-types";
+import type { CreateRunRequest, StudySliceLimits, WorkflowLaunchInput } from "../launch-types";
 import type { WorkflowDefSummary } from "../project-types";
 import { selectAgentSessionTargets } from "../lib/agent-session-targets";
 import { fail, ok, type AdapterResult } from "./core";

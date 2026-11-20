@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import definitionFixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorLaunchRequest } from "../operator-contracts/http/ingress";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
-import type { CreateRunRequest } from "../run-types";
+import type { CreateRunRequest } from "../launch-types";
 import { workflowLaunch } from "../adapters/launch";
 
 const definition = definitionFixture.definition as unknown as OperatorDefinitionDetail;

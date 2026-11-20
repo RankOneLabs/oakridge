@@ -1,5 +1,5 @@
 import type { Result } from "../../lib/result";
-import type { StudySliceLimits, WorkflowLaunchInput } from "../run-types";
+import type { StudySliceLimits, WorkflowLaunchInput } from "../launch-types";
 
 /** Study's slice limits as the operator types them; the cap is in dollars. */
 export interface StudySliceDraft {
@@ -14,15 +14,17 @@ const refuse = (detail: string): Result<never, LaunchInputRefusal> => ({ ok: fal
 const WHOLE = /^\d+$/;
 const DOLLARS = /^(\d+)(?:\.(\d{1,2}))?$/;
 
-/** At least one case, and a cap of at least one cent, in whole cents. */
+/** At least one case, and a cap of at least one cent, in whole cents; a number too large to send exactly is refused. */
 export function selectStudySliceLimits(draft: StudySliceDraft): Result<StudySliceLimits, LaunchInputRefusal> {
   const caseLimit = draft.case_limit.trim();
-  if (!WHOLE.test(caseLimit) || Number(caseLimit) < 1) return refuse("Slice case limit must be a whole number of at least 1.");
+  const cases = Number(caseLimit);
+  if (!WHOLE.test(caseLimit) || !Number.isSafeInteger(cases) || cases < 1) return refuse("Slice case limit must be a whole number of at least 1.");
   const dollars = DOLLARS.exec(draft.cap_dollars.trim());
   if (!dollars) return refuse("Slice spending cap must be an amount in dollars, such as 10 or 12.50.");
   const cents = Number(dollars[1]) * 100 + Number((dollars[2] ?? "").padEnd(2, "0"));
+  if (!Number.isSafeInteger(cents)) return refuse("Slice spending cap is too large.");
   if (cents < 1) return refuse("Slice spending cap must be more than $0.");
-  return { ok: true, value: { slice_case_limit: Number(caseLimit), slice_cap_cents: cents } };
+  return { ok: true, value: { slice_case_limit: cases, slice_cap_cents: cents } };
 }
 
 export interface WorkflowLaunchInputDraft {

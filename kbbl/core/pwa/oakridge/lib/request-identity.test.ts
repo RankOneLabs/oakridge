@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { CreateRunRequest, RepositoryKey } from "../run-types";
+import type { RepositoryKey } from "../run-types";
+import type { CreateRunRequest } from "../launch-types";
 import { selectRequestIdentity } from "./request-identity";
 
 const launchRequest = (notes: string): CreateRunRequest => ({

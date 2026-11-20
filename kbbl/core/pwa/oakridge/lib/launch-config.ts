@@ -3,7 +3,8 @@ import { defaultPlannerModelForRuntime, defaultWorkerModelForRuntime } from "../
 import type { RuntimeDescriptor, RuntimeModelSelection } from "../../types";
 import type { Result } from "../../lib/result";
 import type { CreateRunContext } from "../project-types";
-import type { EpicProfileConfig, FinalMergePolicy, RepositoryInput } from "../run-types";
+import type { FinalMergePolicy } from "../run-types";
+import type { EpicProfileConfig, RepositoryInput } from "../launch-types";
 import type { ValidatedRepositoryInput } from "../repository-inputs";
 
 export interface BuildRunExecutionContextInput {
