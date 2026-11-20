@@ -114,7 +114,9 @@ export class AcpSessionHistory {
       }, loadSignal);
       if (loadSignal?.aborted) return err(acpError("acp_session_load_failed", "service.loadResumeHistory", "resume request was cancelled", kbblSid));
       if (!started.ok) return ok(fallback("agent_history_unavailable"));
-      return ok({ kind: "transcript", sid: kbblSid, transcript: controller.snapshotTranscript(), openTurns, expired: false, summary: null });
+      const transcript = controller.snapshotTranscript();
+      if (transcript.is_truncated) return ok(fallback("agent_history_unavailable"));
+      return ok({ kind: "transcript", sid: kbblSid, transcript, openTurns, expired: false, summary: null });
     } finally {
       await controller.closeChild();
     }

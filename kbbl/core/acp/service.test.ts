@@ -576,9 +576,9 @@ test("session/load rebuilds history after controller destruction", async () => {
   expect(replayedReply).toBeDefined();
 }, 20000);
 
-test("resume and live history both apply the item capacity", async () => {
+test("resume falls back to a saved handoff when the bounded transcript is incomplete", async () => {
   const { stateDir, workdir } = await makeDirs();
-  const { service, registry } = makeHarness({ stateDir, liveItemBuffer: 2 });
+  const { service, registry, store } = makeHarness({ stateDir, liveItemBuffer: 2 });
   const ensured = await service.ensureResumableSession("key-full-resume", spec(workdir, "remember the first turn"));
   if (!ensured.ok) throw new Error("ensure failed");
   const sid = ensured.value.session.sid;
@@ -590,14 +590,17 @@ test("resume and live history both apply the item capacity", async () => {
     item.kind === "agent_message" && item.text.includes("remember the second turn")));
 
 
-  for (const history of [await service.loadHistory(sid), await service.loadResumeHistory(sid)]) {
-    if (!history.ok || history.value.kind !== "transcript") throw new Error("missing transcript");
-    expect(history.value.transcript.is_truncated).toBe(true);
-    expect(history.value.transcript.items).toHaveLength(2);
-    expect(history.value.transcript.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "agent_message", text: expect.stringContaining("remember the second turn") }),
-    ]));
-  }
+  const history = await service.loadHistory(sid);
+  if (!history.ok || history.value.kind !== "transcript") throw new Error("missing transcript");
+  expect(history.value.transcript.is_truncated).toBe(true);
+  expect(history.value.transcript.items).toHaveLength(2);
+  expect(await service.loadResumeHistory(sid)).toMatchObject({ ok: true, value: { kind: "unavailable" } });
+
+  const summary = store.putSessionSummary({
+    schema_version: 1, session_id: sid, method: "manual_compaction",
+    produced_at: new Date().toISOString(), markdown: "Saved handoff across both turns.",
+  });
+  expect(await service.loadResumeHistory(sid)).toMatchObject({ ok: true, value: { kind: "summary", summary } });
   expect(registry.getLive(sid as KbblSessionId)).toBe(live);
 }, 20000);
 
