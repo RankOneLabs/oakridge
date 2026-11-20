@@ -1,5 +1,5 @@
+import type { TranscriptItem } from "./transcript-model";
 import type {
-  AcpUiEvent,
   KbblSessionId,
   Result,
   TerminalSessionSummary,
@@ -8,7 +8,7 @@ import type {
 
 export interface SessionSummaryRequest {
   readonly session_id: KbblSessionId;
-  readonly events: readonly AcpUiEvent[];
+  readonly items: readonly TranscriptItem[];
   readonly produced_at: string;
 }
 
@@ -35,14 +35,12 @@ export class ManualCompactionSummaryGenerator implements SessionSummaryGenerator
   readonly method = "manual_compaction" as const;
 
   async generate(request: SessionSummaryRequest): Promise<Result<TerminalSessionSummaryDraft, SessionSummaryFailure>> {
-    const lastUserMessage = [...request.events].reverse().find(
-      (event): event is Extract<AcpUiEvent, { kind: "user_message" }> => event.kind === "user_message",
-    );
-    const trigger = lastUserMessage?.content.map((content) => content.text).join("").trim() ?? "";
+    const lastUserMessage = request.items.findLast((item) => item.kind === "user_message");
+    const trigger = lastUserMessage?.text.trim() ?? "";
     if (!trigger.startsWith("/compact")) {
       return { ok: false, error: summaryFailure(this.method, request.session_id, "the final turn was not manual compaction") };
     }
-    const compacted = selectFinalAssistantMarkdown(request.events);
+    const compacted = selectFinalAssistantMarkdown(request.items);
     if (!compacted) {
       return { ok: false, error: summaryFailure(this.method, request.session_id, "manual compaction produced no assistant response") };
     }
@@ -64,7 +62,7 @@ export class FinalResponseSummaryGenerator implements SessionSummaryGenerator {
   readonly method = "final_response" as const;
 
   async generate(request: SessionSummaryRequest): Promise<Result<TerminalSessionSummaryDraft, SessionSummaryFailure>> {
-    const markdown = selectFinalAssistantMarkdown(request.events);
+    const markdown = selectFinalAssistantMarkdown(request.items);
     if (!markdown) {
       return {
         ok: false,
@@ -97,15 +95,12 @@ function summaryFailure(
   return { operation: "generate_session_summary", method, session_id, detail };
 }
 
-export function selectFinalAssistantMarkdown(events: readonly AcpUiEvent[]): string | null {
-  const lastUserIndex = events.reduce(
-    (found, event, index) => event.kind === "user_message" ? index : found,
-    -1,
-  );
-  const markdown = events
+export function selectFinalAssistantMarkdown(items: readonly TranscriptItem[]): string | null {
+  const lastUserIndex = items.findLastIndex((item) => item.kind === "user_message");
+  const markdown = items
     .slice(lastUserIndex + 1)
-    .filter((event): event is Extract<AcpUiEvent, { kind: "agent_message" }> => event.kind === "agent_message")
-    .flatMap((event) => event.content.map((content) => content.text))
+    .filter((item) => item.kind === "agent_message")
+    .map((item) => item.text)
     .join("")
     .trim();
   return markdown || null;

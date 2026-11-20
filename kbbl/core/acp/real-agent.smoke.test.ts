@@ -26,7 +26,8 @@ import { AcpControllerRegistry } from "./controller-registry";
 import { AcpProcessSupervisor } from "./process-supervisor";
 import { AcpSessionService } from "./session-service";
 import { AcpSessionStore } from "./store";
-import type { AcpUiEvent, TurnKey } from "./types";
+import type { TranscriptItem } from "./transcript-model";
+import type { TurnKey } from "./types";
 
 const REAL_AGENT = process.env.KBBL_ACP_REAL_AGENT ?? "";
 const realTest = REAL_AGENT === "claude-code" || REAL_AGENT === "codex" ? test : test.skip;
@@ -34,8 +35,9 @@ if (REAL_AGENT !== "claude-code" && REAL_AGENT !== "codex")
   console.warn("SKIP: real-agent ACP smoke gate (codex and claude-code); run test:acp:codex:real and test:acp:claude:real explicitly.");
 
 const cleanups: Array<() => Promise<void> | void> = [];
-const agentText = (events: readonly AcpUiEvent[]): string => events
-  .flatMap(event => event.kind === "agent_message" ? event.content.map(content => content.text) : [])
+const agentText = (items: readonly TranscriptItem[]): string => items
+  .filter(item => item.kind === "agent_message")
+  .map(item => item.text)
   .join("");
 afterAll(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
@@ -80,7 +82,7 @@ realTest(
         default_agent: REAL_AGENT,
         graceful_kill_ms: 3000,
         idle_child_ttl_ms: 900_000,
-        live_event_buffer: 2000,
+        live_item_buffer: 5000, initial_item_window: 200, item_page_limit: 100, item_page_limit_max: 500,
       },
     });
     cleanups.push(async () => {
@@ -284,7 +286,7 @@ realTest(
 
     const history = await service.loadHistory(sid);
     if (!history.ok) throw new Error(`history failed: ${history.error.code}`);
-    const reply = agentText(history.value.events).includes("SMOKE-OK");
+    const reply = agentText(history.value.transcript?.items ?? []).includes("SMOKE-OK");
     report.push(`agent_reply=${reply ? "SMOKE-OK" : "MISSING"}`);
     expect(reply).toBe(true);
 
@@ -294,7 +296,7 @@ realTest(
     if (before) await before.closeChild();
     const reloaded = await service.loadHistory(sid);
     if (!reloaded.ok) throw new Error(`reload failed: ${reloaded.error.code}`);
-    report.push(`load_replay=${reloaded.value.expired ? "EXPIRED" : `${reloaded.value.events.length} events`}`);
+    report.push(`load_replay=${reloaded.value.expired ? "EXPIRED" : `${reloaded.value.transcript?.items.length} items`}`);
     expect(reloaded.value.expired).toBe(false);
 
     // The respawned agent reports its settings-default mode; kbbl must have
@@ -385,7 +387,7 @@ realTest(
     expect(store.getTurn(empty.value.sid, turnKey)?.status).toBe("succeeded");
     expect(store.getSession(empty.value.sid)?.worktree_path).toBe(empty.value.worktree_path);
     const resumedHistory = await service.loadHistory(empty.value.sid);
-    expect(resumedHistory.ok && agentText(resumedHistory.value.events).includes("RESUME-OK")).toBe(true);
+    expect(resumedHistory.ok && agentText(resumedHistory.value.transcript?.items ?? []).includes("RESUME-OK")).toBe(true);
     report.push("empty_session_recovery=RESUME-OK");
 
     console.log(`[acp-real-smoke] ${report.join(" | ")}`);

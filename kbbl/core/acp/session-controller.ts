@@ -9,14 +9,13 @@ interface SessionControllerInput {
   readonly profile: AgentProfile;
   readonly deps: AcpSessionServiceDeps;
   readonly historyOnly?: boolean;
-  readonly fullReplay?: boolean;
 }
 /** All new, resumed and private history children receive the same pinned launch settings. */
-export function createSessionController({ row, profile, deps, historyOnly, fullReplay }: SessionControllerInput): AcpSessionController {
+export function createSessionController({ row, profile, deps, historyOnly }: SessionControllerInput): AcpSessionController {
   return new AcpSessionController({
     sid: row.sid, profile, store: deps.store, supervisor: deps.supervisor,
     prepareIntegration: () => prepareSessionIntegration(row, profile, deps.integration),
-    config: { live_event_buffer: fullReplay ? Number.MAX_SAFE_INTEGER : deps.config.live_event_buffer,
+    config: { live_item_buffer: deps.config.live_item_buffer,
       close_grace_ms: deps.config.graceful_kill_ms },
     onDefunct: historyOnly ? () => undefined : sid => deps.controllers.remove(sid),
   });

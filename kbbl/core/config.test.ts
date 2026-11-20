@@ -89,3 +89,20 @@ test("PR installation settings are captured from config input, independently of 
   env.OAKRIDGE_PR_INTEGRATION = "none";
   expect(config).toEqual({ default_integration: "github-cli", gated_review_url: "http://review/mcp" });
 });
+
+describe("ACP transcript retention configuration", () => {
+  test("uses the agreed item and page defaults", () => {
+    expect(KbblConfigSchema.parse({}).acp).toMatchObject({
+      live_item_buffer: 5000, initial_item_window: 200, item_page_limit: 100, item_page_limit_max: 500,
+    });
+  });
+
+  test.each([
+    { item_page_limit_max: 501 },
+    { live_item_buffer: 5, initial_item_window: 6 },
+    { item_page_limit: 101, item_page_limit_max: 100 },
+    { live_event_buffer: 2000 },
+  ])("rejects invalid limits or the removed configuration key %j", (acp) => {
+    expect(KbblConfigSchema.safeParse({ acp }).success).toBe(false);
+  });
+});

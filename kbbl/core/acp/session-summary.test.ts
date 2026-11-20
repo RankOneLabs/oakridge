@@ -5,19 +5,24 @@ import {
   ManualCompactionSummaryGenerator,
   generateSessionSummary,
 } from "./session-summary";
+import { transcriptItemId, transcriptSeq, type AgentMessageItem, type UserMessageItem } from "./transcript-model";
 import type { KbblSessionId } from "./types";
 
 const sid = "00000000-0000-4000-8000-000000000001" as KbblSessionId;
+function user(index: number, text: string): UserMessageItem {
+  const seq = transcriptSeq(index);
+  return { kind: "user_message", id: transcriptItemId(seq), seq, message_id: null, turn_key: null, text, is_replayed: false };
+}
+
+function agent(index: number, text: string): AgentMessageItem {
+  const seq = transcriptSeq(index);
+  return { kind: "agent_message", id: transcriptItemId(seq), seq, message_id: null, text, is_streaming: false, is_replayed: false };
+}
+
 const request = {
   session_id: sid,
   produced_at: "2026-09-23T00:00:00.000Z",
-  events: [
-    { kind: "user_message" as const, id: "u1", content: [{ type: "text" as const, text: "first" }], replayed: false },
-    { kind: "agent_message" as const, id: "a1", content: [{ type: "text" as const, text: "old" }], streaming: false, replayed: false },
-    { kind: "user_message" as const, id: "u2", content: [{ type: "text" as const, text: "second" }], replayed: false },
-    { kind: "agent_message" as const, id: "a2", content: [{ type: "text" as const, text: "final " }], streaming: true, replayed: false },
-    { kind: "agent_message" as const, id: "a2", content: [{ type: "text" as const, text: "answer" }], streaming: true, replayed: false },
-  ],
+  items: [user(0, "first"), agent(1, "old"), user(2, "second"), agent(3, "final "), agent(4, "answer")],
 };
 
 test("final-response summary retains only the latest assistant turn", async () => {
@@ -37,12 +42,9 @@ test("final-response summary retains only the latest assistant turn", async () =
 test("manual compaction is an explicit replaceable generator", async () => {
   const result = await new ManualCompactionSummaryGenerator().generate({
     ...request,
-    events: [
-      { kind: "user_message", id: "compact", content: [{ type: "text", text: "/compact" }], replayed: false },
-      { kind: "agent_message", id: "handoff", content: [{ type: "text", text: "# compact handoff" }], streaming: false, replayed: false },
-    ],
+    items: [user(0, " /compact "), agent(1, " # compact handoff ")],
   });
-  expect(result.ok && result.value.method).toBe("manual_compaction");
+  expect(result.ok && result.value).toMatchObject({ method: "manual_compaction", markdown: "# compact handoff" });
 });
 
 test("summary strategy runner falls through typed generator failures", async () => {

@@ -188,7 +188,10 @@ const acpService = new AcpSessionService({
     default_agent: config.acp.default_agent,
     graceful_kill_ms: config.acp.graceful_kill_ms,
     idle_child_ttl_ms: config.acp.idle_child_ttl_ms,
-    live_event_buffer: config.acp.live_event_buffer,
+    live_item_buffer: config.acp.live_item_buffer,
+    initial_item_window: config.acp.initial_item_window,
+    item_page_limit: config.acp.item_page_limit,
+    item_page_limit_max: config.acp.item_page_limit_max,
   },
 });
 acpService.recoverOnBoot();
