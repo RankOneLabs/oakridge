@@ -1,11 +1,11 @@
 import type { ArtifactTypeDescriptor } from "../artifact-types";
-import { selectArtifactComponent } from "../lib/artifact-version";
+import { CURRENT_VIEWERS, selectArtifactComponent } from "../lib/artifact-version";
+/** The development body schemas the run views show, and the viewer each opens in when its revision names no current version. */
 export const SCHEMA_COMPONENTS: Readonly<Record<string, string>> = {
-  analysis_body: "dev-spec-analysis-viewer", text: "dev-spec-viewer", spec_body: "dev-spec-viewer", plan_body: "dev-plan-viewer", tasks_body: "dev-tasks-viewer", brief_body: "dev-build-brief-viewer",
-  build_body: "dev-build-result-viewer", assessment_body: "dev-assessment-viewer", pr_body: "dev-pr-summary-viewer",
+  ...CURRENT_VIEWERS, build_body: "dev-build-result-viewer", pr_body: "dev-pr-summary-viewer",
 };
 const SCHEMA_TYPES: Readonly<Record<string, string>> = {
-  analysis_body: "dev.spec_analysis", text: "dev.spec", spec_body: "dev.spec", plan_body: "dev.plan", tasks_body: "dev.tasks", brief_body: "dev.build_brief",
+  analysis_body: "dev.spec_analysis", spec_body: "dev.spec", plan_body: "dev.plan", brief_body: "dev.build_brief",
   build_body: "dev.build_result", assessment_body: "dev.assessment", pr_body: "dev.pr_summary",
 };
 export const artifactType = (schema: string, version?: string | null, is_adjudicated = false): ArtifactTypeDescriptor => schema === "workspace"

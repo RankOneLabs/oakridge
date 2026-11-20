@@ -4,13 +4,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { correctnessQuestion, id, IMPLEMENTATION, itemStatus, paged, reviewerAnswer, supportQuestion } from "../__fixtures__/grading";
-import { compositeId } from "../adapters/core";
-import { AssessmentViewer } from "../components/molecules/AssessmentViewer";
 import { ItemGradeAction } from "../components/organisms/ItemGradeAction";
 import { ShowAutomaticGrades } from "../components/organisms/ShowAutomaticGrades";
 import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
 import type { ObservationItemStatusResponse } from "../grading-contracts/storage/grading-record-store";
-import { parseAssessment } from "../lib/assessment";
 import { useGradingVisibility } from "../state/gradingVisibility";
 
 const json = (body: unknown, status = 200): Response => Response.json(body, { status });
@@ -79,18 +76,5 @@ describe("automatic grades on the artifact", () => {
     fireEvent.click(screen.getByTestId("or-show-automatic-grades"));
     fireEvent.click(screen.getByTestId("or-show-automatic-grades"));
     expect(screen.queryByTestId("or-automatic-grades")).toBeNull();
-  });
-  it("the assessment viewer renders the slots for its findings and a show-all control", () => {
-    const parsed = parseAssessment({ head_sha: "abc", verdict: "fail", test_evidence: null, recommended_next_actions: [], findings: [
-      { task_ids: [], status: "not_met", evidence: [], description: "one" }, { task_ids: [], status: "not_met", evidence: [], description: "two" }] });
-    if (!parsed.ok) throw new Error(parsed.error.detail);
-    const missing = { kind: "missing", cohort_label: null } as const;
-    const revision_id = compositeId({ kind: "artifact", runId: "run-1", unitId: "u", name: `assessment:${IMPLEMENTATION.source_revision_id}` });
-    const shown: ObservationItemAddress[][] = [];
-    wrap(<AssessmentViewer assessment={parsed.value} brief={missing} result={missing} cohortLabel={null} source={{ revision_id }} onOpenItem={vi.fn()}
-      itemGrading={{ renderItemAction: (selection) => <span data-testid="slot-action">{selection.item_path}</span>, renderShowAll: (selections) => { shown.push([...selections]); return <span data-testid="slot-all" />; } }} />);
-    expect(screen.getAllByTestId("slot-action").map((slot) => slot.textContent).sort()).toEqual(["/findings/0", "/findings/1"]);
-    expect(screen.getByTestId("slot-all")).toBeTruthy();
-    expect(shown.at(-1)?.map((selection) => selection.item_path)).toEqual(["/findings/0", "/findings/1"]);
   });
 });

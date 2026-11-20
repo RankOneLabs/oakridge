@@ -7,7 +7,7 @@ import { retryUnit, sampleCohort as cohort, sampleRun as run, sampleUnits as uni
 import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
 import type { OperatorRunEvent } from "../operator-contracts/projections/run-event";
 import type { OperatorAttemptView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
-import { artifactType, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, developmentPullRequestUrl, isVisibleDevelopmentArtifact, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, unitToStages } from "./core";
+import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, developmentPullRequestUrl, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, unitToStages } from "./core";
 import { parseUnitViews } from "./parse";
 import { selectRunSessionRows } from "../lib/run-sessions";
 import { selectRunSidebarSessions } from "../lib/run-overview";
@@ -46,15 +46,6 @@ describe("v2 development adapters", () => {
     const analysis = withUnitFields(retryUnit("analysis"), { stage: "analysis", collection_key: null });
     const stages = unitToStages([analysis]);
     expect(stages.ok && stages.value[0]?.units?.map((unit) => [unit.unit_id, unit.is_retryable])).toEqual([["0", true]]);
-  });
-  it("shows the approved text specification as a reviewable artifact", () => {
-    const analysis = units.find((unit) => unit.stage === "analysis");
-    const oldArtifact = analysis?.artifacts.find((artifact) => artifact.artifact_key === "analysis");
-    if (!analysis || !oldArtifact) throw new Error("captured fixture lacks an analysis unit");
-    const spec = { ...oldArtifact, artifact_key: "spec", schema: "text",
-      latest_revision: oldArtifact.latest_revision ? { ...oldArtifact.latest_revision, body: "Revised requirements" } : null };
-    const stage = unitToStages([withUnitFields(analysis, { artifacts: [spec] })]);
-    expect(stage.ok && stage.value[0]?.artifacts.map((artifact) => artifact.type_id)).toEqual(["dev.spec"]);
   });
   it("names the two analysis-stage sessions by the document they produce", () => {
     const analysis = units.find((unit) => unit.stage === "analysis");
@@ -164,16 +155,9 @@ describe("v2 development adapters", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
     expect(artifact.ok && artifact.value.component_id).toBe("dev-build-result-viewer");
     expect(artifactTypes().map((type) => type.component_id)).toEqual([
-      "dev-spec-analysis-viewer", "dev-spec-viewer", "dev-plan-viewer", "dev-tasks-viewer", "dev-build-brief-viewer",
-      "dev-build-result-viewer", "dev-assessment-viewer", "dev-pr-summary-viewer",
+      "dev-current-analysis-viewer", "dev-current-spec-viewer", "dev-current-plan-viewer", "dev-current-brief-viewer",
+      "dev-current-assessment-viewer", "dev-build-result-viewer", "dev-pr-summary-viewer",
     ]);
-  });
-  it("exposes tasks artifacts with the tasks viewer and type id", () => {
-    const artifact = units.flatMap((unit) => unit.artifacts)[0];
-    if (!artifact) throw new Error("captured fixture has no artifact");
-    expect([isVisibleDevelopmentArtifact({ ...artifact, artifact_key: "tasks", schema: "tasks_body" }), artifactType("tasks_body")])
-      .toEqual([true, { id: "dev.tasks", component_id: "dev-tasks-viewer",
-        capabilities: { reviewable: true, commentable: true, atom_editable: true, review_items: true }, anchor_schema: null }]);
   });
   it("retains the cohort label so assessment revisions can find their brief", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);

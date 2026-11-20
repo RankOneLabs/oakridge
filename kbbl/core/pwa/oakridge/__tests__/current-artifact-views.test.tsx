@@ -10,7 +10,6 @@ import { CurrentSpecViewer } from "../components/molecules/CurrentSpecViewer";
 import { CurrentPlanViewer } from "../components/molecules/CurrentPlanViewer";
 import { CurrentBuildBriefViewer } from "../components/molecules/CurrentBuildBriefViewer";
 import { ReceivedContextPanel } from "../components/molecules/ReceivedContextPanel";
-import { SpecViewer } from "../components/molecules/SpecViewer";
 import { parseCurrentAnalysis, parseCanonicalSpec } from "../lib/current-contract";
 import { selectReceivedContext } from "../lib/received-context";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
@@ -90,11 +89,6 @@ test("pinned assignment panel is titled What this agent received", () => {
   expect(screen.getByRole("heading", { name: "What this agent received" })).toBeTruthy();
   expect(screen.queryByText("R2")).toBeNull();
 });
-test("legacy text specification keeps its exact display", () => {
-  render(<SpecViewer body="Original legacy text" />);
-  expect(screen.getByText("Original legacy text").tagName).toBe("ARTICLE");
-});
-
 /** Slots that print the item paths each viewer hands to "Show automatic grades" and to its per-item grade actions. */
 const recordingGrading: ItemGradingSlots = {
   renderItemAction: (selection: ObservationItemAddress) => <span data-testid="item-action">{selection.item_path}</span>,
