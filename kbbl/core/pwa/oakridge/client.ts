@@ -19,7 +19,7 @@ import { createCollabClient } from "./client-collab";
 import { createGateClient } from "./client-gates";
 import { committed, oakridgeGet, oakridgePost, OPERATOR, runPath, unitPath } from "./client-http";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
-import { developmentLaunch } from "./adapters/launch";
+import { workflowLaunch } from "./adapters/launch";
 import { parseArtifactDetail, parseRunInboxBatch, parseRunView } from "./adapters/parse";
 
 async function resolveArtifactId(id: string): Promise<CompositeId> {
@@ -209,7 +209,7 @@ function readDefinitionName(definitionId: string): Promise<string> {
 export async function createRun(body: CreateRunRequest, idempotencyKey: string): Promise<RunSummary> {
   const definition = await fetchOperatorDefinition(body.workflow_def_id);
   const path = `${OPERATOR}/runs`;
-  const launch = unwrapAdapter(path, developmentLaunch(body, definition, idempotencyKey));
+  const launch = unwrapAdapter(path, workflowLaunch(body, definition, idempotencyKey));
   const runId = committed(await oakridgePost<OperatorIngressResponse>(path, launch), path);
   const run = unwrapAdapter(runPath(runId), parseRunView(await oakridgeGet<unknown>(runPath(runId))));
   return runSummary(unwrapAdapter(runPath(runId), runSnapshot(run, await readUnits(runId))), run);

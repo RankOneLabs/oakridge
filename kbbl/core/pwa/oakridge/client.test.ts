@@ -41,6 +41,7 @@ const createRunRequest = (): CreateRunRequest => ({
   epic_profile: { title: "Build it", slug: "build-it", final_merge_policy: "guarded",
     repositories: [{ repository_key: "api" as RepositoryKey, repository_path: "/repo", integration_branch: "main",
       forge_repository: { provider: "github", owner: "acme", name: "api" } }] },
+  workflow_input: { kind: "development" },
 });
 
 describe("v2 Oakridge client", () => {
@@ -160,14 +161,26 @@ describe("v2 Oakridge client", () => {
     calls((path) => path.includes("/api/definitions/") ? definition : sample.run);
     const request = createRunRequest();
     await expect(createRun({ ...request, context: { ...request.context, repositories: [] } }, "launch-none"))
-      .rejects.toThrow("Development runs require at least one repository");
+      .rejects.toThrow("A run requires at least one repository");
   });
 
-  it("refuses to launch a workflow other than development", async () => {
+  it("refuses a launch whose input is for another workflow than the pinned one", async () => {
     const study = { ...definition, bundle: { ...definition.bundle, key: "study" } };
     const fetch = calls((path) => path.includes("/api/definitions/") ? study : sample.run);
-    await expect(createRun(createRunRequest(), "launch-study")).rejects.toThrow("the PWA cannot launch the study workflow");
+    await expect(createRun(createRunRequest(), "launch-study")).rejects.toThrow("the study workflow cannot launch with development input");
     expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
+  it("launches a study with its slice limits and no approved plan", async () => {
+    const study = { ...definition, bundle: { ...definition.bundle, key: "study" } };
+    const fetch = calls((path) => path.includes("/api/definitions/") ? study
+      : path.endsWith("/api/runs") ? { kind: "committed", run_id: runId, event_id: "event-study" }
+      : path.includes("/units") ? sample.units : sample.run);
+    await createRun({ ...createRunRequest(), workflow_input: { kind: "study", slice: { slice_case_limit: 6, slice_cap_cents: 1000 } } }, "launch-study");
+    const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
+    expect(JSON.parse(String(launch?.[1]?.body)).input).toEqual({ title: "Build it", spec: "Build it", primary_repository_key: "api", final_merge_policy: "require_merge",
+      repositories: [expect.objectContaining({ key: "api" })],
+      slice_case_limit: 6, slice_cap_cents: 1000, approved_plan: null });
   });
 
   it("accepts settings for an agent declared through a worker template", async () => {

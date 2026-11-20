@@ -15,6 +15,7 @@ const launchRequest = (notes: string): CreateRunRequest => ({
     title: "Build it", slug: "build-it", final_merge_policy: "guarded",
     repositories: [{ repository_key: "repo" as RepositoryKey, repository_path: "/repo", integration_branch: "main", forge_repository: { provider: "github", owner: "acme", name: "repo" } }],
   },
+  workflow_input: { kind: "development" },
 });
 
 describe("request identity", () => {
