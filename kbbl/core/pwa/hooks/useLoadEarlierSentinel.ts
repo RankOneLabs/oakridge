@@ -5,15 +5,16 @@ interface LoadEarlierSentinelOptions {
   viewportRef: RefObject<HTMLDivElement | null>;
   hasEarlier: boolean;
   isLoadingEarlier: boolean;
+  hasLoadError: boolean;
   onLoadEarlier: () => Promise<void>;
 }
 
-export function useLoadEarlierSentinel({ viewportRef, hasEarlier, isLoadingEarlier, onLoadEarlier }: LoadEarlierSentinelOptions) {
+export function useLoadEarlierSentinel({ viewportRef, hasEarlier, isLoadingEarlier, hasLoadError, onLoadEarlier }: LoadEarlierSentinelOptions) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const isRequestInFlight = useRef(false);
 
   const loadWhenVisible = useEffectEvent((entries: IntersectionObserverEntry[]) => {
-    if (!shouldLoadEarlier({
+    if (hasLoadError || !shouldLoadEarlier({
       is_intersecting: entries.some((entry) => entry.isIntersecting),
       has_earlier: hasEarlier,
       is_loading_earlier: isLoadingEarlier || isRequestInFlight.current,
@@ -26,11 +27,11 @@ export function useLoadEarlierSentinel({ viewportRef, hasEarlier, isLoadingEarli
   useEffect(() => {
     const root = viewportRef.current;
     const sentinel = sentinelRef.current;
-    if (!root || !sentinel || !hasEarlier || typeof IntersectionObserver === "undefined") return;
+    if (!root || !sentinel || !hasEarlier || hasLoadError || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver((entries) => loadWhenVisible(entries), { root });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [viewportRef, hasEarlier]);
+  }, [viewportRef, hasEarlier, hasLoadError]);
 
   return sentinelRef;
 }

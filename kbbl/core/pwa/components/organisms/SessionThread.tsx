@@ -7,6 +7,8 @@ import { useLoadEarlierSentinel } from "../../hooks/useLoadEarlierSentinel";
 import { usePrependAnchor } from "../../hooks/usePrependAnchor";
 import { useSendInput, type SendInputCallbacks } from "../../hooks/useSendInput";
 import { useSessionThreadRuntime } from "../../hooks/useSessionThreadRuntime";
+import { Button } from "../atoms/Button";
+import { FeedbackMessage } from "../atoms/FeedbackMessage";
 import { AgentMessage } from "../molecules/AgentMessage";
 import { PlanCard } from "../molecules/PlanCard";
 import { ThoughtBlock } from "../molecules/ThoughtBlock";
@@ -22,9 +24,9 @@ interface ThreadSession {
 
 const ThreadSessionContext = createContext<ThreadSession | null>(null);
 
-function ThreadTool({ toolCallId }: { toolCallId: string }) {
+function ThreadTool() {
   const session = useContext(ThreadSessionContext);
-  return session && <ThreadToolCallPart sid={session.sid} toolCallId={toolCallId} />;
+  return session && <ThreadToolCallPart sid={session.sid} />;
 }
 
 function ThreadPlan({ data }: DataMessagePartProps<PlanItem>) {
@@ -78,20 +80,29 @@ interface ThreadViewportProps {
   children: ReactNode;
 }
 
-function ThreadViewport({ paging, notices, children }: ThreadViewportProps) {
+interface SessionThreadViewportProps extends ThreadViewportProps {
+  sid: string;
+}
+
+function ThreadViewport({ sid, paging, notices, children }: SessionThreadViewportProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  // Observe the runtime's rendered order so anchoring runs after its message
-  // list commits, even when the external store updates one render earlier.
-  const firstId = useAuiState((state) => state.thread.messages[0]?.id);
-  const onLoadEarlier = usePrependAnchor(viewportRef, firstId, paging.loadEarlier);
-  const sentinelRef = useLoadEarlierSentinel({ ...paging, viewportRef, onLoadEarlier });
+  const renderedMessages = useAuiState((state) => state.thread.messages);
+  const { onLoadEarlier, loadError } = usePrependAnchor({ sid, viewportRef, renderedMessages, loadEarlier: paging.loadEarlier });
+  const sentinelRef = useLoadEarlierSentinel({ ...paging, viewportRef, onLoadEarlier, hasLoadError: loadError !== null });
 
   return (
     <ThreadPrimitive.Viewport className="session-thread__viewport events" ref={viewportRef} autoScroll
       scrollToBottomOnRunStart={false}>
       {paging.hasEarlier ? (
         <div ref={sentinelRef} className="session-thread__sentinel">
-          {paging.isLoadingEarlier && <span className="notice notice-muted">Loading earlier history…</span>}
+          {loadError !== null ? (
+            <FeedbackMessage tone="danger" className="flex flex-wrap items-center gap-2">
+              <span>Could not load earlier history. {loadError}</span>
+              <Button size="small" disabled={paging.isLoadingEarlier} onClick={() => void onLoadEarlier()}>
+                {paging.isLoadingEarlier ? "Retrying…" : "Retry"}
+              </Button>
+            </FeedbackMessage>
+          ) : paging.isLoadingEarlier && <span className="notice notice-muted">Loading earlier history…</span>}
         </div>
       ) : paging.isTruncated && (
         <div className="row row-system"><div className="notice notice-muted">Older history is no longer held</div></div>
@@ -117,7 +128,7 @@ export function SessionThread({ session, sendCallbacks, ...viewport }: SessionTh
     <AssistantRuntimeProvider runtime={runtime}>
       <ThreadSessionContext.Provider value={session}>
         <ThreadPrimitive.Root className="session-thread">
-          <ThreadViewport {...viewport} />
+          <ThreadViewport sid={sid} {...viewport} />
         </ThreadPrimitive.Root>
       </ThreadSessionContext.Provider>
     </AssistantRuntimeProvider>

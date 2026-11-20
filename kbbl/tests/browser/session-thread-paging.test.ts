@@ -36,7 +36,8 @@ function encodeFrame(frame: SessionWireFrame): Uint8Array {
 
 function serveThread({ hasEarlier, isTruncated }: { hasEarlier: boolean; isTruncated: boolean }) {
   const requests: number[] = [];
-  const state: { live?: ReadableStreamDefaultController<Uint8Array>; releasePage?: () => void } = {};
+  let pageRequested = Promise.withResolvers<void>();
+  const state: { live?: ReadableStreamDefaultController<Uint8Array>; releasePage?: (response?: Response) => void } = {};
   const initial: SessionEpochFrame = {
     kind: "epoch", stream_epoch: epoch, history_kind: "transcript", expired: false, summary: null,
     session_state: EMPTY_SESSION_LIVE_STATE, open_turns: [], items: items.slice(-200),
@@ -56,7 +57,12 @@ function serveThread({ hasEarlier, isTruncated }: { hasEarlier: boolean; isTrunc
     if (url.pathname === "/sessions/paging/items") {
       const before_seq = Number(url.searchParams.get("before_seq"));
       requests.push(before_seq);
-      await new Promise<void>((resolve) => { state.releasePage = resolve; });
+      const response = await new Promise<Response | undefined>((resolve) => {
+        state.releasePage = resolve;
+        pageRequested.resolve();
+        pageRequested = Promise.withResolvers<void>();
+      });
+      if (response) return response;
       const page: ItemPage = { kind: "page", stream_epoch: epoch, ...selectItemPage({ items, before_seq, limit: 100 }) };
       return Response.json(page);
     }
@@ -66,8 +72,11 @@ function serveThread({ hasEarlier, isTruncated }: { hasEarlier: boolean; isTrunc
   } });
   return {
     server, requests,
-    append: () => state.live?.enqueue(encodeFrame({ kind: "item", item: agentItem(451) })),
-    releasePage: () => state.releasePage?.(),
+    emitItem: (number: number) => state.live?.enqueue(encodeFrame({ kind: "item", item: agentItem(number) })),
+    waitForPageRequest: async (count: number) => {
+      while (requests.length < count) await pageRequested.promise;
+    },
+    releasePage: (response?: Response) => state.releasePage?.(response),
     closeStream: () => state.live?.close(),
   };
 }
@@ -105,13 +114,14 @@ test("follows live output and anchors the visible row when older history is prep
     await waitForVisibleRow(page, 450);
     expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(820);
 
-    fixture.append();
+    fixture.emitItem(451);
     await waitForVisibleRow(page, 451);
 
     // Measure at the position where the reader requests history, after the
     // intentional jump to the sentinel and before the network page is released.
     await viewport.evaluate((element) => { element.scrollTop = 0; });
     await viewport.getByText("Loading earlier history…").waitFor();
+    await fixture.waitForPageRequest(1);
     const anchor = await firstVisible(viewport);
     await viewport.evaluate(async (element) => {
       element.scrollTop = 300;
@@ -120,6 +130,10 @@ test("follows live output and anchors the visible row when older history is prep
       await new Promise(requestAnimationFrame);
     });
     expect(fixture.requests).toEqual([251]);
+    // A live item older than the page changes the first ID during the request
+    // and leaves that ID unchanged when the page itself renders.
+    fixture.emitItem(101);
+    await viewport.getByText("Message 101", { exact: true }).waitFor({ state: "attached" });
     fixture.releasePage();
 
     await viewport.getByText("Message 151", { exact: true }).waitFor({ state: "attached" });
@@ -129,6 +143,39 @@ test("follows live output and anchors the visible row when older history is prep
     }, anchor);
     expect(fixture.requests).toEqual([251]);
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  } finally {
+    fixture.releasePage();
+    fixture.closeStream();
+    await page.close();
+    fixture.server.stop(true);
+  }
+}, 30_000);
+
+test("offers a retry after a failed history request while the sentinel stays visible", async () => {
+  const fixture = serveThread({ hasEarlier: true, isTruncated: false });
+  const page = await browser.newPage();
+  try {
+    await page.goto(fixture.server.url.href);
+    await page.getByText("idle", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Show conversation" }).click();
+    const viewport = page.locator(".session-thread__viewport");
+    await waitForVisibleRow(page, 450);
+    await viewport.evaluate((element) => { element.scrollTop = 0; });
+    await viewport.getByText("Loading earlier history…").waitFor();
+    await fixture.waitForPageRequest(1);
+    fixture.releasePage(Response.json({ error: "Temporary failure" }, { status: 503 }));
+    const feedback = viewport.getByRole("alert").filter({ hasText: "Temporary failure" });
+    await feedback.waitFor();
+    expect(fixture.requests).toEqual([251]);
+
+    await feedback.getByRole("button", { name: "Retry" }).click();
+    await feedback.getByRole("button", { name: "Retrying…" }).waitFor();
+    await fixture.waitForPageRequest(2);
+    expect(fixture.requests).toEqual([251, 251]);
+    fixture.releasePage();
+    await viewport.getByText("Message 151", { exact: true }).waitFor({ state: "attached" });
+    await feedback.waitFor({ state: "detached" });
+    expect(fixture.requests).toEqual([251, 251]);
   } finally {
     fixture.releasePage();
     fixture.closeStream();

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import {
-  EMPTY_SESSION_LIVE_STATE, permissionRequestId, transcriptItemId, transcriptSeq, TOOL_STATUSES, type PermissionItem, type TranscriptItem, type ToolCallItem,
+  EMPTY_SESSION_LIVE_STATE, permissionRequestId, transcriptItemId, transcriptSeq, TOOL_STATUSES, type PermissionItem, type PlanItem, type TranscriptItem, type ToolCallItem,
 } from "../../acp/transcript-model";
 import { permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import type { SessionSurfaceLayout } from "../lib/session-surface";
@@ -129,6 +129,43 @@ function setThreadItems(items: TranscriptItem[]) {
   });
 }
 
+it("renders live permissions and plans outside the window and drops stale unanswered permission rows", () => {
+  const permissionSeq = transcriptSeq(1);
+  const planSeq = transcriptSeq(2);
+  const messageSeq = transcriptSeq(3);
+  const permission: PermissionItem = {
+    kind: "permission", seq: permissionSeq, id: transcriptItemId(permissionSeq),
+    request_id: permissionRequestId("live-only"), title: "Live permission",
+    options: [{ option_id: "allow", name: "Allow", kind: "allow_once" }], resolution: null,
+  };
+  const plan: PlanItem = {
+    kind: "plan", seq: planSeq, id: transcriptItemId(planSeq),
+    entries: [{ content: "Live plan step", status: { is_recognized: true, value: "pending" },
+      priority: { is_recognized: true, value: "medium" } }],
+  };
+  const message: TranscriptItem = {
+    kind: "agent_message", id: transcriptItemId(messageSeq), seq: messageSeq, message_id: null,
+    text: "Loaded conversation", is_streaming: false, is_replayed: false,
+  };
+  const store = getSessionTranscriptStore(sid);
+  setThreadItems([message]);
+  store.setState({ session_state: { ...EMPTY_SESSION_LIVE_STATE, open_permissions: [permission], latest_plan: plan } });
+
+  const { container } = renderView(sid);
+  fireEvent.click(screen.getByRole("button", { name: "Show conversation" }));
+  const viewport = container.querySelector<HTMLElement>(".session-thread__viewport");
+  if (!viewport) throw new Error("missing thread viewport");
+  const rowIds = () => Array.from(viewport.querySelectorAll<HTMLElement>("[data-item-id]"), (row) => row.dataset.itemId);
+  expect(rowIds()).toEqual([permission.id, plan.id, message.id]);
+  expect(within(viewport).getByRole("button", { name: "Allow" })).toBeTruthy();
+  expect(within(viewport).getByText("Live plan step")).toBeTruthy();
+
+  act(() => setThreadItems([permission, message]));
+  act(() => store.setState({ session_state: { ...EMPTY_SESSION_LIVE_STATE, latest_plan: plan } }));
+  expect(rowIds()).toEqual([plan.id, message.id]);
+  expect(within(viewport).queryByRole("button", { name: "Allow" })).toBeNull();
+});
+
 it("renders sanitized agent Markdown and an expandable thought in the thread", () => {
   const agentSeq = transcriptSeq(1);
   const thoughtSeq = transcriptSeq(2);
@@ -171,6 +208,30 @@ it("updates the thread tool status from live items and displays all typed conten
   expect(within(row).getByText("deferred")).toBeTruthy();
   expect(within(row).getByText("example.ts:3")).toBeTruthy();
   expect(JSON.parse(row.querySelector(".card-body")?.textContent ?? "null")).toEqual(tool.content);
+});
+
+it("renders distinct snapshots when two transcript items share a tool call ID", () => {
+  const originalSeq = transcriptSeq(1);
+  const reusedSeq = transcriptSeq(2);
+  const original: ToolCallItem = {
+    kind: "tool_call", seq: originalSeq, id: transcriptItemId(originalSeq), tool_call_id: "reused",
+    title: "First tool run", tool_kind: { is_recognized: true, value: "read" },
+    status: { is_recognized: true, value: "completed" }, content: [], locations: [],
+  };
+  const reused: ToolCallItem = {
+    ...original, seq: reusedSeq, id: transcriptItemId(reusedSeq), title: "Second tool run",
+    status: { is_recognized: true, value: "in_progress" },
+  };
+  setThreadItems([original, reused]);
+  const { container } = renderView(sid);
+  fireEvent.click(screen.getByRole("button", { name: "Show conversation" }));
+  const originalRow = container.querySelector<HTMLElement>(`[data-item-id="${original.id}"]`);
+  const reusedRow = container.querySelector<HTMLElement>(`[data-item-id="${reused.id}"]`);
+  if (!originalRow || !reusedRow) throw new Error("missing tool rows");
+  expect(within(originalRow).getByText("First tool run")).toBeTruthy();
+  expect(within(originalRow).getByText("completed")).toBeTruthy();
+  expect(within(reusedRow).getByText("Second tool run")).toBeTruthy();
+  expect(within(reusedRow).getByText("in_progress")).toBeTruthy();
 });
 
 function renderInput() {

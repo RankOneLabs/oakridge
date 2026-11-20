@@ -64,16 +64,25 @@ function selectPermission(item: PermissionItem): Extract<TimelineItem, { kind: "
   };
 }
 
-export function selectSessionTimelineItems(items: readonly TranscriptItem[], state: SessionLiveState): TimelineItem[] {
-  const openPermissions = new Set(state.open_permissions.map((item) => item.id));
+type LiveTimelineItems = Pick<SessionLiveState, "open_permissions" | "latest_plan">;
+
+export function selectSessionTranscriptItems(items: readonly TranscriptItem[], state: LiveTimelineItems): readonly TranscriptItem[] {
+  const { open_permissions, latest_plan } = state;
+  if (open_permissions.length === 0 && latest_plan === null && !items.some((item) => item.kind === "permission" && item.resolution === null)) {
+    return items;
+  }
+  const openPermissions = new Set(open_permissions.map((item) => item.id));
   const visibleItems = items.filter((item) => item.kind !== "permission" || item.resolution !== null || openPermissions.has(item.id));
   const visibleIds = new Set(visibleItems.map((item) => item.id));
-  const stateItems = state.latest_plan === null ? state.open_permissions : [...state.open_permissions, state.latest_plan];
+  const stateItems = latest_plan === null ? open_permissions : [...open_permissions, latest_plan];
   const missingItems = stateItems.filter((item) => !visibleIds.has(item.id));
-  const timeline = missingItems.length === 0
+  return missingItems.length === 0
     ? visibleItems
     : [...visibleItems, ...missingItems].sort((a, b) => a.seq - b.seq);
-  return selectTimelineItems(timeline);
+}
+
+export function selectSessionTimelineItems(items: readonly TranscriptItem[], state: SessionLiveState): TimelineItem[] {
+  return selectTimelineItems(selectSessionTranscriptItems(items, state));
 }
 
 export function selectTimelineItems(items: readonly TranscriptItem[]): TimelineItem[] {
