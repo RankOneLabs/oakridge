@@ -63,6 +63,7 @@ export function SessionView({
     unavailableReason,
     streamError,
     openTurns,
+    terminalTurnKeys,
     historyLoaded,
   } = useAcpSession(sid);
 
@@ -113,7 +114,7 @@ export function SessionView({
     acceptPendingSend,
     removePendingSend,
     lastPendingClientMessageId,
-  } = usePendingSends(sid, openTurns, sessionState.active_turn, sessionStatus);
+  } = usePendingSends(sid, { openTurns, activeTurn: sessionState.active_turn, terminalTurnKeys, sessionStatus });
 
   const [isInterrupting, setIsInterrupting] = useState(false);
   const operatorState = selectOperatorExecutionState({

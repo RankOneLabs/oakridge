@@ -31,6 +31,7 @@ export function useAcpSession(sid: string) {
     summary: history?.summary ?? null,
     unavailableReason: history?.unavailable_reason ?? null,
     openTurns: useSessionTranscript(sid, (state) => state.open_turns),
+    terminalTurnKeys: useSessionTranscript(sid, (state) => state.terminal_turn_keys),
     historyLoaded: history !== null,
     transcriptVersion: useSessionTranscript(sid, (state) => state.transcript_version),
     loadEarlier: acquired?.sid === sid ? acquired.handle.loadEarlier : loadEarlierBeforeAcquire,

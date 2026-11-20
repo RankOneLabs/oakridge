@@ -2,7 +2,7 @@ import {
   INITIAL_SESSION_TRANSCRIPT_STATE,
   type SessionTranscriptState,
 } from "../state/session-transcript-store";
-import type { SessionEpochFrame, SessionWireFrame, TranscriptItem, TranscriptItemId } from "../types";
+import type { SessionEpochFrame, SessionWireFrame, TranscriptItem, TranscriptItemId, TurnKey } from "../types";
 
 export function applyEpochFrame(
   frame: SessionEpochFrame,
@@ -17,6 +17,10 @@ export function applyEpochFrame(
     is_truncated: frame.is_truncated,
     session_state: frame.session_state,
     open_turns: frame.open_turns,
+    // A reconnect in the same epoch can race an outstanding input receipt.
+    terminal_turn_keys: frame.stream_epoch !== null && frame.stream_epoch === previous.stream_epoch
+      ? previous.terminal_turn_keys
+      : INITIAL_SESSION_TRANSCRIPT_STATE.terminal_turn_keys,
     connection: { status: previous.connection.status, stream_error: null },
     history: {
       kind: frame.history_kind,
@@ -35,6 +39,7 @@ export function applyIncrementalFrames(
   let next = state;
   let items: Map<TranscriptItemId, TranscriptItem> | null = null;
   let ordered: TranscriptItemId[] | null = null;
+  let terminalTurnKeys: Set<TurnKey> | null = null;
   for (const frame of frames) {
     switch (frame.kind) {
       case "epoch":
@@ -73,6 +78,10 @@ export function applyIncrementalFrames(
         next = { ...next, session_state: frame.state };
         break;
       case "turn_state":
+        if (frame.state !== "prompting" && !(terminalTurnKeys ?? state.terminal_turn_keys).has(frame.turn_key)) {
+          terminalTurnKeys ??= new Set(state.terminal_turn_keys);
+          terminalTurnKeys.add(frame.turn_key);
+        }
         next = {
           ...next,
           open_turns: frame.state === "prompting"
@@ -90,6 +99,7 @@ export function applyIncrementalFrames(
     ...next,
     items_by_id: items ?? state.items_by_id,
     ordered_ids: ordered ?? state.ordered_ids,
+    terminal_turn_keys: terminalTurnKeys ?? state.terminal_turn_keys,
     transcript_version: state.transcript_version + 1,
   };
 }

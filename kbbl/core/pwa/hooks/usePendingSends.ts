@@ -21,12 +21,17 @@ export interface PendingSendsState {
   lastPendingClientMessageId: string | null;
 }
 
+interface PendingTurnState {
+  openTurns: readonly UiOpenTurn[];
+  activeTurn: TurnKey | null;
+  terminalTurnKeys: ReadonlySet<TurnKey>;
+  sessionStatus: SessionStatus | null;
+}
+
 /** Projects durable operator turns plus the brief pre-receipt network window. */
 export function usePendingSends(
   sid: string,
-  openTurns: readonly UiOpenTurn[],
-  activeTurn: TurnKey | null,
-  sessionStatus: SessionStatus | null,
+  { openTurns, activeTurn, terminalTurnKeys, sessionStatus }: PendingTurnState,
 ): PendingSendsState {
   const [localSends, setLocalSends] = useState<PendingSend[]>([]);
   const observedTurns = useRef(new Set<TurnKey>());
@@ -44,7 +49,8 @@ export function usePendingSends(
     if (activeTurn !== null) observedTurns.current.add(activeTurn);
     const retained = localSends.filter(({ turnKey }) =>
       turnKey === null ||
-      (turnKey !== activeTurn && (openKeys.has(turnKey) || !observedTurns.current.has(turnKey))));
+      (turnKey !== activeTurn && !terminalTurnKeys.has(turnKey) &&
+        (openKeys.has(turnKey) || !observedTurns.current.has(turnKey))));
     if (retained.length !== localSends.length) {
       setLocalSends((current) => current === localSends ? retained : current);
     }
@@ -52,7 +58,7 @@ export function usePendingSends(
     if (retained.every((send) => send.turnKey !== null)) {
       observedTurns.current = new Set(activeTurn === null ? openKeys : [...openKeys, activeTurn]);
     }
-  }, [sid, isClosed, openTurns, activeTurn, localSends]);
+  }, [sid, isClosed, openTurns, activeTurn, terminalTurnKeys, localSends]);
 
   const addPendingSend = useCallback((text: string, clientMessageId: string) => {
     setLocalSends((sends) => [
@@ -85,7 +91,7 @@ export function usePendingSends(
   }, []);
 
   const pendingSends = selectPendingBubbles({
-    local_sends: isClosed ? [] : localSends,
+    local_sends: isClosed ? [] : localSends.filter(({ turnKey }) => turnKey === null || !terminalTurnKeys.has(turnKey)),
     open_turns: openTurns,
     active_turn: activeTurn,
   });

@@ -4,7 +4,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import { EMPTY_SESSION_LIVE_STATE } from "../../acp/transcript-model";
 import type {
   SessionHistoryUnavailableReason, SessionLiveState, Status, StreamEpoch,
-  TerminalSessionSummary, TranscriptItem, TranscriptItemId, UiOpenTurn,
+  TerminalSessionSummary, TranscriptItem, TranscriptItemId, TurnKey, UiOpenTurn,
 } from "../types";
 
 export interface SessionHistoryMeta {
@@ -28,6 +28,7 @@ export interface SessionTranscriptState {
   is_loading_earlier: boolean;
   session_state: SessionLiveState;
   open_turns: readonly UiOpenTurn[];
+  terminal_turn_keys: ReadonlySet<TurnKey>;
   connection: SessionConnection;
   history: SessionHistoryMeta | null;
   transcript_version: number;
@@ -42,6 +43,7 @@ export const INITIAL_SESSION_TRANSCRIPT_STATE: SessionTranscriptState = {
   is_loading_earlier: false,
   session_state: EMPTY_SESSION_LIVE_STATE,
   open_turns: [],
+  terminal_turn_keys: new Set(),
   connection: { status: "connecting", stream_error: null },
   history: null,
   transcript_version: 0,
