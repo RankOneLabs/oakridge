@@ -5,7 +5,8 @@ use workflow_compiler::{
     decode_workflow_value_detailed, CheckKind, CompileError,
 };
 use workflow_model::{
-    AdjudicationRole, AuthoredReviewDefinition, CheckedWorkflow, ResourceLimits, Review, Workflow,
+    AdjudicationRole, AuthoredReviewDefinition, CheckedWorkflow, ResourceLimits, Review,
+    SourceSpan, Workflow,
 };
 
 const REVIEW_PATH: &str = "stages.document.reviews.assessment_review";
@@ -61,14 +62,15 @@ fn compile(value: Value) -> Result<CheckedWorkflow, Vec<CompileError>> {
     compile_workflow_detailed(&workflow, &[], &prompts())
 }
 
-fn assert_review_error(value: Value, path: &str, detail: &str) {
+fn assert_review_error(value: Value, path: &str, detail: &str) -> CompileError {
     let errors = compile(value).unwrap_err();
-    assert!(
-        errors.iter().any(|error| {
+    errors
+        .iter()
+        .find(|error| {
             error.check == CheckKind::Review && error.path.0 == path && error.detail == detail
-        }),
-        "missing {path}: {detail} in {errors:?}"
-    );
+        })
+        .unwrap_or_else(|| panic!("missing {path}: {detail} in {errors:?}"))
+        .clone()
 }
 
 fn plain_review(value: &mut Value) {
@@ -319,11 +321,12 @@ fn explicit_assessment_equal_to_review_target_compiles() {
 fn assessment_binding_requires_assessment_artifact_kind() {
     let mut value = adjudicating_source();
     review_value(&mut value)["assessment"] = json!("draft");
-    assert_review_error(
+    let error = assert_review_error(
         value,
         &format!("{REVIEW_PATH}.assessment"),
         "assessment draft is not a kind: assessment artifact",
     );
+    assert_eq!(error.span, SourceSpan { start: 0, end: 5 });
 }
 
 #[test]

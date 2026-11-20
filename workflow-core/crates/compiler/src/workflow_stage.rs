@@ -135,15 +135,17 @@ pub(super) fn compile_stage(
             }
         };
         state.capture(result);
-        state.errors.extend(adjudication::check_adjudication(
-            adjudication::AdjudicationCheck {
+        let adjudication_errors =
+            adjudication::check_adjudication(adjudication::AdjudicationCheck {
                 review_key,
                 review,
                 stage_key: key,
                 stage,
                 path: &path,
-            },
-        ));
+            });
+        for error in adjudication_errors {
+            state.error(error.check, &error.path.0, error.detail);
+        }
         let input_before = state.errors.len();
         let review_inputs = state.fields(
             &review.inputs,
