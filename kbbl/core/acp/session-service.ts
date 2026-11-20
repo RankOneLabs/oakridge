@@ -1,3 +1,5 @@
+import { buildEpochFrame, toWireFrames, type SessionEpochFrame, type SessionWireFrame } from "./session-wire";
+import { selectItemPage, type EpochChanged, type ItemPage } from "./transcript-page";
 import type { StreamEpoch, TranscriptEmission } from "./transcript-model";
 import { randomUUID } from "node:crypto";
 import { AcpSessionReads } from "#kbbl/core/acp/session-reads";
@@ -7,7 +9,7 @@ import { AcpSessionProvisioner } from "#kbbl/core/acp/session-provisioner";
 import { createSessionController } from "./session-controller";
 import { removeSessionSkills, type SessionIntegrationConfig } from "./session-integration";
 import { sha256Hex } from "./start-spec-hash";
-import { toSnapshot, turnToReceipt } from "./pwa-wire";
+import { toSnapshot, turnToOpenTurn, turnToReceipt } from "./pwa-wire";
 // Application service used by HTTP handlers (§8.6). Routes never reach into
 // an SDK connection; everything goes through this facade. Every prompt is
 // dispatched through the controller's accepted-turn loop, so "one active
@@ -59,6 +61,17 @@ export interface AcpSessionServiceDeps {
   readonly summary_generators?: readonly SessionSummaryGenerator[];
 }
 
+export interface SessionStreamLease {
+  epoch_frame: SessionEpochFrame;
+  release(): Promise<void>;
+}
+
+interface ItemPageQuery {
+  epoch: string;
+  before_seq: number;
+  limit: number;
+}
+
 export class AcpSessionService {
   private readonly reads: AcpSessionReads;
   private readonly history: AcpSessionHistory;
@@ -76,6 +89,72 @@ export class AcpSessionService {
   loadHistory(...args: Parameters<AcpSessionHistory["loadHistory"]>) { return this.history.loadHistory(...args); }
   loadResumeHistory(...args: Parameters<AcpSessionHistory["loadResumeHistory"]>) { return this.history.loadResumeHistory(...args); }
   acquireHistory(...args: Parameters<AcpSessionHistory["acquireHistory"]>) { return this.history.acquireHistory(...args); }
+
+  get transcriptLimits(): Readonly<Pick<AcpServiceConfig, "initial_item_window" | "item_page_limit" | "item_page_limit_max">> {
+    return this.deps.config;
+  }
+
+  async openSessionStream(
+    sid: string,
+    listener: (frames: readonly SessionWireFrame[]) => void,
+    signal?: AbortSignal,
+  ): Promise<Result<SessionStreamLease, AcpError>> {
+    let unsubscribe: (() => void) | undefined;
+    const detach = () => {
+      unsubscribe?.();
+      unsubscribe = undefined;
+      signal?.removeEventListener("abort", detach);
+    };
+    // History also releases on abort. Detach first so a display-only child
+    // is not kept alive by this stream's own subscription.
+    signal?.addEventListener("abort", detach, { once: true });
+    const acquired = await this.acquireHistory(sid, signal);
+    if (!acquired.ok) {
+      detach();
+      return acquired;
+    }
+
+    const lease = acquired.value;
+    let history = lease.history;
+    const controller = this.deps.controllers.getLive(history.sid);
+    if (!signal?.aborted && history.kind === "transcript" && controller?.streamEpoch === history.transcript.stream_epoch) {
+      // No asynchronous work between the snapshot and the live subscription.
+      const transcript = controller.snapshotTranscript();
+      unsubscribe = controller.subscribe(({ frames }) => {
+        listener(toWireFrames(frames, controller.snapshotTranscript().items));
+      });
+      history = {
+        ...history,
+        transcript,
+        openTurns: this.deps.store.listOpenTurns(history.sid).map(turnToOpenTurn),
+      };
+    }
+    return ok({
+      epoch_frame: buildEpochFrame({
+        history,
+        stream_epoch: controller?.streamEpoch ?? null,
+        initial_item_window: this.transcriptLimits.initial_item_window,
+      }),
+      release: () => {
+        detach();
+        return lease.release();
+      },
+    });
+  }
+
+  readItemPage(sid: string, query: ItemPageQuery): Result<ItemPage | EpochChanged, AcpError> {
+    const sessionId = sid as KbblSessionId;
+    if (!this.deps.store.getSession(sessionId)) {
+      return err(acpError("session_not_found", "service.readItemPage", `no session ${sid}`));
+    }
+    const live = this.deps.controllers.getLive(sessionId);
+    const retained = this.history.getRetainedSnapshot(sessionId);
+    const matching = live?.streamEpoch === query.epoch ? live.snapshotTranscript() : retained;
+    if (matching?.stream_epoch !== query.epoch) {
+      return ok({ kind: "epoch_changed", stream_epoch: live?.streamEpoch ?? retained?.stream_epoch ?? null });
+    }
+    return ok({ kind: "page", stream_epoch: matching.stream_epoch, ...selectItemPage({ ...query, items: matching.items }) });
+  }
 
   /** §10.7 boot recovery sweep. Call once before serving requests. */
   recoverOnBoot(): void {
@@ -371,6 +450,7 @@ export class AcpSessionService {
       });
     }
     this.deps.store.deleteSession(row.sid);
+    this.history.dropRetainedSnapshot(row.sid);
     return ok(true);
   }
 
