@@ -1,3 +1,4 @@
+import { BLOCKER_REVIEW } from "../operator-contracts/blocker";
 import type { OperatorInboxItem, OperatorRunInboxBatchEntry } from "../operator-contracts/projections/inbox";
 import type { OperatorArtifactView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../artifact-types";
@@ -22,7 +23,6 @@ const DEVELOPMENT_REVIEW_SUBJECTS: Readonly<Record<string, string>> = {
   "integration:integration_review": "assessment",
 };
 
-const BLOCKER_REVIEW = "blocker_review";
 const isBlockerDecision = (item: OperatorInboxItem): boolean =>
   item.kind === "decision" && item.submit.kind === "review" && item.submit.review === BLOCKER_REVIEW;
 
@@ -101,7 +101,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
   // The retry is the operator's one piece of work for that unit; showing the
   // diagnostic as another inbox item duplicates the same failed brief.
   const unitsWithRetry = new Set(entry.items.flatMap((item) => item.kind === "decision" && item.submit.kind === "retry" ? [item.unit_id] : []));
-  // A parked blocker asks through its blocker_review decisions; its "worker blocked" wait repeats the same ask.
+  // A parked blocker asks through its blocker review decisions; its "worker blocked" wait repeats the same ask.
   const unitsWithBlocker = new Set(entry.items.flatMap((item) => isBlockerDecision(item) ? [item.unit_id] : []));
   const items: ReviewInboxItem[] = entry.items.flatMap((item) => {
     const unit = byId.get(item.unit_id);
