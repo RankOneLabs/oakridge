@@ -6,6 +6,7 @@ import { EMPTY_SESSION_LIVE_STATE, transcriptItemId, transcriptSeq, type AgentMe
 import { createElement, StrictMode, type ComponentProps } from "react";
 import type { SessionEpochFrame, SessionSnapshot, TurnKey } from "../types";
 import type { InputBox } from "../components/organisms/InputBox";
+import { threadExpandedKey } from "../lib/storage";
 import { SessionView } from "../views/SessionView";
 import { useAcpSession } from "./useAcpSession";
 
@@ -227,12 +228,15 @@ describe("useAcpSession", () => {
         }],
       })));
       fireEvent.click(screen.getByRole("button", { name: "Send test input" }));
+      const toggle = screen.getByRole("button", { name: "Show conversation" });
+      fireEvent.click(toggle);
       expect(screen.getByText("server response")).toBeTruthy();
-      expect(screen.getByText("durable input")).toBeTruthy();
-      expect(screen.getByText("queued")).toBeTruthy();
+      const queuedBubble = screen.getAllByText("durable input").find((entry) => entry.closest(".row-user"));
+      expect(queuedBubble?.querySelector(".bubble-pending-tag")?.textContent).toBe("queued");
       expect(screen.getByText("network input")).toBeTruthy();
       expect(screen.getByText("sending…")).toBeTruthy();
     } finally {
+      localStorage.removeItem(threadExpandedKey(SID));
       vi.restoreAllMocks();
     }
   });

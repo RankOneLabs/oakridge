@@ -202,17 +202,25 @@ test("the stream writes the history epoch first, then each frame folded during i
     await entered.promise;
 
     const sent = await harness.service.sendInput(sid, "while epoch blocked", { client_message_id: "during-epoch" });
-    expect(sent.ok).toBe(true);
+    if (!sent.ok) throw new Error(sent.error.detail);
     await idle.promise;
     expect(expected.length).toBeGreaterThan(0);
     expect(written).toEqual([]);
     unblock.resolve();
 
-    for (const frame of [epoch, ...expected]) {
+    const accepted: SessionWireFrame = {
+      kind: "turn_accepted",
+      turn: {
+        turnKey: sent.value.turn_key, source: "operator", text: "while epoch blocked",
+        status: "accepted", createdAt: sent.value.created_at,
+      },
+    };
+    const expectedWire = [epoch, accepted, ...expected];
+    for (const frame of expectedWire) {
       const chunk = decoder.decode((await reader.read()).value);
       expect(chunk).toBe(`event: ${frame.kind}\ndata: ${JSON.stringify(frame)}\n\n`);
     }
-    expect(written).toEqual([epoch, ...expected]);
+    expect(written).toEqual(expectedWire);
     expect(expected).not.toContainEqual(expect.objectContaining({ kind: "item", item: expect.objectContaining({ text: "before snapshot" }) }));
   } finally {
     unblock.resolve();

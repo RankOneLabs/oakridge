@@ -3,14 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSnapshot, Status } from "../types";
 import { useAcpSession } from "../hooks/useAcpSession";
 import { usePendingSends } from "../hooks/usePendingSends";
-import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
+import { readStoredThreadExpanded, writeStoredThreadExpanded } from "../lib/storage";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
 import { selectOpenPermissions, selectSessionTimelineItems, type TimelineItem } from "../lib/session-items";
-import {
-  operatorStateLabel,
-  selectOperatorExecutionState,
-} from "../lib/operator-state";
+import { selectPanelExecution } from "../lib/session-panel";
+import { useSessionTranscript } from "../state/session-transcript-store";
 
+import { Button } from "../components/atoms/Button";
 import { SessionTopBar } from "../components/molecules/SessionTopBar";
 import { SessionTimeline } from "../components/molecules/SessionTimeline";
 import { SessionConfigBar } from "../components/organisms/SessionConfigBar";
@@ -18,7 +17,7 @@ import { InputBox } from "../components/organisms/InputBox";
 import { PendingUserBubbleEntry } from "../components/organisms/PendingUserBubbleEntry";
 import { AgentMessage } from "../components/molecules/AgentMessage";
 import { EndedBanner } from "../components/organisms/EndedBanner";
-import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
+import { AgentStatusPanel } from "../components/organisms/AgentStatusPanel";
 import { SkillRail } from "../components/organisms/SkillRail";
 import { PermissionCard, permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import { readHashPermissionTarget, readHashSessionTarget } from "../lib/hash";
@@ -52,6 +51,18 @@ export function SessionView({
   const appRef = useRef<HTMLDivElement>(null);
   const topBarRef = useRef<HTMLElement>(null);
   const bottomBarRef = useRef<HTMLDivElement>(null);
+  const [isThreadExpanded, setThreadExpanded] = useState(() => readStoredThreadExpanded(sid));
+  const [threadSid, setThreadSid] = useState(sid);
+  if (threadSid !== sid) {
+    setThreadSid(sid);
+    setThreadExpanded(readStoredThreadExpanded(sid));
+  }
+
+  function toggleThread() {
+    const nextExpanded = !isThreadExpanded;
+    setThreadExpanded(nextExpanded);
+    writeStoredThreadExpanded(sid, nextExpanded);
+  }
 
   const {
     items,
@@ -64,10 +75,12 @@ export function SessionView({
     streamError,
     openTurns,
     terminalTurnKeys,
-    historyLoaded,
   } = useAcpSession(sid);
 
-  const timelineItems = useMemo(() => selectSessionTimelineItems(items, sessionState), [items, sessionState]);
+  const timelineItems = useMemo(
+    () => isThreadExpanded ? selectSessionTimelineItems(items, sessionState) : [],
+    [isThreadExpanded, items, sessionState],
+  );
   const openPermissions = useMemo(() => selectOpenPermissions(sessionState), [sessionState]);
   const turnActive = sessionState.active_turn !== null;
   const sessionTitle = sessionState.session_title;
@@ -93,7 +106,7 @@ export function SessionView({
     focusedPermissionRef.current = `${request_id}:${hashFocusVersion}`;
     card.scrollIntoView({ behavior: "smooth", block: "center" });
     card.focus({ preventScroll: true });
-  }, [openPermissions, hashFocusVersion]);
+  }, [sid, openPermissions, hashFocusVersion]);
 
   const sessionStatus = snapshot?.status ?? null;
   const sessionClosed =
@@ -103,7 +116,7 @@ export function SessionView({
 
   const renderPermission = useCallback(
     (item: Extract<TimelineItem, { kind: "permission" }>) => (
-      <PermissionCard key={item.key} sid={sid} requestId={item.requestId} title={item.title} options={item.options} resolution={item.resolution} sessionClosed={sessionClosed} />
+      <PermissionCard key={item.key} sid={sid} requestId={item.requestId} title={item.title} options={item.options} resolution={item.resolution} sessionClosed={sessionClosed} isAnchor={false} />
     ),
     [sid, sessionClosed],
   );
@@ -117,14 +130,9 @@ export function SessionView({
   } = usePendingSends(sid, { openTurns, activeTurn: sessionState.active_turn, terminalTurnKeys, sessionStatus });
 
   const [isInterrupting, setIsInterrupting] = useState(false);
-  const operatorState = selectOperatorExecutionState({
-    sessionStatus,
-    streamStatus,
-    historyLoaded,
-    pendingSends,
-    isTurnActive: turnActive,
-    hasOpenPermission: openPermissions.length > 0,
-    isInterrupting,
+  const transcript = useSessionTranscript(sid, (state) => state);
+  const operatorState = selectPanelExecution({
+    transcript, snapshot, pending_sends: pendingSends, is_interrupting: isInterrupting,
   });
 
   const awaitingResult =
@@ -136,13 +144,13 @@ export function SessionView({
   useEffect(() => {
     setTurnStartedAt((prev) => (awaitingResult ? (prev ?? Date.now()) : null));
   }, [awaitingResult]);
-  const elapsedSec = useElapsedSeconds(turnStartedAt, awaitingResult);
 
   useAutoScrollAndLayout({
     sid,
     transcriptVersion,
     pendingLength: pendingSends.length,
     awaitingResult,
+    isThreadExpanded,
     sessionStatus,
     appRef,
     topBarRef,
@@ -169,19 +177,27 @@ export function SessionView({
         usage={sessionState.usage}
         chrome={chrome}
       />
+      <AgentStatusPanel
+        sid={sid}
+        snapshot={snapshot}
+        pendingSends={pendingSends}
+        isInterrupting={isInterrupting}
+        localWaitStartedMs={turnStartedAt}
+        sessionClosed={sessionClosed}
+      />
+      <Button className="my-2 self-start" size="small" aria-expanded={isThreadExpanded} onClick={toggleThread}>
+        {isThreadExpanded ? "Hide conversation" : "Show conversation"}
+      </Button>
+      {canInput && (
+        <SessionConfigBar sid={sid} options={sessionState.config_options} disabled={awaitingResult} />
+      )}
+      {streamError !== null && (
+        <div className="row row-system">
+          <div className="notice notice-muted">stream: {streamError}</div>
+        </div>
+      )}
+      {isThreadExpanded && (
         <>
-          {canInput && (
-            <SessionConfigBar
-              sid={sid}
-              options={sessionState.config_options}
-              disabled={awaitingResult}
-            />
-          )}
-          {streamError !== null && (
-            <div className="row row-system">
-              <div className="notice notice-muted">stream: {streamError}</div>
-            </div>
-          )}
           {summary !== null && (
             <>
               <div className="row row-system">
@@ -217,14 +233,8 @@ export function SessionView({
               isLatest={m.clientMessageId === lastPendingClientMessageId}
             />
           ))}
-          {operatorState.kind !== "idle" && !sessionClosed && (
-            <ThinkingIndicator
-              label={operatorStateLabel(operatorState)}
-              elapsedSec={elapsedSec}
-              outputTokens={null}
-            />
-          )}
         </>
+      )}
       <div className="bottom-stack" ref={bottomBarRef}>
         {canInput && (
           <InputBox

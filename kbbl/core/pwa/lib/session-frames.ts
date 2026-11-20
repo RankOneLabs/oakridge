@@ -77,6 +77,12 @@ export function applyIncrementalFrames(
       case "session_state":
         next = { ...next, session_state: frame.state };
         break;
+      case "turn_accepted":
+        if (!(terminalTurnKeys ?? state.terminal_turn_keys).has(frame.turn.turnKey) &&
+            !next.open_turns.some((turn) => turn.turnKey === frame.turn.turnKey)) {
+          next = { ...next, open_turns: [...next.open_turns, frame.turn] };
+        }
+        break;
       case "turn_state":
         if (frame.state !== "prompting" && !(terminalTurnKeys ?? state.terminal_turn_keys).has(frame.turn_key)) {
           terminalTurnKeys ??= new Set(state.terminal_turn_keys);
