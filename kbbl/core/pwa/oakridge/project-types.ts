@@ -1,7 +1,8 @@
 // Oakridge projects, workflow definition summaries and run launch settings.
 
 import type { RuntimeId } from "../../runtime";
-import type { ForgeRepositoryIdentity, RepositoryInput } from "./run-types";
+import type { ForgeRepositoryIdentity } from "./run-types";
+import type { RepositoryInput } from "./launch-types";
 export interface OakridgeConfig {
   available: boolean;
   core_url?: string | null;

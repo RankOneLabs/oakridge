@@ -2,7 +2,7 @@ import { TextInput } from "../../../components/atoms/TextInput";
 import { Select } from "../../../components/atoms/Select";
 import { useState, type Dispatch, type SetStateAction } from "react";
 
-import type { RepositoryInputDraft } from "../../run-types";
+import type { RepositoryInputDraft } from "../../launch-types";
 import type { Project } from "../../project-types";
 import { Button } from "../../../components/atoms/Button";
 

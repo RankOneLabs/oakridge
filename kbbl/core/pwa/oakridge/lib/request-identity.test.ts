@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { CreateRunRequest, RepositoryKey } from "../run-types";
+import type { RepositoryKey } from "../run-types";
+import type { CreateRunRequest } from "../launch-types";
 import { selectRequestIdentity } from "./request-identity";
 
 const launchRequest = (notes: string): CreateRunRequest => ({
@@ -15,6 +16,7 @@ const launchRequest = (notes: string): CreateRunRequest => ({
     title: "Build it", slug: "build-it", final_merge_policy: "guarded",
     repositories: [{ repository_key: "repo" as RepositoryKey, repository_path: "/repo", integration_branch: "main", forge_repository: { provider: "github", owner: "acme", name: "repo" } }],
   },
+  workflow_input: { kind: "development" },
 });
 
 describe("request identity", () => {

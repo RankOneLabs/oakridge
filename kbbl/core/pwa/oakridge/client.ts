@@ -9,7 +9,8 @@ import type { ExecutedPromptTurn } from "../../executed-prompt";
 
 import type { CohortPullRequestResponse, ConfirmCohortMergedRequest, ArtifactDetail, ArtifactTypeDescriptor, ReviewInbox } from "./artifact-types";
 import type { OakridgeConfig, WorkflowDefSummary } from "./project-types";
-import type { CreateRunRequest, RunSummary, RunDetail, ConfirmFinalPullRequestRequest, EpicWorkflowProfile, FinalPullRequestResponse, RepositoryKey, EpicProfileId, WorkflowRunId, RunSessionAttempt, SessionRunLocation } from "./run-types";
+import type { RunSummary, RunDetail, ConfirmFinalPullRequestRequest, EpicWorkflowProfile, FinalPullRequestResponse, RepositoryKey, EpicProfileId, WorkflowRunId, RunSessionAttempt, SessionRunLocation } from "./run-types";
+import type { CreateRunRequest } from "./launch-types";
 import type { OperatorDecideRequest, OperatorIngressResponse } from "./operator-contracts/http/ingress";
 import type { OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary } from "./operator-contracts/projections/definition-view";
 import type { OperatorRunInboxBatch } from "./operator-contracts/projections/inbox";
@@ -19,7 +20,7 @@ import { createCollabClient } from "./client-collab";
 import { createGateClient } from "./client-gates";
 import { committed, oakridgeGet, oakridgePost, OPERATOR, runPath, unitPath } from "./client-http";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
-import { developmentLaunch } from "./adapters/launch";
+import { workflowLaunch } from "./adapters/launch";
 import { parseArtifactDetail, parseRunInboxBatch, parseRunView } from "./adapters/parse";
 
 async function resolveArtifactId(id: string): Promise<CompositeId> {
@@ -209,7 +210,7 @@ function readDefinitionName(definitionId: string): Promise<string> {
 export async function createRun(body: CreateRunRequest, idempotencyKey: string): Promise<RunSummary> {
   const definition = await fetchOperatorDefinition(body.workflow_def_id);
   const path = `${OPERATOR}/runs`;
-  const launch = unwrapAdapter(path, developmentLaunch(body, definition, idempotencyKey));
+  const launch = unwrapAdapter(path, workflowLaunch(body, definition, idempotencyKey));
   const runId = committed(await oakridgePost<OperatorIngressResponse>(path, launch), path);
   const run = unwrapAdapter(runPath(runId), parseRunView(await oakridgeGet<unknown>(runPath(runId))));
   return runSummary(unwrapAdapter(runPath(runId), runSnapshot(run, await readUnits(runId))), run);
