@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chromium, expect as expectPage, type Browser, type Locator } from "@playwright/test";
+import { chromium, type Browser, type Locator, type Page } from "@playwright/test";
 import { EMPTY_SESSION_LIVE_STATE, streamEpoch, transcriptItemId, transcriptSeq, type AgentMessageItem } from "../../core/acp/transcript-model";
 import type { SessionEpochFrame, SessionWireFrame } from "../../core/acp/session-wire";
 import { selectItemPage, type ItemPage } from "../../core/acp/transcript-page";
@@ -68,7 +68,19 @@ function serveThread({ hasEarlier, isTruncated }: { hasEarlier: boolean; isTrunc
     server, requests,
     append: () => state.live?.enqueue(encodeFrame({ kind: "item", item: agentItem(451) })),
     releasePage: () => state.releasePage?.(),
+    closeStream: () => state.live?.close(),
   };
+}
+
+async function waitForVisibleRow(page: Page, number: number) {
+  await page.waitForFunction((id) => {
+    const row = document.querySelector(`[data-item-id="${id}"]`);
+    const viewport = row?.closest(".session-thread__viewport");
+    if (!row || !viewport) return false;
+    const item = row.getBoundingClientRect();
+    const bounds = viewport.getBoundingClientRect();
+    return item.bottom > bounds.top && item.top < bounds.bottom;
+  }, transcriptItemId(transcriptSeq(number)));
 }
 
 async function firstVisible(viewport: Locator) {
@@ -90,11 +102,11 @@ test("follows live output and anchors the visible row when older history is prep
     await page.getByText("idle", { exact: true }).waitFor();
     await page.getByRole("button", { name: "Show conversation" }).click();
     const viewport = page.locator(".session-thread__viewport");
-    await expectPage(viewport.getByText("Message 450", { exact: true })).toBeInViewport();
+    await waitForVisibleRow(page, 450);
     expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(820);
 
     fixture.append();
-    await expectPage(viewport.getByText("Message 451", { exact: true })).toBeInViewport();
+    await waitForVisibleRow(page, 451);
 
     // Measure at the position where the reader requests history, after the
     // intentional jump to the sentinel and before the network page is released.
@@ -111,12 +123,15 @@ test("follows live output and anchors the visible row when older history is prep
     fixture.releasePage();
 
     await viewport.getByText("Message 151", { exact: true }).waitFor({ state: "attached" });
-    const row = viewport.locator(`[data-item-id="${anchor.id}"]`);
-    await expectPage.poll(async () => Math.abs(((await row.boundingBox())?.y ?? Infinity) - anchor.top)).toBeLessThanOrEqual(2);
+    await page.waitForFunction(({ id, top }) => {
+      const row = document.querySelector(`[data-item-id="${id}"]`);
+      return row !== null && Math.abs(row.getBoundingClientRect().top - top) <= 2;
+    }, anchor);
     expect(fixture.requests).toEqual([251]);
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
   } finally {
     fixture.releasePage();
+    fixture.closeStream();
     await page.close();
     fixture.server.stop(true);
   }
@@ -134,6 +149,7 @@ test("shows the truncation notice when the server has no earlier items", async (
     expect(await viewport.locator(".session-thread__sentinel").count()).toBe(0);
     expect(fixture.requests).toEqual([]);
   } finally {
+    fixture.closeStream();
     await page.close();
     fixture.server.stop(true);
   }
