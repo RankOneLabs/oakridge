@@ -2,7 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EMPTY_SESSION_LIVE_STATE, permissionRequestId, transcriptItemId, transcriptSeq, type PermissionItem } from "../../../acp/transcript-model";
-import { applySessionFrame, EMPTY_SESSION_STREAM_STATE } from "../../lib/session-frames";
+import { applyIncrementalFrames } from "../../lib/session-frames";
+import { INITIAL_SESSION_TRANSCRIPT_STATE } from "../../state/session-transcript-store";
 import type { Sid } from "../../lib/ids";
 import type { SessionSnapshot } from "../../types";
 import { useStore } from "../../state/store";
@@ -22,9 +23,9 @@ const second: PermissionItem = {
     { option_id: "reject-second", name: "Reject tests", kind: "reject_once" },
   ],
 };
-let stream = EMPTY_SESSION_STREAM_STATE;
+let stream = INITIAL_SESSION_TRANSCRIPT_STATE;
 function receivePermissions(open_permissions: readonly PermissionItem[]) {
-  stream = applySessionFrame(stream, { kind: "session_state", state: { ...EMPTY_SESSION_LIVE_STATE, open_permissions } });
+  stream = applyIncrementalFrames(stream, [{ kind: "session_state", state: { ...EMPTY_SESSION_LIVE_STATE, open_permissions } }]);
 }
 vi.mock("../../hooks/useAcpSession", () => ({
   useAcpSession: () => ({ historyLoaded: true, sessionState: stream.session_state }),

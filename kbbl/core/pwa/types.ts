@@ -44,16 +44,16 @@ export interface RuntimeDescriptor {
 
 export type { RuntimeModelSelection } from "../runtime-interface";
 
-/** Optimistic operator send awaiting its user_message echo on the stream. */
+/** Operator input awaiting a receipt or queued for delivery. */
 export interface PendingSend {
   clientMessageId: string;
   turnKey: TurnKey | null;
   text: string;
   sentAt: number;
-  status: "sending" | "accepted" | "prompting";
+  status: "sending" | "accepted";
 }
 
-export type { SessionLiveState, StreamEpoch, TranscriptItem, TranscriptItemId } from "../acp/transcript-model";
+export type { SessionLiveState, StreamEpoch, TranscriptItem, TranscriptItemId, TranscriptSeq } from "../acp/transcript-model";
 export type {
   SessionEpochFrame,
   SessionItemFrame,
