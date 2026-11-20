@@ -414,17 +414,53 @@ body {
    height since .app is a normal-flow scrolling column, not a flex parent;
    xterm fills the box and manages its own scrollback. */
 
-.events {
+.app:has(> .session-thread) {
   display: flex;
   flex-direction: column;
+  height: 100dvh;
+}
+
+#app:has(> .app-surface-nav + .app > .session-thread) {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+.app-surface-nav + .app:has(> .session-thread) {
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  flex: 1;
+}
+
+.session-surface--embedded:has(> .session-thread) {
+  height: 100%;
+}
+
+.session-thread {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.session-thread .session-thread__viewport {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-anchor: none;
   gap: 0.5rem;
-  /* --top-bar-h is pushed in by SessionView's useLayoutEffect after
-     measuring the rendered top-bar height — keeps the first message
-     clear of the sticky top bar on first paint and on iOS visual-viewport
-     jumps. The fixed input bar at the bottom is cleared via .app's
-     padding-bottom (so pending bubbles / thinking row also clear it). */
-  padding-top: var(--top-bar-h, 0.5rem);
-  padding-bottom: 0.5rem;
+  padding-block: 0.5rem;
+}
+
+.session-thread__viewport > * {
+  flex-shrink: 0;
+}
+
+.session-thread__sentinel {
+  min-height: 1.5rem;
 }
 
 .row {

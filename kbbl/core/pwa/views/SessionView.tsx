@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { SessionSnapshot, Status } from "../types";
 import { useAcpSession } from "../hooks/useAcpSession";
 import { usePendingSends } from "../hooks/usePendingSends";
 import { readStoredThreadExpanded, writeStoredThreadExpanded } from "../lib/storage";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
-import { selectOpenPermissions, selectSessionTimelineItems, type TimelineItem } from "../lib/session-items";
+import { selectOpenPermissions } from "../lib/session-items";
 import { selectPanelExecution } from "../lib/session-panel";
 import { useSessionTranscript } from "../state/session-transcript-store";
 
 import { Button } from "../components/atoms/Button";
 import { SessionTopBar } from "../components/molecules/SessionTopBar";
-import { SessionTimeline } from "../components/molecules/SessionTimeline";
+import { SessionThread } from "../components/organisms/SessionThread";
 import { SessionConfigBar } from "../components/organisms/SessionConfigBar";
 import { InputBox } from "../components/organisms/InputBox";
 import { PendingUserBubbleEntry } from "../components/organisms/PendingUserBubbleEntry";
@@ -19,7 +19,7 @@ import { AgentMessage } from "../components/molecules/AgentMessage";
 import { EndedBanner } from "../components/organisms/EndedBanner";
 import { AgentStatusPanel } from "../components/organisms/AgentStatusPanel";
 import { SkillRail } from "../components/organisms/SkillRail";
-import { PermissionCard, permissionCardAnchorId } from "../components/organisms/PermissionCard";
+import { permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import { readHashPermissionTarget, readHashSessionTarget } from "../lib/hash";
 import {
   DOCUMENT_SESSION_SURFACE_LAYOUT,
@@ -41,11 +41,7 @@ export function SessionView({
   /** Which app-level affordances the host contributes to the top bar. */
   chrome: SessionSurfaceChrome;
   onResume: (parentSid: string) => Promise<string | null>;
-  /**
-   * Which host this view scrolls and where its input bar anchors. Defaults to
-   * the document/viewport layout, so the standalone route renders exactly as
-   * it did before anchoring became injectable.
-   */
+  /** Where the session input bar anchors. */
   layout?: SessionSurfaceLayout;
 }) {
   const appRef = useRef<HTMLDivElement>(null);
@@ -65,9 +61,11 @@ export function SessionView({
   }
 
   const {
-    items,
+    hasEarlier,
+    isTruncated,
+    isLoadingEarlier,
+    loadEarlier,
     sessionState,
-    transcriptVersion,
     streamStatus,
     expired,
     summary,
@@ -77,10 +75,6 @@ export function SessionView({
     terminalTurnKeys,
   } = useAcpSession(sid);
 
-  const timelineItems = useMemo(
-    () => isThreadExpanded ? selectSessionTimelineItems(items, sessionState) : [],
-    [isThreadExpanded, items, sessionState],
-  );
   const openPermissions = useMemo(() => selectOpenPermissions(sessionState), [sessionState]);
   const turnActive = sessionState.active_turn !== null;
   const sessionTitle = sessionState.session_title;
@@ -114,13 +108,6 @@ export function SessionView({
     sessionStatus === "fenced" ||
     sessionStatus === "failed";
 
-  const renderPermission = useCallback(
-    (item: Extract<TimelineItem, { kind: "permission" }>) => (
-      <PermissionCard key={item.key} sid={sid} requestId={item.requestId} title={item.title} options={item.options} resolution={item.resolution} sessionClosed={sessionClosed} isAnchor={false} />
-    ),
-    [sid, sessionClosed],
-  );
-
   const {
     pendingSends,
     addPendingSend,
@@ -145,18 +132,13 @@ export function SessionView({
     setTurnStartedAt((prev) => (awaitingResult ? (prev ?? Date.now()) : null));
   }, [awaitingResult]);
 
-  useAutoScrollAndLayout({
-    sid,
-    transcriptVersion,
-    pendingLength: pendingSends.length,
-    awaitingResult,
-    isThreadExpanded,
-    sessionStatus,
-    appRef,
-    topBarRef,
-    bottomBarRef,
-    layout,
-  });
+  useAutoScrollAndLayout({ appRef, topBarRef, bottomBarRef });
+
+  const sendCallbacks = {
+    onSend: addPendingSend,
+    onSendAccepted: acceptPendingSend,
+    onSendFailed: removePendingSend,
+  };
 
   const canInput = snapshot !== null && !sessionClosed;
 
@@ -197,33 +179,34 @@ export function SessionView({
         </div>
       )}
       {isThreadExpanded && (
-        <>
-          {summary !== null && (
-            <>
+        <SessionThread
+          key={sid}
+          session={{ sid, sessionClosed }}
+          sendCallbacks={sendCallbacks}
+          paging={{ hasEarlier, isTruncated, isLoadingEarlier, loadEarlier }}
+          notices={<>
+            {summary !== null && (
+              <>
+                <div className="row row-system">
+                  <div className="notice notice-muted">
+                    Recovered session summary · {summary.method.replaceAll("_", " ")} · {new Date(summary.produced_at).toLocaleString()}
+                  </div>
+                </div>
+                <AgentMessage text={summary.markdown} />
+              </>
+            )}
+            {expired && summary === null && (
               <div className="row row-system">
                 <div className="notice notice-muted">
-                  Recovered session summary · {summary.method.replaceAll("_", " ")} · {new Date(summary.produced_at).toLocaleString()}
+                  session history unavailable
+                  {unavailableReason === "missing_acp_session_id"
+                    ? " — no agent session id was recorded"
+                    : " — the agent no longer holds this session's transcript and no terminal summary was captured"}
                 </div>
               </div>
-              <AgentMessage text={summary.markdown} />
-            </>
-          )}
-          {expired && summary === null && (
-            <div className="row row-system">
-              <div className="notice notice-muted">
-                session history unavailable
-                {unavailableReason === "missing_acp_session_id"
-                  ? " — no agent session id was recorded"
-                  : " — the agent no longer holds this session's transcript and no terminal summary was captured"}
-              </div>
-            </div>
-          )}
-          <SessionTimeline
-            renderPermission={renderPermission}
-            sid={sid}
-            items={timelineItems}
-            sessionClosed={sessionClosed}
-          />
+            )}
+          </>}
+        >
           {pendingSends.map((m) => (
             <PendingUserBubbleEntry
               key={m.turnKey ?? `sending:${m.clientMessageId}`}
@@ -233,16 +216,14 @@ export function SessionView({
               isLatest={m.clientMessageId === lastPendingClientMessageId}
             />
           ))}
-        </>
+        </SessionThread>
       )}
       <div className="bottom-stack" ref={bottomBarRef}>
         {canInput && (
           <InputBox
             sid={sid}
             tools={<SkillRail sid={sid} snapshot={snapshot} commands={sessionState.commands} position="composer" />}
-            onSend={addPendingSend}
-            onSendAccepted={acceptPendingSend}
-            onSendFailed={removePendingSend}
+            {...sendCallbacks}
             isTurnActive={turnActive}
             onInterruptingChange={setIsInterrupting}
           />

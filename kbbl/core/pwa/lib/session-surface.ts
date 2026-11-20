@@ -1,17 +1,7 @@
-// Where a session view scrolls, and where its input bar anchors.
-//
-// The standalone session view scrolls the document and fixes its bar to the
-// viewport. A session mounted inside a pane scrolls its own element and must
-// anchor the bar to that element instead — otherwise a viewport-fixed bar
-// floats over unrelated chrome. Both are expressed here as data, so the hook
-// and the view read a layout rather than branching on a caller's identity.
-
 import type { RefObject } from "react";
 
 /**
- * What a session view scrolls. A discriminated union, not a nullable ref
- * beside a boolean: the container only exists for the element variant, and
- * only the element variant can supply one.
+ * The host surface around the session. The thread has its own viewport.
  */
 export type SessionScrollHost =
   | { readonly kind: "document" }
@@ -22,7 +12,7 @@ export interface SessionSurfaceLayout {
   /**
    * `"viewport"` fixes the input bar to the window — the standalone mobile
    * path, where the bar must clear the iOS home indicator via safe-area
-   * insets. `"surface"` sticks it to the bottom of the scrolling element,
+   * insets. `"surface"` sticks it to the bottom of the surface,
    * for a session embedded in a pane.
    */
   readonly barAnchor: "viewport" | "surface";
