@@ -7,7 +7,8 @@ import { useRunGates } from "../../hooks/useRunGates";
 import type { MergeStatus, ParkedGate } from "../../artifact-types";
 import { fetchMergeStatus } from "../../client";
 import { randomUuid } from "../../../lib/random-uuid";
-import { parseCompositeId, selectGateDecision } from "../../adapters/core";
+import { selectInboxDecisionGate } from "../../lib/review-decision-selectors";
+import { selectGateDecision } from "../../adapters/core";
 import { Button } from "../../../components/atoms/Button";
 import { selectValidationRejectionNotice } from "../../lib/validation-rejection";
 
@@ -62,16 +63,6 @@ function InboxGateDecisionActions({ gate, ...props }: GateDecisionActionsProps) 
   const fullGate = selectInboxDecisionGate(gate, query.data ?? []);
   if (!fullGate) return <p role="status">{query.isPending ? "Loading review decisions…" : "Review decisions unavailable."}</p>;
   return <GateDecisionActionsForGate {...props} key={fullGate.id} gate={fullGate} artifactRevisionId={undefined} />;
-}
-
-function selectInboxDecisionGate(inboxGate: ParkedGate, gates: readonly ParkedGate[]): ParkedGate | null {
-  const inboxId = parseCompositeId(inboxGate.id, "gate");
-  if (!inboxId.ok) return null;
-  return gates.find(gate => {
-    if (gate.gate_step !== inboxId.value.name || gate.assessment_revision_id !== inboxGate.artifact_revision_id) return false;
-    const id = parseCompositeId(gate.id, "gate");
-    return id.ok && id.value.unitId === inboxId.value.unitId;
-  }) ?? null;
 }
 
 function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {}, onComplete }: GateDecisionActionsProps) {

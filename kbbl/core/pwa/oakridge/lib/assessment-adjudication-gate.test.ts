@@ -1,3 +1,5 @@
+import { selectAssessmentCorrection, selectInboxDecisionGate } from "./review-decision-selectors";
+import { compositeId } from "../adapters/core";
 import { describe, expect, it } from "vitest";
 import { CURRENT_ASSESSMENT } from "../__fixtures__/current-assessments";
 import type { ParkedGate } from "../artifact-types";
@@ -84,4 +86,19 @@ describe("adjudication gate", () => {
   it("an adjudication with no builder action left on an available decision is sendable", () => {
     expect(selectAdjudicationBlockReason(decided, gate, accept)).toBeNull();
   });
+});
+
+it("selects the plain feedback route for the displayed assessment revision", () => {
+  expect(selectAssessmentCorrection(expansionReview, "assessment-rev")).toBe(assessmentChanges);
+  expect(selectAssessmentCorrection(expansionReview, "older")).toBeNull();
+});
+
+it("matches an inbox review by unit, review and assessment revision", () => {
+  const id = (unitId: string) => compositeId({ kind: "gate", runId: "run-1", unitId, name: "expansion_review" });
+  const full = { ...expansionReview, id: id("alpha") };
+  const inbox = { ...full, artifact_revision_id: full.assessment_revision_id ?? null };
+  expect(selectInboxDecisionGate(inbox, [
+    { ...full, id: id("beta") }, { ...full, gate_step: "other" },
+    { ...full, assessment_revision_id: "older" }, full,
+  ])).toBe(full);
 });
