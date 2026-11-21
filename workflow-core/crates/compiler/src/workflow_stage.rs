@@ -284,6 +284,21 @@ pub(super) fn compile_stage(
             }
         });
     }
+    for artifact in &artifacts {
+        if stage.artifacts[&artifact.key.0].kind == ArtifactKind::Assessment
+            && matches!(&artifact.schema, Type::Record { fields } if fields.contains_key("next_actions"))
+            && !adjudication::has_adjudication_coverage(stage, &artifact.key)
+        {
+            state.error(
+                CheckKind::Review,
+                &format!("stages.{key}.artifacts.{}", artifact.key),
+                format!(
+                    "assessment {} has next_actions but no review adjudicates it with accept and feedback",
+                    artifact.key
+                ),
+            );
+        }
+    }
     let done = match stage.done_when.as_deref() {
         Some(text) => {
             let result = checked_guard(

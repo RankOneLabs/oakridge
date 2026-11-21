@@ -62,7 +62,7 @@
     },
     "next_action": {
       "id": "uuid(generated)",
-      "audience": "enum(builder, operator)",
+      "audience": "enum(rework, operator)",
       "source": "action_source",
       "text": "text"
     },
@@ -75,7 +75,7 @@
       "disposition": "enum(accepted, modified, rejected)",
       "original_text": "text",
       "final_text": "optional(text)",
-      "audience": "enum(builder, operator)",
+      "audience": "enum(rework, operator)",
       "source": "action_source",
       "reason": "optional(text)"
     },
@@ -83,14 +83,14 @@
       "action_id": "text",
       "origin": "enum(operator)",
       "final_text": "text",
-      "audience": "enum(builder, operator)",
+      "audience": "enum(rework, operator)",
       "source": "action_source",
       "reason": "optional(text)"
     },
     "adjudication": {
       "entries": "list(action_disposition)",
       "added_actions": "list(added_action)",
-      "builder_feedback": "text"
+      "rework_feedback": "text"
     },
     "pr_body": {
       "pr_url": "text",
@@ -761,6 +761,7 @@
         },
         "slice_report_review": {
           "of": "slice_report",
+          "assessment": "slice_assessment",
           "by": "operator",
           "prompt": "study/slice-report-review.md",
           "when": "report_is_paid and published(slice_assessment) and latest(slice_assessment).run_key == latest(slice_report).run_key",
@@ -773,7 +774,17 @@
           "decisions": {
             "expand": {
               "effect": "approve",
-              "label": "Expand"
+              "adjudication": "accept",
+              "label": "Expand",
+              "payload": "adjudication"
+            },
+            "send_feedback_to_builder": {
+              "effect": "request_changes",
+              "adjudication": "feedback",
+              "on": "slice_build",
+              "label": "Send actions to builder",
+              "payload": "adjudication",
+              "feedback_field": "rework_feedback"
             },
             "send_to_builder": {
               "effect": "request_changes",
@@ -987,6 +998,7 @@
           "decisions": {
             "accept": {
               "effect": "approve",
+              "adjudication": "accept",
               "label": "Accept",
               "payload": "adjudication"
             },
@@ -999,10 +1011,11 @@
             },
             "send_to_expander": {
               "effect": "request_changes",
+              "adjudication": "feedback",
               "on": "expansion",
-              "label": "Send to builder",
+              "label": "Send to expander",
               "payload": "adjudication",
-              "feedback_field": "builder_feedback"
+              "feedback_field": "rework_feedback"
             }
           }
         },
@@ -1333,14 +1346,16 @@
           "decisions": {
             "accept": {
               "effect": "approve",
+              "adjudication": "accept",
               "label": "Accept",
               "payload": "adjudication"
             },
             "request_changes": {
               "effect": "request_changes",
+              "adjudication": "feedback",
               "label": "Send to integrator",
               "payload": "adjudication",
-              "feedback_field": "builder_feedback",
+              "feedback_field": "rework_feedback",
               "on": "assessment"
             }
           }

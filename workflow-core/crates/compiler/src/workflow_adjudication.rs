@@ -13,6 +13,25 @@ pub(super) fn reviews_assessment(review: &Review, artifacts: &BTreeMap<String, A
         .is_some_and(|artifact| artifact.kind == ArtifactKind::Assessment)
 }
 
+pub(super) fn has_adjudication_coverage(stage: &Stage, artifact: &SymbolKey) -> bool {
+    stage.reviews.values().any(|review| {
+        let assessment = review
+            .assessment
+            .as_ref()
+            .or_else(|| reviews_assessment(review, &stage.artifacts).then_some(&review.of));
+        let has_role = |role| {
+            review
+                .decisions
+                .values()
+                .any(|decision| decision.adjudication == Some(role))
+        };
+        is_adjudicating(review)
+            && assessment == Some(artifact)
+            && has_role(AdjudicationRole::Accept)
+            && has_role(AdjudicationRole::Feedback)
+    })
+}
+
 pub(super) struct AdjudicationCheck<'a> {
     pub review_key: &'a str,
     pub review: &'a Review,

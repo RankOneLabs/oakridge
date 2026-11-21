@@ -727,3 +727,12 @@ test("published prompt survives regeneration and check without altering the auth
   expect(invalid.stderr.toString()).toContain("prompt-pointers/review-loop/write.md.json");
   expect(readFileSync(resolve(store, "launchable.json"))).toEqual(launchable);
 });
+
+test("development and study schemas use rework and operator audiences", () => {
+  for (const name of ["development", "study"] as const) {
+    const definition = unwrap(resolveLaunchableDefinition(name));
+    for (const schema of ["next_action", "action_disposition", "added_action"]) {
+      expect(definition.source.schemas?.[schema]).toMatchObject({ audience: "enum(rework, operator)" });
+    }
+  }
+});
