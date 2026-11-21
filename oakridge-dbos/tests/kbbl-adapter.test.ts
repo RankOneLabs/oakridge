@@ -9,7 +9,7 @@ import { selectEffectInstruction, type EffectInstruction, type RunWorkerAction }
 import { createAgentProvider, derivePublicationSecret, publicationSecretHash, selectDeliveryKey, selectSessionStart, selectWorkspaceBranch, type AgentProviderConfig } from "../src/effects/agent-provider";
 import type { ExternalHandle } from "../src/effects/provider";
 import { resolveObserve } from "../src/effects/outcomes";
-import { sampleWorkflow } from "./authority-fixture";
+import { compiledFixture, sampleWorkflow } from "./authority-fixture";
 
 interface Call { readonly method: string; readonly url: string; readonly headers: Headers; readonly body: unknown }
 /** A fetch that records each call and answers from `respond`. */
@@ -26,19 +26,21 @@ function recording(respond: (call: Call) => Response | Promise<Response>) {
 const snapshot = (status = "live", extra: object = {}) => ({ sid: "sid-1", status, lastActivityTs: "2026-10-12T12:00:00.000Z", ...extra });
 
 const run_id = "run-1" as import("../src/domain/primitives").RunId;
+const workflow = sampleWorkflow("review-loop");
+const parsed = await compiledFixture(workflow);
+const stage = parsed.stages.document!;
+const parsed_writer = stage.workers.writer!;
+if (parsed_writer.kind !== "agent") throw new Error("writer is an agent");
+const fresh = { ...parsed, stages: { ...parsed.stages, document: { ...stage,
+  workers: { ...stage.workers, writer: { ...parsed_writer, session: "fresh" as const } } } } };
 const unit = "run-1/document";
 const writer: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "initial" }, cause: { kind: "missing" } };
 function instructionFor(overrides: { readonly action?: RunWorkerAction; readonly resolved?: Partial<ResolvedRunWorker>; readonly fresh?: boolean;
   readonly config?: RunConfig } = {}): EffectInstruction {
-  const workflow = sampleWorkflow("review-loop");
-  const declared = workflow.stages.document!.workers.writer!;
-  const fresh = overrides.fresh && declared.kind === "agent"
-    ? { ...workflow, stages: { document: { ...workflow.stages.document!, workers: { ...workflow.stages.document!.workers, writer: { ...declared, session: "fresh" as const } } } } }
-    : workflow;
   const action = overrides.action ?? writer;
-  const selected = selectEffectInstruction({ run_id, workflow: fresh, stage: "document", config: overrides.config ?? null, action, seq: 0,
+  const selected = selectEffectInstruction({ run_id, workflow, parsed_workflow: overrides.fresh ? fresh : parsed, stage: "document", config: overrides.config ?? null, action, seq: 0,
     prompts: { "review-loop/write.md": "a".repeat(64), "review-loop/revise.md": "b".repeat(64) },
-    resolved: { action_id: `action-${action.mode.kind}`, inputs: { topic: "Oakridge", critique: null }, feedback: [], ...overrides.resolved } });
+    resolved: { action_id: `action-${action.mode.kind}`, prompt: action.mode.kind === "revise" ? "review-loop/revise.md" : "review-loop/write.md", inputs: { topic: "Oakridge", critique: null }, feedback: [], ...overrides.resolved } });
   if (!selected.ok) throw new Error(selected.error.detail);
   return selected.value;
 }

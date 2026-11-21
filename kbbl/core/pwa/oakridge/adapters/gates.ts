@@ -1,3 +1,4 @@
+import { BLOCKER_REVIEW } from "../operator-contracts/blocker";
 import { selectUnitRequirementIds } from "../lib/unit-requirements";
 import type { OperatorBodyValue, OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { ParkedGate, SentReviewFeedback } from "../artifact-types";
@@ -27,7 +28,7 @@ const hasSiblingChangeRequests = (review: string, offered: readonly OperatorDeci
 export const decisionAction = (decision: OperatorDecisionDefinition, offered: readonly OperatorDecisionDefinition[]): string => {
   if (decision.submit.kind === "retry") return "rerun";
   if (decision.submit.kind === "cancel") return "fail";
-  if (decision.submit.review === "blocker_review"
+  if (decision.submit.review === BLOCKER_REVIEW
       || decision.submit.review === "assessment_review" && decision.submit.effect === "request_changes"
       || decision.submit.effect === "request_changes" && hasSiblingChangeRequests(decision.submit.review, offered))
     return decision.submit.decision;
@@ -64,7 +65,7 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
     const artifact = target.kind === "review" ? unit.artifacts.find((candidate) => candidate.latest_revision?.id === target.target_revision_id) : null;
     const id = compositeId({ kind: "gate", runId: unit.run_id, unitId: unit.unit_id,
       name: `${review}:${target.kind === "review" ? target.target_revision_id : "unknown"}` });
-    return { id, requires_adjudication: decisions.some(isAdjudicationDecision), blocker: review === "blocker_review" && unit.blocker?.is_open ? unit.blocker : null,
+    return { id, requires_adjudication: decisions.some(isAdjudicationDecision), blocker: review === BLOCKER_REVIEW && unit.blocker?.is_open ? unit.blocker : null,
       requirement_ids: selectUnitRequirementIds(unit), gate_type: review.includes("merge") ? "merge_confirmation" : artifact ? "artifact_approval" : "gate_decision",
       gate_step: review, run_id: unit.run_id, stage_name: session.stage, unit_id: session.unit,
       artifact_revision_id: target.kind === "review"
@@ -103,6 +104,6 @@ export function sentReviewFeedback(unit: OperatorUnitView): SentReviewFeedback[]
 export function selectOpenBlockerGate(unit: OperatorUnitView): (ParkedGate & { readonly blocker: NonNullable<ParkedGate["blocker"]> }) | null {
   const gates = reviewToGates(unit);
   if (!gates.ok) return null;
-  const gate = gates.value.find((candidate) => candidate.gate_step === "blocker_review");
+  const gate = gates.value.find((candidate) => candidate.gate_step === BLOCKER_REVIEW);
   return gate?.blocker?.is_open ? { ...gate, blocker: gate.blocker } : null;
 }

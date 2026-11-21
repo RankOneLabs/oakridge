@@ -1,3 +1,4 @@
+import { BLOCKER_REVIEW } from "../../operator-contracts/blocker";
 import { TextArea } from "../../../components/atoms/TextArea";
 import { useEffect, useRef, useState } from "react";
 
@@ -27,18 +28,15 @@ function actionLabel(action: string): string {
     case "pass": return "Pass";
     case "fail": return "Mark failed";
     case "rerun": return "Run again";
-    case "clarify": return "Clarify";
-    case "discuss": return "Discuss";
-    case "override": return "Override";
     default: return action.replaceAll("_", " ");
   }
 }
 
-function successMessage(action: string): string {
+function successMessage(action: string, gate_step: string | null): string {
+  if (gate_step === BLOCKER_REVIEW) return "Answer sent to the worker.";
   if (action === "request_assessment_changes") return "Assessment changes requested. The assessor will revise its report.";
   if (action === REQUEST_BUILD_CHANGES) return "Build changes requested. The builder will revise its work.";
   if (action === "request_revision") return "Changes requested.";
-  if (["clarify", "discuss", "override"].includes(action)) return "Answer sent to the worker.";
   if (action === "confirm_merged") return "Merge confirmed. The cohort can continue.";
   return "Decision recorded. The cohort can continue.";
 }
@@ -73,7 +71,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
   // native button never fires its onClick.
   const disabled = !gate.actionable;
   const feedbackDecision = selectGateDecision(gate, feedbackAction);
-  const isBlocker = gate.gate_step === "blocker_review";
+  const isBlocker = gate.gate_step === BLOCKER_REVIEW;
 
   useEffect(() => {
     return () => { isActive.current = false; };
@@ -141,7 +139,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
 
   if (completedAction) {
     return <div className="or-decision-success" role="status" data-testid="or-decision-success">
-      {completedWithOverride ? "Merge confirmation recorded with an operator override. The run can continue." : successMessage(completedAction)}
+      {completedWithOverride ? "Merge confirmation recorded with an operator override. The run can continue." : successMessage(completedAction, gate.gate_step)}
     </div>;
   }
 
@@ -174,7 +172,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
                 data-testid={`or-decision-${action}`}
               >
                 {isCheckingMerge && action === "confirm_merged" ? "Checking PR…" : mutation.isPending && mutation.variables?.action === action
-                  ? "Saving…" : isConfirming ? "Confirm approval" : (actionLabels[action] ?? actionLabel(action))}
+                  ? "Saving…" : isConfirming ? "Confirm approval" : (actionLabels[action] ?? (isBlocker && decision ? decision.label : actionLabel(action)))}
               </Button>
               {reason && <p id={reasonId} className="text-sm text-[var(--text-secondary)]" role="status">{reason}</p>}
             </div>

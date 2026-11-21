@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { blockerUnit } from "../__fixtures__/read-models";
 import fixture from "../__fixtures__/parked-blocker-unit.json";
 import { BlockerPanel } from "../components/organisms/BlockerPanel";
 import { reviewToGates } from "../adapters/gates";
@@ -22,6 +23,14 @@ test("blocker shows suggested choices and its full history in chronological orde
   const history = screen.getAllByRole("list").find((list) => list.tagName === "OL");
   expect(history?.textContent).toMatch(/blocker:1[\s\S]*Explain the width tradeoff[\s\S]*blocker:2/);
   expect(screen.getByText(/Operator steve/)).toBeTruthy();
+});
+test("blocker controls display the core decision labels", () => {
+  const projected = reviewToGates(blockerUnit());
+  if (!projected.ok || !projected.value[0]) throw new Error("blocker gate absent");
+  display(projected.value[0]);
+  for (const label of ["Clarify", "Discuss", "Override"]) {
+    expect(screen.getByRole("button", { name: label })).toBeTruthy();
+  }
 });
 test("each blocker revision names the worker attempt that published it", () => {
   display();

@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 /// workflow to the compile response for tagged-type read projections.
 /// v8 carries decision adjudication roles and review assessment in the source
 /// and projected workflow.
-pub const PROTOCOL_VERSION: u32 = 8;
+/// v9 adds the resolved agent prompt path to a wanted worker and agent
+/// prompts to the checked worker.
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// One wanted worker and the identity of the attempt that runs it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

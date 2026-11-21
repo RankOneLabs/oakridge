@@ -1012,6 +1012,16 @@ pub fn blocker_schema() -> Type {
     ]))
 }
 
+pub const BLOCKER_REVIEW_PROMPT: &str = "The worker is blocked and needs an operator answer. Clarify, override, or discuss with a free-text answer.";
+
+pub fn blocker_answer_schema() -> Type {
+    Type::Record(BTreeMap::from([("answer".into(), Type::Text)]))
+}
+
+pub fn reserved_artifact_schemas() -> BTreeMap<&'static str, Type> {
+    BTreeMap::from([(BLOCKER_ARTIFACT, blocker_schema())])
+}
+
 pub fn blocker_review() -> Review {
     Review {
         of: SymbolKey::from(BLOCKER_ARTIFACT),
@@ -1020,27 +1030,58 @@ pub fn blocker_review() -> Review {
         prompt: None,
         inputs: BTreeMap::new(),
         when: None,
-        decisions: ["clarify", "override", "discuss"]
-            .into_iter()
-            .map(|key| {
-                (
-                    key.into(),
-                    ReviewDecision {
-                        effect: DeclaredDecisionEffect::RequestChanges,
-                        adjudication: None,
-                        on: Some(SymbolKey::from(BLOCKER_ARTIFACT)),
-                        label: key.into(),
-                        payload: Some(Type::Record(BTreeMap::from([(
-                            "answer".into(),
-                            Type::Text,
-                        )]))),
-                        fields: BTreeMap::from([("answer".into(), "Answer".into())]),
-                        feedback: None,
-                        feedback_field: Some("answer".into()),
-                        when: None,
-                    },
-                )
-            })
-            .collect(),
+        decisions: [
+            ("clarify", "Clarify"),
+            ("override", "Override"),
+            ("discuss", "Discuss"),
+        ]
+        .into_iter()
+        .map(|(key, label)| {
+            (
+                key.into(),
+                ReviewDecision {
+                    effect: DeclaredDecisionEffect::RequestChanges,
+                    adjudication: None,
+                    on: Some(SymbolKey::from(BLOCKER_ARTIFACT)),
+                    label: label.into(),
+                    payload: Some(blocker_answer_schema()),
+                    fields: BTreeMap::from([("answer".into(), "Answer".into())]),
+                    feedback: None,
+                    feedback_field: Some("answer".into()),
+                    when: None,
+                },
+            )
+        })
+        .collect(),
+    }
+}
+
+#[cfg(test)]
+mod blocker_tests {
+    use super::*;
+
+    #[test]
+    fn blocker_reviews_define_operator_facing_labels() {
+        let review = blocker_review();
+        for (key, label) in [
+            ("clarify", "Clarify"),
+            ("override", "Override"),
+            ("discuss", "Discuss"),
+        ] {
+            assert_eq!(review.decisions[key].label, label);
+        }
+    }
+
+    #[test]
+    fn blocker_review_prompt_preserves_the_operator_copy() {
+        assert_eq!(BLOCKER_REVIEW_PROMPT, "The worker is blocked and needs an operator answer. Clarify, override, or discuss with a free-text answer.");
+    }
+
+    #[test]
+    fn reserved_schemas_include_the_compact_blocker_schema() {
+        assert_eq!(
+            reserved_artifact_schemas()[BLOCKER_ARTIFACT].to_string(),
+            blocker_schema().to_string()
+        );
     }
 }

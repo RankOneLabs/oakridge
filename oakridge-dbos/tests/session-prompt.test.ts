@@ -1,22 +1,24 @@
 import { expect, test } from "bun:test";
 import type { RevisionState } from "../src/core-client/core-types";
 import { selectEffectInstruction, type EffectInstruction, type RunWorkerAction } from "../src/domain/effect-instruction";
-import { renderSessionPreamble, renderSessionTask, renderSharedTaskDelivery, renderTemplate, selectSessionTaskContext, type SessionTaskContext } from "../src/effects/session-prompt";
-import { sampleWorkflow } from "./authority-fixture";
+import { renderSessionPreamble, renderSessionTask, renderSharedTaskDelivery, renderTaskPublication, renderTemplate, selectSessionTaskContext, type SessionTaskContext } from "../src/effects/session-prompt";
+import { compiledFixture, sampleWorkflow } from "./authority-fixture";
 
+const workflow = sampleWorkflow("review-loop");
+const parsed = await compiledFixture(workflow);
+const stage = parsed.stages.document!;
+const parsed_writer = stage.workers.writer!;
+if (parsed_writer.kind !== "agent") throw new Error("writer is an agent");
+const fresh = { ...parsed, stages: { ...parsed.stages, document: { ...stage,
+  workers: { ...stage.workers, writer: { ...parsed_writer, session: "fresh" as const } } } } };
 const unit = "run-1/document";
 const r1: RevisionState = { id: `${unit}:draft:1`, unit, seq: 1, artifact: "draft", body: { title: "T", body: "long" }, by: "a1" };
 const revise: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: `${unit}:d1` } };
 function writerInstruction(input: { readonly action: RunWorkerAction; readonly fresh?: boolean }): EffectInstruction {
-  const workflow = sampleWorkflow("review-loop");
-  const writer = workflow.stages.document!.workers.writer!;
-  const source = input.fresh && writer.kind === "agent"
-    ? { ...workflow, stages: { document: { ...workflow.stages.document!, workers: { ...workflow.stages.document!.workers, writer: { ...writer, session: "fresh" as const } } } } }
-    : workflow;
   const is_revise = input.action.mode.kind === "revise";
-  const selected = selectEffectInstruction({ run_id: "run-1" as import("../src/domain/primitives").RunId, workflow: source, stage: "document", config: null, action: input.action, seq: 0,
+  const selected = selectEffectInstruction({ run_id: "run-1" as import("../src/domain/primitives").RunId, workflow, parsed_workflow: input.fresh ? fresh : parsed, stage: "document", config: null, action: input.action, seq: 0,
     prompts: { "review-loop/write.md": "a".repeat(64), "review-loop/revise.md": "b".repeat(64) },
-    resolved: { action_id: "a2", inputs: { topic: "Oakridge", critique: null }, feedback: is_revise
+    resolved: { action_id: "a2", prompt: is_revise ? "review-loop/revise.md" : "review-loop/write.md", inputs: { topic: "Oakridge", critique: null }, feedback: is_revise
       ? [{ id: `${unit}:d1`, review: "draft_review", decision: "request_changes", target: r1.id, payload: { feedback: "shorter" } }] : [],
       ...(is_revise ? { previous: r1 } : {}) } });
   if (!selected.ok) throw new Error(selected.error.detail);
@@ -68,11 +70,21 @@ test("the task context takes each artifact's latest revision and the most recent
     previous: { mode: { kind: "revise" }, status: { kind: "failed", code: "x", detail: "y" } } });
 });
 
+test("the task publication list follows the instruction's artifacts", () => {
+  const instruction = writerInstruction({ action: revise });
+  if (instruction.worker.kind !== "agent") throw new Error("writer is an agent");
+  const publication = renderTaskPublication(instruction, context());
+  expect([...publication.matchAll(/^- `([^`]+)`:/gm)].map((entry) => entry[1]))
+    .toEqual(instruction.worker.creates.map(({ key }) => key));
+});
+
 test("the preamble's publication block names each artifact's endpoint and schema and the session's secret", () => {
   const instruction = writerInstruction({ action: revise });
   const creates = instruction.worker.kind === "agent" ? instruction.worker.creates : [];
   const preamble = renderSessionPreamble({ run_id: "run-1", unit, worker: "writer", creates, schemas: { tag: "ident" },
     publish_base_url: "http://oakridge.test/", secret: "s3cret" });
+  const artifacts = preamble.split("Artifacts:\n")[1]?.split("Named schemas this")[0] ?? "";
+  expect([...artifacts.matchAll(/^- `([^`]+)`$/gm)].map((entry) => entry[1])).toEqual(creates.map(({ key }) => key));
   expect([preamble.includes("endpoint: http://oakridge.test/api/runs/run-1/units/run-1%2Fdocument/artifacts/draft"),
     preamble.includes('schema: {"title":"text","body":"text"}'), preamble.includes('- `tag`: "ident"'), preamble.includes("Your publication secret: s3cret")])
     .toEqual([true, true, true, true]);
@@ -90,6 +102,8 @@ test("a shared session's stable preamble leaves each brief's endpoint in its tas
     renderSessionTask(a, context()).includes("run-1%2Fbriefs%2Fa"), renderSessionTask(b, context()).includes("run-1%2Fbriefs%2Fb")])
     .toEqual([true, false, true, true]);
   const delivered = renderSharedTaskDelivery(a, renderSessionTask(a, context()), { publish_base_url: "http://oakridge.test", secret: "session-secret" });
+  expect(delivered.split("\n").filter((line) => line.startsWith("PUT "))).toEqual(
+    first.worker.creates.map(({ key }) => `PUT http://oakridge.test/api/runs/run-1/units/run-1%2Fbriefs%2Fa/artifacts/${key}`));
   expect([delivered.includes("Authorization: Bearer session-secret"),
     delivered.includes("PUT http://oakridge.test/api/runs/run-1/units/run-1%2Fbriefs%2Fa/artifacts/draft"),
     delivered.includes("Do not use the backend publication key")]).toEqual([true, true, true]);

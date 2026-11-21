@@ -1,3 +1,4 @@
+import { BLOCKER_REVIEW, BLOCKER_REVIEW_PROMPT, BLOCKER_SCHEMA } from "../src/core-client/core-types";
 import { afterAll, expect, test } from "bun:test";
 import { CoreClient, compileWorkflow, type CompileInput, type CompiledAgainst } from "../src/core-client/client";
 import type { Event, Incoming, StepResult, StepSnapshot, Workflow, Writer } from "../src/core-client/core-types";
@@ -132,7 +133,9 @@ test("every implicit blocker decision form collects only the operator answer", a
 
 test("a historical agent without a revise prompt can resume its blocker", async () => {
   const run = await Run.create("brief", false);
-  await run.publish("blocker", { text: "Clarify" });
+  const parked = await run.publish("blocker", { text: "Clarify" });
+  expect(parked.review_updates.find((update) => update.unit_id === "run/a")?.prompts[BLOCKER_REVIEW]?.prompt)
+    .toBe(BLOCKER_REVIEW_PROMPT);
   const plan = await run.answer("clarify");
   const instruction = plan.intents[0]?.instruction;
   expect(instruction?.worker.kind === "agent" ? instruction.worker.prompt.path : null).toBe("initial.md");
@@ -170,8 +173,8 @@ test("a guarded decision is disabled with its reason and its refusal writes no r
   expect([http.status, await http.text(), run.state.decisions.length]).toEqual([409, expect.stringContaining("Resolve findings"), 0]);
 });
 
-test("every preamble includes the blocker endpoint, schema and exact alternative-publication instruction", () => {
-  const preamble = renderSessionPreamble({ run_id: "run", unit: "run/a", worker: "writer", creates: [{ key: "result", schema: "text" }], schemas: {}, publish_base_url: "http://oakridge.test", secret: "test-secret" });
+test("the preamble renders a declared blocker endpoint, schema and exact alternative-publication instruction", () => {
+  const preamble = renderSessionPreamble({ run_id: "run", unit: "run/a", worker: "writer", creates: [{ key: "result", schema: "text" }, { key: "blocker", schema: BLOCKER_SCHEMA }], schemas: {}, publish_base_url: "http://oakridge.test", secret: "test-secret" });
   expect(preamble).toContain("endpoint: http://oakridge.test/api/runs/run/units/run%2Fa/artifacts/blocker");
   expect(preamble).toContain("suggested_choices");
   expect(preamble).toContain("If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, publish a `blocker` instead of guessing; a published blocker ends the task.");

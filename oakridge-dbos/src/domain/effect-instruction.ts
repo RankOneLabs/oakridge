@@ -1,3 +1,4 @@
+import { RESERVED_ARTIFACT_SCHEMAS } from "../core-client/core-types";
 import { selectInputProvenance, type InputProvenanceView } from "./unit-status";
 import { createHash } from "node:crypto";
 import type { Action, FeedbackEntry, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression } from "../core-client/core-types";
@@ -82,7 +83,7 @@ export const selectSharedSessionUnit = (unit: string): string => unit.slice(0, u
 export interface InstructionSource {
   readonly run_id: RunId;
   readonly workflow: import("../core-client/source-types").WorkflowDefinitionDescriptor;
-  readonly parsed_workflow?: ParsedWorkflow;
+  readonly parsed_workflow: ParsedWorkflow;
   /** prompt path -> content digest, as pinned on the definition bundle. */
   readonly prompts: { readonly [path: string]: string };
   readonly stage: string;
@@ -129,16 +130,15 @@ export function selectReferencedSchemas(types: readonly TypeExpression[], schema
 export function selectEffectInstruction(source: InstructionSource): Result<EffectInstruction, InstructionError> {
   const { action, resolved } = source;
   const stage = source.workflow.stages[source.stage];
-  const declared = source.parsed_workflow?.stages[source.stage]?.workers[action.worker]
-    ?? stage?.workers[action.worker];
-  if (!stage || !declared || !("kind" in declared)) return failure(resolved.action_id, `worker ${action.worker} is not declared on stage ${source.stage}`);
+  const declared = source.parsed_workflow.stages[source.stage]?.workers[action.worker];
+  if (!stage || !declared) return failure(resolved.action_id, `worker ${action.worker} is not declared on stage ${source.stage}`);
   const pin = (path: string): Result<PinnedPrompt, InstructionError> => {
     const digest = source.prompts[path];
     return digest === undefined ? failure(resolved.action_id, `prompt ${path} is not pinned`) : { ok: true, value: { path, digest } };
   };
   let worker: WorkerInstruction;
   if (declared.kind === "agent") {
-    const path = declared.prompts[action.mode.kind];
+    const path = resolved.prompt;
     if (path == null) return failure(resolved.action_id, `agent ${action.worker} has no ${action.mode.kind} prompt`);
     const prompt = pin(path);
     if (!prompt.ok) return prompt;
@@ -150,9 +150,10 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     if (handoff && !handoff.ok) return handoff;
     const creates: CreatedArtifact[] = [];
     for (const key of declared.produces) {
-      const artifact = stage.artifacts[key];
-      if (!artifact) return failure(resolved.action_id, `artifact ${key} is not declared on stage ${source.stage}`);
-      creates.push({ key, schema: selectResolvedSchema(artifact.schema, source.workflow.schemas ?? {}) });
+      const schema = stage.artifacts[key]?.schema
+        ?? (Object.hasOwn(RESERVED_ARTIFACT_SCHEMAS, key) ? RESERVED_ARTIFACT_SCHEMAS[key] : undefined);
+      if (schema === undefined) return failure(resolved.action_id, `artifact ${key} is not declared on stage ${source.stage}`);
+      creates.push({ key, schema: selectResolvedSchema(schema, source.workflow.schemas ?? {}) });
     }
     worker = { kind: "agent", session, session_key: selectSessionKey(action, resolved.action_id, session),
       ...(session === "shared" ? { shared_session_unit: selectSharedSessionUnit(action.unit) } : {}),

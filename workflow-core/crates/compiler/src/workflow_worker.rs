@@ -186,6 +186,7 @@ impl StageCheck<'_> {
                     return None;
                 }
                 Some(CheckedWorker::Agent {
+                    prompts: modes.clone(),
                     key: WorkerKey::from(key),
                     inputs: input_fields.expect("valid worker inputs"),
                     creates: produces
@@ -194,7 +195,7 @@ impl StageCheck<'_> {
                         .chain([SymbolKey::from(BLOCKER_ARTIFACT)])
                         .collect(),
                     reviews: evaluates.clone(),
-                    workspace: workspace.expect("valid workspace"),
+                    workspace: workspace.expect("valid workspace").map(Box::new),
                     when: when.map(|(expression, _)| expression),
                 })
             }
