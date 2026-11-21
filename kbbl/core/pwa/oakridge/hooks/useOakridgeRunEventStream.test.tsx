@@ -58,10 +58,14 @@ test("a run invalidate frame refreshes its sidebar sessions", () => {
   hook.unmount();
 });
 
-test("a run event refreshes an open artifact from that run", () => {
+test("a run event invalidates the operator run and open artifacts for that run", () => {
   vi.stubGlobal("EventSource", EventSourceStub);
   const client = new QueryClient();
   const artifactKey = ["oakridge", "artifact", "assessment"];
+  const operatorRunKey = ["oakridge", "operator-run", "run-1"];
+  const otherOperatorRunKey = ["oakridge", "operator-run", "run-2"];
+  client.setQueryData(operatorRunKey, { operator_actions: [] });
+  client.setQueryData(otherOperatorRunKey, { operator_actions: [] });
   client.setQueryData(artifactKey, { run_id: "run-1", revisions: [{ id: "old" }] });
   const invalidate = vi.spyOn(client, "invalidateQueries");
   const wrapper = ({ children }: PropsWithChildren) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -69,5 +73,7 @@ test("a run event refreshes an open artifact from that run", () => {
   act(() => { EventSourceStub.instances[0]?.emit("run_event", JSON.stringify({ run_id: "run-1" })); });
   expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ["oakridge", "artifact"] }));
   expect(client.getQueryState(artifactKey)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(operatorRunKey)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(otherOperatorRunKey)?.isInvalidated).toBe(false);
   hook.unmount(); client.clear();
 });
