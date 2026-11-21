@@ -18,7 +18,7 @@ import { actionOf, executor, launch, openAuthority, submitter, unitOf, type Auth
  */
 // Keep the runtime field assertion exhaustive at typecheck time as RunView evolves.
 const RUN_VIEW_FIELDS = {
-  requirement_rollup: true, open_blockers: true, archived_at: true, config_error: true, created_at: true, definition_id: true,
+  operator_actions: true, requirement_rollup: true, open_blockers: true, archived_at: true, config_error: true, created_at: true, definition_id: true,
   pr_integration: true, pr_skill_digest: true, repository_keys: true, run_id: true,
   status: true, title: true, units: true, updated_at: true,
 } satisfies Record<keyof RunView, true>;
@@ -178,7 +178,7 @@ describe("each read model carries exactly its contract's fields", () => {
     const page = await get<RunPage>("/api/runs");
     const view = await get<RunView>(`/api/runs/${segment(run_id)}`);
     holds("RunView", view);
-    expect(fields(page.items[0])).toEqual(CONTRACT_FIELDS.RunView.filter(field => field !== "requirement_rollup"));
+    expect(fields(page.items[0])).toEqual(CONTRACT_FIELDS.RunView.filter(field => field !== "requirement_rollup" && field !== "operator_actions"));
     holds("RunUnitSummary", view.units[0]);
     expect(fields(page)).toEqual(["items", "next_cursor"]);
   });

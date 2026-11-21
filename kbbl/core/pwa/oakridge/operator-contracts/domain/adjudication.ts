@@ -3,6 +3,8 @@
 
 import type { OperatorActionSource } from "./assessment";
 
+export type OperatorDisposition = "accepted" | "modified" | "rejected";
+
 export interface OperatorAdjudication {
   readonly entries: readonly OperatorProposedActionEntry[]; readonly added_actions: readonly OperatorAddedActionEntry[]; readonly rework_feedback: string;
 }
@@ -16,5 +18,3 @@ export interface OperatorAddedActionEntry {
   readonly action_id: string; readonly origin: "operator"; readonly final_text: string;
   readonly audience: "rework" | "operator"; readonly source: OperatorActionSource; readonly reason?: string | null;
 }
-
-export type OperatorDisposition = "accepted" | "modified" | "rejected";
