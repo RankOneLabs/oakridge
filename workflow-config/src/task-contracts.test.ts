@@ -171,7 +171,7 @@ for (const [stageName, stage] of Object.entries(development.stages)) for (const 
   }
 }
 for (const [path, prompt] of Object.entries(prompts)) test(`${path} contains no retired vocabulary`, () => {
-  expect(prompt).not.toMatch(/pick a sensible path|\btasks\b|task_ids|tasks_review|acceptance_criteria|approaches_rejected|dependency_order|recommended_next_actions|needs_decision|subjects/);
+  expect(prompt).not.toMatch(/pick a sensible path|\btasks\b|task_ids|tasks_review|acceptance_criteria|approaches_rejected|dependency_order|recommended_next_actions|needs_decision|subjects|builder_feedback|audience: builder/);
 });
 interface CohortScenario { name: string; cohorts: PlanCohort[]; ready: string[]; waiting: string[] }
 const scenarios = JSON.parse(readFileSync(resolve(root, "workflow-config/samples/development-cohorts.json"), "utf8")) as CohortScenario[];

@@ -591,7 +591,7 @@ for (const name of ["assess", "assess-revise"]) {
     const definition = unwrap(resolveLaunchableDefinition("development"));
     const prompt = definition.prompts[`development/${name}.md`];
     expect(prompt).toContain("source: {kind: item_assessment|additional_finding, id}");
-    expect(prompt).toContain("audience: builder|operator");
+    expect(prompt).toContain("audience: rework|operator");
     expect(prompt).toContain("Omit their id on publication; the server generates it.");
   });
 }

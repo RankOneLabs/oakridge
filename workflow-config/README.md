@@ -44,16 +44,17 @@ requirements, verification and material technical_decisions. Implementation orde
 and outcome titles come from the plan.
 
 Cohort and integration assessments share one schema: item_assessments,
-additional_findings, audience-specific source-linked next_actions, required test
+additional_findings, source-linked next_actions with a `rework` or `operator` audience, required test
 evidence and a mechanically checked verdict. Cohorts assess each build item;
 integration assesses each distinct canonical requirement once across contributions.
 The assessment review records typed adjudication (accepted, modified or rejected
-actions, operator additions and builder_feedback). Only builder_feedback reaches
-the builder or integrator; assessors read the full implicit review_history. Every
+actions, operator additions and `rework_feedback`). Only `rework_feedback` reaches
+the worker that reworks the artifact (builder, integrator, expander or slice builder).
+Assessors read the full implicit review_history. Every
 initial/revise prompt directs the agent to raise a blocker instead of guessing.
 
 The development alias now pins definition
-`e750f73b157cff44b9696ed7f10603a085145e7b79123dbf976262fdfa36c9e3`.
+`01fc57b0c2a03e88b67a4ca0e180cbfff23d6906d6a411fdf370bc301f325fbd`.
 The previous definitions
 `87dac99799b3d699b92499d4d322929a8b6a107c2cbdf7ab09bfb03874aa736b`,
 `cf39117805e56b4bdc5540fed9c4a3c2202a9c432b8e7562bf76960fe383a9a5` and
