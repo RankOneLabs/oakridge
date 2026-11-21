@@ -12,7 +12,7 @@ export const currentAssessmentSchema: z.ZodType<CurrentAssessment> = z.object({
   item_assessments: z.array(z.object({ subject: z.object({ kind: identifier, id: identifier }),
     status: z.enum(["met", "partial", "not_met"]), observation: z.string(), evidence: z.array(evidence) })),
   additional_findings: z.array(z.object({ id: identifier, severity: z.enum(["blocking", "warning", "info"]), observation: z.string(), related_build_item_ids: z.array(identifier), evidence: z.array(evidence) })),
-  next_actions: z.array(z.object({ id: z.string().uuid(), audience: z.enum(["builder", "operator"]), source: z.object({ kind: z.enum(["item_assessment", "additional_finding"]), id: identifier }), text: z.string() })),
+  next_actions: z.array(z.object({ id: z.string().uuid(), audience: z.enum(["rework", "operator"]), source: z.object({ kind: z.enum(["item_assessment", "additional_finding"]), id: identifier }), text: z.string() })),
   test_evidence: z.object({ passed: z.number().int(), failed: z.number().int(), output: z.string().nullish(), summary: z.string().nullish(), cargo_test_output: z.string().nullish() }),
 });
 export const parseCurrentAssessment = (body: unknown) => parseCurrent(currentAssessmentSchema, body, "parse_current_assessment");
@@ -34,7 +34,7 @@ export function selectAdditionalFindings(assessment: CurrentAssessment, labels: 
 }
 export interface AssessmentActionLists { readonly builder: readonly OperatorAssessmentAction[]; readonly operator: readonly OperatorAssessmentAction[] }
 export const selectAssessmentActions = (assessment: CurrentAssessment): AssessmentActionLists => ({
-  builder: assessment.next_actions.filter(action => action.audience === "builder"), operator: assessment.next_actions.filter(action => action.audience === "operator"),
+  builder: assessment.next_actions.filter(action => action.audience === "rework"), operator: assessment.next_actions.filter(action => action.audience === "operator"),
 });
 export interface DerivedAssessmentVerdict { readonly verdict: CurrentAssessment["verdict"]; readonly has_mismatch: boolean }
 export function selectDerivedVerdict(assessment: CurrentAssessment): DerivedAssessmentVerdict {

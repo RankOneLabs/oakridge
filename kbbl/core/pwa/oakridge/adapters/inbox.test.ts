@@ -152,12 +152,12 @@ describe("study inbox", () => {
   if (!revision) throw new Error("captured fixture lacks an artifact revision");
 
   const approve: OperatorDecisionDefinition = {
-    key: "approve", label: "Approve", fields: [], payload_schema: "{}",
+    key: "approve", label: "Approve", fields: [], payload_schema: "{}", adjudication: null, assessment: null,
     submit: { kind: "review", review: "report_review", decision: "approve", effect: "approve", target_revision_id: revision.id },
   };
   const requestChanges: OperatorDecisionDefinition = {
     key: "request_changes", label: "Request changes", fields: [{ key: "feedback", label: "What needs to change?" }],
-    payload_schema: "{feedback: text}",
+    payload_schema: "{feedback: text}", adjudication: null, assessment: null,
     submit: { kind: "review", review: "report_review", decision: "request_changes", effect: "request_changes", target_revision_id: revision.id },
   };
   const unit = withUnitFields(cohort, {

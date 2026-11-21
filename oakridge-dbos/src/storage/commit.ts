@@ -162,31 +162,34 @@ export function requestDigest(request: RequestDigestInput): string {
  * and the operator event, in one transaction. A step rejection is stored, not
  * rolled back. The executor is woken after commit.
  */
-/** A decision on a review that declares adjudication, with what the authority checks it against under the lock. */
+/** The decision and the snapshot the authority holds under the run lock. */
 interface AdjudicatedDecisionCheck {
   readonly event: Extract<Event, { readonly kind: "operator_decided" }>;
   readonly expected_assessment_revision_id: string | undefined;
   readonly workflow: ParsedWorkflow;
-  readonly snapshot: StepSnapshot;
+  readonly snapshot: Pick<StepSnapshot, "units" | "revisions">;
 }
-/** Why the authority refuses a decision on an adjudicated review, or null when it may commit. Reviews
- * that declare no adjudication pass through: the core checks their payloads alone. */
-function refuseAdjudication({ event, expected_assessment_revision_id, workflow, snapshot }: AdjudicatedDecisionCheck): string | null {
+/** Checks assessment identity and adjudication content before the core evaluates a review decision. */
+export function selectAdjudicationRefusal({ event, expected_assessment_revision_id, workflow, snapshot }: AdjudicatedDecisionCheck): string | null {
   const unit = snapshot.units.find((candidate) => candidate.id === event.unit);
   const stage = unit?.kind.kind === "stage" ? unit.kind.stage : null;
+  const declared = stage == null ? undefined : workflow.stages[stage]?.reviews?.[event.review]?.decisions[event.decision];
+  if (!declared) return null;
+  if (declared.adjudication == null) {
+    return expected_assessment_revision_id === undefined ? null : `${event.target}: plain decision takes no assessment revision`;
+  }
   const review = selectAdjudicatedReview({ workflow, stage, review: event.review });
-  if (!review) return null;
   const assessmentId = selectReviewedAssessmentId({ decision: { review: event.review, unit_id: event.unit, target_revision_id: event.target }, review,
     revisions: snapshot.revisions.map(revision => ({ ...revision, unit_id: revision.unit })) });
   const target = snapshot.revisions.find(revision => revision.id === assessmentId);
-  if (!target) return `${event.target}: reviewed assessment revision not found`;
+  if (!review || !target) return `${event.target}: reviewed assessment revision not found`;
   if ((expected_assessment_revision_id !== undefined || event.target !== assessmentId) && expected_assessment_revision_id !== assessmentId)
     return `${expected_assessment_revision_id ?? event.target}: reviewed assessment changed; expected_assessment_revision_id must match ${assessmentId}`;
   const assessment = parseAssessmentBody(target.body);
   if (!assessment.ok) return `${target.id}: ${assessment.error.detail}`;
-  const declared = review.decisions.find((decision) => decision.key === event.decision);
-  if (!declared) return null;
-  const adjudication = validateAdjudication({ payload: event.payload, assessment: { id: target.id, body: assessment.value }, decision: declared });
+  const decision = review.decisions.find((decision) => decision.key === event.decision);
+  if (!decision) return null;
+  const adjudication = validateAdjudication({ payload: event.payload, assessment: { id: target.id, body: assessment.value }, decision });
   return adjudication.ok ? null : `${adjudication.error.operation} ${adjudication.error.entity_id}: ${adjudication.error.detail}`;
 }
 
@@ -404,7 +407,7 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
     }
   }
   if (request.event.kind === "operator_decided") {
-    const refusal = refuseAdjudication({ event: request.event, expected_assessment_revision_id: request.expected_assessment_revision_id,
+    const refusal = selectAdjudicationRefusal({ event: request.event, expected_assessment_revision_id: request.expected_assessment_revision_id,
       workflow: definition.checked_program.workflow, snapshot });
     if (refusal !== null) return reject(refusal, unit_id.value);
   }

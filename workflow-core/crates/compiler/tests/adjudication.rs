@@ -395,3 +395,61 @@ fn plain_review_cannot_declare_assessment() {
         "assessment is only allowed on an adjudicating review",
     );
 }
+
+fn action_assessment_source() -> Value {
+    let mut source = adjudicating_source();
+    source["schemas"] = json!({"action_assessment": {"next_actions": "list(text)"}});
+    source["stages"]["document"]["artifacts"]["assessment"]["schema"] = json!("action_assessment");
+    source
+}
+
+fn assert_uncovered_assessment(source: Value) {
+    assert_review_error(
+        source,
+        "stages.document.artifacts.assessment",
+        "assessment assessment has next_actions but no review adjudicates it with accept and feedback",
+    );
+}
+
+#[test]
+fn action_assessment_covered_by_implied_assessment() {
+    compile(action_assessment_source()).unwrap();
+}
+
+#[test]
+fn plain_review_does_not_cover_action_assessment() {
+    let mut source = action_assessment_source();
+    plain_review(&mut source);
+    assert_uncovered_assessment(source);
+}
+
+#[test]
+fn roles_on_separate_reviews_do_not_cover_action_assessment() {
+    let mut source = action_assessment_source();
+    let mut feedback_review = review_value(&mut source).clone();
+    feedback_review["decisions"]
+        .as_object_mut()
+        .unwrap()
+        .remove("accept");
+    review_value(&mut source)["decisions"]
+        .as_object_mut()
+        .unwrap()
+        .remove("request_build_changes");
+    source["stages"]["document"]["reviews"]["feedback_review"] = feedback_review;
+    assert_uncovered_assessment(source);
+}
+
+#[test]
+fn text_assessment_can_have_a_plain_review() {
+    let mut source = adjudicating_source();
+    plain_review(&mut source);
+    compile(source).unwrap();
+}
+
+#[test]
+fn action_assessment_covered_by_explicit_assessment() {
+    let mut source = action_assessment_source();
+    review_value(&mut source)["assessment"] = json!("assessment");
+    review_value(&mut source)["of"] = json!("draft");
+    compile(source).unwrap();
+}

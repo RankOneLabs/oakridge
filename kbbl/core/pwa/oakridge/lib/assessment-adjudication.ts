@@ -5,7 +5,7 @@ import type { ParkedGate } from "../artifact-types";
 import { isAdjudicationDecision } from "../adapters/gates";
 import type { OperatorAdjudication, OperatorAddedActionEntry, OperatorDisposition, OperatorProposedActionEntry } from "../operator-contracts/domain/adjudication";
 import type { OperatorActionSource, OperatorAssessmentAction } from "../operator-contracts/domain/assessment";
-import { composeBuilderFeedback } from "../operator-contracts/domain/builder-feedback";
+import { composeReworkFeedback } from "../operator-contracts/domain/rework-feedback";
 import type { OperatorDeclaredDecisionEffect } from "../operator-contracts/core-client/core-types";
 import type { OperatorDecisionDefinition, OperatorRevisionDecision } from "../operator-contracts/projections/unit-view";
 import { selectAssessmentActions, type CurrentAssessment } from "./current-assessment";
@@ -55,7 +55,7 @@ export const selectActionDraft = (state: AdjudicationState, action: OperatorAsse
 export const selectDispositionChoice = (draft: ActionDraft, disposition: OperatorDisposition): DispositionChoice =>
   disposition === "accepted" ? { kind: "accept" } : disposition === "modified" ? { kind: "edit", final_text: draft.final_text } : { kind: "reject", reason: draft.reason };
 
-export interface AddedActionInput { readonly audience: "builder" | "operator"; readonly source: OperatorActionSource; readonly text: string }
+export interface AddedActionInput { readonly audience: "rework" | "operator"; readonly source: OperatorActionSource; readonly text: string }
 export function addAction(state: AdjudicationState, input: AddedActionInput): AdjudicationState {
   return { ...state, added_actions: [...state.added_actions, { action_id: randomUuid(), origin: "operator", final_text: input.text, audience: input.audience, source: input.source }] };
 }
@@ -70,7 +70,7 @@ export interface ProposedActionRow { readonly action: OperatorAssessmentAction; 
 export interface AudienceRows { readonly proposed: readonly ProposedActionRow[]; readonly added: readonly OperatorAddedActionEntry[]; readonly count: number }
 /** One audience's list: the assessor's actions with any recorded disposition, then the operator's added ones. */
 export function selectAudienceRows({ assessment, added_actions, recorded }: AudienceRowsInput, audience: ActionAudience): AudienceRows {
-  const proposed = selectAssessmentActions(assessment)[audience].map(action => ({ action, recorded: recorded?.entries.find(entry => entry.action_id === action.id) ?? null }));
+  const proposed = selectAssessmentActions(assessment)[audience === "rework" ? "builder" : audience].map(action => ({ action, recorded: recorded?.entries.find(entry => entry.action_id === action.id) ?? null }));
   const added = added_actions.filter(entry => entry.audience === audience);
   return { proposed, added, count: proposed.length + added.length };
 }
@@ -85,11 +85,11 @@ function selectEntries(state: AdjudicationState): readonly OperatorProposedActio
   });
 }
 /** The exact text the builder receives on a send-back. */
-export const selectBuilderPreview = (state: AdjudicationState): string => composeBuilderFeedback(selectEntries(state), state.added_actions);
+export const selectReworkPreview = (state: AdjudicationState): string => composeReworkFeedback(selectEntries(state), state.added_actions);
 /** How many actions a send-back delivers to the builder: kept or edited builder actions, plus added ones. */
 export const selectBuilderActionCount = (state: AdjudicationState): number =>
-  selectEntries(state).filter(entry => entry.audience === "builder" && entry.disposition !== "rejected").length
-  + state.added_actions.filter(entry => entry.audience === "builder").length;
+  selectEntries(state).filter(entry => entry.audience === "rework" && entry.disposition !== "rejected").length
+  + state.added_actions.filter(entry => entry.audience === "rework").length;
 
 /** An adjudication either approves the assessment or sends it back with builder feedback. */
 export type AdjudicationEffect = OperatorDeclaredDecisionEffect;
@@ -106,7 +106,7 @@ export function selectSendability(state: AdjudicationState, effect: Adjudication
 export function selectAdjudicationPayload(state: AdjudicationState, effect: AdjudicationEffect): Result<OperatorAdjudication, string> {
   const sendability = selectSendability(state, effect);
   return sendability.kind === "blocked" ? { ok: false, error: sendability.reason }
-    : { ok: true, value: { entries: selectEntries(state), added_actions: state.added_actions, builder_feedback: selectBuilderPreview(state) } };
+    : { ok: true, value: { entries: selectEntries(state), added_actions: state.added_actions, rework_feedback: selectReworkPreview(state) } };
 }
 
 /** Where an action comes from, in the words the Items and Findings tabs use. */

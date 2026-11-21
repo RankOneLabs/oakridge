@@ -22,7 +22,7 @@ const workflow = (stage: "brief" | "build"): Workflow => ({ workflow: `blocker_$
     workers: { writer: { kind: "agent", prompts: { initial: "initial.md", revise: "revise.md" }, inputs: {}, produces: ["result"] } },
     reviews: { result_review: { of: "result", by: "operator", prompt: "review.md", decisions: {
       accept: { label: "Accept", effect: "approve", when: { check: "len(result.findings) == 0", reason: "Resolve findings" } },
-      request_changes: { label: "Fix", effect: "request_changes", on: "result", payload: { entries: "list(text)", builder_feedback: "text" }, feedback_field: "builder_feedback" },
+      request_changes: { label: "Fix", effect: "request_changes", on: "result", payload: { entries: "list(text)", rework_feedback: "text" }, feedback_field: "rework_feedback" },
     } } }, done_when: "approved(result)", outcome: {} } },
 });
 
@@ -120,7 +120,7 @@ test("selected-field decision forms collect only the declared payload", async ()
   const run = await Run.create("build");
   const decision = run.compiled.workflow.stages.build?.reviews?.result_review?.decisions.request_changes;
   if (!decision) throw new Error("request_changes absent");
-  expect(schemaKey(selectDecisionPayloadType(decision))).toBe("{builder_feedback: text, entries: list(text)}");
+  expect(schemaKey(selectDecisionPayloadType(decision))).toBe("{entries: list(text), rework_feedback: text}");
 });
 
 test("every implicit blocker decision form collects only the operator answer", async () => {
@@ -184,7 +184,7 @@ test("review_history and latest field-only feedback render independently in the 
   const run = await Run.create("build");
   const instruction = run.intents[0]?.payload;
   if (!instruction) throw new Error("initial instruction absent");
-  const history = [{ id: "d1", review: "assessment_review", decision: "changes", target: "r1", payload: { entries: ["full disposition"], builder_feedback: "Fix X" } }];
+  const history = [{ id: "d1", review: "assessment_review", decision: "changes", target: "r1", payload: { entries: ["full disposition"], rework_feedback: "Fix X" } }];
   const resolved = { action_id: "action", inputs: {}, feedback: [{ ...history[0]!, payload: { feedback: "Fix X" } }], review_history: history };
   const enriched = withReviewHistory({ ...instruction, engine_inputs: { ...instruction.engine_inputs, feedback: resolved.feedback } }, resolved);
   const rendered = renderModePrompt(enriched, "{{feedback}}\nHISTORY\n{{review_history}}");

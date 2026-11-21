@@ -148,7 +148,7 @@ describe("v2 Oakridge client", () => {
   });
 
   it("retries the cohort unit, not the brief that shares its collection key", async () => {
-    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "builder" } };
+    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", adjudication: null, assessment: null, fields: [], submit: { kind: "retry", worker: "builder" } };
     const units = (sample.units as unknown as OperatorUnitView[]).map((unit) => unit.stage === "cohort" && unit.collection_key === "b"
       ? { ...unit, decisions: [retry] } : unit);
     const stalled = units.find((unit) => unit.stage === "cohort" && unit.collection_key === "b")!;
@@ -159,7 +159,7 @@ describe("v2 Oakridge client", () => {
   });
 
   it("marks only the units Oakridge offers a retry for as retryable", async () => {
-    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "builder" } };
+    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", adjudication: null, assessment: null, fields: [], submit: { kind: "retry", worker: "builder" } };
     const units = (sample.units as unknown as OperatorUnitView[]).map((unit) => unit.stage === "cohort" && unit.collection_key === "b"
       ? { ...unit, decisions: [retry] } : unit);
     calls((path) => path.includes("/units?") ? units : sample.run);
@@ -208,7 +208,7 @@ describe("v2 Oakridge client", () => {
   });
 
   it("maps replace_pr by its request_changes effect and submits feedback", async () => {
-    const replacement = { ...cohort, decisions: [{ key: "replace_pr", label: "Replace PR", payload_schema: "{feedback: text}",
+    const replacement = { ...cohort, decisions: [{ key: "replace_pr", label: "Replace PR", payload_schema: "{feedback: text}", adjudication: null, assessment: null,
       fields: [{ key: "feedback", label: "Why replace?" }],
       submit: { kind: "review", review: "pr_closed", decision: "replace_pr", effect: "request_changes", target_revision_id: "revision-pr" } }] };
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-5" } : replacement);
@@ -221,7 +221,7 @@ describe("v2 Oakridge client", () => {
   });
 
   it("submits the chosen decision when a review offers several request-changes decisions", async () => {
-    const sendBack = (decision: string) => ({ key: decision, label: decision, payload_schema: "{feedback: text}",
+    const sendBack = (decision: string) => ({ key: decision, label: decision, payload_schema: "{feedback: text}", adjudication: null, assessment: null,
       fields: [{ key: "feedback", label: "What must change?" }],
       submit: { kind: "review", review: "slice_report_review", decision, effect: "request_changes", target_revision_id: "revision-report" } });
     const sliceReview = { ...cohort, decisions: [sendBack("send_to_builder"), sendBack("change_design")] };

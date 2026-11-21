@@ -23,7 +23,7 @@ export function retryUnit(unitId: string): OperatorUnitView {
     input_provenance: { status: "unresolved" }, unit_id: `run-1/unit/${unitId}`, run_id: "run-1", unit_key: unitId, label: unitId,
     stage: "cohort", collection_key: unitId, input: {}, depends_on: [], status: { kind: "active" }, outcome: null,
     is_terminal: false, attention: { kind: "stalled", detail: "worker failed" }, attempts: [], artifacts: [],
-    decisions: [{ key: "retry:builder", label: "Retry builder", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "builder" } }],
+    decisions: [{ key: "retry:builder", label: "Retry builder", payload_schema: "{}", adjudication: null, assessment: null, fields: [], submit: { kind: "retry", worker: "builder" } }],
     recorded_decisions: [],
   };
 }
@@ -36,7 +36,7 @@ export function withUnitFields(unit: OperatorUnitView, fields: Partial<OperatorU
 export function blockerUnit(): OperatorUnitView {
   return { ...sampleCohort, run_id: "run-1", unit_id: "unit-a", artifacts: [],
     decisions: Object.entries({ clarify: "Clarify", discuss: "Discuss", override: "Override" }).map(([decision, label]) => ({ key: decision, label,
-      is_available: true, disabled_reason: null, payload_schema: "{answer: text}", fields: [{ key: "answer", label: "Answer" }],
+      is_available: true, disabled_reason: null, payload_schema: "{answer: text}", adjudication: null, assessment: null, fields: [{ key: "answer", label: "Answer" }],
       submit: { kind: "review", review: "blocker_review", decision, effect: "request_changes", target_revision_id: "blocker-revision" } })) };
 }
 
@@ -70,7 +70,7 @@ export function currentAdjudicationUnit(): OperatorUnitView {
     body: JSON.parse(JSON.stringify(CURRENT_ASSESSMENT)) as OperatorJsonValue, predecessor_id: null, subject_id: "build:1", created_at: "2026-11-18T00:00:00Z" };
   const artifact = { run_id: "run", unit_id, artifact_key: "assessment", schema: "assessment_body", is_reviewable: true, is_adjudicated: true, is_editable: true, revision_count: 1, latest_revision: revision };
   return { ...canonicalSpecUnit(), run_id: "run", unit_id, stage: "cohort", artifacts: [artifact], recorded_decisions: [], decisions: ["accept", "request_build_changes"].map(decision => ({
-    key: decision, label: decision, payload_schema: "adjudication", fields: [], submit: { kind: "review", review: "assessment_review", decision,
+    key: decision, label: decision, payload_schema: "adjudication", adjudication: decision === "accept" ? "accept" as const : "feedback" as const, assessment: "assessment", fields: [], submit: { kind: "review", review: "assessment_review", decision,
       target_revision_id: decision === "accept" ? "assessment:1" : "build:1", effect: decision === "accept" ? "approve" : "request_changes" },
   })) };
 }
