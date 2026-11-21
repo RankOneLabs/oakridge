@@ -16,3 +16,13 @@ export function selectArtifactPageGates({ gates, revision_ids }: ArtifactPageGat
     adjudicationGate: gates.find(gate => gate.assessment_revision_id != null && revision_ids.has(gate.assessment_revision_id)) ?? null,
   };
 }
+
+export function selectArtifactDecisionCopy(gate: ParkedGate, assessmentGate: ParkedGate | null) {
+  if (gate.gate_type === "merge_confirmation") return {
+    title: "Confirm the merge", description: "Verify the pull request is merged, then continue the cohort.",
+  };
+  if (gate === assessmentGate) return {
+    title: "Request changes", description: "Describe what needs to change in this assessment.",
+  };
+  return { title: "Make your decision", description: "Approve this artifact or request specific changes." };
+}

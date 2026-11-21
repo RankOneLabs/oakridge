@@ -1,4 +1,4 @@
-import { selectArtifactPageGates } from "../../lib/artifact-page-gates";
+import { selectArtifactDecisionCopy, selectArtifactPageGates } from "../../lib/artifact-page-gates";
 import { ReceivedContextPanel } from "../molecules/ReceivedContextPanel";
 import { EditableBriefText } from "./EditableBriefText";
 import { ReviewItemResolution } from "./ReviewItemResolution";
@@ -267,9 +267,10 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
   const isLatestRevision = revision !== undefined && revIdx === revisions.length - 1;
   // An adjudicated review is decided in the viewer's own decision bar; a box here could only repeat that, with no controls.
   const isDecidedInViewer = artifactGate?.requires_adjudication === true && artifactGate.resume_actions.length === 0 && Viewer !== null && recordsAdjudication(Viewer);
-  const gateActions = artifactGate && isLatestRevision && !isDecidedInViewer ? (
-    <section className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
-      <div><strong>{artifactGate.gate_type === "merge_confirmation" ? "Confirm the merge" : "Make your decision"}</strong><p>{artifactGate.gate_type === "merge_confirmation" ? "Verify the pull request is merged, then continue the cohort." : "Approve this artifact or request specific changes."}</p></div>
+  const decisionCopy = artifactGate && selectArtifactDecisionCopy(artifactGate, adjudicationGate);
+  const gateActions = artifactGate && decisionCopy && isLatestRevision && !isDecidedInViewer ? (
+    <section data-assessment-corrections={artifactGate === adjudicationGate || undefined} className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
+      <div><strong>{decisionCopy.title}</strong><p>{decisionCopy.description}</p></div>
       <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} actionLabels={artifact.review?.action_labels} />
     </section>
   ) : undefined;

@@ -158,7 +158,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
 
   return (
     <div className="or-decision-actions" data-testid="or-decision-actions">
-      {gate.requires_adjudication && gate.validation_rejection && <p role="status" className="text-sm text-[var(--danger-fg)]" data-testid="or-gate-validation-rejection">{selectValidationRejectionNotice(gate.validation_rejection)}</p>}
+      {gate.requires_adjudication && gate.validation_rejection && <p role="status" className="or-gate-validation-notice text-sm text-[var(--danger-fg)]" data-testid="or-gate-validation-rejection">{selectValidationRejectionNotice(gate.validation_rejection)}</p>}
       {gate.requires_adjudication && gate.resume_actions.length === 0 && <p>Review and adjudicate the actions in the assessment to record a decision.</p>}
       {disabled && (
         <div className="or-decision-actions__stranded" role="status" data-testid="or-gate-stranded">

@@ -3,7 +3,7 @@ import { selectAdjudicatedReview, selectReviewedAssessmentId, validateAdjudicati
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileDefinition, selectWanted, type WantedForUnit } from "../core-client/client";
-import { BLOCKER_REVIEW, BLOCKER_REVIEW_PROMPT, VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer } from "../core-client/core-types";
+import { BLOCKER_REVIEW, BLOCKER_REVIEW_PROMPT, VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedReviewDecision, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer } from "../core-client/core-types";
 import { ANALYSIS_LINKS_DECLARED, selectDeclarationRefusal, type AnalysisLinkDeclaration, type AnalysisLinkEntry, type AnalysisLinksDeclared } from "../domain/analysis-link-declaration";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { PrIntegration } from "../domain/pr-integration";
@@ -169,6 +169,20 @@ interface AdjudicatedDecisionCheck {
   readonly workflow: ParsedWorkflow;
   readonly snapshot: Pick<StepSnapshot, "units" | "revisions">;
 }
+/** Core checks declared payload values, but permits extra record keys. */
+function plainPayloadRefusal(declared: ParsedReviewDecision, event: AdjudicatedDecisionCheck["event"], aliases: ParsedWorkflow["schemas"]): string | null {
+  let schema = declared.payload && resolvedType(declared.payload, aliases);
+  while (schema?.kind === "optional") schema = resolvedType(schema.value, aliases);
+  if (schema && schema.kind !== "record") return null; // Core checks scalar and list payloads.
+  if (event.payload == null) return null;
+  const values = objectFields(event.payload);
+  if (!values) return `${event.target}: plain decision requires an object payload`;
+  const extra = Object.keys(values).find(key =>
+    !Object.hasOwn(declared.fields ?? {}, key) && !Object.hasOwn(schema?.fields ?? {}, key)
+    && !(key === "feedback" && declared.effect === "request_changes" && declared.feedback_field == null));
+  return extra === undefined ? null : `${event.target}: plain decision does not accept payload field ${extra}`;
+}
+
 /** Checks assessment identity and adjudication content before the core evaluates a review decision. */
 export function selectAdjudicationRefusal({ event, expected_assessment_revision_id, workflow, snapshot }: AdjudicatedDecisionCheck): string | null {
   const unit = snapshot.units.find((candidate) => candidate.id === event.unit);
@@ -176,7 +190,8 @@ export function selectAdjudicationRefusal({ event, expected_assessment_revision_
   const declared = stage == null ? undefined : workflow.stages[stage]?.reviews?.[event.review]?.decisions[event.decision];
   if (!declared) return null;
   if (declared.adjudication == null) {
-    return expected_assessment_revision_id === undefined ? null : `${event.target}: plain decision takes no assessment revision`;
+    if (expected_assessment_revision_id !== undefined) return `${event.target}: plain decision takes no assessment revision`;
+    return plainPayloadRefusal(declared, event, workflow.schemas);
   }
   const review = selectAdjudicatedReview({ workflow, stage, review: event.review });
   const assessmentId = selectReviewedAssessmentId({ decision: { review: event.review, unit_id: event.unit, target_revision_id: event.target }, review,

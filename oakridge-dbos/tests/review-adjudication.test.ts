@@ -184,6 +184,7 @@ const malformed: Malformed[] = [
   { name: "modified without text", change: p => ({ ...p, entries: p.entries.map(entry => ({ ...entry, disposition: "modified", final_text: null })) }) },
   { name: "duplicate added id", change: p => ({ ...p, added_actions: [...p.added_actions, p.added_actions[0]] }) },
   { name: "empty builder feedback", decision: "request_build_changes", change: p => ({ ...p, rework_feedback: "" }) },
+  { name: "extra key beside valid plain feedback", decision: "request_assessment_changes", change: () => ({ feedback: "Please reassess", stray: true }) },
   { name: "adjudication on assessment changes", decision: "request_assessment_changes", change: p => p },
 ];
 for (const entry of malformed) test(`refused ${entry.name} leaves no decision and review parked`, async () => {

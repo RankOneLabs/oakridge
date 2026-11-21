@@ -156,6 +156,10 @@ describe("ArtifactReview", () => {
 
     expect(await screen.findByRole("region", { name: "Assessment decision" })).toBeTruthy();
     expect(Boolean(screen.queryByTestId("or-artifact-gate-actions"))).toBe(hasPlain);
+    if (hasPlain) {
+      expect(screen.getByTestId("or-artifact-gate-actions").textContent).toContain("Describe what needs to change in this assessment.");
+      expect(screen.getByTestId("or-artifact-gate-actions").textContent).not.toContain("Approve this artifact");
+    }
   });
 
   it("shows error state when artifact fetch fails", async () => {

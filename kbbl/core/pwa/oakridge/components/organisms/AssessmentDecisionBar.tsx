@@ -16,7 +16,7 @@ export function AssessmentDecisionBar({ adjudication }: Props) {
   }
   const correction = selectAssessmentCorrection(gate, adjudication.revision);
   return <section aria-label="Assessment decision" className="flex flex-col gap-3 rounded-md border border-[var(--accent-primary)] p-3" data-testid="or-assessment-decision-bar">
-    {validationRejection && <p role="status" className="text-sm text-[var(--danger-fg)]" data-testid="or-assessment-validation-rejection">
+    {validationRejection && <p role="status" className="or-assessment-validation-notice text-sm text-[var(--danger-fg)]" data-testid="or-assessment-validation-rejection">
       {selectValidationRejectionNotice(validationRejection)}{correction ? ` ${correction.label} to have the assessor correct it.` : ""}
     </p>}
     <div className="flex flex-wrap items-start gap-3">

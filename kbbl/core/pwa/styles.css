@@ -2885,6 +2885,8 @@ a:focus-visible {
 .or-review-history summary { cursor: pointer; font-weight: 650; }
 .or-review-history[open] summary { margin-bottom: 1rem; }
 .or-artifact-decision-bar { position: sticky; bottom: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 2rem; padding: 1rem 1.25rem; border-top: 1px solid var(--border-decorative); background: color-mix(in srgb, var(--bg-surface) 94%, transparent); backdrop-filter: blur(10px); }
+/* Keep the gate notice available in structured view and while assessment history loads. */
+.or-artifact-detail:has(.or-rendered-artifact:not([hidden]) .or-assessment-validation-notice) [data-assessment-corrections] .or-gate-validation-notice { display: none; }
 .or-artifact-decision-bar strong { display: block; margin-bottom: 0.25rem; }
 .or-artifact-decision-bar p { margin: 0; color: var(--text-muted); font-size: 0.875rem; }
 

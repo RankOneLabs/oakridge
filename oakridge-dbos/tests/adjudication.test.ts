@@ -232,7 +232,12 @@ test("a plain decision naming the adjudication schema carries no adjudication", 
   if (!slice) throw new Error("missing slice review");
   const plain = { ...slice, assessment: null, decisions: { expand: { ...slice.decisions.expand, adjudication: null } } };
   const stage = { ...design, reviews: { plain } };
-  expect(selectAdjudicatedReview({ workflow: { ...workflow, stages: { design: stage } }, stage: "design", review: "plain" })).toBeNull();
+  const plainWorkflow = { ...workflow, stages: { design: stage } };
+  expect(selectAdjudicatedReview({ workflow: plainWorkflow, stage: "design", review: "plain" })).toBeNull();
+  const check = { workflow: plainWorkflow, snapshot: snapshot("design", "slice_assessment", ["slice_report"]), expected_assessment_revision_id: undefined };
+  expect(refusal(check, "plain", "expand", "slice_report", validAdjudication())).toBeNull();
+  expect(refusal(check, "plain", "expand", "slice_report", { ...validAdjudication(), stray: true }))
+    .toContain("plain decision does not accept payload field stray");
   expect(selectRecordedAdjudication({ assessment_artifact: "slice_assessment", decisions: [DECLARED.request_assessment_changes] },
     "request_assessment_changes", validAdjudication())).toBeNull();
 });

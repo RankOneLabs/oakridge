@@ -203,3 +203,36 @@ test.each([
     expect(errors).toEqual([]);
   } finally { await page.close(); server.stop(true); }
 }, 30_000);
+
+test("a rejected assessment shows one visible notice in each presentation", async () => {
+  const { unit, detail } = currentArtifactFixture("assessment");
+  const revision = detail.revisions[0];
+  const submit = { kind: "review", review: "assessment_review", target_revision_id: revision.id } as const;
+  const rejection = { id: "validation", review: "engine:validator", decision: "request_changes", effect: "request_changes",
+    target_revision_id: revision.id, payload: { feedback: "Recheck the verdict." }, created_at: revision.created_at };
+  const reviewing = { ...unit, recorded_decisions: [rejection], decisions: [
+    { key: "accept", label: "Accept", adjudication: "accept", assessment: "assessment", fields: [], payload_schema: "{}",
+      submit: { ...submit, decision: "accept", effect: "approve" } },
+    { key: "request_assessment_changes", label: "Request assessment changes", adjudication: null, assessment: "assessment",
+      fields: [{ key: "feedback", label: "Feedback" }], payload_schema: "{feedback: text}",
+      submit: { ...submit, decision: "request_assessment_changes", effect: "request_changes" } },
+  ] };
+  const page = await browser.newPage();
+  try {
+    await page.route("**/*", route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/") return route.fulfill({ contentType: "text/html", body: pageHtml });
+      if (path === "/entry.js") return route.fulfill({ contentType: "application/javascript", body: script });
+      return route.fulfill({ json: path.endsWith("/units") ? [reviewing] : path.endsWith("/artifacts/assessment") ? detail : [] });
+    });
+    await page.goto("http://oakridge.test/?artifact=assessment&unit=run%2Fcohort");
+    await page.addStyleTag({ path: resolve(import.meta.dir, "../../core/pwa/styles.css") });
+    await page.getByTestId("or-assessment-validation-rejection").waitFor();
+    const gateNotice = page.getByTestId("or-gate-validation-rejection");
+    await gateNotice.waitFor({ state: "attached" });
+    expect(await gateNotice.isVisible()).toBe(false);
+    await page.getByRole("tab", { name: "structured" }).click();
+    expect(await gateNotice.isVisible()).toBe(true);
+    expect(await page.getByTestId("or-assessment-validation-rejection").isVisible()).toBe(false);
+  } finally { await page.close(); }
+}, 30_000);

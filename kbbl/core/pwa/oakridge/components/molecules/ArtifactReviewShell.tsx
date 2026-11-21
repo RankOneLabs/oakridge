@@ -29,7 +29,7 @@ export function ArtifactReviewShell({
     <div role="tablist" aria-label="Artifact presentation">
       {(["rendered", "structured"] as const).map((value) => <Button key={value} variant={mode === value ? "primary" : "secondary"} size="xsmall" role="tab" aria-selected={mode === value} onClick={() => setMode(value)}>{value}</Button>)}
     </div>
-    <div hidden={mode !== "rendered"}>{artifact}</div>
+    <div className="or-rendered-artifact" hidden={mode !== "rendered"}>{artifact}</div>
     <div hidden={mode !== "structured"}>{structuredArtifact}</div>
   </section> : artifact;
   const slots: Record<string, ReactNode> = {
