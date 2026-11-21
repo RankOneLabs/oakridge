@@ -375,6 +375,8 @@ fn unify(
         (expected, found) => expected == found,
     }
 }
+#[path = "workflow_adjudication.rs"]
+mod adjudication;
 #[path = "workflow_group.rs"]
 mod group;
 #[path = "workflow_stage.rs"]

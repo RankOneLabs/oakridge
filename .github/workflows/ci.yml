@@ -119,7 +119,7 @@ jobs:
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run --filter kbbl test
+      - run: bun run --filter kbbl test:backend
       - run: bun run test:scripts
 
   kbbl-pwa-tests:

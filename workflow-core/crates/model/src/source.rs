@@ -362,6 +362,8 @@ pub enum AuthoredReview {
 #[serde(deny_unknown_fields)]
 pub struct AuthoredReviewDefinition {
     pub of: SymbolKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment: Option<SymbolKey>,
     pub by: ReviewBy,
     pub prompt: Option<String>,
     #[serde(default)]
@@ -407,6 +409,8 @@ pub struct DecisionOverrides {
     pub when: Option<DecisionGuard>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feedback_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjudication: Option<AdjudicationRole>,
     pub label: Option<String>,
     pub on: Option<SymbolKey>,
     pub fields: Option<BTreeMap<String, String>>,
@@ -428,6 +432,8 @@ pub struct DecisionSetUse {
 #[serde(deny_unknown_fields)]
 pub struct ReviewOverrides {
     pub of: Option<SymbolKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment: Option<SymbolKey>,
     pub when: Option<String>,
     pub prompt: Option<String>,
     pub inputs: Option<BTreeMap<String, String>>,
@@ -916,6 +922,8 @@ pub enum SessionMode {
 #[serde(deny_unknown_fields)]
 pub struct Review {
     pub of: SymbolKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment: Option<SymbolKey>,
     pub by: ReviewBy,
     pub prompt: Option<String>,
     #[serde(default)]
@@ -941,6 +949,8 @@ pub struct ReviewDecision {
     pub when: Option<DecisionGuard>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feedback_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjudication: Option<AdjudicationRole>,
     pub effect: DeclaredDecisionEffect,
     pub on: Option<SymbolKey>,
     pub label: String,
@@ -956,6 +966,14 @@ pub struct ReviewDecision {
 pub enum DeclaredDecisionEffect {
     Approve,
     RequestChanges,
+}
+
+/// A decision's adjudication role. An absent role means a plain decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AdjudicationRole {
+    Accept,
+    Feedback,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -1007,6 +1025,7 @@ pub fn reserved_artifact_schemas() -> BTreeMap<&'static str, Type> {
 pub fn blocker_review() -> Review {
     Review {
         of: SymbolKey::from(BLOCKER_ARTIFACT),
+        assessment: None,
         by: ReviewBy::Operator,
         prompt: None,
         inputs: BTreeMap::new(),
@@ -1022,6 +1041,7 @@ pub fn blocker_review() -> Review {
                 key.into(),
                 ReviewDecision {
                     effect: DeclaredDecisionEffect::RequestChanges,
+                    adjudication: None,
                     on: Some(SymbolKey::from(BLOCKER_ARTIFACT)),
                     label: label.into(),
                     payload: Some(blocker_answer_schema()),
