@@ -388,6 +388,9 @@ function subjectFinding(value: JsonValue, path: string): Result<SelectedItem, Ex
 
 function shapeFindings(field: string, map: Mapping): ExtractorDefinition["select"] {
   return (body) => {
+    const assessment = objectAt(body, "/findings");
+    if (!assessment.ok) return assessment;
+    if (assessment.value.findings === undefined) return ok([]);
     const values = listAt(body, ["findings"]);
     if (!values.ok) return values;
     const items: SelectedItem[] = [];
