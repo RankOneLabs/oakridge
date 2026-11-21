@@ -9,6 +9,7 @@ import { fetchMergeStatus } from "../../client";
 import { randomUuid } from "../../../lib/random-uuid";
 import { parseCompositeId, selectGateDecision } from "../../adapters/core";
 import { Button } from "../../../components/atoms/Button";
+import { selectValidationRejectionNotice } from "../../lib/validation-rejection";
 
 const decisionButtonClass = "min-h-12 w-full rounded-lg! px-4! py-[0.65rem]! md:min-h-11 md:w-auto";
 
@@ -51,7 +52,7 @@ function mergeWarning(status: Exclude<MergeStatus, { readonly kind: "merged" }>)
 export function GateDecisionActions(props: GateDecisionActionsProps) {
   // An adjudicating inbox item links to the assessment. Its plain decisions
   // use the full gate's target and fields.
-  if (props.gate.requires_adjudication && props.gate.offered_decisions.length === 0)
+  if (props.gate.requires_adjudication && props.gate.resume_actions.length > 0 && props.gate.offered_decisions.length === 0)
     return <InboxGateDecisionActions {...props} />;
   return <GateDecisionActionsForGate key={props.gate.id} {...props} />;
 }
@@ -166,6 +167,8 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
 
   return (
     <div className="or-decision-actions" data-testid="or-decision-actions">
+      {gate.requires_adjudication && gate.validation_rejection && <p role="status" className="text-sm text-[var(--danger-fg)]" data-testid="or-gate-validation-rejection">{selectValidationRejectionNotice(gate.validation_rejection)}</p>}
+      {gate.requires_adjudication && gate.resume_actions.length === 0 && <p>Review and adjudicate the actions in the assessment to record a decision.</p>}
       {disabled && (
         <div className="or-decision-actions__stranded" role="status" data-testid="or-gate-stranded">
           Run {gate.run_state} — gate stranded

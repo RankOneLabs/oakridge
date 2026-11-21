@@ -213,6 +213,15 @@ describe("study inbox", () => {
     expect(inbox.value.items[0]?.requires_adjudication).toBe(true);
   });
 
+  it("carries the validator's message when it rejected a revision the review decides", () => {
+    const rejected = withUnitFields(unit, { decisions: [approve, requestChanges].map((decision) => ({ ...decision, payload_schema: "adjudication" })),
+      recorded_decisions: [{ id: "v1", review: "engine:validator", decision: "request_changes", effect: "request_changes", target_revision_id: revision.id,
+        payload: { feedback: "Assessment verdict must match item statuses and additional finding severities." }, created_at: "2026-11-20T00:00:00Z" }] });
+    const inbox = classifyDevelopmentInbox(entry, [rejected], { workflow_name: "study", run_title: null });
+    if (!inbox.ok) throw new Error(inbox.error.detail);
+    expect(inbox.value.items[0]?.validation_rejection).toBe("Assessment verdict must match item statuses and additional finding severities.");
+  });
+
   it("leaves a review with plain payloads deciding from the inbox", () => {
     const inbox = classifyDevelopmentInbox(entry, [unit], { workflow_name: "study", run_title: null });
     if (!inbox.ok) throw new Error(inbox.error.detail);

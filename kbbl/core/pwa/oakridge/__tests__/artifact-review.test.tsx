@@ -7,6 +7,10 @@ import currentBrief from "../__fixtures__/current-brief.json";
 import { ArtifactReview } from "../components/organisms/ArtifactReview";
 import type { ArtifactDetail, ArtifactRevision, ParkedGate } from "../artifact-types";
 import { invalidateCachedRunUnits } from "../client";
+import { CURRENT_ASSESSMENT } from "../__fixtures__/current-assessments";
+
+vi.mock("../hooks/useCohortArtifact", () => ({ useCohortArtifact: () => ({ kind: "missing" }) }));
+vi.mock("../hooks/useAssessmentHistory", () => ({ useAssessmentHistory: () => ({ data: [], isError: false, error: null }) }));
 
 // Split out of oakridge.test.tsx when the chrome union landed: the review
 // organism now has two hosts, and its cases outgrew the shared file.
@@ -138,6 +142,20 @@ describe("ArtifactReview", () => {
     fireEvent.click(screen.getByTestId("or-rev-tab-0"));
     expect(screen.queryByTestId("or-artifact-gate-actions")).toBeNull();
     expect(fetchSpy.mock.calls.some(([input]) => String(input).includes("/runs/run-1/gates"))).toBe(false);
+  });
+
+  it.each([false, true])("shows a second decision box only for a declared plain action (plain action offered: %s)", async hasPlain => {
+    const assessment: ArtifactDetail = { ...ARTIFACT_FIXTURE, type_id: "dev.assessment", component_id: "dev-current-assessment-viewer",
+      revisions: [{ ...REVISION_FIXTURE, status: "draft", body: CURRENT_ASSESSMENT }] };
+    const gate: ParkedGate = { ...PARKED_GATE_FIXTURE, run_id: "run-1", gate_step: "assessment_review", artifact_revision_id: "rev-1", assessment_revision_id: "rev-1", requires_adjudication: true,
+      resume_actions: hasPlain ? ["request_assessment_changes"] : [], offered_decisions: hasPlain ? ["accept", "request_assessment_changes"] : ["accept"], decision_definitions: [{ key: "accept", label: "Accept", payload_schema: "adjudication", adjudication: "accept", assessment: "assessment", fields: [],
+        submit: { kind: "review", review: "assessment_review", decision: "accept", effect: "approve", target_revision_id: "rev-1" } }, ...(hasPlain ? [{ key: "request_assessment_changes", label: "Request assessment changes", adjudication: null, assessment: "assessment", fields: [], payload_schema: "{}",
+          submit: { kind: "review" as const, review: "assessment_review", decision: "request_assessment_changes", effect: "request_changes" as const, target_revision_id: "rev-1" } }] : [])] };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).includes("/gates") ? json([gate]) : json(assessment));
+    wrap(<ArtifactReview artifactId="art-1" />, assessment, [gate]);
+
+    expect(await screen.findByRole("region", { name: "Assessment decision" })).toBeTruthy();
+    expect(Boolean(screen.queryByTestId("or-artifact-gate-actions"))).toBe(hasPlain);
   });
 
   it("shows error state when artifact fetch fails", async () => {

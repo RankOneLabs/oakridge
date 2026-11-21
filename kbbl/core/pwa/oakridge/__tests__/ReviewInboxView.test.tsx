@@ -129,7 +129,7 @@ describe("ReviewInboxView", () => {
     renderInbox(studyInbox.value);
     expect(await screen.findByTestId("or-inbox-artifact-link")).toBeTruthy();
     expect(screen.queryByTestId("or-decision-approve")).toBeNull();
-    expect(screen.getByTestId("or-inbox-artifact-link")).toBeTruthy();
+    expect(screen.getByText("Review and adjudicate the actions in the assessment to record a decision.")).toBeTruthy();
   });
 
   it("puts actionable work first without duplicating it in progress", async () => {

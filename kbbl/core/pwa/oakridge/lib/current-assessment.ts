@@ -32,9 +32,9 @@ export function selectAdditionalFindings(assessment: CurrentAssessment, labels: 
   return assessment.additional_findings.map(finding => ({ finding, is_unattributed: finding.related_build_item_ids.length === 0,
     labels: finding.related_build_item_ids.map(id => ({ id, label: labels.find(label => label.id === id)?.label ?? id })) }));
 }
-export interface AssessmentActionLists { readonly builder: readonly OperatorAssessmentAction[]; readonly operator: readonly OperatorAssessmentAction[] }
+export interface AssessmentActionLists { readonly rework: readonly OperatorAssessmentAction[]; readonly operator: readonly OperatorAssessmentAction[] }
 export const selectAssessmentActions = (assessment: CurrentAssessment): AssessmentActionLists => ({
-  builder: assessment.next_actions.filter(action => action.audience === "rework"), operator: assessment.next_actions.filter(action => action.audience === "operator"),
+  rework: assessment.next_actions.filter(action => action.audience === "rework"), operator: assessment.next_actions.filter(action => action.audience === "operator"),
 });
 export interface DerivedAssessmentVerdict { readonly verdict: CurrentAssessment["verdict"]; readonly has_mismatch: boolean }
 export function selectDerivedVerdict(assessment: CurrentAssessment): DerivedAssessmentVerdict {

@@ -10,6 +10,7 @@ import type { OperatorAdjudicationRole } from "../operator-contracts/core-client
 import type { OperatorDecisionDefinition, OperatorRevisionDecision } from "../operator-contracts/projections/unit-view";
 import { selectAssessmentActions, type CurrentAssessment } from "./current-assessment";
 import { selectHandoffRevisionId } from "./handoff-provenance";
+import { selectValidationRejection } from "./validation-rejection";
 
 export const NO_REVIEW_REASON = "This revision has no open assessment review to record a decision on.";
 
@@ -73,8 +74,7 @@ export interface ProposedActionRow { readonly action: OperatorAssessmentAction; 
 export interface AudienceRows { readonly proposed: readonly ProposedActionRow[]; readonly added: readonly OperatorAddedActionEntry[]; readonly count: number }
 /** One audience's list: the assessor's actions with any recorded disposition, then the operator's added ones. */
 export function selectAudienceRows({ assessment, added_actions, recorded }: AudienceRowsInput, audience: ActionAudience): AudienceRows {
-  const { builder: rework, operator } = selectAssessmentActions(assessment);
-  const proposed = { rework, operator }[audience].map(action => ({ action, recorded: recorded?.entries.find(entry => entry.action_id === action.id) ?? null }));
+  const proposed = selectAssessmentActions(assessment)[audience].map(action => ({ action, recorded: recorded?.entries.find(entry => entry.action_id === action.id) ?? null }));
   const added = added_actions.filter(entry => entry.audience === audience);
   return { proposed, added, count: proposed.length + added.length };
 }
@@ -125,17 +125,17 @@ export function selectAdjudicationSources(assessment: CurrentAssessment): readon
 /** Unit history is oldest first; dispositions belong only to the displayed revision. */
 export function selectRecordedAssessmentDecision(decisions: readonly OperatorRevisionDecision[], revisionId: string): OperatorRevisionDecision | null {
   return decisions.reduce<OperatorRevisionDecision | null>((latest, decision) =>
-    (decision.assessment_revision_id ?? decision.target_revision_id) === revisionId ? decision : latest, null);
+    decision.adjudication != null && (decision.assessment_revision_id ?? decision.target_revision_id) === revisionId ? decision : latest, null);
 }
 export interface AdjudicationGateInput { readonly gate: ParkedGate | null; readonly revisionId: string; readonly decisions: readonly OperatorRevisionDecision[]; readonly hasSubmitted: boolean }
-export interface AdjudicationGateState { readonly revision: string; readonly recordedDecision: OperatorRevisionDecision | null; readonly isRecorded: boolean; readonly isOpen: boolean }
+export interface AdjudicationGateState { readonly revision: string; readonly recordedDecision: OperatorRevisionDecision | null; readonly isRecorded: boolean; readonly isOpen: boolean; readonly validationRejection: string | null }
 /** The form records on the displayed revision only, while its review is open and before a decision exists. */
 export function selectAdjudicationGate({ gate, revisionId, decisions, hasSubmitted }: AdjudicationGateInput): AdjudicationGateState {
   const revision = selectHandoffRevisionId(revisionId) ?? revisionId;
   const recordedDecision = selectRecordedAssessmentDecision(decisions, revision);
   const isRecorded = hasSubmitted || recordedDecision !== null;
   const isOpen = gate?.actionable === true && selectHandoffRevisionId(gate.assessment_revision_id ?? undefined) === revision && !isRecorded;
-  return { revision, recordedDecision, isRecorded, isOpen };
+  return { revision, recordedDecision, isRecorded, isOpen, validationRejection: selectValidationRejection(decisions, revision) };
 }
 
 export interface ReviewDecisionDefinition { readonly definition: OperatorDecisionDefinition; readonly role: OperatorAdjudicationRole }

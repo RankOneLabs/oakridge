@@ -10,7 +10,7 @@ describe("current assessment selectors", () => {
   it("flags authored verdict mismatch", () => expect(selectDerivedVerdict({ ...MET_WITH_REGRESSION, verdict: "pass" }).has_mismatch).toBe(true));
   it("empty related build ids are unattributed", () => expect(selectAdditionalFindings({ ...CURRENT_ASSESSMENT, additional_findings: CURRENT_ASSESSMENT.additional_findings.map(finding => ({ ...finding, related_build_item_ids: [] })) })[0].is_unattributed).toBe(true));
   it("resolves related item labels", () => expect(selectAdditionalFindings(CURRENT_ASSESSMENT, [{ id: "B1", label: "Build feature" }])[0].labels).toEqual([{ id: "B1", label: "Build feature" }]));
-  it("partitions actions by audience", () => expect([selectAssessmentActions(CURRENT_ASSESSMENT).builder, selectAssessmentActions(CURRENT_ASSESSMENT).operator].map(actions => actions.map(action => action.audience))).toEqual([["rework"], ["operator"]]));
+  it("partitions actions by audience", () => expect([selectAssessmentActions(CURRENT_ASSESSMENT).rework, selectAssessmentActions(CURRENT_ASSESSMENT).operator].map(actions => actions.map(action => action.audience))).toEqual([["rework"], ["operator"]]));
 });
 describe("pending adjudication", () => {
   const builder = CURRENT_ASSESSMENT.next_actions[0].id;

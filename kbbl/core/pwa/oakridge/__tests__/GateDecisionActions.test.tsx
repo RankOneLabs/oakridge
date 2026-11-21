@@ -277,3 +277,12 @@ it("offers only the plain assessment changes action on an adjudicating gate", ()
   const view = render(wrapper(new QueryClient(), gates.value[0]));
   expect(view.getAllByRole("button").map(button => button.getAttribute("data-testid"))).toEqual(["or-decision-request_assessment_changes"]);
 });
+it("shows the validator's message on an adjudicated gate whose revision it rejected", () => {
+  const unit = { ...currentAdjudicationUnit(), recorded_decisions: [{ id: "v1", review: "engine:validator", decision: "request_changes", effect: "request_changes" as const,
+    target_revision_id: "assessment:1", payload: { feedback: "Assessment verdict must match item statuses and additional finding severities." }, created_at: "2026-11-20T00:00:00Z" }] };
+  const gates = reviewToGates(unit);
+  if (!gates.ok || !gates.value[0]) throw new Error("gate missing");
+  render(wrapper(new QueryClient(), gates.value[0]));
+  expect(screen.getByTestId("or-gate-validation-rejection").textContent)
+    .toBe("This assessment failed validation, so it cannot be accepted: Assessment verdict must match item statuses and additional finding severities.");
+});

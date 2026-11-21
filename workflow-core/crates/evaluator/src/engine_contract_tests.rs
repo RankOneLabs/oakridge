@@ -548,26 +548,23 @@ fn assessor_review_history_spans_rounds_and_preserves_full_payloads() {
 #[test]
 fn adjudicating_review_keeps_plain_feedback_and_forwards_the_declared_field() {
     let mut source = source();
-    let decisions = &mut source
-        .stages
-        .get_mut("document")
-        .unwrap()
-        .reviews
-        .get_mut("assessment_review")
-        .unwrap()
-        .decisions;
+    let stage = source.stages.get_mut("document").unwrap();
+    let mut review = stage.reviews.remove("assessment_review").unwrap();
+    let decisions = &mut review.decisions;
+    let plain = decisions.remove("request_assessment_changes").unwrap();
+    decisions.insert("ask".into(), plain);
+    let mut feedback = decisions.remove("request_build_changes").unwrap();
+    feedback.adjudication = Some(AdjudicationRole::Feedback);
+    decisions.insert("send".into(), feedback);
     decisions.insert(
-        "accept".into(),
+        "ok".into(),
         serde_json::from_value(json!({
             "effect": "approve", "label": "Accept", "adjudication": "accept",
             "payload": {"entries": "list(text)"}
         }))
         .unwrap(),
     );
-    decisions
-        .get_mut("request_build_changes")
-        .unwrap()
-        .adjudication = Some(AdjudicationRole::Feedback);
+    stage.reviews.insert("ar".into(), review);
 
     let mut run = Run::with_source(source);
     run.publish(
@@ -580,13 +577,8 @@ fn adjudicating_review_keeps_plain_feedback_and_forwards_the_declared_field() {
     run.end("assessor");
 
     let plain_payload = json!({"feedback":"Explain the finding in more detail"});
-    run.decide(
-        "assessment_review",
-        "request_assessment_changes",
-        "assessment",
-        plain_payload.clone(),
-    )
-    .unwrap();
+    run.decide("ar", "ask", "assessment", plain_payload.clone())
+        .unwrap();
     assert_eq!(
         run.result.snapshot.decisions.last().unwrap().payload(),
         plain_payload
@@ -595,8 +587,8 @@ fn adjudicating_review_keeps_plain_feedback_and_forwards_the_declared_field() {
     run.publish("assessor", "assessment", json!("Second"));
     run.end("assessor");
     run.decide(
-        "assessment_review",
-        "request_build_changes",
+        "ar",
+        "send",
         "draft",
         json!({"entries":["disposition"],"builder_feedback":"Fix build"}),
     )
