@@ -39,8 +39,8 @@ test("the domain directory holds only leaf support types", () => {
     "adjudication.ts",
     "analysis-link-declaration.ts",
     "assessment.ts",
-    "builder-feedback.ts", "delegated-session.ts", "effect-instruction.ts", "pr-integration.ts", "primitives.ts", "projects.ts", "prompt-template.ts",
-    "pull-request.ts", "repository-provisioning.ts", "run-config.ts", "unit-status.ts", "usage.ts",
+    "delegated-session.ts", "effect-instruction.ts", "pr-integration.ts", "primitives.ts", "projects.ts", "prompt-template.ts",
+    "pull-request.ts", "repository-provisioning.ts", "rework-feedback.ts", "run-config.ts", "unit-status.ts", "usage.ts",
   ]);
 });
 

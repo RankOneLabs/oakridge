@@ -19,15 +19,17 @@ export type OperatorWriter = { readonly "attempt": string; readonly "kind": "ses
 
 export type OperatorWorkerResult = { readonly "kind": "succeeded" } | { readonly "code": string; readonly "detail": string; readonly "kind": "failed" };
 
+export type OperatorAdjudicationRole = "accept" | "feedback";
+
 export type OperatorTypeExpression = string | { readonly [key: string]: OperatorTypeExpression };
 
 export type OperatorGroup = { readonly "outcome": { readonly [key: string]: string }; readonly "pools"?: { readonly [key: string]: number }; readonly "units": { readonly [key: string]: OperatorUnit } };
 
 export type OperatorStage = { readonly "artifacts": { readonly [key: string]: OperatorArtifact }; readonly "done_when"?: string | null; readonly "input": OperatorTypeExpression; readonly "let"?: { readonly [key: string]: string }; readonly "outcome": { readonly [key: string]: string }; readonly "reviews"?: { readonly [key: string]: OperatorReview }; readonly "workers": { readonly [key: string]: OperatorWorker } };
 
-export type OperatorReviewDecision = { readonly "effect": OperatorDeclaredDecisionEffect; readonly "feedback"?: string | null; readonly "feedback_field"?: string | null; readonly "fields"?: { readonly [key: string]: string }; readonly "label": string; readonly "on"?: string | null; readonly "payload"?: OperatorTypeExpression | null; readonly "when"?: OperatorDecisionGuard | null };
+export type OperatorReviewDecision = { readonly "adjudication"?: OperatorAdjudicationRole | null; readonly "effect": OperatorDeclaredDecisionEffect; readonly "feedback"?: string | null; readonly "feedback_field"?: string | null; readonly "fields"?: { readonly [key: string]: string }; readonly "label": string; readonly "on"?: string | null; readonly "payload"?: OperatorTypeExpression | null; readonly "when"?: OperatorDecisionGuard | null };
 
-export type OperatorReview = { readonly "by": OperatorReviewBy; readonly "decisions": { readonly [key: string]: OperatorReviewDecision }; readonly "inputs"?: { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null; readonly "when"?: string | null };
+export type OperatorReview = { readonly "assessment"?: string | null; readonly "by": OperatorReviewBy; readonly "decisions": { readonly [key: string]: OperatorReviewDecision }; readonly "inputs"?: { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null; readonly "when"?: string | null };
 
 export type OperatorAuthoredStage = { readonly "artifacts": { readonly [key: string]: OperatorArtifact }; readonly "done_when"?: string | null; readonly "input": OperatorTypeExpression; readonly "let"?: { readonly [key: string]: string }; readonly "outcome": { readonly [key: string]: string }; readonly "reviews"?: { readonly [key: string]: OperatorAuthoredReview }; readonly "workers": { readonly [key: string]: OperatorAuthoredWorker } };
 
@@ -65,7 +67,7 @@ export type OperatorSessionMode = "resume" | "fresh" | "shared";
 
 export type OperatorParsedArtifact = { readonly "edit_policy"?: OperatorEditPolicy; readonly "kind": OperatorArtifactKind; readonly "schema": OperatorType; readonly "validate"?: (OperatorValidationCheck)[] };
 
-export type OperatorParsedReview = { readonly "by": OperatorReviewBy; readonly "decisions": { readonly [key: string]: OperatorParsedReviewDecision }; readonly "inputs"?: { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null; readonly "when"?: string | null };
+export type OperatorParsedReview = { readonly "assessment"?: string | null; readonly "by": OperatorReviewBy; readonly "decisions": { readonly [key: string]: OperatorParsedReviewDecision }; readonly "inputs"?: { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null; readonly "when"?: string | null };
 
 export type OperatorFeedbackEntry = { readonly "decision": string; readonly "id": string; readonly "payload": unknown; readonly "review": string; readonly "target": string };
 
@@ -77,22 +79,22 @@ export type OperatorArtifactKind = "document" | "record" | "external_reference" 
 
 export type OperatorValidationCheck = { readonly "check": string; readonly "message": string };
 
-export type OperatorAuthoredReviewDefinition = { readonly "by": OperatorReviewBy; readonly "decisions": OperatorAuthoredDecisions; readonly "inputs"?: { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null; readonly "when"?: string | null };
+export type OperatorAuthoredReviewDefinition = { readonly "assessment"?: string | null; readonly "by": OperatorReviewBy; readonly "decisions": OperatorAuthoredDecisions; readonly "inputs"?: { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null; readonly "when"?: string | null };
 
 export type OperatorReviewUse = { readonly "overrides"?: OperatorReviewOverrides | null; readonly "template": string };
 
 export type OperatorWorkerUse = { readonly "overrides"?: OperatorWorkerOverrides | null; readonly "template": string };
 
-export type OperatorParsedReviewDecision = { readonly "effect": OperatorDeclaredDecisionEffect; readonly "feedback"?: string | null; readonly "feedback_field"?: string | null; readonly "fields"?: { readonly [key: string]: string }; readonly "label": string; readonly "on"?: string | null; readonly "payload"?: OperatorType | null; readonly "when"?: OperatorDecisionGuard | null };
+export type OperatorParsedReviewDecision = { readonly "adjudication"?: OperatorAdjudicationRole | null; readonly "effect": OperatorDeclaredDecisionEffect; readonly "feedback"?: string | null; readonly "feedback_field"?: string | null; readonly "fields"?: { readonly [key: string]: string }; readonly "label": string; readonly "on"?: string | null; readonly "payload"?: OperatorType | null; readonly "when"?: OperatorDecisionGuard | null };
 
 export type OperatorRevisionState = { readonly "artifact": string; readonly "body": unknown; readonly "by"?: string | null; readonly "decision_cursor"?: number; readonly "id": string; readonly "predecessor"?: string | null; readonly "seq": number; readonly "subject"?: string | null; readonly "unit": string };
 
 export type OperatorAuthoredDecisions = { readonly [key: string]: OperatorReviewDecision } | OperatorDecisionSetUse;
 
-export type OperatorReviewOverrides = { readonly "decisions"?: { readonly [key: string]: OperatorDecisionOverrides } | null; readonly "inputs"?: { readonly [key: string]: string } | null; readonly "of"?: string | null; readonly "prompt"?: string | null; readonly "when"?: string | null };
+export type OperatorReviewOverrides = { readonly "assessment"?: string | null; readonly "decisions"?: { readonly [key: string]: OperatorDecisionOverrides } | null; readonly "inputs"?: { readonly [key: string]: string } | null; readonly "of"?: string | null; readonly "prompt"?: string | null; readonly "when"?: string | null };
 
 export type OperatorWorkerOverrides = { readonly "evaluates"?: string | null; readonly "every"?: string | null; readonly "inputs"?: { readonly [key: string]: string } | null; readonly "operation"?: string | null; readonly "produces"?: (string)[] | null; readonly "prompts"?: OperatorPrompts | null; readonly "runtime"?: OperatorWorkerRuntime | null; readonly "session"?: OperatorSessionMode | null; readonly "when"?: string | null; readonly "workspace"?: string | null };
 
 export type OperatorDecisionSetUse = { readonly "overrides"?: { readonly [key: string]: OperatorDecisionOverrides }; readonly "rename"?: { readonly [key: string]: string }; readonly "set": string };
 
-export type OperatorDecisionOverrides = { readonly "feedback"?: string | null; readonly "feedback_field"?: string | null; readonly "fields"?: { readonly [key: string]: string } | null; readonly "label"?: string | null; readonly "on"?: string | null; readonly "payload"?: OperatorTypeExpression | null; readonly "when"?: OperatorDecisionGuard | null };
+export type OperatorDecisionOverrides = { readonly "adjudication"?: OperatorAdjudicationRole | null; readonly "feedback"?: string | null; readonly "feedback_field"?: string | null; readonly "fields"?: { readonly [key: string]: string } | null; readonly "label"?: string | null; readonly "on"?: string | null; readonly "payload"?: OperatorTypeExpression | null; readonly "when"?: OperatorDecisionGuard | null };

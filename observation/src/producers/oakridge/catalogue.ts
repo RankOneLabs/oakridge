@@ -1,3 +1,4 @@
+import { DEVELOPMENT_ARTIFACT_VERSIONS } from "./artifact-versions";
 import type { RegisteredSelector } from "../../grading/configuration";
 import { err, ok, type JsonValue, type Result } from "../../domain/primitives";
 import { idList, listAt, objectAt, requiredId, type ExtractionFailure, type ExtractorDefinition,
@@ -47,7 +48,7 @@ export interface AdditionalFinding {
 export type ActionSource = { readonly kind: "item_assessment"; readonly id: string }
   | { readonly kind: "additional_finding"; readonly id: string };
 export interface NextAction {
-  readonly id: string; readonly audience: "builder" | "operator"; readonly source: ActionSource; readonly text: string;
+  readonly id: string; readonly audience: "rework" | "operator"; readonly source: ActionSource; readonly text: string;
 }
 export interface Blocker { readonly text: string; readonly suggested_choices?: readonly string[] }
 
@@ -221,7 +222,7 @@ export const CURRENT_SCHEMA_VERSIONS = {
   spec: "artifact-schema/v2:3e6831d5b78d1a4ac06096edd5901aae62889530f407b8581a71698e4e65ca58",
   plan: "artifact-schema/v2:532d3d3e11f8df58a07618e8093374bb8e3e4f2348fa49a980bbbecb8290174d",
   brief: "artifact-schema/v2:e04f77b836567abab8dc575972e28ad6c16c4fed569e0bbb3cb6653783913969",
-  assessment: "artifact-schema/v2:8128a3b8a1dbedf479cfe122a42e3538d84106a436cb5de25a8716def76f747b",
+  assessment: DEVELOPMENT_ARTIFACT_VERSIONS.assessment_body.version,
 } as const;
 
 function referenceId(value: JsonValue, field: string, path: string): Result<string, ExtractionFailure> {
@@ -387,6 +388,9 @@ function subjectFinding(value: JsonValue, path: string): Result<SelectedItem, Ex
 
 function shapeFindings(field: string, map: Mapping): ExtractorDefinition["select"] {
   return (body) => {
+    const assessment = objectAt(body, "/findings");
+    if (!assessment.ok) return assessment;
+    if (assessment.value.findings === undefined) return ok([]);
     const values = listAt(body, ["findings"]);
     if (!values.ok) return values;
     const items: SelectedItem[] = [];

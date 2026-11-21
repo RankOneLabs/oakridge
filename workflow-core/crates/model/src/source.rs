@@ -362,6 +362,8 @@ pub enum AuthoredReview {
 #[serde(deny_unknown_fields)]
 pub struct AuthoredReviewDefinition {
     pub of: SymbolKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment: Option<SymbolKey>,
     pub by: ReviewBy,
     pub prompt: Option<String>,
     #[serde(default)]
@@ -407,6 +409,8 @@ pub struct DecisionOverrides {
     pub when: Option<DecisionGuard>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feedback_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjudication: Option<AdjudicationRole>,
     pub label: Option<String>,
     pub on: Option<SymbolKey>,
     pub fields: Option<BTreeMap<String, String>>,
@@ -428,6 +432,8 @@ pub struct DecisionSetUse {
 #[serde(deny_unknown_fields)]
 pub struct ReviewOverrides {
     pub of: Option<SymbolKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment: Option<SymbolKey>,
     pub when: Option<String>,
     pub prompt: Option<String>,
     pub inputs: Option<BTreeMap<String, String>>,
@@ -916,6 +922,8 @@ pub enum SessionMode {
 #[serde(deny_unknown_fields)]
 pub struct Review {
     pub of: SymbolKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment: Option<SymbolKey>,
     pub by: ReviewBy,
     pub prompt: Option<String>,
     #[serde(default)]
@@ -941,6 +949,8 @@ pub struct ReviewDecision {
     pub when: Option<DecisionGuard>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feedback_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjudication: Option<AdjudicationRole>,
     pub effect: DeclaredDecisionEffect,
     pub on: Option<SymbolKey>,
     pub label: String,
@@ -956,6 +966,14 @@ pub struct ReviewDecision {
 pub enum DeclaredDecisionEffect {
     Approve,
     RequestChanges,
+}
+
+/// A decision's adjudication role. An absent role means a plain decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AdjudicationRole {
+    Accept,
+    Feedback,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -994,33 +1012,76 @@ pub fn blocker_schema() -> Type {
     ]))
 }
 
+pub const BLOCKER_REVIEW_PROMPT: &str = "The worker is blocked and needs an operator answer. Clarify, override, or discuss with a free-text answer.";
+
+pub fn blocker_answer_schema() -> Type {
+    Type::Record(BTreeMap::from([("answer".into(), Type::Text)]))
+}
+
+pub fn reserved_artifact_schemas() -> BTreeMap<&'static str, Type> {
+    BTreeMap::from([(BLOCKER_ARTIFACT, blocker_schema())])
+}
+
 pub fn blocker_review() -> Review {
     Review {
         of: SymbolKey::from(BLOCKER_ARTIFACT),
+        assessment: None,
         by: ReviewBy::Operator,
         prompt: None,
         inputs: BTreeMap::new(),
         when: None,
-        decisions: ["clarify", "override", "discuss"]
-            .into_iter()
-            .map(|key| {
-                (
-                    key.into(),
-                    ReviewDecision {
-                        effect: DeclaredDecisionEffect::RequestChanges,
-                        on: Some(SymbolKey::from(BLOCKER_ARTIFACT)),
-                        label: key.into(),
-                        payload: Some(Type::Record(BTreeMap::from([(
-                            "answer".into(),
-                            Type::Text,
-                        )]))),
-                        fields: BTreeMap::from([("answer".into(), "Answer".into())]),
-                        feedback: None,
-                        feedback_field: Some("answer".into()),
-                        when: None,
-                    },
-                )
-            })
-            .collect(),
+        decisions: [
+            ("clarify", "Clarify"),
+            ("override", "Override"),
+            ("discuss", "Discuss"),
+        ]
+        .into_iter()
+        .map(|(key, label)| {
+            (
+                key.into(),
+                ReviewDecision {
+                    effect: DeclaredDecisionEffect::RequestChanges,
+                    adjudication: None,
+                    on: Some(SymbolKey::from(BLOCKER_ARTIFACT)),
+                    label: label.into(),
+                    payload: Some(blocker_answer_schema()),
+                    fields: BTreeMap::from([("answer".into(), "Answer".into())]),
+                    feedback: None,
+                    feedback_field: Some("answer".into()),
+                    when: None,
+                },
+            )
+        })
+        .collect(),
+    }
+}
+
+#[cfg(test)]
+mod blocker_tests {
+    use super::*;
+
+    #[test]
+    fn blocker_reviews_define_operator_facing_labels() {
+        let review = blocker_review();
+        for (key, label) in [
+            ("clarify", "Clarify"),
+            ("override", "Override"),
+            ("discuss", "Discuss"),
+        ] {
+            assert_eq!(review.decisions[key].label, label);
+        }
+    }
+
+    #[test]
+    fn blocker_review_prompt_preserves_the_operator_copy() {
+        assert_eq!(BLOCKER_REVIEW_PROMPT, "The worker is blocked and needs an operator answer. Clarify, override, or discuss with a free-text answer.");
+    }
+
+    #[test]
+    fn reserved_schemas_include_the_compact_blocker_schema() {
+        assert_eq!(
+            reserved_artifact_schemas()[BLOCKER_ARTIFACT].to_string(),
+            blocker_schema().to_string()
+        );
     }
 }

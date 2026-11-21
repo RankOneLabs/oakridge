@@ -135,6 +135,17 @@ pub(super) fn compile_stage(
             }
         };
         state.capture(result);
+        let adjudication_errors =
+            adjudication::check_adjudication(adjudication::AdjudicationCheck {
+                review_key,
+                review,
+                stage_key: key,
+                stage,
+                path: &path,
+            });
+        for error in adjudication_errors {
+            state.error(error.check, &error.path.0, error.detail);
+        }
         let input_before = state.errors.len();
         let review_inputs = state.fields(
             &review.inputs,
@@ -272,6 +283,21 @@ pub(super) fn compile_stage(
                 }
             }
         });
+    }
+    for artifact in &artifacts {
+        if stage.artifacts[&artifact.key.0].kind == ArtifactKind::Assessment
+            && matches!(&artifact.schema, Type::Record { fields } if fields.contains_key("next_actions"))
+            && !adjudication::has_adjudication_coverage(stage, &artifact.key)
+        {
+            state.error(
+                CheckKind::Review,
+                &format!("stages.{key}.artifacts.{}", artifact.key),
+                format!(
+                    "assessment {} has next_actions but no review adjudicates it with accept and feedback",
+                    artifact.key
+                ),
+            );
+        }
     }
     let done = match stage.done_when.as_deref() {
         Some(text) => {

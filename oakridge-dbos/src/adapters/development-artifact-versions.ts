@@ -17,7 +17,7 @@ export const DEVELOPMENT_ARTIFACT_VERSIONS = {
     "is_distinct": true
   },
   "assessment_body": {
-    "version": "artifact-schema/v2:8128a3b8a1dbedf479cfe122a42e3538d84106a436cb5de25a8716def76f747b",
+    "version": "artifact-schema/v2:7439eab135ecb8f0679b5d7efb793895fc35564a5906ad517b5035ee33a886f0",
     "is_distinct": true
   }
 } as const;

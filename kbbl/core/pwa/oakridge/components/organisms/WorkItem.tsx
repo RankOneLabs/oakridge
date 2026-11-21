@@ -7,7 +7,7 @@ import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../
 
 function itemToGate(item: ReviewInboxItem): ParkedGate | null {
   if (item.kind !== "artifact_gate" && item.kind !== "merge_confirmation") return null;
-  if (!item.gate_id || !item.artifact_revision_id || item.resume_actions.length === 0) return null;
+  if (!item.gate_id || !item.artifact_revision_id || (item.resume_actions.length === 0 && !item.requires_adjudication)) return null;
   const mergeConfirmation = item.kind === "merge_confirmation";
   return {
     id: item.gate_id,

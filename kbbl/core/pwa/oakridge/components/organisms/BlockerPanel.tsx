@@ -1,3 +1,4 @@
+import { BLOCKER_REVIEW } from "../../operator-contracts/blocker";
 import { useRef, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { TextArea } from "../../../components/atoms/TextArea";
@@ -17,7 +18,7 @@ export function BlockerPanel({ gate, blocker }: Props) {
   const [action, setAction] = useState<string | null>(null);
   const [isSent, setIsSent] = useState(false);
   const decision = selectGateDecision(gate, action);
-  const definitions = gate.decision_definitions?.filter((entry) => entry.submit.kind === "review" && entry.submit.review === "blocker_review") ?? [];
+  const definitions = gate.decision_definitions?.filter((entry) => entry.submit.kind === "review" && entry.submit.review === BLOCKER_REVIEW) ?? [];
   function submit() {
     if (!action || !answer.trim() || !gate.artifact_revision_id || !decision || decision.is_available === false) return;
     const identity = JSON.stringify([gate.artifact_revision_id, action, answer]);

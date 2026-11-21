@@ -1,12 +1,12 @@
 import { isAdjudicatedArtifact, selectAdjudicatedReview, selectRecordedAdjudication, selectReviewedAssessmentId, type Adjudication } from "../domain/adjudication";
-import type { Writer } from "../core-client/core-types";
+import { BLOCKER_ARTIFACT, BLOCKER_REVIEW, type BlockerAnswerBody, type BlockerBody, type Writer } from "../core-client/core-types";
 import type { ReviewDecisionRead } from "../storage/read-store";
 import type { ArtifactSchemaVersions } from "../storage/read-store";
 import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
 import type { BlockerAuthor, BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
 import type { ReviewHistoryEngineInputs } from "../effects/session-prompt";
 import type { PinnedPrompt } from "../domain/effect-instruction";
-import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
+import type { AdjudicationRole, AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
 import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { RevisionRef, RunRead, RunSummaryRead, UnitSummaryRecord } from "../storage/read-store";
@@ -95,6 +95,8 @@ export interface DecisionDefinition {
   readonly key: string;
   readonly label: string;
   readonly payload_schema: string;
+  readonly adjudication: AdjudicationRole | null;
+  readonly assessment: string | null;
   /** Labels for the payload's text fields. */
   readonly fields: readonly DecisionField[];
   readonly submit: DecisionSubmit;
@@ -238,21 +240,23 @@ function reviewDecisions(stage: ParsedStage, attention: UnitAttention): readonly
   return attention.awaiting.flatMap((awaiting) => {
     const review: ParsedReview | undefined = stage.reviews?.[awaiting.review];
     if (!review) return [];
+    const assessment = Object.values(review.decisions).some(decision => decision.adjudication != null) ? review.assessment ?? null : null;
     return Object.entries(review.decisions).sort(([left], [right]) => left.localeCompare(right)).flatMap(([key, decision]) => {
       // The core names each decision's target; a decision it does not list is not legal now.
       const resolved = awaiting.decisions.find((resolved) => resolved.decision === key);
       const target = resolved?.target;
       if (target === undefined) return [];
       return [{ is_available: resolved?.is_available ?? true, disabled_reason: resolved?.disabled_reason ?? null, key: decisionKey(stage, awaiting.review, key), label: decision.label, payload_schema: schemaKey(selectDecisionPayloadType(decision)),
+        adjudication: decision.adjudication ?? null, assessment,
         fields: Object.entries(decision.fields ?? {}).map(([field, label]) => ({ key: field, label })),
         submit: { kind: "review", review: awaiting.review, decision: key, effect: decision.effect, target_revision_id: target } }];
     });
   });
 }
 const retryDecisions = (attention: UnitAttention): readonly DecisionDefinition[] => attention.stalled.map((stalled) => ({
-  is_available: true, disabled_reason: null, key: `retry:${stalled.worker}`, label: `Retry ${titleCase(stalled.worker)}`, payload_schema: schemaKey(EMPTY_PAYLOAD), fields: [],
+  is_available: true, disabled_reason: null, key: `retry:${stalled.worker}`, label: `Retry ${titleCase(stalled.worker)}`, payload_schema: schemaKey(EMPTY_PAYLOAD), adjudication: null, assessment: null, fields: [],
   submit: { kind: "retry", worker: stalled.worker } }));
-const CANCEL: DecisionDefinition = { is_available: true, disabled_reason: null, key: "cancel", label: "Cancel run", payload_schema: schemaKey(EMPTY_PAYLOAD), fields: [], submit: { kind: "cancel" } };
+const CANCEL: DecisionDefinition = { is_available: true, disabled_reason: null, key: "cancel", label: "Cancel run", payload_schema: schemaKey(EMPTY_PAYLOAD), adjudication: null, assessment: null, fields: [], submit: { kind: "cancel" } };
 
 /** What the operator may decide on a unit now: its awaiting reviews' decisions, a retry per stalled worker, and cancel on a live run's root. */
 export function selectAvailableDecisions(read: RunSummaryRead, unit: UnitSummaryRecord, attention: UnitAttention): readonly DecisionDefinition[] {
@@ -286,9 +290,6 @@ export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitA
     artifacts: selectArtifactViews(read, unit) };
 }
 
-/** Bodies mirror the reserved blocker and answer schemas supplied by the core. */
-interface BlockerBody { readonly text: string; readonly suggested_choices?: readonly string[] | null }
-interface BlockerAnswerBody { readonly answer: string }
 function isBlockerBody(body: unknown): body is BlockerBody {
   return typeof body === "object" && body !== null && "text" in body && typeof body.text === "string"
     && (!("suggested_choices" in body) || body.suggested_choices === null
@@ -307,7 +308,7 @@ export function selectRevisionAuthor(attempts: readonly AttemptRecord[], revisio
 }
 
 function selectBlockerHistory(read: RunRead, unit: UnitRecord): BlockerHistory | null {
-  const revisions = read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === "blocker")
+  const revisions = read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === BLOCKER_ARTIFACT)
     .sort((left, right) => left.seq - right.seq).flatMap((revision): BlockerRevision[] => {
       if (!isBlockerBody(revision.body)) return [];
       return [{ revision_id: revision.id, text: revision.body.text,
@@ -316,7 +317,7 @@ function selectBlockerHistory(read: RunRead, unit: UnitRecord): BlockerHistory |
     });
   const latest = revisions.at(-1);
   if (!latest) return null;
-  const decisions = read.decisions.filter((decision) => decision.unit_id === unit.id && decision.review === "blocker_review")
+  const decisions = read.decisions.filter((decision) => decision.unit_id === unit.id && decision.review === BLOCKER_REVIEW)
     .flatMap((decision): BlockerAnswer[] => {
       if (!isBlockerAnswerBody(decision.payload)) return [];
       return [{ id: decision.id, target_revision_id: decision.target_revision_id, decision: decision.decision,
@@ -327,5 +328,5 @@ function selectBlockerHistory(read: RunRead, unit: UnitRecord): BlockerHistory |
     ...decisions.map((decision): BlockerHistoryEntry => ({ kind: "decision", decision })),
   ].sort((left, right) => (left.kind === "revision" ? left.revision.created_at : left.decision.created_at).getTime()
     - (right.kind === "revision" ? right.revision.created_at : right.decision.created_at).getTime());
-  return { is_open: unit.blocked_reason?.kind === "blocker", available_decisions: unit.review_prompts?.blocker_review?.decisions ?? [], latest, revisions, decisions, history };
+  return { is_open: unit.blocked_reason?.kind === "blocker", available_decisions: unit.review_prompts?.[BLOCKER_REVIEW]?.decisions ?? [], latest, revisions, decisions, history };
 }

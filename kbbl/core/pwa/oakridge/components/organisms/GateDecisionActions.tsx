@@ -1,11 +1,13 @@
+import { BLOCKER_REVIEW } from "../../operator-contracts/blocker";
 import { TextArea } from "../../../components/atoms/TextArea";
 import { useEffect, useRef, useState } from "react";
 
 import { useResumeGate } from "../../hooks/useResumeGate";
+import { useRunGates } from "../../hooks/useRunGates";
 import type { MergeStatus, ParkedGate } from "../../artifact-types";
 import { fetchMergeStatus } from "../../client";
 import { randomUuid } from "../../../lib/random-uuid";
-import { REQUEST_BUILD_CHANGES, selectGateDecision } from "../../adapters/core";
+import { parseCompositeId, selectGateDecision } from "../../adapters/core";
 import { Button } from "../../../components/atoms/Button";
 import { selectValidationRejectionNotice } from "../../lib/validation-rejection";
 
@@ -23,23 +25,20 @@ function actionLabel(action: string): string {
     case "approve": return "Approve artifact";
     case "request_revision": return "Request changes";
     case "request_assessment_changes": return "Request assessment changes";
-    case REQUEST_BUILD_CHANGES: return "Request build changes";
+    case "send_to_builder": return "Send to builder";
+    case "change_design": return "Change design";
     case "confirm_merged": return "Confirm merge";
     case "pass": return "Pass";
     case "fail": return "Mark failed";
     case "rerun": return "Run again";
-    case "clarify": return "Clarify";
-    case "discuss": return "Discuss";
-    case "override": return "Override";
     default: return action.replaceAll("_", " ");
   }
 }
 
-function successMessage(action: string): string {
+function successMessage(action: string, gate_step: string | null): string {
+  if (gate_step === BLOCKER_REVIEW) return "Answer sent to the worker.";
   if (action === "request_assessment_changes") return "Assessment changes requested. The assessor will revise its report.";
-  if (action === REQUEST_BUILD_CHANGES) return "Build changes requested. The builder will revise its work.";
   if (action === "request_revision") return "Changes requested.";
-  if (["clarify", "discuss", "override"].includes(action)) return "Answer sent to the worker.";
   if (action === "confirm_merged") return "Merge confirmed. The cohort can continue.";
   return "Decision recorded. The cohort can continue.";
 }
@@ -51,11 +50,28 @@ function mergeWarning(status: Exclude<MergeStatus, { readonly kind: "merged" }>)
 }
 
 export function GateDecisionActions(props: GateDecisionActionsProps) {
-  if (props.gate.requires_adjudication) return <div className="flex flex-col gap-1">
-    {props.gate.validation_rejection && <p role="status" className="text-sm text-[var(--danger-fg)]" data-testid="or-gate-validation-rejection">{selectValidationRejectionNotice(props.gate.validation_rejection)}</p>}
-    <p>Review and adjudicate the actions in the assessment to record a decision.</p>
-  </div>;
+  // An adjudicating inbox item links to the assessment. Its plain decisions
+  // use the full gate's target and fields.
+  if (props.gate.requires_adjudication && props.gate.resume_actions.length > 0 && props.gate.offered_decisions.length === 0)
+    return <InboxGateDecisionActions {...props} />;
   return <GateDecisionActionsForGate key={props.gate.id} {...props} />;
+}
+
+function InboxGateDecisionActions({ gate, ...props }: GateDecisionActionsProps) {
+  const query = useRunGates(gate.run_id);
+  const fullGate = selectInboxDecisionGate(gate, query.data ?? []);
+  if (!fullGate) return <p role="status">{query.isPending ? "Loading review decisions…" : "Review decisions unavailable."}</p>;
+  return <GateDecisionActionsForGate {...props} key={fullGate.id} gate={fullGate} artifactRevisionId={undefined} />;
+}
+
+function selectInboxDecisionGate(inboxGate: ParkedGate, gates: readonly ParkedGate[]): ParkedGate | null {
+  const inboxId = parseCompositeId(inboxGate.id, "gate");
+  if (!inboxId.ok) return null;
+  return gates.find(gate => {
+    if (gate.gate_step !== inboxId.value.name || gate.assessment_revision_id !== inboxGate.artifact_revision_id) return false;
+    const id = parseCompositeId(gate.id, "gate");
+    return id.ok && id.value.unitId === inboxId.value.unitId;
+  }) ?? null;
 }
 
 function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {}, onComplete }: GateDecisionActionsProps) {
@@ -77,7 +93,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
   // native button never fires its onClick.
   const disabled = !gate.actionable;
   const feedbackDecision = selectGateDecision(gate, feedbackAction);
-  const isBlocker = gate.gate_step === "blocker_review";
+  const isBlocker = gate.gate_step === BLOCKER_REVIEW;
 
   useEffect(() => {
     return () => { isActive.current = false; };
@@ -145,12 +161,14 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
 
   if (completedAction) {
     return <div className="or-decision-success" role="status" data-testid="or-decision-success">
-      {completedWithOverride ? "Merge confirmation recorded with an operator override. The run can continue." : successMessage(completedAction)}
+      {completedWithOverride ? "Merge confirmation recorded with an operator override. The run can continue." : successMessage(completedAction, gate.gate_step)}
     </div>;
   }
 
   return (
     <div className="or-decision-actions" data-testid="or-decision-actions">
+      {gate.requires_adjudication && gate.validation_rejection && <p role="status" className="text-sm text-[var(--danger-fg)]" data-testid="or-gate-validation-rejection">{selectValidationRejectionNotice(gate.validation_rejection)}</p>}
+      {gate.requires_adjudication && gate.resume_actions.length === 0 && <p>Review and adjudicate the actions in the assessment to record a decision.</p>}
       {disabled && (
         <div className="or-decision-actions__stranded" role="status" data-testid="or-gate-stranded">
           Run {gate.run_state} — gate stranded
@@ -159,7 +177,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
       <div className="or-decision-actions__buttons">
         {gate.resume_actions.map((action) => {
           const decision = selectGateDecision(gate, action);
-          const needsFeedback = Boolean(decision?.fields.length) || action === "request_revision" || action === "request_assessment_changes" || action === REQUEST_BUILD_CHANGES
+          const needsFeedback = Boolean(decision?.fields.length) || action === "request_revision" || action === "request_assessment_changes"
             || action === "rerun" || action === "reject" || action === "fail";
           const isPrimary = action === "approve" || action === "confirm_merged" || action === "pass";
           const isConfirming = action === "approve" && isConfirmingApproval;
@@ -178,7 +196,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
                 data-testid={`or-decision-${action}`}
               >
                 {isCheckingMerge && action === "confirm_merged" ? "Checking PR…" : mutation.isPending && mutation.variables?.action === action
-                  ? "Saving…" : isConfirming ? "Confirm approval" : (actionLabels[action] ?? actionLabel(action))}
+                  ? "Saving…" : isConfirming ? "Confirm approval" : (actionLabels[action] ?? (isBlocker && decision ? decision.label : actionLabel(action)))}
               </Button>
               {reason && <p id={reasonId} className="text-sm text-[var(--text-secondary)]" role="status">{reason}</p>}
             </div>

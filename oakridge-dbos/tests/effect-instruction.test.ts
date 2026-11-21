@@ -1,17 +1,29 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import type { ResolvedRunWorker } from "../src/core-client/core-types";
+import { BLOCKER_REVIEW, BLOCKER_SCHEMA, type ResolvedRunWorker, type Workflow } from "../src/core-client/core-types";
 import { decodeEffectInstruction, DEFAULT_MAX_START_ATTEMPTS, DEFAULT_PROVIDER_DEADLINE_MS, selectEffectInstruction, selectEverySeconds,
   selectReferencedSchemas, selectResolvedSchema, selectSessionKey, type RunWorkerAction } from "../src/domain/effect-instruction";
 import { bounded, resolveObserve, resolveStart, resolveStop } from "../src/effects/outcomes";
-import { sampleWorkflow } from "./authority-fixture";
+import { compiledFixture, sampleWorkflow } from "./authority-fixture";
 import type { ActionId, RunId } from "../src/domain/primitives";
+
+const workflow = sampleWorkflow("review-loop");
+const parsed_workflow = await compiledFixture(workflow);
+const development = JSON.parse(readFileSync(new URL("../../workflow-core/fixtures/bundles/development.json", import.meta.url), "utf8")) as Workflow;
+const parsed_development = await compiledFixture(development);
+const parsed_document = parsed_workflow.stages.document!;
+const parsed_writer = parsed_document.workers.writer!;
+if (parsed_writer.kind !== "agent") throw new Error("writer is an agent");
+type AgentWorker = typeof parsed_writer;
+const withWriter = (writer: AgentWorker) => ({ ...parsed_workflow, stages: { ...parsed_workflow.stages,
+  document: { ...parsed_document, workers: { ...parsed_document.workers, writer } } } });
 
 const unit = "run-1/document";
 const action: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "initial" }, cause: { kind: "missing" } };
-const resolved: ResolvedRunWorker = { action_id: `${unit}:writer:Initial:Missing`, inputs: { topic: "Oakridge", critique: null }, feedback: [] };
+const resolved: ResolvedRunWorker = { action_id: `${unit}:writer:Initial:Missing`, inputs: { topic: "Oakridge", critique: null }, feedback: [], prompt: "review-loop/write.md" };
 const prompts = { "review-loop/write.md": "a".repeat(64) };
 const select = (overrides: Partial<Parameters<typeof selectEffectInstruction>[0]> = {}) =>
-  selectEffectInstruction({ run_id: "run-1" as RunId, workflow: sampleWorkflow("review-loop"), prompts, stage: "document", config: null, action, seq: 1, resolved, ...overrides });
+  selectEffectInstruction({ run_id: "run-1" as RunId, workflow, parsed_workflow, prompts, stage: "document", config: null, action, seq: 1, resolved, ...overrides });
 
 test("an agent instruction carries its pinned prompt, session key, inputs and default budgets", () => {
   const instruction = select();
@@ -19,21 +31,17 @@ test("an agent instruction carries its pinned prompt, session key, inputs and de
     attempt: { action_id: resolved.action_id as ActionId, seq: 1 },
     worker: { kind: "agent", session: "resume", session_key: selectSessionKey(action, resolved.action_id, "resume"),
       prompt: { path: "review-loop/write.md", digest: "a".repeat(64) }, handoff: null, settings: null,
-      creates: [{ key: "draft", schema: { title: "text", body: "text" } }], schemas: {} },
+      creates: [{ key: "draft", schema: { title: "text", body: "text" } }, { key: "blocker", schema: BLOCKER_SCHEMA }], schemas: {} },
     input_provenance: { status: "unresolved" }, inputs: { topic: "Oakridge", critique: null }, engine_inputs: { previous: null, feedback: [], subject: null }, workspace: null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS });
 });
 
 test("a cohort pins independent assessor and builder settings", () => {
-  const base = sampleWorkflow("review-loop");
-  const document = base.stages.document;
-  if (!document || !document.workers.writer) throw new Error("sample writer is missing");
-  const workflow = { ...base, workflow: "development", stages: { cohort: { ...document,
-    workers: { assessor: document.workers.writer, builder: document.workers.writer } } } };
   const config = { sessions: { cohort: { assessor: { harness: "claude-code", model: "opus", effort: "high" },
     builder: { harness: "codex", model: "gpt-6-sol", effort: "high" } } }, pr_integration: "gated-review" as const, pr_skill_digest: null, grading_enabled: false };
   const settingsFor = (worker: string) => {
-    const selected = select({ workflow, config, stage: "cohort", action: { ...action,
+    const selected = select({ workflow: development, parsed_workflow: parsed_development, config, stage: "cohort",
+      prompts: { "development/assess.md": "a".repeat(64) }, resolved: { ...resolved, prompt: "development/assess.md" }, action: { ...action,
       unit: "run-1/implementation/theme", worker } });
     return selected.ok && selected.value.worker.kind === "agent" ? selected.value.worker.settings : null;
   };
@@ -41,13 +49,9 @@ test("a cohort pins independent assessor and builder settings", () => {
 });
 
 test("a fresh worker pins its handoff template; a resume worker never does", () => {
-  const workflow = sampleWorkflow("review-loop");
-  const writer = workflow.stages.document!.workers.writer!;
-  if (writer.kind !== "agent") throw new Error("writer is an agent");
-  const fresh = { ...workflow, stages: { document: { ...workflow.stages.document!,
-    workers: { ...workflow.stages.document!.workers, writer: { ...writer, session: "fresh" as const, prompts: { ...writer.prompts, handoff: "review-loop/handoff.md" } } } } } };
+  const fresh = withWriter({ ...parsed_writer, session: "fresh", prompts: { ...parsed_writer.prompts, handoff: "review-loop/handoff.md" } });
   const pinned = { ...prompts, "review-loop/handoff.md": "b".repeat(64) };
-  const selected = select({ workflow: fresh, prompts: pinned });
+  const selected = select({ parsed_workflow: fresh, prompts: pinned });
   const resumed = select({ prompts: pinned });
   expect([selected.ok && selected.value.worker.kind === "agent" ? selected.value.worker.handoff : "refused",
     resumed.ok && resumed.value.worker.kind === "agent" ? resumed.value.worker.handoff : "refused"])
@@ -84,20 +88,16 @@ test("a session key is fixed-length and slash-free however long the unit's path"
 });
 
 test("a shared writer uses one session key for sibling collection units", () => {
-  const workflow = sampleWorkflow("review-loop");
-  const writer = workflow.stages.document!.workers.writer!;
-  if (writer.kind !== "agent") throw new Error("writer is an agent");
-  const shared = { ...workflow, stages: { document: { ...workflow.stages.document!,
-    workers: { ...workflow.stages.document!.workers, writer: { ...writer, session: "shared" as const } } } } };
+  const shared = withWriter({ ...parsed_writer, session: "shared" });
   const first = { ...action, unit: "run-1/briefs/a" };
   const second = { ...action, unit: "run-1/briefs/b" };
-  const a = select({ workflow: shared, action: first });
-  const b = select({ workflow: shared, action: second });
+  const a = select({ parsed_workflow: shared, action: first });
+  const b = select({ parsed_workflow: shared, action: second });
   expect([a.ok && a.value.worker.kind === "agent" ? a.value.worker.session_key : null,
     b.ok && b.value.worker.kind === "agent" ? b.value.worker.session_key : null,
     a.ok && a.value.worker.kind === "agent" ? a.value.worker.shared_session_unit : null])
     .toEqual([selectSessionKey(first, resolved.action_id, "shared"), selectSessionKey(first, resolved.action_id, "shared"), "run-1/briefs"]);
-  expect(select({ workflow: shared }).ok).toBe(false);
+  expect(select({ parsed_workflow: shared }).ok).toBe(false);
 });
 
 test("an unpinned prompt or an undeclared worker refuses the instruction", () => {
@@ -155,20 +155,18 @@ test("a provider call past its deadline is uncertain and aborted", async () => {
 });
 
 test("a same-SHA replacement selects the declared assessor review prompt", () => {
-  const fs = require("node:fs") as typeof import("node:fs");
-  const workflow = JSON.parse(fs.readFileSync(new URL("../../workflow-core/fixtures/bundles/development.json", import.meta.url), "utf8")) as import("../src/core-client/core-types").Workflow;
   const build = { id: "run-1/cohort:build_result:2", unit: "run-1/cohort", artifact: "build_result", seq: 2, body: { head_sha: "same" } };
   const previous = { id: "run-1/cohort:assessment:1", unit: "run-1/cohort", artifact: "assessment", seq: 1, body: { head_sha: "same" }, subject: "run-1/cohort:build_result:1" };
   const reviewAction: RunWorkerAction = { kind: "run_worker", unit: "run-1/cohort", worker: "assessor", mode: { kind: "review" }, cause: { kind: "review_of", revision: build.id } };
-  const selected = selectEffectInstruction({ run_id: "run-1" as RunId, workflow, stage: "cohort", config: null, action: reviewAction, seq: 1,
+  const selected = selectEffectInstruction({ run_id: "run-1" as RunId, workflow: development, parsed_workflow: parsed_development, stage: "cohort", config: null, action: reviewAction, seq: 1,
     prompts: { "development/assess.md": "a".repeat(64), "development/assess-revise.md": "b".repeat(64) },
-    resolved: { action_id: "assess-new-build", inputs: {}, previous, subject: build, feedback: [] } });
+    resolved: { action_id: "assess-new-build", prompt: "development/assess.md", inputs: {}, previous, subject: build, feedback: [] } });
   expect(selected.ok && selected.value.worker.kind === "agent" ? selected.value.worker.prompt.path : "refused")
     .toBe("development/assess.md");
   const reviseAction: RunWorkerAction = { ...reviewAction, mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: "run-1/cohort:d3" } };
-  const revised = selectEffectInstruction({ run_id: "run-1" as RunId, workflow, stage: "cohort", config: null, action: reviseAction, seq: 2,
+  const revised = selectEffectInstruction({ run_id: "run-1" as RunId, workflow: development, parsed_workflow: parsed_development, stage: "cohort", config: null, action: reviseAction, seq: 2,
     prompts: { "development/assess.md": "a".repeat(64), "development/assess-revise.md": "b".repeat(64) },
-    resolved: { action_id: "revise-assessment", inputs: {}, previous, subject: build, feedback: [] } });
+    resolved: { action_id: "revise-assessment", prompt: "development/assess-revise.md", inputs: {}, previous, subject: build, feedback: [] } });
   expect(revised.ok && revised.value.worker.kind === "agent" ? revised.value.worker.prompt.path : "refused")
     .toBe("development/assess-revise.md");
 });
@@ -177,4 +175,16 @@ test("effect instructions freeze the core unit provenance", () => {
   const entries = [{ input: "brief", unit: "run/briefs/a", revision_id: "accepted" }];
   const instruction = select({ resolved: { ...resolved, input_provenance: entries } });
   expect(instruction.ok && instruction.value.input_provenance).toEqual({ status: "recorded", entries });
+});
+
+
+test("ordinary revision without a resolved prompt refuses the instruction", () => {
+  const selected = select({ action: { ...action, mode: { kind: "revise" } }, resolved: { ...resolved, prompt: null } });
+  expect(selected.ok ? null : selected.error.detail).toBe("agent writer has no revise prompt");
+});
+
+test("the development projection exposes the core's blocker decision labels", () => {
+  const decisions = parsed_development.stages.cohort?.reviews?.[BLOCKER_REVIEW]?.decisions ?? {};
+  expect(Object.fromEntries(Object.entries(decisions).map(([key, decision]) => [key, decision.label])))
+    .toEqual({ clarify: "Clarify", discuss: "Discuss", override: "Override" });
 });

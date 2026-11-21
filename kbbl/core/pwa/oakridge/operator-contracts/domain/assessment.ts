@@ -17,15 +17,15 @@ export interface OperatorAdditionalFinding {
   readonly related_build_item_ids: readonly string[]; readonly evidence: readonly OperatorAssessmentEvidence[];
 }
 
-export interface OperatorAssessmentAction { readonly id: string; readonly audience: "builder" | "operator"; readonly source: OperatorActionSource; readonly text: string }
+export interface OperatorAssessmentAction { readonly id: string; readonly audience: "rework" | "operator"; readonly source: OperatorActionSource; readonly text: string }
 
 export interface OperatorAssessmentTestEvidence {
   readonly passed: number; readonly failed: number; readonly output?: string | null;
   readonly summary?: string | null; readonly cargo_test_output?: string | null;
 }
 
+export interface OperatorActionSource { readonly kind: "item_assessment" | "additional_finding"; readonly id: string }
+
 export interface OperatorAssessmentSubject { readonly kind: string; readonly id: string }
 
 export interface OperatorAssessmentEvidence { readonly kind: "file" | "test" | "output"; readonly ref: string; readonly detail?: string | null }
-
-export interface OperatorActionSource { readonly kind: "item_assessment" | "additional_finding"; readonly id: string }

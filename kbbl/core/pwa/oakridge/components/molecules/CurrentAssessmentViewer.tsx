@@ -59,7 +59,7 @@ function FindingsPanel({ assessment, findings, review }: { assessment: CurrentAs
 function ActionsPanel({ assessment, handoff }: { assessment: CurrentAssessment; handoff: ReactNode }) {
   if (handoff) return <>{handoff}</>;
   const actions = selectAssessmentActions(assessment);
-  return <>{(["builder", "operator"] as const).map(audience => <ArtifactSection key={audience} title={`${audience === "builder" ? "Builder" : "Operator"} actions (${actions[audience].length})`} testId={`or-${audience}-actions`}>
+  return <>{(["rework", "operator"] as const).map(audience => <ArtifactSection key={audience} title={`${audience === "rework" ? "Rework" : "Operator"} actions (${actions[audience].length})`} testId={`or-${audience}-actions`}>
     {actions[audience].length === 0 ? <p className="text-sm text-[var(--text-muted)]">None.</p> : <ul>{actions[audience].map(action => <li key={action.id}>{action.text}</li>)}</ul>}
   </ArtifactSection>)}</>;
 }

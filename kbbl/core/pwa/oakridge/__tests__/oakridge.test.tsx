@@ -464,7 +464,7 @@ describe("RunDetail stage list", () => {
 
   it("retries a failed analysis author from its collapsed stage row", async () => {
     const unit = withUnitFields(retryUnit("analysis"), { stage: "analysis", collection_key: null,
-      decisions: [{ key: "retry:author", label: "Retry author", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "author" } }] });
+      decisions: [{ key: "retry:author", label: "Retry author", payload_schema: "{}", adjudication: null, assessment: null, fields: [], submit: { kind: "retry", worker: "author" } }] });
     const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "analysis" });
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,

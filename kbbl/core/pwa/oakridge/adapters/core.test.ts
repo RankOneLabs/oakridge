@@ -77,11 +77,11 @@ describe("v2 development adapters", () => {
       ["builder", cohort.collection_key, 1, 1], ["assessment", cohort.collection_key, 1, 1],
     ]);
   });
-  it("omits the retired build-change action from pinned assessment reviews", () => {
+  it("keeps the generic change action for pinned plain assessment reviews", () => {
     const gates = reviewToGates(cohort);
-    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve"]);
+    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve", "request_revision"]);
   });
-  it("gives successive assessment targets distinct review identities while retaining the hidden send offer", () => {
+  it("gives successive assessment targets distinct review identities while retaining the declared decision key", () => {
     const first = reviewToGates(cohort);
     const second = reviewToGates({ ...cohort, decisions: cohort.decisions.map((decision) => decision.submit.kind === "review"
       && decision.submit.review === "assessment_review" ? { ...decision,
@@ -91,15 +91,15 @@ describe("v2 development adapters", () => {
     expect({ distinct: oldGate?.id !== newGate?.id, offered: newGate?.offered_decisions?.includes("request_build_changes"),
       displayed: newGate?.resume_actions.includes("request_build_changes") }).toEqual({ distinct: true, offered: true, displayed: false });
   });
-  it("keeps assessment revision available on pinned reviews", () => {
+  it("keeps plain assessment changes available beside an adjudication", () => {
     const buildChange = cohort.decisions.find((decision) => decision.key === "request_build_changes");
     if (!buildChange || buildChange.submit.kind !== "review") throw new Error("fixture lacks build change decision");
     const assessmentChange = { ...buildChange, key: "request_assessment_changes", label: "Revise assessment",
       submit: { ...buildChange.submit, decision: "request_assessment_changes",
         target_revision_id: cohort.artifacts.find((artifact) => artifact.artifact_key === "assessment")?.latest_revision?.id ?? "" } };
-    const gates = reviewToGates({ ...cohort, decisions: [...cohort.decisions, assessmentChange] });
+    const gates = reviewToGates({ ...cohort, decisions: [...cohort.decisions.map(decision => ({ ...decision, adjudication: decision.key === "accept" ? "accept" as const : "feedback" as const, assessment: "assessment" })), assessmentChange] });
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions)
-      .toEqual(["approve", "request_assessment_changes"]);
+      .toEqual(["request_assessment_changes"]);
   });
   it("marks the assessor session as needing the operator when its assessment is published", () => {
     const attempts = cohort.attempts.filter((attempt) => attempt.kbbl_session_id).map((attempt) =>

@@ -5,7 +5,31 @@ use workflow_model::protocol::{
     Request, Response, DECODER_MAX_JSON_DEPTH, DECODER_MAX_SCHEMA_HOPS, MAX_DEPTH_CEILING,
     PROTOCOL_VERSION,
 };
-use workflow_model::{ROOT_DECLARATION, VALIDATION_REVIEW};
+use workflow_model::{Type, ROOT_DECLARATION, VALIDATION_REVIEW};
+
+fn reserved_type_to_ts(schema: &Type) -> String {
+    match schema {
+        Type::Text => "string".into(),
+        Type::List { item } => format!("readonly {}[]", reserved_type_to_ts(item)),
+        Type::Optional { value } => format!("{} | null", reserved_type_to_ts(value)),
+        Type::Record { fields } => {
+            let fields = fields
+                .iter()
+                .map(|(key, schema)| {
+                    let optional = if matches!(schema, Type::Optional { .. }) {
+                        "?"
+                    } else {
+                        ""
+                    };
+                    format!("readonly {key}{optional}: {}", reserved_type_to_ts(schema))
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("{{ {fields} }}")
+        }
+        _ => panic!("unsupported reserved type"),
+    }
+}
 
 /// The decoder source with its depth guards filled in from the protocol constants.
 fn schema_decoder() -> String {
@@ -181,6 +205,27 @@ pub fn generate() -> String {
     output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_DEPTH = {MAX_DEPTH_CEILING};\nexport const ROOT_DECLARATION = {ROOT_DECLARATION:?};\nexport const VALIDATION_REVIEW = {VALIDATION_REVIEW:?};\n"));
     output.push_str(&format!("export const BLOCKER_ARTIFACT = {:?};\nexport const BLOCKER_REVIEW = {:?};\nexport const BLOCKER_SCHEMA: TypeExpression = {:?};\n",
         workflow_model::BLOCKER_ARTIFACT, workflow_model::BLOCKER_REVIEW, workflow_model::blocker_schema().to_string()));
+    output.push_str(&format!(
+        "export const BLOCKER_REVIEW_PROMPT = {:?};\n",
+        workflow_model::BLOCKER_REVIEW_PROMPT
+    ));
+    let reserved_schemas: BTreeMap<_, _> = workflow_model::reserved_artifact_schemas()
+        .into_iter()
+        .map(|(key, schema)| (key, schema.to_string()))
+        .collect();
+    output.push_str(&format!(
+        "export const RESERVED_ARTIFACT_SCHEMAS: {{ readonly [key: string]: TypeExpression | undefined }} = {};\n",
+        serde_json::to_string(&reserved_schemas).expect("reserved schemas serialize")
+    ));
+    for (name, schema) in [
+        ("BlockerBody", workflow_model::blocker_schema()),
+        ("BlockerAnswerBody", workflow_model::blocker_answer_schema()),
+    ] {
+        output.push_str(&format!(
+            "export interface {name} {}\n",
+            reserved_type_to_ts(&schema)
+        ));
+    }
     for (name, schema) in &definitions {
         output.push_str(&format!(
             "export type {name} = {};\n",

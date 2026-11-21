@@ -147,7 +147,7 @@ schemas:
     id: ident
   next_action:
     id: uuid(generated)
-    audience: enum(builder, operator)
+    audience: enum(rework, operator)
     source: action_source
     text: text
   assessment_body:
@@ -166,20 +166,20 @@ schemas:
     disposition: enum(accepted, modified, rejected)
     original_text: text
     final_text: optional(text)
-    audience: enum(builder, operator)
+    audience: enum(rework, operator)
     source: action_source
     reason: optional(text)
   added_action:
     action_id: text
     origin: enum(operator)
     final_text: text
-    audience: enum(builder, operator)
+    audience: enum(rework, operator)
     source: action_source
     reason: optional(text)
   adjudication:
     entries: list(action_disposition)
     added_actions: list(added_action)
-    builder_feedback: text
+    rework_feedback: text
   pr_body:
     pr_url: text
     branch: text
@@ -622,6 +622,7 @@ stages:
         decisions:
           accept:
             effect: approve
+            adjudication: accept
             label: Accept
             payload: adjudication
           request_assessment_changes:
@@ -631,10 +632,11 @@ stages:
               feedback: What must the assessment change?
           request_build_changes:
             effect: request_changes
+            adjudication: feedback
             on: build_result
             label: Send to builder
             payload: adjudication
-            feedback_field: builder_feedback
+            feedback_field: rework_feedback
       merge_confirmation:
         of: pr
         by: operator
@@ -754,13 +756,15 @@ stages:
         decisions:
           accept:
             effect: approve
+            adjudication: accept
             label: Accept
             payload: adjudication
           request_changes:
             effect: request_changes
+            adjudication: feedback
             label: Send to integrator
             payload: adjudication
-            feedback_field: builder_feedback
+            feedback_field: rework_feedback
             on: assessment
       merge_confirmation:
         of: manual_merge_target

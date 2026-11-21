@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionId, RunId } from "../src/domain/primitives";
-import { composeBuilderFeedback, type Adjudication } from "../src/domain/adjudication";
+import { composeReworkFeedback, type Adjudication } from "../src/domain/adjudication";
 import { browserWritePolicy } from "../src/http/browser-write-policy";
 import { createHttpApp } from "../src/http/app";
 import { readHistory, readRun } from "../src/storage/read-store";
@@ -10,7 +10,7 @@ import { selectArtifactDetail } from "../src/projections/artifact-view";
 import { selectUnitHistory } from "../src/projections/history-view";
 import { commitTestDefinition } from "./committed-fixture";
 import { launch, openAuthority, submitter, type Authority } from "./authority-fixture";
-import { target, validAdjudication } from "./adjudication-fixture";
+import { dropRework, target, validAdjudication } from "./adjudication-fixture";
 
 // Study's expansion review adjudicates an assessment whose subjects are study cases, and
 // sends corrections to the expander's `expansion` artifact rather than a build result.
@@ -28,7 +28,7 @@ beforeAll(async () => {
     expand: { ...expand, input: {}, let: {},
       // The real assessment schema; the expansion body is not under test, so it is plain text.
       artifacts: { assessment: { ...expand.artifacts.assessment, validate: [] }, expansion: { kind: expand.artifacts.expansion.kind, schema: "text" } },
-      workers: { writer: { kind: "agent", prompts: { initial: prompt, revise: prompt }, inputs: {}, produces: ["expansion", "assessment"] } },
+      workers: { expander: { kind: "agent", prompts: { initial: prompt, revise: prompt }, inputs: {}, produces: ["expansion", "assessment"] } },
       reviews: { expansion_review: { ...review, prompt, inputs: {} } }, done_when: "approved(assessment)", outcome: {} },
   } };
   ({ definition_id } = await commitTestDefinition({ source: source as unknown as Workflow, prompt_edit: { path: prompt, content: "Review the expansion assessment." } }));
@@ -37,7 +37,7 @@ beforeAll(async () => {
 afterAll(async () => { await authority?.close(); });
 
 interface Parked { readonly run_id: RunId; readonly unit_id: string; readonly assessment_id: string; readonly expansion_id: string; readonly payload: Adjudication }
-/** An expansion and its assessment published, the writer's turn ended, so expansion_review is open. */
+/** An expansion and its assessment published, the expander’s turn ended, so expansion_review is open. */
 async function parked(): Promise<Parked> {
   const launched = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: "test" });
   if (!launched.result.ok || launched.result.value.kind !== "committed") throw new Error(JSON.stringify(launched.result));
@@ -59,10 +59,10 @@ async function parked(): Promise<Parked> {
   const stored = assessment.body as typeof target.body;
   const valid = validAdjudication();
   const entries = valid.entries.map((entry, index) => ({ ...entry, action_id: stored.next_actions[index].id }));
-  return { run_id, unit_id, assessment_id: assessment.id, expansion_id: expansion.id, payload: { ...valid, entries, builder_feedback: composeBuilderFeedback(entries, valid.added_actions) } };
+  return { run_id, unit_id, assessment_id: assessment.id, expansion_id: expansion.id, payload: { ...valid, entries, rework_feedback: composeReworkFeedback(entries, valid.added_actions) } };
 }
 interface Decide { readonly decision: string; readonly payload: unknown; readonly expected_assessment_revision_id?: string }
-async function decide(state: Parked, { decision, payload, expected_assessment_revision_id = state.assessment_id }: Decide) {
+async function decide(state: Parked, { decision, payload, expected_assessment_revision_id = decision === "request_assessment_changes" ? undefined : state.assessment_id }: Decide) {
   return app.request(`/api/runs/${state.run_id}/units/${encodeURIComponent(state.unit_id)}/reviews/expansion_review/decide`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: crypto.randomUUID(),
       target: decision === "send_to_expander" ? state.expansion_id : state.assessment_id, expected_assessment_revision_id, decision, payload }),
@@ -76,6 +76,8 @@ test("a study send-back records its adjudication against the assessment it revie
   expect({ status: response.status, body: response.status > 299 ? await response.text() : null }).toEqual({ status: 201, body: null });
   const read = await readRun(authority.db, state.run_id);
   if (!read) throw new Error("missing run");
+  expect(read.intents.filter(intent => intent.payload.action.worker === "expander").at(-1)?.payload.engine_inputs.feedback.map(entry => entry.payload))
+    .toEqual([{ feedback: state.payload.rework_feedback }]);
   const detail = selectArtifactDetail(read, { unit_id: state.unit_id, artifact: "assessment" });
   const decision = detail?.decisions.at(-1);
   const page = await readHistory(authority.db, { run_id: state.run_id, unit_id: state.unit_id, after: null, limit: 100 });
@@ -95,7 +97,7 @@ test("a study send-back is refused once the assessment it reviewed has a success
   expect({ status: response.status, decisions: (await recorded(state)).length, reason: (await response.text()).includes("reviewed assessment changed") })
     .toEqual({ status: 409, decisions: 0, reason: true });
 });
-for (const [decision, change] of [["send_to_expander", (p: Adjudication) => ({ ...p, builder_feedback: "forged" })], ["accept", (p: Adjudication) => ({ ...p, entries: p.entries.slice(1) })]] as const)
+for (const [decision, change] of [["send_to_expander", (p: Adjudication) => ({ ...p, rework_feedback: "forged" })], ["accept", (p: Adjudication) => ({ ...p, entries: p.entries.slice(1) })]] as const)
   test(`a study ${decision} with an invalid adjudication is refused`, async () => {
     const state = await parked();
     const response = await decide(state, { decision, payload: change(state.payload) });
@@ -103,5 +105,19 @@ for (const [decision, change] of [["send_to_expander", (p: Adjudication) => ({ .
   });
 test("a study accept with a valid adjudication approves the assessment", async () => {
   const state = await parked();
-  expect((await decide(state, { decision: "accept", payload: state.payload })).status).toBe(201);
+  expect((await decide(state, { decision: "accept", payload: dropRework(state.payload) })).status).toBe(201);
+});
+
+test("plain study assessment changes commit without an expected assessment revision", async () => {
+  const state = await parked();
+  const payload = { feedback: "Reassess" };
+  expect((await decide(state, { decision: "request_assessment_changes", payload })).status).toBe(201);
+  expect((await recorded(state)).at(-1)?.payload).toEqual(payload);
+});
+
+test("plain study assessment changes refuse an expected assessment revision", async () => {
+  const state = await parked();
+  const response = await decide(state, { decision: "request_assessment_changes", payload: { feedback: "Reassess" },
+    expected_assessment_revision_id: state.assessment_id });
+  expect([response.status, await response.text()]).toEqual([409, expect.stringContaining("plain decision takes no assessment revision")]);
 });
