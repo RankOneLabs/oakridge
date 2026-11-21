@@ -9,9 +9,8 @@
  * resolved them, so the accepted cases use the fake agent's model ids.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -20,6 +19,8 @@ import { validateGitRefName, validateWorktreeSubdir } from "./sessions";
 import { mountSessionsRoutes } from "./sessions";
 import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
 
+let fixtureRoot: string;
+let templateRepo: string;
 let tmpRoot: string;
 let repoDir: string;
 let harness: AcpTestHarness;
@@ -58,13 +59,19 @@ async function postSessions(app: Hono, body: unknown): Promise<Response> {
   });
 }
 
-beforeEach(async () => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-contract-test-"));
+beforeAll(async () => {
+  fixtureRoot = mkdtempSync(join(tmpdir(), "kbbl-contract-test-"));
+  templateRepo = join(fixtureRoot, "template");
+  mkdirSync(templateRepo);
+  await gitInitRepo(templateRepo);
+});
+
+beforeEach(() => {
+  tmpRoot = mkdtempSync(join(fixtureRoot, "case-"));
   repoDir = join(tmpRoot, "repo");
-  await mkdir(join(tmpRoot, "worktrees"), { recursive: true });
-  await mkdir(join(tmpRoot, "state"), { recursive: true });
-  mkdirSync(repoDir, { recursive: true });
-  await gitInitRepo(repoDir);
+  cpSync(templateRepo, repoDir, { recursive: true });
+  mkdirSync(join(tmpRoot, "worktrees"));
+  mkdirSync(join(tmpRoot, "state"));
   harness = makeAcpTestService({
     stateDir: join(tmpRoot, "state"),
     worktreesRoot: join(tmpRoot, "worktrees"),
@@ -75,6 +82,8 @@ afterEach(async () => {
   await harness.service.shutdown();
   rmSync(tmpRoot, { recursive: true, force: true });
 });
+
+afterAll(() => rmSync(fixtureRoot, { recursive: true, force: true }));
 
 test("collaboration ensure revives an ended session in place", async () => {
   const app = makeApp(repoDir);

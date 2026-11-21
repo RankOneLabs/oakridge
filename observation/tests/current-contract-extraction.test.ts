@@ -22,6 +22,15 @@ test("unknown versions select the unchanged legacy set", () => {
   expect(definitionsForSchemaVersion("unknown").map((d) => d.extractor_id))
     .toEqual(definitionsForSchemaVersion("development-v1").map((d) => d.extractor_id));
 });
+
+test("an unrecognized assessment version without findings has no matching items", async () => {
+  const definitions = oakridgeCatalogue("assessment", "unknown");
+  const pass = selectRevision(await fixtureBody("current-assessment"), "assessment", definitions);
+  expect(pass.items).toEqual([]);
+  expect(pass.issues.map(({ kind, is_retriable }) => [kind, is_retriable]))
+    .toEqual([["no_matching_items", false], ["no_matching_items", false]]);
+});
+
 test("analysis links findings only to the enclosing requirement", async () => {
   const pass = await current("analysis");
   expect(pass.issues).toEqual([]);

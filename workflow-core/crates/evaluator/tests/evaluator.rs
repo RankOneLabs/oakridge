@@ -2903,6 +2903,7 @@ fn w6_projection(result: &StepResult) -> Value {
             .as_object_mut()
             .unwrap()
             .remove("review_history");
+        wanted["resolved"].as_object_mut().unwrap().remove("prompt");
         wanted["action"]["cause"]
             .as_object_mut()
             .unwrap()

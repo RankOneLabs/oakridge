@@ -9,8 +9,8 @@ import mergeFixture from "../__fixtures__/v2-cohort-merge.json";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { ParkedGate } from "../artifact-types";
 import type { RepositoryKey, RunState } from "../run-types";
-import { compositeId, reviewToGates } from "../adapters/core";
 import { currentAdjudicationUnit } from "../__fixtures__/read-models";
+import { compositeId, reviewToGates } from "../adapters/core";
 
 function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {
   return {
@@ -23,8 +23,8 @@ function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, 
     repository_key: "web" as RepositoryKey,
     artifact_revision_id: revision,
     worktree: null,
-    resume_actions: ["approve", "request_build_changes"],
-    offered_decisions: ["approve", "request_build_changes"],
+    resume_actions: ["approve", "request_revision"],
+    offered_decisions: ["approve", "request_revision"],
     pr_url: null,
     run_state: "active",
     actionable: true,
@@ -91,12 +91,12 @@ describe("GateDecisionActions", () => {
     if (!gates.ok || !gates.value[0]) throw new Error("review gate absent");
     const fetch = vi.spyOn(globalThis, "fetch");
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    render(wrapper(client, { ...gates.value[0], resume_actions: ["approve", "request_build_changes"] }));
+    render(wrapper(client, { ...gates.value[0], resume_actions: ["approve", "request_revision"] }));
 
     const button = screen.getByTestId("or-decision-approve") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent).toBe("Resolve blocking findings");
-    expect((screen.getByTestId("or-decision-request_build_changes") as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByTestId("or-decision-request_revision") as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(button);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -220,7 +220,7 @@ describe("GateDecisionActions", () => {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     render(wrapper(client, gate(compositeId({ kind: "gate", runId: "run-1", unitId: "unit-a", name: "assessment_review" }), "revision-a")));
 
-    fireEvent.click(screen.getByTestId("or-decision-request_build_changes"));
+    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
     fireEvent.change(screen.getByLabelText("What needs to change?"), { target: { value: "First explanation" } });
     fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
     await screen.findByRole("alert");
@@ -245,9 +245,9 @@ describe("GateDecisionActions", () => {
     const stranded = screen.getByTestId("or-gate-stranded");
     expect(stranded.textContent).toBe("Run cancelled — gate stranded");
     expect((screen.getByTestId("or-decision-approve") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId("or-decision-request_build_changes") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("or-decision-request_revision") as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByTestId("or-decision-request_build_changes"));
+    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
     expect(screen.queryByTestId("or-decision-feedback")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -256,7 +256,7 @@ describe("GateDecisionActions", () => {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const view = render(wrapper(client, gate("gate-a", "revision-a")));
 
-    fireEvent.click(screen.getByTestId("or-decision-request_build_changes"));
+    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
     expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();
 
     view.rerender(wrapper(client, gate("gate-a", "revision-a", { actionable: false })));
@@ -265,6 +265,18 @@ describe("GateDecisionActions", () => {
   });
 });
 
+it("offers only the plain assessment changes action on an adjudicating gate", () => {
+  const unit = currentAdjudicationUnit();
+  const action = "request_assessment_changes";
+  const gates = reviewToGates({ ...unit, decisions: [...unit.decisions, {
+    key: action, label: "Request assessment changes", fields: [{ key: "feedback", label: "Feedback" }],
+    payload_schema: "{feedback: text}", adjudication: null, assessment: "assessment",
+    submit: { kind: "review", review: "assessment_review", decision: action, effect: "request_changes", target_revision_id: "assessment:1" },
+  }] });
+  if (!gates.ok || !gates.value[0]) throw new Error("assessment gate missing");
+  const view = render(wrapper(new QueryClient(), gates.value[0]));
+  expect(view.getAllByRole("button").map(button => button.getAttribute("data-testid"))).toEqual(["or-decision-request_assessment_changes"]);
+});
 it("shows the validator's message on an adjudicated gate whose revision it rejected", () => {
   const unit = { ...currentAdjudicationUnit(), recorded_decisions: [{ id: "v1", review: "engine:validator", decision: "request_changes", effect: "request_changes" as const,
     target_revision_id: "assessment:1", payload: { feedback: "Assessment verdict must match item statuses and additional finding severities." }, created_at: "2026-11-20T00:00:00Z" }] };

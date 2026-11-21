@@ -13,7 +13,7 @@ export interface AdditionalFinding {
   readonly related_build_item_ids: readonly string[]; readonly evidence: readonly AssessmentEvidence[];
 }
 export interface ActionSource { readonly kind: "item_assessment" | "additional_finding"; readonly id: string }
-export interface AssessmentAction { readonly id: string; readonly audience: "builder" | "operator"; readonly source: ActionSource; readonly text: string }
+export interface AssessmentAction { readonly id: string; readonly audience: "rework" | "operator"; readonly source: ActionSource; readonly text: string }
 export interface AssessmentTestEvidence {
   readonly passed: number; readonly failed: number; readonly output?: string | null;
   readonly summary?: string | null; readonly cargo_test_output?: string | null;
@@ -34,7 +34,7 @@ const item = (value: unknown): value is ItemAssessment => fields(value) && field
   && text(value.subject.id) && ["met", "partial", "not_met"].includes(String(value.status)) && text(value.observation) && list(value.evidence, evidence);
 const finding = (value: unknown): value is AdditionalFinding => fields(value) && text(value.id) && ["blocking", "warning", "info"].includes(String(value.severity))
   && text(value.observation) && list(value.related_build_item_ids, text) && list(value.evidence, evidence);
-const action = (value: unknown): value is AssessmentAction => fields(value) && text(value.id) && (value.audience === "builder" || value.audience === "operator") && isActionSource(value.source) && text(value.text);
+const action = (value: unknown): value is AssessmentAction => fields(value) && text(value.id) && (value.audience === "rework" || value.audience === "operator") && isActionSource(value.source) && text(value.text);
 const tests = (value: unknown): value is AssessmentTestEvidence => fields(value) && Number.isSafeInteger(value.passed) && Number.isSafeInteger(value.failed)
   && optionalText(value.output) && optionalText(value.summary) && optionalText(value.cargo_test_output);
 export function parseAssessmentBody(body: unknown): Result<AssessmentBody, AssessmentReadError> {

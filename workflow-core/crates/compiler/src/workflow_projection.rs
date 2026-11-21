@@ -45,6 +45,12 @@ pub(super) fn workflow(declared: &Workflow, resolved: &Workflow) -> Workflow {
             );
         }
         for (name, review) in &mut stage.reviews {
+            if adjudication::is_adjudicating(review)
+                && review.assessment.is_none()
+                && adjudication::reviews_assessment(review, &stage.artifacts)
+            {
+                review.assessment = Some(review.of.clone());
+            }
             for (decision, value) in &mut review.decisions {
                 if let (Some(declared), Some(resolved)) = (
                     &original.reviews[name].decisions[decision].payload,

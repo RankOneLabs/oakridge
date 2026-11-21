@@ -5,14 +5,14 @@ import { bytesIdentity, composePrompts } from "../src/runtime/definition-store";
 const sources = {
   "review.md": "# Review\n\n{{> shared/adjudication.md}}\n\n## Assessment\n\n{{ assessment }}\n",
   "shared/adjudication.md": "Record a disposition. {{> shared/forwarding.md}}\n",
-  "shared/forwarding.md": "Only builder_feedback is forwarded.\n",
+  "shared/forwarding.md": "Only rework_feedback is forwarded.\n",
   "unused.md": "Not read.\n",
 };
 
 test("an include is replaced by the included prompt, nested includes expanded, without its final newline", () => {
   const expanded = expandPrompts(["review.md"], sources);
   expect(expanded.ok && expanded.value.prompts["review.md"])
-    .toBe("# Review\n\nRecord a disposition. Only builder_feedback is forwarded.\n\n## Assessment\n\n{{ assessment }}\n");
+    .toBe("# Review\n\nRecord a disposition. Only rework_feedback is forwarded.\n\n## Assessment\n\n{{ assessment }}\n");
 });
 test("expansion lists every authored prompt it read, and no other", () => {
   const expanded = expandPrompts(["review.md"], sources);
@@ -52,7 +52,7 @@ test("a committed prompt id covers the expanded text, and a source id the author
 });
 test("editing an included prompt changes the id of every prompt that includes it", () => {
   const before = composePrompts(["review.md"], sources);
-  const after = composePrompts(["review.md"], { ...sources, "shared/forwarding.md": "Only builder_feedback reaches the builder.\n" });
+  const after = composePrompts(["review.md"], { ...sources, "shared/forwarding.md": "Only rework_feedback reaches the builder.\n" });
   expect(before.ok && after.ok && before.value.prompts["review.md"].id !== after.value.prompts["review.md"].id).toBe(true);
 });
 test("a prompt's direct includes are listed once each, in the order the text first names them", () => {

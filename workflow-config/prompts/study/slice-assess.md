@@ -6,7 +6,7 @@ Publish `slice_assessment` using the development assessment shape with `run_key`
 
 - `item_assessments` entries are `{subject: {kind, id}, status, observation, evidence}`. Use kind `criterion`, `trigger`, or `case`, and status `met`, `partial`, or `not_met`. Cover every criterion and trigger exactly once. Ground judgments in `{kind: file|test|output, ref, detail?}` evidence.
 - `additional_findings` record other issues with stable IDs, severity (`blocking`, `warning`, or `info`), observations, and evidence.
-- `next_actions` use `{audience: builder|operator, source: {kind: item_assessment|additional_finding, id}, text}`. Link each action to its item or finding and let the server assign action IDs. Apply recorded dispositions in `review_history` and repeat a rejected recommendation only when new evidence justifies it.
+- `next_actions` use `{audience: rework|operator, source: {kind: item_assessment|additional_finding, id}, text}`. Rework actions go to the worker that reworks the slice build (the slice builder). Link each action to its item or finding and let the server assign action IDs. Apply recorded dispositions in `review_history` and repeat a rejected recommendation only when new evidence justifies it.
 - Always report `test_evidence` as `{passed, failed, output?, summary?, cargo_test_output?}`. Failed tests require an unmet item or a blocking or warning finding.
 - Set `verdict` to `fail` if any item is `partial` or `not_met` or any finding is blocking. Otherwise set it to `pass_with_notes` if any finding is a warning, or `pass` if there are no warnings.
 

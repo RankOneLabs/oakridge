@@ -1,3 +1,5 @@
+import { selectAssessmentRevisionId } from "./gates";
+import { BLOCKER_REVIEW } from "../operator-contracts/blocker";
 import type { OperatorInboxItem, OperatorRunInboxBatchEntry } from "../operator-contracts/projections/inbox";
 import type { OperatorArtifactView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../artifact-types";
@@ -15,15 +17,6 @@ const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
   "cohort:pr_closed": "gate_decision", "integration:pr_closed": "gate_decision",
 };
 
-/**
- * Reviews whose decision targets one artifact while the operator judges another.
- * The integration review approves the pull request, but its evidence is the assessment.
- */
-const DEVELOPMENT_REVIEW_SUBJECTS: Readonly<Record<string, string>> = {
-  "integration:integration_review": "assessment",
-};
-
-const BLOCKER_REVIEW = "blocker_review";
 const isBlockerDecision = (item: OperatorInboxItem): boolean =>
   item.kind === "decision" && item.submit.kind === "review" && item.submit.review === BLOCKER_REVIEW;
 
@@ -102,13 +95,11 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
   // The retry is the operator's one piece of work for that unit; showing the
   // diagnostic as another inbox item duplicates the same failed brief.
   const unitsWithRetry = new Set(entry.items.flatMap((item) => item.kind === "decision" && item.submit.kind === "retry" ? [item.unit_id] : []));
-  // A parked blocker asks through its blocker_review decisions; its "worker blocked" wait repeats the same ask.
+  // A parked blocker asks through its blocker review decisions; its "worker blocked" wait repeats the same ask.
   const unitsWithBlocker = new Set(entry.items.flatMap((item) => isBlockerDecision(item) ? [item.unit_id] : []));
   const items: ReviewInboxItem[] = entry.items.flatMap((item) => {
     const unit = byId.get(item.unit_id);
     if (!unit) return [];
-    const declared = item.kind === "decision" ? unit.decisions.find((decision) => decision.key === item.key) : undefined;
-    if (declared && !isDisplayedReviewDecision(declared)) return [];
     if (item.kind === "stalled" && unitsWithRetry.has(item.unit_id)) return [];
     if (item.kind === "waiting" && unitsWithBlocker.has(item.unit_id)) return [];
     const isManualMergeAvailable = deriveStatus(statusInputOf(unit)).stage === "parked"
@@ -126,19 +117,24 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     const attention = unitAttentionLabelInput(unit);
     const review = item.kind === "decision" && item.submit.kind === "review" ? item.submit.review : null;
     const target = item.kind === "decision" && item.submit.kind === "review" ? item.submit.target_revision_id : null;
-    const artifact = findTargetArtifact(unit, target);
+    const reviewDecisions = review ? unit.decisions.filter((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review) : [];
+    const adjudicatingDecision = reviewDecisions.find(isAdjudicationDecision);
+    const artifact = adjudicatingDecision
+      ? unit.artifacts.find((candidate) => candidate.artifact_key === adjudicatingDecision.assessment) ?? null
+      : findTargetArtifact(unit, target);
+    const revisionId = adjudicatingDecision ? selectAssessmentRevisionId(unit, reviewDecisions)
+      : artifact && target ? artifactRevisionId(artifact, target) : null;
     const kind = classify(item, { stage: unit.stage, workflow_name: run.workflow_name, target_artifact: artifact });
     const gate = review ? compositeId({ kind: "gate", runId: entry.run_id, unitId: unit.unit_id, name: review }) : null;
     const stageId = compositeId({ kind: "stage", runId: entry.run_id, unitId: unit.unit_id, name: unit.stage ?? "$root" });
-    const reviewDecisions = review ? unit.decisions.filter((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review) : [];
     const actions = reviewDecisions.filter((candidate) => candidate.submit.kind === "review"
       && isDisplayedReviewDecision(candidate)).map((candidate) => decisionAction(candidate, unit.decisions));
     // An adjudication payload is recorded from the assessment view; the inbox's plain controls cannot supply it.
-    const requiresAdjudication = reviewDecisions.some(isAdjudicationDecision);
+    const requiresAdjudication = adjudicatingDecision !== undefined;
     return [{ id: `${item.run_id}:${item.unit_id}:${item.kind === "decision" ? item.key : item.kind}`, kind,
       state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: run.workflow_name, stage_instance_id: stageId,
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
-      ...attention, title: selectUnitAttentionLabel(attention), run_title: run.run_title, artifact_key: (review ? DEVELOPMENT_REVIEW_SUBJECTS[`${unit.stage}:${review}`] : null) ?? artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
+      ...attention, title: selectUnitAttentionLabel(attention), run_title: run.run_title, artifact_key: adjudicatingDecision ? adjudicatingDecision.assessment : artifact?.artifact_key ?? null, artifact_revision_id: revisionId,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null, run_unit_id: unit.unit_id,
       resume_actions: actions, requires_adjudication: requiresAdjudication, validation_rejection: selectReviewValidationRejection(unit.recorded_decisions, reviewDecisions), blocked_by: unit.depends_on.map((id) => {

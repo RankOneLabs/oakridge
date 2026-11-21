@@ -148,7 +148,7 @@ describe("v2 Oakridge client", () => {
   });
 
   it("retries the cohort unit, not the brief that shares its collection key", async () => {
-    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "builder" } };
+    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", adjudication: null, assessment: null, fields: [], submit: { kind: "retry", worker: "builder" } };
     const units = (sample.units as unknown as OperatorUnitView[]).map((unit) => unit.stage === "cohort" && unit.collection_key === "b"
       ? { ...unit, decisions: [retry] } : unit);
     const stalled = units.find((unit) => unit.stage === "cohort" && unit.collection_key === "b")!;
@@ -159,7 +159,7 @@ describe("v2 Oakridge client", () => {
   });
 
   it("marks only the units Oakridge offers a retry for as retryable", async () => {
-    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "builder" } };
+    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", adjudication: null, assessment: null, fields: [], submit: { kind: "retry", worker: "builder" } };
     const units = (sample.units as unknown as OperatorUnitView[]).map((unit) => unit.stage === "cohort" && unit.collection_key === "b"
       ? { ...unit, decisions: [retry] } : unit);
     calls((path) => path.includes("/units?") ? units : sample.run);
@@ -172,7 +172,7 @@ describe("v2 Oakridge client", () => {
       : path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
       : path.includes("/units?") ? sample.units : cohort);
     await resumeGate("legacy-gate", { idempotency_key: "opaque-1", artifact_revision_id: acceptTarget,
-      action: "request_build_changes", feedback: "Improve it" });
+      action: "request_revision", feedback: "Improve it" });
     const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(String(posted?.[0])).toContain(`/units/${encodeURIComponent(cohort.unit_id)}/reviews/assessment_review/decide`);
     expect(JSON.parse(String(posted?.[1]?.body)).target).toBe(changeTarget);
@@ -182,7 +182,7 @@ describe("v2 Oakridge client", () => {
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-3" } : cohort);
     const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "assessment_review" });
     await resumeGate(gateId, { idempotency_key: "decide-1", artifact_revision_id: acceptTarget,
-      action: "request_build_changes", feedback: "Fix the API" });
+      action: "request_revision", feedback: "Fix the API" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-1", decision: "request_build_changes",
       target: changeTarget, payload: { feedback: "Fix the API" } });
@@ -208,7 +208,7 @@ describe("v2 Oakridge client", () => {
   });
 
   it("maps replace_pr by its request_changes effect and submits feedback", async () => {
-    const replacement = { ...cohort, decisions: [{ key: "replace_pr", label: "Replace PR", payload_schema: "{feedback: text}",
+    const replacement = { ...cohort, decisions: [{ key: "replace_pr", label: "Replace PR", payload_schema: "{feedback: text}", adjudication: null, assessment: null,
       fields: [{ key: "feedback", label: "Why replace?" }],
       submit: { kind: "review", review: "pr_closed", decision: "replace_pr", effect: "request_changes", target_revision_id: "revision-pr" } }] };
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-5" } : replacement);
@@ -221,7 +221,7 @@ describe("v2 Oakridge client", () => {
   });
 
   it("submits the chosen decision when a review offers several request-changes decisions", async () => {
-    const sendBack = (decision: string) => ({ key: decision, label: decision, payload_schema: "{feedback: text}",
+    const sendBack = (decision: string) => ({ key: decision, label: decision, payload_schema: "{feedback: text}", adjudication: null, assessment: null,
       fields: [{ key: "feedback", label: "What must change?" }],
       submit: { kind: "review", review: "slice_report_review", decision, effect: "request_changes", target_revision_id: "revision-report" } });
     const sliceReview = { ...cohort, decisions: [sendBack("send_to_builder"), sendBack("change_design")] };

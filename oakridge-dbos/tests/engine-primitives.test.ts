@@ -1,3 +1,4 @@
+import { BLOCKER_REVIEW, BLOCKER_REVIEW_PROMPT, BLOCKER_SCHEMA } from "../src/core-client/core-types";
 import { afterAll, expect, test } from "bun:test";
 import { CoreClient, compileWorkflow, type CompileInput, type CompiledAgainst } from "../src/core-client/client";
 import type { Event, Incoming, StepResult, StepSnapshot, Workflow, Writer } from "../src/core-client/core-types";
@@ -21,7 +22,7 @@ const workflow = (stage: "brief" | "build"): Workflow => ({ workflow: `blocker_$
     workers: { writer: { kind: "agent", prompts: { initial: "initial.md", revise: "revise.md" }, inputs: {}, produces: ["result"] } },
     reviews: { result_review: { of: "result", by: "operator", prompt: "review.md", decisions: {
       accept: { label: "Accept", effect: "approve", when: { check: "len(result.findings) == 0", reason: "Resolve findings" } },
-      request_changes: { label: "Fix", effect: "request_changes", on: "result", payload: { entries: "list(text)", builder_feedback: "text" }, feedback_field: "builder_feedback" },
+      request_changes: { label: "Fix", effect: "request_changes", on: "result", payload: { entries: "list(text)", rework_feedback: "text" }, feedback_field: "rework_feedback" },
     } } }, done_when: "approved(result)", outcome: {} } },
 });
 
@@ -119,7 +120,7 @@ test("selected-field decision forms collect only the declared payload", async ()
   const run = await Run.create("build");
   const decision = run.compiled.workflow.stages.build?.reviews?.result_review?.decisions.request_changes;
   if (!decision) throw new Error("request_changes absent");
-  expect(schemaKey(selectDecisionPayloadType(decision))).toBe("{builder_feedback: text, entries: list(text)}");
+  expect(schemaKey(selectDecisionPayloadType(decision))).toBe("{entries: list(text), rework_feedback: text}");
 });
 
 test("every implicit blocker decision form collects only the operator answer", async () => {
@@ -132,7 +133,9 @@ test("every implicit blocker decision form collects only the operator answer", a
 
 test("a historical agent without a revise prompt can resume its blocker", async () => {
   const run = await Run.create("brief", false);
-  await run.publish("blocker", { text: "Clarify" });
+  const parked = await run.publish("blocker", { text: "Clarify" });
+  expect(parked.review_updates.find((update) => update.unit_id === "run/a")?.prompts[BLOCKER_REVIEW]?.prompt)
+    .toBe(BLOCKER_REVIEW_PROMPT);
   const plan = await run.answer("clarify");
   const instruction = plan.intents[0]?.instruction;
   expect(instruction?.worker.kind === "agent" ? instruction.worker.prompt.path : null).toBe("initial.md");
@@ -170,8 +173,8 @@ test("a guarded decision is disabled with its reason and its refusal writes no r
   expect([http.status, await http.text(), run.state.decisions.length]).toEqual([409, expect.stringContaining("Resolve findings"), 0]);
 });
 
-test("every preamble includes the blocker endpoint, schema and exact alternative-publication instruction", () => {
-  const preamble = renderSessionPreamble({ run_id: "run", unit: "run/a", worker: "writer", creates: [{ key: "result", schema: "text" }], schemas: {}, publish_base_url: "http://oakridge.test", secret: "test-secret" });
+test("the preamble renders a declared blocker endpoint, schema and exact alternative-publication instruction", () => {
+  const preamble = renderSessionPreamble({ run_id: "run", unit: "run/a", worker: "writer", creates: [{ key: "result", schema: "text" }, { key: "blocker", schema: BLOCKER_SCHEMA }], schemas: {}, publish_base_url: "http://oakridge.test", secret: "test-secret" });
   expect(preamble).toContain("endpoint: http://oakridge.test/api/runs/run/units/run%2Fa/artifacts/blocker");
   expect(preamble).toContain("suggested_choices");
   expect(preamble).toContain("If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, publish a `blocker` instead of guessing; a published blocker ends the task.");
@@ -181,7 +184,7 @@ test("review_history and latest field-only feedback render independently in the 
   const run = await Run.create("build");
   const instruction = run.intents[0]?.payload;
   if (!instruction) throw new Error("initial instruction absent");
-  const history = [{ id: "d1", review: "assessment_review", decision: "changes", target: "r1", payload: { entries: ["full disposition"], builder_feedback: "Fix X" } }];
+  const history = [{ id: "d1", review: "assessment_review", decision: "changes", target: "r1", payload: { entries: ["full disposition"], rework_feedback: "Fix X" } }];
   const resolved = { action_id: "action", inputs: {}, feedback: [{ ...history[0]!, payload: { feedback: "Fix X" } }], review_history: history };
   const enriched = withReviewHistory({ ...instruction, engine_inputs: { ...instruction.engine_inputs, feedback: resolved.feedback } }, resolved);
   const rendered = renderModePrompt(enriched, "{{feedback}}\nHISTORY\n{{review_history}}");

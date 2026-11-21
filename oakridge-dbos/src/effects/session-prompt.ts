@@ -1,4 +1,4 @@
-import { BLOCKER_ARTIFACT, BLOCKER_SCHEMA } from "../core-client/core-types";
+import { BLOCKER_REVIEW } from "../core-client/core-types";
 import type { FeedbackEntry, ResolvedRunWorker } from "../core-client/core-types";
 import type { AttemptStatus, Mode, TypeExpression } from "../core-client/core-types";
 import type { CreatedArtifact, EffectInstruction, EngineInputs } from "../domain/effect-instruction";
@@ -42,7 +42,7 @@ export interface SessionHistoryRows {
 export interface SessionPromptTexts { readonly prompt_text: string; readonly handoff_text: string | null }
 
 export function selectSessionTaskContext(instruction: EffectInstruction, history: SessionHistoryRows, texts: SessionPromptTexts): SessionTaskContext {
-  const creates = instruction.worker.kind === "agent" ? selectAgentPublications(instruction.worker.creates) : [];
+  const creates = instruction.worker.kind === "agent" ? instruction.worker.creates : [];
   const latest = new Map(history.latest.map((revision) => [revision.artifact, revision]));
   const previous = history.earlier_attempts.at(-1);
   return {
@@ -53,12 +53,6 @@ export function selectSessionTaskContext(instruction: EffectInstruction, history
     }),
     previous_attempt: previous ? { mode: previous.mode, status: previous.status } : null,
   };
-}
-
-/** Agent alternative output, also present for historical stored instructions. */
-export function selectAgentPublications(creates: readonly CreatedArtifact[]): readonly CreatedArtifact[] {
-  return creates.some((artifact) => artifact.key === BLOCKER_ARTIFACT) ? creates
-    : [...creates, { key: BLOCKER_ARTIFACT, schema: BLOCKER_SCHEMA }];
 }
 
 const inputValues = (instruction: EffectInstruction): { readonly [key: string]: unknown } =>
@@ -137,7 +131,7 @@ export function renderHandoff(instruction: EffectInstruction, context: SessionTa
 /** Where this task's publications attach: each artifact's current revision, and the revision under review. */
 export function renderTaskPublication(instruction: EffectInstruction, context: SessionTaskContext): string {
   const latest = new Map(context.latest.map((revision) => [revision.artifact, revision.revision_id]));
-  const creates = instruction.worker.kind === "agent" ? selectAgentPublications(instruction.worker.creates) : [];
+  const creates = instruction.worker.kind === "agent" ? instruction.worker.creates : [];
   const subject = instruction.engine_inputs.subject;
   return [
     "## Publishing this task",
@@ -158,7 +152,7 @@ export function renderSessionTask(instruction: EffectInstruction, context: Sessi
   const handoff = renderHandoff(instruction, context);
   const unit = instruction.worker.kind === "agent" && instruction.worker.session === "shared"
     ? `This task belongs to unit \`${instruction.action.unit}\`. Publish only to the endpoints below.` : null;
-  const blocker_answer = instruction.engine_inputs.feedback.some((entry) => entry.review === "blocker_review")
+  const blocker_answer = instruction.engine_inputs.feedback.some((entry) => entry.review === BLOCKER_REVIEW)
     ? "The operator answered your blocker. Resume with this answer as feedback and publish your normal artifacts. If clarification is still needed, publish a successor blocker using its latest revision as predecessor." : null;
   return [unit, handoff, blocker_answer, renderModePrompt(instruction, context.prompt_text), renderTaskPublication(instruction, context)]
     .filter((part): part is string => part !== null).join("\n\n");
@@ -194,7 +188,7 @@ export function renderSharedTaskDelivery(instruction: EffectInstruction, task: s
     "## Publication credentials for this task",
     "Use this session bearer token for every artifact PUT. Do not use the backend publication key, an alternate header, or an unauthenticated request; those do not attribute the revision to this worker attempt.",
     `Authorization: Bearer ${input.secret}`,
-    ...selectAgentPublications(worker.creates).map(({ key }) => `PUT ${selectPublishEndpoint({ run_id: instruction.run_id, unit: instruction.action.unit,
+    ...worker.creates.map(({ key }) => `PUT ${selectPublishEndpoint({ run_id: instruction.run_id, unit: instruction.action.unit,
       publish_base_url: input.publish_base_url }, key)}`),
     "",
     task,
@@ -220,7 +214,7 @@ export function renderSessionPreamble(input: SessionPreambleInput): string {
     "A 200 or 201 response means the revision was recorded. A 409 response says why it was refused: correct it and publish again with a new request_id.",
     "",
     "Artifacts:",
-    ...selectAgentPublications(input.creates).flatMap((artifact) => [
+    ...input.creates.flatMap((artifact) => [
       `- \`${artifact.key}\``,
       ...(input.shared ? ["  endpoint: supplied with each task"] : [`  endpoint: ${selectPublishEndpoint(input, artifact.key)}`]),
       `  schema: ${JSON.stringify(artifact.schema)}`,

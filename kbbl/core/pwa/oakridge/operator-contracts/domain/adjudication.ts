@@ -3,18 +3,18 @@
 
 import type { OperatorActionSource } from "./assessment";
 
+export type OperatorDisposition = "accepted" | "modified" | "rejected";
+
 export interface OperatorAdjudication {
-  readonly entries: readonly OperatorProposedActionEntry[]; readonly added_actions: readonly OperatorAddedActionEntry[]; readonly builder_feedback: string;
+  readonly entries: readonly OperatorProposedActionEntry[]; readonly added_actions: readonly OperatorAddedActionEntry[]; readonly rework_feedback: string;
 }
 
 export interface OperatorProposedActionEntry {
   readonly action_id: string; readonly disposition: OperatorDisposition; readonly original_text: string;
-  readonly final_text?: string | null; readonly audience: "builder" | "operator"; readonly source: OperatorActionSource; readonly reason?: string | null;
+  readonly final_text?: string | null; readonly audience: "rework" | "operator"; readonly source: OperatorActionSource; readonly reason?: string | null;
 }
 
 export interface OperatorAddedActionEntry {
   readonly action_id: string; readonly origin: "operator"; readonly final_text: string;
-  readonly audience: "builder" | "operator"; readonly source: OperatorActionSource; readonly reason?: string | null;
+  readonly audience: "rework" | "operator"; readonly source: OperatorActionSource; readonly reason?: string | null;
 }
-
-export type OperatorDisposition = "accepted" | "modified" | "rejected";

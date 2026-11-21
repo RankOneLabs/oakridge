@@ -18,7 +18,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "domain/adjudication.ts",
   "domain/analysis-link-declaration.ts",
   "domain/assessment.ts",
-  "domain/builder-feedback.ts",
+  "domain/rework-feedback.ts",
   "domain/effect-instruction.ts",
   "domain/run-config.ts",
   "domain/pr-integration.ts",

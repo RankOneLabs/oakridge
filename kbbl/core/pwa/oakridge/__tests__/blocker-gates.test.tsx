@@ -8,7 +8,7 @@ import { invalidateCachedRunUnits } from "../client";
 
 afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 
-it.each(["clarify", "discuss", "override"])("submits a blocker %s answer through the real gate client", async (action) => {
+it.each([["clarify", "Clarify"], ["discuss", "Discuss"], ["override", "Override"]])("submits a blocker %s answer through the real gate client", async (action, label) => {
   const unit = blockerUnit();
   const gates = reviewToGates(unit);
   if (!gates.ok || !gates.value[0]) throw new Error("blocker gate absent");
@@ -25,7 +25,7 @@ it.each(["clarify", "discuss", "override"])("submits a blocker %s answer through
   render(<QueryClientProvider client={client}><GateDecisionActions gate={gates.value[0]} /></QueryClientProvider>);
 
   expect(gates.value[0].resume_actions).toEqual(["clarify", "discuss", "override"]);
-  fireEvent.click(screen.getByTestId(`or-decision-${action}`));
+  fireEvent.click(screen.getByRole("button", { name: label }));
   expect(fetch).not.toHaveBeenCalled();
   expect((screen.getByRole("button", { name: "Send answer" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.change(screen.getByLabelText("Answer"), { target: { value: "Use the revised contract" } });

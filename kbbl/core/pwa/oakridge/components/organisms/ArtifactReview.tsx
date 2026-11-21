@@ -1,3 +1,4 @@
+import { selectArtifactDecisionCopy, selectArtifactPageGates } from "../../lib/artifact-page-gates";
 import { ReceivedContextPanel } from "../molecules/ReceivedContextPanel";
 import { EditableBriefText } from "./EditableBriefText";
 import { ReviewItemResolution } from "./ReviewItemResolution";
@@ -73,7 +74,7 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
   const gatesQuery = useRunGates(query.data?.run_id ?? "", Boolean(query.data?.run_id));
   const gates = Array.isArray(gatesQuery.data) ? gatesQuery.data : [];
   const revisionIds = new Set(revisions.map((candidate) => candidate.id));
-  const artifactGate = gates.find((gate) => gate.artifact_revision_id !== null && revisionIds.has(gate.artifact_revision_id));
+  const { artifactGate, adjudicationGate } = selectArtifactPageGates({ gates, revision_ids: revisionIds });
 
   useEffect(() => {
     setSelectedRevIdx(null);
@@ -218,7 +219,7 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
                 })),
                 onSubmitBody: (_previousBody, nextBody) => settleEdit(bodyEdit.mutateAsync(nextBody)),
               } : undefined}
-              gate={artifactGate && revIdx === revisions.length - 1 ? artifactGate : undefined}
+              gate={revIdx === revisions.length - 1 ? adjudicationGate ?? artifactGate ?? undefined : undefined}
               onOpenItem={onOpenItem}
               onOpenTask={onOpenTask}
               itemGrading={grading}
@@ -265,10 +266,11 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
 
   const isLatestRevision = revision !== undefined && revIdx === revisions.length - 1;
   // An adjudicated review is decided in the viewer's own decision bar; a box here could only repeat that, with no controls.
-  const isDecidedInViewer = artifactGate?.requires_adjudication === true && Viewer !== null && recordsAdjudication(Viewer);
-  const gateActions = artifactGate && isLatestRevision && !isDecidedInViewer ? (
-    <section className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
-      <div><strong>{artifactGate.gate_type === "merge_confirmation" ? "Confirm the merge" : "Make your decision"}</strong><p>{artifactGate.gate_type === "merge_confirmation" ? "Verify the pull request is merged, then continue the cohort." : "Approve this artifact or request specific changes."}</p></div>
+  const isDecidedInViewer = artifactGate?.requires_adjudication === true && artifactGate.resume_actions.length === 0 && Viewer !== null && recordsAdjudication(Viewer);
+  const decisionCopy = artifactGate && selectArtifactDecisionCopy(artifactGate, adjudicationGate);
+  const gateActions = artifactGate && decisionCopy && isLatestRevision && !isDecidedInViewer ? (
+    <section data-assessment-corrections={artifactGate === adjudicationGate || undefined} className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
+      <div><strong>{decisionCopy.title}</strong><p>{decisionCopy.description}</p></div>
       <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} actionLabels={artifact.review?.action_labels} />
     </section>
   ) : undefined;
