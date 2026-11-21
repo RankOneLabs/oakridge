@@ -2,6 +2,7 @@ import type { OperatorInboxItem, OperatorRunInboxBatchEntry } from "../operator-
 import type { OperatorArtifactView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../artifact-types";
 import { selectUnitAttentionLabel, type UnitAttentionLabelInput } from "../lib/run-attention";
+import { selectReviewValidationRejection } from "../lib/validation-rejection";
 import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isAdjudicationDecision, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";
 
 const DEVELOPMENT_WORKFLOW_NAME = "development";
@@ -140,7 +141,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
       ...attention, title: selectUnitAttentionLabel(attention), run_title: run.run_title, artifact_key: (review ? DEVELOPMENT_REVIEW_SUBJECTS[`${unit.stage}:${review}`] : null) ?? artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null, run_unit_id: unit.unit_id,
-      resume_actions: actions, requires_adjudication: requiresAdjudication, blocked_by: unit.depends_on.map((id) => {
+      resume_actions: actions, requires_adjudication: requiresAdjudication, validation_rejection: selectReviewValidationRejection(unit.recorded_decisions, reviewDecisions), blocked_by: unit.depends_on.map((id) => {
         const blocker = byId.get(id);
         return blocker ? selectUnitAttentionLabel(unitAttentionLabelInput(blocker)) || blocker.unit_id : id;
       }).filter((label) => label.length > 0) }];

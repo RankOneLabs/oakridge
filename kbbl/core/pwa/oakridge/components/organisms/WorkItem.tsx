@@ -21,6 +21,7 @@ function itemToGate(item: ReviewInboxItem): ParkedGate | null {
     worktree: null,
     resume_actions: item.resume_actions,
     requires_adjudication: item.requires_adjudication,
+    validation_rejection: item.validation_rejection,
     // The inbox projection carries displayed actions only; it cannot establish the full offer.
     offered_decisions: [],
     pr_url: item.pr_url,

@@ -10,7 +10,7 @@ import type { OperatorDeclaredDecisionEffect } from "../operator-contracts/core-
 import type { OperatorDecisionDefinition, OperatorRevisionDecision } from "../operator-contracts/projections/unit-view";
 import { selectAssessmentActions, type CurrentAssessment } from "./current-assessment";
 import { selectHandoffRevisionId } from "./handoff-provenance";
-import { VALIDATION_REVIEW } from "../operator-contracts/validation";
+import { selectValidationRejection } from "./validation-rejection";
 
 export const NO_REVIEW_REASON = "This revision has no open assessment review to record a decision on.";
 
@@ -124,13 +124,6 @@ export function selectAdjudicationSources(assessment: CurrentAssessment): readon
 export function selectRecordedAssessmentDecision(decisions: readonly OperatorRevisionDecision[], revisionId: string): OperatorRevisionDecision | null {
   return decisions.reduce<OperatorRevisionDecision | null>((latest, decision) =>
     decision.adjudication != null && (decision.assessment_revision_id ?? decision.target_revision_id) === revisionId ? decision : latest, null);
-}
-const selectFeedbackText = (payload: OperatorRevisionDecision["payload"]): string | null =>
-  typeof payload === "object" && payload !== null && "feedback" in payload && typeof payload.feedback === "string" ? payload.feedback : null;
-/** The validator's message when it rejected the displayed revision, which the core then never lets the operator accept. */
-export function selectValidationRejection(decisions: readonly OperatorRevisionDecision[], revisionId: string): string | null {
-  const rejection = decisions.findLast(decision => decision.review === VALIDATION_REVIEW && decision.target_revision_id === revisionId);
-  return rejection ? selectFeedbackText(rejection.payload) ?? "The validator rejected this revision." : null;
 }
 export interface AdjudicationGateInput { readonly gate: ParkedGate | null; readonly revisionId: string; readonly decisions: readonly OperatorRevisionDecision[]; readonly hasSubmitted: boolean }
 export interface AdjudicationGateState { readonly revision: string; readonly recordedDecision: OperatorRevisionDecision | null; readonly isRecorded: boolean; readonly isOpen: boolean; readonly validationRejection: string | null }
