@@ -24,7 +24,7 @@ that carry every run without knowing its stages:
   the run is done or cancelled and nothing is owed. Every committed event wakes it.
   With pinned DBOS SDK 4.25.14, `DBOS.send` stores a wake until `DBOS.recv`
   consumes it, even when the send arrives during carrier dispatch before the
-  run parks. `tests/periodic-workers.test.ts` holds that ordering open and
+  run parks. `tests/periodic-workers.integration.test.ts` holds that ordering open and
   checks the run advances before its wake timeout. Recheck this guarantee on
   an SDK upgrade; without it, a pre-park wake could delay work until timeout.
 - `oakridgeEffectWorkflow` (id = `<intent id>@<application version>`, then
@@ -169,7 +169,7 @@ bun run --filter oakridge-dbos test:unit
 bun run --filter oakridge-dbos test:integration
 ```
 
-`tests/executor-e2e.test.ts` and `tests/executor-restart.test.ts` drive the
+`tests/executor-e2e.integration.test.ts` and `tests/executor-restart.integration.test.ts` drive the
 samples end to end against a stub kbbl (`tests/stub-kbbl.ts`). Sample A against
 a real kbbl and agent is opt-in, since it spends agent turns: start a kbbl of
 your own on another port and data directory, then run

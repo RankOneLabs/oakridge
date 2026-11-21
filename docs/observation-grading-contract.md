@@ -437,10 +437,10 @@ observation baseline, core contract or generated definition changed for declarat
   absent file as `is_absent: true` and the reported test results; and the committed instructions
   naming that shape.
 
-- `oakridge-dbos/tests/analysis-link-declaration.test.ts`: the exact approved revision, a newer unapproved
+- `oakridge-dbos/tests/analysis-link-declaration.integration.test.ts`: the exact approved revision, a newer unapproved
   one, another run's addresses, replayed and reused ingress ids, the route with nothing applicable, standing
   stalls, and through the real feed, failed delivery, a lost acknowledgement, stale redelivery and repeats.
-- `oakridge-dbos/tests/observation-process-restart.test.ts`: a real publisher process killed before a
+- `oakridge-dbos/tests/observation-process-restart.integration.test.ts`: a real publisher process killed before a
   declaration is applied, and after it is applied but before its acknowledgement, each delivering it once
   when restarted.
 - `observation/tests/relation-declaration.test.ts`: what a declaration decodes to, unchanged items,

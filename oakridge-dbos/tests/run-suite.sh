@@ -10,13 +10,10 @@ if [[ "$suite" == integration && -z "${OAKRIDGE_TEST_DATABASE_URL:-}" ]]; then
   exit 2
 fi
 # Integration files run against a real PostgreSQL server: each creates and drops its own scratch database.
-integration=' analysis-link-declaration carrier-stop collaboration-store commit commit-atomicity concurrent-decisions definition-cutover development-e2e event-stream executor-e2e executor-restart executor-store fresh-boot ingress migrate observation-event-order observation-process-restart observation-publisher  ops-live periodic-workers read-models read-store review-collections review-adjudication operator-store run-deletion study-adjudication '
 mapfile -d '' files < <(find src tests -name '*.test.ts' -print0 | sort -z)
 selected=()
 for file in "${files[@]}"; do
-  name="${file##*/}"
-  name="${name%.test.ts}"
-  if [[ "$integration" == *" $name "* ]]; then kind=integration; else kind=unit; fi
+  if [[ "$file" == *.integration.test.ts ]]; then kind=integration; else kind=unit; fi
   if [[ "$kind" == "$suite" ]]; then selected+=("$file"); fi
 done
 if [[ ${#selected[@]} -eq 0 ]]; then echo "empty $suite suite" >&2; exit 2; fi

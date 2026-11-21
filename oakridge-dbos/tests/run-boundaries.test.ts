@@ -66,7 +66,7 @@ test("K2: a value import from the generated types, or a reach into the core's so
 // production source names a sample. Most of a sample's keys are ordinary
 // words ("worker", "result"), so the names checked are the ones only a sample
 // gives: its workflow key, its prompt paths and the keys no other code uses.
-// executor-e2e.test.ts carries the converse: a renamed copy of sample A runs.
+// executor-e2e.integration.test.ts carries the converse: a renamed copy of sample A runs.
 
 function promptPaths(workflow: Workflow): readonly string[] {
   return Object.values(workflow.stages).flatMap((stage) => [
