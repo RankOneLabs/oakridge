@@ -8,7 +8,8 @@ const REQUEST_BUILD_CHANGES = { key: "request_build_changes", effect: "request_c
 import { browserWritePolicy } from "../src/http/browser-write-policy";
 import { createHttpApp } from "../src/http/app";
 import { commitEvent } from "../src/storage/commit";
-import { readRun, readHistory } from "../src/storage/read-store";
+import { readRun, readRunSummary, readHistory } from "../src/storage/read-store";
+import { selectRunView } from "../src/projections/run-view";
 import { selectRequirementRollup } from "../src/projections/requirement-rollup";
 import { selectArtifactDetail } from "../src/projections/artifact-view";
 import { selectUnitHistory } from "../src/projections/history-view";
@@ -100,6 +101,40 @@ test("request_build_changes sends exactly the persisted rework_feedback to the w
   const decision = selectArtifactDetail(read, { unit_id: state.unit_id, artifact: "assessment" })?.decisions.at(-1);
   expect({ target: decision?.assessment_revision_id, payload: decision?.adjudication, effect_target: decision?.target_revision_id ?? null })
     .toEqual({ target: state.revision_id, payload: state.payload, effect_target: state.build_revision_id });
+});
+test("history includes assessed and added operator actions", async () => {
+  const state = await parked();
+  const control = await parked();
+  const entries = control.payload.entries.map(entry => entry.audience === "operator"
+    ? { ...entry, disposition: "rejected" as const, final_text: null } : entry);
+  const added_actions = control.payload.added_actions.filter(entry => entry.audience === "rework");
+  const controlPayload: Adjudication = { entries, added_actions, rework_feedback: control.payload.rework_feedback };
+
+  expect((await decide(state, state.payload, "request_build_changes")).status).toBe(201);
+  expect((await decide(control, controlPayload, "request_build_changes")).status).toBe(201);
+
+  const [read, summary, controlRead] = await Promise.all([
+    readRun(authority.db, state.run_id), readRunSummary(authority.db, state.run_id), readRun(authority.db, control.run_id),
+  ]);
+  if (!read || !summary || !controlRead) throw new Error("missing run");
+  const view = selectRunView(read);
+  const context = { unit_id: state.unit_id, assessment_revision_id: state.revision_id,
+    review: "assessment_review", decision: "request_build_changes", created_at: expect.any(Date) };
+  expect(view.operator_actions).toEqual([
+    expect.objectContaining({ ...context, kind: "assessed", disposition: "accepted", original_text: "operator", final_text: null }),
+    expect.objectContaining({ ...context, kind: "assessed", disposition: "modified", original_text: "operator modified", final_text: "replacement" }),
+    expect.objectContaining({ ...context, kind: "assessed", disposition: "rejected", original_text: "operator rejected", final_text: null }),
+    expect.objectContaining({ ...context, kind: "added", final_text: "added" }),
+  ]);
+  expect(selectRunView(summary)).not.toHaveProperty("operator_actions");
+  expect(view.units.map(unit => [unit.unit_key, unit.asks]))
+    .toEqual(selectRunView(controlRead).units.map(unit => [unit.unit_key, unit.asks]));
+  expect(read.units.map(unit => Object.keys(unit.review_prompts)))
+    .toEqual(controlRead.units.map(unit => Object.keys(unit.review_prompts)));
+
+  const response = await app.request(`/api/runs/${state.run_id}`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toHaveProperty("operator_actions", JSON.parse(JSON.stringify(view.operator_actions)));
 });
 test("redirected adjudication refuses an unseen successor even when its actions still validate", async () => {
   const state = await parked(false, true);

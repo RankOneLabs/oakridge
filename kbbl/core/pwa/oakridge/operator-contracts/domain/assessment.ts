@@ -24,8 +24,8 @@ export interface OperatorAssessmentTestEvidence {
   readonly summary?: string | null; readonly cargo_test_output?: string | null;
 }
 
+export interface OperatorActionSource { readonly kind: "item_assessment" | "additional_finding"; readonly id: string }
+
 export interface OperatorAssessmentSubject { readonly kind: string; readonly id: string }
 
 export interface OperatorAssessmentEvidence { readonly kind: "file" | "test" | "output"; readonly ref: string; readonly detail?: string | null }
-
-export interface OperatorActionSource { readonly kind: "item_assessment" | "additional_finding"; readonly id: string }

@@ -15,6 +15,7 @@ export function useOakridgeInvalidationStream(isEnabled: boolean): void {
     const refreshRun = (runId: string) => {
       invalidateCachedRunUnits(runId);
       void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
+      void client.invalidateQueries({ queryKey: ["oakridge", "operator-run", runId] });
       void client.invalidateQueries({ queryKey: ["oakridge", "run", runId, "gates"] });
       void client.invalidateQueries({ queryKey: ["oakridge", "run", runId, "sessions"] });
       void client.invalidateQueries({ queryKey: ["oakridge", "artifact"], predicate: (query) =>
