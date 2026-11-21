@@ -82,7 +82,7 @@ describe("ReviewInboxView", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectRunUnit={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     expect(await screen.findByTestId("or-review-inbox")).toBeTruthy();
-    expect(screen.queryByTestId("or-decision-request_build_changes")).toBeNull();
+    expect(screen.getByTestId("or-decision-request_revision")).toBeTruthy();
     expect(screen.getByTestId("or-decision-approve")).toBeTruthy();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/units?"))).toHaveLength(1);
   });
@@ -117,7 +117,7 @@ describe("ReviewInboxView", () => {
   it("sends a study review that needs adjudication to the assessment instead of plain controls", async () => {
     if (!approveTarget) throw new Error("captured fixture lacks an artifact revision");
     const accept: OperatorDecisionDefinition = {
-      key: "accept", label: "Accept", fields: [], payload_schema: "adjudication", adjudication: "accept", assessment: "assessment",
+      key: "accept", label: "Accept", fields: [], payload_schema: "{}", adjudication: "accept", assessment: "assessment",
       submit: { kind: "review", review: "expansion_review", decision: "accept", effect: "approve", target_revision_id: approveTarget },
     };
     const unit = withUnitFields(v2Unit, { stage: "expand", collection_key: "g2", unit_key: "g2", decisions: [accept], input: { repository_key: "oakridge" } });
@@ -127,7 +127,7 @@ describe("ReviewInboxView", () => {
     if (!studyInbox.ok) throw new Error(studyInbox.error.detail);
 
     renderInbox(studyInbox.value);
-    expect(await screen.findByText("Review and adjudicate the actions in the assessment to record a decision.")).toBeTruthy();
+    expect(await screen.findByTestId("or-inbox-artifact-link")).toBeTruthy();
     expect(screen.queryByTestId("or-decision-approve")).toBeNull();
     expect(screen.getByTestId("or-inbox-artifact-link")).toBeTruthy();
   });

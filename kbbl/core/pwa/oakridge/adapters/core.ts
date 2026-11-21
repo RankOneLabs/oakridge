@@ -150,7 +150,7 @@ export function selectAggregateStatus(statuses: readonly RunStatus[]): StageStat
   return "pending";
 }
 
-export { REQUEST_BUILD_CHANGES, isAdjudicationDecision, isDisplayedReviewDecision, decisionAction, reviewDecisions, reviewToGates, selectGateDecision, sentReviewFeedback } from "./gates";
+export { isAdjudicationDecision, isDisplayedReviewDecision, decisionAction, reviewDecisions, reviewToGates, selectGateDecision, sentReviewFeedback } from "./gates";
 import { reviewToGates } from "./gates";
 
 export function attemptToWorkOrder(input: { readonly runId: string; readonly stage: string; readonly unit: OperatorUnitView; readonly attempt: OperatorAttemptView }): AdapterResult<RunSessionAttempt> {

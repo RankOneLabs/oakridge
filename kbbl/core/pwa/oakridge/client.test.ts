@@ -172,7 +172,7 @@ describe("v2 Oakridge client", () => {
       : path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
       : path.includes("/units?") ? sample.units : cohort);
     await resumeGate("legacy-gate", { idempotency_key: "opaque-1", artifact_revision_id: acceptTarget,
-      action: "request_build_changes", feedback: "Improve it" });
+      action: "request_revision", feedback: "Improve it" });
     const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(String(posted?.[0])).toContain(`/units/${encodeURIComponent(cohort.unit_id)}/reviews/assessment_review/decide`);
     expect(JSON.parse(String(posted?.[1]?.body)).target).toBe(changeTarget);
@@ -182,7 +182,7 @@ describe("v2 Oakridge client", () => {
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-3" } : cohort);
     const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "assessment_review" });
     await resumeGate(gateId, { idempotency_key: "decide-1", artifact_revision_id: acceptTarget,
-      action: "request_build_changes", feedback: "Fix the API" });
+      action: "request_revision", feedback: "Fix the API" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-1", decision: "request_build_changes",
       target: changeTarget, payload: { feedback: "Fix the API" } });

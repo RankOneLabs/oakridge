@@ -3,6 +3,7 @@ import type { OperatorRunView } from "./operator-contracts/projections/run-view"
 import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
 import type { GateResumeRequest, GateResumeResponse, MergeStatus, ParkedGate, SentReviewFeedback } from "./artifact-types";
 import { decisionAction, parseCompositeId, reviewToGates, sentReviewFeedback, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
+import { isAdjudicationDecision } from "./adapters/gates";
 import { parseUnitView } from "./adapters/parse";
 
 interface GateClientContext {
@@ -53,15 +54,16 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
     const currentGate = unwrapAdapter(path, reviewToGates(unit)).find((candidate) => candidate.id === gateId
       || (candidate.run_id === gate.runId && candidate.gate_step === review));
     const requestedRevision = parseCompositeId(req.artifact_revision_id, "artifact");
-    const currentRevision = currentGate?.artifact_revision_id
-      ? parseCompositeId(currentGate.artifact_revision_id, "artifact") : null;
+    const currentRevisionId = req.adjudication ? currentGate?.assessment_revision_id : currentGate?.artifact_revision_id;
+    const currentRevision = currentRevisionId ? parseCompositeId(currentRevisionId, "artifact") : null;
     const requestedTarget = requestedRevision.ok
       ? requestedRevision.value.name.slice(requestedRevision.value.name.indexOf(":") + 1) : req.artifact_revision_id;
     const currentTarget = currentRevision?.ok
-      ? currentRevision.value.name.slice(currentRevision.value.name.indexOf(":") + 1) : currentGate?.artifact_revision_id;
+      ? currentRevision.value.name.slice(currentRevision.value.name.indexOf(":") + 1) : currentRevisionId;
     if (!currentTarget || requestedTarget !== currentTarget)
       throw new Error(`oakridge ${gateId}: review artifact changed; refresh before deciding`);
-    const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review && decisionAction(candidate, unit.decisions) === req.action);
+    const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review
+      && isAdjudicationDecision(candidate) === Boolean(req.adjudication) && decisionAction(candidate, unit.decisions) === req.action);
     if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${gateId}: decision ${req.action} unavailable`);
     if (decision.is_available === false)
       throw new Error(`oakridge ${gateId}: ${decision.disabled_reason ?? `decision ${req.action} unavailable`}`);

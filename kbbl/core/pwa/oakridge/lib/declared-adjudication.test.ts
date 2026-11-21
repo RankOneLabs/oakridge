@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { CURRENT_ASSESSMENT } from "../__fixtures__/current-assessments";
+import { CURRENT_ASSESSMENT, sliceReportReviewUnit } from "../__fixtures__/current-assessments";
 import { currentAdjudicationUnit } from "../__fixtures__/read-models";
-import { reviewToGates } from "../adapters/core";
+import { artifactRevisionId } from "../adapters/core";
+import { decisionAction, isDisplayedReviewDecision, reviewToGates } from "../adapters/gates";
 import type { OperatorJsonValue } from "../operator-contracts/domain/primitives";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { ADJUDICATION_VIEWER, selectArtifactComponent } from "./artifact-version";
@@ -39,4 +40,23 @@ describe("adjudication follows the review's declaration", () => {
   it("labels subject kinds a workflow declares, keeping development's names", () => {
     expect(["build_item", "requirement", "case", "cohort_file"].map(selectSubjectKindLabel)).toEqual(["Build item", "Requirement", "Case", "Cohort file"]);
   });
+});
+
+it("projects the slice assessment separately and offers only plain gate actions", () => {
+  const unit = sliceReportReviewUnit(currentAdjudicationUnit());
+  const gates = reviewToGates(unit);
+  const [plan, , , assessment] = unit.artifacts;
+  expect(gates.ok && gates.value[0]).toMatchObject({
+    gate_step: "slice_report_review", requires_adjudication: true,
+    artifact_revision_id: artifactRevisionId(plan, "plan:1"),
+    assessment_revision_id: artifactRevisionId(assessment, "slice_assessment:2"),
+    resume_actions: ["change_design", "send_to_builder"],
+  });
+  expect(unit.decisions.map(decision => [decision.key, isDisplayedReviewDecision(decision)]))
+    .toEqual([["change_design", true], ["expand", false], ["send_feedback_to_builder", false], ["send_to_builder", true]]);
+
+  const development = currentAdjudicationUnit();
+  const plain = { ...development.decisions[1], key: "request_assessment_changes", adjudication: null,
+    submit: { kind: "review", review: "assessment_review", decision: "request_assessment_changes", effect: "request_changes", target_revision_id: "assessment:1" } } as const;
+  expect(decisionAction(plain, [...development.decisions, plain])).toBe("request_assessment_changes");
 });

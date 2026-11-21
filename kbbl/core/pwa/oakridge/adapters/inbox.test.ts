@@ -5,7 +5,7 @@ import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import { sampleCohort as cohort, sampleRun as run, sampleUnits as units, withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorRunInboxBatchEntry } from "../operator-contracts/projections/inbox";
 import type { OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
-import { objectValue, repositoryKeyOf, reviewToGates } from "./core";
+import { artifactRevisionId, objectValue, repositoryKeyOf, reviewToGates } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { selectOpenBlockerGate } from "./gates";
 import parkedBlocker from "../__fixtures__/parked-blocker-unit.json";
@@ -15,7 +15,7 @@ describe("development inbox", () => {
     const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts/projections/inbox").OperatorInboxItem[] }, units, { workflow_name: "development", run_title: null });
     expect(inbox.ok && [inbox.value.items[0].kind, inbox.value.cohorts[0].lifecycle]).toEqual(["artifact_gate", "artifact_review"]);
     expect(inbox.ok && inbox.value.items.filter((item) => item.kind === "artifact_gate")).toHaveLength(1);
-    expect(inbox.ok && inbox.value.items[0].resume_actions).toEqual(["approve"]);
+    expect(inbox.ok && inbox.value.items[0].resume_actions).toEqual(["approve", "request_revision"]);
   });
   it("labels two repositories and every stage from the captured multi-cohort run", () => {
     const second = units.find((unit) => unit.stage === "cohort" && unit.collection_key === "b");
@@ -122,7 +122,7 @@ describe("development inbox", () => {
       .toEqual([["merge_confirmation"], "merge_confirmation"]);
     expect(inbox.ok && inbox.value.items[0]?.pr_url).toBe("https://github.com/oakridge-e2e/app/pull/1");
     const gates = reviewToGates(stalled);
-    expect(gates.ok && gates.value[0]?.pr_url).toBe("https://github.com/oakridge-e2e/app/pull/1");
+    expect(gates.ok && gates.value[0]).toMatchObject({ pr_url: "https://github.com/oakridge-e2e/app/pull/1", assessment_revision_id: null });
   });
   it("keeps both run slices when invalidate responses complete against an old inbox snapshot", () => {
     const first = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts/projections/inbox").OperatorInboxItem[] }, units, { workflow_name: "development", run_title: null });
@@ -139,11 +139,22 @@ describe("development inbox", () => {
   it("labels integration review work with the assessment it asks the operator to judge", () => {
     const integration = (integrationMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "integration");
     if (!integration) throw new Error("captured fixture lacks an integration unit");
-    const items = integration.decisions.flatMap((decision) => decision.submit.kind === "review" ? [{ kind: "decision" as const,
+    const source = cohort.artifacts.find(artifact => artifact.artifact_key === "assessment");
+    if (!source?.latest_revision) throw new Error("captured fixture lacks assessment");
+    const assessment = { ...source, run_id: integration.run_id, unit_id: integration.unit_id,
+      latest_revision: { ...source.latest_revision, id: "integration-assessment:2", run_id: integration.run_id, unit_id: integration.unit_id } };
+    const adjudicated = withUnitFields(integration, { artifacts: [...integration.artifacts, assessment], decisions: integration.decisions.map(decision =>
+      decision.submit.kind === "review" && decision.submit.review === "integration_review"
+        ? { ...decision, adjudication: decision.submit.effect === "approve" ? "accept" : "feedback", assessment: assessment.artifact_key }
+        : decision) });
+    const items = adjudicated.decisions.flatMap((decision) => decision.submit.kind === "review" ? [{ kind: "decision" as const,
       run_id: integration.run_id, unit_id: integration.unit_id, key: decision.key, label: decision.label, submit: decision.submit, prompt: null }] : []);
-    const result = classifyDevelopmentInbox({ run_id: integration.run_id, items }, [integration], { workflow_name: "development", run_title: null });
-    expect(result.ok && result.value.items.map((item) => [item.kind, item.artifact_key]))
-      .toEqual([["artifact_gate", "assessment"], ["merge_confirmation", "pr_state"]]);
+    const result = classifyDevelopmentInbox({ run_id: integration.run_id, items }, [adjudicated], { workflow_name: "development", run_title: null });
+    expect(result.ok && result.value.items).toMatchObject([
+      { kind: "artifact_gate", artifact_key: "assessment", artifact_revision_id: artifactRevisionId(assessment, assessment.latest_revision.id),
+        requires_adjudication: true, resume_actions: [] },
+      { kind: "merge_confirmation", artifact_key: "pr_state", requires_adjudication: false },
+    ]);
   });
 });
 
@@ -195,8 +206,8 @@ describe("study inbox", () => {
     expect(inbox.value.items[0]?.resume_actions).toEqual(["approve", "send_to_builder", "change_design"]);
   });
 
-  it("marks a review whose decisions carry an adjudication payload as needing adjudication", () => {
-    const adjudicated = withUnitFields(unit, { decisions: [approve, requestChanges].map((decision) => ({ ...decision, payload_schema: "adjudication" })) });
+  it("marks a review whose decisions declare adjudication roles as needing adjudication", () => {
+    const adjudicated = withUnitFields(unit, { decisions: [{ ...approve, adjudication: "accept", assessment: "assessment" }, { ...requestChanges, adjudication: "feedback", assessment: "assessment" }] });
     const inbox = classifyDevelopmentInbox(entry, [adjudicated], { workflow_name: "study", run_title: null });
     if (!inbox.ok) throw new Error(inbox.error.detail);
     expect(inbox.value.items[0]?.requires_adjudication).toBe(true);
@@ -205,7 +216,7 @@ describe("study inbox", () => {
   it("leaves a review with plain payloads deciding from the inbox", () => {
     const inbox = classifyDevelopmentInbox(entry, [unit], { workflow_name: "study", run_title: null });
     if (!inbox.ok) throw new Error(inbox.error.detail);
-    expect(inbox.value.items[0]?.requires_adjudication).toBe(false);
+    expect(inbox.value.items[0]).toMatchObject({ requires_adjudication: false, artifact_key: "assessment" });
   });
 
   it("keeps a review with no matching artifact revision as a gate decision", () => {
