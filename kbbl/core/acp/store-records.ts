@@ -26,6 +26,7 @@ export interface RawAcpSessionRow extends SessionPrIntegration {
   requested_model: string | null;
   requested_effort: string | null;
   requested_mode: string | null;
+  applied_model_name: string | null;
   status: AcpSessionStatus;
   end_reason: string | null;
   end_detail: string | null;

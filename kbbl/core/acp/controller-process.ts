@@ -1,6 +1,6 @@
 import type * as schema from "@agentclientprotocol/sdk";
 import type { ControllerDeps, ControllerStartMode, RequestedSessionConfig } from "#kbbl/core/acp/controller";
-import { matchRequestedOption, resolveRequestedOption } from "#kbbl/core/acp/config-option-resolver";
+import { matchRequestedOption, resolveRequestedModel, resolveRequestedOption, type OptionMatchKind, type ResolvedOption } from "#kbbl/core/acp/config-option-resolver";
 import { resolveExternalGitDir } from "#kbbl/core/session/worktree";
 import { AcpClient } from "#kbbl/core/acp/client";
 import type { AcpChildProcess } from "#kbbl/core/acp/process-supervisor";
@@ -150,36 +150,32 @@ export class AcpControllerProcess {
   async applyRequestedConfig(
     requested: RequestedSessionConfig,
   ): Promise<Result<void, AcpError>> {
-    const requests: Array<["model" | "thought_level", string | null]> = [
-      ["model", requested.requested_model],
-      ["thought_level", requested.requested_effort],
+    const model = resolveRequestedModel(this.configOptions, requested);
+    if (!model.ok) return model;
+    const effort = resolveRequestedOption(this.configOptions, "thought_level", requested.requested_effort);
+    if (!effort.ok) return effort;
+    const resolutions: Array<[string, string | null, ResolvedOption | null]> = [
+      ["model", requested.requested_model, model.value],
+      ["thought_level", requested.requested_effort, effort.value],
     ];
-    for (const [category, value] of requests) {
-      const resolved = resolveRequestedOption(this.configOptions, category, value);
-      if (!resolved.ok) return resolved;
-      if (resolved.value === null) continue;
+    for (const [category, value, resolved] of resolutions) {
+      if (resolved === null) continue;
       // Any match that is not exact changed what will run, and nothing else
       // can tell the operator: the picker showed one id and the session got
       // another.
-      const match = resolved.value.match;
-      const prefix =
-        `[acp] sid=${this.deps.sid} ${category} requested=${value} ` +
-        `resolved=${resolved.value.valueId} `;
-      if (match.kind === "context_hint_ignored") {
-        console.log(
-          prefix +
-            `context_hint_ignored requested_hint=${match.requestedHint ?? "none"} ` +
-            `matched_hint=${match.matchedHint ?? "none"}`,
-        );
-      } else if (match.kind === "retired_id_mapped") {
-        console.log(prefix + `retired_id_mapped retired_id=${match.retiredId}`);
+      const substitution = describeSubstitution(resolved.match);
+      if (substitution !== null) {
+        console.log(`[acp] sid=${this.deps.sid} ${category} requested=${value} resolved=${resolved.valueId} ${substitution}`);
       }
       const applied = await this.setConfigOption(
-        resolved.value.configId,
-        resolved.value.valueId,
+        resolved.configId,
+        resolved.valueId,
       );
       if (!applied.ok) return applied;
     }
+    // The name is what a reload can find this model by again: the agent may
+    // advertise it under a different id then.
+    if (model.value !== null) this.deps.store.setAppliedModelName(this.deps.sid, model.value.valueName);
     return this.applyRequestedMode(requested.requested_mode);
   }
 
@@ -257,5 +253,19 @@ export class AcpControllerProcess {
       "no live ACP connection for this controller",
       this.deps.sid,
     );
+  }
+}
+
+/** The log suffix for a match that changed what runs, or null for an exact one. */
+function describeSubstitution(match: OptionMatchKind): string | null {
+  switch (match.kind) {
+    case "exact":
+      return null;
+    case "context_hint_ignored":
+      return `context_hint_ignored requested_hint=${match.requestedHint ?? "none"} matched_hint=${match.matchedHint ?? "none"}`;
+    case "retired_id_mapped":
+      return `retired_id_mapped retired_id=${match.retiredId}`;
+    case "applied_name_matched":
+      return `applied_name_matched applied_name=${JSON.stringify(match.appliedName)}`;
   }
 }

@@ -143,10 +143,10 @@ describe("kbbl ledger migrations", () => {
     ledger.query<{ name: string }, []>("SELECT name FROM pragma_table_info('acp_sessions')").all().map((column) => column.name);
   const ledgerTables = (ledger: Database): string[] =>
     ledger.query<{ name: string }, []>("SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'acp_%' ORDER BY name").all().map((table) => table.name);
-  /** Every retained ledger row, without the column 004 removes. */
+  /** Every retained ledger row, without the column 004 removes or the ones 005 and 007 add. */
   const retainedRows = (ledger: Database): Record<string, unknown[]> => Object.fromEntries(ledgerTables(ledger).map((table) => [table,
     ledger.query<Record<string, unknown>, []>(`SELECT * FROM ${table} ORDER BY rowid`).all()
-      .map(({ gated_review_json: _removed, pr_integration: _integration, pr_skill_digest: _digest, ...row }) => row)]));
+      .map(({ gated_review_json: _removed, pr_integration: _integration, pr_skill_digest: _digest, applied_model_name: _model_name, ...row }) => row)]));
 
   function ledgerThrough003(): Database {
     const through = join(migrationsDir, "through-003");
@@ -180,7 +180,7 @@ describe("kbbl ledger migrations", () => {
   test("a fresh database applies the complete numbered sequence and has no grant column", () => {
     const ledger = new Database(":memory:");
     const { applied } = applyMigrations(ledger, ledgerMigrations);
-    expect(applied).toEqual(["001_sessions.sql", "002_session_archive.sql", "003_gated_review.sql", dropMigration, "005_session_pr_integration.sql", "006_turn_usage.sql"]);
+    expect(applied).toEqual(["001_sessions.sql", "002_session_archive.sql", "003_gated_review.sql", dropMigration, "005_session_pr_integration.sql", "006_turn_usage.sql", "007_session_applied_model_name.sql"]);
     expect(sessionColumns(ledger)).not.toContain("gated_review_json");
     ledger.close();
   });
@@ -189,8 +189,8 @@ describe("kbbl ledger migrations", () => {
     const ledger = ledgerThrough003();
     const rows = retainedRows(ledger);
     const columns = sessionColumns(ledger);
-    expect(applyMigrations(ledger, ledgerMigrations).applied).toEqual([dropMigration, "005_session_pr_integration.sql", "006_turn_usage.sql"]);
-    expect(sessionColumns(ledger)).toEqual([...columns.filter((column) => column !== "gated_review_json"), "pr_integration", "pr_skill_digest"]);
+    expect(applyMigrations(ledger, ledgerMigrations).applied).toEqual([dropMigration, "005_session_pr_integration.sql", "006_turn_usage.sql", "007_session_applied_model_name.sql"]);
+    expect(sessionColumns(ledger)).toEqual([...columns.filter((column) => column !== "gated_review_json"), "pr_integration", "pr_skill_digest", "applied_model_name"]);
     expect(retainedRows(ledger)).toEqual({ ...rows, acp_turn_usage: [], acp_usage_reading: [] });
     ledger.close();
   });

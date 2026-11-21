@@ -13,12 +13,32 @@ import { acpError, err, ok, type AcpError, type Result } from "./types";
  * a withdrawn id. The caller logs both, because nothing else can tell the
  * operator what changed.
  */
-export type OptionMatchKind = IdMatchKind;
+export type OptionMatchKind =
+  | IdMatchKind
+  /**
+   * The requested id is not advertised, but the one option carrying the
+   * name recorded when kbbl first applied the model is. A reloaded Claude
+   * session offers `claude-fable-5-2` ("Fable 5.2") where the new session
+   * offered `fable` ("Fable 5.2").
+   */
+  | { readonly kind: "applied_name_matched"; readonly appliedName: string };
 
 export interface ResolvedOption {
   readonly configId: string;
   readonly valueId: string;
+  /** The agent's display name for `valueId` (SessionConfigSelectOption.name). */
+  readonly valueName: string;
   readonly match: OptionMatchKind;
+}
+
+/**
+ * A session's model request: the id it asked for, and the agent's name for
+ * the option that id resolved to when kbbl last applied it (null before the
+ * first application).
+ */
+export interface ModelRequest {
+  readonly requested_model: string | null;
+  readonly applied_model_name: string | null;
 }
 
 /**
@@ -53,6 +73,68 @@ export function resolveRequestedOption(
   return matched;
 }
 
+/**
+ * Resolves a session's model request. The recorded name comes first: it is
+ * what this session already ran, and a reload advertises that model under a
+ * different id than the alias it was created with. Without a recorded name,
+ * or when it matches no single option, the requested id resolves as usual.
+ */
+export function resolveRequestedModel(
+  options: readonly schema.SessionConfigOption[],
+  request: ModelRequest,
+): Result<ResolvedOption | null, AcpError> {
+  if (request.requested_model === null) return ok(null);
+  const byName = matchAppliedModelName(options, request.requested_model, request.applied_model_name);
+  if (byName !== null) return ok(byName);
+  const resolved = resolveRequestedOption(options, "model", request.requested_model);
+  if (resolved.ok || request.applied_model_name === null) return resolved;
+  return err(acpError(
+    "requested_model_unsupported",
+    "resolveRequestedModel",
+    `${resolved.error.detail}, and no single option is named "${request.applied_model_name}"`,
+  ));
+}
+
+/** The one model option whose name equals the recorded name, or null. */
+function matchAppliedModelName(
+  options: readonly schema.SessionConfigOption[],
+  requested_model: string,
+  applied_model_name: string | null,
+): ResolvedOption | null {
+  if (applied_model_name === null) return null;
+  const selector = findSelector(options, "model");
+  if (selector === null) return null;
+  const named = flattenSelectOptions(selector).filter((entry) => entry.name === applied_model_name);
+  const [only] = named;
+  if (named.length !== 1 || only === undefined) return null;
+  return {
+    configId: selector.id,
+    valueId: only.value,
+    valueName: only.name,
+    match: only.value === requested_model
+      ? { kind: "exact" }
+      : { kind: "applied_name_matched", appliedName: applied_model_name },
+  };
+}
+
+type SelectConfigOption = Extract<schema.SessionConfigOption, { type: "select" }>;
+
+/** The first select option in a semantic category, or null. */
+function findSelector(
+  options: readonly schema.SessionConfigOption[],
+  category: RequestedOptionCategory,
+): SelectConfigOption | null {
+  const selector = options.find(
+    (option) => option.type === "select" && option.category === category,
+  );
+  return selector?.type === "select" ? selector : null;
+}
+
+/** A select option's values with any grouping removed. */
+function flattenSelectOptions(selector: SelectConfigOption): schema.SessionConfigSelectOption[] {
+  return selector.options.flatMap((entry) => ("options" in entry ? entry.options : [entry]));
+}
+
 /** Semantic config-option categories kbbl resolves requests against (§12). */
 export type RequestedOptionCategory = "model" | "thought_level" | "mode";
 
@@ -67,17 +149,13 @@ export function matchRequestedOption(
   category: RequestedOptionCategory,
   requested: string,
 ): Result<ResolvedOption, string> {
-  const selector = options.find(
-    (option) => option.type === "select" && option.category === category,
-  );
-  if (!selector || selector.type !== "select") {
+  const selector = findSelector(options, category);
+  if (selector === null) {
     return err(
       `agent exposes no select config option with category "${category}"`,
     );
   }
-  const flat = selector.options.flatMap((entry) =>
-    "options" in entry ? entry.options : [entry],
-  );
+  const flat = flattenSelectOptions(selector);
   // Models carry a retirement history; effort and mode ids do not. Both paths
   // are the shared transform in core/runtime — this function owns finding the
   // selector and naming the error, nothing about what an id means.
@@ -85,10 +163,12 @@ export function matchRequestedOption(
     category === "model"
       ? matchAdvertisedModel(requested, flat)
       : matchAdvertisedId(requested, flat);
-  if (matched) {
+  const matchedOption = matched ? flat.find((entry) => entry.value === matched.valueId) : undefined;
+  if (matched && matchedOption) {
     return ok({
       configId: selector.id,
       valueId: matched.valueId,
+      valueName: matchedOption.name,
       match: matched.match,
     });
   }
