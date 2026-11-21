@@ -33,6 +33,13 @@ it("sends the kept builder action back without any per-action click", () => {
   const request = mutate.mock.calls[0]?.[0] as GateResumeRequest;
   expect(request.adjudication?.builder_feedback).toBe(screen.getByTestId("or-assessment-handoff-preview").textContent);
 });
+it("explains a validator rejection and points to the request for assessment changes", () => {
+  harness({ gate: { ...gate, decision_definitions: gate.decision_definitions?.filter(definition => definition.key !== "accept") },
+    decisions: [{ id: "v1", review: "engine:validator", decision: "request_changes", effect: "request_changes", target_revision_id: "assessment:1",
+      payload: { feedback: "Assessment verdict must match item statuses and additional finding severities." }, created_at: "2026-11-20T00:00:00Z" }] });
+  expect(bar().getByTestId("or-assessment-validation-rejection").textContent).toBe("This assessment failed validation, so it cannot be accepted: "
+    + "Assessment verdict must match item statuses and additional finding severities. Request assessment changes to have the assessor correct it.");
+});
 it("accept stays blocked while a builder action is kept, and says why", () => {
   harness();
   expect([(bar().getByRole("button", { name: "Accept" }) as HTMLButtonElement).disabled, bar().getByText(KEPT_BUILDER_ACTIONS_REASON)]).toEqual([true, expect.anything()]);

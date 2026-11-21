@@ -7,6 +7,7 @@ import { fetchMergeStatus } from "../../client";
 import { randomUuid } from "../../../lib/random-uuid";
 import { REQUEST_BUILD_CHANGES, selectGateDecision } from "../../adapters/core";
 import { Button } from "../../../components/atoms/Button";
+import { selectValidationRejectionNotice } from "../../lib/validation-rejection";
 
 const decisionButtonClass = "min-h-12 w-full rounded-lg! px-4! py-[0.65rem]! md:min-h-11 md:w-auto";
 
@@ -50,7 +51,10 @@ function mergeWarning(status: Exclude<MergeStatus, { readonly kind: "merged" }>)
 }
 
 export function GateDecisionActions(props: GateDecisionActionsProps) {
-  if (props.gate.requires_adjudication) return <p>Review and adjudicate the actions in the assessment to record a decision.</p>;
+  if (props.gate.requires_adjudication) return <div className="flex flex-col gap-1">
+    {props.gate.validation_rejection && <p role="status" className="text-sm text-[var(--danger-fg)]" data-testid="or-gate-validation-rejection">{selectValidationRejectionNotice(props.gate.validation_rejection)}</p>}
+    <p>Review and adjudicate the actions in the assessment to record a decision.</p>
+  </div>;
   return <GateDecisionActionsForGate key={props.gate.id} {...props} />;
 }
 

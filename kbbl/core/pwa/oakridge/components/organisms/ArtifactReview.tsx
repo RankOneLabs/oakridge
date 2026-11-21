@@ -17,7 +17,7 @@ import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { useArtifactBody } from "../../hooks/useArtifactBody";
 import { selectFindingSelections } from "../../lib/grading";
 import { settleEdit } from "../../lib/edit-outcome";
-import { resolveViewer, isReadableViewer, selectViewerItemPaths } from "../../artifactRegistry";
+import { resolveViewer, isReadableViewer, recordsAdjudication, selectViewerItemPaths } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { formatRelative } from "../../../lib/time";
@@ -264,7 +264,9 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
       ) : undefined;
 
   const isLatestRevision = revision !== undefined && revIdx === revisions.length - 1;
-  const gateActions = artifactGate && isLatestRevision ? (
+  // An adjudicated review is decided in the viewer's own decision bar; a box here could only repeat that, with no controls.
+  const isDecidedInViewer = artifactGate?.requires_adjudication === true && Viewer !== null && recordsAdjudication(Viewer);
+  const gateActions = artifactGate && isLatestRevision && !isDecidedInViewer ? (
     <section className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
       <div><strong>{artifactGate.gate_type === "merge_confirmation" ? "Confirm the merge" : "Make your decision"}</strong><p>{artifactGate.gate_type === "merge_confirmation" ? "Verify the pull request is merged, then continue the cohort." : "Approve this artifact or request specific changes."}</p></div>
       <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} actionLabels={artifact.review?.action_labels} />

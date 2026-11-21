@@ -10,6 +10,7 @@ import type { OperatorUnitView } from "../operator-contracts/projections/unit-vi
 import type { ParkedGate } from "../artifact-types";
 import type { RepositoryKey, RunState } from "../run-types";
 import { compositeId, reviewToGates } from "../adapters/core";
+import { currentAdjudicationUnit } from "../__fixtures__/read-models";
 
 function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {
   return {
@@ -262,4 +263,14 @@ describe("GateDecisionActions", () => {
 
     expect(screen.queryByRole("button", { name: "Send feedback" })).toBeNull();
   });
+});
+
+it("shows the validator's message on an adjudicated gate whose revision it rejected", () => {
+  const unit = { ...currentAdjudicationUnit(), recorded_decisions: [{ id: "v1", review: "engine:validator", decision: "request_changes", effect: "request_changes" as const,
+    target_revision_id: "assessment:1", payload: { feedback: "Assessment verdict must match item statuses and additional finding severities." }, created_at: "2026-11-20T00:00:00Z" }] };
+  const gates = reviewToGates(unit);
+  if (!gates.ok || !gates.value[0]) throw new Error("gate missing");
+  render(wrapper(new QueryClient(), gates.value[0]));
+  expect(screen.getByTestId("or-gate-validation-rejection").textContent)
+    .toBe("This assessment failed validation, so it cannot be accepted: Assessment verdict must match item statuses and additional finding severities.");
 });

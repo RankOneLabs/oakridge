@@ -90,6 +90,8 @@ export interface ArtifactDetail {
 
 export interface ParkedGate {
   requires_adjudication?: boolean;
+  /** The validator's message when it rejected a revision the review decides, so Accept is withheld. */
+  validation_rejection?: string | null;
   blocker?: import("./operator-contracts/projections/history-view").OperatorBlockerHistory | null;
   requirement_ids?: readonly string[];
   id: string;
@@ -246,6 +248,8 @@ export interface ReviewInboxItem {
   resume_actions: string[];
   /** The review's decisions carry an adjudication payload, recorded from the assessment view rather than inbox controls. */
   requires_adjudication?: boolean;
+  /** The validator's message when it rejected a revision the review decides, so Accept is withheld. */
+  validation_rejection?: string | null;
   blocked_by: string[];
   pr_url?: string | null;
   /** The unit's authority id, which opens its pane in the run. */

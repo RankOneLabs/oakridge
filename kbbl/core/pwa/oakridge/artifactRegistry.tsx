@@ -88,6 +88,9 @@ export function resolveContractRenderer(kind: import("./operator-contracts/core-
   return CONTRACT_RENDERERS[kind] ?? SchemaContractView;
 }
 
+/** Whether the viewer records an adjudicated review's decisions itself, so the page needs no second decision box. */
+export const recordsAdjudication = (Viewer: ComponentType<ViewerProps>): boolean => Viewer === CurrentAssessmentReview;
+
 /** A body its viewer cannot parse, such as another workflow's schema under the same name, falls back to the contract view. */
 export function isReadableViewer(Viewer: ComponentType<ViewerProps>, body: unknown): boolean {
   if (Viewer === CurrentSpecAnalysisViewer) return parseCurrentAnalysis(body).ok;

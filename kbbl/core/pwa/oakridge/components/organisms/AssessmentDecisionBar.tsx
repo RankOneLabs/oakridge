@@ -3,6 +3,7 @@ import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { TextArea } from "../../../components/atoms/TextArea";
 import type { AssessmentAdjudication } from "../../hooks/useAssessmentAdjudication";
+import { selectValidationRejectionNotice } from "../../lib/validation-rejection";
 import { NO_REVIEW_REASON, selectAdjudicationBlockReason, selectAdjudicationDecisions, selectAssessmentChangeDecision, selectDecisionButtonLabel, selectRecordedDecisionSummary } from "../../lib/assessment-adjudication";
 
 interface Props { adjudication: AssessmentAdjudication }
@@ -11,13 +12,16 @@ interface Props { adjudication: AssessmentAdjudication }
 export function AssessmentDecisionBar({ adjudication }: Props) {
   const [isRevising, setIsRevising] = useState(false);
   const [feedback, setFeedback] = useState("");
-  const { gate, state, isOpen, isPending, recordedDecision, isRecorded } = adjudication;
+  const { gate, state, isOpen, isPending, recordedDecision, isRecorded, validationRejection } = adjudication;
   if (!isOpen) {
     const status = recordedDecision ? selectRecordedDecisionSummary(recordedDecision) : isRecorded ? "Decision submitted. Waiting for it to be recorded." : NO_REVIEW_REASON;
     return <section aria-label="Assessment decision" className="rounded-md border border-[var(--border-decorative)] p-3"><FeedbackMessage>{status}</FeedbackMessage></section>;
   }
   const assessmentChange = selectAssessmentChangeDecision(gate);
   return <section aria-label="Assessment decision" className="flex flex-col gap-3 rounded-md border border-[var(--accent-primary)] p-3" data-testid="or-assessment-decision-bar">
+    {validationRejection && <p role="status" className="text-sm text-[var(--danger-fg)]" data-testid="or-assessment-validation-rejection">
+      {selectValidationRejectionNotice(validationRejection)}{assessmentChange ? ` ${assessmentChange.label} to have the assessor correct it.` : ""}
+    </p>}
     <div className="flex flex-wrap items-start gap-3">
       {selectAdjudicationDecisions(gate).map(declared => {
         const reason = selectAdjudicationBlockReason(state, gate, declared);
