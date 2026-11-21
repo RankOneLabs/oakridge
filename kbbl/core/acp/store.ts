@@ -274,6 +274,15 @@ export class AcpSessionStore {
       .run(mode, nowIso(), sid);
   }
 
+  /** Records the agent's display name for the model option kbbl applied, so a reload can find it again. */
+  setAppliedModelName(sid: KbblSessionId, name: string): void {
+    this.db
+      .prepare(
+        "UPDATE acp_sessions SET applied_model_name = ?, updated_at = ? WHERE sid = ?",
+      )
+      .run(name, nowIso(), sid);
+  }
+
   setAcpSessionId(sid: KbblSessionId, acpSessionId: string): void {
     this.db
       .prepare(

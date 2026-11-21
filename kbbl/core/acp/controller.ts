@@ -44,7 +44,7 @@ export type UiEventListener = (emission: TranscriptEmission) => void;
 /** The durable §12 requests a session row carries across every spawn. */
 export type RequestedSessionConfig = Pick<
   AcpSessionRow,
-  "requested_model" | "requested_effort" | "requested_mode"
+  "requested_model" | "requested_effort" | "requested_mode" | "applied_model_name"
 >;
 
 export class AcpSessionController {

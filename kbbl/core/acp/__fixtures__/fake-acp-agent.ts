@@ -21,6 +21,13 @@
 //     "close_ignored"    → session/close never answers (kill-path test).
 //     "persist_on_prompt" → session/new stays in memory until the first
 //                           prompt, like agents with lazy transcript storage.
+//     "load_renames_models" → happy, but session/load offers `fake-large`
+//                           as `fake-large-2` under the same name, like a
+//                           reloaded Claude session offering
+//                           `claude-fable-5-2` in place of `fable`.
+//     "efforts_follow_model" → happy, but the `max` effort is only offered
+//                           once `fake-large` is the selected model, like
+//                           agents whose efforts depend on the model.
 //
 //   FAKE_ACP_STATE_DIR=  transcript dir (required for load replay across
 //                        process restarts). Defaults to a tmp subdir.
@@ -124,6 +131,37 @@ const CONFIG_OPTIONS: schema.SessionConfigOption[] = [
 // Current config values per session (in-memory; config state does not
 // need to survive the fake's restarts).
 const configState = new Map<string, Map<string, string | boolean>>();
+// Sessions this process answered with session/load.
+const loadedSessions = new Set<string>();
+
+/** The config options a session sees now, with its current values. */
+function sessionConfigOptions(sessionId: string): schema.SessionConfigOption[] {
+  const renamed = behavior === "load_renames_models" && loadedSessions.has(sessionId);
+  const offersMax = behavior === "efforts_follow_model" && configState.get(sessionId)?.get("model") === "fake-large";
+  return CONFIG_OPTIONS.map((option) => {
+    const renamedOption = renamed ? renameReloadedModel(option) : option;
+    const offered = offersMax ? offerMaxEffort(renamedOption) : renamedOption;
+    const current = configState.get(sessionId)?.get(option.id);
+    return current === undefined
+      ? offered
+      : ({ ...offered, currentValue: current } as schema.SessionConfigOption);
+  });
+}
+
+/** The effort selector with `max` added. */
+function offerMaxEffort(option: schema.SessionConfigOption): schema.SessionConfigOption {
+  if (option.type !== "select" || option.id !== "effort") return option;
+  return { ...option, options: [...option.options, { value: "max", name: "Max" }] } as schema.SessionConfigOption;
+}
+
+/** The model selector a reloaded session sees: `fake-large` under a new id, same name. */
+function renameReloadedModel(option: schema.SessionConfigOption): schema.SessionConfigOption {
+  if (option.type !== "select" || option.id !== "model") return option;
+  const rename = (entry: schema.SessionConfigSelectOption): schema.SessionConfigSelectOption =>
+    entry.value === "fake-large" ? { ...entry, value: "fake-large-2" } : entry;
+  const options = option.options.map((entry) => ("value" in entry ? rename(entry) : entry));
+  return { ...option, options } as schema.SessionConfigOption;
+}
 
 // The workspace roots the client granted on session/new or session/load,
 // kept beside the transcript so tests can read what reached the agent.
@@ -184,13 +222,8 @@ const app = agent({ name: `fake-acp-${behavior}` })
     // like session/new, so a client can rebuild its selectors after a
     // respawn without waiting for a config_option_update.
     if (!configState.has(sessionId)) configState.set(sessionId, new Map());
-    const options = CONFIG_OPTIONS.map((option) => {
-      const current = configState.get(sessionId)?.get(option.id);
-      return current === undefined
-        ? option
-        : ({ ...option, currentValue: current } as schema.SessionConfigOption);
-    });
-    return { configOptions: options };
+    loadedSessions.add(sessionId);
+    return { configOptions: sessionConfigOptions(sessionId) };
   })
   .onRequest("session/set_config_option", async (ctx) => {
     const { sessionId, configId, value } = ctx.params;
@@ -208,13 +241,7 @@ const app = agent({ name: `fake-acp-${behavior}` })
       }
     }
     configState.get(sessionId)?.set(configId, value as string | boolean);
-    const options = CONFIG_OPTIONS.map((option) => {
-      const current = configState.get(sessionId)?.get(option.id);
-      return current === undefined
-        ? option
-        : ({ ...option, currentValue: current } as schema.SessionConfigOption);
-    });
-    return { configOptions: options };
+    return { configOptions: sessionConfigOptions(sessionId) };
   })
   .onRequest("session/close", async () => {
     if (behavior === "close_ignored") {
