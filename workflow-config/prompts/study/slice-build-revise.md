@@ -1,6 +1,6 @@
 # Revise slice
 
-Take the paid path only when `spend_approved` and `report_is_placeholder` are both true. Otherwise take the offline path and apply the feedback. On send to builder, fix fixtures or tests. On change design, regenerate for the revised plan's slice. On spend request changes, revise the request. If the PR closed, replace it with a draft PR against `build_base`.
+Take the paid path only when `spend_approved` and `report_is_placeholder` are both true. Otherwise take the offline path and apply the feedback. Apply free-text feedback from **Send to builder**. For an action list from **Send actions to builder**, address every `<action_id>: <text>` line and fix fixtures or tests accordingly. On change design, regenerate for the revised plan's slice. On spend request changes, revise the request. If the PR closed, replace it with a draft PR against `build_base`.
 
 Every attempt must publish all four artifacts (`slice_build`, `spend_request`, `slice_report`, and `pr`) or it fails. The offline attempt publishes a spend request for operator approval and a placeholder report that validation deliberately refuses. After approval, that refusal brings the worker back for the paid attempt.
 
