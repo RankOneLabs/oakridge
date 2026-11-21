@@ -2,20 +2,20 @@ import { describe, expect, it } from "vitest";
 import { CURRENT_ASSESSMENT } from "../__fixtures__/current-assessments";
 import type { ParkedGate } from "../artifact-types";
 import type { OperatorDecisionDefinition, OperatorRevisionDecision } from "../operator-contracts/projections/unit-view";
-import { initialAdjudication, KEPT_BUILDER_ACTIONS_REASON, NO_REVIEW_REASON, selectAdjudicationBlockReason, selectAdjudicationDecision, selectAdjudicationDecisions, selectAdjudicationGate, selectAssessmentChangeDecision, setDisposition, type ReviewDecisionDefinition } from "./assessment-adjudication";
+import { initialAdjudication, NO_REVIEW_REASON, selectAdjudicationBlockReason, selectAdjudicationDecision, selectAdjudicationDecisions, selectAdjudicationGate, setDisposition, type ReviewDecisionDefinition } from "./assessment-adjudication";
 
 const definition = (decision: string, availability: Partial<OperatorDecisionDefinition> = {}): OperatorDecisionDefinition => ({
-  key: decision, label: decision, payload_schema: "adjudication", adjudication: decision === "accept" ? "accept" as const : "feedback" as const, assessment: "assessment", fields: [],
+  key: decision, label: decision, payload_schema: "{}", adjudication: decision === "accept" ? "accept" as const : "feedback" as const, assessment: "assessment", fields: [],
   submit: { kind: "review", review: "assessment_review", decision, effect: decision === "accept" ? "approve" : "request_changes", target_revision_id: "assessment-rev" }, ...availability,
 });
 const gate: ParkedGate = {
   id: "gate-1", gate_type: "assessment_review", gate_step: "assessment_review", run_id: "run-1", stage_name: "cohort",
-  unit_id: "alpha", artifact_revision_id: "assessment-rev", worktree: null, resume_actions: ["approve"],
+  unit_id: "alpha", artifact_revision_id: "plan-rev", assessment_revision_id: "assessment-rev", worktree: null, resume_actions: ["approve"],
   offered_decisions: ["accept", "request_build_changes"], run_state: "active", actionable: true,
   decision_definitions: [definition("accept"), definition("request_build_changes")],
 };
 const declared = (decision: OperatorDecisionDefinition): ReviewDecisionDefinition =>
-  ({ definition: decision, effect: decision.submit.kind === "review" ? decision.submit.effect : "approve" });
+  ({ definition: decision, role: decision.adjudication ?? "accept" });
 const accept = declared(definition("accept"));
 const keys = (offered: ParkedGate): string[] => selectAdjudicationDecisions(offered).map(({ definition }) => definition.key);
 const assessmentChanges: OperatorDecisionDefinition = { key: "request_assessment_changes", label: "Request assessment changes", payload_schema: "{feedback: text}", adjudication: null, assessment: "assessment",
@@ -25,7 +25,7 @@ const expansionReview: ParkedGate = { ...gate, gate_step: "expansion_review", of
   decision_definitions: [definition("send_to_expander"), assessmentChanges, definition("accept")] };
 const recorded = { id: "d1", review: "assessment_review", decision: "accept", effect: "approve", target_revision_id: "assessment-rev", payload: {}, created_at: "2026-11-18T00:00:00Z" } as OperatorRevisionDecision;
 /** Every builder action dropped, so accepting delivers nothing the builder would miss. */
-const decided = CURRENT_ASSESSMENT.next_actions.filter(action => action.audience === "rework")
+const decided = CURRENT_ASSESSMENT.next_actions
   .reduce((state, action) => setDisposition(state, action.id, { kind: "reject", reason: "" }), initialAdjudication(CURRENT_ASSESSMENT));
 
 describe("adjudication gate", () => {
@@ -33,7 +33,7 @@ describe("adjudication gate", () => {
     expect(selectAdjudicationGate({ gate, revisionId: "assessment-rev", decisions: [], hasSubmitted: false }).isOpen).toBe(true);
   });
   it("is closed on a stale revision the gate no longer targets", () => {
-    expect(selectAdjudicationGate({ gate, revisionId: "older-rev", decisions: [], hasSubmitted: false }).isOpen).toBe(false);
+    expect(selectAdjudicationGate({ gate, revisionId: "plan-rev", decisions: [], hasSubmitted: false }).isOpen).toBe(false);
   });
   it("is closed and recorded once the revision has a decision", () => {
     const state = selectAdjudicationGate({ gate, revisionId: "assessment-rev", decisions: [recorded], hasSubmitted: false });
@@ -54,9 +54,6 @@ describe("adjudication gate", () => {
   it("offers nothing the gate does not declare", () => {
     expect(keys({ ...gate, decision_definitions: [definition("request_build_changes")] })).toEqual(["request_build_changes"]);
   });
-  it("finds the plain request for assessment changes beside the adjudicated send-back", () => {
-    expect(selectAssessmentChangeDecision(expansionReview)?.key).toBe("request_assessment_changes");
-  });
   it("an available decision submits on the gate's revision", () => {
     const decision = selectAdjudicationDecision(gate, accept);
     expect(decision.kind === "available" && [decision.definition.key, decision.revision_id]).toEqual(["accept", "assessment-rev"]);
@@ -66,10 +63,10 @@ describe("adjudication gate", () => {
     expect(selectAdjudicationBlockReason(decided, guarded, declared(definition("accept", { is_available: false, disabled_reason: "Resolve findings first" })))).toBe("Resolve findings first");
   });
   it("a gate without an open revision cannot take a decision", () => {
-    expect(selectAdjudicationBlockReason(decided, { ...gate, artifact_revision_id: null }, accept)).toBe(NO_REVIEW_REASON);
+    expect(selectAdjudicationBlockReason(decided, { ...gate, assessment_revision_id: null }, accept)).toBe(NO_REVIEW_REASON);
   });
-  it("a kept builder action blocks accepting before the decision's guard", () => {
-    expect(selectAdjudicationBlockReason(initialAdjudication(CURRENT_ASSESSMENT), gate, accept)).toBe(KEPT_BUILDER_ACTIONS_REASON);
+  it("an undecided action blocks accepting before the decision's guard", () => {
+    expect(selectAdjudicationBlockReason(initialAdjudication(CURRENT_ASSESSMENT), gate, accept)).toBe("Keep, edit or drop every action.");
   });
   it("an adjudication with no builder action left on an available decision is sendable", () => {
     expect(selectAdjudicationBlockReason(decided, gate, accept)).toBeNull();

@@ -9,7 +9,7 @@ import { AddAdjudicationAction } from "./AddAdjudicationAction";
 
 interface Props { assessment: CurrentAssessment; adjudication: AssessmentAdjudication }
 
-const AUDIENCE_TITLE = { rework: "Builder", operator: "Operator" } as const;
+const AUDIENCE_TITLE = { rework: "Rework actions", operator: "Operator actions" } as const;
 
 /** The assessor's actions with the operator's Keep / Edit / Drop, recorded dispositions inline once decided. */
 export function AssessmentActionsPanel({ assessment, adjudication }: Props) {
@@ -19,7 +19,7 @@ export function AssessmentActionsPanel({ assessment, adjudication }: Props) {
   const preview = selectReworkPreview(adjudication.state);
   return <ArtifactSection title="Next actions" testId="or-assessment-handoff">
     {(["rework", "operator"] as const).map(audience => ({ audience, rows: selectAudienceRows(rowsInput, audience) })).map(({ audience, rows }) =>
-      <section key={audience} aria-label={`${AUDIENCE_TITLE[audience].toLowerCase()} actions`} className="flex flex-col gap-2">
+      <section key={audience} aria-label={AUDIENCE_TITLE[audience].toLowerCase()} className="flex flex-col gap-2">
         <h3>{AUDIENCE_TITLE[audience]} ({rows.count})</h3>
         <ul className="m-0 flex list-none flex-col gap-2 p-0">
           {rows.proposed.map(({ action, recorded: entry }) => <AdjudicationAction key={action.id} action={action} disabled={disabled} recorded={entry}
@@ -35,8 +35,8 @@ export function AssessmentActionsPanel({ assessment, adjudication }: Props) {
       </section>)}
     {!adjudication.isRecorded && <AddAdjudicationAction sources={selectAdjudicationSources(assessment)} disabled={disabled} onAdd={adjudication.add} />}
     {!adjudication.isRecorded && <details>
-      <summary className="cursor-pointer text-sm">What the builder will receive</summary>
-      <pre className="whitespace-pre-wrap rounded-md border border-[var(--border-decorative)] p-3" data-testid="or-assessment-handoff-preview">{preview || "Nothing: no builder action is kept."}</pre>
+      <summary className="cursor-pointer text-sm">What the reworking worker will receive</summary>
+      <pre className="whitespace-pre-wrap rounded-md border border-[var(--border-decorative)] p-3" data-testid="or-assessment-handoff-preview">{preview || "Nothing: no rework action is kept."}</pre>
     </details>}
   </ArtifactSection>;
 }

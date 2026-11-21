@@ -11,7 +11,7 @@ describe("removeAddedAction", () => {
   it("takes back an added builder action, so accept is sendable again", () => {
     const added = addAction(dropAll(), { audience: "rework", source, text: "Mistake." });
     const removed = removeAddedAction(added, added.added_actions[0]?.action_id ?? "");
-    expect([selectSendability(added, "approve").kind, selectSendability(removed, "approve").kind]).toEqual(["blocked", "sendable"]);
+    expect([selectSendability(added, "accept").kind, selectSendability(removed, "accept").kind]).toEqual(["blocked", "sendable"]);
   });
 });
 

@@ -100,6 +100,7 @@ export interface ParkedGate {
   unit_id: string;
   repository_key?: RepositoryKey | null;
   artifact_revision_id: string | null;
+  assessment_revision_id?: string | null;
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
   /** Full server offer, including decisions hidden from the generic resume buttons. */

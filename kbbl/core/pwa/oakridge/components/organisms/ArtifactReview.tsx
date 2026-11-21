@@ -1,3 +1,4 @@
+import { selectArtifactPageGates } from "../../lib/artifact-page-gates";
 import { ReceivedContextPanel } from "../molecules/ReceivedContextPanel";
 import { EditableBriefText } from "./EditableBriefText";
 import { ReviewItemResolution } from "./ReviewItemResolution";
@@ -73,7 +74,7 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
   const gatesQuery = useRunGates(query.data?.run_id ?? "", Boolean(query.data?.run_id));
   const gates = Array.isArray(gatesQuery.data) ? gatesQuery.data : [];
   const revisionIds = new Set(revisions.map((candidate) => candidate.id));
-  const artifactGate = gates.find((gate) => gate.artifact_revision_id !== null && revisionIds.has(gate.artifact_revision_id));
+  const { artifactGate, adjudicationGate } = selectArtifactPageGates({ gates, revision_ids: revisionIds });
 
   useEffect(() => {
     setSelectedRevIdx(null);
@@ -218,7 +219,7 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
                 })),
                 onSubmitBody: (_previousBody, nextBody) => settleEdit(bodyEdit.mutateAsync(nextBody)),
               } : undefined}
-              gate={artifactGate && revIdx === revisions.length - 1 ? artifactGate : undefined}
+              gate={revIdx === revisions.length - 1 ? adjudicationGate ?? artifactGate ?? undefined : undefined}
               onOpenItem={onOpenItem}
               onOpenTask={onOpenTask}
               itemGrading={grading}
