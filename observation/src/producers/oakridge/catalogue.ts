@@ -47,7 +47,7 @@ export interface AdditionalFinding {
 export type ActionSource = { readonly kind: "item_assessment"; readonly id: string }
   | { readonly kind: "additional_finding"; readonly id: string };
 export interface NextAction {
-  readonly id: string; readonly audience: "builder" | "operator"; readonly source: ActionSource; readonly text: string;
+  readonly id: string; readonly audience: "rework" | "operator"; readonly source: ActionSource; readonly text: string;
 }
 export interface Blocker { readonly text: string; readonly suggested_choices?: readonly string[] }
 

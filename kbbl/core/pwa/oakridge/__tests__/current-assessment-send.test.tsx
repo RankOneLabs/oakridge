@@ -45,14 +45,14 @@ it.each([
   const preview = screen.getByTestId("or-assessment-handoff-preview").textContent;
   fireEvent.click(within(screen.getByRole("region", { name: "Assessment decision" })).getByRole("button", { name: `${button} (1)` }));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0]).toMatchObject({ decision, target, expected_assessment_revision_id: "assessment:1", payload: { builder_feedback: preview,
+  expect(posts[0]).toMatchObject({ decision, target, expected_assessment_revision_id: "assessment:1", payload: { rework_feedback: preview,
     entries: [{ original_text: CURRENT_ASSESSMENT.next_actions[0].text, final_text: "Investigate and add regression coverage.", disposition: "modified" }, { disposition: "accepted", audience: "operator" }] } });
   client.clear();
 });
 
 it("study's expansion review posts a plain request for assessment changes", async () => {
   const cohort = currentAdjudicationUnit();
-  const assessmentChanges = { key: "request_assessment_changes", label: "Request assessment changes", payload_schema: "{feedback: text}",
+  const assessmentChanges = { key: "request_assessment_changes", label: "Request assessment changes", payload_schema: "{feedback: text}", adjudication: null, assessment: "assessment",
     fields: [{ key: "feedback", label: "What must the assessment change?" }],
     submit: { kind: "review" as const, review: "expansion_review", decision: "request_assessment_changes", effect: "request_changes" as const, target_revision_id: "assessment:1" } };
   const unit = { ...cohort, stage: "expansion", decisions: [...cohort.decisions.map(definition => {

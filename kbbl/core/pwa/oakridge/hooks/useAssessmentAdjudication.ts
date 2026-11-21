@@ -3,7 +3,7 @@ import { randomUuid } from "../../lib/random-uuid";
 import type { ParkedGate } from "../artifact-types";
 import { decisionAction } from "../adapters/core";
 import type { CurrentAssessment } from "../lib/current-assessment";
-import { addAction, initialAdjudication, removeAddedAction, selectAdjudicationDecision, selectAdjudicationGate, selectAdjudicationPayload, selectBuilderPreview, setDisposition,
+import { addAction, initialAdjudication, removeAddedAction, selectAdjudicationDecision, selectAdjudicationGate, selectAdjudicationPayload, selectReworkPreview, setDisposition,
   type AddedActionInput, type AdjudicationGateState, type AdjudicationState, type DispositionChoice, type ReviewDecisionDefinition } from "../lib/assessment-adjudication";
 import type { OperatorDecisionDefinition, OperatorRevisionDecision } from "../operator-contracts/projections/unit-view";
 import { useResumeGate } from "./useResumeGate";
@@ -40,7 +40,7 @@ export function useAssessmentAdjudication({ assessment, revisionId, gate, decisi
     const key = keys.current.get(identity) ?? randomUuid();
     keys.current.set(identity, key);
     mutation.mutate({ idempotency_key: key, artifact_revision_id: decision.revision_id, action: decisionAction(decision.definition, gate.decision_definitions ?? []),
-      feedback: selectBuilderPreview(state), adjudication: payload.value }, recorded);
+      feedback: selectReworkPreview(state), adjudication: payload.value }, recorded);
   }
   function requestAssessmentChanges(definition: OperatorDecisionDefinition, feedback: string): void {
     if (!gate?.artifact_revision_id || isClosed || !feedback.trim()) return;

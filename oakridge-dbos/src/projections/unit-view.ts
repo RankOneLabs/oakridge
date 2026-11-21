@@ -6,7 +6,7 @@ import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-
 import type { BlockerAuthor, BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
 import type { ReviewHistoryEngineInputs } from "../effects/session-prompt";
 import type { PinnedPrompt } from "../domain/effect-instruction";
-import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
+import type { AdjudicationRole, AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
 import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { RevisionRef, RunRead, RunSummaryRead, UnitSummaryRecord } from "../storage/read-store";
@@ -95,6 +95,8 @@ export interface DecisionDefinition {
   readonly key: string;
   readonly label: string;
   readonly payload_schema: string;
+  readonly adjudication: AdjudicationRole | null;
+  readonly assessment: string | null;
   /** Labels for the payload's text fields. */
   readonly fields: readonly DecisionField[];
   readonly submit: DecisionSubmit;
@@ -238,21 +240,23 @@ function reviewDecisions(stage: ParsedStage, attention: UnitAttention): readonly
   return attention.awaiting.flatMap((awaiting) => {
     const review: ParsedReview | undefined = stage.reviews?.[awaiting.review];
     if (!review) return [];
+    const assessment = Object.values(review.decisions).some(decision => decision.adjudication != null) ? review.assessment ?? null : null;
     return Object.entries(review.decisions).sort(([left], [right]) => left.localeCompare(right)).flatMap(([key, decision]) => {
       // The core names each decision's target; a decision it does not list is not legal now.
       const resolved = awaiting.decisions.find((resolved) => resolved.decision === key);
       const target = resolved?.target;
       if (target === undefined) return [];
       return [{ is_available: resolved?.is_available ?? true, disabled_reason: resolved?.disabled_reason ?? null, key: decisionKey(stage, awaiting.review, key), label: decision.label, payload_schema: schemaKey(selectDecisionPayloadType(decision)),
+        adjudication: decision.adjudication ?? null, assessment,
         fields: Object.entries(decision.fields ?? {}).map(([field, label]) => ({ key: field, label })),
         submit: { kind: "review", review: awaiting.review, decision: key, effect: decision.effect, target_revision_id: target } }];
     });
   });
 }
 const retryDecisions = (attention: UnitAttention): readonly DecisionDefinition[] => attention.stalled.map((stalled) => ({
-  is_available: true, disabled_reason: null, key: `retry:${stalled.worker}`, label: `Retry ${titleCase(stalled.worker)}`, payload_schema: schemaKey(EMPTY_PAYLOAD), fields: [],
+  is_available: true, disabled_reason: null, key: `retry:${stalled.worker}`, label: `Retry ${titleCase(stalled.worker)}`, payload_schema: schemaKey(EMPTY_PAYLOAD), adjudication: null, assessment: null, fields: [],
   submit: { kind: "retry", worker: stalled.worker } }));
-const CANCEL: DecisionDefinition = { is_available: true, disabled_reason: null, key: "cancel", label: "Cancel run", payload_schema: schemaKey(EMPTY_PAYLOAD), fields: [], submit: { kind: "cancel" } };
+const CANCEL: DecisionDefinition = { is_available: true, disabled_reason: null, key: "cancel", label: "Cancel run", payload_schema: schemaKey(EMPTY_PAYLOAD), adjudication: null, assessment: null, fields: [], submit: { kind: "cancel" } };
 
 /** What the operator may decide on a unit now: its awaiting reviews' decisions, a retry per stalled worker, and cancel on a live run's root. */
 export function selectAvailableDecisions(read: RunSummaryRead, unit: UnitSummaryRecord, attention: UnitAttention): readonly DecisionDefinition[] {

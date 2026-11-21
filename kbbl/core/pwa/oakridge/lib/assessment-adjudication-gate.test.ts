@@ -5,7 +5,7 @@ import type { OperatorDecisionDefinition, OperatorRevisionDecision } from "../op
 import { initialAdjudication, KEPT_BUILDER_ACTIONS_REASON, NO_REVIEW_REASON, selectAdjudicationBlockReason, selectAdjudicationDecision, selectAdjudicationDecisions, selectAdjudicationGate, selectAssessmentChangeDecision, setDisposition, type ReviewDecisionDefinition } from "./assessment-adjudication";
 
 const definition = (decision: string, availability: Partial<OperatorDecisionDefinition> = {}): OperatorDecisionDefinition => ({
-  key: decision, label: decision, payload_schema: "adjudication", fields: [],
+  key: decision, label: decision, payload_schema: "adjudication", adjudication: decision === "accept" ? "accept" as const : "feedback" as const, assessment: "assessment", fields: [],
   submit: { kind: "review", review: "assessment_review", decision, effect: decision === "accept" ? "approve" : "request_changes", target_revision_id: "assessment-rev" }, ...availability,
 });
 const gate: ParkedGate = {
@@ -18,14 +18,14 @@ const declared = (decision: OperatorDecisionDefinition): ReviewDecisionDefinitio
   ({ definition: decision, effect: decision.submit.kind === "review" ? decision.submit.effect : "approve" });
 const accept = declared(definition("accept"));
 const keys = (offered: ParkedGate): string[] => selectAdjudicationDecisions(offered).map(({ definition }) => definition.key);
-const assessmentChanges: OperatorDecisionDefinition = { key: "request_assessment_changes", label: "Request assessment changes", payload_schema: "{feedback: text}",
+const assessmentChanges: OperatorDecisionDefinition = { key: "request_assessment_changes", label: "Request assessment changes", payload_schema: "{feedback: text}", adjudication: null, assessment: "assessment",
   fields: [{ key: "feedback", label: "What must the assessment change?" }],
   submit: { kind: "review", review: "expansion_review", decision: "request_assessment_changes", effect: "request_changes", target_revision_id: "assessment-rev" } };
 const expansionReview: ParkedGate = { ...gate, gate_step: "expansion_review", offered_decisions: ["send_to_expander", "request_assessment_changes", "accept"],
   decision_definitions: [definition("send_to_expander"), assessmentChanges, definition("accept")] };
 const recorded = { id: "d1", review: "assessment_review", decision: "accept", effect: "approve", target_revision_id: "assessment-rev", payload: {}, created_at: "2026-11-18T00:00:00Z" } as OperatorRevisionDecision;
 /** Every builder action dropped, so accepting delivers nothing the builder would miss. */
-const decided = CURRENT_ASSESSMENT.next_actions.filter(action => action.audience === "builder")
+const decided = CURRENT_ASSESSMENT.next_actions.filter(action => action.audience === "rework")
   .reduce((state, action) => setDisposition(state, action.id, { kind: "reject", reason: "" }), initialAdjudication(CURRENT_ASSESSMENT));
 
 describe("adjudication gate", () => {

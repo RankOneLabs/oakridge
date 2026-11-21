@@ -19,6 +19,8 @@ export type OperatorWriter = { readonly "attempt": string; readonly "kind": "ses
 
 export type OperatorWorkerResult = { readonly "kind": "succeeded" } | { readonly "code": string; readonly "detail": string; readonly "kind": "failed" };
 
+export type OperatorAdjudicationRole = "accept" | "feedback";
+
 export type OperatorTypeExpression = string | { readonly [key: string]: OperatorTypeExpression };
 
 export type OperatorGroup = { readonly "outcome": { readonly [key: string]: string }; readonly "pools"?: { readonly [key: string]: number }; readonly "units": { readonly [key: string]: OperatorUnit } };
@@ -48,8 +50,6 @@ export type OperatorAttemptStatus = { readonly "kind": "pending" } | { readonly 
 export type OperatorUnit = { readonly "after"?: OperatorUnitDependencies; readonly "for_each"?: string | null; readonly "group"?: OperatorGroup | null; readonly "input"?: { readonly [key: string]: string }; readonly "key"?: string | null; readonly "order"?: string | null; readonly "pool"?: string | null; readonly "stage"?: string | null };
 
 export type OperatorArtifact = { readonly "edit_policy"?: OperatorEditPolicy; readonly "kind": OperatorArtifactKind; readonly "schema": OperatorTypeExpression; readonly "validate"?: (OperatorValidationCheck)[] };
-
-export type OperatorAdjudicationRole = "accept" | "feedback";
 
 export type OperatorDecisionGuard = { readonly "check": string; readonly "reason": string };
 

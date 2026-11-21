@@ -82,7 +82,7 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
 
 const feedbackOf = (payload: OperatorBodyValue): string | null => {
   if (typeof payload !== "object" || payload === null) return null;
-  const feedback = "builder_feedback" in payload ? payload.builder_feedback : "feedback" in payload ? payload.feedback : null;
+  const feedback = "rework_feedback" in payload ? payload.rework_feedback : "feedback" in payload ? payload.feedback : null;
   return typeof feedback === "string" && feedback.trim() ? feedback : null;
 };
 /** Changes requested on a revision that is still its artifact's latest: sent, and not yet answered by a new revision. */

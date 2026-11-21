@@ -15,12 +15,12 @@ vi.mock("../hooks/useResumeGate", () => ({ useResumeGate: () => ({ mutate, isPen
 vi.mock("../hooks/useCohortArtifact", () => ({ useCohortArtifact: () => ({ kind: "missing" }) }));
 vi.mock("../hooks/useAssessmentHistory", () => ({ useAssessmentHistory: () => ({ data: [], isError: false, error: null }) }));
 afterEach(() => { cleanup(); mutate.mockReset(); });
-const assessmentChanges = { key: "request_assessment_changes", label: "Request assessment changes", payload_schema: "{feedback: text}",
+const assessmentChanges = { key: "request_assessment_changes", label: "Request assessment changes", payload_schema: "{feedback: text}", adjudication: null, assessment: "assessment",
   fields: [{ key: "feedback", label: "What must the assessment change?" }],
   submit: { kind: "review" as const, review: "assessment_review", decision: "request_assessment_changes", effect: "request_changes" as const, target_revision_id: "assessment:1" } };
 const gate: ParkedGate = { id: "gate", run_id: "run", unit_id: "unit", stage_name: "assessment", gate_type: "artifact_approval", gate_step: "assessment_review", artifact_revision_id: "assessment:1", worktree: null,
   resume_actions: ["approve"], offered_decisions: ["accept", "request_build_changes", "request_assessment_changes"], run_state: "active", actionable: true,
-  decision_definitions: [...["accept", "request_build_changes"].map(decision => ({ key: decision, label: decision === "accept" ? "Accept" : "Send to builder", fields: [], payload_schema: "adjudication",
+  decision_definitions: [...["accept", "request_build_changes"].map(decision => ({ key: decision, label: decision === "accept" ? "Accept" : "Send to builder", fields: [], payload_schema: "adjudication", adjudication: decision === "accept" ? "accept" as const : "feedback" as const, assessment: "assessment",
     submit: { kind: "review" as const, review: "assessment_review", decision, target_revision_id: "assessment:1", effect: decision === "accept" ? "approve" as const : "request_changes" as const } })), assessmentChanges] };
 const bar = () => within(screen.getByRole("region", { name: "Assessment decision" }));
 const builderActions = () => within(screen.getByRole("region", { name: "builder actions" }));
@@ -31,7 +31,7 @@ it("sends the kept builder action back without any per-action click", () => {
   harness();
   fireEvent.click(bar().getByRole("button", { name: "Send to builder (1)" }));
   const request = mutate.mock.calls[0]?.[0] as GateResumeRequest;
-  expect(request.adjudication?.builder_feedback).toBe(screen.getByTestId("or-assessment-handoff-preview").textContent);
+  expect(request.adjudication?.rework_feedback).toBe(screen.getByTestId("or-assessment-handoff-preview").textContent);
 });
 it("accept stays blocked while a builder action is kept, and says why", () => {
   harness();
