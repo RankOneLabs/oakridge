@@ -458,6 +458,67 @@ fn assessor_review_history_spans_rounds_and_preserves_full_payloads() {
 }
 
 #[test]
+fn adjudicating_review_keeps_plain_feedback_and_forwards_the_declared_field() {
+    let mut source = source();
+    let decisions = &mut source
+        .stages
+        .get_mut("document")
+        .unwrap()
+        .reviews
+        .get_mut("assessment_review")
+        .unwrap()
+        .decisions;
+    decisions.insert(
+        "accept".into(),
+        serde_json::from_value(json!({
+            "effect": "approve", "label": "Accept", "adjudication": "accept",
+            "payload": {"entries": "list(text)"}
+        }))
+        .unwrap(),
+    );
+    decisions
+        .get_mut("request_build_changes")
+        .unwrap()
+        .adjudication = Some(AdjudicationRole::Feedback);
+
+    let mut run = Run::with_source(source);
+    run.publish(
+        "writer",
+        "draft",
+        json!({"findings":["blocking"],"text":"A"}),
+    );
+    run.end("writer");
+    run.publish("assessor", "assessment", json!("First"));
+    run.end("assessor");
+
+    let plain_payload = json!({"feedback":"Explain the finding in more detail"});
+    run.decide(
+        "assessment_review",
+        "request_assessment_changes",
+        "assessment",
+        plain_payload.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        run.result.snapshot.decisions.last().unwrap().payload(),
+        plain_payload
+    );
+
+    run.publish("assessor", "assessment", json!("Second"));
+    run.end("assessor");
+    run.decide(
+        "assessment_review",
+        "request_build_changes",
+        "draft",
+        json!({"entries":["disposition"],"builder_feedback":"Fix build"}),
+    )
+    .unwrap();
+    let feedback = &run.wanted("writer").resolved.feedback;
+    assert_eq!(feedback.len(), 1);
+    assert_eq!(feedback[0].payload, json!({"feedback":"Fix build"}));
+}
+
+#[test]
 fn integrator_review_mode_receives_integration_decisions_across_rounds() {
     let mut source = source();
     let stage = source.stages.get_mut("document").unwrap();
