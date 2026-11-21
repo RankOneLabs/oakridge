@@ -84,7 +84,7 @@ export function resolveRequestedModel(
   request: ModelRequest,
 ): Result<ResolvedOption | null, AcpError> {
   if (request.requested_model === null) return ok(null);
-  const byName = matchAppliedModelName(options, request.requested_model, request.applied_model_name);
+  const byName = matchAppliedModelName(options, request);
   if (byName !== null) return ok(byName);
   const resolved = resolveRequestedOption(options, "model", request.requested_model);
   if (resolved.ok || request.applied_model_name === null) return resolved;
@@ -98,9 +98,9 @@ export function resolveRequestedModel(
 /** The one model option whose name equals the recorded name, or null. */
 function matchAppliedModelName(
   options: readonly schema.SessionConfigOption[],
-  requested_model: string,
-  applied_model_name: string | null,
+  request: ModelRequest,
 ): ResolvedOption | null {
+  const { requested_model, applied_model_name } = request;
   if (applied_model_name === null) return null;
   const selector = findSelector(options, "model");
   if (selector === null) return null;

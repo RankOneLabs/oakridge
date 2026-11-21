@@ -25,6 +25,9 @@
 //                           as `fake-large-2` under the same name, like a
 //                           reloaded Claude session offering
 //                           `claude-fable-5-2` in place of `fable`.
+//     "efforts_follow_model" → happy, but the `max` effort is only offered
+//                           once `fake-large` is the selected model, like
+//                           agents whose efforts depend on the model.
 //
 //   FAKE_ACP_STATE_DIR=  transcript dir (required for load replay across
 //                        process restarts). Defaults to a tmp subdir.
@@ -134,13 +137,21 @@ const loadedSessions = new Set<string>();
 /** The config options a session sees now, with its current values. */
 function sessionConfigOptions(sessionId: string): schema.SessionConfigOption[] {
   const renamed = behavior === "load_renames_models" && loadedSessions.has(sessionId);
+  const offersMax = behavior === "efforts_follow_model" && configState.get(sessionId)?.get("model") === "fake-large";
   return CONFIG_OPTIONS.map((option) => {
-    const offered = renamed ? renameReloadedModel(option) : option;
+    const renamedOption = renamed ? renameReloadedModel(option) : option;
+    const offered = offersMax ? offerMaxEffort(renamedOption) : renamedOption;
     const current = configState.get(sessionId)?.get(option.id);
     return current === undefined
       ? offered
       : ({ ...offered, currentValue: current } as schema.SessionConfigOption);
   });
+}
+
+/** The effort selector with `max` added. */
+function offerMaxEffort(option: schema.SessionConfigOption): schema.SessionConfigOption {
+  if (option.type !== "select" || option.id !== "effort") return option;
+  return { ...option, options: [...option.options, { value: "max", name: "Max" }] } as schema.SessionConfigOption;
 }
 
 /** The model selector a reloaded session sees: `fake-large` under a new id, same name. */

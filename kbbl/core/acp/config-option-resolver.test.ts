@@ -1,6 +1,6 @@
 import type * as schema from "@agentclientprotocol/sdk";
 import { expect, test } from "bun:test";
-import { resolveRequestedModel } from "./config-option-resolver";
+import { resolveRequestedModel } from "#kbbl/core/acp/config-option-resolver";
 
 // Model options captured 2026-11-21 from claude-agent-acp 0.76.0 driving the
 // installed CLI 2.1.330. A new session offers the `fable` alias; the same

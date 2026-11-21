@@ -152,31 +152,34 @@ export class AcpControllerProcess {
   ): Promise<Result<void, AcpError>> {
     const model = resolveRequestedModel(this.configOptions, requested);
     if (!model.ok) return model;
-    const effort = resolveRequestedOption(this.configOptions, "thought_level", requested.requested_effort);
-    if (!effort.ok) return effort;
-    const resolutions: Array<[string, string | null, ResolvedOption | null]> = [
-      ["model", requested.requested_model, model.value],
-      ["thought_level", requested.requested_effort, effort.value],
-    ];
-    for (const [category, value, resolved] of resolutions) {
-      if (resolved === null) continue;
-      // Any match that is not exact changed what will run, and nothing else
-      // can tell the operator: the picker showed one id and the session got
-      // another.
-      const substitution = describeSubstitution(resolved.match);
-      if (substitution !== null) {
-        console.log(`[acp] sid=${this.deps.sid} ${category} requested=${value} resolved=${resolved.valueId} ${substitution}`);
-      }
-      const applied = await this.setConfigOption(
-        resolved.configId,
-        resolved.valueId,
-      );
-      if (!applied.ok) return applied;
-    }
+    const appliedModel = await this.applyResolvedOption("model", requested.requested_model, model.value);
+    if (!appliedModel.ok) return appliedModel;
     // The name is what a reload can find this model by again: the agent may
     // advertise it under a different id then.
     if (model.value !== null) this.deps.store.setAppliedModelName(this.deps.sid, model.value.valueName);
+    // Resolved only now: applying the model replaces configOptions, and the
+    // efforts on offer can change with the model.
+    const effort = resolveRequestedOption(this.configOptions, "thought_level", requested.requested_effort);
+    if (!effort.ok) return effort;
+    const appliedEffort = await this.applyResolvedOption("thought_level", requested.requested_effort, effort.value);
+    if (!appliedEffort.ok) return appliedEffort;
     return this.applyRequestedMode(requested.requested_mode);
+  }
+
+  private async applyResolvedOption(
+    category: "model" | "thought_level",
+    requested: string | null,
+    resolved: ResolvedOption | null,
+  ): Promise<Result<void, AcpError>> {
+    if (resolved === null) return ok(undefined);
+    // Any match that is not exact changed what will run, and nothing else
+    // can tell the operator: the picker showed one id and the session got
+    // another.
+    const substitution = describeSubstitution(resolved.match);
+    if (substitution !== null) {
+      console.log(`[acp] sid=${this.deps.sid} ${category} requested=${requested} resolved=${resolved.valueId} ${substitution}`);
+    }
+    return this.setConfigOption(resolved.configId, resolved.valueId);
   }
 
   private async applyRequestedMode(
