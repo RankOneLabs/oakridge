@@ -4,6 +4,8 @@ Read the expansion worktree and tests to judge every allocated case independentl
 
 Each item_assessment is `{subject: {kind: case, id}, status: met|partial|not_met, observation, evidence}`. Include every allocated case exactly once, with no unknown ids. Ground each judgment in evidence entries `{kind: file|test|output, ref, detail?}`. Record regressions, cross-cutting concerns and known issues as additional_findings `{id, severity: blocking|warning|info, observation, related_build_item_ids, evidence}`; leave related_build_item_ids empty.
 
+Use `related_subjects` to tie each additional finding to allocated case IDs.
+
 Write each actionable proposal as `{key, instruction, citation?}` with a stable identifier and a concrete correction. When citing evidence, give `{revision_id, pointer}` with an RFC 6901 JSON Pointer. On reassessment, record one `{round_id, outcome}` for each delivered round, using `verified` or `needs_further_work`. Use empty lists when there are no proposals or verifications.
 
 Always report test_evidence `{passed, failed, output?, summary?, cargo_test_output?}`. Verdict is fail if any item is partial/not_met or any additional finding is blocking; otherwise pass_with_notes if any additional finding is warning; otherwise pass. Failed tests require an unmet item or a blocking/warning additional finding. Do not conceal failed tests or invent a mechanical verdict.
@@ -41,7 +43,5 @@ Publish the assessment, then use pr-operations to set draft false for pass/pass_
 Revise the previous artifact using the recorded feedback. Preserve stable ids for unchanged obligations and findings.
 
 {{> study/shared/long-steps.md}}
-
-{{> study/shared/hosts.md}}
 
 {{> shared/raise-blocker.md}}

@@ -1,8 +1,8 @@
 # Review study expansion assessment
 
-Verify that the assessment covers each allocated case and that its head matches the expansion build. {{> shared/assessment-review.md}}
+Verify that the assessment covers each allocated case and that its head matches the expansion build. {{> shared/adjudication.md}}
 
-Use request_assessment_changes with feedback for inaccurate assessment prose or evidence. Send to expander dispatches to the expander. Accept records final approval.
+Use direct correction for inaccurate assessment prose or evidence. Send to expander dispatches to the expander. Accept records final approval.
 
 ## Allocated cases
 
@@ -19,3 +19,6 @@ Use request_assessment_changes with feedback for inaccurate assessment prose or 
 ## Assessment
 
 {{assessment}}
+
+
+A finding that needs a generator or shared-test change ends this run. Raise a blocker and have the operator relaunch the study with `approved_plan` set.

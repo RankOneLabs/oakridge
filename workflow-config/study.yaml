@@ -1,62 +1,10 @@
-# Study workflow. Prepare, the pr_watch/pr_closed templates and integration's PR
-# machinery are copied from development.yaml and guarded by study-shared.test.ts
-# (b_equality_test).
 workflow: study
+include: [shared/workflow-common.yaml]
 input:
-  title: text
-  spec: text
-  repositories: list(repository)
-  primary_repository_key: ident
-  final_merge_policy: final_merge_policy
   slice_case_limit: integer
   slice_cap_cents: integer
   approved_plan: optional(plan_body)
 schemas:
-  final_merge_policy: enum(require_merge, allow_close_without_merge)
-  repository:
-    key: ident
-    preparation:
-      repository_path: repo_path
-      expected_head: optional(text)
-    forge: forge
-  forge:
-    owner: ident
-    name: ident
-    build_base: text
-    final_base: text
-  workspace:
-    repository_path: repo_path
-    push_remote_owner: ident
-    head: ident
-    base_branch: text
-  prepared:
-    key: ident
-    workspace: workspace
-  pr_status:
-    state: enum(open, merged, closed_unmerged)
-    number: integer
-    url: text
-    head_sha: optional(text)
-    merged_at: optional(text)
-  severity: enum(blocking, warning, info)
-  issue:
-    description: text
-    severity: severity
-  evidence_ref:
-    kind: enum(file, test, output)
-    ref: text
-    detail: optional(text)
-  test_evidence:
-    passed: integer
-    failed: integer
-    output: optional(text)
-    summary: optional(text)
-    cargo_test_output: optional(text)
-  pr_body:
-    pr_url: text
-    branch: text
-    summary: text
-    review_status: optional(enum(draft, ready, changes_requested, approved, merged, closed))
   cost_basis: enum(measured, assumption)
   expected_cost:
     cents: integer
@@ -103,6 +51,7 @@ schemas:
     models: list(plan_model)
     slice: plan_slice
     slice_paid: slice_paid_plan
+    full_study_repeats: integer
     iteration_triggers: list(plan_item)
   build_summary:
     cohort_id: ident
@@ -121,11 +70,15 @@ schemas:
     omissions_isolated: boolean
     controls_replayed: boolean
     detail: text
+  digest_recipe:
+    files: list(text)
+    command: text
   slice_build_body:
     build: build_summary
     generator_digest: text
     case_ids: list(ident)
     qualifications: list(case_qualification)
+    digest_recipe: digest_recipe
   spend_request_body:
     cohort_file: text
     attempt_count: integer
@@ -140,40 +93,31 @@ schemas:
     spend_cents: integer
     launch_command: text
     store_path: text
-  mark:
+  criterion_mark:
     id: ident
     status: enum(met, not_met)
+    evidence: text
+  trigger_mark:
+    id: ident
+    status: enum(fired, not_fired)
     evidence: text
   slice_report_body:
     run_key: text
     generator_digest: text
     qualifications: list(case_qualification)
     paid_results: list(paid_result)
-    criteria_marks: list(mark)
-    trigger_marks: list(mark)
+    criteria_marks: list(criterion_mark)
+    trigger_marks: list(trigger_mark)
     proposed_changes: list(text)
   assessment_subject:
     kind: enum(case, criterion, trigger, cohort_file)
     id: ident
-  item_assessment:
-    subject: assessment_subject
-    status: enum(met, partial, not_met)
-    observation: text
-    evidence: list(evidence_ref)
   additional_finding:
     id: ident
     severity: severity
     observation: text
-    related_build_item_ids: list(ident)
+    related_subjects: list(assessment_subject)
     evidence: list(evidence_ref)
-  assessment_body:
-    head_sha: text
-    item_assessments: list(item_assessment)
-    additional_findings: list(additional_finding)
-    proposals: list(feedback_proposal)
-    verifications: list(assignment_verification)
-    test_evidence: test_evidence
-    verdict: enum(pass, pass_with_notes, fail)
   slice_assessment_body:
     head_sha: text
     item_assessments: list(item_assessment)
@@ -190,6 +134,8 @@ schemas:
     qualifications: list(case_qualification)
   freeze_cohort:
     id: ident
+    case_ids: list(ident)
+    groups: list(ident)
     file: text
     digest: text
     attempt_count: integer
@@ -201,44 +147,9 @@ schemas:
     image_digest: text
     is_byte_identical: boolean
     cohorts: list(freeze_cohort)
-decisions:
-  accept_or_request:
-    accept:
-      effect: approve
-      label: Accept
-    request_changes:
-      effect: request_changes
-      label: Request changes
-      fields:
-        feedback: What must the proposed specification change?
-workers:
-  pr_watch:
-    kind: code
-    operation: pull_request.observe
-    when: pr_opened
-    inputs:
-      query: "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
-    every: 2m
-    produces:
-      - pr_state
-reviews:
-  pr_closed:
-    of: build_result
-    by: operator
-    when: closed_pr
-    prompt: development/pr-closed.md
-    inputs:
-      pr: latest(pr)
-      pr_state: latest(pr_state)
-    decisions:
-      replace_pr:
-        effect: request_changes
-        label: Replace the closed PR
-        fields:
-          feedback: What must change in the replacement pull request?
 run:
   pools:
-    expanders: 4
+    expanders: 2
   units:
     prepare:
       for_each: input.repositories
@@ -264,6 +175,7 @@ run:
         group_id: each.id
         case_ids: filter(each.case_ids, not contains(design.outcome.plan.slice.case_ids, item))
         generator_digest: design.outcome.generator_digest
+        digest_recipe: design.outcome.digest_recipe
         plan: design.outcome.plan
         repository: require(lookup(input.repositories, key, input.primary_repository_key))
         workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
@@ -272,6 +184,7 @@ run:
       input:
         plan: design.outcome.plan
         generator_digest: design.outcome.generator_digest
+        digest_recipe: design.outcome.digest_recipe
         slice_report: design.outcome.slice_report
         expansions: map(expansion, expansion.outcome)
         repository: require(lookup(input.repositories, key, input.primary_repository_key))
@@ -292,28 +205,6 @@ run:
     freeze: freeze.outcome.freeze
     integration: integration.outcome
 stages:
-  prepare:
-    input:
-      repository: repository
-    artifacts:
-      workspace:
-        kind: record
-        schema: workspace
-    workers:
-      git:
-        kind: code
-        operation: repository.prepare
-        inputs:
-          repository_path: input.repository.preparation.repository_path
-          expected_head: input.repository.preparation.expected_head
-          base_branch: input.repository.forge.build_base
-          integration_branch: input.repository.forge.final_base
-        produces:
-          - workspace
-    done_when: published(workspace)
-    outcome:
-      key: input.repository.key
-      workspace: latest(workspace)
   design:
     input:
       spec: text
@@ -323,9 +214,7 @@ stages:
       slice_cap_cents: integer
       approved_plan: optional(plan_body)
     let:
-      report_published: published(slice_report)
-      report_is_placeholder: published(slice_report) and len(latest(slice_report).paid_results) == 0
-      report_is_paid: published(slice_report) and len(latest(slice_report).paid_results) > 0
+      spend_matches_build: published(slice_build) and published(spend_request) and latest(spend_request).generator_digest == latest(slice_build).generator_digest and every(latest(spend_request).case_ids, contains(latest(slice_build).case_ids, item)) and every(latest(slice_build).case_ids, contains(latest(spend_request).case_ids, item))
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
       pr_opened: pr_published and latest(pr).pr_url != ""
@@ -338,6 +227,16 @@ stages:
         kind: document
         schema: plan_body
         validate:
+          - check: len(plan.outcomes) > 0
+            message: "The plan needs at least one outcome."
+          - check: len(plan.decision_rule) > 0
+            message: "The plan needs at least one decision rule."
+          - check: len(plan.slice.criteria) > 0
+            message: "The slice needs at least one criterion."
+          - check: len(plan.iteration_triggers) > 0
+            message: "The plan needs at least one iteration trigger."
+          - check: plan.full_study_repeats > 0
+            message: "The full study needs at least one repeat."
           - check: len(plan.cases) > 0 and len(plan.hypotheses) > 0
             message: "The plan needs at least one case and one hypothesis."
           - check: every(plan.slice.case_ids, contains(map(plan.cases, item.id), item))
@@ -372,6 +271,10 @@ stages:
         kind: document
         schema: slice_build_body
         validate:
+          - check: every(slice_build.qualifications, item.reference_passes and item.omissions_isolated and item.controls_replayed)
+            message: "Every slice case must pass qualification: reference passes, omissions isolated and controls replayed."
+          - check: len(slice_build.digest_recipe.files) > 0 and slice_build.digest_recipe.command != ""
+            message: "The digest recipe needs files and a hashing command."
           - check: published(plan) and every(slice_build.case_ids, contains(latest(plan).slice.case_ids, item)) and every(latest(plan).slice.case_ids, contains(slice_build.case_ids, item))
             message: "The slice build must cover exactly the plan's slice cases."
           - check: every(slice_build.case_ids, contains(map(slice_build.qualifications, item.case_id), item))
@@ -383,6 +286,7 @@ stages:
       spend_request:
         kind: document
         schema: spend_request_body
+        equivalent_subject_fields: [generator_digest, case_ids]
         validate:
           - check: published(slice_build) and spend_request.generator_digest == latest(slice_build).generator_digest
             message: "The spend request's generator digest must equal the latest slice build's."
@@ -394,9 +298,17 @@ stages:
         kind: document
         schema: slice_report_body
         validate:
+          - check: published(plan) and every(slice_report.paid_results, contains(latest(plan).slice_paid.models, item.model_id))
+            message: "Paid results may name only the plan's paid slice models."
+          - check: published(spend_request) and len(slice_report.paid_results) <= latest(spend_request).attempt_count
+            message: "A report may hold at most the approved attempt count of results."
+          - check: published(plan) and every(slice_report.criteria_marks, contains(map(latest(plan).slice.criteria, item.id), item.id))
+            message: "Criterion marks may name only plan slice criteria."
+          - check: published(plan) and every(slice_report.trigger_marks, contains(map(latest(plan).iteration_triggers, item.id), item.id))
+            message: "Trigger marks may name only plan iteration triggers."
           - check: len(slice_report.paid_results) > 0
-            message: "No paid results yet: this offline report waits for the spend request's approval."
-          - check: len(slice_report.paid_results) == 0 or approved(spend_request)
+            message: "The paid run produced no results. Revise the report from the same execution; do not request new spend."
+          - check: approved(spend_request)
             message: "Paid results need an approved spend request."
           - check: published(plan) and every(map(latest(plan).slice.criteria, item.id), contains(map(slice_report.criteria_marks, item.id), item))
             message: "Every plan slice criterion must be marked."
@@ -408,14 +320,24 @@ stages:
             message: "Paid results may name only slice cases."
           - check: published(slice_build) and slice_report.generator_digest == latest(slice_build).generator_digest
             message: "The report's generator digest must equal the latest slice build's."
-          - check: len(slice_report.paid_results) == 0 or slice_report.run_key != ""
-            message: "A paid report needs its run key (the paid run's store path)."
+          - check: slice_report.run_key != ""
+            message: "The paid report needs its run key."
       slice_assessment:
         kind: assessment
         schema: slice_assessment_body
         edit_policy:
           kind: frozen_when_accepted
         validate:
+          - check: published(slice_build) and slice_assessment.head_sha == latest(slice_build).build.head_sha
+            message: "The slice assessment's head must equal the latest slice build's."
+          - check: published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == "case"), contains(latest(plan).slice.case_ids, item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == "case"), contains(latest(plan).slice.case_ids, item.id))
+            message: "Case subjects and related subjects must resolve within the reviewed scope."
+          - check: published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == "criterion"), contains(map(latest(plan).slice.criteria, item.id), item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == "criterion"), contains(map(latest(plan).slice.criteria, item.id), item.id))
+            message: "Criterion subjects and related subjects must resolve within the reviewed scope."
+          - check: published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == "trigger"), contains(map(latest(plan).iteration_triggers, item.id), item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == "trigger"), contains(map(latest(plan).iteration_triggers, item.id), item.id))
+            message: "Trigger subjects and related subjects must resolve within the reviewed scope."
+          - check: every(slice_assessment.item_assessments, item.subject.kind != "cohort_file") and every(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind != "cohort_file")
+            message: "Slice assessments cannot link cohort_file subjects."
           - check: published(slice_report) and slice_assessment.run_key == latest(slice_report).run_key
             message: "The assessment must name the latest slice report's run key."
           - check: published(plan) and every(map(latest(plan).slice.criteria, item.id), contains(map(filter(slice_assessment.item_assessments, item.subject.kind == "criterion"), item.subject.id), item))
@@ -426,9 +348,9 @@ stages:
             message: Assessment item ids must be unique.
           - check: unique(map(slice_assessment.additional_findings, item.id))
             message: Additional finding ids must be unique.
-          - check: (slice_assessment.verdict == "fail" and (len(filter(slice_assessment.item_assessments, item.status != "met")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0)) or (slice_assessment.verdict == "pass_with_notes" and not (len(filter(slice_assessment.item_assessments, item.status != "met")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0)) or (slice_assessment.verdict == "pass" and not (len(filter(slice_assessment.item_assessments, item.status != "met")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0))
+          - check: (slice_assessment.verdict == "fail" and (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0)) or (slice_assessment.verdict == "pass_with_notes" and not (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0)) or (slice_assessment.verdict == "pass" and not (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0))
             message: Assessment verdict must match item statuses and additional finding severities.
-          - check: slice_assessment.test_evidence.failed == 0 or (len(filter(slice_assessment.item_assessments, item.status != "met")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0)
+          - check: slice_assessment.test_evidence.failed == 0 or (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0)
             message: Failed tests require an unmet item or a blocking or warning additional finding.
       pr:
         kind: external_reference
@@ -453,34 +375,55 @@ stages:
           repository_key: input.repository.key
         workspace: repository(input.workspace)
         produces: [plan]
-      # Before paid approval, publish slice_build, spend_request, then the
-      # offline slice_report (paid_results [], run_key ""), then pr, and end.
-      # R1 refuses the placeholder and queues a revision. The gate holds that
-      # revision until spend is approved or changes are requested.
-      # With approved spend and a placeholder report, publish the paid report
-      # first, then republish slice_build, spend_request and pr unchanged.
-      # The paid report keeps the spend review closed after republication.
       slice_builder:
         kind: agent
         prompts:
           initial: study/slice-build.md
           revise: study/slice-build-revise.md
-        when: approved(plan) and not (report_is_placeholder and not approved(spend_request) and not changes_requested(spend_request))
+        when: approved(plan)
         inputs:
           plan: latest(plan)
           spec: input.spec
           repository: input.repository
           build_base: input.repository.forge.build_base
-          spend_approved: approved(spend_request)
-          report_is_placeholder: report_is_placeholder
+          repository_name: input.repository.forge.name
         workspace: repository(input.workspace)
-        produces: [slice_build, spend_request, slice_report, pr]
+        produces: [slice_build, pr]
+      spend_requester:
+        kind: agent
+        prompts:
+          initial: study/spend-request.md
+          review: study/spend-request.md
+          revise: study/spend-request-revise.md
+        evaluates: slice_build
+        when: published(slice_build) and (not spend_matches_build or changes_requested(spend_request))
+        inputs:
+          plan: latest(plan)
+          slice_build: latest(slice_build)
+          repository: input.repository
+        workspace: repository(input.workspace)
+        produces: [spend_request]
+      slice_runner:
+        kind: agent
+        prompts:
+          review: study/slice-run.md
+          revise: study/slice-run-revise.md
+        evaluates: spend_request
+        when: approved(spend_request) and spend_matches_build
+        keyed_execution: true
+        inputs:
+          plan: latest(plan)
+          spend_request: latest(spend_request)
+          slice_build: latest(slice_build)
+          repository: input.repository
+          repository_name: input.repository.forge.name
+        workspace: repository(input.workspace)
+        produces: [slice_report]
       slice_assessor:
         kind: agent
         prompts:
           review: study/slice-assess.md
           revise: study/slice-assess-revise.md
-        when: report_is_paid and not changes_requested(slice_report)
         inputs:
           plan: latest(plan)
           slice_report: latest(slice_report)
@@ -517,7 +460,7 @@ stages:
         of: spend_request
         by: operator
         prompt: study/spend-request-review.md
-        when: report_is_placeholder
+        when: published(spend_request) and spend_matches_build and not approved(spend_request)
         inputs:
           plan: latest(plan)
           slice_build: latest(slice_build)
@@ -531,12 +474,36 @@ stages:
             label: Request changes
             fields:
               feedback: What must the spend request change?
-      slice_report_review:
-        of: slice_report
-        assessment: slice_assessment
+      slice_assessment_review:
+        of: slice_assessment
         by: operator
         prompt: study/slice-report-review.md
-        when: report_is_paid and published(slice_assessment) and latest(slice_assessment).run_key == latest(slice_report).run_key
+        when: published(slice_report) and published(slice_assessment) and latest(slice_assessment).run_key == latest(slice_report).run_key
+        inputs:
+          plan: latest(plan)
+          slice_build: latest(slice_build)
+          slice_report: latest(slice_report)
+          slice_assessment: latest(slice_assessment)
+        decisions:
+          approve_assessment:
+            effect: approve
+            operation: approve_assessment
+            label: Approve assessment
+          send_feedback_to_builder:
+            effect: request_changes
+            operation: dispatch_feedback
+            on: slice_build
+            label: Send selected feedback to builder
+          correct_assessment:
+            effect: request_changes
+            operation: direct_correction
+            on: slice_assessment
+            label: Correct the assessment
+      slice_report_review:
+        of: slice_report
+        by: operator
+        prompt: study/slice-report-review.md
+        when: published(slice_report) and approved(slice_assessment)
         inputs:
           plan: latest(plan)
           slice_build: latest(slice_build)
@@ -545,23 +512,14 @@ stages:
         decisions:
           expand:
             effect: approve
-            operation: approve_assessment
             label: Expand
-          send_feedback_to_builder:
-            effect: request_changes
-            operation: dispatch_feedback
-            on: slice_build
-            label: Send actions to builder
-          send_to_builder:
-            effect: request_changes
-            label: Send to builder
-            on: slice_build
-            fields:
-              feedback: What must the slice builder fix?
+            when:
+              check: every(slice_report.trigger_marks, item.status == "not_fired")
+              reason: An iteration trigger fired; expansion is withheld.
           change_design:
             effect: request_changes
-            label: Change design
             on: plan
+            label: Change design
             fields:
               feedback: What must the plan change?
       merge_confirmation:
@@ -580,10 +538,11 @@ stages:
         template: pr_closed
         overrides:
           of: pr
-    done_when: approved(plan) and approved(slice_report) and published(slice_build) and pr_published and (merged_pr or approved(pr))
+    done_when: approved(plan) and approved(slice_assessment) and approved(slice_report) and published(slice_build) and pr_published and (merged_pr or approved(pr))
     outcome:
       plan: latest(plan)
       generator_digest: latest(slice_build).generator_digest
+      digest_recipe: latest(slice_build).digest_recipe
       slice_report: latest(slice_report)
       cohort: "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(slice_build).build}"
   expand:
@@ -591,6 +550,7 @@ stages:
       group_id: ident
       case_ids: list(ident)
       generator_digest: text
+      digest_recipe: digest_recipe
       plan: plan_body
       repository: repository
       workspace: workspace
@@ -607,6 +567,8 @@ stages:
         kind: document
         schema: expansion_body
         validate:
+          - check: every(expansion.qualifications, contains(input.case_ids, item.case_id))
+            message: "Expansion qualifications must name allocated case ids."
           - check: expansion.generator_digest == input.generator_digest
             message: "The expansion's generator digest must equal the approved slice's."
           - check: unique(expansion.case_ids) and every(expansion.case_ids, contains(input.case_ids, item)) and every(input.case_ids, contains(expansion.case_ids, item))
@@ -621,6 +583,8 @@ stages:
         edit_policy:
           kind: frozen_when_accepted
         validate:
+          - check: every(assessment.item_assessments, contains(input.case_ids, item.subject.id)) and every(flatten(map(assessment.additional_findings, item.related_subjects)), item.kind == "case" and contains(input.case_ids, item.id))
+            message: "Expansion case subjects and related subjects must resolve to allocated cases."
           - check: every(assessment.item_assessments, item.subject.kind == "case")
             message: "Expansion assessment items must be cases."
           - check: every(input.case_ids, contains(map(assessment.item_assessments, item.subject.id), item))
@@ -658,9 +622,11 @@ stages:
           group_id: input.group_id
           case_ids: input.case_ids
           generator_digest: input.generator_digest
+          digest_recipe: input.digest_recipe
           plan: input.plan
           repository: input.repository
           build_base: input.repository.forge.build_base
+          repository_name: input.repository.forge.name
         workspace: repository(input.workspace)
         produces: [expansion, pr]
       assessor:
@@ -703,9 +669,9 @@ stages:
             label: Accept
           request_assessment_changes:
             effect: request_changes
+            operation: direct_correction
+            on: assessment
             label: Request assessment changes
-            fields:
-              feedback: What must the assessment change?
           send_to_expander:
             effect: request_changes
             operation: dispatch_feedback
@@ -737,6 +703,7 @@ stages:
     input:
       plan: plan_body
       generator_digest: text
+      digest_recipe: digest_recipe
       slice_report: slice_report_body
       expansions: list(completed_cohort)
       repository: repository
@@ -754,6 +721,12 @@ stages:
         kind: document
         schema: freeze_body
         validate:
+          - check: every(map(input.plan.cases, item.id), contains(flatten(map(freeze.cohorts, item.case_ids)), item)) and every(flatten(map(freeze.cohorts, item.case_ids)), contains(map(input.plan.cases, item.id), item))
+            message: "The frozen cohorts' cases must be exactly the plan's cases."
+          - check: every(map(input.plan.groups, item.id), contains(flatten(map(freeze.cohorts, item.groups)), item))
+            message: "Every plan group must be named by a frozen cohort."
+          - check: every(flatten(map(freeze.cohorts, item.groups)), contains(map(input.plan.groups, item.id), item))
+            message: "Frozen cohorts may name only plan groups."
           - check: freeze.generator_digest == input.generator_digest
             message: "The freeze must use the approved generator digest."
           - check: freeze.is_byte_identical == true
@@ -784,10 +757,12 @@ stages:
         inputs:
           plan: input.plan
           generator_digest: input.generator_digest
+          digest_recipe: input.digest_recipe
           slice_report: input.slice_report
           expansions: input.expansions
           repository: input.repository
           build_base: input.repository.forge.build_base
+          repository_name: input.repository.forge.name
         workspace: repository(input.workspace)
         produces: [freeze, pr]
       pr_watch:
@@ -838,22 +813,11 @@ stages:
       cohort: "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(freeze).build}"
   integration:
     input:
-      repository: repository
-      workspace: workspace
       slice_cohort: completed_cohort
       expansion_cohorts: list(completed_cohort)
       freeze_cohort: completed_cohort
       cases: list(plan_case)
       freeze: freeze_body
-      final_merge_policy: final_merge_policy
-    let:
-      pr_published: published(pr)
-      pr_opened: pr_published and latest(pr).pr_url != ""
-      watch_base: input.repository.forge.final_base
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
-      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
-      closed_pr: input.final_merge_policy == "require_merge" and pr_state_current and latest(pr_state).state == "closed_unmerged"
-      final_state: pr_state_current and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
     artifacts:
       assessment:
         kind: assessment
@@ -861,6 +825,12 @@ stages:
         edit_policy:
           kind: frozen_when_accepted
         validate:
+          - check: every(filter(assessment.item_assessments, item.subject.kind == "case"), contains(map(input.cases, item.id), item.subject.id)) and every(filter(flatten(map(assessment.additional_findings, item.related_subjects)), item.kind == "case"), contains(map(input.cases, item.id), item.id))
+            message: "Case subjects and related subjects must resolve within the reviewed scope."
+          - check: every(filter(assessment.item_assessments, item.subject.kind == "cohort_file"), contains(map(input.freeze.cohorts, item.id), item.subject.id)) and every(filter(flatten(map(assessment.additional_findings, item.related_subjects)), item.kind == "cohort_file"), contains(map(input.freeze.cohorts, item.id), item.id))
+            message: "Cohort_file subjects and related subjects must resolve within the reviewed scope."
+          - check: every(flatten(map(assessment.additional_findings, item.related_subjects)), item.kind == "case" or item.kind == "cohort_file")
+            message: "Integration related subjects must be cases or cohort files."
           - check: every(assessment.item_assessments, item.subject.kind == "case" or item.subject.kind == "cohort_file")
             message: "Integration assessment items must be cases or cohort files."
           - check: every(map(input.cases, item.id), contains(map(filter(assessment.item_assessments, item.subject.kind == "case"), item.subject.id), item))
@@ -871,18 +841,6 @@ stages:
           - *a2
           - *a4
           - *a5
-      pr:
-        kind: external_reference
-        schema: pr_body
-      pr_state:
-        kind: status_record
-        schema: pr_status
-      manual_merge_target:
-        kind: external_reference
-        schema: pr_body
-      observed_state:
-        kind: status_record
-        schema: pr_status
     workers:
       integrator:
         kind: agent
@@ -898,26 +856,6 @@ stages:
           freeze: input.freeze
         workspace: repository(input.workspace)
         produces: [pr, assessment]
-      pr_watch:
-        template: pr_watch
-      prepare_manual_merge:
-        kind: code
-        operation: value.publish
-        when: pr_published
-        inputs:
-          value: latest(pr)
-        every: 2m
-        produces:
-          - manual_merge_target
-      prepare_observed_state:
-        kind: code
-        operation: value.publish
-        when: pr_state_current
-        inputs:
-          value: latest(pr_state)
-        every: 2m
-        produces:
-          - observed_state
     reviews:
       integration_review:
         of: assessment
@@ -943,24 +881,3 @@ stages:
             operation: dispatch_feedback
             label: Send to integrator
             on: assessment
-      merge_confirmation:
-        of: manual_merge_target
-        by: operator
-        when: published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)
-        prompt: development/merge-confirmation.md
-        inputs:
-          pr: latest(pr)
-          pr_state: latest(pr_state)
-        decisions:
-          confirm_merged:
-            effect: approve
-            label: Confirm merged
-      pr_closed:
-        template: pr_closed
-        overrides:
-          of: pr
-    done_when: approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(observed_state).state == "closed_unmerged"))))
-    outcome:
-      repository_key: input.repository.key
-      pr_url: latest(pr).pr_url
-      is_merged: approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == "merged")

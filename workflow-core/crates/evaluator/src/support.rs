@@ -80,6 +80,7 @@ pub(super) fn attribute_event(
 pub struct EvaluationContext<'a> {
     pub(super) limits: &'a ResourceLimits,
     pub(super) remaining: usize,
+    pub(super) program: Option<&'a CheckedWorkflow>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,6 +106,7 @@ impl<'a> EvaluationContext<'a> {
         Self {
             limits,
             remaining: limits.evaluation_budget,
+            program: None,
         }
     }
     pub(super) fn charge(&mut self) -> Result<(), EvalError> {

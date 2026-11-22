@@ -809,6 +809,10 @@ pub struct Artifact {
     pub edit_policy: EditPolicy,
     #[serde(default)]
     pub validate: Vec<ValidationCheck>,
+    /// Named fields of the reviewed subject that keep decisions applicable
+    /// across equivalent revisions. Array fields compare as sets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub equivalent_subject_fields: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -850,6 +854,8 @@ pub enum Worker {
         inputs: BTreeMap<String, String>,
         produces: Vec<SymbolKey>,
         evaluates: Option<SymbolKey>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keyed_execution: bool,
         runtime: Option<WorkerRuntime>,
         workspace: Option<String>,
         session: Option<SessionMode>,
@@ -858,6 +864,8 @@ pub enum Worker {
         when: Option<String>,
     },
     Code {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keyed_execution: bool,
         operation: SymbolKey,
         inputs: BTreeMap<String, String>,
         produces: Vec<SymbolKey>,

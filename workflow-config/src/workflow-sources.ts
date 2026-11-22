@@ -1,10 +1,29 @@
-/**
- * Each authored workflow, by the name of the JSON derived from it under
- * `workflow-core/fixtures/bundles/`, and the YAML it is written in.
- */
-export const WORKFLOW_SOURCES = {
-  "review-loop": { path: "workflow-config/samples/review-loop.yaml", audience: "test_fixture" },
-  "fan-out": { path: "workflow-config/samples/fan-out.yaml", audience: "test_fixture" },
-  development: { path: "workflow-config/development.yaml", audience: "user" },
-  study: { path: "workflow-config/study.yaml", audience: "user" },
-} as const;
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+export interface WorkflowSource {
+  readonly name: string;
+  readonly path: string;
+  readonly audience: "user" | "test_fixture";
+}
+
+export function discoverWorkflowSources(root: string): readonly WorkflowSource[] {
+  const directories = [
+    { directory: "workflow-config", audience: "user" },
+    { directory: "workflow-config/samples", audience: "test_fixture" },
+  ] as const;
+  const sources = directories.flatMap(({ directory, audience }) => {
+    const path = join(root, directory);
+    if (!existsSync(path) && audience === "test_fixture") return [];
+    return readdirSync(path, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".yaml"))
+      .map((entry): WorkflowSource => ({
+        name: entry.name.slice(0, -".yaml".length),
+        path: join(directory, entry.name),
+        audience,
+      }));
+  }).sort((left, right) => left.name.localeCompare(right.name));
+  const duplicate = sources.find((source, index) => sources[index - 1]?.name === source.name);
+  if (duplicate) throw new Error(`Duplicate workflow name: ${duplicate.name}`);
+  return sources;
+}

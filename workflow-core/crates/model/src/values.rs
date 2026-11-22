@@ -412,6 +412,8 @@ pub struct FeedbackEntry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedRunWorker {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyed_execution: Option<KeyedExecutionWant>,
     pub prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub review_history: Vec<FeedbackEntry>,
@@ -427,6 +429,12 @@ pub struct ResolvedRunWorker {
     #[serde(with = "crate::wire_numbers::optional_json")]
     #[schemars(with = "Option<Value>")]
     pub workspace: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct KeyedExecutionWant {
+    pub authorizing_revision: RevisionId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

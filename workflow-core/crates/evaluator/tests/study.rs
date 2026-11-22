@@ -85,7 +85,7 @@ struct Run {
 }
 
 impl Run {
-    fn launch() -> Self {
+    fn launch(approved_plan: Value) -> Self {
         let (_, program) = study_definition();
         let input = json!({
             "title": "t", "spec": "s",
@@ -94,7 +94,7 @@ impl Run {
             "final_merge_policy": "require_merge",
             "slice_case_limit": 6,
             "slice_cap_cents": 1000,
-            "approved_plan": null
+            "approved_plan": approved_plan
         });
         let snapshot = StepSnapshot {
             run: RunState {
@@ -261,15 +261,6 @@ const G2_CASES: &[&str] = &["g2_a", "g2_b"];
 const G3_CASES: &[&str] = &["g3_a"];
 const MODEL: &str = "model_a";
 
-const PLACEHOLDER: &str =
-    "No paid results yet: this offline report waits for the spend request's approval.";
-const UNAPPROVED_SPEND: &str = "Paid results need an approved spend request.";
-const MISSING_CRITERION: &str = "Every plan slice criterion must be marked.";
-const MISSING_TRIGGER: &str = "Every plan iteration trigger must be marked.";
-const REPORT_CASES: &str = "The report's case ids must equal the plan's slice ids.";
-const SPEND_DIGEST: &str =
-    "The spend request's generator digest must equal the latest slice build's.";
-const SPEND_CASES: &str = "The spend request's case ids must equal the latest slice build's.";
 const EXPANSION_DIGEST: &str = "The expansion's generator digest must equal the approved slice's.";
 const EXPANSION_CASES: &str = "The expansion's case ids must be exactly its allocated cases.";
 
@@ -311,7 +302,8 @@ fn plan() -> Value {
             "criteria": [{"id": "sc1", "text": "Both slice cases produce scores."}]
         },
         "slice_paid": {"models": [MODEL], "repeats": 1, "cap_cents": 200},
-        "iteration_triggers": [{"id": "it1", "text": "Check that controls replay."}]
+        "iteration_triggers": [{"id": "it1", "text": "Check that controls replay."}],
+        "full_study_repeats": 2
     })
 }
 
@@ -328,7 +320,9 @@ fn qualifications(case_ids: &[&str]) -> Vec<Value> {
 }
 
 fn slice_build(digest: &str) -> Value {
-    expansion("slice", digest, SLICE_CASES)
+    let mut build = expansion("slice", digest, SLICE_CASES);
+    build["digest_recipe"] = digest_recipe();
+    build
 }
 
 fn spend_request(digest: &str, case_ids: &[&str]) -> Value {
@@ -338,14 +332,8 @@ fn spend_request(digest: &str, case_ids: &[&str]) -> Value {
     })
 }
 
-fn placeholder_report(digest: &str) -> Value {
-    json!({
-        "run_key": "", "generator_digest": digest, "qualifications": qualifications(SLICE_CASES),
-        "paid_results": [],
-        "criteria_marks": [{"id": "sc1", "status": "not_met", "evidence": "awaiting the paid run"}],
-        "trigger_marks": [{"id": "it1", "status": "not_met", "evidence": "awaiting the paid run"}],
-        "proposed_changes": []
-    })
+fn digest_recipe() -> Value {
+    json!({"files": ["generator.py"], "command": "sha256sum generator.py"})
 }
 
 fn paid_report(digest: &str, run_key: &str) -> Value {
@@ -363,7 +351,7 @@ fn paid_report(digest: &str, run_key: &str) -> Value {
         "run_key": run_key, "generator_digest": digest,
         "qualifications": qualifications(SLICE_CASES), "paid_results": results,
         "criteria_marks": [{"id": "sc1", "status": "met", "evidence": "Both cases scored"}],
-        "trigger_marks": [{"id": "it1", "status": "met", "evidence": "Control replayed"}],
+        "trigger_marks": [{"id": "it1", "status": "not_fired", "evidence": "Control replayed"}],
         "proposed_changes": []
     })
 }
@@ -423,7 +411,7 @@ fn slice_output(artifact: &str) -> WorkerOutput<'_> {
 
 impl Run {
     fn prepared() -> Self {
-        let mut run = Self::launch();
+        let mut run = Self::launch(Value::Null);
         run.write(
             WorkerOutput {
                 unit: "run/prepare/oakridge",
@@ -457,27 +445,77 @@ impl Run {
         });
     }
 
-    fn request_spend(&mut self, digest: &str) {
+    fn build(&mut self, digest: &str, branch: &str) {
         self.slice_publish("slice_build", slice_build(digest));
-        self.slice_publish("spend_request", spend_request(digest, SLICE_CASES));
-    }
-
-    fn finish_slice_attempt(&mut self) {
-        self.slice_publish("pr", pr("slice"));
+        self.slice_publish("pr", pr(branch));
         self.end(DESIGN, "slice_builder");
     }
 
-    fn offline_cycle(&mut self, digest: &str) {
-        self.request_spend(digest);
-        self.slice_publish("slice_report", placeholder_report(digest));
-        self.finish_slice_attempt();
+    fn request_spend(&mut self, digest: &str) {
+        self.reviewed(
+            "spend_requester",
+            "spend_request",
+            "slice_build",
+            spend_request(digest, SLICE_CASES),
+        );
     }
 
-    fn paid_cycle(&mut self, digest: &str, run_key: &str) {
-        // The approved spend request must still be latest when validation runs.
-        self.slice_publish("slice_report", paid_report(digest, run_key));
-        self.request_spend(digest);
-        self.finish_slice_attempt();
+    fn reviewed(&mut self, worker: &str, artifact: &str, subject: &str, body: Value) {
+        self.publish(Publication {
+            output: WorkerOutput {
+                unit: DESIGN,
+                worker,
+                artifact,
+            },
+            body,
+            subject: self.latest_id(DESIGN, subject),
+        });
+        self.end(DESIGN, worker);
+    }
+
+    fn decided(&mut self, review: &str, artifact: &str, decision: &str, payload: Value) {
+        self.decide(Decision {
+            review: ReviewOf {
+                unit: DESIGN,
+                review,
+                artifact,
+            },
+            decision,
+            payload,
+        })
+        .unwrap();
+    }
+
+    fn observe_pr(&mut self, branch: &str, state: &str) {
+        let body = json!({"state":state,"number":1,"url":pr(branch)["pr_url"]});
+        self.write(
+            WorkerOutput {
+                unit: DESIGN,
+                worker: "pr_watch",
+                artifact: "pr_state",
+            },
+            body.clone(),
+        );
+        if state == "merged" {
+            self.write(
+                WorkerOutput {
+                    unit: DESIGN,
+                    worker: "prepare_observed_state",
+                    artifact: "observed_state",
+                },
+                body,
+            );
+        }
+    }
+
+    fn expand_offered(&self) -> bool {
+        self.last.reviews.iter().any(|review| {
+            review.review.0 == "slice_report_review"
+                && review
+                    .decisions
+                    .iter()
+                    .any(|decision| decision.decision.0 == "expand" && decision.is_available)
+        })
     }
 
     fn assessed(&mut self, run_key: &str) {
@@ -535,213 +573,327 @@ impl Run {
     }
 }
 
-fn at_slice_builder() -> Run {
+fn at_slice_builder(plan: Value) -> Run {
     let mut run = Run::prepared();
-    run.approved_plan(plan());
+    run.approved_plan(plan);
     run
 }
 
-#[test]
-fn slice_builder_waits_for_spend_approval_then_runs_paid() {
-    let mut run = at_slice_builder();
-    let wanted_after_plan_approval = run.wants(DESIGN, "slice_builder");
-
-    run.offline_cycle("d1");
-    run.assert_validation(DESIGN, "slice_report", PLACEHOLDER);
-    assert!(
-        !run.wants(DESIGN, "slice_builder"),
-        "offline revision must wait for spend approval"
-    );
-    // Removing the guard also changes when the first attempt is dispatched.
-    // Check the spend hold first so that regression points to the missing hold.
-    assert!(wanted_after_plan_approval);
-    assert!(run.offers(DESIGN, "spend_request_review"));
-
-    run.approve_spend();
-    assert!(run.wants(DESIGN, "slice_builder"));
-    assert!(run.last.wanted.iter().any(|wanted| matches!(&wanted.action,
-        Action::RunWorker { unit, worker, mode: Mode::Revise, .. }
-        if unit.0 == DESIGN && worker.0 == "slice_builder"
-    )));
-
-    run.paid_cycle("d1", "r1");
-    assert!(run.validation_messages(DESIGN, "slice_report").is_empty());
-    assert!(!run.wants(DESIGN, "slice_builder"));
-    assert!(!run.offers(DESIGN, "spend_request_review"));
-    assert!(run.wants(DESIGN, "slice_assessor"));
-}
-
-#[test]
-fn paid_results_are_refused_without_an_approved_spend_request() {
-    let mut run = at_slice_builder();
+fn at_spend_review() -> Run {
+    let mut run = at_slice_builder(plan());
+    run.build("d1", "slice");
     run.request_spend("d1");
-    run.slice_publish("slice_report", paid_report("d1", "r1"));
-    run.assert_validation(DESIGN, "slice_report", UNAPPROVED_SPEND);
-    assert!(!run
-        .validation_messages(DESIGN, "slice_report")
-        .iter()
-        .any(|message| message == PLACEHOLDER));
+    run
 }
 
-fn assert_slice_report_refusal(report: Value, message: &str) {
-    let mut run = at_slice_builder();
+fn assessed_slice(plan: Value, fired: bool) -> Run {
+    let mut run = at_slice_builder(plan);
+    run.build("d1", "slice");
     run.request_spend("d1");
-    run.slice_publish("slice_report", report);
-    run.assert_validation(DESIGN, "slice_report", message);
-}
-
-#[test]
-fn slice_report_refuses_a_missing_criterion_mark() {
-    let mut report = placeholder_report("d1");
-    report["criteria_marks"] = json!([]);
-    assert_slice_report_refusal(report, MISSING_CRITERION);
-}
-
-#[test]
-fn slice_report_refuses_a_missing_trigger_mark() {
-    let mut report = placeholder_report("d1");
-    report["trigger_marks"] = json!([]);
-    assert_slice_report_refusal(report, MISSING_TRIGGER);
-}
-
-#[test]
-fn slice_report_refuses_incomplete_case_qualifications() {
-    let mut report = placeholder_report("d1");
-    report["qualifications"] = json!(qualifications(&["g1_a"]));
-    assert_slice_report_refusal(report, REPORT_CASES);
-}
-
-fn assessed_slice() -> Run {
-    let mut run = at_slice_builder();
-    run.offline_cycle("d1");
     run.approve_spend();
-    run.paid_cycle("d1", "r1");
+    let mut report = paid_report("d1", "r1");
+    if fired {
+        report["trigger_marks"][0]["status"] = json!("fired");
+    }
+    run.reviewed("slice_runner", "slice_report", "spend_request", report);
     run.assessed("r1");
+    assert!(run
+        .validation_messages(DESIGN, "slice_assessment")
+        .is_empty());
     run
 }
 
 #[test]
-fn send_to_builder_rebuilds_and_needs_a_fresh_spend_approval() {
-    let mut run = assessed_slice();
-    let first_paid_report = run.latest_id(DESIGN, "slice_report").unwrap();
-    let feedback = "Fix the omission patch for g1_b";
-    run.decide(Decision {
-        review: ReviewOf {
-            unit: DESIGN,
-            review: "slice_report_review",
-            artifact: "slice_build",
-        },
-        decision: "send_to_builder",
-        payload: json!({"feedback": feedback}),
-    })
-    .unwrap();
-    assert!(run.wants(DESIGN, "slice_builder"));
-
-    run.slice_publish("slice_build", slice_build("d2"));
-    run.slice_publish("spend_request", spend_request("d1", SLICE_CASES));
-    run.assert_validation(DESIGN, "spend_request", SPEND_DIGEST);
-    run.slice_publish("spend_request", spend_request("d2", &["g1_a"]));
-    run.assert_validation(DESIGN, "spend_request", SPEND_CASES);
-    run.slice_publish("spend_request", spend_request("d2", SLICE_CASES));
-    assert!(run.validation_messages(DESIGN, "spend_request").is_empty());
-    run.slice_publish("slice_report", placeholder_report("d2"));
-    run.finish_slice_attempt();
-
-    assert!(!run.wants(DESIGN, "slice_builder"));
-    assert!(run.offers(DESIGN, "spend_request_review"));
-    assert!(!run.offers(DESIGN, "slice_report_review"));
-
+fn paid_runner_is_never_wanted_while_spend_is_unapproved() {
+    let mut run = at_slice_builder(plan());
+    assert!(!run.wants(DESIGN, "slice_runner"));
+    run.build("d1", "slice");
+    run.request_spend("d1");
+    assert!(!run.wants(DESIGN, "slice_runner"));
+    run.decided(
+        "spend_request_review",
+        "spend_request",
+        "request_changes",
+        json!({"feedback":"Document the cap."}),
+    );
+    assert!(run.wants(DESIGN, "spend_requester"));
+    assert!(!run.wants(DESIGN, "slice_runner"));
+    run.request_spend("d1");
     run.approve_spend();
-    run.paid_cycle("d2", "r2");
-    assert!(run.validation_messages(DESIGN, "slice_report").is_empty());
-
-    let mut reports: Vec<_> = run
-        .state()
-        .revisions
-        .iter()
-        .filter(|revision| revision.unit.0 == DESIGN && revision.artifact.0 == "slice_report")
-        .collect();
-    reports.sort_by_key(|revision| revision.seq);
-    let rounds: Vec<_> = reports
-        .iter()
-        .map(|revision| {
-            (
-                revision.body["generator_digest"].as_str().unwrap(),
-                revision.body["run_key"].as_str().unwrap(),
-            )
-        })
-        .collect();
-    assert_eq!(rounds, [("d1", ""), ("d1", "r1"), ("d2", ""), ("d2", "r2")]);
-    let retained = run
-        .state()
-        .revisions
-        .iter()
-        .find(|revision| revision.id == first_paid_report)
-        .expect("first paid report is still readable by id");
-    assert_eq!(retained.body, paid_report("d1", "r1"));
-    assert!(run.state().decisions.iter().any(|entry| matches!(entry,
-        DecisionState::Review { unit, review, decision, payload, .. }
-        if unit.0 == DESIGN && review.0 == "slice_report_review"
-            && decision.0 == "send_to_builder" && payload["feedback"] == feedback
-    )));
+    assert!(run.wants(DESIGN, "slice_runner"));
+    run.reviewed(
+        "slice_runner",
+        "slice_report",
+        "spend_request",
+        paid_report("d1", "r1"),
+    );
+    run.assessed("r1");
+    run.observe_pr("slice", "closed_unmerged");
+    run.decided(
+        "pr_closed",
+        "pr",
+        "replace_pr",
+        json!({"feedback":"Replace the closed branch."}),
+    );
+    run.build("d2", "replacement");
+    assert!(run.wants(DESIGN, "spend_requester"));
+    assert!(!run.wants(DESIGN, "slice_runner"));
+    run.request_spend("d2");
+    assert!(!run.wants(DESIGN, "slice_runner"));
 }
 
 #[test]
-fn change_design_reruns_the_slice_after_the_plan_is_reapproved() {
-    let mut run = assessed_slice();
-    run.decide(Decision {
-        review: ReviewOf {
-            unit: DESIGN,
-            review: "slice_report_review",
-            artifact: "plan",
-        },
-        decision: "change_design",
-        payload: json!({"feedback": "Clarify the slice scoring criterion."}),
-    })
-    .unwrap();
-    assert!(run.wants(DESIGN, "designer"));
-    assert!(!run.wants(DESIGN, "slice_builder"));
-    assert!(!run.offers(DESIGN, "slice_report_review"));
-
-    let mut revised = plan();
-    revised["slice"]["criteria"][0]["text"] = json!("Both slice cases produce numeric scores.");
-    run.write(PLAN, revised);
-    assert!(!run.wants(DESIGN, "slice_builder"));
-
-    run.accept_plan();
-    assert!(run.wants(DESIGN, "slice_builder"));
-    run.offline_cycle("d2");
-    assert!(!run.wants(DESIGN, "slice_builder"));
-    assert!(run.offers(DESIGN, "spend_request_review"));
-
+fn refused_paid_report_is_corrected_without_new_spend() {
+    let mut run = at_spend_review();
     run.approve_spend();
-    assert!(run.wants(DESIGN, "slice_builder"));
-    run.paid_cycle("d2", "r2");
-    assert!(run.validation_messages(DESIGN, "slice_report").is_empty());
-    let report = latest(
-        run.state(),
-        &UnitId::from(DESIGN),
-        &SymbolKey::from("slice_report"),
+    let mut report = paid_report("d1", "r1");
+    report["paid_results"] = json!([]);
+    let spend = run.latest_id(DESIGN, "spend_request").unwrap();
+    run.reviewed("slice_runner", "slice_report", "spend_request", report);
+    run.assert_validation(DESIGN, "slice_report", "The paid run produced no results. Revise the report from the same execution; do not request new spend.");
+    assert!(!run.wants(DESIGN, "spend_requester"));
+    assert!(!run.offers(DESIGN, "spend_request_review"));
+    let worker = run
+        .last
+        .wanted
+        .iter()
+        .find(|worker| worker.worker.0 == "slice_runner")
+        .unwrap();
+    assert!(matches!(
+        worker.action,
+        Action::RunWorker {
+            mode: Mode::Revise,
+            ..
+        }
+    ));
+    assert_eq!(
+        worker
+            .resolved
+            .keyed_execution
+            .as_ref()
+            .unwrap()
+            .authorizing_revision,
+        spend
+    );
+}
+
+#[test]
+fn send_back_to_builder_withholds_expand_and_design() {
+    let mut run = assessed_slice(plan(), false);
+    run.observe_pr("slice", "merged");
+    run.decided(
+        "slice_assessment_review",
+        "slice_build",
+        "send_feedback_to_builder",
+        json!({"rounds":[{"round":"round-1","assignment":"item-1","worker":"slice_builder"}]}),
+    );
+    assert!(run
+        .last
+        .wanted
+        .iter()
+        .any(|worker| worker.worker.0 == "slice_builder"
+            && matches!(
+                worker.action,
+                Action::RunWorker {
+                    cause: Cause::AssignmentRound { .. },
+                    ..
+                }
+            )));
+    assert!(!run.offers(DESIGN, "slice_report_review"));
+    assert!(!run.is_done(DESIGN));
+    assert!(!run.has_unit("run/expansion/g2"));
+    run.build("d1", "slice");
+    assert!(run
+        .last
+        .wanted
+        .iter()
+        .any(|worker| worker.worker.0 == "slice_assessor"
+            && matches!(
+                worker.action,
+                Action::RunWorker {
+                    cause: Cause::Reassessment { .. },
+                    ..
+                }
+            )));
+}
+
+#[test]
+fn fired_trigger_withholds_expand() {
+    let mut run = assessed_slice(plan(), true);
+    run.decided(
+        "slice_assessment_review",
+        "slice_assessment",
+        "approve_assessment",
+        json!({}),
+    );
+    assert!(!run.expand_offered());
+}
+
+#[test]
+fn not_fired_trigger_offers_expand() {
+    let mut run = assessed_slice(plan(), false);
+    run.decided(
+        "slice_assessment_review",
+        "slice_assessment",
+        "approve_assessment",
+        json!({}),
+    );
+    assert!(run.expand_offered());
+}
+
+#[test]
+fn unchanged_pr_replacement_keeps_spend_approval() {
+    let mut run = assessed_slice(plan(), false);
+    let spend = run.latest_id(DESIGN, "spend_request").unwrap();
+    run.observe_pr("slice", "closed_unmerged");
+    run.decided(
+        "pr_closed",
+        "pr",
+        "replace_pr",
+        json!({"feedback":"Replace the closed branch."}),
+    );
+    run.build("d1", "replacement");
+    assert!(!run.wants(DESIGN, "spend_requester"));
+    assert!(!run.wants(DESIGN, "slice_runner"));
+    assert!(!run.offers(DESIGN, "spend_request_review"));
+    assert_eq!(run.latest_id(DESIGN, "spend_request").unwrap(), spend);
+    // The publish guardian also consumes approved(spend_request). An invalid
+    // report revises the runner on the existing, still approved execution.
+    let mut report = paid_report("d1", "r1");
+    report["paid_results"] = json!([]);
+    run.apply(
+        Event::RevisionPublished {
+            unit: UnitId::from(DESIGN),
+            artifact: SymbolKey::from("slice_report"),
+            body: report,
+            predecessor: run.latest_id(DESIGN, "slice_report"),
+            subject: run.latest_id(DESIGN, "spend_request"),
+            by: None,
+        },
+        Writer::Operator {
+            subject: "test".into(),
+        },
     )
     .unwrap();
-    assert_eq!(report.body["run_key"], "r2");
+    assert!(!run
+        .validation_messages(DESIGN, "slice_report")
+        .contains(&"Paid results need an approved spend request.".to_owned()));
+}
+
+#[test]
+fn direct_correction_wants_only_the_assessor() {
+    let mut run = assessed_slice(plan(), false);
+    let before = run.latest_id(DESIGN, "slice_assessment");
+    run.decided(
+        "slice_assessment_review",
+        "slice_assessment",
+        "correct_assessment",
+        json!({"rounds":[{"round":"round-1","assignment":"item-1","worker":"slice_assessor"}]}),
+    );
+    let agents: Vec<_> = run
+        .last
+        .wanted
+        .iter()
+        .filter(|worker| worker.unit.0 == DESIGN && worker.resolved.prompt.is_some())
+        .map(|worker| worker.worker.0.as_str())
+        .collect();
+    assert_eq!(agents, ["slice_assessor"]);
+    let mut body = slice_assessment("r1");
+    body["verifications"] = json!([{"round_id":"round-1","outcome":"verified"}]);
+    run.reviewed("slice_assessor", "slice_assessment", "slice_report", body);
+    assert_ne!(before, run.latest_id(DESIGN, "slice_assessment"));
+    assert!(run.offers(DESIGN, "slice_assessment_review"));
+}
+
+#[test]
+fn design_readiness() {
+    let mut run = assessed_slice(plan(), false);
+    assert!(!run.expand_offered() && !run.is_done(DESIGN));
+    run.decided(
+        "slice_assessment_review",
+        "slice_assessment",
+        "approve_assessment",
+        json!({}),
+    );
+    assert!(run.expand_offered() && !run.is_done(DESIGN));
+    run.decided("slice_report_review", "slice_report", "expand", json!({}));
+    assert!(!run.is_done(DESIGN) && !run.has_unit("run/expansion/g2"));
+    run.confirm_merged(DESIGN);
+    assert!(run.is_done(DESIGN) && run.has_unit("run/expansion/g2"));
 }
 
 fn slice_approved() -> Run {
-    let mut run = assessed_slice();
-    run.decide(Decision {
-        review: ReviewOf {
-            unit: DESIGN,
-            review: "slice_report_review",
-            artifact: "slice_report",
-        },
-        decision: "expand",
-        payload: json!({}),
-    })
-    .unwrap();
+    let mut run = assessed_slice(plan(), false);
+    run.decided(
+        "slice_assessment_review",
+        "slice_assessment",
+        "approve_assessment",
+        json!({}),
+    );
+    run.decided("slice_report_review", "slice_report", "expand", json!({}));
     run.confirm_merged(DESIGN);
-    assert!(run.is_done(DESIGN));
     run
+}
+
+#[test]
+fn at_most_two_expansions_are_active() {
+    let mut body = plan();
+    body["cases"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"g4_a","group":"g4","is_control":false}));
+    body["groups"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"g4","case_ids":["g4_a"]}));
+    let mut run = assessed_slice(body, false);
+    run.decided(
+        "slice_assessment_review",
+        "slice_assessment",
+        "approve_assessment",
+        json!({}),
+    );
+    run.decided("slice_report_review", "slice_report", "expand", json!({}));
+    run.confirm_merged(DESIGN);
+    assert!(run.wants("run/expansion/g2", "expander"));
+    assert!(run.wants("run/expansion/g3", "expander"));
+    assert!(run
+        .last
+        .blocked
+        .iter()
+        .any(|block| block.unit.0 == "run/expansion/g4"
+            && matches!(block.reason, BlockedReason::Capacity { .. })));
+    run.complete_expansion("g2");
+    assert!(run.wants("run/expansion/g4", "expander"));
+}
+
+#[test]
+fn approved_plan_reaches_design() {
+    let plan = plan();
+    let mut run = Run::launch(plan.clone());
+    run.publish(Publication {
+        output: WorkerOutput {
+            unit: "run/prepare/oakridge",
+            worker: "git",
+            artifact: "workspace",
+        },
+        body: workspace("oakridge"),
+        subject: None,
+    });
+    let design = run
+        .state()
+        .units
+        .iter()
+        .find(|unit| unit.id.0 == DESIGN)
+        .unwrap();
+    assert_eq!(design.input.as_ref().unwrap()["approved_plan"], plan);
+    let designer = run
+        .last
+        .wanted
+        .iter()
+        .find(|worker| worker.worker.0 == "designer")
+        .unwrap();
+    assert_eq!(designer.resolved.inputs["approved_plan"], plan);
 }
 
 impl Run {
@@ -828,6 +980,7 @@ fn expansion_units_cover_groups_with_non_slice_cases() {
             .as_ref()
             .unwrap();
         assert_eq!(input["generator_digest"], "d1");
+        assert_eq!(input["digest_recipe"], digest_recipe());
         assert_eq!(input["case_ids"], json!(case_ids));
     }
 }
@@ -879,4 +1032,14 @@ fn freeze_starts_only_after_every_expansion_unit_is_done() {
     run.complete_expansion("g3");
     assert!(run.is_done("run/expansion/g3"));
     assert!(run.wants(FREEZE, "freezer"));
+    let freeze = run
+        .state()
+        .units
+        .iter()
+        .find(|unit| unit.id.0 == FREEZE)
+        .unwrap();
+    assert_eq!(
+        freeze.input.as_ref().unwrap()["digest_recipe"],
+        digest_recipe()
+    );
 }
