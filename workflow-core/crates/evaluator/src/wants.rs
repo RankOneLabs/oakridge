@@ -780,7 +780,16 @@ pub(super) fn resolve_run_worker(
         .collect();
     let prompt = match checked {
         CheckedWorker::Agent { prompts, .. } => {
-            resolve_agent_prompt(prompts, action.mode, &feedback)
+            resolve_agent_prompt(prompts, action.mode, &feedback).or_else(|| {
+                if matches!(
+                    action.cause,
+                    Cause::AssignmentRound { .. } | Cause::Reassessment { .. }
+                ) {
+                    prompts.initial.clone().or_else(|| prompts.review.clone())
+                } else {
+                    None
+                }
+            })
         }
         CheckedWorker::Code { .. } => None,
     };

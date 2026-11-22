@@ -240,3 +240,28 @@ fn dispatch_on_the_assessment_does_not_count_as_approval() {
         .iter()
         .any(|unit| unit.id.0 == UNIT && unit.status == UnitStatus::Active));
 }
+
+#[test]
+fn retry_creates_a_new_attempt_for_the_same_round() {
+    let mut run = Run::seeded();
+    run.apply(run.dispatch(&[("round", "item", "builder_b")]));
+    let original = run.action("builder_b");
+    run.apply(Event::WorkerEnded {
+        action: original.clone(),
+        result: WorkerResult::Failed {
+            code: "unavailable".into(),
+            detail: "retry".into(),
+        },
+    });
+    let retry = Incoming {
+        event: Event::RetryRequested {
+            unit: UnitId::from(UNIT),
+            worker: WorkerKey::from("builder_b"),
+        },
+        writer: Writer::Engine,
+        ingress_id: Some("retry-request".into()),
+    };
+    run.result = step(&run.program, &run.result.snapshot, &retry).unwrap();
+    assert!(run.owes("builder_b", "round"));
+    assert_ne!(run.action("builder_b"), original);
+}
