@@ -15,4 +15,3 @@ for (const recovery of ["off", "by_key"] as const satisfies readonly KeyedExecut
     expect(selectClaimAnswer({ state, evidence: state === "evidence_attached" ? evidence : null }, recovery)).toEqual(expected[state]);
   });
 }
-

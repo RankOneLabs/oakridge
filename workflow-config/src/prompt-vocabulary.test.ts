@@ -15,7 +15,7 @@ const retired = /pick a sensible path|\btasks\b|task_ids|tasks_review|acceptance
 
 function quotedTokens(markdown: string): string[] {
   // Treat a balanced run of backticks as one span. Skip fenced code.
-  return [...markdown.replace(/^\s*```[^\n]*\n[\s\S]*?^\s*```\s*$/gm, "").matchAll(/(?<!`)(`+)([^`\n]+)\1(?!`)/g)]
+  return [...markdown.replace(/^\s*```[^\n]*\n[\s\S]*?^\s*```\s*$/gm, "").matchAll(/(?<!`)(`+)([^`]+)\1(?!`)/g)]
     .flatMap(([, , span]) => identifier.test(span) ? [span]
       : fieldList.test(span) ? span.slice(1, -1).split(",").map((field) => field.trim().replace(/\?$/, "")) : []);
 }
@@ -111,6 +111,6 @@ for (const { name, path } of discoverWorkflowSources(root)) test(`${name} prompt
 });
 
 test("quoted vocabulary checks individual identifiers and field lists", () => {
-  expect(quotedTokens("`not_a_field_xyz` `{field, optional_field?}` `docker ps` `~/apps/x`"))
+  expect(quotedTokens("`not_a_field_xyz` `{field,\noptional_field?}` `docker ps` `~/apps/x`"))
     .toEqual(["not_a_field_xyz", "field", "optional_field"]);
 });
