@@ -7,7 +7,7 @@ CREATE TYPE authority.effect_status AS ENUM
 -- its watch was replaced, or the executor, when an attempt failed while an
 -- execution may still be live.
 CREATE TYPE authority.stop_origin AS ENUM ('commit', 'executor');
-CREATE TYPE authority.decision_effect AS ENUM ('approve', 'request_changes');
+CREATE TYPE authority.decision_effect AS ENUM ('approve', 'request_changes', 'dispatch');
 
 CREATE TABLE authority.schema_baseline (
   id boolean PRIMARY KEY DEFAULT true CHECK (id),
@@ -131,6 +131,135 @@ CREATE TABLE authority.review_decision (
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
   FOREIGN KEY (run_id, target_revision_id) REFERENCES authority.artifact_revision(run_id, id)
 );
+
+CREATE TYPE authority.feedback_origin AS ENUM ('proposal', 'operator');
+CREATE TYPE authority.feedback_association AS ENUM ('proposed', 'carried');
+CREATE TYPE authority.dispatch_operation AS ENUM ('dispatch_feedback', 'direct_correction');
+CREATE TYPE authority.verification_outcome AS ENUM ('verified', 'needs_further_work');
+
+CREATE TABLE authority.feedback_item (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  unit_id text NOT NULL,
+  assessment_artifact text NOT NULL,
+  origin authority.feedback_origin NOT NULL,
+  proposal_revision_id text,
+  proposal_key text,
+  operator_request_id text,
+  instruction text NOT NULL CHECK (instruction <> ''),
+  citation jsonb,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
+  FOREIGN KEY (run_id, proposal_revision_id) REFERENCES authority.artifact_revision(run_id, id),
+  UNIQUE (run_id, proposal_revision_id, proposal_key),
+  CHECK (
+    (origin = 'proposal' AND proposal_revision_id IS NOT NULL AND proposal_key IS NOT NULL AND operator_request_id IS NULL)
+    OR (origin = 'operator' AND proposal_revision_id IS NULL AND proposal_key IS NULL AND operator_request_id IS NOT NULL)
+  )
+);
+
+CREATE TABLE authority.assessment_feedback (
+  run_id text NOT NULL REFERENCES authority.run(id),
+  assessment_revision_id text NOT NULL,
+  feedback_item_id text NOT NULL REFERENCES authority.feedback_item(id),
+  association authority.feedback_association NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (run_id, assessment_revision_id, feedback_item_id),
+  FOREIGN KEY (run_id, assessment_revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+CREATE TABLE authority.dispatch_authorization (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  feedback_item_id text NOT NULL REFERENCES authority.feedback_item(id),
+  operation authority.dispatch_operation NOT NULL,
+  target_unit_id text NOT NULL,
+  target_artifact text NOT NULL,
+  target_revision_id text NOT NULL,
+  instruction text NOT NULL,
+  recipients text[] NOT NULL CHECK (cardinality(recipients) > 0),
+  policy text NOT NULL,
+  authorized_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY (run_id, target_unit_id) REFERENCES authority.unit(run_id, id),
+  FOREIGN KEY (run_id, target_revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+CREATE TABLE authority.feedback_assignment (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  feedback_item_id text NOT NULL REFERENCES authority.feedback_item(id),
+  target_unit_id text NOT NULL,
+  target_artifact text NOT NULL,
+  recipient text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (run_id, feedback_item_id, target_unit_id, target_artifact, recipient),
+  FOREIGN KEY (run_id, target_unit_id) REFERENCES authority.unit(run_id, id)
+);
+
+CREATE TABLE authority.feedback_rejection (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  feedback_item_id text NOT NULL REFERENCES authority.feedback_item(id),
+  assessment_revision_id text NOT NULL,
+  assignment_id text REFERENCES authority.feedback_assignment(id),
+  reason text NOT NULL CHECK (reason <> ''),
+  decision_id text NOT NULL REFERENCES authority.review_decision(id),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE NULLS NOT DISTINCT (run_id, assessment_revision_id, feedback_item_id, assignment_id),
+  FOREIGN KEY (run_id, assessment_revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+CREATE TABLE authority.assignment_round (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  assignment_id text NOT NULL REFERENCES authority.feedback_assignment(id),
+  ordinal integer NOT NULL CHECK (ordinal >= 1),
+  authorization_id text NOT NULL REFERENCES authority.dispatch_authorization(id),
+  instruction text NOT NULL,
+  decision_id text NOT NULL REFERENCES authority.review_decision(id),
+  action_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (assignment_id, ordinal),
+  UNIQUE (assignment_id, authorization_id)
+);
+
+CREATE TABLE authority.assignment_update (
+  round_id text PRIMARY KEY REFERENCES authority.assignment_round(id),
+  run_id text NOT NULL REFERENCES authority.run(id),
+  revision_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY (run_id, revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+CREATE TABLE authority.assignment_verification (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  round_id text NOT NULL REFERENCES authority.assignment_round(id),
+  assessment_revision_id text NOT NULL,
+  update_revision_id text NOT NULL,
+  outcome authority.verification_outcome NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (round_id, assessment_revision_id),
+  FOREIGN KEY (run_id, assessment_revision_id) REFERENCES authority.artifact_revision(run_id, id),
+  FOREIGN KEY (run_id, update_revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+CREATE TABLE authority.assessment_approval (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  unit_id text NOT NULL,
+  assessment_revision_id text NOT NULL UNIQUE,
+  assessed_revision_id text NOT NULL,
+  decision_id text NOT NULL UNIQUE REFERENCES authority.review_decision(id),
+  approved_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
+  FOREIGN KEY (run_id, assessment_revision_id) REFERENCES authority.artifact_revision(run_id, id),
+  FOREIGN KEY (run_id, assessed_revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+COMMENT ON COLUMN authority.feedback_item.citation IS '@type {Citation}';
 
 CREATE TABLE authority.event (
   id text PRIMARY KEY,
