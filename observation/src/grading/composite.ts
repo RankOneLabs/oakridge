@@ -32,7 +32,7 @@ export const pageOf = <Item>(items: readonly Item[], page: PageRequest): Paged<I
 
 // --------------------------------------------------------------- what is read ---
 
-export interface CompositeLogicalItem { readonly logical_item_id: LogicalItemId; readonly scope: string; readonly producer_local_id: string }
+export interface CompositeLogicalItem { readonly logical_item_id: LogicalItemId; readonly scope: string; readonly task_kind: string | null; readonly producer_local_id: string }
 export interface CompositeRevision {
   readonly stage: string;
   readonly revision_id: ArtifactRevisionId;
@@ -60,6 +60,7 @@ export interface CompositeRelation {
   readonly type: RelationType;
   readonly asserted_by: string;
   readonly evidence_ref: string;
+  readonly qualifier?: JsonValue;
 }
 export interface CompositeEvaluator {
   readonly evaluator_definition_id: EvaluatorDefinitionId;
@@ -331,10 +332,20 @@ export type StageComposite = StageState & {
   readonly history: CompositeDrilldownKey;
 }
 /** One logical item's stages side by side. There is deliberately no figure across them. */
+export interface RepositoryJudgment {
+  readonly assessment_revision_id: ArtifactRevisionId;
+  readonly status: "met" | "partial" | "not_met";
+}
+export interface ApplicableRepository {
+  readonly repository_key: string;
+  readonly judgments: readonly RepositoryJudgment[];
+}
 export interface LogicalItemComposite {
   readonly run_id: RunId;
   readonly logical_item_id: LogicalItemId;
   readonly scope: string;
+  readonly task_kind: string | null;
+  readonly repositories: readonly ApplicableRepository[];
   readonly producer_local_id: string;
   readonly coverage: "linked" | "gap";
   readonly stages: readonly StageComposite[];
@@ -475,7 +486,8 @@ function uniqueQuestions(questions: readonly QuestionKey[]): readonly QuestionKe
 
 function compositeFromRead(read: PreparedCompositeRead, item: CompositeLogicalItem): LogicalItemComposite {
   const linked = read.linked.get(item.logical_item_id) ?? [];
-  return { run_id: read.inputs.run_id, logical_item_id: item.logical_item_id, scope: item.scope, producer_local_id: item.producer_local_id,
+  return { run_id: read.inputs.run_id, logical_item_id: item.logical_item_id, scope: item.scope, task_kind: item.task_kind, producer_local_id: item.producer_local_id,
+    repositories: read.path.repositoryApplicability?.(read.inputs, item) ?? [],
     coverage: linked.some((contribution) => contribution.is_current) ? "linked" : "gap",
     stages: read.stages.map((stage) => stageComposite(stage, item.logical_item_id, linked, read)) };
 }
@@ -615,9 +627,17 @@ export interface LogicalItemLineage extends Paged<LineageEntry> {
   readonly is_captured: boolean;
 }
 
+/** A full id identifies any task. A local id is accepted when it has exactly one match. */
+export function selectLogicalItem(inputs: CompositeInputs, path: CompositePath, identity: string): CompositeLogicalItem | undefined {
+  const candidates = inputs.logical_items.filter((item) => item.scope === path.logical_scope);
+  const exact = candidates.find((item) => item.logical_item_id === identity);
+  const local = candidates.filter((item) => item.producer_local_id === identity);
+  return exact ?? (local.length === 1 ? local[0] : undefined);
+}
+
 /** Definitions in recording order, then each stage's linked items in the profile's order, then what is still unresolved. */
 export function selectLineage(inputs: CompositeInputs, path: CompositePath, producer_local_id: string, page: PageRequest): LogicalItemLineage {
-  const item = inputs.logical_items.find((candidate) => candidate.scope === path.logical_scope && candidate.producer_local_id === producer_local_id) ?? null;
+  const item = selectLogicalItem(inputs, path, producer_local_id) ?? null;
   const standings = selectRevisionStandings(inputs.revisions, path);
   const stream = (revision_id: string) => standings.get(revision_id);
   const recordedAt = (revision_id: string) => stream(revision_id)?.revision;
@@ -637,7 +657,7 @@ export function selectLineage(inputs: CompositeInputs, path: CompositePath, prod
   const linked = item === null ? [] : inStageOrder(selectLinkedContributions(contributions, item.logical_item_id))
     .filter((entry) => entry.occurrence.logical_item_id !== item.logical_item_id)
     .map((entry): LineageEntry => ({ kind: "contribution", item: contributionItem(entry), provenance: entry.provenance! }));
-  const reference = logicalReference(path.logical_scope, producer_local_id);
+  const reference = logicalReference(path.logical_scope, item?.producer_local_id ?? producer_local_id, item?.task_kind ?? "requirement");
   const unresolved = inStageOrder(contributions.filter((contribution) => contribution.links.some((link) => link.unresolved_target_ref === reference))).flatMap((contribution): readonly LineageEntry[] =>
     contribution.links.filter((link) => link.unresolved_target_ref === reference).map((link): LineageEntry => ({ kind: "unresolved", item: contributionItem(contribution),
       relation_id: link.relation_id, unresolved_target_ref: reference, evidence_ref: link.evidence_ref })));

@@ -1,15 +1,14 @@
 import type { RunStageSource } from "../grading/task-stages";
 import type { Hono } from "hono";
-import { decodeCapture } from "../ingest/capture";
-import { decodeSourceEventDelivery, type SourceEventOutcome } from "../ingest/cursor";
+import { decodeRevisionDelivery } from "../ingest/capture";
+import type { DeliveredEvent } from "../ingest/dbos-revision-delivery";
 import type { ProducerProfile } from "../ports/producer-profile";
 import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../grading/evidence";
-import { deliverSourceEvent, readSourceCursor, readSourceRevision, readUnmappedSourceEvents } from "../storage/capture-store";
+import { deliverSourceEvent, readSourceCursor, readSourceRevision } from "../storage/capture-store";
 import type { Database } from "../storage/database";
 import type { EvidenceReconciler } from "../storage/evidence-pipeline";
 import { errorResponse } from "./errors";
 import { credentialFor, type Credentials } from "./ingest-auth";
-import { pagination } from "./items";
 
 export interface SourceDependencies {
   readonly db: Database;
@@ -27,8 +26,8 @@ export interface SourceDependencies {
  * inputs they cite, and a run input supplies what its questions read. Ignored and unmapped events
  * never start a pass, so they can never cause an admission; the periodic sweep and restart still
  * revisit every waiting run. */
-export const startsReconciliation = (outcome: SourceEventOutcome): boolean =>
-  outcome.kind === "artifact_revision" || outcome.kind === "run_input";
+export const startsReconciliation = (outcome: DeliveredEvent): boolean =>
+  outcome.kind === "launched" || (outcome.kind === "revisions" && outcome.revisions.length > 0);
 
 /** The one ordered source feed, served under the injected producer's name. */
 export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void {
@@ -43,27 +42,17 @@ export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void 
     if (!credential || credential.producer !== producer) return errorResponse(c, 401, "unauthorized", "ingest credential required");
     let input: unknown;
     try { input = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
-    const delivery = decodeSourceEventDelivery(input);
-    if (!delivery) return errorResponse(c, 400, "invalid_event", "valid source event delivery required");
-    if (delivery.outcome.kind === "artifact_revision") {
-      const decoded = decodeCapture(delivery.outcome.revision);
-      if (!decoded.ok) return errorResponse(c, 400, "invalid_capture", decoded.error.detail);
-      if (decoded.value.envelope.source.producer !== credential.producer || decoded.value.envelope.source.namespace !== credential.namespace)
-        return errorResponse(c, 403, "forbidden", "credential cannot ingest this source");
-    }
+    const decoded = decodeRevisionDelivery(input);
+    if (!decoded.ok) return errorResponse(c, 400, "invalid_event", decoded.error.detail);
+    const delivery = decoded.value;
+    if (delivery.producer !== credential.producer || delivery.namespace !== credential.namespace)
+      return errorResponse(c, 403, "forbidden", "credential cannot ingest this source");
     const result = await deliverSourceEvent(deps.db, credential, delivery, { extraction: deps.profile.extraction, configuration: deps.capture_configuration ?? NO_CAPTURE_PINS });
     // Reconciliation reads repositories, so the acknowledgement does not wait for it; a failed pass
     // leaves its questions waiting for the next event, sweep or restart.
-    if (result.status === 200 && startsReconciliation(delivery.outcome)) deps.evidence?.reconcileRun(credential, delivery.outcome.run_id)
-      .catch((error: unknown) => console.error("[observation] reconciliation failed", { run_id: delivery.outcome.run_id, error }));
+    if (result.status === 200 && startsReconciliation(delivery.event)) deps.evidence?.reconcileRun(credential, delivery.run_id)
+      .catch((error: unknown) => console.error("[observation] reconciliation failed", { run_id: delivery.run_id, error }));
     return c.json(result.body, result.status);
-  });
-  app.get(`/v1/sources/${producer}/unmapped`, async (c) => {
-    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
-    if (!credential || credential.producer !== producer) return errorResponse(c, 403, "forbidden", "read credential required");
-    const page = pagination(c.req.url);
-    if (!page) return errorResponse(c, 400, "invalid_pagination", "limit must be 1..200 and offset nonnegative");
-    return c.json(await readUnmappedSourceEvents(deps.db, credential, page));
   });
   app.get("/v1/source-revisions/:id", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);

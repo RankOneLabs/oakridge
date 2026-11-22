@@ -34,7 +34,7 @@ export function selectReportEvent(input: ExecutorReport): { readonly event: Even
     case "ended": return { event: { kind: "worker_ended", action: action_id, result: report.result },
       ingress_id: `worker_ended:${action_id}:${seq}` };
     case "published": return { event: { kind: "revision_published", unit: report.unit, artifact: report.artifact, body: report.body,
-      predecessor: report.predecessor, subject: null, by: action_id }, ingress_id: `revision_published:${action_id}:${seq}:${report.artifact}` };
+      predecessor: report.predecessor, subject: null, by: { action: action_id, seq } }, ingress_id: `revision_published:${action_id}:${seq}:${report.artifact}` };
   }
 }
 

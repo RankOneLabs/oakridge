@@ -3,7 +3,7 @@ import { canonicalJson, canonicalDigest } from "canonical-json";
 import type { ParsedWorkflow, Type } from "../core-client/core-types";
 import { err, ok, type Result } from "../domain/primitives";
 import type { PinnedDefinitionRead } from "../storage/read-store";
-import type { CanonicalDigest, JsonValue } from "./observation-wire";
+import type { JsonValue } from "./revision-delivery";
 
 function encoded(value: JsonValue): string {
   const result = canonicalJson(value);
@@ -12,16 +12,13 @@ function encoded(value: JsonValue): string {
 }
 
 /** Retain the stored digest's domain prefix over the shared canonical bytes. */
-function schemaDigest(declaration: JsonValue, version: "v1" | "v2"): string {
-  return `artifact-schema/${version}:${createHash("sha256").update(encoded(declaration), "utf8").digest("hex")}`;
+function schemaDigest(declaration: JsonValue): string {
+  return `artifact-schema/v2:${createHash("sha256").update(encoded(declaration), "utf8").digest("hex")}`;
 }
-export function declarationDigest(declaration: JsonValue): string {
-  return schemaDigest(declaration, "v1");
-}
-export function bodyDigest(body: JsonValue): CanonicalDigest {
+export function bodyDigest(body: JsonValue): string {
   const result = canonicalDigest(body);
   if (!result.ok) throw new Error(`${result.error.operation}: ${result.error.entity_id}: ${result.error.detail}`);
-  return result.value as CanonicalDigest;
+  return result.value;
 }
 interface SchemaResolution {
   readonly type: Type;
@@ -61,21 +58,17 @@ function resolveSchema(input: SchemaResolution): Result<Type, SchemaResolutionFa
     default: return ok(type);
   }
 }
-/** The pinned contract's identity authority determines its versioning epoch.
- * Historical tasks-based contracts retain their exact declaration digests,
- * including on replay. Spec-based contracts use v2 resolved bodies. The epoch
- * also distinguishes unchanged built-in blocker schemas across the cutover.
- * No revision body or prompt participates in this decision. */
-function usesResolvedSchemaVersions(workflow: ParsedWorkflow): boolean {
-  const artifacts = Object.values(workflow.stages).map((stage) => stage.artifacts);
-  return artifacts.some((stage) => stage.spec !== undefined) && artifacts.every((stage) => stage.tasks === undefined);
-}
 export function parsedArtifactSchemaVersion(workflow: ParsedWorkflow, stage: string, artifact: string): string | null {
   const declaration = workflow.stages[stage]?.artifacts[artifact];
   if (!declaration) return null;
-  if (!usesResolvedSchemaVersions(workflow)) return declarationDigest(declaration.schema);
   const resolved = resolveSchema({ type: declaration.schema, schemas: workflow.schemas ?? {}, visiting: new Set() });
-  return resolved.ok ? schemaDigest(resolved.value, "v2") : null;
+  return resolved.ok ? schemaDigest(resolved.value) : null;
+}
+
+export function runInputSchemaVersion(workflow: ParsedWorkflow): string {
+  const resolved = resolveSchema({ type: workflow.input, schemas: workflow.schemas ?? {}, visiting: new Set() });
+  if (!resolved.ok) throw new Error(`Cannot resolve run input: ${resolved.error.entity_id} ${resolved.error.detail}`);
+  return schemaDigest(resolved.value);
 }
 
 export function artifactSchemaVersion(definition: PinnedDefinitionRead, stage: string, artifact: string): string | null {

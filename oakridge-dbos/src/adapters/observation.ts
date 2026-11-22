@@ -1,41 +1,38 @@
 import type { Kysely } from "kysely";
 import type { DB } from "../storage/db-types";
-import { readSpecAnalysisRevisionId, readUnitInputProvenance, readCommittedEventsAfter, readCommittedRunConfig, readEventRevisionSequence, readEventUnitStage, readPinnedDefinition,
-  type CommittedEventRow } from "../storage/read-store";
+import { readCommittedEventsAfter, readCommittedRunConfig, readDeliveredRevisions, readPinnedDefinition, type CommittedEventRow } from "../storage/read-store";
 import type { CoreEvent } from "../storage/json-column-types";
-import { mapObservationEvent } from "./observation-mapping";
-import type { SourceEventAck, SourceEventCursor, SourceEventDelivery } from "./observation-wire";
+import { selectEventDelivery, type DeliveryAck, type DeliveryCursor, type CommittedEventDelivery } from "./revision-delivery";
 
 export interface ObservationOptions { readonly url: string; readonly namespace: string; readonly token: string; readonly read_token?: string | null;
   readonly poll_ms?: number; readonly fetcher?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   readonly log?: (detail: string) => void }
 
-async function deliveryFor(db: Kysely<DB>, row: CommittedEventRow<CoreEvent>, namespace: string, previous: SourceEventCursor): Promise<SourceEventDelivery> {
-  const event = row.payload;
-  const definition = await readPinnedDefinition(db, row.run_id ?? "");
-  const stage = event.kind === "revision_published" ? await readEventUnitStage(db, row.run_id ?? "", event.unit) : null;
-  const sequence = event.kind === "revision_published" ? await readEventRevisionSequence(db, row, event.artifact) : null;
-  const run_config = event.kind === "launched" ? await readCommittedRunConfig(db, row.run_id ?? "") : null;
-  const input_provenance = event.kind === "revision_published"
-    ? await readUnitInputProvenance(db, { run_id: row.run_id ?? "", unit_id: event.unit }) : undefined;
-  const analysis_revision_id = await readSpecAnalysisRevisionId(db, row);
-  const outcome = mapObservationEvent({ row, definition, input_provenance, analysis_revision_id, namespace, stage, revision_sequence: sequence, run_config });
-  return { previous, cursor: { commit_txid: row.commit_txid, id: row.id }, outcome };
+async function deliveryFor(db: Kysely<DB>, row: CommittedEventRow<CoreEvent>, namespace: string, previous: DeliveryCursor): Promise<CommittedEventDelivery> {
+  const run_id = row.run_id ?? "";
+  const revisions = await readDeliveredRevisions(db, run_id, row.id);
+  const launched = row.payload.kind === "launched";
+  const definition = launched || revisions.length ? await readPinnedDefinition(db, run_id) : null;
+  const committed = launched ? await readCommittedRunConfig(db, run_id) : null;
+  if (committed?.state === "malformed") throw new Error(`Malformed committed config for run ${run_id}`);
+  const config = committed?.state === "committed"
+    ? { sessions: committed.config.sessions, grading_enabled: committed.config.grading_enabled } : { sessions: {}, grading_enabled: false };
+  return selectEventDelivery({ ...row, namespace, previous, config }, revisions, revisions, definition);
 }
 
-async function serviceCursor(options: ObservationOptions, signal?: AbortSignal): Promise<SourceEventCursor> {
+async function serviceCursor(options: ObservationOptions, signal?: AbortSignal): Promise<DeliveryCursor> {
   const response = await (options.fetcher ?? fetch)(new URL("/v1/sources/oakridge/cursor", options.url),
     { headers: { authorization: `Bearer ${options.token}` }, signal });
   if (!response.ok) throw new Error(`observation cursor HTTP ${response.status}`);
-  const ack = await response.json() as SourceEventAck;
-  if (!ack.cursor || !/^[0-9]+$/.test(ack.cursor.commit_txid) || typeof ack.cursor.id !== "string") throw new Error("invalid observation cursor response");
+  const ack = await response.json() as DeliveryAck;
+  if (!ack.cursor || !/^[0-9]+$/.test(ack.cursor.commit_txid) || typeof ack.cursor.event_id !== "string") throw new Error("invalid observation cursor response");
   return ack.cursor;
 }
 
 /** One read and one acknowledged delivery; the service's cursor is always authoritative. */
 export async function publishObservationOnce(db: Kysely<DB>, options: ObservationOptions, signal?: AbortSignal): Promise<boolean> {
   const previous = await serviceCursor(options, signal);
-  const [row] = await readCommittedEventsAfter(db, "authority.event", { after: previous, limit: 1 });
+  const [row] = await readCommittedEventsAfter(db, "authority.event", { after: { id: previous.event_id, commit_txid: previous.commit_txid }, limit: 1 });
   if (!row) return false;
   const delivery = await deliveryFor(db, row, options.namespace, previous);
   const response = await (options.fetcher ?? fetch)(new URL("/v1/sources/oakridge/events", options.url), {
@@ -43,8 +40,8 @@ export async function publishObservationOnce(db: Kysely<DB>, options: Observatio
     body: JSON.stringify(delivery), signal,
   });
   if (!response.ok) throw new Error(`observation delivery HTTP ${response.status}`);
-  const ack = await response.json() as SourceEventAck;
-  if (ack.cursor?.commit_txid !== delivery.cursor.commit_txid || ack.cursor.id !== delivery.cursor.id)
+  const ack = await response.json() as DeliveryAck;
+  if (ack.cursor?.commit_txid !== delivery.cursor.commit_txid || ack.cursor.event_id !== delivery.cursor.event_id)
     throw new Error("observation acknowledged a different cursor");
   return true;
 }

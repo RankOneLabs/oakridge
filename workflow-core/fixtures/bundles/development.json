@@ -715,6 +715,10 @@
           },
           "validate": [
             {
+              "check": "every(assessment.proposals, not present(item.citation) or require(item.citation).revision_id != \"\")",
+              "message": "A cited proposal must name its source revision."
+            },
+            {
               "check": "every(assessment.item_assessments, item.subject.kind == \"build_item\")",
               "message": "Cohort assessment items must be build items."
             },
@@ -922,6 +926,10 @@
           },
           "validate": [
             {
+              "check": "every(assessment.proposals, not present(item.citation) or require(item.citation).revision_id != \"\")",
+              "message": "A cited proposal must name its source revision."
+            },
+            {
               "check": "every(assessment.item_assessments, item.subject.kind == \"requirement\")",
               "message": "Integration assessment items must be canonical requirements."
             },
@@ -932,6 +940,10 @@
             {
               "check": "every(assessment.item_assessments, contains(map(input.requirements, item.id), item.subject.id))",
               "message": "Integration assessment items must name applicable canonical requirements."
+            },
+            {
+              "check": "every(flatten(map(assessment.additional_findings, item.related_build_item_ids)), contains(flatten(map(input.briefs, map(item.build_items, item.id))), item))",
+              "message": "Additional finding links must name build items in the reviewed briefs."
             },
             {
               "check": "unique(map(assessment.item_assessments, item.subject.id))",

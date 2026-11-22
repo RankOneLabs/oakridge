@@ -235,7 +235,7 @@ export async function submitHumanAnswer(db: Database, tenant: TenantScope, revie
   const execution_id = digest.value;
   const question: QuestionKey = { question_id: input.question_id, question_version: input.question_version };
   return withTenant(db, tenant, async (trx) => {
-    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${tenant.producer}:${tenant.namespace}:${reviewer_id}:submissions`}, 0))`.execute(trx);
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([tenant.producer, tenant.namespace, reviewer_id, "submissions"])}, 0))`.execute(trx);
     const repeated = await readRecordedSubmission(trx, tenant, input.submission_id, execution_id);
     if (repeated) return ok({ status: "duplicate", submission: repeated });
     const item = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "run_id"]).where("producer", "=", tenant.producer)

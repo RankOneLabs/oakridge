@@ -24,7 +24,7 @@ export async function readStepSnapshot(db: Reader, run_id: string, unit_id: stri
     db.selectFrom("authority.attempt").select(["action_id", "seq", "unit_id", "worker", "mode", "cause", "status", "kbbl_session_id"])
       // The core reads a worker's latest attempt by position: they go in the order commit opened them, not by (hashed) id.
       .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("created_at").orderBy("seq").execute(),
-    db.selectFrom("authority.artifact_revision").select(["id", "unit_id", "artifact", "seq", "decision_cursor", "body", "by_id", "predecessor_id", "subject"])
+    db.selectFrom("authority.artifact_revision").select(["id", "unit_id", "artifact", "seq", "decision_cursor", "body", "by_action_id", "by_seq", "predecessor_id", "subject"])
       .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("created_at").orderBy("seq").execute(),
     db.selectFrom("authority.review_decision").select(["id", "unit_id", "review", "decision", "effect", "target_revision_id", "payload", "validation_artifact", "validation_messages"])
       .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("created_at").orderBy("id").execute(),
@@ -46,7 +46,7 @@ export async function readStepSnapshot(db: Reader, run_id: string, unit_id: stri
       kbbl_session_id: attempt.kbbl_session_id })),
     revisions: revisions.map((revision) => ({ id: revision.id, unit: revision.unit_id, artifact: revision.artifact, seq: revision.seq,
       decision_cursor: revision.decision_cursor,
-      body: revision.body, by: revision.by_id, predecessor: revision.predecessor_id, subject: revision.subject })),
+      body: revision.body, by: revision.by_action_id === null || revision.by_seq === null ? null : { action: revision.by_action_id, seq: revision.by_seq }, predecessor: revision.predecessor_id, subject: revision.subject })),
     decisions: decisions.map((decision) => decision.review === VALIDATION_REVIEW && decision.validation_artifact !== null
       ? { kind: "validation" as const, id: decision.id, unit: decision.unit_id, artifact: decision.validation_artifact,
         target: decision.target_revision_id, messages: decision.validation_messages ?? [] }

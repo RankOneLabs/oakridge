@@ -1,7 +1,7 @@
 import { readRunChargedCost } from "../storage/grading-record-store";
 import { readEvaluatorDefinition } from "../storage/grading-store";
 import { isRunComplete, stagesFromReadiness, type RollupContext } from "../grading/task-stages";
-import { filterCompositeStage, selectComposite, selectCompositePage, selectDrilldown, selectRunStages } from "../grading/composite";
+import { filterCompositeStage, selectComposite, selectCompositePage, selectDrilldown, selectLogicalItem, selectRunStages } from "../grading/composite";
 import { hasCapturedRun, readValidatedRun, selectGradeableItems } from "../storage/grading-record-store";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
@@ -160,7 +160,7 @@ export function registerGradingRecordRoutes(app: Hono, deps: SourceDependencies)
     if (!context.ok) return contextErrorResponse(c, context.error);
     const stage = c.req.query("stage") ?? null;
     const result = await readValidatedRun(deps.db, tenant, path, { run_id: c.req.param("run_id"), context: context.value, stage }, (inputs) => {
-      const item = inputs.logical_items.find((candidate) => candidate.producer_local_id === c.req.param("local_id"));
+      const item = selectLogicalItem(inputs, path, c.req.param("local_id"));
       return item ? selectComposite(inputs, path, item) : null;
     });
     if (!result.ok) return errorResponse(c, 400, "invalid_stage", "unknown run stage");

@@ -171,16 +171,14 @@ export function selectAttemptIntent(attempt: AttemptRecord, intents: RunRead["in
 export const selectAttemptId = (attempt: Pick<AttemptRecord, "action_id" | "seq">): string => `${attempt.action_id}:${attempt.seq}`;
 
 /**
- * The attempt that published a revision. A revision records only its action, so this is the latest attempt of that
- * action opened by then: commit stamps both under the run lock, and a retry opens after every revision written before it.
+ * The exact attempt stored when the revision was published.
  */
-export function selectPublishingAttempt<Attempt extends Pick<AttemptRecord, "action_id" | "seq" | "created_at">>(
-  revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">, attempts: readonly Attempt[]): Attempt | null {
-  return attempts.filter((attempt) => attempt.action_id === revision.by_id && attempt.created_at.getTime() <= revision.created_at.getTime())
-    .reduce<Attempt | null>((latest, attempt) => latest === null || attempt.seq > latest.seq ? attempt : latest, null);
+export function selectPublishingAttempt<Attempt extends Pick<AttemptRecord, "action_id" | "seq">>(
+  revision: Pick<ArtifactRevisionRecord, "by_action_id" | "by_seq">, attempts: readonly Attempt[]): Attempt | null {
+  return attempts.find((attempt) => attempt.action_id === revision.by_action_id && attempt.seq === revision.by_seq) ?? null;
 }
-export function selectPublishingAttemptId(revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">,
-  attempts: readonly Pick<AttemptRecord, "action_id" | "seq" | "created_at">[]): string | null {
+export function selectPublishingAttemptId(revision: Pick<ArtifactRevisionRecord, "by_action_id" | "by_seq">,
+  attempts: readonly Pick<AttemptRecord, "action_id" | "seq">[]): string | null {
   const publisher = selectPublishingAttempt(revision, attempts);
   return publisher === null ? null : selectAttemptId(publisher);
 }
@@ -296,8 +294,8 @@ function isBlockerAnswerBody(body: unknown): body is BlockerAnswerBody {
 }
 
 /** The worker attempt that published a revision (see `selectPublishingAttempt`); null for an operator edit. */
-export function selectRevisionAuthor(attempts: readonly AttemptRecord[], revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">): BlockerAuthor | null {
-  if (revision.by_id === null) return null;
+export function selectRevisionAuthor(attempts: readonly AttemptRecord[], revision: Pick<ArtifactRevisionRecord, "by_action_id" | "by_seq">): BlockerAuthor | null {
+  if (revision.by_action_id === null) return null;
   const attempt = selectPublishingAttempt(revision, attempts);
   if (attempt === null) return null;
   return { worker: attempt.worker, action_id: attempt.action_id, attempt_seq: attempt.seq, session_id: attempt.kbbl_session_id };

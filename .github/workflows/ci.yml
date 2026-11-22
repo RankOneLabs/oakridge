@@ -93,6 +93,8 @@ jobs:
       - run: bunx tsc --noEmit -p workflow-config/src/tsconfig.json
       - run: cargo build --locked --target wasm32-unknown-unknown -p workflow-evaluator
         working-directory: workflow-core
+      - run: bun oakridge-dbos/scripts/generate-revision-delivery-contract.ts --check
+      - run: bun oakridge-dbos/scripts/generate-artifact-versions.ts --check
       - run: bun test workflow-config/src
       - run: bun test canonical-json/tests
 

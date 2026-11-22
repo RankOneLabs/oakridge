@@ -1,7 +1,7 @@
 // Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
-import type { AttemptStatus, BlockedReason, Cause, Citation, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ExecutionEvidence, ExecutionReconciliation, ForgeRepository, InputProvenanceEntries, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
+import type { AttemptStatus, BlockedReason, Cause, Citation, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ExecutionEvidence, ExecutionReconciliation, ForgeRepository, InputBindings, InputProvenanceEntries, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
 import type { ColumnType } from "kysely";
 
 export type AuthorityDecisionEffect = "approve" | "dispatch" | "request_changes";
@@ -15,6 +15,8 @@ export type AuthorityFeedbackAssociation = "carried" | "proposed";
 export type AuthorityFeedbackOrigin = "operator" | "proposal";
 
 export type AuthorityKeyedExecutionState = "claimed" | "evidence_attached" | "reconcile" | "unclaimed";
+
+export type AuthorityRevisionOrigin = "operator_edit" | "worker";
 
 export type AuthorityStopOrigin = "commit" | "executor";
 
@@ -32,10 +34,16 @@ export interface AuthorityArtifactRevision {
    * @type {RuntimeValue}
    */
   body: JsonColumn<RuntimeValue>;
-  by_id: string | null;
+  by_action_id: string | null;
+  by_seq: number | null;
   created_at: Generated<Timestamp>;
   decision_cursor: Generated<number>;
   id: string;
+  /**
+   * @type {InputBindings}
+   */
+  input_bindings: JsonColumn<InputBindings>;
+  origin_kind: AuthorityRevisionOrigin;
   predecessor_id: string | null;
   run_id: string;
   seq: number;
@@ -98,6 +106,10 @@ export interface AuthorityAttempt {
    */
   cause: JsonColumn<Cause>;
   created_at: Generated<Timestamp>;
+  /**
+   * @type {InputBindings}
+   */
+  input_bindings: JsonColumn<InputBindings>;
   kbbl_session_id: string | null;
   /**
    * @type {Mode}
@@ -315,6 +327,13 @@ export interface AuthorityReviewItem {
   unit_id: string;
 }
 
+export interface AuthorityRevisionDelivery {
+  event_id: string;
+  ordinal: number;
+  revision_id: string;
+  run_id: string;
+}
+
 export interface AuthorityRun {
   archived_at: Timestamp | null;
   /**
@@ -401,6 +420,7 @@ export interface DB {
   "authority.project": AuthorityProject;
   "authority.review_decision": AuthorityReviewDecision;
   "authority.review_item": AuthorityReviewItem;
+  "authority.revision_delivery": AuthorityRevisionDelivery;
   "authority.run": AuthorityRun;
   "authority.unit": AuthorityUnit;
   "authority.unit_dependency": AuthorityUnitDependency;

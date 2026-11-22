@@ -1,6 +1,6 @@
 import { canonicalDigest } from "canonical-json";
 
-export type ExtractionIssueKind = "extraction_failed" | "no_matching_items" | "identity_collision" | "unresolved_relation";
+export type ExtractionIssueKind = "unregistered_declaration" | "extraction_failed" | "no_matching_items" | "identity_collision" | "unresolved_relation";
 export interface ExtractionIssue {
   readonly revision_id: string;
   readonly extractor_id: string;
@@ -22,11 +22,12 @@ export function issueId(issue: ExtractionIssue): string {
 export function extractionIssue(revision_id: string, extractor_id: string, extractor_version: string,
   item_selector: string, kind: ExtractionIssueKind): ExtractionIssue {
   const details: Record<ExtractionIssueKind, string> = {
+    unregistered_declaration: "no extractor registration",
     extraction_failed: "artifact shape does not match the pinned selector",
     no_matching_items: "selector matched no items",
     identity_collision: "two selected items have the same occurrence identity",
     unresolved_relation: "producer reference has no eligible target in this run",
   };
   return { revision_id, extractor_id, extractor_version, item_selector, kind,
-    detail: details[kind], is_retriable: kind !== "no_matching_items" };
+    detail: details[kind], is_retriable: kind !== "no_matching_items" && kind !== "unregistered_declaration" };
 }

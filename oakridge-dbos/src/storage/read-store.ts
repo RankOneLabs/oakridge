@@ -14,9 +14,8 @@ import type { RunEventCursor } from "../projections/run-event";
 import type { OperatorEventPayload } from "../projections/operator-event";
 import type { SessionHold, SessionRunLocation } from "../projections/session-hold";
 import type { DB } from "./db-types";
-import { anyOf, jsonText, type DatabaseTransaction } from "./database";
+import { anyOf, type DatabaseTransaction } from "./database";
 import { OWED_STATUSES } from "./executor-store";
-import { ANALYSIS_LINKS_DECLARED } from "../domain/analysis-link-declaration";
 import type { CoreEvent, StallRecord, WantedWorkers } from "./json-column-types";
 import type { ArtifactRevisionRecord, AttemptRecord, EffectIntentRecord, EventRecord, IngressReceiptRecord, ReviewDecisionRecord, RunRecord,
   UnitDependencyRecord, UnitRecord } from "./schema-records";
@@ -37,7 +36,7 @@ const summaryUnit = (row: Omit<Row<"authority.unit">, "input" | "input_provenanc
 const attemptRecord = (row: Row<"authority.attempt">): AttemptRecord => ({ ...row, action_id: row.action_id as ActionId,
   run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId });
 const revisionRecord = (row: Row<"authority.artifact_revision">): ArtifactRevisionRecord => ({ ...row, id: row.id as RevisionId,
-  run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId, by_id: row.by_id as ActionId | null,
+  run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId, by_action_id: row.by_action_id as ActionId | null,
   predecessor_id: row.predecessor_id as RevisionId | null, subject: row.subject as RevisionId | null });
 const revisionRef = (row: Pick<Row<"authority.artifact_revision">, "id" | "run_id" | "unit_id" | "artifact" | "seq" | "created_at">): RevisionRef =>
   ({ ...row, id: row.id as RevisionId, run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId });
@@ -147,7 +146,6 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
   ]);
   const latest_events = await trx.selectFrom("authority.event").distinctOn(["run_id", "unit_id"])
     .select(["run_id", "unit_id", "id", "created_at"]).where("run_id", "=", ids)
-    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "<>", ANALYSIS_LINKS_DECLARED))
     .orderBy("run_id").orderBy("unit_id").orderBy("created_at", "desc").orderBy("id", "desc").execute();
   const definitions = new Map(await Promise.all(runs.map(async (run) => [run.definition_id, await loadDefinition(run.definition_id as DefinitionId)] as const)));
   return run_ids.flatMap((run_id) => {
@@ -554,35 +552,12 @@ export async function readCommittedEventsAfter(db: Reader, table: "authority.eve
   return rows.rows;
 }
 
-/** The stage pinned on the unit addressed by a revision event. */
-export async function readEventUnitStage(db: Reader, run_id: string, unit_id: string): Promise<string | null> {
-  const row = await db.selectFrom("authority.unit").select("stage").where("run_id", "=", run_id).where("id", "=", unit_id).executeTakeFirst();
-  return row?.stage ?? null;
-}
-
-/** Count committed publications through this event to reproduce the core's revision sequence. */
-export async function readEventRevisionSequence(db: Reader, row: CommittedEventRow<CoreEvent>, artifact: string): Promise<number> {
-  const counted = await db.selectFrom("authority.event").select((eb) => eb.fn.countAll<number>().as("count"))
-    .where("run_id", "=", row.run_id ?? "").where("unit_id", "=", row.unit_id)
-    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "revision_published"))
-    .where((eb) => eb(eb.ref("payload", "->>").key("artifact"), "=", artifact))
-    .where((eb) => eb(eb.refTuple("commit_txid", "id"), "<=", eb.tuple(eb.cast<number>(eb.val(row.commit_txid), "bigint"), row.id)))
-    .executeTakeFirstOrThrow();
-  return Number(counted.count);
-}
-
-/** Current spec editors resolve `approved_analysis: latest(analysis)` when an
- * attempt is scheduled. Worker provenance currently records only unit inputs,
- * so use that attempt's journaled opening boundary, never the latest revision
- * at replay. Operator edits resolve latest(analysis) at their publication. */
-export async function readSpecAnalysisRevisionId(db: Reader, row: CommittedEventRow<CoreEvent>): Promise<string | null> {
-  const event = row.payload;
-  if (event.kind !== "revision_published" || event.artifact !== "spec") return null;
-  if (!event.by) {
-    const sequence = await readEventRevisionSequence(db, row, "analysis");
-    return sequence > 0 ? `${event.unit}:analysis:${sequence}` : null;
-  }
-  return (await readPublishedAnalysisRevisionIds(db, row))?.[0] ?? null;
+export function readDeliveredRevisions(db: Reader, run_id: string, event_id: string) {
+  return db.selectFrom("authority.revision_delivery as delivery")
+    .innerJoin("authority.artifact_revision as revision", (join) => join.onRef("revision.run_id", "=", "delivery.run_id").onRef("revision.id", "=", "delivery.revision_id"))
+    .innerJoin("authority.unit as unit", (join) => join.onRef("unit.run_id", "=", "revision.run_id").onRef("unit.id", "=", "revision.unit_id"))
+    .where("delivery.run_id", "=", run_id).where("delivery.event_id", "=", event_id)
+    .selectAll("revision").select(["delivery.ordinal", "delivery.revision_id", "unit.stage"]).execute();
 }
 
 export async function readOperatorEventsAfter(db: Reader, input: { readonly after: RunEventCursor; readonly limit: number; readonly subscription_snapshot: string | null }): Promise<readonly OperatorEventDeliveryRow[]> {
@@ -653,44 +628,4 @@ export async function readUnitInputProvenance(db: Kysely<DB>, location: UnitLoca
   const row = await db.selectFrom("authority.unit").select("input_provenance")
     .where("run_id", "=", location.run_id).where("id", "=", location.unit_id).executeTakeFirst();
   return row?.input_provenance == null ? { status: "unresolved" } : { status: "recorded", entries: row.input_provenance };
-}
-
-/** Pin the analysis supplied to the publishing attempt using its saved input and
- * the approval history at the event that opened it. Later approvals cannot move it. */
-export async function readPublishedAnalysisRevisionIds(db: Reader, row: CommittedEventRow<CoreEvent>): Promise<readonly string[] | null> {
-  const event = row.payload;
-  if (row.run_id === null || event.kind !== "revision_published" || event.artifact !== "spec") return null;
-  // Keep time comparisons in Postgres: JavaScript Dates truncate sub-millisecond ordering.
-  let cutoff_event_id = row.id;
-  let approved_analysis: unknown;
-  if (event.by) {
-    const attempt = await db.selectFrom("authority.attempt as attempt")
-      .innerJoin("authority.effect_intent as intent", (join) => join.onRef("intent.action_id", "=", "attempt.action_id").onRef("intent.seq", "=", "attempt.seq"))
-      .innerJoin("authority.event as publication", (join) => join.on("publication.id", "=", row.id))
-      .select(["attempt.seq", "intent.payload"])
-      .where("attempt.run_id", "=", row.run_id).where("attempt.unit_id", "=", event.unit).where("attempt.action_id", "=", event.by)
-      .whereRef("attempt.created_at", "<=", "publication.created_at").orderBy("attempt.seq", "desc").executeTakeFirst();
-    if (!attempt) return null;
-    const wanted = await db.selectFrom("authority.wanted_log as wanted")
-      .innerJoin("authority.event as event", "event.id", "wanted.event_id")
-      .innerJoin("authority.event as publication", (join) => join.on("publication.id", "=", row.id))
-      .innerJoin("authority.attempt as attempt", (join) => join.on("attempt.action_id", "=", event.by!).on("attempt.seq", "=", attempt.seq))
-      .select(["wanted.actions", "event.id"])
-      .where("wanted.run_id", "=", row.run_id).where("wanted.unit_id", "=", event.unit)
-      .whereRef("event.created_at", ">=", "attempt.created_at").whereRef("event.created_at", "<=", "publication.created_at")
-      .orderBy("event.created_at").orderBy("event.id").execute();
-    const opening = wanted.find((entry) => entry.actions.some((action) => action.action_id === event.by && action.attempt_seq === attempt.seq));
-    const inputs = attempt.payload.inputs;
-    if (!opening || typeof inputs !== "object" || inputs === null || !("approved_analysis" in inputs)) return null;
-    cutoff_event_id = opening.id;
-    approved_analysis = inputs.approved_analysis;
-  }
-  let query = db.selectFrom("authority.artifact_revision as analysis")
-    .innerJoin("authority.review_decision as decision", "decision.target_revision_id", "analysis.id")
-    .innerJoin("authority.event as cutoff", (join) => join.on("cutoff.id", "=", cutoff_event_id))
-    .select("analysis.id").where("analysis.run_id", "=", row.run_id).where("analysis.unit_id", "=", event.unit)
-    .where("analysis.artifact", "=", "analysis").where("decision.effect", "=", "approve").whereRef("decision.created_at", "<=", "cutoff.created_at");
-  if (event.by) query = query.where("analysis.body", "=", jsonText(approved_analysis));
-  const found = await query.orderBy("decision.created_at", "desc").orderBy("decision.id", "desc").executeTakeFirst();
-  return found ? [found.id] : null;
 }
