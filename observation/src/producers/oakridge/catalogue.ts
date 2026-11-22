@@ -301,8 +301,12 @@ type StudyKind = "case" | "criterion" | "trigger" | "cohort_file";
 const isStudyKind = (value: JsonValue | undefined): value is StudyKind =>
   value === "case" || value === "criterion" || value === "trigger" || value === "cohort_file";
 
-function studyTaskLink(type: LogicalItemLink["type"], target_task_kind: StudyKind, target_local_id: string, evidence_ref: string): LogicalItemLink {
-  return { target: "logical_item", type, target_scope: TASK_SCOPE, target_task_kind, target_local_id, evidence_ref };
+interface StudyTaskLinkTarget extends Pick<LogicalItemLink, "type" | "target_local_id" | "evidence_ref"> {
+  readonly target_task_kind: StudyKind;
+}
+
+function studyTaskLink(target: StudyTaskLinkTarget): LogicalItemLink {
+  return { ...target, target: "logical_item", target_scope: TASK_SCOPE };
 }
 function studySubject(value: JsonValue, path: string, type: LogicalItemLink["type"]): Result<LogicalItemLink, ExtractionFailure> {
   const id = requiredId(value, path);
@@ -310,7 +314,7 @@ function studySubject(value: JsonValue, path: string, type: LogicalItemLink["typ
   const subject = objectAt(value, path);
   if (!subject.ok) return subject;
   const kind = subject.value.kind;
-  return isStudyKind(kind) ? ok(studyTaskLink(type, kind, id.value, path)) :
+  return isStudyKind(kind) ? ok(studyTaskLink({ type, target_task_kind: kind, target_local_id: id.value, evidence_ref: path })) :
     err({ operation: "select_items", entity_id: path, detail: "unknown study subject kind" });
 }
 function studyTask(path: readonly string[], kind: StudyKind): Extractor {
@@ -324,16 +328,23 @@ function studyTask(path: readonly string[], kind: StudyKind): Extractor {
     }) : items;
   });
 }
-function studyMark(field: string, item_kind: string, task_kind: StudyKind, idField: string): Extractor {
+interface StudyMarkFields {
+  readonly field: string;
+  readonly item_kind: string;
+  readonly task_kind: StudyKind;
+  readonly idField: string;
+}
+
+function studyMark({ field, item_kind, task_kind, idField }: StudyMarkFields): Extractor {
   const selector = `/${field}/*`;
   return definition(`study.${field}`, item_kind, selector, topList(field, (value, address) => {
     const id = referenceId(value, idField, address);
     return id.ok ? ok(pathItem(item_kind, selector, address, value,
-      [studyTaskLink("assesses", task_kind, id.value, `${address}/${idField}`)], id.value)) : id;
+      [studyTaskLink({ type: "assesses", target_task_kind: task_kind, target_local_id: id.value, evidence_ref: `${address}/${idField}` })], id.value)) : id;
   }));
 }
 function studyRegistrations(): readonly Registration[] {
-  const qualifications = studyMark("qualifications", "qualification", "case", "case_id");
+  const qualifications = studyMark({ field: "qualifications", item_kind: "qualification", task_kind: "case", idField: "case_id" });
   const assessment = [
     definition("assessment.item_assessments", "item_assessment", "/item_assessments/*", topList("item_assessments", (value, path) => {
       const object = objectAt(value, path);
@@ -364,8 +375,8 @@ function studyRegistrations(): readonly Registration[] {
       })]),
     register(study.design.slice_build, [qualifications]),
     register(study.expand.expansion, [qualifications]),
-    register(study.design.slice_report, [studyMark("criteria_marks", "criterion_mark", "criterion", "id"),
-      studyMark("trigger_marks", "trigger_mark", "trigger", "id"), studyMark("paid_results", "paid_result", "case", "case_id")]),
+    register(study.design.slice_report, [studyMark({ field: "criteria_marks", item_kind: "criterion_mark", task_kind: "criterion", idField: "id" }),
+      studyMark({ field: "trigger_marks", item_kind: "trigger_mark", task_kind: "trigger", idField: "id" }), studyMark({ field: "paid_results", item_kind: "paid_result", task_kind: "case", idField: "case_id" })]),
     register(study.design.slice_assessment, assessment),
     register(study.expand.assessment, assessment),
     register(study.integration.assessment, assessment),
@@ -374,7 +385,9 @@ function studyRegistrations(): readonly Registration[] {
       if (!id.ok) return id;
       const cases = idList(value, "case_ids", path);
       return cases.ok ? ok(taskItem("cohort_file", "/cohorts/*", path, id.value, value,
-        cases.value.map((caseId, index) => studyTaskLink("addresses", "case", caseId, `${path}/case_ids/${index}`)), "cohort_file")) : cases;
+        cases.value.map((caseId, index) => studyTaskLink({
+          type: "addresses", target_task_kind: "case", target_local_id: caseId, evidence_ref: `${path}/case_ids/${index}`,
+        })), "cohort_file")) : cases;
     }))]),
   ];
 }
