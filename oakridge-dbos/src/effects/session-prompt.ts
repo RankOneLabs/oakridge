@@ -143,18 +143,21 @@ export function renderTaskPublication(instruction: EffectInstruction, context: S
         ? `\n  endpoint: /api/runs/${encodeURIComponent(instruction.run_id)}/units/${encodeURIComponent(instruction.action.unit)}/artifacts/${encodeURIComponent(artifact.key)}` : "";
       return `- \`${artifact.key}\`: ${current === null ? "no revision yet, so send `predecessor: null`" : `current revision \`${current}\`, so send it as \`predecessor\``}${endpoint}`;
     }),
-    subject === null ? "Send `subject: null`." : `You are reviewing revision \`${subject.id}\`: send it as \`subject\`.`,
+    instruction.engine_inputs.self_assessment
+      ? "Publish `pr` first. For `assessment`, send the exact latest `pr` revision as `subject`. For `pr`, send `subject: null`."
+      : subject === null ? "Send `subject: null`." : `You are reviewing revision \`${subject.id}\`: send it as \`subject\`.`,
   ].join("\n");
 }
 
 /** One attempt's input: the handoff (fresh sessions), the mode prompt, and where to publish. */
 export function renderSessionTask(instruction: EffectInstruction, context: SessionTaskContext): string {
   const handoff = renderHandoff(instruction, context);
+  const roundDelivery = instruction.engine_inputs.round_delivery;
   const unit = instruction.worker.kind === "agent" && instruction.worker.session === "shared"
     ? `This task belongs to unit \`${instruction.action.unit}\`. Publish only to the endpoints below.` : null;
   const blocker_answer = instruction.engine_inputs.feedback.some((entry) => entry.review === BLOCKER_REVIEW)
     ? "The operator answered your blocker. Resume with this answer as feedback and publish your normal artifacts. If clarification is still needed, publish a successor blocker using its latest revision as predecessor." : null;
-  return [unit, handoff, blocker_answer, renderModePrompt(instruction, context.prompt_text), renderTaskPublication(instruction, context)]
+  return [unit, handoff, blocker_answer, renderModePrompt(instruction, context.prompt_text), roundDelivery ?? null, renderTaskPublication(instruction, context)]
     .filter((part): part is string => part !== null).join("\n\n");
 }
 

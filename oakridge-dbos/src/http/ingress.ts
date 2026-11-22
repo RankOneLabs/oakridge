@@ -1,3 +1,5 @@
+import type { AssessmentDecisionReceipt } from "../storage/json-column-types";
+import type { AssessmentDecisionCommand, Citation, DispatchAuthorizationRequest, FeedbackItemRequest } from "../core-client/core-types";
 import { readPinnedDefinition } from "../storage/read-store";
 import { declarationDigest } from "../adapters/observation-schema-version";
 import { parsePrIntegration, type PrIntegration } from "../domain/pr-integration";
@@ -9,7 +11,7 @@ import type { Event, Writer } from "../core-client/core-types";
 import { acceptsAnalysisLinkDeclarations, selectApplicableEntries, type AnalysisLinkEntry } from "../domain/analysis-link-declaration";
 import { err, ok, type ProjectId, type Result, type RunId } from "../domain/primitives";
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
-import { commitAnalysisLinkDeclaration, commitDecisionWithLinks, commitEvent, launchRunId, replayLaunch, type LaunchRequestContent, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
+import { commitAnalysisLinkDeclaration, commitAssessmentMutation, commitDecisionWithLinks, commitEvent, launchRunId, replayLaunch, type LaunchRequestContent, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
 import { readSessionAttempt } from "../storage/read-store";
 import { hasProject } from "../storage/operator-store";
 import { operatorWriterFromCredential } from "./control-auth";
@@ -32,12 +34,15 @@ export interface LaunchRequest extends IngressRequest {
 }
 export interface DecideRequest extends IngressRequest {
   readonly decision: string; readonly target: string; readonly payload: unknown;
-  /** Assessment displayed by the operator, separate from a redirected core effect target. */
-  readonly expected_assessment_revision_id?: string;
   /** Optional explicit links, declared against the tasks revision this decision approves. Nothing requires them. */
   readonly analysis_links?: readonly AnalysisLinkEntry[];
 }
 /** What an agent sends to publish a revision; its attempt comes from the session secret. */
+export type DecideAssessmentRequest = IngressRequest & AssessmentDecisionCommand;
+export type AuthorizeFeedbackRequest = IngressRequest & DispatchAuthorizationRequest;
+export type CreateFeedbackRequest = IngressRequest & FeedbackItemRequest;
+export interface AuthorizationResponse { readonly authorization_id: string }
+export interface CreateFeedbackResponse { readonly item_id: string }
 export interface PublishRequest extends IngressRequest { readonly body: unknown; readonly predecessor: string | null; readonly subject: string | null }
 /** Explicit producer-supplied links against one exact approved tasks revision. */
 export interface DeclareLinksRequest extends IngressRequest { readonly tasks_revision_id: string; readonly entries: readonly AnalysisLinkEntry[] }
@@ -46,7 +51,7 @@ export interface NoDeclaration { readonly kind: "no_declaration"; readonly run_i
 /** Successful ingress returns the committed event; typed refusals use the shared error response. */
 export type IngressResponse = IngressCommitted;
 /** A committed (or replayed) ingress request: the only success body. */
-export interface IngressCommitted { readonly kind: "committed"; readonly run_id: string; readonly event_id: string; readonly analysis_links?: DeclaredLinks }
+export interface IngressCommitted { readonly kind: "committed"; readonly run_id: string; readonly event_id: string; readonly analysis_links?: DeclaredLinks; readonly assessment_decision?: AssessmentDecisionReceipt }
 /** What a decision's supplied links came to. A refusal refuses only them: the decision stands. */
 export type DeclaredLinks = { readonly kind: "committed"; readonly event_id: string } | { readonly kind: "refused"; readonly reason: string };
 
@@ -80,12 +85,9 @@ const linkEntry = ({ source_revision_id, item_path, task_ids }: AnalysisLinkEntr
 export function parseDecideRequest(raw: unknown): Parsed<DecideRequest> {
   if (!isFields(raw) || !isRequestId(raw.request_id) || !isKey(raw.decision) || !isKey(raw.target) || !("payload" in raw))
     return malformed("request_id, decision, target and payload are required");
-  if (raw.expected_assessment_revision_id !== undefined && !isKey(raw.expected_assessment_revision_id))
-    return malformed("expected_assessment_revision_id is a non-empty revision id");
   if (raw.analysis_links !== undefined && !(Array.isArray(raw.analysis_links) && raw.analysis_links.every(isLinkEntry)))
     return malformed("analysis_links is a list of { source_revision_id, item_path, task_ids }");
   return ok({ request_id: raw.request_id, decision: raw.decision, target: raw.target, payload: raw.payload,
-    ...(raw.expected_assessment_revision_id === undefined ? {} : { expected_assessment_revision_id: raw.expected_assessment_revision_id }),
     ...(raw.analysis_links ? { analysis_links: raw.analysis_links.map(linkEntry) } : {}) });
 }
 export function parsePublishRequest(raw: unknown): Parsed<PublishRequest> {
@@ -106,13 +108,25 @@ export function ingressResponse(run_id: string, result: CommitResult): Response 
   const outcome: CommitOutcome = result.value;
   const json = (body: IngressResponse, status = 200) => Response.json(body, { status });
   switch (outcome.kind) {
-    case "committed": return json({ kind: "committed", run_id, event_id: outcome.event_id }, 201);
-    case "replayed": return outcome.receipt.kind === "committed" ? json({ kind: "committed", run_id, event_id: outcome.receipt.event_id })
+    case "committed": return json({ kind: "committed", run_id, event_id: outcome.event_id, ...(outcome.assessment_decision ? { assessment_decision: outcome.assessment_decision } : {}) }, 201);
+    case "replayed": return outcome.receipt.kind === "committed" ? json({ kind: "committed", run_id, event_id: outcome.receipt.event_id, ...(outcome.receipt.assessment_decision ? { assessment_decision: outcome.receipt.assessment_decision } : {}) })
       : errorResponse(new ConflictError(outcome.receipt.reason));
     case "rejected": return errorResponse(new ConflictError(outcome.reason));
     case "conflict": case "contended": return errorResponse(new ConflictError(outcome.detail));
     case "missing": return errorResponse(new MissingEntityError(outcome.detail));
   }
+}
+
+function isCitation(value: unknown): value is Citation | null | undefined {
+  return value == null || (isFields(value) && isKey(value.revision_id) && typeof value.pointer === "string" && Object.keys(value).length === 2);
+}
+
+function assessmentMutationResponse(run: string, result: CommitResult, field: "item_id" | "authorization_id"): Response {
+  if (result.ok && result.value.kind === "committed") return Response.json({ [field]: result.value.event_id }, { status: 201 });
+  if (result.ok && result.value.kind === "replayed" && result.value.receipt.kind === "committed") {
+    return Response.json({ [field]: result.value.receipt.event_id });
+  }
+  return ingressResponse(run, result);
 }
 
 function declaredLinks(outcome: CommitOutcome): DeclaredLinks {
@@ -213,12 +227,16 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
   app.post("/api/runs/:run_id/units/:unit_id/reviews/:review/decide", async (c) => {
     const raw = await requestBody(c.req.raw);
     if (raw instanceof MalformedRequestError) return errorResponse(raw);
+    if (!isFields(raw) || !isRequestId(raw.request_id) || !isKey(raw.decision) || !isKey(raw.target)) {
+      return errorResponse(new MalformedRequestError("request_id, decision and target are required"));
+    }
     const parsed = parseDecideRequest(raw);
-    if (!parsed.ok) return errorResponse(parsed.error);
-    const body = parsed.value;
+    const isAssessmentRequest = Object.keys(raw).some(key => !["request_id", "decision", "target", "payload", "analysis_links"].includes(key));
+    if (!parsed.ok && !isAssessmentRequest) return errorResponse(parsed.error);
+    const body = parsed.ok ? parsed.value : { request_id: raw.request_id, decision: raw.decision, target: raw.target, payload: {} };
     const run_id = param(c, "run_id") as RunId;
     const request = { run_id, ingress_id: body.request_id, writer: operatorWriterFromCredential(c.req.raw),
-      ...(body.expected_assessment_revision_id === undefined ? {} : { expected_assessment_revision_id: body.expected_assessment_revision_id }), event: { kind: "operator_decided" as const, unit: param(c, "unit_id"),
+      assessment_decision: raw, event: { kind: "operator_decided" as const, unit: param(c, "unit_id"),
       review: param(c, "review"), decision: body.decision, target: body.target, payload: body.payload } };
     const entries = selectApplicableEntries(body.analysis_links ?? []);
     try {
@@ -229,6 +247,34 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
       const response = ingressResponse(run_id, decision);
       return response.ok && links ? Response.json({ ...await response.json() as IngressCommitted, analysis_links: declaredLinks(links) } satisfies IngressCommitted, { status: response.status }) : response;
     } catch (cause) { return fault(cause); }
+  });
+
+  app.post("/api/runs/:run_id/units/:unit_id/assessments/:artifact/feedback", async (c) => {
+    const raw = await requestBody(c.req.raw);
+    if (raw instanceof MalformedRequestError) return errorResponse(raw);
+    if (!isFields(raw) || !isRequestId(raw.request_id) || !isKey(raw.instruction) || !isCitation(raw.citation)) {
+      return errorResponse(new MalformedRequestError("request_id, instruction and optional citation are required"));
+    }
+    const run_id = param(c, "run_id") as RunId;
+    const result = await commitAssessmentMutation(deps, { run_id, unit: param(c, "unit_id"), request_id: raw.request_id,
+      writer: operatorWriterFromCredential(c.req.raw), mutation: { kind: "feedback", artifact: param(c, "artifact"),
+        command: { instruction: raw.instruction, citation: raw.citation } } });
+    return assessmentMutationResponse(run_id, result, "item_id");
+  });
+
+  app.post("/api/runs/:run_id/units/:unit_id/feedback/:item_id/authorizations", async (c) => {
+    const raw = await requestBody(c.req.raw);
+    if (raw instanceof MalformedRequestError) return errorResponse(raw);
+    const item = param(c, "item_id");
+    if (!isFields(raw) || raw.item !== item || !isRequestId(raw.request_id) || !isKey(raw.target_revision)
+        || !isKey(raw.instruction) || !Array.isArray(raw.recipients) || !raw.recipients.every(isKey)) {
+      return errorResponse(new MalformedRequestError("request_id, matching item, target_revision, instruction and recipients are required"));
+    }
+    const run_id = param(c, "run_id") as RunId;
+    const result = await commitAssessmentMutation(deps, { run_id, unit: param(c, "unit_id"), request_id: raw.request_id,
+      writer: operatorWriterFromCredential(c.req.raw), mutation: { kind: "authorization",
+        command: { item, target_revision: raw.target_revision, instruction: raw.instruction, recipients: raw.recipients } } });
+    return assessmentMutationResponse(run_id, result, "authorization_id");
   });
 
   /**

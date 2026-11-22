@@ -1,3 +1,4 @@
+import { CORE_ASSESSMENT_SCHEMAS } from "../core-client/core-types";
 import { RESERVED_ARTIFACT_SCHEMAS } from "../core-client/core-types";
 import { selectInputProvenance, type InputProvenanceView } from "./unit-status";
 import { createHash } from "node:crypto";
@@ -35,6 +36,8 @@ export interface EngineInputs {
   readonly previous: RevisionState | null;
   readonly feedback: readonly FeedbackEntry[];
   readonly subject: RevisionState | null;
+  readonly round_delivery?: string;
+  readonly self_assessment?: boolean;
 }
 /**
  * Everything the executor needs to run one attempt, written by commit as
@@ -126,6 +129,22 @@ export function selectReferencedSchemas(types: readonly TypeExpression[], schema
   return Object.fromEntries(Object.entries(referenced).sort(([left], [right]) => left.localeCompare(right)));
 }
 
+interface IntegrationAssessmentLocation {
+  readonly workflow: ParsedWorkflow;
+  readonly stage: string;
+  readonly worker: string;
+}
+
+export function isIntegrationAssessmentProducer({ workflow, stage, worker }: IntegrationAssessmentLocation): boolean {
+  if ((workflow.workflow !== "development" && workflow.workflow !== "study") || stage !== "integration") return false;
+  const definition = workflow.stages[stage];
+  const producer = definition?.workers[worker];
+  const decisions = Object.values(definition?.reviews ?? {}).flatMap(review => Object.values(review.decisions));
+  return producer?.kind === "agent" && producer.evaluates == null
+    && producer.produces.includes("pr") && producer.produces.includes("assessment")
+    && decisions.some(decision => decision.operation === "dispatch_feedback" && decision.on === "assessment");
+}
+
 /** Build the instruction for a newly wanted RunWorker from its pinned definition and resolved inputs. */
 export function selectEffectInstruction(source: InstructionSource): Result<EffectInstruction, InstructionError> {
   const { action, resolved } = source;
@@ -136,7 +155,9 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     const digest = source.prompts[path];
     return digest === undefined ? failure(resolved.action_id, `prompt ${path} is not pinned`) : { ok: true, value: { path, digest } };
   };
+  const schemas = { ...CORE_ASSESSMENT_SCHEMAS, ...source.workflow.schemas } as { readonly [name: string]: TypeExpression };
   let worker: WorkerInstruction;
+  const self_assessment = isIntegrationAssessmentProducer({ workflow: source.parsed_workflow, stage: source.stage, worker: action.worker });
   if (declared.kind === "agent") {
     const path = resolved.prompt;
     if (path == null) return failure(resolved.action_id, `agent ${action.worker} has no ${action.mode.kind} prompt`);
@@ -153,14 +174,14 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
       const schema = stage.artifacts[key]?.schema
         ?? (Object.hasOwn(RESERVED_ARTIFACT_SCHEMAS, key) ? RESERVED_ARTIFACT_SCHEMAS[key] : undefined);
       if (schema === undefined) return failure(resolved.action_id, `artifact ${key} is not declared on stage ${source.stage}`);
-      creates.push({ key, schema: selectResolvedSchema(schema, source.workflow.schemas ?? {}) });
+      creates.push({ key, schema: selectResolvedSchema(schema, schemas) });
     }
     worker = { kind: "agent", session, session_key: selectSessionKey(action, resolved.action_id, session),
       ...(session === "shared" ? { shared_session_unit: selectSharedSessionUnit(action.unit) } : {}),
       prompt: prompt.value, handoff: handoff?.value ?? null,
       settings: selectWorkerSessionSettings(source.config,
         { stage: source.stage, worker: action.worker }, declared.runtime ?? null), creates,
-      schemas: selectReferencedSchemas(creates.map((artifact) => artifact.schema), source.workflow.schemas ?? {}) };
+      schemas: selectReferencedSchemas(creates.map((artifact) => artifact.schema), schemas) };
   } else {
     const artifact = declared.produces[0];
     if (declared.produces.length !== 1 || artifact === undefined)
@@ -172,7 +193,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
   return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id as ActionId, seq: source.seq }, worker,
     inputs: resolved.inputs,
     input_provenance: selectInputProvenance(resolved.input_provenance),
-    engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? [], subject: resolved.subject ?? null },
+    engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? [], subject: resolved.subject ?? null, ...(self_assessment ? { self_assessment } : {}) },
     workspace: resolved.workspace ?? null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS } };
 }
@@ -196,6 +217,8 @@ function isCause(value: unknown): boolean {
     case "missing": return true;
     case "periodic": return isString(value.inputs) && isNullableString(value.replaces ?? null);
     case "changes_requested": return isString(value.decision);
+    case "assignment_round": return isString(value.round) && isNullableString(value.retry ?? null);
+    case "reassessment": return isString(value.round);
     case "review_of": return isString(value.revision);
     case "retry": return isString(value.event);
     default: return false;

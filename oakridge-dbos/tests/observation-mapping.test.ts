@@ -9,7 +9,7 @@ import type { CommittedEventRow, CommittedRunConfig, PinnedDefinitionRead } from
 
 const definition = (schema: unknown, digest = "bundle-a"): PinnedDefinitionRead => ({
   definition_id: digest as PinnedDefinitionRead["definition_id"], operation_registry_id: "0" as PinnedDefinitionRead["operation_registry_id"], prompts: {}, prompt_ids: {}, prompt_sources: {}, prompt_source_ids: {}, operations: [], schema_names: [], stage_names: ["writing"], source: {} as PinnedDefinitionRead["source"],
-  checked_program: { digest, stages: ["writing"], workflow: { workflow: "test", input: { kind: "text" },
+  checked_program: { assessments: {}, digest, stages: ["writing"], workflow: { workflow: "test", input: { kind: "text" },
     run: {} as PinnedDefinitionRead["checked_program"]["workflow"]["run"], schemas: {},
     stages: { writing: { input: { kind: "text" }, artifacts: { draft: { kind: "document", schema: schema as { kind: "text" } } },
       workers: {}, outcome: {} } } } },

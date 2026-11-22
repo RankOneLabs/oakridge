@@ -1,3 +1,4 @@
+import { selectAssessmentStatus } from "../projections/assessment-status";
 import { readObservationCost, type ObservationOptions } from "../adapters/observation";
 import type { KbblClient } from "../adapters/kbbl";
 import type { RunUsage, KbblUsage } from "../domain/usage";
@@ -14,7 +15,7 @@ import type { Database } from "../storage/database";
 import type { SessionHoldResponse } from "../projections/session-hold";
 import { selectUnitInputFields } from "../projections/unit-view";
 import { listDefinitions, listLiveRuns, listRuns, readAllRunsChangeKey, readDefinition, readHistory, readPinnedDefinition, readRun, readRunChangeKey,
-  readRunInspect, readSessionHold, readSessionRunLocation, readRunSummaries, readRunSummary, readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
+  readRunInspect, readAssessmentStatusFacts, readSessionHold, readSessionRunLocation, readRunSummaries, readRunSummary, readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
 import { changeKeyed } from "./change-key";
 import { errorResponse, fault, MalformedRequestError, MissingEntityError } from "./errors";
 
@@ -64,6 +65,14 @@ const ALL_RUNS_KEYED_READS = ["/api/runs", "/api/run-inboxes"] as const;
 
 export function installReadModels(app: Hono, deps: ReadModelDependencies): void {
   const { db } = deps;
+  app.get("/api/runs/:run_id/units/:unit_id/assessments/:artifact/status", async c => {
+    try {
+      const facts = await readAssessmentStatusFacts(db, {
+        run_id: c.req.param("run_id"), unit_id: c.req.param("unit_id"), artifact: c.req.param("artifact"),
+      });
+      return found(c, facts ? selectAssessmentStatus(facts) : null, "assessment");
+    } catch (cause) { return fault(cause); }
+  });
   app.get("/api/runs/:run_id/usage", async (c) => { try {
     const read = await readRun(db, c.req.param("run_id"));
     return found(c, read ? await readUsageView({ read, kbbl: deps.kbbl, observation: deps.observation }) : null, "run");

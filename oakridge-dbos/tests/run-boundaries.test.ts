@@ -17,7 +17,7 @@ const parse = (file: string): ts.SourceFile => ts.createSourceFile(file, readFil
 
 /** What run code may import, as values, from the core client: the client itself, compile, the wanted-action reader, and where the WASM is. */
 const CORE_CLIENT_VALUES = new Set(["CoreClient", "compileWorkflow", "compileDefinition", "selectWanted", "CORE_WASM_PATH"]);
-const GENERATED_CORE_CONSTANTS = new Set(["ROOT_DECLARATION", "VALIDATION_REVIEW", "BLOCKER_ARTIFACT", "BLOCKER_REVIEW", "BLOCKER_SCHEMA", "BLOCKER_REVIEW_PROMPT", "RESERVED_ARTIFACT_SCHEMAS"]);
+const GENERATED_CORE_CONSTANTS = new Set(["ROOT_DECLARATION", "VALIDATION_REVIEW", "BLOCKER_ARTIFACT", "BLOCKER_REVIEW", "BLOCKER_SCHEMA", "BLOCKER_REVIEW_PROMPT", "RESERVED_ARTIFACT_SCHEMAS", "CORE_ASSESSMENT_SCHEMAS"]);
 interface CoreImport { readonly file: string; readonly module: string; readonly name: string; readonly is_type: boolean }
 function coreImports(file: string): readonly CoreImport[] {
   const imports: CoreImport[] = [];

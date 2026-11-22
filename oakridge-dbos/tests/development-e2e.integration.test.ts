@@ -1,5 +1,5 @@
 import { commitTestDefinition } from "./committed-fixture";
-import { APPROVED_ANALYSIS, REVISED_ANALYSIS, APPROVED_SPEC, COHORTS, developmentBrief, COHORT_ASSESSMENT, INTEGRATION_ASSESSMENT, ACCEPT_ADJUDICATION, INTEGRATION_REPLACEMENT_ADJUDICATION } from "./development-contract-fixture";
+import { APPROVED_ANALYSIS, REVISED_ANALYSIS, APPROVED_SPEC, COHORTS, developmentBrief, COHORT_ASSESSMENT, INTEGRATION_ASSESSMENT } from "./development-contract-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -143,10 +143,17 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
       case "assessor":
         await publish("assessment", COHORT_ASSESSMENT, turn.subject());
         break;
-      case "integrator":
-        await publish("assessment", INTEGRATION_ASSESSMENT);
+      case "integrator": {
         await publish("pr", { pr_url: forge.open("integration", "main"), branch: "integration", summary: "Both cohorts.", review_status: "ready" });
+        const unit = decodeURIComponent(/units\/([^/]+)\/artifacts/.exec(turn.preamble)![1]);
+        const prRevision = await db.selectFrom("authority.artifact_revision").select("id").where("unit_id", "=", unit)
+          .where("artifact", "=", "pr").orderBy("seq", "desc").executeTakeFirstOrThrow();
+        const round = /^Assignment round: (ar_[a-f0-9]+)$/m.exec(turn.task)?.[1];
+        const proposals = !round && integrationReplacements.has(unit.split("/", 1)[0]) ? [{ key: "replace", instruction: "Open a new integration PR." }] : [];
+        await publish("assessment", { ...INTEGRATION_ASSESSMENT, proposals,
+          verifications: round ? [{ round_id: round, outcome: "verified" }] : [] }, prRevision.id);
         break;
+      }
       default:
         throw new Error(`no script for worker ${workerOf(turn)}`);
     }
@@ -154,6 +161,7 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
   };
 }
 
+const integrationReplacements = new Set<string>();
 let scratch: Awaited<ReturnType<typeof scratchDatabase>>;
 let db: Database;
 let stub: StubKbbl;
@@ -217,6 +225,12 @@ async function captureAdapterFixture(run_id: string, name: string): Promise<void
   capturedAdapterFixtures.add(name);
 }
 
+async function approvalFields(review: string, target: string) {
+  if (review !== "assessment_review" && review !== "integration_review") return { payload: {} };
+  const revision = await db.selectFrom("authority.artifact_revision").select("subject").where("id", "=", target).executeTakeFirstOrThrow();
+  return { assessed_revision: revision.subject, dispositions: [] };
+}
+
 /** Decide every review awaiting the operator once; merge a cohort's PR once its assessment is accepted. */
 async function operate(run_id: string, decided: Set<string>, confirmation: "none" | "cohort" | "all" = "none",
   accept_integration = true, merged_cohorts_without_confirmation?: Set<string>, accept_assessment = true): Promise<void> {
@@ -254,7 +268,7 @@ async function operate(run_id: string, decided: Set<string>, confirmation: "none
       if (review === "merge_confirmation" && unit.stage === "integration") await captureAdapterFixture(run_id, "v2-integration-merge");
       if (review === "merge_confirmation" && unit.stage === "cohort") forge.merge(`cohort-${unit.collection_key}`);
       const response = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit.id)}/reviews/${review}/decide`,
-        { request_id: crypto.randomUUID(), decision, target, payload: review === "assessment_review" || review === "integration_review" ? ACCEPT_ADJUDICATION : {} });
+        { request_id: crypto.randomUUID(), decision, target, ...await approvalFields(review, target) });
       if (response.status !== 201) throw new Error(`${review} on ${unit.id} refused: ${await response.text()}`);
       decided.add(key);
       if (review === "assessment_review" && confirmation === "none") { forge.merge(`cohort-${unit.collection_key}`); timeline.set(`merge:${unit.collection_key}`, Date.now()); }
@@ -590,7 +604,7 @@ test("merge confirmation waits for the accepted assessment and closes again for 
   expect("merge_confirmation" in cohort.review_prompts).toBe(false);
 
   const accepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(cohort.id)}/reviews/assessment_review/decide`,
-    { request_id: crypto.randomUUID(), decision: "accept", target: cohort.review_prompts.assessment_review?.target, payload: ACCEPT_ADJUDICATION });
+    { request_id: crypto.randomUUID(), decision: "accept", target: cohort.review_prompts.assessment_review!.target, ...await approvalFields("assessment_review", cohort.review_prompts.assessment_review!.target) });
   expect(accepted.status).toBe(201);
   await eventually("merge confirmation after the accepted assessment", async () =>
     (await prompts(cohort.id)).merge_confirmation ?? null, 120_000);
@@ -692,6 +706,7 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   operationServices.pull_requests = forge.reader;
   const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
+  integrationReplacements.add(launchRunId(request_id));
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Replace merged integration PR", spec: "Do not reuse an old merge.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
@@ -718,16 +733,26 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   }, 120_000);
   forge.replace_on_next_open.add("integration");
   forge.withhold_integration_observation = true;
-  const requested = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}/reviews/integration_review/decide`,
-    { request_id: crypto.randomUUID(), decision: "request_changes", target: old_review.target,
-      payload: INTEGRATION_REPLACEMENT_ADJUDICATION });
-  expect(requested.status).toBe(201);
+  const item = await db.selectFrom("authority.feedback_item").select("id").where("proposal_revision_id", "=", old_review.target).executeTakeFirstOrThrow();
+  const instruction = "Open a new integration PR.";
+  const recipients = ["integrator"];
+  const base = `/api/runs/${segment(run_id)}/units/${segment(integration.id)}`;
+  const authorization = await api("POST", `${base}/feedback/${item.id}/authorizations`, {
+    request_id: crypto.randomUUID(), item: item.id, target_revision: old_review.target, instruction, recipients,
+  });
+  expect(authorization.status).toBe(201);
+  const requested = await api("POST", `${base}/reviews/integration_review/decide`, {
+    request_id: crypto.randomUUID(), decision: "request_changes", target: old_review.target,
+    ...await approvalFields("integration_review", old_review.target), dispositions: [{ kind: "dispatch", item: item.id, instruction, recipients }],
+  });
+  if (requested.status !== 201) throw new Error(await requested.text());
   const replacement = await eventually("replacement integration PR to publish", async () => {
     const pr = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)
       .where("unit_id", "=", integration.id).where("artifact", "=", "pr").orderBy("seq", "desc").executeTakeFirst();
     return (pr?.body as { readonly pr_url?: string } | undefined)?.pr_url === pullUrl(13) ? true : null;
   }, 120_000);
   expect(replacement).toBe(true);
+  integrationReplacements.delete(run_id);
   await eventually("replacement integration review", async () => {
     await operate(run_id, decided, "cohort");
     const decision = await db.selectFrom("authority.review_decision").select("id").where("run_id", "=", run_id)

@@ -1,3 +1,4 @@
+import { openReturnedAssessment } from "./assessment-fixture";
 import { sampleDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { DefinitionId, RunId } from "../src/domain/primitives";
@@ -42,4 +43,17 @@ test("a run whose intents are settled is deleted with every row, and the stream 
 
 test("deleting a run that does not exist reports it missing", async () => {
   expect(await deleteRun(authority.db, "run-missing" as RunId)).toEqual({ kind: "missing" });
+});
+
+test("run deletion removes a run containing rows in all nine assessment tables", async () => {
+  const run = await openReturnedAssessment(authority);
+  expect((await run.decide({ decision: "approve", dispositions: [{ kind: "reject_follow_up", assignment: run.b.assignment_id, reason: "Sufficient." }] })).status).toBe(201);
+  const tables = ["authority.feedback_item", "authority.assessment_feedback", "authority.feedback_rejection", "authority.dispatch_authorization",
+    "authority.feedback_assignment", "authority.assignment_round", "authority.assignment_update", "authority.assignment_verification", "authority.assessment_approval"] as const;
+  expect(await Promise.all(tables.map(async table => (await run.rows(table)).length > 0))).toEqual(tables.map(() => true));
+  for (const intent of await run.rows("authority.effect_intent")) {
+    await settleIntent(authority.db, { intent_id: intent.id as import("../src/domain/primitives").IntentId, status: "stopped", last_error: null });
+  }
+  expect(await deleteRun(authority.db, run.run_id)).toEqual({ kind: "deleted" });
+  expect(await Promise.all(tables.map(async table => (await run.rows(table)).length))).toEqual(tables.map(() => 0));
 });
