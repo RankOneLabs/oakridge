@@ -5,12 +5,23 @@
     "targets": [
       {
         "artifact": "analysis",
-        "selector": "/findings/*"
+        "selector": "/requirements/*/findings/*"
       }
     ],
     "evidence": [
       "subject",
-      "spec"
+      "spec",
+      {
+        "capability": "requirement",
+        "params": {
+          "artifact": "spec",
+          "list": "/requirements",
+          "task_source": {
+            "artifact": "spec",
+            "list": "/requirements"
+          }
+        }
+      }
     ],
     "question": {
       "text": "Is this finding relevant to the spec the run was launched with?",
@@ -45,12 +56,12 @@
     ]
   },
   {
-    "id": "assessment_finding.correctness",
+    "id": "item_assessment.correctness",
     "scope": "per_task",
     "targets": [
       {
         "artifact": "assessment",
-        "selector": "/findings/*"
+        "selector": "/item_assessments/*"
       }
     ],
     "evidence": [
@@ -61,8 +72,8 @@
       {
         "capability": "task_context",
         "params": {
-          "artifact": "tasks",
-          "item_kind": "task"
+          "artifact": "spec",
+          "item_kind": "requirement"
         }
       },
       "assessed_build_items"
@@ -101,12 +112,12 @@
     "task_source": "resolved_assesses"
   },
   {
-    "id": "assessment_finding.evidence_support",
+    "id": "item_assessment.evidence_support",
     "scope": "per_task",
     "targets": [
       {
         "artifact": "assessment",
-        "selector": "/findings/*"
+        "selector": "/item_assessments/*"
       }
     ],
     "evidence": [
@@ -116,8 +127,8 @@
       {
         "capability": "task_context",
         "params": {
-          "artifact": "tasks",
-          "item_kind": "task"
+          "artifact": "spec",
+          "item_kind": "requirement"
         }
       },
       "assessed_build_items"
@@ -156,47 +167,20 @@
     "task_source": "resolved_assesses"
   },
   {
-    "id": "task.requirement_coverage",
+    "id": "requirement.requirement_coverage",
     "scope": "per_item",
     "targets": [
       {
-        "artifact": "tasks",
-        "selector": "/tasks/*"
+        "artifact": "spec",
+        "selector": "/requirements/*"
       }
     ],
     "evidence": [
       "subject",
-      {
-        "capability": "spec",
-        "params": {
-          "artifact": "spec",
-          "task_source": {
-            "artifact": "tasks",
-            "list": "/tasks"
-          }
-        }
-      },
-      {
-        "capability": "spec_task",
-        "params": {
-          "artifact": "tasks",
-          "list": "/tasks"
-        }
-      },
-      {
-        "capability": "requirement",
-        "params": {
-          "artifact": "analysis",
-          "list": "/requirements",
-          "task_source": {
-            "artifact": "tasks",
-            "list": "/tasks"
-          }
-        }
-      }
+      "spec"
     ],
     "question": {
-      "text": "How well does this spec task account for the specification requirements it explicitly references?",
+      "text": "How faithfully do this canonical requirement's text and acceptance conditions capture the obligation identified by its source_refs in the original specification?",
       "response": "choice",
       "values": [
         "fully_covers",
@@ -206,8 +190,8 @@
       ],
       "missing_evidence_policy": "abstain",
       "abstain_semantics": "Abstain only when the evidence set is marked incomplete.",
-      "unclear_semantics": "Choose unclear when no requirements are explicitly linked or the evidence cannot establish coverage.",
-      "interpretation_caveats": "Judge the task definition, not implementation success. Only requirement_ids declares its scope; do not infer links from prose."
+      "unclear_semantics": "Choose unclear when the source_refs or original specification do not establish the obligation being captured.",
+      "interpretation_caveats": "Judge the requirement definition against its cited source obligation, not completed implementation. source_refs identifies the source; analysis_finding_ids records provenance. This item has no requirement_ids field."
     },
     "evaluators": [
       {
@@ -217,12 +201,12 @@
         "instructions": {
           "system_one": {
             "type": "choice",
-            "instructions": "Each entry of state is an evidence reference with source, revision_id, item_path and content; judge the referenced content, not the wrapper. How well does the spec task in state.subject account for its explicitly linked requirements? state.spec_task is its canonical definition, state.requirement:N contains each linked requirement at its captured revision, and state.spec is the captured specification. Judge the proposed task, not completed implementation. fully_covers means its description concretely accounts for all linked requirements; partially_covers means it accounts for some but omits or weakens a material part; does_not_cover means its proposed work fails to address the linked requirements. Choose unclear when no requirements are explicitly linked or the evidence cannot establish coverage. Do not invent links or require unrelated work.",
+            "instructions": "Each entry of state is an evidence reference with source, revision_id or input_path, and content; judge the content. state.subject is a canonical requirement with id, text, acceptance_conditions, source_refs and analysis_finding_ids. state.spec is the original specification captured from the run launch. Identify the obligation explicitly cited by source_refs, then assess whether the requirement text and acceptance conditions preserve it accurately and make it testable. fully_covers means they capture that obligation without material omissions or weakening; partially_covers means a material part is omitted, weakened or too vague to verify; does_not_cover means they fail to capture or contradict the obligation. Choose unclear when the source references or original specification cannot establish the obligation. Do not compare this requirement with itself, invent links to other requirements, or judge implementation success.",
             "criteria": {
-              "fully_covers": "The proposed work concretely accounts for the entire explicitly assigned obligation",
-              "partially_covers": "The proposed work accounts for some but omits or weakens a material part",
-              "does_not_cover": "The proposed work does not address its assigned obligation",
-              "unclear": "The evidence cannot establish coverage or no requirements are explicitly linked"
+              "fully_covers": "The requirement text and acceptance conditions faithfully capture the cited source obligation",
+              "partially_covers": "The requirement captures some of the cited obligation but omits, weakens or leaves a material part unverifiable",
+              "does_not_cover": "The requirement fails to capture or contradicts the cited source obligation",
+              "unclear": "The cited source obligation cannot be established from the available evidence"
             }
           }
         }
@@ -230,12 +214,12 @@
     ]
   },
   {
-    "id": "acceptance_entry.task_coverage",
+    "id": "allocation.task_coverage",
     "scope": "per_item",
     "targets": [
       {
         "artifact": "plan",
-        "selector": "/cohorts/*/acceptance_criteria/*"
+        "selector": "/cohorts/*/allocations/*"
       }
     ],
     "evidence": [
@@ -245,26 +229,8 @@
         "params": {
           "artifact": "spec",
           "task_source": {
-            "artifact": "tasks",
-            "list": "/tasks"
-          }
-        }
-      },
-      {
-        "capability": "spec_task",
-        "params": {
-          "artifact": "tasks",
-          "list": "/tasks"
-        }
-      },
-      {
-        "capability": "requirement",
-        "params": {
-          "artifact": "analysis",
-          "list": "/requirements",
-          "task_source": {
-            "artifact": "tasks",
-            "list": "/tasks"
+            "artifact": "spec",
+            "list": "/requirements"
           }
         }
       },
@@ -274,7 +240,8 @@
           "artifact": "plan"
         }
       },
-      "contribution_context"
+      "contribution_context",
+      "requirement_context"
     ],
     "question": {
       "text": "How well does this cohort contribution cover its assigned spec task?",
@@ -313,7 +280,7 @@
   {
     "id": "build_item.task_support",
     "scope": "per_task",
-    "task_ids": "/task_ids",
+    "task_ids": "/requirement_ids",
     "targets": [
       {
         "artifact": "brief",
@@ -357,6 +324,191 @@
       },
       {
         "runner": "human"
+      }
+    ]
+  },
+  {
+    "id": "additional_finding.correctness",
+    "scope": "per_item",
+    "targets": [
+      {
+        "artifact": "assessment",
+        "selector": "/additional_findings/*"
+      }
+    ],
+    "evidence": [
+      "subject",
+      "build_result",
+      "citation",
+      "test_evidence"
+    ],
+    "question": {
+      "text": "Is this assessment finding correct, given its cited evidence and the build it assesses?",
+      "response": "choice",
+      "values": [
+        "supported",
+        "contradicted",
+        "unclear"
+      ],
+      "missing_evidence_policy": "abstain",
+      "abstain_semantics": "Abstain only when the evidence set is marked incomplete; low confidence alone is not abstention.",
+      "unclear_semantics": "Choose unclear when the available evidence cannot establish whether the finding is correct.",
+      "interpretation_caveats": "Judge this one finding. Test and output citations are agent-reported; a file recorded as absent is evidence of absence. Linked task context is optional background. Evaluate the linked build items from the exact recorded brief as instructions given to the builder."
+    },
+    "evaluators": [
+      {
+        "runner": "jev_direct",
+        "model": "jev-1.14.0",
+        "estimated_cost_per_call": 0.01,
+        "instructions": {
+          "system_one": {
+            "type": "choice",
+            "instructions": "Is the assessment finding in state.subject correct? Each entry of state is one evidence reference: its source, where it came from and its content. Use its citations (citation:N), the assessment's test results (test_evidence), the build result it assessed (build_result) when present, and any linked task context (task_context:N). A repository entry is the file at path in commit_sha, limited to line_range when one is given; is_absent true means that file does not exist at that commit. An entry whose source is reported, and the tests inside build_result, are the agent's own report and were not independently verified. Choose supported when the evidence shows the finding is correct; contradicted when the evidence shows it is wrong; unclear when the evidence cannot establish either.",
+            "criteria": {
+              "supported": "The evidence shows the finding is correct",
+              "contradicted": "The evidence shows the finding is wrong",
+              "unclear": "The evidence cannot establish whether the finding is correct"
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "feedback_proposal.correctness",
+    "scope": "per_item",
+    "targets": [
+      {
+        "artifact": "assessment",
+        "selector": "/proposals/*"
+      }
+    ],
+    "evidence": [
+      "subject",
+      "contribution_context",
+      "build_result",
+      "test_evidence"
+    ],
+    "question": {
+      "text": "Does this next action address its explicitly identified source assessment or additional finding and give its audience an actionable instruction?",
+      "response": "choice",
+      "values": [
+        "supported",
+        "contradicted",
+        "unclear"
+      ],
+      "missing_evidence_policy": "abstain",
+      "abstain_semantics": "Abstain only when the evidence set is marked incomplete; low confidence alone is not abstention.",
+      "unclear_semantics": "Choose unclear when the named source or available evidence cannot establish whether the action addresses it.",
+      "interpretation_caveats": "Only source.kind and source.id identify the source. An item assessment is identified by subject.id; an additional finding by id. Judge the proposed action, not whether it has already been implemented."
+    },
+    "evaluators": [
+      {
+        "runner": "jev_direct",
+        "model": "jev-1.14.0",
+        "estimated_cost_per_call": 0.01,
+        "instructions": {
+          "system_one": {
+            "type": "choice",
+            "instructions": "Each entry of state is an evidence reference; judge its content. state.subject is a next action with source, audience and text. state.contribution_context is the exact containing assessment. Resolve source.kind and source.id only: for item_assessment match item_assessments[].subject.id, and for additional_finding match additional_findings[].id. Use the source observation and status or severity, with build_result and test_evidence when present, to assess the proposed instruction. Choose supported when the action concretely addresses its source and is actionable for its declared audience; contradicted when it conflicts with that source or available evidence; unclear when the source or evidence cannot establish either. Do not invent source associations, assume file contents that were not collected, or grade implementation success.",
+            "criteria": {
+              "supported": "The action concretely addresses its named source and is actionable for its audience",
+              "contradicted": "The action conflicts with its named source or available evidence",
+              "unclear": "The named source or evidence cannot establish whether the action addresses it"
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "technical_decision.correctness",
+    "scope": "per_item",
+    "targets": [
+      {
+        "artifact": "brief",
+        "selector": "/technical_decisions/*"
+      }
+    ],
+    "evidence": [
+      "subject",
+      "spec",
+      "contribution_context"
+    ],
+    "question": {
+      "text": "Is this technical decision justified and consistent with the build items explicitly named by its build_item_ids?",
+      "response": "choice",
+      "values": [
+        "supported",
+        "contradicted",
+        "unclear"
+      ],
+      "missing_evidence_policy": "abstain",
+      "abstain_semantics": "Abstain only when the evidence set is marked incomplete; low confidence alone is not abstention.",
+      "unclear_semantics": "Choose unclear when the available evidence cannot establish whether the decision is justified for its named build items.",
+      "interpretation_caveats": "Judge the decision and its rationale as instructions for future implementation. Only build_item_ids declares which build items it addresses; do not infer additional links or require completed builds."
+    },
+    "evaluators": [
+      {
+        "runner": "jev_direct",
+        "model": "jev-1.14.0",
+        "estimated_cost_per_call": 0.01,
+        "instructions": {
+          "system_one": {
+            "type": "choice",
+            "instructions": "Each entry of state is an evidence reference; judge its content. state.subject is a technical decision with decision, rationale and build_item_ids. state.contribution_context is its exact containing brief, including build_items, and state.spec is the original specification. Locate only the build items explicitly named by build_item_ids in that brief. Choose supported when the decision and rationale are technically sound and consistent with those instructions and the specification; contradicted when they conflict with that evidence or rest on a demonstrably false premise; unclear when the evidence cannot establish either. Judge a proposed technical choice, not an assessment finding or completed implementation. Do not assume uncollected repository files, citations or test results.",
+            "criteria": {
+              "supported": "The decision and rationale are sound and consistent with its explicitly named build items and specification",
+              "contradicted": "The decision conflicts with its named build items or specification, or rests on a demonstrably false premise",
+              "unclear": "The available evidence cannot establish whether the decision is justified"
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "blocker.correctness",
+    "scope": "per_item",
+    "targets": [
+      {
+        "artifact": "blocker",
+        "selector": "/"
+      }
+    ],
+    "evidence": [
+      "subject",
+      "spec"
+    ],
+    "question": {
+      "text": "Does this blocker explain a concrete impediment and provide actionable suggested choices consistent with the original specification?",
+      "response": "choice",
+      "values": [
+        "supported",
+        "contradicted",
+        "unclear"
+      ],
+      "missing_evidence_policy": "abstain",
+      "abstain_semantics": "Abstain only when the evidence set is marked incomplete; low confidence alone is not abstention.",
+      "unclear_semantics": "Choose unclear when the blocker and available specification cannot establish the impediment or whether its suggested choices can resolve it.",
+      "interpretation_caveats": "Judge text and suggested_choices as a request for operator action. The blocker is an agent report; do not treat its claims as independently verified or infer links to requirements or build items."
+    },
+    "evaluators": [
+      {
+        "runner": "jev_direct",
+        "model": "jev-1.14.0",
+        "estimated_cost_per_call": 0.01,
+        "instructions": {
+          "system_one": {
+            "type": "choice",
+            "instructions": "Each entry of state is an evidence reference; judge its content. state.subject is the blocker body with text and suggested_choices. state.spec is the original specification. Choose supported when the blocker explains a concrete impediment and gives actionable choices consistent with the specification; contradicted when the described impediment or choices conflict with the available evidence; unclear when the evidence cannot establish the impediment or whether those choices can resolve it. Judge the need for operator action and the proposed choices, not an assessment finding or a completed build. The blocker text is an agent report, not independent verification. Do not assume access to repository files, citations or test results that are not in state.",
+            "criteria": {
+              "supported": "The blocker explains a concrete impediment with actionable choices consistent with the specification",
+              "contradicted": "The described impediment or suggested choices conflict with the available evidence",
+              "unclear": "The available evidence cannot establish the impediment or whether the choices can resolve it"
+            }
+          }
+        }
       }
     ]
   }
