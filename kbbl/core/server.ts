@@ -32,7 +32,6 @@ const { values } = parseArgs({
     // /approval, /stream, /events to any reachable peer. Operator opts into
     // phone/tablet access over Tailscale with --host=0.0.0.0.
     host: { type: "string", default: "127.0.0.1" },
-    claudeBin: { type: "string", default: "claude" },
     dataDir: { type: "string" },
     // Path to kbbl/config.json. Default is `<kbbl-root>/config.json`. A
     // missing file resolves to schema defaults; tests and dev workflows
@@ -58,8 +57,6 @@ if (!Number.isInteger(port) || port <= 0 || port > 65535) {
   process.exit(1);
 }
 const host = values.host ?? "127.0.0.1";
-// --claudeBin is still accepted so operator launch scripts don't break, but
-// agent binaries now come from ACP profiles (config.acp.agents).
 
 // === auth policy ===
 // Resolved before any other startup work so a misconfigured non-loopback
@@ -174,9 +171,10 @@ const acpWorktrees = new GitWorktreeProvider({
   worktreesRoot: worktreesDir,
   store: acpStore,
 });
+const prIntegration = loadPrIntegrationConfig(process.env);
 const acpService = new AcpSessionService({
-  integration: { ...loadPrIntegrationConfig(process.env),
-    skill_store_root: join(kbblRoot, "../workflow-config/definitions/skills"),
+  integration: { ...prIntegration,
+    skill_store_root: process.env.OAKRIDGE_SKILL_STORE_ROOT ?? join(kbblRoot, "../workflow-config/definitions/skills"),
     session_skills_root: join(dataDir, "session-skills"),
   },
   store: acpStore,
@@ -215,6 +213,7 @@ if (coreControlToken && authPolicy.mode !== "token") {
 }
 
 const app = createApp({
+  defaultPrIntegration: prIntegration.default_integration,
   readAgentProfiles: () => Promise.all([...acpProfiles.values()].map((profile) => readProfileReadiness(profile))),
   acp: acpService,
   defaultWorkdir: workdir,

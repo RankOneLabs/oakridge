@@ -190,37 +190,29 @@ test("the Claude picker carries no generation-pinned id", () => {
   expect(pinned).toEqual([]);
 });
 
-/**
- * The regression greptile caught: a durable row outlives the picker.
- *
- * `epics.planner_model` and `acp_sessions.requested_model` hold free text
- * written whenever the operator chose, and `applyRequestedConfig` forwards it
- * verbatim on every respawn. A row holding an id the agent has since stopped
- * advertising must land on the alias that replaced it, not kill the session.
- */
-describe("a retired model id stored before the picker moved on", () => {
+describe("a stored model id outside the advertised vocabulary", () => {
   const claudeOptions = advertisedOptions(
     ADVERTISED_AGENT_VOCABULARY["claude-code"],
     ADVERTISED_AGENT_VOCABULARY["claude-code"].model_value_variants[0]!,
   );
 
-  test("resolves to the family alias that replaced it", () => {
+  test("rejects an id the agent no longer advertises", () => {
     const resolved = resolveRequestedOption(claudeOptions, "model", "claude-fable-5-1");
 
-    expect(resolved.ok && resolved.value?.valueId).toBe("fable");
+    expect(resolved.ok).toBe(false);
   });
 
-  test("resolves when it also carries a context hint", () => {
+  test("rejects that id with a context hint", () => {
     const resolved = resolveRequestedOption(
       claudeOptions,
       "model",
       "claude-fable-5-1[1m]",
     );
 
-    expect(resolved.ok && resolved.value?.valueId).toBe("fable");
+    expect(resolved.ok).toBe(false);
   });
 
-  test("an advertised id still matches exactly, not through the alias map", () => {
+  test("an advertised id matches exactly", () => {
     const resolved = resolveRequestedOption(claudeOptions, "model", "claude-fable-5");
 
     expect(resolved.ok && resolved.value?.valueId).toBe("claude-fable-5");

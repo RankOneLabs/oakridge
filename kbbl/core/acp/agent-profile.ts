@@ -20,7 +20,15 @@ export interface AgentProfileEnvPolicy {
 
 export type SkillDiscovery = { readonly kind: "additionalDirectories" };
 
+export interface ProfileAuthProbe {
+  readonly command: readonly string[];
+  readonly fix: string;
+}
+
 export interface AgentProfile {
+  readonly auth_probe?: ProfileAuthProbe;
+  readonly models?: readonly import("../runtime").RuntimeOption[];
+  readonly default_model?: string;
   readonly usageParser?: import("#kbbl/core/acp/usage-parsers/types").UsageParser;
   readonly skillDiscovery?: SkillDiscovery | null;
   readonly id: AgentProfileId;
@@ -57,6 +65,9 @@ export function loadAgentProfiles(
     profiles.set(id, {
       usageParser: id === "claude-code" ? claudeUsageParser : id === "codex" ? codexUsageParser : undefined,
       id,
+      auth_probe: agent.auth_probe,
+      models: agent.models,
+      default_model: agent.default_model,
       skillDiscovery: agent.skill_discovery ?? null,
       label: agent.label ?? id,
       command: agent.command,

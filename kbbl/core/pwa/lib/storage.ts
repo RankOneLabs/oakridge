@@ -35,7 +35,7 @@ export function matchStoredNewSessionModel(
 }
 
 export function defaultNewSessionModelForRuntime(runtime: RuntimeDescriptor): string {
-  const preferred = defaultModelForRuntime(runtime.id);
+  const preferred = runtime.default_model ?? defaultModelForRuntime(runtime.id);
   return runtime.models.some((option) => option.value === preferred)
     ? preferred
     : "";

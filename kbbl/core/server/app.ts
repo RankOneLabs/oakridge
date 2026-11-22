@@ -26,10 +26,10 @@ import { mountExecutedPromptRoutes } from "./handlers/executed-prompt";
 import {
   isRuntimeId,
   RUNTIME_EFFORTS,
-  RUNTIME_MODELS,
 } from "../runtime";
 
 export interface CreateAppDeps {
+  readonly defaultPrIntegration?: import("../../../oakridge-dbos/src/domain/pr-integration").PrIntegration;
   readonly readAgentProfiles?: () => Promise<readonly AgentProfileReadiness[]>;
   /** ACP session service — the production session backend. */
   acp: AcpSessionService;
@@ -132,29 +132,20 @@ export function createApp(deps: CreateAppDeps): Hono {
       runtimes: acp
         .listProfiles()
         .filter((profile) => profile.enabled)
-        .map((profile) => {
-          if (!isRuntimeId(profile.id)) {
-            return {
-              id: profile.id,
-              label: profile.label,
-              models: [],
-              efforts: [],
-            };
-          }
-          return {
-            id: profile.id,
-            label: profile.label,
-            models: RUNTIME_MODELS[profile.id],
-            efforts: RUNTIME_EFFORTS[profile.id],
-          };
-        }),
+        .map((profile) => ({
+          id: profile.id,
+          label: profile.label,
+          models: profile.models ?? [],
+          default_model: profile.default_model ?? null,
+          efforts: isRuntimeId(profile.id) ? RUNTIME_EFFORTS[profile.id] : [],
+        })),
     });
   });
 
 
 
   // ---- sessions CRUD ----
-  mountSessionsRoutes(app, { acp, defaultWorkdir, oakridgeBaseUrl: process.env.OAKRIDGE_CORE_BASE_URL, oakridgeControlToken: coreControlToken });
+  mountSessionsRoutes(app, { acp, defaultWorkdir, defaultPrIntegration: deps.defaultPrIntegration, oakridgeBaseUrl: process.env.OAKRIDGE_CORE_BASE_URL, oakridgeControlToken: coreControlToken });
 
   // ---- local directory browser ----
   mountDirectoriesRoutes(app, { defaultWorkdir });
