@@ -11,7 +11,7 @@ import type { CoreClient } from "../core-client/client";
 import { compileDefinition, selectWanted, type WantedForUnit } from "../core-client/client";
 import { BLOCKER_ARTIFACT, BLOCKER_REVIEW, BLOCKER_REVIEW_PROMPT, VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedReviewDecision, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer } from "../core-client/core-types";
 import { ANALYSIS_LINKS_DECLARED, selectDeclarationRefusal, type AnalysisLinkDeclaration, type AnalysisLinkEntry, type AnalysisLinksDeclared } from "../domain/analysis-link-declaration";
-import { isIntegrationAssessmentProducer, selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
+import { selectEffectInstruction, selectSelfAssessmentSubjects, type RunWorkerAction } from "../domain/effect-instruction";
 import type { PrIntegration } from "../domain/pr-integration";
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
@@ -1093,10 +1093,13 @@ async function planAssessmentPublication(trx: DatabaseTransaction, input: Assess
   const embeddings = workflow.assessments[unit.kind.stage]?.[revision.artifact];
   const attempt = snapshot.attempts.findLast(value => value.action_id === revision.by);
   const producer = attempt && stage?.workers?.[attempt.worker];
-  const selfAssessment = revision.artifact === "assessment" && attempt &&
-    isIntegrationAssessmentProducer({ workflow: workflow.workflow, stage: unit.kind.stage, worker: attempt.worker });
-  if (selfAssessment && latestRevision(snapshot, revision.unit, "pr")?.id !== revision.subject) {
-    return traced("publish_assessment", revision.id, "assessment must cite the exact latest PR revision as subject");
+  const subjectBinding = attempt && selectSelfAssessmentSubjects(stage, attempt.worker)
+    .find(binding => binding.assessment === revision.artifact);
+  if (subjectBinding) {
+    const subject = latestRevision(snapshot, revision.unit, subjectBinding.subject_artifact);
+    if (!subject || subject.id !== revision.subject) {
+      return traced("publish_assessment", revision.id, `assessment must cite the exact latest ${subjectBinding.subject_artifact} revision as subject`);
+    }
   }
   let update: AssignmentUpdate | null = null;
   let selfUpdate: AssignmentUpdate | null = null;

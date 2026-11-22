@@ -1,5 +1,5 @@
 import { CORE_ASSESSMENT_SCHEMAS } from "../core-client/core-types";
-import { RESERVED_ARTIFACT_SCHEMAS } from "../core-client/core-types";
+import { BLOCKER_ARTIFACT, RESERVED_ARTIFACT_SCHEMAS } from "../core-client/core-types";
 import { selectInputProvenance, type InputProvenanceView } from "./unit-status";
 import { createHash } from "node:crypto";
 import type { Action, FeedbackEntry, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression } from "../core-client/core-types";
@@ -37,7 +37,7 @@ export interface EngineInputs {
   readonly feedback: readonly FeedbackEntry[];
   readonly subject: RevisionState | null;
   readonly round_delivery?: string;
-  readonly self_assessment?: boolean;
+  readonly self_assessment?: readonly SelfAssessmentSubject[];
 }
 /**
  * Everything the executor needs to run one attempt, written by commit as
@@ -129,20 +129,26 @@ export function selectReferencedSchemas(types: readonly TypeExpression[], schema
   return Object.fromEntries(Object.entries(referenced).sort(([left], [right]) => left.localeCompare(right)));
 }
 
-interface IntegrationAssessmentLocation {
-  readonly workflow: ParsedWorkflow;
-  readonly stage: string;
-  readonly worker: string;
+export interface SelfAssessmentSubject {
+  readonly assessment: string;
+  readonly subject_artifact: string;
 }
 
-export function isIntegrationAssessmentProducer({ workflow, stage, worker }: IntegrationAssessmentLocation): boolean {
-  if ((workflow.workflow !== "development" && workflow.workflow !== "study") || stage !== "integration") return false;
-  const definition = workflow.stages[stage];
-  const producer = definition?.workers[worker];
-  const decisions = Object.values(definition?.reviews ?? {}).flatMap(review => Object.values(review.decisions));
-  return producer?.kind === "agent" && producer.evaluates == null
-    && producer.produces.includes("pr") && producer.produces.includes("assessment")
-    && decisions.some(decision => decision.operation === "dispatch_feedback" && decision.on === "assessment");
+/** Find the work an agent publishes alongside assessments it can be sent back to revise. */
+export function selectSelfAssessmentSubjects(stage: ParsedWorkflow["stages"][string] | undefined, worker: string): SelfAssessmentSubject[] {
+  const producer = stage?.workers[worker];
+  if (producer?.kind !== "agent" || producer.evaluates != null) return [];
+  const work = producer.produces.filter(artifact => artifact !== BLOCKER_ARTIFACT && stage?.artifacts?.[artifact]?.kind !== "assessment");
+  const subjects = new Map<string, string>();
+  for (const review of Object.values(stage?.reviews ?? {})) {
+    const assessment = review.assessment ?? review.of;
+    if (stage?.artifacts?.[assessment]?.kind !== "assessment" || !producer.produces.includes(assessment)) continue;
+    if (!Object.values(review.decisions).some(decision => decision.operation === "dispatch_feedback" && decision.on === assessment)) continue;
+    // An explicit review of one output identifies it even when the agent produces several.
+    const subject = work.includes(review.of) ? review.of : work.length === 1 ? work[0] : undefined;
+    if (subject !== undefined) subjects.set(assessment, subject);
+  }
+  return Array.from(subjects, ([assessment, subject_artifact]) => ({ assessment, subject_artifact }));
 }
 
 /** Build the instruction for a newly wanted RunWorker from its pinned definition and resolved inputs. */
@@ -157,7 +163,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
   };
   const schemas = { ...CORE_ASSESSMENT_SCHEMAS, ...source.workflow.schemas } as { readonly [name: string]: TypeExpression };
   let worker: WorkerInstruction;
-  const self_assessment = isIntegrationAssessmentProducer({ workflow: source.parsed_workflow, stage: source.stage, worker: action.worker });
+  const self_assessment = selectSelfAssessmentSubjects(source.parsed_workflow.stages[source.stage], action.worker);
   if (declared.kind === "agent") {
     const path = resolved.prompt;
     if (path == null) return failure(resolved.action_id, `agent ${action.worker} has no ${action.mode.kind} prompt`);
@@ -193,7 +199,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
   return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id as ActionId, seq: source.seq }, worker,
     inputs: resolved.inputs,
     input_provenance: selectInputProvenance(resolved.input_provenance),
-    engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? [], subject: resolved.subject ?? null, ...(self_assessment ? { self_assessment } : {}) },
+    engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? [], subject: resolved.subject ?? null, ...(self_assessment.length > 0 ? { self_assessment } : {}) },
     workspace: resolved.workspace ?? null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS } };
 }
@@ -257,7 +263,9 @@ function isFeedbackEntry(value: unknown): value is FeedbackEntry {
 }
 function isEngineInputs(value: unknown): value is EngineInputs {
   return isFields(value) && isNullableRevision(value.previous) && Array.isArray(value.feedback)
-    && value.feedback.every(isFeedbackEntry) && isNullableRevision(value.subject);
+    && value.feedback.every(isFeedbackEntry) && isNullableRevision(value.subject)
+    && (value.self_assessment === undefined || Array.isArray(value.self_assessment) &&
+      value.self_assessment.every(binding => isFields(binding) && isString(binding.assessment) && isString(binding.subject_artifact)));
 }
 
 /** The executor's only way in: an `effect_intent.payload` that is not a version-1 instruction is refused. */

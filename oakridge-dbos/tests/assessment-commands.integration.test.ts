@@ -3,7 +3,8 @@ import { createAgentProvider } from "../src/effects/agent-provider";
 import { startStubKbbl } from "./stub-kbbl";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { sql } from "kysely";
-import type { AssessmentStatus, FeedbackProposal } from "../src/core-client/core-types";
+import type { AssessmentStatus, FeedbackProposal, Workflow } from "../src/core-client/core-types";
+import { renderTaskPublication } from "../src/effects/session-prompt";
 import { selectDeliveryKey } from "../src/effects/delivery-key";
 import { cleanAssessment, openAssessmentRun, openReturnedAssessment, sampleProposal, type AssessmentBody } from "./assessment-fixture";
 import { openAuthority, type Authority } from "./authority-fixture";
@@ -61,6 +62,46 @@ test("clean assessment waits for final approval and an approval replay preserves
   expect(await (await run.decide({ decision: "approve" })).text()).toContain("approval is final");
   expect(await (await run.decide({ decision: "send" })).text()).toContain("approval is final");
   expect(await run.counts()).toEqual(before);
+});
+
+test("a renamed self-assessment uses its review and output to bind and prompt for the latest subject", async () => {
+  const source = {
+    workflow: "delivery", input: {},
+    run: { units: { handoff: { stage: "assemble" } }, outcome: {} },
+    stages: { assemble: {
+      input: {}, outcome: {}, done_when: "approved(checklist)",
+      artifacts: {
+        candidate: { kind: "record", schema: "text" },
+        checklist: { kind: "assessment", schema: "text" },
+      },
+      workers: { assembler: {
+        kind: "agent", inputs: { topic: '"delivery"' }, produces: ["candidate", "checklist"],
+        prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" },
+      } },
+      reviews: { signoff: { by: "operator", of: "checklist", prompt: "review-loop/editor.md", decisions: {
+        approve: { effect: "approve", operation: "approve_assessment", label: "Approve" },
+        return_work: { effect: "request_changes", operation: "dispatch_feedback", on: "checklist", label: "Return" },
+      } } },
+    } },
+  } satisfies Workflow;
+  const run = await openAssessmentRun(authority, source);
+  const unit = `${run.run_id}/handoff`;
+  const [intent] = await run.rows("authority.effect_intent");
+  expect(intent?.payload.engine_inputs.self_assessment).toEqual([{ assessment: "checklist", subject_artifact: "candidate" }]);
+  expect(renderTaskPublication(intent!.payload, { prompt_text: "", handoff_text: null, latest: [], previous_attempt: null }))
+    .toContain("Publish `candidate` first. For `checklist`, send the exact latest `candidate` revision as `subject`.");
+
+  const publish = (artifact: string, body: string, subject?: string) =>
+    run.publish({ unit, worker: "assembler", artifact, body, subject });
+  const refusal = { value: { kind: "rejected", reason: expect.stringContaining("exact latest candidate revision") } };
+  expect(await publish("checklist", "reviewed")).toMatchObject(refusal);
+  expect(await publish("candidate", "first")).toMatchObject({ value: { kind: "committed" } });
+  const first = (await run.revision("candidate", unit))!.id;
+  expect(await publish("candidate", "second")).toMatchObject({ value: { kind: "committed" } });
+  const latest = (await run.revision("candidate", unit))!.id;
+  expect(await publish("checklist", "reviewed", first)).toMatchObject(refusal);
+  expect(await publish("checklist", "reviewed", latest)).toMatchObject({ value: { kind: "committed" } });
+  expect(await run.revision("checklist", unit)).toMatchObject({ subject: latest });
 });
 
 test("renamed proposal paths bind once and publication replays preserve the item id", async () => {
