@@ -14,7 +14,7 @@ import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
 import { collectPinnedQuestion, readOccurrenceEvidence } from "../src/storage/captured-evidence-store";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems } from "../src/storage/projection-store";
-import { OAKRIDGE_QUESTIONS, createFeed, evaluator, evaluatorId, fixtureBody, integration, scopeOf, scratchDatabase, targetOf, tenant } from "./grading-fixture";
+import { OAKRIDGE_QUESTIONS, createFeed, evaluator, evaluatorId, integration, scopeOf, scratchDatabase, targetOf, tenant } from "./grading-fixture";
 
 let root = "";
 let primary = "";
@@ -128,7 +128,7 @@ test("a text file beside a binary one is still read as text", async () => {
     .toEqual({ state: "present", content: "# Demo\n" });
 });
 
-const binaryFinding: JsonValue = { task_ids: ["T7"], criterion: "The demo is shown", status: "met",
+const binaryFinding: JsonValue = { subject: { kind: "requirement", id: "T7" }, observation: "The demo is shown", status: "met",
   evidence: [{ kind: "file", ref: "docs/demo.png", detail: "PNG screenshot" }, { kind: "file", ref: "README.md" }] };
 
 test("the collector cites a binary file as present, binary and sized, with no content", async () => {
@@ -150,10 +150,10 @@ integration("a cited binary file freezes as ready evidence instead of failing th
   await registerEvaluator(db, tenant, evaluator("human"));
   const feed = createFeed(db, tenant, { pins: [{ ...scopeOf(EVIDENCE_SUPPORT_ID), ...question, ...targetOf(EVIDENCE_SUPPORT_ID), ...pinProvenance(question), evaluator_definition_ids: [evaluatorId("human")] }] });
   await feed.launch({ spec: "s", primary_repository_key: "binary", repositories: [{ key: "binary", preparation: { repository_path: binary } }] });
-  await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
-  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment",
-    body: { ...(await fixtureBody("assessment") as { readonly [key: string]: JsonValue }), head_sha: binary_commit, findings: [binaryFinding] } });
-  const occurrence = (await listRunItems(db, tenant, "run-1", { limit: 50, offset: 0 })).items.find((item) => item.item_kind === "assessment_finding")!;
+  await feed.revision({ revision_id: "spec-1", artifact_kind: "spec", body: { requirements: [{ id: "T7", analysis_finding_ids: [] }] } });
+  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", stage: "integration",
+    body: { head_sha: binary_commit, item_assessments: [binaryFinding] } });
+  const occurrence = (await listRunItems(db, tenant, "run-1", { limit: 50, offset: 0 })).items.find((item) => item.item_kind === "item_assessment")!;
   const [pinned] = await readOccurrenceEvidence(db, tenant, occurrence.occurrence_id as ItemOccurrenceId);
   const source = new CaptureArtifactSource({ db, tenant, run_id: "run-1", collector: oakridgeEvidence, repository: createGitRepositoryReader() });
   const collected = await collectPinnedQuestion(db, tenant, source, pinned!);

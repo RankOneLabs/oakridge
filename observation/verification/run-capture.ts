@@ -40,7 +40,7 @@ const readAuthorityEvents = (io: ProofIo, run_id: string) => readRows(io, io.sta
 
 const readOutcomes = (io: ProofIo, run_id: string) => readRows(io, io.state.observation.database,
   `SELECT coalesce(json_agg(json_build_object('event_id', event_id, 'event_kind', event_kind, 'outcome_kind', outcome_kind,
-    'reason', detail->>'reason', 'revision_id', detail->'revisions'->-1->>'revision_id') ORDER BY commit_txid, event_id), '[]')
+    'reason', detail->>'reason', 'revision_id', detail->'revision_ids'->>-1) ORDER BY commit_txid, event_id), '[]')
     FROM observation.source_event_outcome WHERE producer = '${PRODUCER}' AND namespace = '${io.state.observation.namespace}' AND run_id = '${run_id}'`, outcomesSchema);
 
 async function readCursor(io: ProofIo): Promise<Result<SourceCursor, ProofFailure>> {

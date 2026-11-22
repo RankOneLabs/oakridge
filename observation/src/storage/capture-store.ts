@@ -93,7 +93,8 @@ export async function deliverSourceEvent(db: Database, tenant: TenantScope, deli
       await trx.insertInto("observation.source_event_outcome").values({ producer: tenant.producer, namespace: tenant.namespace,
         event_id, run_id, commit_txid: sql<number>`${cursor.commit_txid}::bigint`,
         event_kind: event.kind === "other" ? event.event_kind : event.kind === "revisions" ? "revision_published" : "launched",
-        outcome_kind: event.kind, detail: jsonText(event as unknown as JsonValue) })
+        outcome_kind: event.kind, detail: jsonText(event.kind === "revisions"
+          ? { revision_ids: event.revisions.map((revision) => revision.revision_id) } : event as unknown as JsonValue) })
         .onConflict((target) => target.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
       await sql`UPDATE observation.source_event_cursor SET commit_txid = ${cursor.commit_txid}::bigint, event_id = ${event_id}
         WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx);

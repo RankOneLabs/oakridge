@@ -1,10 +1,16 @@
 import { expect, test } from "bun:test";
 import { createApp } from "../../observation/src/http/app";
+import { ARTIFACT_KEYS } from "../../observation/src/producers/oakridge/artifact-versions";
+import { selectRegistration } from "../../observation/src/producers/oakridge/catalogue";
 import { oakridgeProfile } from "../../observation/src/producers/oakridge/profile";
 import { openDatabase, withTenant } from "../../observation/src/storage/database";
+import { readLogicalItemLineage } from "../../observation/src/storage/grading-record-store";
 import { migrateEmptyDatabase } from "../../observation/src/storage/migrate";
+import { artifactSchemaVersion } from "../src/adapters/observation-schema-version";
 import { publishObservationOnce, type ObservationOptions } from "../src/adapters/observation";
 import type { Workflow } from "../src/core-client/core-types";
+import { readPinnedDefinition } from "../src/storage/read-store";
+import { assessmentWorkflow, openAssessmentRun, sampleProposal } from "./assessment-fixture";
 import { executor, launch, openAuthority, scratchDatabase, submitter, unitOf } from "./authority-fixture";
 import { commitTestDefinition } from "./committed-fixture";
 
@@ -105,6 +111,93 @@ test("three periodic publication events advance the cursor three times and repla
     await fixture.replay(initial, 3);
     expect(await captured()).toEqual(expected as Awaited<ReturnType<typeof captured>>);
   });
+}, 60_000);
+
+test("sending an authored proposal to one or two DBOS recipients preserves its task association", async () => {
+  const authority = await openAuthority();
+  const scratch = await scratchDatabase();
+  const observation = openDatabase(scratch.url);
+  try {
+    await migrateEmptyDatabase(observation);
+    const work = assessmentWorkflow.stages.work;
+    const workflow = {
+      ...assessmentWorkflow,
+      stages: { work: { ...work,
+        artifacts: {
+          ...work.artifacts,
+          spec: { kind: "record", schema: { requirements: "list(requirement)" } },
+          assessment: { ...work.artifacts.assessment,
+            schema: { item_assessments: "list(judgment)", proposals: "list(feedback_proposal)" },
+            validate: [] },
+        },
+        workers: { ...work.workers, builder_a: { ...work.workers.builder_a, produces: ["part_a", "spec"] } },
+      } },
+      schemas: {
+        requirement: { id: "ident", analysis_finding_ids: "list(ident)" },
+        judgment: { subject: { kind: "text", id: "ident" }, status: "text" },
+      },
+    } satisfies Workflow;
+    const profile = oakridgeProfile([]);
+    const dev = ARTIFACT_KEYS.development;
+    const registry = new Map([
+      ["spec", selectRegistration({ definition_id: dev.analysis.spec.definition_id, stage: dev.analysis.spec.stage,
+        artifact_kind: "spec", artifact_schema_version: dev.analysis.spec.schema_version })!.extractors],
+      ["assessment", selectRegistration({ definition_id: dev.integration.assessment.definition_id, stage: dev.integration.assessment.stage,
+        artifact_kind: "assessment", artifact_schema_version: dev.integration.assessment.schema_version })!.extractors],
+    ]);
+    const runs = [await openAssessmentRun(authority, workflow), await openAssessmentRun(authority, workflow)];
+    const definition = await readPinnedDefinition(authority.db, runs[0]!.run_id);
+    if (!definition) throw new Error("missing assessment fixture definition");
+    const tenant = { producer: "oakridge", namespace: "dispatch" };
+    const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [] },
+      profile: { ...profile, extraction: { ...profile.extraction, definitions: (declaration) =>
+        declaration.definition_id === definition.definition_id && declaration.stage === "work" &&
+        declaration.artifact_schema_version === artifactSchemaVersion(definition, declaration.stage, declaration.artifact_kind)
+          ? (registry.get(declaration.artifact_kind) ?? []).map((extractor) => ({
+            ...extractor, schema_version: declaration.artifact_schema_version,
+          })) : undefined } } });
+    const options: ObservationOptions = { url: "http://observation.test", namespace: tenant.namespace, token: "ingest",
+      fetcher: (input, init) => Promise.resolve(app.request(new Request(input, init))) };
+    for (const [index, run] of runs.entries()) {
+      for (const [worker, artifact] of [["builder_a", "part_a"], ["builder_b", "part_b"]] as const)
+        expect(await run.publish({ worker, artifact, body: { text: artifact } })).toMatchObject({ value: { kind: "committed" } });
+      expect(await run.publish({ worker: "builder_a", artifact: "spec", body: { requirements: [{ id: "R1", analysis_finding_ids: [] }] } }))
+        .toMatchObject({ value: { kind: "committed" } });
+      await run.end("builder_a");
+      await run.end("builder_b");
+      const subject = (await run.revision("part_a"))!.id;
+      const judgment = { subject: { kind: "requirement", id: "R1" }, status: "met" };
+      expect(await run.publish({ worker: "assessor", artifact: "assessment", subject, body: { item_assessments: [judgment], proposals: [] } }))
+        .toMatchObject({ value: { kind: "committed" } });
+      const cited = (await run.revision("assessment"))!.id;
+      expect(await run.publish({ worker: "assessor", artifact: "assessment", subject, body: {
+        item_assessments: [judgment], proposals: [{ ...sampleProposal, citation: { revision_id: cited, pointer: "/item_assessments/0" } }],
+      } })).toMatchObject({ value: { kind: "committed" } });
+      await run.end("assessor");
+      const [{ id: item }] = await run.rows("authority.feedback_item");
+      const recipients = index === 0 ? ["builder_a"] : ["builder_a", "builder_b"];
+      expect((await run.authorize(item, subject, sampleProposal.instruction, recipients)).status).toBe(201);
+      expect((await run.decide({ decision: "send", dispositions: [{ kind: "dispatch", item, instruction: sampleProposal.instruction, recipients }] })).status).toBe(201);
+      expect((await run.counts()).assignments).toBe(recipients.length);
+    }
+    const count = await authority.db.selectFrom("authority.event").select((eb) => eb.fn.countAll().as("count")).executeTakeFirstOrThrow();
+    const deadline = Date.now() + 30_000;
+    let delivered = 0;
+    while (delivered < Number(count.count) && Date.now() < deadline) {
+      if (await publishObservationOnce(authority.db, options)) delivered++;
+      else await Bun.sleep(25);
+    }
+    expect(delivered).toBe(Number(count.count));
+    for (const run of runs) {
+      const lineage = await readLogicalItemLineage(observation, tenant, profile.composite, run.run_id, "R1", { limit: 100, offset: 0 });
+      expect(lineage.items.flatMap((entry) => entry.kind === "contribution" && entry.item.item_kind === "feedback_proposal" ? [entry.item.item_path] : []))
+        .toEqual(["/proposals/0"]);
+    }
+  } finally {
+    await observation.destroy();
+    await scratch.drop();
+    await authority.close();
+  }
 }, 60_000);
 
 test("worker and operator publications preserve their original inputs through retry, newer source revisions and redelivery", async () => {

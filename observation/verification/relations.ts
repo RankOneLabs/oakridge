@@ -10,7 +10,7 @@ import type { CommittedEventDelivery } from "../src/ingest/dbos-revision-deliver
 import type { RollupContext } from "../src/grading/task-stages";
 import { oakridgeProfile as createOakridgeProfile } from "../src/producers/oakridge/profile";
 import type { Database, TenantScope } from "../src/storage/database";
-import { listRunComposites, readCompositeDrilldown, readLogicalItemComposite, readLogicalItemLineage } from "../src/storage/grading-record-store";
+import { listRunComposites, listRunUnresolvedReferences, readCompositeDrilldown, readLogicalItemComposite, readLogicalItemLineage } from "../src/storage/grading-record-store";
 import { registerDefinitions } from "../src/storage/grading-store";
 import { readSpend, type GradingRunLabel, type GradingRunOptions } from "./grading";
 import { NO_EVIDENCE, scenarioStatus, type MeasurementReadback, type ProofCheck, type ProofFailure, type RelationCheckpoint, type RunReference, type ScenarioReport, type SpendReadback } from "./proof-contract";
@@ -232,10 +232,20 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
     }, [brief]);
   }
   const read = await readLogicalItemComposite(db, tenant, path, run_id, "R1");
+  const lineage = await readLogicalItemLineage(db, tenant, path, run_id, "R1", WHOLE);
+  const contributions = lineage.items.flatMap((entry) => entry.kind === "contribution" ? [entry] : []);
+  const judgment = read?.repositories[0]?.judgments[0];
+  const unresolved = await listRunUnresolvedReferences(db, tenant, path, run_id, WHOLE);
   return { reads: read, checks: [
+    check("matrix: the specification defines one captured requirement", read?.task_kind === "requirement" && lineage.is_captured
+      && lineage.items.filter((entry) => entry.kind === "occurrence" && entry.revision_id === "spec:1").length === 1, JSON.stringify(read?.logical_item_id)),
     check("matrix: applicability includes both repositories", read?.repositories.map((row) => row.repository_key).join(",") === "alpha,beta", JSON.stringify(read?.repositories)),
-    check("matrix: a judgment stays with the bound build item", read?.repositories[0]?.judgments[0]?.status === "met"
-      && read.repositories[1]?.judgments.length === 0, JSON.stringify(read?.repositories)),
+    check("matrix: a judgment stays with the bound build item", judgment?.status === "met" && judgment.assessment_revision_id === "alpha:assessment:1",
+      JSON.stringify(judgment)),
+    check("matrix: the repository awaiting assessment has no judgments", read?.repositories[1]?.judgments.length === 0, JSON.stringify(read?.repositories[1])),
+    check("matrix: both build items and their assessment contribute to the requirement", contributions.length === 3
+      && contributions.some((entry) => entry.item.revision_id === "alpha:assessment:1"), JSON.stringify(contributions.map((entry) => entry.item.revision_id))),
+    check("matrix: every authored reference resolves", unresolved.total === 0, JSON.stringify(unresolved.items)),
   ] };
 }
 

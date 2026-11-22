@@ -719,10 +719,10 @@ describe("the stack's startup wait", () => {
 describe("the registration scenario", () => {
   test("a pin check expects a question only on items of its declared artifact and selector", () => {
     const registration = plan(committedText);
-    const coverage = registration.capture.pins.find((pin) => pin.question_id === "acceptance_entry.task_coverage")!;
+    const coverage = registration.capture.pins.find((pin) => pin.question_id === "allocation.task_coverage")!;
     const entry = (id: string, artifact_kind: string, item_selector: string, item_path: string): ItemReadback =>
-      ({ occurrence_id: id, revision_id: `${artifact_kind}-1`, item_path, artifact_kind, item_selector, item_kind: "acceptance_entry" });
-    const plan_entry = entry("plan-entry", "plan", "/cohorts/*/acceptance_criteria/*", "/cohorts/0/acceptance_criteria/0");
+      ({ occurrence_id: id, revision_id: `${artifact_kind}-1`, item_path, artifact_kind, item_selector, item_kind: "allocation" });
+    const plan_entry = entry("plan-entry", "plan", "/cohorts/*/allocations/*", "/cohorts/0/allocations/0");
     const brief_entry = entry("brief-entry", "brief", "/acceptance_criteria/*", "/acceptance_criteria/0");
     const pin = { checkpoint: "capture", run_id: "run-1", occurrence_id: plan_entry.occurrence_id, revision_id: plan_entry.revision_id,
       item_path: plan_entry.item_path, item_kind: plan_entry.item_kind, question_id: coverage.question_id, question_version: coverage.question_version,
@@ -733,7 +733,7 @@ describe("the registration scenario", () => {
     expect(checks.map((check) => [check.passed, check.detail])).toEqual([[true, "1 pinned question(s) on 3 item(s)"], [true, "all match"]]);
   });
 
-  const committedText = readFileSync(resolve(repository, "observation/tests/fixtures/grading-definitions.json"), "utf8");
+  const committedText = JSON.stringify(JSON.parse(readFileSync(resolve(repository, "observation/tests/fixtures/grading-definitions-current.json"), "utf8")).definitions, null, 2) + "\n";
   const plan = (text: string) => {
     const parsed = parseGradingDefinitions(JSON.parse(text), oakridgeGradingRegistry);
     if (!parsed.ok) throw new Error(parsed.error.detail);
@@ -825,10 +825,10 @@ describe("the registration scenario", () => {
         const run_id = `run-${label}`;
         const item = (id: string, artifact_kind: string, item_path: string, item_kind: string, cites_file: boolean) =>
           occurrences.push({ run_id, id: `${run_id}-${id}`, revision_id: `${artifact_kind}-${run_id}`, item_path, artifact_kind,
-            item_selector: "/findings/*", item_kind, cites_file, pinned: null, ready_at: null });
-        item("finding", "analysis", "/findings/0", FINDING_KIND, false);
-        item("cited", "assessment", "/findings/0", "item_assessment", !options.nothing_cited);
-        item("uncited", "assessment", "/findings/1", "item_assessment", false);
+            item_selector: artifact_kind === "analysis" ? "/requirements/*/findings/*" : "/item_assessments/*", item_kind, cites_file, pinned: null, ready_at: null });
+        item("finding", "analysis", "/requirements/0/findings/0", FINDING_KIND, false);
+        item("cited", "assessment", "/item_assessments/0", "item_assessment", !options.nothing_cited);
+        item("uncited", "assessment", "/item_assessments/1", "item_assessment", false);
         const launched = await run_options.after_launch({ run_id, definition_id: "development" });
         if (run_options.capture === "deferred") deferred = run_id;
         else {
@@ -854,12 +854,12 @@ describe("the registration scenario", () => {
     expect(failing(report)).toEqual([]);
     expect(report.evidence.registrations.map((entry) => entry.checkpoint)).toEqual(["committed", "committed, repository withheld",
       "edited, repository withheld", "edited, repository supplied"]);
-    const pinOf = (checkpoint: string) => report.evidence.pins.find((pin) => pin.checkpoint === checkpoint && pin.item_path === "/findings/0"
+    const pinOf = (checkpoint: string) => report.evidence.pins.find((pin) => pin.checkpoint === checkpoint && pin.item_path === "/item_assessments/0"
       && pin.item_kind === "item_assessment")!;
     expect(pinOf("first-capture")).toMatchObject({ readiness: "not_ready", not_ready_code: "repository_unavailable" });
     expect(pinOf("first-after-arrival")).toMatchObject({ readiness: "ready", pinned_evaluator_definition_ids: pinOf("first-capture").pinned_evaluator_definition_ids });
     expect(pinOf("second").pinned_evaluator_definition_ids).not.toEqual(pinOf("first-capture").pinned_evaluator_definition_ids);
-    expect(report.evidence.frozen_evidence.find((set) => set.run_id === "run-first" && set.item_path === "/findings/0" && set.question_id.endsWith("correctness"))
+    expect(report.evidence.frozen_evidence.find((set) => set.run_id === "run-first" && set.item_path === "/item_assessments/0" && set.question_id.endsWith("correctness"))
       ?.references).toContainEqual(expect.objectContaining({ source: "repository", commit_sha: "abc", path: "core/a.ts", content: "two\nthree" }));
     expect(report.evidence.provider_request_count).toBe(0);
     expect(stack.graders()).toBe(committedText);

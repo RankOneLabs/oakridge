@@ -222,19 +222,33 @@ integration("startup fails on the latest version with its identity and never fal
   } finally { await rm(directory, { recursive: true, force: true }); }
 }));
 
+const assessedBuild = {
+  cohort_id: "startup", repository_key: "oakridge", technical_decisions: [],
+  build_items: [["T7", "T8"], ["T7"], ["T9"]].map((requirement_ids, index) => ({ id: `B${index}`, requirement_ids })),
+};
+const assessBindings = [{ input: "reviewed", unit: "brief", revision_id: "brief-context" }];
+const assessedBody = { head_sha: HEAD, item_assessments: [0, 1, 2, 3].map((index) => ({
+  subject: { kind: "build_item", id: `B${index}` }, status: "met", observation: "Verified",
+  evidence: index === 0 ? [{ kind: "file", ref: "src/alpha.ts:2-3" }] : [],
+})) };
+async function captureAssessmentContext(h: Harness, service: Service): Promise<void> {
+  await h.send(service, revisionOutcome({ revision_id: "spec-context", artifact_kind: "spec",
+    body: { requirements: ["T7", "T8", "T9"].map((id) => ({ id, text: id, analysis_finding_ids: [] })) } }));
+  await h.send(service, revisionOutcome({ revision_id: "brief-context", artifact_kind: "brief", body: assessedBuild }));
+}
+
 integration("not-ready capture, config swap and restart, readiness arrival and a later capture keep each occurrence's own pins",
   async () => withHarness(async (db, h, reader) => {
-  const before = await configured();
+  const before = (await configured()).filter((entry) => entry.id !== "task.requirement_coverage");
   const after = swapped(before);
   const first = await h.start(before);
   await h.send(first, launchOutcome(launch));
   await h.send(first, revisionOutcome({ revision_id: "analysis-1", artifact_kind: "analysis", body: await fixtureBody("analysis") }));
-  await h.send(first, revisionOutcome({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") }));
-  await h.send(first, revisionOutcome({ revision_id: "tasks-context", artifact_kind: "tasks", body: { tasks: ["T7", "T8"].map((id) => ({ id, description: id, requirement_ids: ["unavailable"] })) } }));
+  await captureAssessmentContext(h, first);
   await h.send(first, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", subject_id: "build-1",
-    body: await fixtureBody("assessment") }));
-  const cited = await itemAt(h, first, "assessment-1", "/findings/0", "assessment_finding");
-  const uncited = await itemAt(h, first, "assessment-1", "/findings/1", "assessment_finding");
+    body: assessedBody, input_bindings: assessBindings }));
+  const cited = await itemAt(h, first, "assessment-1", "/item_assessments/0", "item_assessment");
+  const uncited = await itemAt(h, first, "assessment-1", "/item_assessments/1", "item_assessment");
   const finding = await itemAt(h, first, "analysis-1", "/requirements/0/findings/0", "finding");
 
   // Relevance is ready from the captured spec; the cited finding waits on its repository for both
@@ -269,8 +283,8 @@ integration("not-ready capture, config swap and restart, readiness arrival and a
 
   // A later capture takes the swapped configuration.
   await h.send(second, revisionOutcome({ revision_id: "assessment-2", artifact_kind: "assessment", subject_id: "build-1",
-    body: await fixtureBody("assessment") }));
-  const later = await settled(h, second, await itemAt(h, second, "assessment-2", "/findings/1", "assessment_finding"), collected);
+    body: assessedBody, input_bindings: assessBindings }));
+  const later = await settled(h, second, await itemAt(h, second, "assessment-2", "/item_assessments/1", "item_assessment"), collected);
   for (const set of later) expect(set.pinned_evaluator_definition_ids).toEqual(pinsOf(after, set.question_id));
   expect(pinsOf(after, CORRECTNESS_ID)).not.toEqual(pinsOf(before, CORRECTNESS_ID));
 
@@ -284,12 +298,12 @@ integration("not-ready capture, config swap and restart, readiness arrival and a
 }));
 
 integration("a restart retries questions an earlier process left waiting", async () => withHarness(async (db, h, reader) => {
-  const configuration = await configured();
+  const configuration = (await configured()).filter((entry) => entry.id !== "task.requirement_coverage");
   const first = await h.start(configuration);
   await h.send(first, launchOutcome(launch));
-  await h.send(first, revisionOutcome({ revision_id: "tasks-context", artifact_kind: "tasks", body: { tasks: ["T7", "T8"].map((id) => ({ id, description: id, requirement_ids: ["unavailable"] })) } }));
-  await h.send(first, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", body: await fixtureBody("assessment") }));
-  const cited = await itemAt(h, first, "assessment-1", "/findings/0", "assessment_finding");
+  await captureAssessmentContext(h, first);
+  await h.send(first, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", body: assessedBody, input_bindings: assessBindings }));
+  const cited = await itemAt(h, first, "assessment-1", "/item_assessments/0", "item_assessment");
   expect((await settled(h, first, cited, collected)).every((set) => set.readiness.reason?.code === "repository_unavailable")).toBe(true);
   await first.stop();
   reader.accessible = true;
@@ -325,14 +339,14 @@ const executionsBy = (db: Database) => withTenant(db, tenant, (trx) => trx.selec
 
 integration("an enabled run grades with the evaluators pinned at capture across a swap and restarts, and never regrades",
   async () => withHarness(async (db, h, reader) => {
-  const before = await configured();
+  const before = (await configured()).filter((entry) => entry.id !== "task.requirement_coverage");
   const after = swapped(before);
   const requests: string[] = [];
   const first = await h.start(before, recordingRunners(requests));
   await h.send(first, launchOutcome(launch, "run-1", runConfig(true)));
-  await h.send(first, revisionOutcome({ revision_id: "tasks-context", artifact_kind: "tasks", body: { tasks: ["T7", "T8"].map((id) => ({ id, description: id, requirement_ids: ["unavailable"] })) } }));
+  await captureAssessmentContext(h, first);
   await h.send(first, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", subject_id: "build-1",
-    body: await fixtureBody("assessment") }));
+    body: assessedBody, input_bindings: assessBindings }));
   // Ready questions are graded right away; the cited finding and every Correctness wait.
   const early = await until(() => executionsBy(db), (rows) => rows.length === 2 && rows.every((row) => row.status === "completed"));
   expect(early.every((row) => row.question_id === EVIDENCE_SUPPORT_ID)).toBe(true);
@@ -344,13 +358,13 @@ integration("an enabled run grades with the evaluators pinned at capture across 
   const ready = await until(() => executionsBy(db), (rows) => rows.length === 8 && rows.every((row) => row.status === "completed"));
   // The older occurrence's first answers use its original evaluators, not the swapped ones.
   for (const row of ready) expect(pinsOf(before, row.question_id)).toContain(row.evaluator_definition_id as never);
-  const cited = await itemAt(h, second, "assessment-1", "/findings/0", "assessment_finding");
+  const cited = await itemAt(h, second, "assessment-1", "/item_assessments/0", "item_assessment");
   const measured = await h.get(second, `/v1/items/${encodeURIComponent(cited.occurrence_id)}/status`) as {
     questions: { items: { machine: { items: { measurement: { state: string } }[] } }[] } };
   expect(measured.questions.items.flatMap((entry) => entry.machine.items.map((machine) => machine.measurement.state))).toEqual(["answered", "answered", "answered", "answered"]);
 
   await h.send(second, revisionOutcome({ revision_id: "assessment-2", artifact_kind: "assessment", subject_id: "build-1",
-    body: await fixtureBody("assessment") }));
+    body: assessedBody, input_bindings: assessBindings }));
   const later = await until(() => executionsBy(db), (rows) => rows.length === 16 && rows.every((row) => row.status === "completed"));
   for (const row of later.filter((entry) => entry.revision_id === "assessment-2"))
     expect(pinsOf(after, row.question_id)).toContain(row.evaluator_definition_id as never);
@@ -359,7 +373,7 @@ integration("an enabled run grades with the evaluators pinned at capture across 
   const sent = requests.length;
   const third = await h.start(after, recordingRunners(requests));
   await h.send(third, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", subject_id: "build-1",
-    body: await fixtureBody("assessment") }, "event:assessment-1-replayed"));
+    body: assessedBody, input_bindings: assessBindings }, "event:assessment-1-replayed"));
   await Bun.sleep(300);
   await third.stop();
   expect([(await executionsBy(db)).length, requests.length, sent]).toEqual([16, sent, 16]);
@@ -367,22 +381,24 @@ integration("an enabled run grades with the evaluators pinned at capture across 
 }));
 
 for (const edit of ["wording", "targets"] as const) integration(`waiting subjects retain their collection plan across a ${edit} edit and process restart`, async () => withHarness(async (db, h, reader) => {
-  const before = (await configured()).filter((entry) => entry.id === "acceptance_entry.task_coverage");
-  const original = before[0]!;
+  const configuredQuestion = (await configured()).find((entry) => entry.id === CORRECTNESS_ID)!;
+  const { task_source: _taskSource, ...definition } = { ...configuredQuestion, task_source: "resolved_assesses" };
+  const original = { ...definition, scope: "per_item" as const, evidence: ["subject", "build_result"],
+    targets: [...definition.targets, { artifact: "slice_assessment", selector: "/item_assessments/*" }] };
+  const before: GradingDefinitions = [original];
   const after: GradingDefinitions = [{ ...original, evidence: ["subject"],
     ...(edit === "wording" ? { question: { ...original.question, text: "Reworded coverage question" } }
-      : { targets: original.targets.filter((target) => target.artifact === "plan") }) }];
+      : { targets: original.targets.filter((target) => target.artifact === "slice_assessment") }) }];
   const requests: string[] = [];
   let service: Service | null = null;
   try {
     service = await h.start(before, recordingRunners(requests));
     await h.send(service, launchOutcome(launch, "run-1", runConfig(true)));
-    await h.send(service, revisionOutcome({ revision_id: "plan-original", artifact_kind: "plan", body: { cohorts: [], risks: [] }, recorded_at: "2026-11-01T00:00:00Z" }));
-    await h.send(service, revisionOutcome({ revision_id: "brief-original", artifact_kind: "brief", recorded_at: "2026-11-01T00:00:02Z",
-      body: { cohort_id: "api", decisions_made: [], approaches_rejected: [], acceptance_criteria: [{ id: "T1", text: "Ship reads", decision_ids: [] }] } }));
-    const item = await itemAt(h, service, "brief-original", "/acceptance_criteria/0", "acceptance_entry");
+    await h.send(service, revisionOutcome({ revision_id: "assessment-original", artifact_kind: "assessment",
+      subject_id: "build-original", body: { ...assessedBody, item_assessments: assessedBody.item_assessments.slice(0, 1) } }));
+    const item = await itemAt(h, service, "assessment-original", "/item_assessments/0", "item_assessment");
     const [pinned] = await settled(h, service, item, collected);
-    expect(pinned!.readiness).toMatchObject({ state: "not_ready", reason: { code: "task_unavailable" } });
+    expect(pinned!.readiness).toMatchObject({ state: "not_ready", reason: { code: "build_result_unavailable" } });
     const original_plan = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set").select("collection_plan")
       .where("evidence_set_id", "=", pinned!.evidence_set_id).executeTakeFirstOrThrow());
     expect(original_plan.collection_plan).toMatchObject({ question_version: pinned!.question_version, evidence: original.evidence });
@@ -393,20 +409,20 @@ for (const edit of ["wording", "targets"] as const) integration(`waiting subject
     // A fresh process knows only the edited configuration, including a different evidence list.
     service = await h.start(after, recordingRunners(requests));
     reader.accessible = true;
-    await h.send(service, revisionOutcome({ revision_id: "tasks-original", artifact_kind: "tasks", recorded_at: "2026-11-01T00:00:01Z",
-      body: { tasks: [{ id: "T1", description: "Ship reads", requirement_ids: [] }] } }));
+    await h.send(service, revisionOutcome({ revision_id: "build-original", artifact_kind: "build_result",
+      body: await fixtureBody("build-result") }));
     const [ready] = await settled(h, service, item, (sets) => sets.length === 1 && sets.every((set) => set.readiness.state === "ready"));
     expect(ready).toMatchObject({ evidence_set_id: pinned!.evidence_set_id, question_version: pinned!.question_version,
       pinned_evaluator_definition_ids: pinned!.pinned_evaluator_definition_ids });
     expect(ready!.readiness.references?.map((ref) => (ref as { ref: string }).ref))
-      .toEqual(["subject", "spec", "spec_task", "plan", "contribution_context"]);
+      .toEqual(["subject", "build_result"]);
     const completed = await until(() => executionsBy(db), (rows) => rows.length === 1 && rows[0]!.status === "completed");
     expect(completed[0]!.evaluator_definition_id).toBe(pinsOf(before, original.id)[0]!);
     expect(requests).toHaveLength(1);
     const response = await fetch(`http://127.0.0.1:${service.port}/v1/items/${encodeURIComponent(item.occurrence_id)}/answers`, {
       method: "POST", headers: { authorization: "Bearer grade-secret", "content-type": "application/json" },
       body: JSON.stringify({ question_id: original.id, question_version: pinned!.question_version,
-        submission_id: `old-plan-${edit}`, answer: "fully_covers", task_id: null }),
+        submission_id: `old-plan-${edit}`, answer: "supported", task_id: null }),
     });
     expect(response.status).toBe(201);
   } finally { await service?.stop(); }

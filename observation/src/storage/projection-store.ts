@@ -145,11 +145,14 @@ async function targetOccurrence(trx: DatabaseTransaction, tenant: TenantScope,
   if (link.target_bound) {
     const ids = [...new Set(source.input_bindings.map((binding) => binding.revision_id))];
     if (!ids.length) return null;
-    const candidates = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "item_scope"])
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("run_id", "=", source.run_id).where("revision_id", "in", ids)
-      .where("artifact_kind", "=", link.target_artifact_kind).where("item_kind", "=", link.target_item_kind)
-      .where("producer_local_id", "=", link.target_local_id).execute();
+    const candidates = await trx.selectFrom("observation.source_revision as revision")
+      .innerJoin("observation.item_occurrence as item", (join) => join.onRef("item.producer", "=", "revision.producer")
+        .onRef("item.namespace", "=", "revision.namespace").onRef("item.revision_id", "=", "revision.revision_id"))
+      .select(["item.occurrence_id", "item.item_scope"])
+      .where("revision.producer", "=", tenant.producer).where("revision.namespace", "=", tenant.namespace)
+      .where("revision.run_id", "=", source.run_id).where("revision.revision_id", "in", ids)
+      .where("revision.artifact_kind", "=", link.target_artifact_kind).where("item.item_kind", "=", link.target_item_kind)
+      .where("item.producer_local_id", "=", link.target_local_id).execute();
     const eligible = link.target_scope === null ? candidates
       : candidates.filter((item) => item.item_scope === link.target_scope);
     return eligible.length === 1 ? eligible[0]!.occurrence_id : null;

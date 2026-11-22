@@ -10,7 +10,7 @@ import type { CaptureConfiguration } from "../src/grading/evidence";
 import { evaluationDigest, submissionAttemptLabel, submissionDigest } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID } from "./grading-fixture";
-import { scopeOf, OAKRIDGE_QUESTIONS, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
+import { scopeOf, OAKRIDGE_QUESTIONS, oakridgeProfile, createFeed, evaluator, evaluatorId, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
 import { listRunComposites, listRunUnlinkedItems, listRunUnresolvedReferences, readCompositeDrilldown, readLogicalItemComposite, readLogicalItemLineage } from "../src/storage/grading-record-store";
@@ -19,16 +19,26 @@ import { listRunItems } from "../src/storage/projection-store";
 
 const path = oakridgeProfile.composite;
 const context = { stages: [
-  { stage: "analysis", artifact_kinds: ["analysis"] }, { stage: "tasks", artifact_kinds: ["tasks"] },
-  { stage: "plan", artifact_kinds: ["plan"] }, { stage: "brief", artifact_kinds: ["brief"] },
-  { stage: "implementation", artifact_kinds: ["assessment", "build_result"] }, { stage: "integration", artifact_kinds: ["assessment"] }
+  { stage: "analysis", artifact_kinds: ["analysis", "spec"] }, { stage: "planning", artifact_kinds: ["plan"] },
+  { stage: "brief", artifact_kinds: ["brief"] },
+  { stage: "cohort", artifact_kinds: ["assessment", "build_result"] }, { stage: "integration", artifact_kinds: ["assessment"] }
 ], pins: [], is_run_complete: true };
 const all = { limit: 200, offset: 0 };
 const pages = uniformDrilldownPages(all);
 const MACHINE_A = "machine-a", MACHINE_B = "machine-b", HUMAN = "human";
 const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ ...scopeOf(question.question_id), ...question, ...targetOf(question.question_id), ...pinProvenance(question),
   evaluator_definition_ids: [evaluatorId(MACHINE_A), evaluatorId(MACHINE_B), evaluatorId(HUMAN)] })) };
-const finding = (task_ids: readonly string[], extra: { readonly [key: string]: JsonValue } = {}): JsonValue => ({ task_ids: [...task_ids], criterion: "c", status: "met", evidence: [], ...extra });
+interface AssessmentFixture { readonly requirement_ids: readonly string[]; readonly note?: JsonValue }
+const finding = (requirement_ids: readonly string[], extra: { readonly note?: JsonValue } = {}): AssessmentFixture =>
+  ({ requirement_ids, ...extra });
+const spec = (ids: readonly string[] = ["T7", "T8"]) => ({ requirements: ids.map((id) => ({ id, text: id, analysis_finding_ids: [] })) });
+const brief = (id: string, findings: readonly AssessmentFixture[]) => ({
+  cohort_id: id, repository_key: id, technical_decisions: [],
+  build_items: findings.map((finding, index) => ({ id: `B${index}`, requirement_ids: [...new Set(finding.requirement_ids)] })),
+});
+const assess = (findings: readonly AssessmentFixture[]) => ({ item_assessments: findings.map(({ note }, index) =>
+  ({ subject: { kind: "build_item", id: `B${index}` }, status: "met", evidence: [], observation: note ?? "Verified" })) });
+const binding = (revision_id: string) => ({ input: "reviewed", unit: revision_id, revision_id });
 const choice = (value: string): GradeAnswer => ({ state: "answered", kind: "choice", value });
 
 interface Harness { readonly db: Database; readonly feed: Feed; readonly scope: TenantScope }
@@ -50,7 +60,7 @@ async function readyAll(h: Harness, occurrence_id: ItemOccurrenceId, only?: stri
   for (const set of await readOccurrenceEvidence(h.db, h.scope, occurrence_id)) {
     if (only && set.question_id !== only) continue;
     const recorded = await recordCollection(h.db, h.scope, set.evidence_set_id, { state: "ready",
-      references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "fixture" as ArtifactRevisionId, item_path: "/findings/0", content: `evidence of ${occurrence_id}` }] });
+      references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "fixture" as ArtifactRevisionId, item_path: "/item_assessments/0", content: `evidence of ${occurrence_id}` }] });
     if (!recorded.ok) throw new Error(recorded.error.detail);
   }
 }
@@ -138,52 +148,55 @@ test("a page reports the whole list's size, and every boundary continues without
 
 
 
-/** One run: tasks, a revised plan, a brief and assessment per cohort, and the assessments as given. */
-async function sharedTaskRun(h: Harness, implementation: { readonly alpha: readonly JsonValue[]; readonly beta: readonly JsonValue[] }): Promise<void> {
-  const plan = await fixtureBody("plan") as { readonly [key: string]: JsonValue };
-  const brief = await fixtureBody("brief") as { readonly [key: string]: JsonValue };
+/** One run with a revised plan, a brief and assessment per cohort, and a shared requirement. */
+async function sharedTaskRun(h: Harness, assessments: { readonly alpha: readonly AssessmentFixture[]; readonly beta: readonly AssessmentFixture[] }): Promise<void> {
+  const plan = { cohorts: ["alpha", "beta"].map((id) => ({ id, allocations: [{ requirement_id: "T7", contribution: id }] })) };
   await h.feed.launch({ spec: "s" }, "run-1", runConfig(true));
-  await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", unit_id: "run-1/analysis", body: await fixtureBody("tasks") });
+  await h.feed.revision({ revision_id: "spec-1", artifact_kind: "spec", unit_id: "run-1/analysis", body: spec() });
   await h.feed.revision({ revision_id: "plan-1", artifact_kind: "plan", unit_id: "run-1/planning", body: plan });
   await h.feed.revision({ revision_id: "plan-2", artifact_kind: "plan", unit_id: "run-1/planning", predecessor_id: "plan-1", body: { ...plan, summary: "revised" } });
-  await h.feed.revision({ revision_id: "brief-alpha-1", artifact_kind: "brief", unit_id: "run-1/briefs/alpha", body: brief });
-  await h.feed.revision({ revision_id: "brief-alpha-2", artifact_kind: "brief", unit_id: "run-1/briefs/alpha", predecessor_id: "brief-alpha-1", body: { ...brief, title: "revised" } });
-  await h.feed.revision({ revision_id: "brief-beta-1", artifact_kind: "brief", unit_id: "run-1/briefs/beta", body: { ...brief, cohort_id: "beta", acceptance_criteria: [{ id: "T7", text: "beta", decision_ids: [] }] } });
-  await h.feed.revision({ revision_id: "assessment-alpha-1", artifact_kind: "assessment", unit_id: "run-1/implementation/alpha", body: { findings: [...implementation.alpha] } });
-  await h.feed.revision({ revision_id: "assessment-beta-1", artifact_kind: "assessment", unit_id: "run-1/implementation/beta", body: { findings: [...implementation.beta] } });
+  await h.feed.revision({ revision_id: "brief-alpha-1", artifact_kind: "brief", unit_id: "run-1/briefs/alpha", body: brief("alpha", assessments.alpha) });
+  await h.feed.revision({ revision_id: "brief-alpha-2", artifact_kind: "brief", unit_id: "run-1/briefs/alpha", predecessor_id: "brief-alpha-1", body: brief("alpha", assessments.alpha) });
+  await h.feed.revision({ revision_id: "brief-beta-1", artifact_kind: "brief", unit_id: "run-1/briefs/beta", body: brief("beta", assessments.beta) });
+  await h.feed.revision({ revision_id: "assessment-alpha-1", artifact_kind: "assessment", unit_id: "run-1/implementation/alpha", body: assess(assessments.alpha),
+    input_bindings: [binding("brief-alpha-2")] });
+  await h.feed.revision({ revision_id: "assessment-beta-1", artifact_kind: "assessment", unit_id: "run-1/implementation/beta", body: assess(assessments.beta),
+    input_bindings: [binding("brief-beta-1")] });
 }
 
 integration("one task through both cohorts, revised plan and briefs: one logical item, and every cohort's current findings", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7"]), finding(["T7"]), finding(["T7", "T8"])], beta: [finding(["T7"]), finding([])] });
   const read = await composite(h, "T7");
-  const implementation = stageOf(read, "implementation");
+  const implementation = stageOf(read, "cohort");
   expect([implementation.publication, implementation.totals.contributing_items, stageOf(read, "integration").publication, stageOf(read, "analysis").publication.state, read.logical_item_id as string]).toEqual([
-    { state: "published", is_final: false, unit_ids: ["run-1/implementation/alpha" as UnitId, "run-1/implementation/beta" as UnitId] }, 4, { state: "pending" }, "pending", `oakridge:${h.scope.namespace}:run-1:task:requirement:T7`]);
+    { state: "published", is_final: false, unit_ids: ["run-1/implementation/alpha" as UnitId, "run-1/implementation/beta" as UnitId] }, 4, { state: "pending" }, "published", `oakridge:${h.scope.namespace}:run-1:task:requirement:T7`]);
   // A finding naming two tasks contributes once to each, and copies nothing.
   const other = await composite(h, "T8");
-  expect(stageOf(other, "implementation").totals.contributing_items).toBe(1);
+  expect(stageOf(other, "cohort").totals.contributing_items).toBe(1);
   const unlinked = await listRunUnlinkedItems(h.db, h.scope, path, "run-1", all);
-  expect(unlinked.items.map((item) => [item.revision_id, item.item_path])).toEqual([["assessment-beta-1", "/findings/1"]]);
+  expect(unlinked.items.filter((item) => item.item_kind === "item_assessment").map((item) => [item.revision_id, item.item_path])).toEqual([]);
   const lineage = await readLogicalItemLineage(h.db, h.scope, path, "run-1", "T7", all);
   const occurrences = lineage.items.flatMap((entry) => entry.kind === "occurrence" ? [[entry.artifact_kind, entry.revision_id, entry.is_current]] : []);
-  expect(occurrences).toEqual([["tasks", "tasks-1", true], ["plan", "plan-1", false], ["plan", "plan-1", false], ["plan", "plan-2", true], ["plan", "plan-2", true],
-    ["brief", "brief-alpha-1", false], ["brief", "brief-alpha-2", true], ["brief", "brief-beta-1", true]]);
-  expect(lineage.items.flatMap((entry) => entry.kind === "contribution" ? [[entry.item.revision_id, entry.item.item_path, entry.item.stage, entry.item.is_current]] : [])).toEqual([
-    ["assessment-alpha-1", "/findings/0", "implementation", true], ["assessment-alpha-1", "/findings/1", "implementation", true], ["assessment-alpha-1", "/findings/2", "implementation", true],
-    ["assessment-beta-1", "/findings/0", "implementation", true]]);
+  expect(occurrences).toEqual([["spec", "spec-1", true], ["plan", "plan-1", false], ["plan", "plan-1", false], ["plan", "plan-2", true], ["plan", "plan-2", true]]);
+  const briefHistory = lineage.items.flatMap((entry) => entry.kind === "contribution" && entry.item.artifact_kind === "brief" ? [[String(entry.item.revision_id), entry.item.is_current]] : []);
+  expect(briefHistory).toEqual([["brief-alpha-1", false], ["brief-alpha-1", false], ["brief-alpha-1", false],
+    ["brief-alpha-2", true], ["brief-alpha-2", true], ["brief-alpha-2", true], ["brief-beta-1", true]]);
+  expect(lineage.items.flatMap((entry) => entry.kind === "contribution" && entry.item.artifact_kind === "assessment" ? [[entry.item.revision_id, entry.item.item_path, entry.item.stage, entry.item.is_current]] : [])).toEqual([
+    ["assessment-alpha-1", "/item_assessments/0", "cohort", true], ["assessment-alpha-1", "/item_assessments/1", "cohort", true], ["assessment-alpha-1", "/item_assessments/2", "cohort", true],
+    ["assessment-beta-1", "/item_assessments/0", "cohort", true]]);
   expect(lineage.is_captured).toBe(true);
 }));
 
 integration("a newer revision with no links replaces a linked one instead of resurrecting it, and history keeps what it replaced", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7"])], beta: [finding(["T7"])] });
-  const old = await occurrenceAt(h, "assessment-alpha-1", "/findings/0");
+  const old = await occurrenceAt(h, "assessment-alpha-1", "/item_assessments/0");
   await readyAll(h, old);
   await measure(h, { occurrence_id: old, question_id: CORRECTNESS_ID, evaluator_id: MACHINE_A, answer: choice("supported") });
-  expect(stageOf(await composite(h, "T7"), "implementation").totals.contributing_items).toBe(2);
-  await h.feed.revision({ revision_id: "assessment-alpha-2", artifact_kind: "assessment", unit_id: "run-1/implementation/alpha", predecessor_id: "assessment-alpha-1", body: { findings: [finding([])] } });
-  const read = stageOf(await composite(h, "T7"), "implementation");
+  expect(stageOf(await composite(h, "T7"), "cohort").totals.contributing_items).toBe(2);
+  await h.feed.revision({ revision_id: "assessment-alpha-2", artifact_kind: "assessment", unit_id: "run-1/implementation/alpha", predecessor_id: "assessment-alpha-1", body: { item_assessments: [] } });
+  const read = stageOf(await composite(h, "T7"), "cohort");
   expect([read.totals.contributing_items, read.totals.superseded_items, read.answers]).toEqual([1, 1, []]);
   const history = await readCompositeDrilldown(h.db, h.scope, path, "run-1", read.history, pages);
   expect(history.items.map((row) => [row.item.revision_id as string, row.item.is_current, row.questions.items.flatMap((question) => question.answers.items.map((answer) => answer.answer))])).toEqual([
@@ -196,23 +209,23 @@ integration("a newer revision with no links replaces a linked one instead of res
 integration("stages stand side by side: integration is pending, then final once published, whatever its answers and approvals", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7"])], beta: [] });
-  const alpha = await occurrenceAt(h, "assessment-alpha-1", "/findings/0");
+  const alpha = await occurrenceAt(h, "assessment-alpha-1", "/item_assessments/0");
   await readyAll(h, alpha);
   await measure(h, { occurrence_id: alpha, question_id: CORRECTNESS_ID, evaluator_id: MACHINE_A, answer: choice("supported") });
   expect(stageOf(await composite(h, "T7"), "integration").publication).toEqual({ state: "pending" });
-  await h.feed.revision({ revision_id: "integration-1", artifact_kind: "assessment", unit_id: "run-1/integration/oakridge", body: { findings: [finding(["T7"])] } });
+  await h.feed.revision({ revision_id: "integration-1", artifact_kind: "assessment", unit_id: "run-1/integration/oakridge", body: { item_assessments: [{ subject: { kind: "requirement", id: "T7" }, status: "met", evidence: [] }] } });
   const unanswered = await composite(h, "T7");
   const integration_stage = stageOf(unanswered, "integration");
   expect([integration_stage.publication, integration_stage.state, integration_stage.answers, integration_stage.totals.contributing_items]).toEqual([
     { state: "published", is_final: true, unit_ids: ["run-1/integration/oakridge" as UnitId] }, "linked", [], 1]);
-  const final = await occurrenceAt(h, "integration-1", "/findings/0");
+  const final = await occurrenceAt(h, "integration-1", "/item_assessments/0");
   await readyAll(h, final);
   await measure(h, { occurrence_id: final, question_id: CORRECTNESS_ID, evaluator_id: MACHINE_A, answer: choice("contradicted") });
   const read = await composite(h, "T7");
   // The two stages' answers are kept apart: nothing across them adds up.
-  expect(answersIn(stageOf(read, "implementation"))).toEqual([[CORRECTNESS_ID, MACHINE_A, "supported", 1]]);
+  expect(answersIn(stageOf(read, "cohort"))).toEqual([[CORRECTNESS_ID, MACHINE_A, "supported", 1]]);
   expect(answersIn(stageOf(read, "integration"))).toEqual([[CORRECTNESS_ID, MACHINE_A, "contradicted", 1]]);
-  expect(Object.keys(read).sort()).toEqual(["coverage", "logical_item_id", "producer_local_id", "run_id", "scope", "stages"]);
+  expect(Object.keys(read).sort()).toEqual(["coverage", "logical_item_id", "producer_local_id", "repositories", "run_id", "scope", "stages", "task_kind"]);
   // A published integration with nothing linked to this task is final and a coverage gap.
   expect([stageOf(await composite(h, "T8"), "integration").publication.state, stageOf(await composite(h, "T8"), "integration").state]).toEqual(["published", "gap"]);
 }));
@@ -220,7 +233,7 @@ integration("stages stand side by side: integration is pending, then final once 
 integration("corrections count once under their own reviewer; disagreement is only on one item and question", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7"]), finding(["T7"])], beta: [] });
-  const [first, second] = [await occurrenceAt(h, "assessment-alpha-1", "/findings/0"), await occurrenceAt(h, "assessment-alpha-1", "/findings/1")];
+  const [first, second] = [await occurrenceAt(h, "assessment-alpha-1", "/item_assessments/0"), await occurrenceAt(h, "assessment-alpha-1", "/item_assessments/1")];
   await readyAll(h, first);
   await readyAll(h, second);
   const wrong = await measure(h, { occurrence_id: first, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("contradicted") });
@@ -228,11 +241,11 @@ integration("corrections count once under their own reviewer; disagreement is on
   await measure(h, { occurrence_id: first, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-b", answer: choice("supported") });
   // Different items answering differently: no disagreement, and an old corrected answer is none either.
   await measure(h, { occurrence_id: second, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("contradicted") });
-  let stage = stageOf(await composite(h, "T7"), "implementation");
+  let stage = stageOf(await composite(h, "T7"), "cohort");
   expect(answersIn(stage)).toEqual([[CORRECTNESS_ID, "human:reviewer-a", "contradicted", 1], [CORRECTNESS_ID, "human:reviewer-a", "supported", 1], [CORRECTNESS_ID, "human:reviewer-b", "supported", 1]]);
   expect([stage.disagreements, stage.totals.superseded_answers]).toEqual([[], 1]);
   await measure(h, { occurrence_id: first, question_id: CORRECTNESS_ID, evaluator_id: MACHINE_A, answer: choice("contradicted") });
-  stage = stageOf(await composite(h, "T7"), "implementation");
+  stage = stageOf(await composite(h, "T7"), "cohort");
   expect(stage.disagreements.map((entry) => [entry.question.question_id, entry.item_count])).toEqual([[CORRECTNESS_ID, 1]]);
   const opened = await readCompositeDrilldown(h.db, h.scope, path, "run-1", stage.disagreements[0]!.drilldown, pages);
   expect(opened.items.map((row) => row.item.occurrence_id)).toEqual([first]);
@@ -245,11 +258,11 @@ integration("corrections count once under their own reviewer; disagreement is on
 integration("a count is of items: two alike uncorrected answers from one reviewer count once, and open that item with both raw answers", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7"])], beta: [] });
-  const occurrence_id = await occurrenceAt(h, "assessment-alpha-1", "/findings/0");
+  const occurrence_id = await occurrenceAt(h, "assessment-alpha-1", "/item_assessments/0");
   await readyAll(h, occurrence_id);
   for (let submission = 0; submission < 2; submission++)
     await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("supported") });
-  const stage = stageOf(await composite(h, "T7"), "implementation");
+  const stage = stageOf(await composite(h, "T7"), "cohort");
   const [count] = stage.answers;
   const opened = await readCompositeDrilldown(h.db, h.scope, path, "run-1", count!.drilldown, pages);
   expect([count!.count, opened.total, opened.items[0]!.questions.items[0]!.answers.total]).toEqual([1, 1, 2]);
@@ -258,14 +271,14 @@ integration("a count is of items: two alike uncorrected answers from one reviewe
 integration("not-ready, pending, failed, deferred and off stay distinct from each other and from negative and unclear answers", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7"]), finding(["T7"]), finding(["T7"]), finding(["T7"]), finding(["T7"]), finding(["T7"])], beta: [] });
-  const at = (index: number) => occurrenceAt(h, "assessment-alpha-1", `/findings/${index}`);
+  const at = (index: number) => occurrenceAt(h, "assessment-alpha-1", `/item_assessments/${index}`);
   // Evidence support is ready while Correctness waits for its real reason: each question moves alone.
   const split = await at(0);
   await readyAll(h, split, EVIDENCE_SUPPORT_ID);
   const correctness = (await readOccurrenceEvidence(h.db, h.scope, split)).find((set) => set.question_id === CORRECTNESS_ID)!;
   const waiting = await recordCollection(h.db, h.scope, correctness.evidence_set_id, { state: "not_ready", reason: { code: "build_result_unavailable", detail: "subject not captured" } });
   if (!waiting.ok) throw new Error(waiting.error.detail);
-  const statuses = async (): Promise<StageComposite> => stageOf(await composite(h, "T7"), "implementation");
+  const statuses = async (): Promise<StageComposite> => stageOf(await composite(h, "T7"), "cohort");
   await measure(h, { occurrence_id: split, question_id: EVIDENCE_SUPPORT_ID, evaluator_id: MACHINE_A, answer: choice("does_not_support") });
   const [queued, deferred, failed, negative] = [await at(1), await at(2), await at(3), await at(4)];
   for (const occurrence_id of [queued, deferred, failed, negative]) await readyAll(h, occurrence_id, CORRECTNESS_ID);
@@ -296,24 +309,24 @@ integration("not-ready, pending, failed, deferred and off stay distinct from eac
 integration("a run with grading off reads as off, not as an answer", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await h.feed.launch({ spec: "s" }, "run-1", runConfig(false));
-  await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", unit_id: "run-1/analysis", body: await fixtureBody("tasks") });
-  await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/alpha", body: { findings: [finding(["T7"])] } });
-  await readyAll(h, await occurrenceAt(h, "assessment-1", "/findings/0"));
-  const stage = stageOf(await composite(h, "T7"), "implementation");
+  await h.feed.revision({ revision_id: "spec-1", artifact_kind: "spec", unit_id: "run-1/analysis", body: spec() });
+  await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/integration/alpha", body: { item_assessments: [{ subject: { kind: "requirement", id: "T7" }, status: "met", evidence: [] }] } });
+  await readyAll(h, await occurrenceAt(h, "assessment-1", "/item_assessments/0"));
+  const stage = stageOf(await composite(h, "T7"), "integration");
   expect([stage.answers, stage.totals.grading_off_items, [...new Set(stage.statuses.map((count) => count.status.state))]]).toEqual([[], 1, ["grading_off"]]);
 }));
 
 integration("an unknown task stays visible until the task arrives, then counts under it", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await h.feed.launch({ spec: "s" }, "run-1", runConfig(true));
-  await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/alpha", body: { findings: [finding(["T7"])] } });
+  await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/integration/alpha", body: { item_assessments: [{ subject: { kind: "requirement", id: "T7" }, status: "met", evidence: [] }] } });
   expect(await readLogicalItemComposite(h.db, h.scope, path, "run-1", "T7")).toBeNull();
   expect((await listRunUnresolvedReferences(h.db, h.scope, path, "run-1", all)).items.map((reference) => reference.unresolved_target_ref)).toEqual(["logical_item:task:requirement:T7"]);
   const lineage = await readLogicalItemLineage(h.db, h.scope, path, "run-1", "T7", all);
   expect([lineage.is_captured, lineage.items.map((entry) => entry.kind)]).toEqual([false, ["unresolved"]]);
-  await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", unit_id: "run-1/analysis", body: await fixtureBody("tasks") });
+  await h.feed.revision({ revision_id: "spec-1", artifact_kind: "spec", unit_id: "run-1/analysis", body: spec() });
   expect((await listRunUnresolvedReferences(h.db, h.scope, path, "run-1", all)).items.every((reference) => reference.unresolved_target_ref !== "logical_item:task:requirement:T7")).toBe(true);
-  expect(stageOf(await composite(h, "T7"), "implementation").totals.contributing_items).toBe(1);
+  expect(stageOf(await composite(h, "T7"), "integration").totals.contributing_items).toBe(1);
 }));
 
 
@@ -321,14 +334,14 @@ integration("an unknown task stays visible until the task arrives, then counts u
 integration("every list pages to its whole population, nested lists included, and a count covers more than any page", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7"]), finding(["T7"]), finding(["T7"]), finding(["T7"], { note: "fourth" })], beta: [] });
-  const ids = await Promise.all([0, 1, 2, 3].map((index) => occurrenceAt(h, "assessment-alpha-1", `/findings/${index}`)));
+  const ids = await Promise.all([0, 1, 2, 3].map((index) => occurrenceAt(h, "assessment-alpha-1", `/item_assessments/${index}`)));
   for (const occurrence_id of ids) {
     await readyAll(h, occurrence_id, CORRECTNESS_ID);
     await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: MACHINE_A, answer: choice("supported") });
   }
   await measure(h, { occurrence_id: ids[0]!, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("supported") });
   await measure(h, { occurrence_id: ids[0]!, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-b", answer: choice("supported") });
-  const stage = stageOf(await composite(h, "T7"), "implementation");
+  const stage = stageOf(await composite(h, "T7"), "cohort");
   const count = stage.answers.find((entry) => entry.grader.kind === "machine")!;
   expect(count.count).toBe(4);
   const seen: string[] = [];
@@ -350,7 +363,7 @@ integration("every list pages to its whole population, nested lists included, an
 integration("a drilldown's questions and every list inside them continue separately, each reporting its whole size", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7", "T8"])], beta: [] });
-  const occurrence_id = await occurrenceAt(h, "assessment-alpha-1", "/findings/0");
+  const occurrence_id = await occurrenceAt(h, "assessment-alpha-1", "/item_assessments/0");
   await readyAll(h, occurrence_id);
   const wrong = await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("contradicted") });
   await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("supported"), supersedes: wrong });
@@ -358,7 +371,7 @@ integration("a drilldown's questions and every list inside them continue separat
   await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-b", answer: choice("supported"), supersedes: wrong_again });
   await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer-c", answer: choice("supported") });
   await measure(h, { occurrence_id, question_id: EVIDENCE_SUPPORT_ID, evaluator_id: HUMAN, reviewer: "reviewer-a", answer: choice("supports") });
-  const stage = stageOf(await composite(h, "T7"), "implementation");
+  const stage = stageOf(await composite(h, "T7"), "cohort");
   const open = (windows: Partial<DrilldownPages>) => readCompositeDrilldown(h.db, h.scope, path, "run-1", stage.items, { ...pages, ...windows });
   const one = { limit: 1, offset: 0 };
 
@@ -393,7 +406,8 @@ integration("a drilldown's questions and every list inside them continue separat
 
   // Moving one list's window moves no other, and links and statuses have their own.
   const { links, questions } = (await open({ links: { limit: 1, offset: 1 }, questions: one, statuses: { limit: 0, offset: 0 } })).items[0]!;
-  expect([links.total, links.items.length, links.offset]).toEqual([2, 1, 1]);
+  expect([links.total, links.items.length, links.offset]).toEqual([1, 0, 1]);
+  expect((await open({ links: one })).items[0]!.links.items).toHaveLength(1);
   const [opened] = questions.items;
   expect([opened!.statuses.limit, opened!.statuses.items]).toEqual([0, []]);
 }));
@@ -401,14 +415,14 @@ integration("a drilldown's questions and every list inside them continue separat
 integration("reads stop at the run and the tenant, even for the same ids", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7"])], beta: [] });
-  await h.feed.revision({ revision_id: "tasks-other", artifact_kind: "tasks", run_id: "run-2", unit_id: "run-2/analysis", body: await fixtureBody("tasks") });
-  await h.feed.revision({ revision_id: "assessment-other", artifact_kind: "assessment", run_id: "run-2", unit_id: "run-2/implementation/alpha", body: { findings: [finding(["T7"]), finding(["T7"])] } });
-  expect(stageOf(await composite(h, "T7"), "implementation").totals.contributing_items).toBe(1);
-  expect(stageOf(await composite(h, "T7", "run-2"), "implementation").totals.contributing_items).toBe(2);
+  await h.feed.revision({ revision_id: "spec-other", artifact_kind: "spec", run_id: "run-2", unit_id: "run-2/analysis", body: spec() });
+  await h.feed.revision({ revision_id: "assessment-other", artifact_kind: "assessment", run_id: "run-2", unit_id: "run-2/integration/alpha", body: { item_assessments: [0, 1].map(() => ({ subject: { kind: "requirement", id: "T7" }, status: "met", evidence: [] })) } });
+  expect(stageOf(await composite(h, "T7"), "cohort").totals.contributing_items).toBe(1);
+  expect(stageOf(await composite(h, "T7", "run-2"), "integration").totals.contributing_items).toBe(2);
   const other: TenantScope = { producer: "oakridge", namespace: "other-tenant" };
   expect(await readLogicalItemComposite(h.db, other, path, "run-1", "T7")).toBeNull();
   expect(await listRunComposites(h.db, other, path, "run-1", all)).toEqual({ items: [], total: 0, ...all });
-  const stage = stageOf(await composite(h, "T7"), "implementation");
+  const stage = stageOf(await composite(h, "T7"), "cohort");
   expect((await readCompositeDrilldown(h.db, other, path, "run-1", stage.items, pages)).total).toBe(0);
   expect((await readLogicalItemLineage(h.db, other, path, "run-1", "T7", all)).total).toBe(0);
 }));
@@ -416,11 +430,11 @@ integration("reads stop at the run and the tenant, even for the same ids", async
 integration("a full task page keeps shared findings and independent task grades across page boundaries", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   const ids = Array.from({ length: 60 }, (_, index) => `T${String(index).padStart(2, "0")}`);
-  await h.feed.revision({ revision_id: "many-tasks", artifact_kind: "tasks", unit_id: "run-1/analysis",
-    body: { tasks: ids.map((id) => ({ id, description: id, requirement_ids: [] })) } });
+  await h.feed.revision({ revision_id: "many-requirements", artifact_kind: "spec", unit_id: "run-1/analysis", body: spec(ids) });
+  await h.feed.revision({ revision_id: "shared-brief", artifact_kind: "brief", body: brief("alpha", [finding(ids)]) });
   await h.feed.revision({ revision_id: "shared", artifact_kind: "assessment", unit_id: "run-1/implementation/alpha",
-    body: { findings: [finding(ids)] } });
-  const occurrence_id = await occurrenceAt(h, "shared", "/findings/0");
+    body: assess([finding(ids)]), input_bindings: [binding("shared-brief")] });
+  const occurrence_id = await occurrenceAt(h, "shared", "/item_assessments/0");
   await readyAll(h, occurrence_id);
   await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: MACHINE_A, answer: choice("supported") });
   const first = await measure(h, { occurrence_id, question_id: CORRECTNESS_ID, evaluator_id: HUMAN, reviewer: "reviewer", answer: choice("supported") });
@@ -430,7 +444,7 @@ integration("a full task page keeps shared findings and independent task grades 
   expect([firstPage.total, firstPage.items.length, secondPage.total, secondPage.items.length]).toEqual([60, 50, 60, 10]);
   expect([...firstPage.items, ...secondPage.items].map((item) => item.producer_local_id)).toEqual(ids);
   for (const item of [...firstPage.items, ...secondPage.items]) {
-    const stage = stageOf(item, "implementation");
+    const stage = stageOf(item, "cohort");
     if (item.producer_local_id !== ids[0]) {
       expect(stage.totals).toMatchObject({ contributing_items: 1, superseded_answers: 0 });
       expect(stage.answers).toEqual([]);
@@ -446,11 +460,11 @@ integration("a full task page keeps shared findings and independent task grades 
 integration("a finding naming two tasks yields independent grades counted only under their own task", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
   await sharedTaskRun(h, { alpha: [finding(["T7", "T8", "T7"])], beta: [] });
-  const occurrence_id = await occurrenceAt(h, "assessment-alpha-1", "/findings/0");
+  const occurrence_id = await occurrenceAt(h, "assessment-alpha-1", "/item_assessments/0");
   await readyAll(h, occurrence_id);
   await measure(h, { occurrence_id, task_id: "T7", question_id: CORRECTNESS_ID, evaluator_id: MACHINE_A, answer: choice("supported") });
-  const t7 = stageOf(await composite(h, "T7"), "implementation");
-  const t8 = stageOf(await composite(h, "T8"), "implementation");
+  const t7 = stageOf(await composite(h, "T7"), "cohort");
+  const t8 = stageOf(await composite(h, "T8"), "cohort");
   expect(answersIn(t7)).toEqual([[CORRECTNESS_ID, MACHINE_A, "supported", 1]]);
   expect(t8.answers).toEqual([]);
   expect(t8.totals.pending_items).toBe(1);
