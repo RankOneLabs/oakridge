@@ -389,9 +389,7 @@ CREATE TABLE authority.review_item (
   FOREIGN KEY (run_id, thread_id) REFERENCES authority.collaboration_thread(run_id, id)
 );
 
--- The operator stream's outbox. Written by commit and the registry store in the
--- transaction that causes it; never read by step. A deleted run leaves its
--- rows in the stream with no run (D12).
+-- Exact revisions inserted by each committed event, in insertion order.
 CREATE TABLE authority.revision_delivery (
   run_id text NOT NULL,
   event_id text NOT NULL,
@@ -403,6 +401,9 @@ CREATE TABLE authority.revision_delivery (
   FOREIGN KEY (run_id, revision_id) REFERENCES authority.artifact_revision(run_id, id)
 );
 
+-- The operator stream's outbox. Written by commit and the registry store in the
+-- transaction that causes it; never read by step. A deleted run leaves its
+-- rows in the stream with no run (D12).
 CREATE TABLE authority.operator_event (
   id text PRIMARY KEY,
   run_id text REFERENCES authority.run(id) ON DELETE SET NULL,
