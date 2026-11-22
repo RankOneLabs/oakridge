@@ -1,24 +1,15 @@
 import { createHash } from "node:crypto";
-import { canonicalJson, canonicalDigest } from "canonical-json";
+import { canonicalJson, type CanonicalizationError } from "canonical-json";
 import type { ParsedWorkflow, Type } from "../core-client/core-types";
 import { err, ok, type Result } from "../domain/primitives";
 import type { PinnedDefinitionRead } from "../storage/read-store";
 import type { JsonValue } from "./revision-delivery";
 
-function encoded(value: JsonValue): string {
-  const result = canonicalJson(value);
-  if (!result.ok) throw new Error(`${result.error.operation}: ${result.error.entity_id}: ${result.error.detail}`);
-  return result.value;
-}
-
 /** Retain the stored digest's domain prefix over the shared canonical bytes. */
-function schemaDigest(declaration: JsonValue): string {
-  return `artifact-schema/v2:${createHash("sha256").update(encoded(declaration), "utf8").digest("hex")}`;
-}
-export function bodyDigest(body: JsonValue): string {
-  const result = canonicalDigest(body);
-  if (!result.ok) throw new Error(`${result.error.operation}: ${result.error.entity_id}: ${result.error.detail}`);
-  return result.value;
+function schemaDigest(declaration: JsonValue): Result<string, CanonicalizationError> {
+  const encoded = canonicalJson(declaration);
+  if (!encoded.ok) return encoded;
+  return ok(`artifact-schema/v2:${createHash("sha256").update(encoded.value, "utf8").digest("hex")}`);
 }
 interface SchemaResolution {
   readonly type: Type;
@@ -62,13 +53,14 @@ export function parsedArtifactSchemaVersion(workflow: ParsedWorkflow, stage: str
   const declaration = workflow.stages[stage]?.artifacts[artifact];
   if (!declaration) return null;
   const resolved = resolveSchema({ type: declaration.schema, schemas: workflow.schemas ?? {}, visiting: new Set() });
-  return resolved.ok ? schemaDigest(resolved.value) : null;
+  if (!resolved.ok) return null;
+  const digest = schemaDigest(resolved.value);
+  return digest.ok ? digest.value : null;
 }
 
-export function runInputSchemaVersion(workflow: Pick<ParsedWorkflow, "input" | "schemas">): string {
+export function runInputSchemaVersion(workflow: Pick<ParsedWorkflow, "input" | "schemas">): Result<string, SchemaResolutionFailure | CanonicalizationError> {
   const resolved = resolveSchema({ type: workflow.input, schemas: workflow.schemas ?? {}, visiting: new Set() });
-  if (!resolved.ok) throw new Error(`Cannot resolve run input: ${resolved.error.entity_id} ${resolved.error.detail}`);
-  return schemaDigest(resolved.value);
+  return resolved.ok ? schemaDigest(resolved.value) : resolved;
 }
 
 export function artifactSchemaVersion(definition: PinnedDefinitionRead, stage: string, artifact: string): string | null {

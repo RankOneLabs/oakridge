@@ -8,7 +8,13 @@ export interface ObservationOptions { readonly url: string; readonly namespace: 
   readonly poll_ms?: number; readonly fetcher?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   readonly log?: (detail: string) => void }
 
-async function deliveryFor(db: Kysely<DB>, row: CommittedEventRow<CoreEvent>, namespace: string, previous: DeliveryCursor): Promise<CommittedEventDelivery> {
+interface DeliveryRequest {
+  readonly row: CommittedEventRow<CoreEvent>;
+  readonly namespace: string;
+  readonly previous: DeliveryCursor;
+}
+
+async function deliveryFor(db: Kysely<DB>, { row, namespace, previous }: DeliveryRequest): Promise<CommittedEventDelivery> {
   const run_id = row.run_id ?? "";
   const revisions = await readDeliveredRevisions(db, run_id, row.id);
   const launched = row.payload.kind === "launched";
@@ -17,7 +23,12 @@ async function deliveryFor(db: Kysely<DB>, row: CommittedEventRow<CoreEvent>, na
   if (committed?.state === "malformed") throw new Error(`Malformed committed config for run ${run_id}`);
   const config = committed?.state === "committed"
     ? { sessions: committed.config.sessions, grading_enabled: committed.config.grading_enabled } : { sessions: {}, grading_enabled: false };
-  return selectEventDelivery({ ...row, namespace, previous, config }, revisions, revisions, definition);
+  const selected = selectEventDelivery({ row: { ...row, namespace, previous, config }, deliveries: revisions, revisions, definition });
+  if (!selected.ok) {
+    const { operation, entity_id, detail } = selected.error;
+    throw new Error(`${operation}: ${entity_id}: ${detail}`);
+  }
+  return selected.value;
 }
 
 async function serviceCursor(options: ObservationOptions, signal?: AbortSignal): Promise<DeliveryCursor> {
@@ -34,7 +45,7 @@ export async function publishObservationOnce(db: Kysely<DB>, options: Observatio
   const previous = await serviceCursor(options, signal);
   const [row] = await readCommittedEventsAfter(db, "authority.event", { after: { id: previous.event_id, commit_txid: previous.commit_txid }, limit: 1 });
   if (!row) return false;
-  const delivery = await deliveryFor(db, row, options.namespace, previous);
+  const delivery = await deliveryFor(db, { row, namespace: options.namespace, previous });
   const response = await (options.fetcher ?? fetch)(new URL("/v1/sources/oakridge/events", options.url), {
     method: "POST", headers: { authorization: `Bearer ${options.token}`, "content-type": "application/json" },
     body: JSON.stringify(delivery), signal,

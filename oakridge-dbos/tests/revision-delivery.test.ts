@@ -7,8 +7,10 @@ const event = { id: "event-1", run_id: "run", unit_id: "run/unit", created_at: n
   config: { sessions: {}, grading_enabled: false },
   payload: { kind: "revision_published" as const, unit: "run/unit", artifact: "body", body: "sample" },
 };
+const selection = { row: event, deliveries: [], revisions: [], definition: null };
+
 test("a committed publication with no inserted revisions still delivers an empty revision event", () => {
-  expect(selectEventDelivery(event, [], [], null).event).toEqual({ kind: "revisions", revisions: [] });
+  expect(selectEventDelivery(selection)).toMatchObject({ ok: true, value: { event: { kind: "revisions", revisions: [] } } });
 });
 
 test("delivery selects stored revision ids in ordinal order", () => {
@@ -18,7 +20,21 @@ test("delivery selects stored revision ids in ordinal order", () => {
   const row = { run_id: "run", unit_id: "run/unit", stage: "stage", artifact: "body", body: "sample",
     predecessor_id: null, subject: null, origin_kind: "operator_edit" as const, by_action_id: null, by_seq: null,
     input_bindings: [], created_at: new Date(0) };
-  const selected = selectEventDelivery(event, [{ ordinal: 1, revision_id: "r:2" }, { ordinal: 0, revision_id: "r:1" }],
-    [{ ...row, id: "r:2" }, { ...row, id: "r:1" }], definition);
-  expect(selected.event.kind === "revisions" && selected.event.revisions.map((revision) => revision.revision_id)).toEqual(["r:1", "r:2"]);
+  const selected = selectEventDelivery({ row: event, deliveries: [{ ordinal: 1, revision_id: "r:2" }, { ordinal: 0, revision_id: "r:1" }],
+    revisions: [{ ...row, id: "r:2" }, { ...row, id: "r:1" }], definition });
+  expect(selected).toMatchObject({ ok: true, value: { event: { kind: "revisions",
+    revisions: [{ revision_id: "r:1" }, { revision_id: "r:2" }],
+  } } });
+});
+
+test("a delivery with no run returns a traced error", () => {
+  expect(selectEventDelivery({ ...selection, row: { ...event, run_id: null } })).toEqual({
+    ok: false, error: { operation: "select_event_delivery", entity_id: event.id, detail: "event has no run" },
+  });
+});
+
+test("a delivery referencing a missing revision returns a traced error", () => {
+  expect(selectEventDelivery({ ...selection, deliveries: [{ ordinal: 0, revision_id: "missing" }] })).toEqual({
+    ok: false, error: { operation: "select_event_delivery", entity_id: "missing", detail: "missing stored revision" },
+  });
 });

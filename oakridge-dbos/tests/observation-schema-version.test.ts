@@ -58,7 +58,9 @@ test("each launchable development and study artifact and run input use resolved 
       const compiled = await compileDefinition(core.value, catalog.value[key].definition_id);
       if (!compiled.ok) throw new Error(JSON.stringify(compiled.error));
       const workflow = compiled.value.checked_program.workflow;
-      expect(runInputSchemaVersion(workflow)).toMatch(/^artifact-schema\/v2:[a-f0-9]{64}$/);
+      const inputVersion = runInputSchemaVersion(workflow);
+      if (!inputVersion.ok) throw new Error(JSON.stringify(inputVersion.error));
+      expect(inputVersion.value).toMatch(/^artifact-schema\/v2:[a-f0-9]{64}$/);
       for (const [stage, definition] of Object.entries(workflow.stages)) {
         for (const artifact of Object.keys(definition.artifacts)) {
           expect(artifactSchemaVersion(compiled.value, stage, artifact)).toMatch(/^artifact-schema\/v2:[a-f0-9]{64}$/);
@@ -71,5 +73,8 @@ test("each launchable development and study artifact and run input use resolved 
 test("run inputs expand named fields before hashing", () => {
   const original = { input: { kind: "record", fields: { requirement: { kind: "named", schema: "requirement" } } }, schemas } satisfies Pick<ParsedWorkflow, "input" | "schemas">;
   const revised = { ...original, schemas: { ...schemas, requirement: { kind: "record" as const, fields: { id: { kind: "ident" as const } } } } };
-  expect(runInputSchemaVersion(original)).not.toBe(runInputSchemaVersion(revised));
+  const previousVersion = runInputSchemaVersion(original);
+  const revisedVersion = runInputSchemaVersion(revised);
+  if (!previousVersion.ok || !revisedVersion.ok) throw new Error("expected valid run input schemas");
+  expect(previousVersion.value).not.toBe(revisedVersion.value);
 });
