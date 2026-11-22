@@ -1,4 +1,3 @@
-import { parseAssessmentBody } from "../domain/assessment";
 import type { RunRead } from "../storage/read-store";
 
 /** Integration judgments remain repository-local; pending is absence, never not_met. */
@@ -44,14 +43,18 @@ export function selectRequirementRollup(read: RequirementRollupRead): readonly R
     const revision = read.revisions.filter(revision => revision.unit_id === unit.id && revision.artifact === "assessment"
       && read.decisions.filter(decision => decision.target_revision_id === revision.id && decision.review === "integration_review").at(-1)?.effect === "approve")
       .sort((a, b) => b.seq - a.seq)[0];
-    const parsed = revision ? parseAssessmentBody(revision.body) : null;
-    return [{ scope, revision, assessment: parsed?.ok ? parsed.value : null }];
+    const body = revision?.body;
+    const assessment = object(body) && typeof body.head_sha === "string" && Array.isArray(body.item_assessments)
+      ? { head_sha: body.head_sha, item_assessments: body.item_assessments as readonly unknown[] } : null;
+    return [{ scope, revision, assessment }];
   });
   return spec.requirements.map(requirement => {
     const repositories = integrations.filter(({ scope }) => scope.briefs.some(brief => brief.build_items.some(item => item.requirement_ids.includes(requirement.id))))
       .map(({ scope, revision, assessment }): RepositoryRequirementJudgment => {
-        const item = assessment?.item_assessments.find(item => item.subject.kind === "requirement" && item.subject.id === requirement.id);
-        return item && revision && assessment ? { repository_key: scope.repository.key, status: item.status, revision_id: revision.id, head_sha: assessment.head_sha }
+        const item = assessment?.item_assessments.find(item => object(item) && object(item.subject) &&
+          item.subject.kind === "requirement" && item.subject.id === requirement.id);
+        const status = object(item) ? item.status : null;
+        return (status === "met" || status === "partial" || status === "not_met") && revision && assessment ? { repository_key: scope.repository.key, status, revision_id: revision.id, head_sha: assessment.head_sha }
           : { repository_key: scope.repository.key, status: "pending", revision_id: null, head_sha: null };
       }).sort((a, b) => a.repository_key.localeCompare(b.repository_key));
     return { requirement_id: requirement.id, status: repositories.length > 0 && repositories.every(repository => repository.status !== "pending") ? "judged" : "pending", repositories };

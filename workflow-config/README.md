@@ -43,23 +43,19 @@ bind their envelope to that plan cohort and supply detailed build_items linked t
 requirements, verification and material technical_decisions. Implementation order
 and outcome titles come from the plan.
 
-Cohort and integration assessments share one schema: item_assessments,
-additional_findings, source-linked next_actions with a `rework` or `operator` audience, required test
-evidence and a mechanically checked verdict. Cohorts assess each build item;
-integration assesses each distinct canonical requirement once across contributions.
-The assessment review records typed adjudication (accepted, modified or rejected
-actions, operator additions and `rework_feedback`). Only `rework_feedback` reaches
-the worker that reworks the artifact (builder, integrator, expander or slice builder).
-Assessors read the full implicit review_history. Every
-initial/revise prompt directs the agent to raise a blocker instead of guessing.
+Cohort and integration assessments share item assessments, additional findings,
+feedback proposals, assignment verifications, test evidence and a checked verdict.
+Cohorts assess each build item. Integration assesses each canonical requirement
+once across contributions and binds the assessment to the exact latest PR revision.
 
-The development alias now pins definition
-`01fc57b0c2a03e88b67a4ca0e180cbfff23d6906d6a411fdf370bc301f325fbd`.
-The previous definitions
-`87dac99799b3d699b92499d4d322929a8b6a107c2cbdf7ab09bfb03874aa736b`,
-`cf39117805e56b4bdc5540fed9c4a3c2202a9c432b8e7562bf76960fe383a9a5` and
-`74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4`
-and their exact prompt objects remain addressable.
+Operators authorize the instruction and recipients before dispatching feedback.
+Each recipient receives the committed instruction and citation under a stable
+assignment round. Final approval records the exact assessment and assessed
+revisions and preserves the assessor's verdict.
+
+The development and study aliases pin
+`4ccb48846e15b3cea5f030b73e743249883e97ff3d41d96e8e3d9658d3618ba9`
+and `8b550c953b8ea832e2d734e939c49d6346347273b1fba9f78d91c18e59adb92b`, respectively.
 
 Current `artifact_schema_version` values, calculated by the observation adapter
 from the resolved schema bodies in the pinned requirement contract:
@@ -71,7 +67,7 @@ from the resolved schema bodies in the pinned requirement contract:
 | spec | `artifact-schema/v2:3e6831d5b78d1a4ac06096edd5901aae62889530f407b8581a71698e4e65ca58` |
 | plan | `artifact-schema/v2:532d3d3e11f8df58a07618e8093374bb8e3e4f2348fa49a980bbbecb8290174d` |
 | brief | `artifact-schema/v2:e04f77b836567abab8dc575972e28ad6c16c4fed569e0bbb3cb6653783913969` |
-| assessment (both stages) | `artifact-schema/v2:8128a3b8a1dbedf479cfe122a42e3538d84106a436cb5de25a8716def76f747b` |
+| assessment (both stages) | `artifact-schema/v2:a63baa9afb68c1334a5babe86e2c89d9278361c60cf22020dd1531c1dfe9ee18` |
 
 The spec-based requirement contract uses the v2 epoch, including for implicit
 blockers whose schema body is unchanged. Historical tasks-based contracts retain
@@ -92,10 +88,9 @@ Two upstream limitations remain blocking for the complete contract:
   the changed analysis does not invalidate or re-want an already published spec.
   The evaluator replay for the required editor rerun is recorded as a todo test.
 
-The workflow-contract cohort changes no compiler or evaluator implementation.
-Resolved observation fingerprinting is supplied by the observation-requirements cohort. Integration's
-request_changes explicitly targets `on: assessment`, as the shipped engine requires
-an explicit target when feedback_field is used.
+The integration review dispatches on the assessment. The integrator publishes
+the PR first and then publishes the assessment with the PR revision as its subject.
+During a round, the assessment records both the update and its verification.
 
 ## Definition store
 

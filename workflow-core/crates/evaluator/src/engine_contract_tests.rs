@@ -12,9 +12,9 @@ fn source() -> Workflow {
                 "assessor":{"kind":"agent","prompts":{"review":"review","revise":"reassess"},"inputs":{},"produces":["assessment"],"evaluates":"draft"}},
             "reviews":{"draft_review":{"of":"draft","by":"operator","prompt":"p","decisions":{
                 "accept":{"effect":"approve","label":"Accept","when":{"check":"len(draft.findings) == 0","reason":"Resolve findings first"}},
-                "request_changes":{"effect":"request_changes","label":"Fix","on":"draft","payload":{"entries":"list(text)","builder_feedback":"text"},"feedback_field":"builder_feedback"}}},
+                "request_changes":{"effect":"request_changes","label":"Fix","on":"draft","payload":{"entries":"list(text)","feedback":"text"}}}},
                 "assessment_review":{"of":"assessment","by":"operator","prompt":"p","decisions":{
-                    "request_build_changes":{"effect":"request_changes","label":"Build","on":"draft","payload":{"entries":"list(text)","builder_feedback":"text"},"feedback_field":"builder_feedback"},
+                    "request_build_changes":{"effect":"request_changes","label":"Build","on":"draft"},
                     "request_assessment_changes":{"effect":"request_changes","label":"Assess"}}}},
             "done_when":"approved(draft)","outcome":{}}}
     })).unwrap()
@@ -172,7 +172,7 @@ fn declared_prompts_resolve_for_initial_review_and_ordinary_revision() {
         "draft_review",
         "request_changes",
         "draft",
-        json!({"entries": [], "builder_feedback": "Revise"}),
+        json!({"entries": [], "feedback": "Revise"}),
     )
     .unwrap();
     assert_eq!(
@@ -479,12 +479,12 @@ fn decision_guard_is_reported_with_its_reason_and_refused_at_the_authority_bound
         "draft_review",
         "request_changes",
         "draft",
-        json!({"entries":["full disposition"],"builder_feedback":"Fix X"}),
+        json!({"entries":["full disposition"],"feedback":"Fix X"}),
     )
     .unwrap();
     assert_eq!(
         run.wanted("writer").resolved.feedback[0].payload,
-        json!({"feedback":"Fix X"})
+        json!({"entries":["full disposition"],"feedback":"Fix X"})
     );
     assert_eq!(
         run.wanted("writer").resolved.review_history[0].payload["entries"],
@@ -511,7 +511,7 @@ fn assessor_review_history_spans_rounds_and_preserves_full_payloads() {
         "assessment_review",
         "request_build_changes",
         "draft",
-        json!({"entries":["disposition"],"builder_feedback":"Fix build"}),
+        json!({"entries":["disposition"],"feedback":"Fix build"}),
     )
     .unwrap();
     run.publish(
@@ -546,59 +546,6 @@ fn assessor_review_history_spans_rounds_and_preserves_full_payloads() {
 }
 
 #[test]
-fn adjudicating_review_keeps_plain_feedback_and_forwards_the_declared_field() {
-    let mut source = source();
-    let stage = source.stages.get_mut("document").unwrap();
-    let mut review = stage.reviews.remove("assessment_review").unwrap();
-    let decisions = &mut review.decisions;
-    let plain = decisions.remove("request_assessment_changes").unwrap();
-    decisions.insert("ask".into(), plain);
-    let mut feedback = decisions.remove("request_build_changes").unwrap();
-    feedback.adjudication = Some(AdjudicationRole::Feedback);
-    decisions.insert("send".into(), feedback);
-    decisions.insert(
-        "ok".into(),
-        serde_json::from_value(json!({
-            "effect": "approve", "label": "Accept", "adjudication": "accept",
-            "payload": {"entries": "list(text)"}
-        }))
-        .unwrap(),
-    );
-    stage.reviews.insert("ar".into(), review);
-
-    let mut run = Run::with_source(source);
-    run.publish(
-        "writer",
-        "draft",
-        json!({"findings":["blocking"],"text":"A"}),
-    );
-    run.end("writer");
-    run.publish("assessor", "assessment", json!("First"));
-    run.end("assessor");
-
-    let plain_payload = json!({"feedback":"Explain the finding in more detail"});
-    run.decide("ar", "ask", "assessment", plain_payload.clone())
-        .unwrap();
-    assert_eq!(
-        run.result.snapshot.decisions.last().unwrap().payload(),
-        plain_payload
-    );
-
-    run.publish("assessor", "assessment", json!("Second"));
-    run.end("assessor");
-    run.decide(
-        "ar",
-        "send",
-        "draft",
-        json!({"entries":["disposition"],"builder_feedback":"Fix build"}),
-    )
-    .unwrap();
-    let feedback = &run.wanted("writer").resolved.feedback;
-    assert_eq!(feedback.len(), 1);
-    assert_eq!(feedback[0].payload, json!({"feedback":"Fix build"}));
-}
-
-#[test]
 fn integrator_review_mode_receives_integration_decisions_across_rounds() {
     let mut source = source();
     let stage = source.stages.get_mut("document").unwrap();
@@ -619,7 +566,7 @@ fn integrator_review_mode_receives_integration_decisions_across_rounds() {
         "integration_review",
         "request_build_changes",
         "draft",
-        json!({"entries":["integration disposition"],"builder_feedback":"Fix integration"}),
+        json!({"entries":["integration disposition"],"feedback":"Fix integration"}),
     )
     .unwrap();
     run.publish(

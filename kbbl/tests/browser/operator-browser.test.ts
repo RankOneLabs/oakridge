@@ -7,6 +7,7 @@ import { chromium, type Browser } from "@playwright/test";
 import capturedRun from "../../core/pwa/oakridge/__fixtures__/v2-adapter-sample.json";
 import definitionFixture from "../../core/pwa/oakridge/__fixtures__/v2-definition-detail.json";
 import { selectAbbreviatedDefinitionId } from "../../core/pwa/oakridge/lib/definition-overview";
+import type { OperatorUnitView } from "../../core/pwa/oakridge/operator-contracts/projections/unit-view";
 
 async function browserScript(): Promise<string> {
   const directory = mkdtempSync(join(tmpdir(), "oakridge-v1-browser-"));
@@ -208,17 +209,20 @@ test("a rejected assessment shows one visible notice in each presentation", asyn
   const { unit, detail } = currentArtifactFixture("assessment");
   const revision = detail.revisions[0];
   const submit = { kind: "review", review: "assessment_review", target_revision_id: revision.id } as const;
-  const rejection = { id: "validation", review: "engine:validator", decision: "request_changes", effect: "request_changes",
-    target_revision_id: revision.id, payload: { feedback: "Recheck the verdict." }, created_at: revision.created_at };
-  const reviewing = { ...unit, recorded_decisions: [rejection], decisions: [
-    { key: "accept", label: "Accept", adjudication: "accept", assessment: "assessment", fields: [], payload_schema: "{}",
+  const feedback = "Recheck the verdict.";
+  const reviewing: OperatorUnitView = { ...unit, recorded_decisions: [{
+    id: "validation", review: "engine:validator", decision: "request_changes", effect: "request_changes",
+    target_revision_id: revision.id, payload: { feedback }, created_at: revision.created_at,
+  }], decisions: [
+    { key: "accept", label: "Accept", operation: "approve_assessment", assessment: "assessment", fields: [], payload_schema: "{}",
       submit: { ...submit, decision: "accept", effect: "approve" } },
-    { key: "request_assessment_changes", label: "Request assessment changes", adjudication: null, assessment: "assessment",
+    { key: "request_assessment_changes", label: "Request assessment changes", operation: "plain", assessment: "assessment",
       fields: [{ key: "feedback", label: "Feedback" }], payload_schema: "{feedback: text}",
       submit: { ...submit, decision: "request_assessment_changes", effect: "request_changes" } },
   ] };
   const page = await browser.newPage();
   try {
+    page.setDefaultTimeout(10_000);
     await page.route("**/*", route => {
       const path = new URL(route.request().url()).pathname;
       if (path === "/") return route.fulfill({ contentType: "text/html", body: pageHtml });
@@ -227,12 +231,10 @@ test("a rejected assessment shows one visible notice in each presentation", asyn
     });
     await page.goto("http://oakridge.test/?artifact=assessment&unit=run%2Fcohort");
     await page.addStyleTag({ path: resolve(import.meta.dir, "../../core/pwa/styles.css") });
-    await page.getByTestId("or-assessment-validation-rejection").waitFor();
-    const gateNotice = page.getByTestId("or-gate-validation-rejection");
-    await gateNotice.waitFor({ state: "attached" });
-    expect(await gateNotice.isVisible()).toBe(false);
+    const notice = page.getByText(`This assessment failed validation, so it cannot be accepted: ${feedback}`, { exact: true }).filter({ visible: true });
+    await notice.waitFor();
+    expect(await notice.count()).toBe(1);
     await page.getByRole("tab", { name: "structured" }).click();
-    expect(await gateNotice.isVisible()).toBe(true);
-    expect(await page.getByTestId("or-assessment-validation-rejection").isVisible()).toBe(false);
+    expect(await notice.count()).toBe(1);
   } finally { await page.close(); }
 }, 30_000);

@@ -3,10 +3,10 @@
 mod expressions;
 mod workflow;
 pub use workflow::{
-    compile_workflow, compile_workflow_detailed, compile_workflow_with_limits,
-    compile_workflow_with_limits_and_projection_detailed, compile_workflow_with_limits_detailed,
-    decode_workflow, decode_workflow_value_detailed, expand_workflow_templates_value, CheckKind,
-    CompileError,
+    assessment_embeddings, compile_workflow, compile_workflow_detailed,
+    compile_workflow_with_limits, compile_workflow_with_limits_and_projection_detailed,
+    compile_workflow_with_limits_detailed, decode_workflow, decode_workflow_value_detailed,
+    expand_workflow_templates_value, CheckKind, CompileError,
 };
 use workflow_model::*;
 

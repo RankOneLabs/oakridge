@@ -1,14 +1,22 @@
 // Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
-import type { AttemptStatus, BlockedReason, Cause, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ForgeRepository, InputProvenanceEntries, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
+import type { AttemptStatus, BlockedReason, Cause, Citation, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ForgeRepository, InputProvenanceEntries, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
 import type { ColumnType } from "kysely";
 
-export type AuthorityDecisionEffect = "approve" | "request_changes";
+export type AuthorityDecisionEffect = "approve" | "dispatch" | "request_changes";
+
+export type AuthorityDispatchOperation = "direct_correction" | "dispatch_feedback";
 
 export type AuthorityEffectStatus = "acknowledged" | "failed" | "pending" | "stop_requested" | "stopped";
 
+export type AuthorityFeedbackAssociation = "carried" | "proposed";
+
+export type AuthorityFeedbackOrigin = "operator" | "proposal";
+
 export type AuthorityStopOrigin = "commit" | "executor";
+
+export type AuthorityVerificationOutcome = "needs_further_work" | "verified";
 
 export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
   ? ColumnType<S, I | undefined, U>
@@ -31,6 +39,54 @@ export interface AuthorityArtifactRevision {
   seq: number;
   subject: string | null;
   unit_id: string;
+}
+
+export interface AuthorityAssessmentApproval {
+  approved_by: string;
+  assessed_revision_id: string;
+  assessment_revision_id: string;
+  created_at: Generated<Timestamp>;
+  decision_id: string;
+  id: string;
+  run_id: string;
+  unit_id: string;
+}
+
+export interface AuthorityAssessmentFeedback {
+  assessment_revision_id: string;
+  association: AuthorityFeedbackAssociation;
+  created_at: Generated<Timestamp>;
+  feedback_item_id: string;
+  run_id: string;
+}
+
+export interface AuthorityAssignmentRound {
+  action_id: string | null;
+  assignment_id: string;
+  authorization_id: string;
+  created_at: Generated<Timestamp>;
+  decision_id: string;
+  id: string;
+  instruction: string;
+  ordinal: number;
+  run_id: string;
+}
+
+export interface AuthorityAssignmentUpdate {
+  created_at: Generated<Timestamp>;
+  revision_id: string;
+  round_id: string;
+  run_id: string;
+}
+
+export interface AuthorityAssignmentVerification {
+  assessment_revision_id: string;
+  created_at: Generated<Timestamp>;
+  id: string;
+  outcome: AuthorityVerificationOutcome;
+  round_id: string;
+  run_id: string;
+  update_revision_id: string;
 }
 
 export interface AuthorityAttempt {
@@ -80,6 +136,21 @@ export interface AuthorityCollaborationThread {
   unit_id: string;
 }
 
+export interface AuthorityDispatchAuthorization {
+  authorized_by: string;
+  created_at: Generated<Timestamp>;
+  feedback_item_id: string;
+  id: string;
+  instruction: string;
+  operation: AuthorityDispatchOperation;
+  policy: string;
+  recipients: string[];
+  run_id: string;
+  target_artifact: string;
+  target_revision_id: string;
+  target_unit_id: string;
+}
+
 export interface AuthorityEffectIntent {
   action_id: string;
   id: string;
@@ -114,6 +185,44 @@ export interface AuthorityEvent {
    * @type {Writer}
    */
   writer: JsonColumn<Writer>;
+}
+
+export interface AuthorityFeedbackAssignment {
+  created_at: Generated<Timestamp>;
+  feedback_item_id: string;
+  id: string;
+  recipient: string;
+  run_id: string;
+  target_artifact: string;
+  target_unit_id: string;
+}
+
+export interface AuthorityFeedbackItem {
+  assessment_artifact: string;
+  /**
+   * @type {Citation}
+   */
+  citation: NullableJsonColumn<Citation>;
+  created_at: Generated<Timestamp>;
+  id: string;
+  instruction: string;
+  operator_request_id: string | null;
+  origin: AuthorityFeedbackOrigin;
+  proposal_key: string | null;
+  proposal_revision_id: string | null;
+  run_id: string;
+  unit_id: string;
+}
+
+export interface AuthorityFeedbackRejection {
+  assessment_revision_id: string;
+  assignment_id: string | null;
+  created_at: Generated<Timestamp>;
+  decision_id: string;
+  feedback_item_id: string;
+  id: string;
+  reason: string;
+  run_id: string;
 }
 
 export interface AuthorityIngressReceipt {
@@ -248,11 +357,20 @@ export interface AuthorityWantedLog {
 
 export interface DB {
   "authority.artifact_revision": AuthorityArtifactRevision;
+  "authority.assessment_approval": AuthorityAssessmentApproval;
+  "authority.assessment_feedback": AuthorityAssessmentFeedback;
+  "authority.assignment_round": AuthorityAssignmentRound;
+  "authority.assignment_update": AuthorityAssignmentUpdate;
+  "authority.assignment_verification": AuthorityAssignmentVerification;
   "authority.attempt": AuthorityAttempt;
   "authority.collaboration_message": AuthorityCollaborationMessage;
   "authority.collaboration_thread": AuthorityCollaborationThread;
+  "authority.dispatch_authorization": AuthorityDispatchAuthorization;
   "authority.effect_intent": AuthorityEffectIntent;
   "authority.event": AuthorityEvent;
+  "authority.feedback_assignment": AuthorityFeedbackAssignment;
+  "authority.feedback_item": AuthorityFeedbackItem;
+  "authority.feedback_rejection": AuthorityFeedbackRejection;
   "authority.ingress_receipt": AuthorityIngressReceipt;
   "authority.operator_event": AuthorityOperatorEvent;
   "authority.project": AuthorityProject;

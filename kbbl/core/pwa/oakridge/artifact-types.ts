@@ -134,7 +134,6 @@ export interface SentReviewFeedback {
 }
 
 export interface GateResumeRequest {
-  adjudication?: import("./operator-contracts/domain/adjudication").OperatorAdjudication;
   idempotency_key: string;
   artifact_revision_id: string;
   action: string;

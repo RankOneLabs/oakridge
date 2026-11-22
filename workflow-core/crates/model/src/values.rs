@@ -110,6 +110,14 @@ pub enum Mode {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Cause {
+    AssignmentRound {
+        round: AssignmentRoundId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry: Option<EventId>,
+    },
+    Reassessment {
+        round: AssignmentRoundId,
+    },
     Missing,
     ChangesRequested {
         decision: DecisionId,
@@ -193,6 +201,7 @@ pub struct RevisionState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DecisionEffect {
+    Dispatch { rounds: Vec<RoundRequest> },
     Approve,
     RequestChanges { feedback: String },
 }

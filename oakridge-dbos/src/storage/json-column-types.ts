@@ -16,7 +16,7 @@ export type JsonText<Value> = string & { readonly __json: Value };
 export type JsonColumn<Value> = ColumnType<Value, JsonText<Value>, JsonText<Value>>;
 export type NullableJsonColumn<Value> = ColumnType<Value | null, JsonText<Value> | null, JsonText<Value> | null>;
 
-export type { AttemptStatus, BlockedReason, Cause, CompiledWorkflow, Mode, UnitStatus, Writer } from "../core-client/core-types";
+export type { AttemptStatus, BlockedReason, Cause, Citation, CompiledWorkflow, Mode, UnitStatus, Writer } from "../core-client/core-types";
 export type { EffectInstruction } from "../domain/effect-instruction";
 export type { RunConfig } from "../domain/run-config";
 export type { OperatorEventPayload } from "../projections/operator-event";
@@ -34,8 +34,15 @@ export interface ReviewPrompt { readonly target: string; readonly decisions: rea
 /** Review key -> its awaiting prompt, on the unit. */
 export type ReviewPrompts = { readonly [review: string]: ReviewPrompt };
 /** What an ingress id resolved to. A rejection is stored so a replay returns it again. */
+export interface AssessmentDecisionReceipt {
+  readonly decision_id: string;
+  readonly approval_id: string | null;
+  readonly rejection_ids: readonly string[];
+  readonly round_ids: readonly string[];
+}
+
 export type CommitReceipt =
-  | { readonly kind: "committed"; readonly event_id: string }
+  | { readonly kind: "committed"; readonly event_id: string; readonly assessment_decision?: AssessmentDecisionReceipt }
   /** `stall` is set when step refused the event because advancing the run past it failed (D-V4). */
   | { readonly kind: "rejected"; readonly reason: string; readonly stall?: StallRecord };
 /**

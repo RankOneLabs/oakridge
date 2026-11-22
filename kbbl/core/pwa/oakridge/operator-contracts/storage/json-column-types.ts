@@ -3,6 +3,13 @@
 
 export interface OperatorForgeRepository { readonly provider: "github"; readonly owner: string; readonly name: string }
 
+export interface OperatorAssessmentDecisionReceipt {
+  readonly decision_id: string;
+  readonly approval_id: string | null;
+  readonly rejection_ids: readonly string[];
+  readonly round_ids: readonly string[];
+}
+
 export interface OperatorCollaborationThreadContext { readonly title: string; readonly anchor: string | null }
 
 export interface OperatorCollaborationMessageBody { readonly text: string; readonly author: string }

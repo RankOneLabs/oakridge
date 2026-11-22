@@ -234,10 +234,10 @@ fn reduce_event(
                         .rposition(|a| {
                             a.action_id == *by
                                 && a.unit == *unit
-                                && matches!(
+                                && (matches!(
                                     a.status,
                                     AttemptStatus::Pending | AttemptStatus::Running
-                                )
+                                ) || is_superseded_assignment_attempt(&state, a))
                         })
                         .ok_or_else(|| rejected("publication attempt is not current"))?,
                 ),
@@ -395,11 +395,6 @@ fn reduce_event(
             if review.0 == BLOCKER_REVIEW && parked_blocker(&state, unit).is_none() {
                 return Err(rejected("blocker is closed"));
             }
-            if !operator_review_is_open(program, &state, owner, when.as_ref(), context)?
-                || !reviewed_output_is_current(program, &state, owner, of)?
-            {
-                return Err(rejected("review is not open"));
-            }
             if state.decisions.iter().any(|d| {
                 matches!(d, DecisionState::Review { unit: existing_unit, review: existing_review,
                     decision: existing_decision, target: existing_target, payload: existing_payload, .. }
@@ -408,12 +403,21 @@ fn reduce_event(
             }) {
                 return Ok(deltas);
             }
+            if !operator_review_is_open(program, &state, owner, when.as_ref(), context)?
+                || !reviewed_output_is_current(program, &state, owner, of)?
+            {
+                return Err(rejected("review is not open"));
+            }
             let current = latest(&state, unit, decided_artifact(of, &decision_definition.on))
                 .ok_or_else(|| rejected("reviewed artifact unpublished"))?;
             if current.id != *target {
                 return Err(rejected("target is not latest revision"));
             }
-            if is_decided_by(&state, unit, review, target) {
+            if matches!(
+                decision_definition.operation,
+                DecisionOperation::Plain | DecisionOperation::ApproveAssessment
+            ) && is_decided_by(&state, unit, review, target)
+            {
                 return Err(rejected("review already decided on latest revision"));
             }
             if decision_definition.effect == DeclaredDecisionEffect::Approve
@@ -437,29 +441,46 @@ fn reduce_event(
                     return Err(rejected("decision payload fails schema"));
                 }
             }
-            let feedback_field = decision_definition
-                .feedback_field
-                .as_deref()
-                .unwrap_or("feedback");
-            if decision_definition.effect == DeclaredDecisionEffect::RequestChanges
-                && payload
-                    .get(feedback_field)
-                    .and_then(Value::as_str)
-                    .is_none_or(str::is_empty)
-            {
-                return Err(rejected("request_changes requires feedback"));
-            }
-            let id = decision_id(&state, unit);
-            let effect = match decision_definition.effect {
-                DeclaredDecisionEffect::Approve => DecisionEffect::Approve,
-                DeclaredDecisionEffect::RequestChanges => DecisionEffect::RequestChanges {
-                    feedback: payload
-                        .get(feedback_field)
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
+            let effect = match decision_definition.operation {
+                DecisionOperation::DispatchFeedback | DecisionOperation::DirectCorrection => {
+                    let DispatchPayload { rounds } = serde_json::from_value(payload.clone())
+                        .map_err(|_| rejected("dispatch requires rounds"))?;
+                    if rounds.is_empty() {
+                        return Err(rejected("dispatch requires rounds"));
+                    }
+                    let stage = checked_stage(program, owner)?;
+                    for round in &rounds {
+                        if !stage.workers.iter().any(|worker| matches!(worker, CheckedWorker::Agent { key, .. } if key.0 == round.worker.0)) {
+                            return Err(rejected(format!("recipient {} is not an agent worker of stage {}", round.worker, stage.key)));
+                        }
+                    }
+                    DecisionEffect::Dispatch { rounds }
+                }
+                DecisionOperation::ApproveAssessment => {
+                    if !payload.as_object().is_some_and(|fields| fields.is_empty()) {
+                        return Err(rejected("assessment approval requires an empty payload"));
+                    }
+                    DecisionEffect::Approve
+                }
+                DecisionOperation::Plain => match decision_definition.effect {
+                    DeclaredDecisionEffect::Approve => DecisionEffect::Approve,
+                    DeclaredDecisionEffect::RequestChanges => {
+                        let field = decision_definition
+                            .feedback_field
+                            .as_deref()
+                            .unwrap_or("feedback");
+                        let feedback = payload
+                            .get(field)
+                            .and_then(Value::as_str)
+                            .filter(|text| !text.is_empty())
+                            .ok_or_else(|| rejected("request_changes requires feedback"))?;
+                        DecisionEffect::RequestChanges {
+                            feedback: feedback.to_owned(),
+                        }
+                    }
                 },
             };
+            let id = decision_id(&state, unit);
             record!(Delta::PushDecision(DecisionState::Review {
                 id,
                 unit: unit.clone(),
@@ -536,4 +557,32 @@ fn reduce_event(
         }
     }
     Ok(deltas)
+}
+
+fn is_superseded_assignment_attempt(state: &StepSnapshot, attempt: &AttemptState) -> bool {
+    let Cause::AssignmentRound { round, .. } = &attempt.cause else {
+        return false;
+    };
+    let mut seen = None;
+    for decision in &state.decisions {
+        let DecisionState::Review {
+            unit,
+            effect: DecisionEffect::Dispatch { rounds },
+            ..
+        } = decision
+        else {
+            continue;
+        };
+        if unit != &attempt.unit {
+            continue;
+        }
+        for request in rounds {
+            if &request.round == round {
+                seen = Some(&request.assignment);
+            } else if seen == Some(&request.assignment) {
+                return true;
+            }
+        }
+    }
+    false
 }

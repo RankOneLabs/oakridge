@@ -24,4 +24,5 @@ export type { PromptVersionView, PromptVersionListing, PromptValidationOutcome, 
 
 export type { RunUsage } from "../domain/usage";
 
-export type { AssessmentBody } from "../domain/assessment";
+export type { AssessmentStatus } from "../core-client/core-types";
+export type { DecideAssessmentRequest, AuthorizeFeedbackRequest, CreateFeedbackRequest, AuthorizationResponse, CreateFeedbackResponse } from "./ingress";

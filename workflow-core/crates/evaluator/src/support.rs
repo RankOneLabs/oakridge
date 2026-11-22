@@ -220,7 +220,7 @@ pub(super) fn is_retry_spent(
     state.attempts.iter().any(|attempt| {
         attempt.unit == *unit
             && attempt.worker == *worker
-            && matches!(&attempt.cause, Cause::Retry { event, .. } if event == retry)
+            && matches!(&attempt.cause, Cause::Retry { event, .. } | Cause::AssignmentRound { retry: Some(event), .. } if event == retry)
     })
 }
 /// The first 16 bytes of a value's SHA-256 over its wire JSON (object

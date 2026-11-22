@@ -1,5 +1,5 @@
 import type { Kysely } from "kysely";
-import type { StepSnapshot } from "../core-client/core-types";
+import type { RoundRequest, StepSnapshot } from "../core-client/core-types";
 import { VALIDATION_REVIEW } from "../core-client/core-types";
 import type { DB } from "./db-types";
 import { anyOf, type DatabaseTransaction } from "./database";
@@ -52,8 +52,9 @@ export async function readStepSnapshot(db: Reader, run_id: string, unit_id: stri
         target: decision.target_revision_id, messages: decision.validation_messages ?? [] }
       : { kind: "review" as const, id: decision.id, unit: decision.unit_id, review: decision.review,
         decision: decision.decision, effect: decision.effect === "approve" ? { kind: "approve" as const }
+          : decision.effect === "dispatch" ? { kind: "dispatch" as const, rounds: (decision.payload as { readonly rounds: RoundRequest[] }).rounds }
           : { kind: "request_changes" as const, feedback: typeof decision.payload === "object" && decision.payload !== null
-            && "feedback" in decision.payload && typeof decision.payload.feedback === "string" ? decision.payload.feedback : "" },
+            ? (decision.payload as { readonly feedback?: string; readonly answer?: string }).feedback ?? (decision.payload as { readonly answer?: string }).answer ?? "" : "" },
         target: decision.target_revision_id, payload: decision.payload }),
     retry_events: retries.flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
       ? [{ unit: retry.unit_id, worker: retry.payload.worker, event: retry.ingress_id }] : []),

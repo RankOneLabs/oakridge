@@ -7,7 +7,6 @@ import { RunDetailView } from "../views/RunDetailView";
 import { usageFixture } from "./run-usage-fixture";
 vi.mock("../components/organisms/RunWorkspace", () => ({ RunWorkspace: () => null }));
 vi.mock("../components/organisms/ManualMergeIndications", () => ({ ManualMergeIndications: () => null }));
-vi.mock("../components/organisms/OperatorActionsHistory", () => ({ OperatorActionsHistory: () => null }));
 vi.mock("../hooks/useRunUsage", () => ({ useRunUsage: () => ({ data: usageFixture, isPending: false, isError: false }) }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it("reads the generated usage response through the run endpoint", async () => {

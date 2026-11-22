@@ -132,7 +132,9 @@ export function renderHandoff(instruction: EffectInstruction, context: SessionTa
 export function renderTaskPublication(instruction: EffectInstruction, context: SessionTaskContext): string {
   const latest = new Map(context.latest.map((revision) => [revision.artifact, revision.revision_id]));
   const creates = instruction.worker.kind === "agent" ? instruction.worker.creates : [];
-  const subject = instruction.engine_inputs.subject;
+  const { subject, self_assessment = [] } = instruction.engine_inputs;
+  const subjectPrompt = subject !== null ? `You are reviewing revision \`${subject.id}\`: send it as \`subject\`.`
+    : self_assessment.length > 0 ? "For all other publications, send `subject: null`." : "Send `subject: null`.";
   return [
     "## Publishing this task",
     "If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, publish a `blocker` instead of guessing; a published blocker ends the task.",
@@ -143,18 +145,21 @@ export function renderTaskPublication(instruction: EffectInstruction, context: S
         ? `\n  endpoint: /api/runs/${encodeURIComponent(instruction.run_id)}/units/${encodeURIComponent(instruction.action.unit)}/artifacts/${encodeURIComponent(artifact.key)}` : "";
       return `- \`${artifact.key}\`: ${current === null ? "no revision yet, so send `predecessor: null`" : `current revision \`${current}\`, so send it as \`predecessor\``}${endpoint}`;
     }),
-    subject === null ? "Send `subject: null`." : `You are reviewing revision \`${subject.id}\`: send it as \`subject\`.`,
+    ...self_assessment.map(({ assessment, subject_artifact }) =>
+      `Publish \`${subject_artifact}\` first. For \`${assessment}\`, send the exact latest \`${subject_artifact}\` revision as \`subject\`.`),
+    subjectPrompt,
   ].join("\n");
 }
 
 /** One attempt's input: the handoff (fresh sessions), the mode prompt, and where to publish. */
 export function renderSessionTask(instruction: EffectInstruction, context: SessionTaskContext): string {
   const handoff = renderHandoff(instruction, context);
+  const roundDelivery = instruction.engine_inputs.round_delivery;
   const unit = instruction.worker.kind === "agent" && instruction.worker.session === "shared"
     ? `This task belongs to unit \`${instruction.action.unit}\`. Publish only to the endpoints below.` : null;
   const blocker_answer = instruction.engine_inputs.feedback.some((entry) => entry.review === BLOCKER_REVIEW)
     ? "The operator answered your blocker. Resume with this answer as feedback and publish your normal artifacts. If clarification is still needed, publish a successor blocker using its latest revision as predecessor." : null;
-  return [unit, handoff, blocker_answer, renderModePrompt(instruction, context.prompt_text), renderTaskPublication(instruction, context)]
+  return [unit, handoff, blocker_answer, renderModePrompt(instruction, context.prompt_text), roundDelivery ?? null, renderTaskPublication(instruction, context)]
     .filter((part): part is string => part !== null).join("\n\n");
 }
 

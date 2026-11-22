@@ -91,13 +91,13 @@ describe("v2 development adapters", () => {
     expect({ distinct: oldGate?.id !== newGate?.id, offered: newGate?.offered_decisions?.includes("request_build_changes"),
       displayed: newGate?.resume_actions.includes("request_build_changes") }).toEqual({ distinct: true, offered: true, displayed: false });
   });
-  it("keeps plain assessment changes available beside an adjudication", () => {
+  it("keeps plain assessment changes available beside assessment operations", () => {
     const buildChange = cohort.decisions.find((decision) => decision.key === "request_build_changes");
     if (!buildChange || buildChange.submit.kind !== "review") throw new Error("fixture lacks build change decision");
-    const assessmentChange = { ...buildChange, key: "request_assessment_changes", label: "Revise assessment",
+    const assessmentChange = { ...buildChange, key: "request_assessment_changes", label: "Revise assessment", operation: "plain" as const,
       submit: { ...buildChange.submit, decision: "request_assessment_changes",
         target_revision_id: cohort.artifacts.find((artifact) => artifact.artifact_key === "assessment")?.latest_revision?.id ?? "" } };
-    const gates = reviewToGates({ ...cohort, decisions: [...cohort.decisions.map(decision => ({ ...decision, adjudication: decision.key === "accept" ? "accept" as const : "feedback" as const, assessment: "assessment" })), assessmentChange] });
+    const gates = reviewToGates({ ...cohort, decisions: [...cohort.decisions.map(decision => ({ ...decision, operation: decision.key === "accept" ? "approve_assessment" as const : "dispatch_feedback" as const, assessment: "assessment" })), assessmentChange] });
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions)
       .toEqual(["request_assessment_changes"]);
   });

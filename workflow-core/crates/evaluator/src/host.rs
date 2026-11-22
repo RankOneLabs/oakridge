@@ -155,6 +155,7 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
         )
         .map(|(program, projected_workflow)| {
             let output = CompiledWorkflow {
+                assessments: workflow_compiler::assessment_embeddings(&projected_workflow),
                 digest: program.digest.clone(),
                 stages: program
                     .stages

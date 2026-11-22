@@ -407,10 +407,8 @@ pub struct WorkerUse {
 pub struct DecisionOverrides {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<DecisionGuard>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feedback_field: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub adjudication: Option<AdjudicationRole>,
+    #[serde(default, skip_serializing_if = "DecisionOperation::is_plain")]
+    pub operation: DecisionOperation,
     pub label: Option<String>,
     pub on: Option<SymbolKey>,
     pub fields: Option<BTreeMap<String, String>>,
@@ -947,10 +945,8 @@ pub enum ReviewBy {
 pub struct ReviewDecision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<DecisionGuard>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feedback_field: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub adjudication: Option<AdjudicationRole>,
+    #[serde(default, skip_serializing_if = "DecisionOperation::is_plain")]
+    pub operation: DecisionOperation,
     pub effect: DeclaredDecisionEffect,
     pub on: Option<SymbolKey>,
     pub label: String,
@@ -968,12 +964,22 @@ pub enum DeclaredDecisionEffect {
     RequestChanges,
 }
 
-/// A decision's adjudication role. An absent role means a plain decision.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
-pub enum AdjudicationRole {
-    Accept,
-    Feedback,
+pub enum DecisionOperation {
+    ApproveAssessment,
+    DispatchFeedback,
+    DirectCorrection,
+    #[default]
+    Plain,
+}
+
+impl DecisionOperation {
+    pub fn is_plain(&self) -> bool {
+        *self == Self::Plain
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -1041,13 +1047,12 @@ pub fn blocker_review() -> Review {
                 key.into(),
                 ReviewDecision {
                     effect: DeclaredDecisionEffect::RequestChanges,
-                    adjudication: None,
+                    operation: DecisionOperation::Plain,
                     on: Some(SymbolKey::from(BLOCKER_ARTIFACT)),
                     label: label.into(),
                     payload: Some(blocker_answer_schema()),
                     fields: BTreeMap::from([("answer".into(), "Answer".into())]),
                     feedback: None,
-                    feedback_field: Some("answer".into()),
                     when: None,
                 },
             )

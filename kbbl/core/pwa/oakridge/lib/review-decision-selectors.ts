@@ -3,7 +3,7 @@ import type { ParkedGate } from "../artifact-types";
 
 export function selectAssessmentCorrection(gate: ParkedGate | null, revision: string) {
   return gate?.decision_definitions?.find(decision =>
-    decision.adjudication == null &&
+    (decision.operation === undefined || decision.operation === "plain") &&
     decision.submit.kind === "review" &&
     decision.submit.target_revision_id === revision &&
     decision.submit.effect === "request_changes" &&

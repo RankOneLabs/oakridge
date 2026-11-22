@@ -10,7 +10,7 @@ export interface GateDecision { readonly action: string; readonly decision: Oper
 const V1_APPROVE_ACTIONS: ReadonlySet<string> = new Set(["approve", "confirm_merged", "pass"]);
 /** Whether a decision records an operator adjudication, which only the assessment view can compose. */
 export const isAdjudicationDecision = (decision: OperatorDecisionDefinition): boolean =>
-  decision.submit.kind === "review" && decision.adjudication != null;
+  decision.submit.kind === "review" && decision.operation !== undefined && decision.operation !== "plain";
 export const isDisplayedReviewDecision = (decision: OperatorDecisionDefinition): boolean =>
   !isAdjudicationDecision(decision);
 /** True when the decision's review offers more than one request-changes decision, so the shared request_revision action would be ambiguous. */

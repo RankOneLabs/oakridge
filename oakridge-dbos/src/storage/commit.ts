@@ -1,11 +1,17 @@
-import { parseAssessmentBody } from "../domain/assessment";
-import { selectAdjudicatedReview, selectReviewedAssessmentId, validateAdjudication } from "../domain/adjudication";
+import { parseAssessmentDecision, resolveCitation, selectPublicationFacts, type AssessmentFactError } from "../domain/assessment-embeddings";
+import { assessmentFactId, authorizeDispatch, selectAuthorizationId, validateRecipients } from "../domain/dispatch-policy";
+import { renderRoundDelivery } from "../domain/round-delivery";
+import { selectCurrentRound, selectRoundProgress } from "../projections/assessment-status";
+import { readAssessmentFacts, readRoundAssessment, bindRoundAction, readRoundDelivery, writeAssessmentFacts, type AssessmentFacts, type AssessmentWrites } from "./assessment-facts";
+import type { AssessmentDecisionCommand, AssignmentRound, AssignmentUpdate, CompiledWorkflow, DispatchAuthorization,
+  DispatchAuthorizationRequest, DispatchOperation, FeedbackAssignment, FeedbackItem, FeedbackItemRequest, FeedbackRejection, ParsedReview, RevisionState, RoundRequest } from "../core-client/core-types";
+import { ok, traced } from "../domain/primitives";
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileDefinition, selectWanted, type WantedForUnit } from "../core-client/client";
-import { BLOCKER_REVIEW, BLOCKER_REVIEW_PROMPT, VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedReviewDecision, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer } from "../core-client/core-types";
+import { BLOCKER_ARTIFACT, BLOCKER_REVIEW, BLOCKER_REVIEW_PROMPT, VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedReviewDecision, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer } from "../core-client/core-types";
 import { ANALYSIS_LINKS_DECLARED, selectDeclarationRefusal, type AnalysisLinkDeclaration, type AnalysisLinkEntry, type AnalysisLinksDeclared } from "../domain/analysis-link-declaration";
-import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
+import { selectEffectInstruction, selectSelfAssessmentSubjects, type RunWorkerAction } from "../domain/effect-instruction";
 import type { PrIntegration } from "../domain/pr-integration";
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
@@ -16,7 +22,7 @@ import type { CommitFaultNotice } from "../projections/operator-event";
 import { selectRunEventFields, type RunEvent, type RunEventFields } from "../projections/run-event";
 import { selectUnitTree } from "../projections/unit-label";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
-import type { CommitReceipt, ReviewPrompt, ReviewPrompts, StallRecord, WantedWorkers } from "./json-column-types";
+import type { AssessmentDecisionReceipt, CommitReceipt, ReviewPrompt, ReviewPrompts, StallRecord, WantedWorkers } from "./json-column-types";
 import { START_OWED_STATUSES } from "./executor-store";
 import { readStepSnapshot } from "./snapshot-store";
 
@@ -33,8 +39,7 @@ export interface CommitRequest {
   readonly ingress_id: string | null;
   readonly event: Event;
   readonly writer: Writer;
-  /** Optimistic assessment identity checked under the run lock before adjudication. */
-  readonly expected_assessment_revision_id?: string;
+  readonly assessment_decision?: unknown;
   /** Required with `launched`: the run is created pinned to this definition. */
   readonly launch?: { readonly definition_id: DefinitionId; readonly project_id: ProjectId | null; readonly config: RunConfig | null };
   /**
@@ -47,7 +52,7 @@ export interface CommitRequest {
   readonly launch_request?: LaunchRequestContent;
 }
 export type CommitOutcome =
-  | { readonly kind: "committed"; readonly event_id: string }
+  | { readonly kind: "committed"; readonly event_id: string; readonly assessment_decision?: AssessmentDecisionReceipt }
   /** The ingress id was seen before with the same content: its stored result. */
   | { readonly kind: "replayed"; readonly receipt: CommitReceipt }
   /** `step` refused the event. Stored as a rejected receipt when it carries an ingress id. */
@@ -141,7 +146,7 @@ function canonical(value: unknown): string {
     .map((key) => `${JSON.stringify(key)}:${canonical((value as { readonly [key: string]: unknown })[key])}`).join(",")}}`;
   return JSON.stringify(value) ?? "null";
 }
-export interface RequestDigestInput extends Pick<CommitRequest, "writer" | "publication_secret_hash" | "launch_request" | "expected_assessment_revision_id"> {
+export interface RequestDigestInput extends Pick<CommitRequest, "writer" | "publication_secret_hash" | "launch_request" | "assessment_decision"> {
   readonly event: Event | AnalysisLinksDeclared;
   readonly launch?: CommitRequest["launch"] | LaunchRequestContent;
 }
@@ -151,7 +156,7 @@ export function requestDigest(request: RequestDigestInput): string {
   const launch = request.launch_request ?? request.launch;
   return createHash("sha256").update(canonical({ event, writer, ...(publication_secret_hash ? { publication_secret_hash } : {}),
     ...(launch ? { launch } : {}),
-    ...(request.expected_assessment_revision_id === undefined ? {} : { expected_assessment_revision_id: request.expected_assessment_revision_id }) })).digest("hex");
+    ...(request.assessment_decision === undefined ? {} : { assessment_decision: request.assessment_decision }) })).digest("hex");
 }
 
 /**
@@ -162,15 +167,9 @@ export function requestDigest(request: RequestDigestInput): string {
  * and the operator event, in one transaction. A step rejection is stored, not
  * rolled back. The executor is woken after commit.
  */
-/** The decision and the snapshot the authority holds under the run lock. */
-interface AdjudicatedDecisionCheck {
-  readonly event: Extract<Event, { readonly kind: "operator_decided" }>;
-  readonly expected_assessment_revision_id: string | undefined;
-  readonly workflow: ParsedWorkflow;
-  readonly snapshot: Pick<StepSnapshot, "units" | "revisions">;
-}
+type OperatorDecisionEvent = Extract<Event, { readonly kind: "operator_decided" }>;
 /** Core checks declared payload values, but permits extra record keys. */
-function plainPayloadRefusal(declared: ParsedReviewDecision, event: AdjudicatedDecisionCheck["event"], aliases: ParsedWorkflow["schemas"]): string | null {
+function plainPayloadRefusal(declared: ParsedReviewDecision, event: OperatorDecisionEvent, aliases: ParsedWorkflow["schemas"]): string | null {
   let schema = declared.payload && resolvedType(declared.payload, aliases);
   while (schema?.kind === "optional") schema = resolvedType(schema.value, aliases);
   if (schema && schema.kind !== "record") return null; // Core checks scalar and list payloads.
@@ -179,33 +178,143 @@ function plainPayloadRefusal(declared: ParsedReviewDecision, event: AdjudicatedD
   if (!values) return `${event.target}: plain decision requires an object payload`;
   const extra = Object.keys(values).find(key =>
     !Object.hasOwn(declared.fields ?? {}, key) && !Object.hasOwn(schema?.fields ?? {}, key)
-    && !(key === "feedback" && declared.effect === "request_changes" && declared.feedback_field == null));
+    && !(key === "feedback" && declared.effect === "request_changes" && event.review !== BLOCKER_REVIEW));
   return extra === undefined ? null : `${event.target}: plain decision does not accept payload field ${extra}`;
 }
 
-/** Checks assessment identity and adjudication content before the core evaluates a review decision. */
-export function selectAdjudicationRefusal({ event, expected_assessment_revision_id, workflow, snapshot }: AdjudicatedDecisionCheck): string | null {
-  const unit = snapshot.units.find((candidate) => candidate.id === event.unit);
+function latestRevision(snapshot: Pick<StepSnapshot, "revisions">, unit: string, artifact: string): RevisionState | undefined {
+  return snapshot.revisions.findLast(revision => revision.unit === unit && revision.artifact === artifact);
+}
+
+function stageOf(workflow: CompiledWorkflow, snapshot: StepSnapshot, id: string) {
+  const unit = snapshot.units.find(value => value.id === id);
   const stage = unit?.kind.kind === "stage" ? unit.kind.stage : null;
-  const declared = stage == null ? undefined : workflow.stages[stage]?.reviews?.[event.review]?.decisions[event.decision];
-  if (!declared) return null;
-  if (declared.adjudication == null) {
-    if (expected_assessment_revision_id !== undefined) return `${event.target}: plain decision takes no assessment revision`;
-    return plainPayloadRefusal(declared, event, workflow.schemas);
+  return stage === null ? undefined : workflow.workflow.stages[stage];
+}
+
+function assessmentOf(review: ParsedReview, stage: NonNullable<ReturnType<typeof stageOf>>): string | undefined {
+  return review.assessment ?? (stage.artifacts?.[review.of]?.kind === "assessment" ? review.of : undefined);
+}
+
+function stageAgents(stage: NonNullable<ReturnType<typeof stageOf>>): string[] {
+  return Object.entries(stage.workers ?? {}).filter(([, worker]) => worker.kind === "agent").map(([key]) => key);
+}
+
+interface AssessmentDecisionInput {
+  readonly command: AssessmentDecisionCommand;
+  readonly facts: AssessmentFacts;
+  readonly snapshot: StepSnapshot;
+  readonly workflow: CompiledWorkflow;
+  readonly event: OperatorDecisionEvent;
+  readonly writer: Writer;
+}
+
+interface AssessmentDecisionPlan {
+  readonly event: OperatorDecisionEvent;
+  readonly assignments: readonly FeedbackAssignment[];
+  readonly rejections: readonly Omit<FeedbackRejection, "decision">[];
+  readonly approval?: Omit<NonNullable<AssessmentWrites["approval"]>, "decision">;
+  readonly rounds: readonly Omit<AssignmentRound, "decision">[];
+}
+
+export function selectAssessmentDecisionPlan(input: AssessmentDecisionInput): Result<AssessmentDecisionPlan, AssessmentFactError> {
+  const { command, facts, snapshot, workflow, event, writer } = input;
+  const refusal = (detail: string) => traced("decide_assessment", event.target, detail);
+  if (writer.kind !== "operator") return refusal("assessment decisions require an operator credential");
+  if (facts.approval) return refusal("approval is final; it cannot be withdrawn or replaced");
+  if (facts.revision !== command.target) return refusal("target is not the latest assessment revision");
+  const assessmentIndex = snapshot.revisions.findIndex(revision => revision.id === facts.revision);
+  const assessment = snapshot.revisions[assessmentIndex];
+  const assessed = snapshot.revisions.find(revision => revision.id === command.assessed_revision);
+  if (!assessment || !assessed || assessment.subject !== assessed.id || assessed.unit !== event.unit
+    || latestRevision(snapshot, assessed.unit, assessed.artifact)?.id !== assessed.id
+    || facts.updates.some(update => snapshot.revisions.findIndex(revision => revision.id === update.revision) > assessmentIndex)) {
+    return refusal("assessed work changed since it was read");
   }
-  const review = selectAdjudicatedReview({ workflow, stage, review: event.review });
-  const assessmentId = selectReviewedAssessmentId({ decision: { review: event.review, unit_id: event.unit, target_revision_id: event.target }, review,
-    revisions: snapshot.revisions.map(revision => ({ ...revision, unit_id: revision.unit })) });
-  const target = snapshot.revisions.find(revision => revision.id === assessmentId);
-  if (!review || !target) return `${event.target}: reviewed assessment revision not found`;
-  if ((expected_assessment_revision_id !== undefined || event.target !== assessmentId) && expected_assessment_revision_id !== assessmentId)
-    return `${expected_assessment_revision_id ?? event.target}: reviewed assessment changed; expected_assessment_revision_id must match ${assessmentId}`;
-  const assessment = parseAssessmentBody(target.body);
-  if (!assessment.ok) return `${target.id}: ${assessment.error.detail}`;
-  const decision = review.decisions.find((decision) => decision.key === event.decision);
-  if (!decision) return null;
-  const adjudication = validateAdjudication({ payload: event.payload, assessment: { id: target.id, body: assessment.value }, decision });
-  return adjudication.ok ? null : `${adjudication.error.operation} ${adjudication.error.entity_id}: ${adjudication.error.detail}`;
+  const stage = stageOf(workflow, snapshot, event.unit);
+  const review = stage?.reviews?.[event.review];
+  const decision = review?.decisions[event.decision];
+  if (!stage || !review || !decision || command.decision !== event.decision || command.target !== event.target) {
+    return refusal("assessment decision not found");
+  }
+  if (snapshot.decisions.some(value => value.kind === "validation" && value.target === facts.revision)) {
+    return refusal("target revision failed validation");
+  }
+  const target = latestRevision(snapshot, event.unit, decision.on ?? review.of);
+  if (!target) return refusal("dispatch target is unpublished");
+  const operation = decision.operation;
+  const approving = operation === "approve_assessment";
+  if (operation !== "dispatch_feedback" && operation !== "direct_correction" && !approving) return refusal("assessment operation not found");
+  const rejections: Omit<FeedbackRejection, "decision">[] = [];
+  const assignments: FeedbackAssignment[] = [];
+  const rounds: Omit<AssignmentRound, "decision">[] = [];
+  const requests: RoundRequest[] = [];
+  const disposed = new Set<string>();
+  const disposedAssignments = new Set<string>();
+  for (const disposition of command.dispositions) {
+    const assignment = disposition.kind === "reject_follow_up" ? facts.assignments.find(value => value.id === disposition.assignment) : undefined;
+    const id = disposition.kind === "reject_follow_up" ? assignment?.item : disposition.item;
+    const item = facts.items.find(value => value.id === id);
+    if (!item) return refusal("disposition does not name feedback associated with the assessment");
+    if (assignment) {
+      if (disposedAssignments.has(assignment.id)) return refusal(`assignment ${assignment.id} has multiple dispositions`);
+      disposedAssignments.add(assignment.id);
+    } else {
+      if (disposed.has(item.id)) return refusal(`feedback item ${item.id} has multiple dispositions`);
+      disposed.add(item.id);
+    }
+    if (facts.rejections.some(value => value.item === item.id && value.assignment == null)) return refusal(`feedback item ${item.id} was rejected`);
+    if (disposition.kind === "reject_follow_up" || disposition.kind === "reject") {
+      if (disposition.kind === "reject_follow_up") {
+        const round = assignment && selectCurrentRound(facts, assignment.id);
+        if (!approving || !round || selectRoundProgress(facts, round) !== "returned_for_update") return refusal("only a current needs_further_work follow-up may be rejected on approval");
+      } else if (item.origin.kind !== "proposal" || facts.assignments.some(value => value.item === item.id)) {
+        return refusal("only an undisposed proposal may be rejected");
+      }
+      rejections.push({ id: assessmentFactId("fr_", [assessment.id, item.id, assignment?.id ?? ""]), item: item.id,
+        assessment_revision: assessment.id, assignment: assignment?.id ?? null, reason: disposition.reason });
+      continue;
+    }
+    if (approving || item.origin.kind !== (operation === "dispatch_feedback" ? "proposal" : "operator")) return refusal("feedback origin does not match the dispatch operation");
+    const authorization = authorizeDispatch({ kind: "operator_required" }, { operation, item,
+      target: { unit: event.unit, artifact: target.artifact, revision: target.id }, instruction: disposition.instruction,
+      recipients: disposition.recipients, stage_agent_workers: stageAgents(stage), authorizations: facts.authorizations });
+    if (!authorization.ok) return authorization;
+    for (const recipient of authorization.value.recipients) {
+      const assignmentId = assessmentFactId("fa_", [item.id, event.unit, target.artifact, recipient]);
+      const current = selectCurrentRound(facts, assignmentId);
+      const roundId = assessmentFactId("ar_", [assignmentId, authorization.value.id]);
+      if (current?.id === roundId) continue;
+      if (facts.rounds.some(value => value.id === roundId)) return refusal(`authorization already used for assignment ${assignmentId}`);
+      if (current && selectRoundProgress(facts, current) !== "returned_for_update") return refusal(`assignment ${assignmentId} has not been returned for update`);
+      assignments.push({ id: assignmentId, item: item.id, target_unit: event.unit, target_artifact: target.artifact, recipient });
+      rounds.push({ id: roundId, assignment: assignmentId, ordinal: (current?.ordinal ?? 0) + 1,
+        authorization: authorization.value.id, instruction: authorization.value.instruction });
+      requests.push({ round: roundId, assignment: assignmentId, worker: recipient });
+    }
+  }
+  if (approving) {
+    for (const item of facts.items) {
+      const related = facts.assignments.filter(value => value.item === item.id);
+      if (related.length === 0 && ![...facts.rejections, ...rejections].some(value => value.item === item.id && value.assignment == null)) {
+        return refusal(`readiness refused: proposal ${item.origin.kind === "proposal" ? item.origin.key : item.id} has no disposition`);
+      }
+      for (const assignment of related) {
+        const round = selectCurrentRound(facts, assignment.id);
+        const progress = round ? selectRoundProgress(facts, round) : "awaiting_update";
+        if (progress === "assessor_verified" || progress === "accepted_by_operator"
+          || (progress === "returned_for_update" && rejections.some(value => value.assignment === assignment.id))) continue;
+        const reason = progress === "awaiting_update" ? "awaits update" : progress === "awaiting_verification" ? "awaits verification" : "needs further work";
+        return refusal(`readiness refused: assignment ${assignment.id} ${reason}`);
+      }
+    }
+    return ok({ event: { ...event, target: target.id, payload: {} }, rounds, rejections, assignments, approval: {
+      id: assessmentFactId("aa_", [assessment.id]), unit: facts.unit, assessment_revision: assessment.id,
+      assessed_revision: assessed.id, approved_by: writer.subject ?? "local-control",
+    } });
+  }
+  if (!requests.length) return refusal("dispatch requires at least one new round");
+  return ok({ event: { ...event, target: target.id, payload: { rounds: requests } }, rounds, rejections, assignments });
 }
 
 export async function commitEvent(deps: CommitDependencies, request: CommitRequest,
@@ -407,6 +516,7 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
   const snapshot = await readStepSnapshot(trx, run_id, unit_id.value);
   if (!snapshot) return reject(`unit ${unit_id.value} is not part of run ${run_id}`, null);
   let effectiveRequest = request;
+  let assessmentDecision: AssessmentDecisionPlan | null = null;
   if (request.event.kind === "revision_published") {
     const event = request.event;
     const unit = snapshot.units.find((candidate) => candidate.id === event.unit);
@@ -422,9 +532,30 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
     }
   }
   if (request.event.kind === "operator_decided") {
-    const refusal = selectAdjudicationRefusal({ event: request.event, expected_assessment_revision_id: request.expected_assessment_revision_id,
-      workflow: definition.checked_program.workflow, snapshot });
-    if (refusal !== null) return reject(refusal, unit_id.value);
+    const { event } = request;
+    const workflow = definition.checked_program;
+    const stage = stageOf(workflow, snapshot, event.unit);
+    const review = stage?.reviews?.[event.review];
+    const decision = review?.decisions[event.decision];
+    const assessment = stage && review && assessmentOf(review, stage);
+    const facts = assessment ? await readAssessmentFacts(trx, run_id, event.unit, assessment) : null;
+    if (facts?.approval && (decision?.operation && decision.operation !== "plain" || decision?.effect === "request_changes")) {
+      return reject("approval is final; it cannot be withdrawn or replaced", unit_id.value);
+    }
+    if (decision?.operation !== undefined && decision.operation !== "plain") {
+      const command = parseAssessmentDecision(request.assessment_decision);
+      if (!command) return reject("assessment decisions take dispositions only", unit_id.value);
+      if (!facts) return reject("assessment revision not found", unit_id.value);
+      const plan = selectAssessmentDecisionPlan({ command, facts, snapshot, workflow, event, writer: request.writer });
+      if (!plan.ok) return reject(plan.error.detail, unit_id.value);
+      assessmentDecision = plan.value;
+      effectiveRequest = { ...request, event: plan.value.event };
+    } else if (decision) {
+      const raw = objectFields(request.assessment_decision);
+      if (raw && !Object.hasOwn(raw, "payload")) return reject("request_id, decision, target and payload are required", unit_id.value);
+      const refusal = plainPayloadRefusal(decision, event, workflow.workflow.schemas);
+      if (refusal !== null) return reject(refusal, unit_id.value);
+    }
   }
   const incoming: Incoming = { event: effectiveRequest.event, writer: request.writer, ingress_id: request.ingress_id };
   const stepped = await stepPinned(core, { run_id, definition, snapshot, incoming });
@@ -445,10 +576,32 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
     prompts: definition.prompts, config: run.config, step: stepped.value.step });
   const planned = selectCommitPlan(snapshot, stepped.value.step, existing);
   if (!planned.ok) return { ok: false, error: fault(run_id, planned.error.detail) };
+  let assessmentWrites: AssessmentWrites = {};
+  let assessmentReceipt: AssessmentDecisionReceipt | undefined;
+  const published = planned.value.delta.created_revisions[0];
+  if (published && published.artifact !== BLOCKER_ARTIFACT
+    && !planned.value.delta.created_decisions.some(value => value.kind === "validation" && value.target === published.id)) {
+    const bindings = await planAssessmentPublication(trx, { run_id, snapshot, workflow: definition.checked_program, revision: published });
+    if (!bindings.ok) return reject(bindings.error.detail, unit_id.value);
+    assessmentWrites = bindings.value;
+  }
+  if (assessmentDecision) {
+    const decision = planned.value.delta.created_decisions.find(value => value.kind === "review");
+    if (!decision) return reject("assessment decision produced no decision", unit_id.value);
+    const rounds = assessmentDecision.rounds.map(round => ({ ...round, decision: decision.id }));
+    const rejections = assessmentDecision.rejections.map(value => ({ ...value, decision: decision.id }));
+    const approval = assessmentDecision.approval && { ...assessmentDecision.approval, decision: decision.id };
+    assessmentWrites = { assignments: assessmentDecision.assignments, rounds, rejections, approval };
+    assessmentReceipt = { decision_id: decision.id, rejection_ids: rejections.map(value => value.id),
+      approval_id: approval?.id ?? null, round_ids: rounds.map(value => value.id) };
+  }
   await applyCommitPlan(trx, planned.value);
-  await storeReceipt(trx, { request, unit_id: unit_id.value, digest,
-    result: { kind: "committed", event_id: planned.value.event_id } });
-  return { ok: true, value: { kind: "committed", event_id: planned.value.event_id } };
+  await writeAssessmentFacts(trx, run_id, assessmentWrites);
+  await attachRoundDeliveries(trx, planned.value);
+  const result = { kind: "committed" as const, event_id: planned.value.event_id,
+    ...(assessmentReceipt ? { assessment_decision: assessmentReceipt } : {}) };
+  await storeReceipt(trx, { request, unit_id: unit_id.value, digest, result });
+  return ok(result);
 }
 
 type Affected = { readonly ok: true; readonly value: string | null } | { readonly ok: false; readonly reason: string };
@@ -922,4 +1075,171 @@ export async function commitDecisionWithLinks(deps: CommitDependencies, request:
  */
 export function launchRunId(request_id: string): RunId {
   return `run-${createHash("sha256").update(request_id).digest("hex").slice(0, 16)}` as RunId;
+}
+
+interface AssessmentPublicationInput {
+  readonly run_id: string;
+  readonly snapshot: StepSnapshot;
+  readonly workflow: CompiledWorkflow;
+  readonly revision: RevisionState;
+}
+
+async function planAssessmentPublication(trx: DatabaseTransaction, input: AssessmentPublicationInput): Promise<Result<AssessmentWrites, AssessmentFactError>> {
+  const { run_id, snapshot, workflow, revision } = input;
+  const unit = snapshot.units.find(value => value.id === revision.unit);
+  if (unit?.kind.kind !== "stage") return ok({});
+  const stage = workflow.workflow.stages[unit.kind.stage];
+  const embeddings = workflow.assessments[unit.kind.stage]?.[revision.artifact];
+  const attempt = snapshot.attempts.findLast(value => value.action_id === revision.by);
+  const producer = attempt && stage?.workers?.[attempt.worker];
+  const subjectBinding = attempt && selectSelfAssessmentSubjects(stage, attempt.worker)
+    .find(binding => binding.assessment === revision.artifact);
+  if (subjectBinding) {
+    const subject = latestRevision(snapshot, revision.unit, subjectBinding.subject_artifact);
+    if (!subject || subject.id !== revision.subject) {
+      return traced("publish_assessment", revision.id, `assessment must cite the exact latest ${subjectBinding.subject_artifact} revision as subject`);
+    }
+  }
+  let update: AssignmentUpdate | null = null;
+  let selfUpdate: AssignmentUpdate | null = null;
+  if (attempt?.cause.kind === "assignment_round") {
+    const roundId = attempt.cause.round;
+    const location = await readRoundAssessment(trx, run_id, roundId);
+    if (location) {
+      const facts = await readAssessmentFacts(trx, run_id, location.unit_id, location.assessment_artifact);
+      const round = facts?.rounds.find(value => value.id === roundId);
+      const isSelfAssessing = producer?.kind === "agent" && producer.produces.includes(location.assessment_artifact);
+      if (facts && round && selectCurrentRound(facts, round.assignment)?.id === round.id && !facts.updates.some(value => value.round === round.id)) {
+        if (isSelfAssessing && revision.artifact === location.assessment_artifact) selfUpdate = { round: round.id, revision: revision.id };
+        if (!isSelfAssessing) update = { round: round.id, revision: revision.id };
+      }
+    }
+  }
+  if (!embeddings) return ok(update ? { updates: [update] } : {});
+  const facts = await readAssessmentFacts(trx, run_id, revision.unit, revision.artifact);
+  const plan = selectPublicationFacts({ run: run_id, revision, revisions: snapshot.revisions, embeddings, facts, roundUpdate: selfUpdate });
+  if (!plan.ok || !update) return plan;
+  return ok({ ...plan.value, updates: [...(plan.value.updates ?? []), update] });
+}
+
+function renderReassessment(facts: AssessmentFacts): string[] {
+  return facts.assignments.flatMap(assignment => {
+    const round = selectCurrentRound(facts, assignment.id);
+    const update = round && facts.updates.find(value => value.round === round.id);
+    if (!round || !update || selectRoundProgress(facts, round) !== "awaiting_verification") return [];
+    return [`Round ${round.id}\nRecipient: ${assignment.recipient}\nInstruction: ${round.instruction}\nUpdate revision: ${update.revision}`];
+  });
+}
+
+async function attachRoundDeliveries(trx: DatabaseTransaction, plan: CommitPlan): Promise<void> {
+  for (const intent of plan.intents) {
+    const { instruction } = intent;
+    const cause = instruction.action.cause;
+    let round_delivery: string;
+    if (cause.kind === "assignment_round" || cause.kind === "reassessment") {
+      const delivery = await readRoundDelivery(trx, { run_id: plan.run_id, round: cause.round });
+      if (!delivery) throw new Error(`missing committed facts for ${cause.round}`);
+      if (cause.kind === "assignment_round") {
+        await bindRoundAction(trx, { run_id: plan.run_id, round: cause.round, action: intent.action_id });
+        round_delivery = renderRoundDelivery(delivery.round, delivery.item);
+      } else {
+        round_delivery = renderReassessment(delivery.facts).join("\n\n");
+      }
+    } else if (cause.kind === "review_of" && instruction.worker.kind === "agent") {
+      // A new work revision can independently want the same assessment worker.
+      const facts = await Promise.all(instruction.worker.creates.filter(value => value.key !== BLOCKER_ARTIFACT)
+        .map(value => readAssessmentFacts(trx, plan.run_id, intent.unit_id, value.key)));
+      round_delivery = facts.flatMap(value => value ? renderReassessment(value) : []).join("\n\n");
+    } else continue;
+    if (!round_delivery) continue;
+    await trx.updateTable("authority.effect_intent").set({ payload: jsonText({ ...instruction, engine_inputs: { ...instruction.engine_inputs, round_delivery } }) })
+      .where("run_id", "=", plan.run_id).where("action_id", "=", intent.action_id).where("seq", "=", intent.seq).execute();
+  }
+}
+
+type AssessmentMutation = { readonly kind: "feedback"; readonly artifact: string; readonly command: FeedbackItemRequest }
+  | { readonly kind: "authorization"; readonly command: DispatchAuthorizationRequest };
+
+export interface AssessmentMutationInput {
+  readonly run_id: RunId;
+  readonly unit: string;
+  readonly request_id: string;
+  readonly writer: Extract<Writer, { readonly kind: "operator" }>;
+  readonly mutation: AssessmentMutation;
+}
+
+export async function commitAssessmentMutation(deps: CommitDependencies, input: AssessmentMutationInput): Promise<CommitResult> {
+  const { run_id, unit, writer, mutation } = input;
+  const request = { run_id, ingress_id: scopeIngressId(writer, input.request_id) };
+  const digest = createHash("sha256").update(canonical({ unit, writer, mutation })).digest("hex");
+  try {
+    return await deps.db.transaction().execute(async trx => {
+      const run = await trx.selectFrom("authority.run").select("definition_id").where("id", "=", run_id).forUpdate().executeTakeFirst();
+      if (!run) return ok({ kind: "missing", detail: "run not found" });
+      const receipt = await readReceipt(trx, request);
+      if (receipt) return ok(receipt.request_digest === digest ? { kind: "replayed", receipt: receipt.result }
+        : { kind: "conflict", detail: "ingress id reused with different content" });
+      const snapshot = await readStepSnapshot(trx, run_id, unit);
+      if (!snapshot) return ok({ kind: "missing", detail: "unit not found" });
+      const reject = async (reason: string): Promise<CommitResult> => {
+        const result = { kind: "rejected" as const, reason };
+        await storeReceipt(trx, { request, unit_id: unit, digest, result });
+        return ok(result);
+      };
+      const definition = await compileDefinition(deps.core, run.definition_id as DefinitionId);
+      if (!definition.ok) return definition;
+      const stage = stageOf(definition.value.checked_program, snapshot, unit);
+      if (!stage) return reject("unit has no assessment");
+      let writes: AssessmentWrites;
+      let id: string;
+      if (mutation.kind === "feedback") {
+        const { command, artifact } = mutation;
+        if (stage.artifacts?.[artifact]?.kind !== "assessment") return reject("assessment artifact not found");
+        const facts = await readAssessmentFacts(trx, run_id, unit, artifact);
+        if (!facts) return reject("assessment revision not found");
+        if (facts.approval) return reject("approval is final; it cannot be withdrawn or replaced");
+        if (command.citation != null) {
+          const citation = resolveCitation(command.citation, snapshot.revisions);
+          if (!citation.ok) return reject(citation.error.detail);
+        }
+        id = assessmentFactId("fi_", [run_id, request.ingress_id!]);
+        writes = { items: [{ id, unit, assessment_artifact: artifact, origin: { kind: "operator", request_id: request.ingress_id! },
+          instruction: command.instruction, citation: command.citation }],
+          associations: [{ assessment_revision: facts.revision, item: id, association: "proposed" }] };
+      } else {
+        const { command } = mutation;
+        const target = snapshot.revisions.find(value => value.id === command.target_revision && value.unit === unit);
+        if (!target || latestRevision(snapshot, unit, target.artifact)?.id !== target.id) return reject("dispatch target is not the latest revision");
+        let selected: { readonly facts: AssessmentFacts; readonly item: FeedbackItem; readonly operation: DispatchOperation } | null = null;
+        for (const review of Object.values(stage.reviews ?? {})) {
+          const artifact = assessmentOf(review, stage);
+          if (!artifact) continue;
+          const facts = await readAssessmentFacts(trx, run_id, unit, artifact);
+          const item = facts?.items.find(value => value.id === command.item);
+          if (!facts || !item) continue;
+          const operation = item.origin.kind === "proposal" ? "dispatch_feedback" : "direct_correction";
+          if (Object.values(review.decisions).some(decision => decision.operation === operation && decision.on === target.artifact)) {
+            selected = { facts, item, operation };
+            break;
+          }
+        }
+        if (!selected) return reject("feedback item or dispatch operation not found");
+        if (selected.facts.approval) return reject("approval is final; it cannot be withdrawn or replaced");
+        const check = { operation: selected.operation, item: selected.item, target: { unit, artifact: target.artifact, revision: target.id },
+          instruction: command.instruction, recipients: command.recipients, stage_agent_workers: stageAgents(stage) };
+        const recipients = validateRecipients(check);
+        if (!recipients.ok) return reject(recipients.error.detail);
+        id = selectAuthorizationId(check);
+        const authorization: DispatchAuthorization = { id, item: selected.item.id, target: check.target, operation: check.operation,
+          instruction: check.instruction, recipients: check.recipients.toSorted(), policy: "operator_required", authorized_by: writer.subject ?? "local-control" };
+        writes = { authorizations: [authorization] };
+      }
+      await writeAssessmentFacts(trx, run_id, writes);
+      const result = { kind: "committed" as const, event_id: id };
+      await storeReceipt(trx, { request, unit_id: unit, digest, result });
+      return ok(result);
+    });
+  } catch (cause) {
+    return traced("commit_assessment_mutation", run_id, String(cause));
+  }
 }

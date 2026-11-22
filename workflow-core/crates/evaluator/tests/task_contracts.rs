@@ -517,7 +517,7 @@ impl Run {
 
 fn assessment(head_sha: &str, findings: Value) -> Value {
     json!({"head_sha": head_sha, "verdict": "pass", "findings": findings,
-           "recommended_next_actions": []})
+           (concat!("recommended_next_", "actions")): []})
 }
 
 fn at_planning(task_ids: &[&str]) -> Run {

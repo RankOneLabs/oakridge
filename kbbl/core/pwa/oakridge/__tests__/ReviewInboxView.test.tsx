@@ -90,12 +90,12 @@ describe("ReviewInboxView", () => {
   it("renders decision controls for a study report review", async () => {
     if (!approveTarget) throw new Error("captured fixture lacks an artifact revision");
     const approve: OperatorDecisionDefinition = {
-      key: "approve", label: "Approve", fields: [], payload_schema: "{}", adjudication: null, assessment: null,
+      key: "approve", label: "Approve", fields: [], payload_schema: "{}", operation: "plain", assessment: null,
       submit: { kind: "review", review: "report_review", decision: "approve", effect: "approve", target_revision_id: approveTarget },
     };
     const requestChanges: OperatorDecisionDefinition = {
       key: "request_changes", label: "Request changes", fields: [{ key: "feedback", label: "What needs to change?" }],
-      payload_schema: "{feedback: text}", adjudication: null, assessment: null,
+      payload_schema: "{feedback: text}", operation: "plain", assessment: null,
       submit: { kind: "review", review: "report_review", decision: "request_changes", effect: "request_changes", target_revision_id: approveTarget },
     };
     const unit = withUnitFields(v2Unit, {
@@ -117,7 +117,7 @@ describe("ReviewInboxView", () => {
   it("sends a study review that needs adjudication to the assessment instead of plain controls", async () => {
     if (!approveTarget) throw new Error("captured fixture lacks an artifact revision");
     const accept: OperatorDecisionDefinition = {
-      key: "accept", label: "Accept", fields: [], payload_schema: "{}", adjudication: "accept", assessment: "assessment",
+      key: "accept", label: "Accept", fields: [], payload_schema: "{}", operation: "approve_assessment", assessment: "assessment",
       submit: { kind: "review", review: "expansion_review", decision: "accept", effect: "approve", target_revision_id: approveTarget },
     };
     const unit = withUnitFields(v2Unit, { stage: "expand", collection_key: "g2", unit_key: "g2", decisions: [accept], input: { repository_key: "oakridge" } });

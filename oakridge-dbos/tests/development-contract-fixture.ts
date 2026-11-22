@@ -1,5 +1,4 @@
 import type { AnalysisBody, SpecBody, PlanCohort, BriefBody, AssessmentBody } from "../../workflow-config/src/development-test-support";
-import { composeReworkFeedback, type Adjudication } from "../src/domain/adjudication";
 
 /** Bodies mirror the canonical contract in workflow-config/development.yaml. */
 export const APPROVED_ANALYSIS: AnalysisBody = {
@@ -36,17 +35,10 @@ export function developmentBrief(id: string): BriefBody {
 export const COHORT_ASSESSMENT: AssessmentBody = {
   head_sha: "abc123", verdict: "pass",
   item_assessments: [{ subject: { kind: "build_item", id: "item-a" }, status: "met", observation: "it works", evidence: [{ kind: "test", ref: "development-e2e" }] }],
-  additional_findings: [], next_actions: [], test_evidence: { passed: 1, failed: 0 },
+  additional_findings: [], proposals: [], verifications: [], test_evidence: { passed: 1, failed: 0 },
 };
 export const INTEGRATION_ASSESSMENT: AssessmentBody = {
   head_sha: "abc123", verdict: "pass",
   item_assessments: [{ subject: { kind: "requirement", id: "req-a" }, status: "met", observation: "Both cohort changes pass together.", evidence: [{ kind: "test", ref: "integration suite", detail: "Both cohort changes pass together on the integration branch." }] }],
-  additional_findings: [], next_actions: [], test_evidence: { passed: 2, failed: 0 },
+  additional_findings: [], proposals: [], verifications: [], test_evidence: { passed: 2, failed: 0 },
 };
-export const ACCEPT_ADJUDICATION = { entries: [], added_actions: [], rework_feedback: "" };
-/** An operator-added builder action supports requesting changes even when the assessor proposed none. */
-export const INTEGRATION_REPLACEMENT_ADJUDICATION: Adjudication = (() => {
-  const added_actions: Adjudication["added_actions"] = [{ action_id: "00000000-0000-4000-8000-000000000001", origin: "operator",
-    audience: "rework", source: { kind: "item_assessment", id: "req-a" }, final_text: "Open a new integration PR." }];
-  return { entries: [], added_actions, rework_feedback: composeReworkFeedback([], added_actions) };
-})();

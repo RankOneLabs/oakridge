@@ -13,6 +13,42 @@ fn normalized_decision_target(
     target.filter(|target| *target != reviewed).cloned()
 }
 
+const RESERVED_KEYS: [&str; 4] = [
+    BLOCKER_ARTIFACT,
+    BLOCKER_REVIEW,
+    VALIDATION_REVIEW,
+    ROOT_DECLARATION,
+];
+
+enum KeyNamespace<'a> {
+    Artifact(&'a str),
+    Review(&'a str),
+    Worker(&'a str),
+    Stage,
+}
+
+fn reserved_key_errors<'a>(
+    namespace: KeyNamespace<'_>,
+    keys: impl Iterator<Item = &'a String>,
+) -> Vec<CompileError> {
+    let (kind, path) = match namespace {
+        KeyNamespace::Artifact(stage) => ("artifact", format!("stages.{stage}.artifacts")),
+        KeyNamespace::Review(stage) => ("review", format!("stages.{stage}.reviews")),
+        KeyNamespace::Worker(stage) => ("worker", format!("stages.{stage}.workers")),
+        KeyNamespace::Stage => ("stage", "stages".into()),
+    };
+    keys.filter(|key| RESERVED_KEYS.contains(&key.as_str()))
+        .map(|key| {
+            CompileError::new(
+                CheckKind::Name,
+                format!("{path}.{key}"),
+                source_span(key),
+                format!("reserved name {key} cannot be used as a {kind} key"),
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn source_span(text: &str) -> SourceSpan {
     SourceSpan {
         start: 0,
@@ -375,8 +411,9 @@ fn unify(
         (expected, found) => expected == found,
     }
 }
-#[path = "workflow_adjudication.rs"]
-mod adjudication;
+#[path = "workflow_assessment.rs"]
+mod assessment;
+pub use assessment::assessment_embeddings;
 #[path = "workflow_group.rs"]
 mod group;
 #[path = "workflow_stage.rs"]

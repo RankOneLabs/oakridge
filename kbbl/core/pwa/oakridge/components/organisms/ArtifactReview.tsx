@@ -18,7 +18,7 @@ import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { useArtifactBody } from "../../hooks/useArtifactBody";
 import { selectFindingSelections } from "../../lib/grading";
 import { settleEdit } from "../../lib/edit-outcome";
-import { resolveViewer, isReadableViewer, recordsAdjudication, selectViewerItemPaths } from "../../artifactRegistry";
+import { resolveViewer, isReadableViewer, selectViewerItemPaths } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { formatRelative } from "../../../lib/time";
@@ -265,10 +265,9 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
       ) : undefined;
 
   const isLatestRevision = revision !== undefined && revIdx === revisions.length - 1;
-  // An adjudicated review is decided in the viewer's own decision bar; a box here could only repeat that, with no controls.
-  const isDecidedInViewer = artifactGate?.requires_adjudication === true && artifactGate.resume_actions.length === 0 && Viewer !== null && recordsAdjudication(Viewer);
   const decisionCopy = artifactGate && selectArtifactDecisionCopy(artifactGate, adjudicationGate);
-  const gateActions = artifactGate && decisionCopy && isLatestRevision && !isDecidedInViewer ? (
+  const gateActions = artifactGate && decisionCopy && isLatestRevision
+    && !(artifactGate.requires_adjudication && artifactGate.resume_actions.length === 0) ? (
     <section data-assessment-corrections={artifactGate === adjudicationGate || undefined} className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
       <div><strong>{decisionCopy.title}</strong><p>{decisionCopy.description}</p></div>
       <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} actionLabels={artifact.review?.action_labels} />
