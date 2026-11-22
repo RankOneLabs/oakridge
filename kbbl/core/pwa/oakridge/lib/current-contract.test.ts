@@ -1,4 +1,3 @@
-import { canonicalSpecUnit, withUnitFields } from "../__fixtures__/read-models";
 import { expect, test } from "vitest";
 import analysisBody from "../__fixtures__/current-analysis.json";
 import specBody from "../__fixtures__/current-spec.json";
@@ -10,8 +9,6 @@ import { requirementStatus, selectRequirementsByStatus, selectAnalysisCounts, se
 import { selectParallelWaves } from "./plan-graph";
 import { selectAllocations, selectCurrentBuildItems } from "./current-brief";
 import { selectReceivedContext } from "./received-context";
-import { selectRunIdentityRollup } from "./tasks";
-import { selectIdentityStageOverview } from "./stage-overview";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { definitionWithTaskSource, gradingIdentityField, selectGradingIdentityIds } from "./grading-config";
 const unit = unitBody as unknown as OperatorUnitView;
@@ -71,13 +68,6 @@ test("technical decisions appear under every build item they cite", () => {
 test("received context contains exactly the pinned assignment requirements and revision ids", () => {
   expect(selectReceivedContext(unit)).toMatchObject({ assignment: { requirements: [{ id: "R1", acceptance_conditions: ["Visible R1"] }, { id: "R3", acceptance_conditions: ["Visible R3"] }] }, sources: [{ revision_id: "plan:1" }, { revision_id: "spec:2" }] });
 });
-const specUnit = canonicalSpecUnit();
-test("approved canonical spec supplies requirement rollup identities", () => {
-  expect(selectRunIdentityRollup([specUnit])).toMatchObject({ label: "Requirements", rows: [{ id: "R1" }, { id: "R2" }, { id: "R3" }] });
-});
-test("current overview omits a tasks stage", () => {
-  expect(selectIdentityStageOverview([specUnit, { ...unit, stage: "tasks" }]).stages.map((row) => row.stage)).toEqual(["brief"]);
-});
 test.each(["requirement_ids", "task_ids"] as const)("grading pointers preserve %s identity", (field) => {
   const config = { scope: "per_task", task_ids: `/${field}` };
   expect(selectGradingIdentityIds(config, { [field]: ["R1", "R3"] })).toEqual(["R1", "R3"]);
@@ -85,10 +75,6 @@ test.each(["requirement_ids", "task_ids"] as const)("grading pointers preserve %
 test("switching identity retains the generated per_task wire contract and targets requirement_ids", () => {
   const config = definitionWithTaskSource({ task_ids: "/task_ids" }, "requirement_ids");
   expect([gradingIdentityField(config), config]).toEqual(["requirement_ids", { scope: "per_task", task_ids: "/requirement_ids" }]);
-});
-test("legacy rollup retains task rows and label", () => {
-  const legacyUnit = withUnitFields(unit, { artifacts: specUnit.artifacts.map((artifact) => ({ ...artifact, artifact_key: "tasks", schema: "tasks_body", latest_revision: artifact.latest_revision ? { ...artifact.latest_revision, body: { tasks: [{ id: "T1", description: "Legacy task", requirement_ids: ["R1"] }] } } : null })) });
-  expect(selectRunIdentityRollup([legacyUnit])).toEqual({ label: "Tasks", rows: [{ id: "T1", description: "Legacy task", requirement_ids: ["R1"] }] });
 });
 test("analysis requirements list blocked first and keep their analysis positions", () => {
   const reversed = { ...currentAnalysis, requirements: [...currentAnalysis.requirements].reverse() };

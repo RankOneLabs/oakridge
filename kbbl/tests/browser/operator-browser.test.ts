@@ -211,7 +211,7 @@ test("a rejected assessment shows one visible notice in each presentation", asyn
   const submit = { kind: "review", review: "assessment_review", target_revision_id: revision.id } as const;
   const feedback = "Recheck the verdict.";
   const reviewing: OperatorUnitView = { ...unit, recorded_decisions: [{
-    id: "validation", review: "engine:validator", decision: "request_changes", effect: "request_changes",
+    id: "validation", decision_id: "validation", actor: null, reviewed_revision_id: revision.id, approved_assessment_revision_id: null, effect_target_revision_id: revision.id, review: "engine:validator", decision: "request_changes", effect: "request_changes",
     target_revision_id: revision.id, payload: { feedback }, created_at: revision.created_at,
   }], decisions: [
     { key: "accept", label: "Accept", operation: "approve_assessment", assessment: "assessment", fields: [], payload_schema: "{}",

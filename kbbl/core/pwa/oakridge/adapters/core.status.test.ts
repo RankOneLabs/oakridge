@@ -20,7 +20,7 @@ function childWithStatus(status: RunStatus, index: number, stage = "cohort"): Op
     unit_id: `${cohort.unit_id}-${index}`, unit_key: `${stage}-${index}`, collection_key: `${stage}-${index}`, stage,
     status: unitStatus, is_terminal: status === "complete" || status === "cancelled",
     attention: status === "parked" ? { kind: "waiting", reason: "awaiting review" }
-      : status === "failed" ? { kind: "stalled", detail: "worker failed" } : null,
+      : status === "failed" ? { kind: "stalled", failure_code: null, detail: "worker failed" } : null,
     decisions: status === "parked" ? cohort.decisions : [], attempts: [], artifacts: [],
   });
 }
@@ -62,7 +62,7 @@ describe("child status aggregation", () => {
     { name: "only terminal children including cancellation", statuses: ["complete", "cancelled"], expectedStage: "failed", expectedRun: "running", parkedCount: 0 },
     { name: "only an active root unit", statuses: [], expectedStage: null, expectedRun: "running", parkedCount: 0, rootUnit },
     { name: "a failed stage-null root unit", statuses: [], expectedStage: null, expectedRun: "running", parkedCount: 0,
-      rootUnit: withUnitFields(rootUnit, { attention: { kind: "stalled", detail: "root failed" } }), isStuck: true },
+      rootUnit: withUnitFields(rootUnit, { attention: { kind: "stalled", failure_code: null, detail: "root failed" } }), isStuck: true },
   ])("uses the child and root statuses for $name", ({ statuses, expectedStage, expectedRun, parkedCount, rootStatus, rootUnit, isStuck }) => {
     const children = statuses.map((status, index) => childWithStatus(status, index));
     const stageUnits = rootUnit ? [rootUnit, ...children] : children;
@@ -100,13 +100,13 @@ describe("run and unit status", () => {
     expect(detail.ok && detail.value.status).toBe("cancelled");
   });
   it("keeps an active run stuck while a brief unit has failed", () => {
-    const failedBrief = withUnitFields(cohort, { stage: "brief", attention: { kind: "stalled", detail: "writer failed" } });
+    const failedBrief = withUnitFields(cohort, { stage: "brief", attention: { kind: "stalled", failure_code: null, detail: "writer failed" } });
     const detail = runSnapshot({ ...run, status: { kind: "active" } }, [failedBrief]);
     expect(detail.ok && [detail.value.status, detail.value.is_stuck,
       runSummary(detail.value, run).is_failed]).toEqual(["running", true, false]);
   });
   it("distinguishes a stalled worker from a parked review", () => {
-    expect(deriveStatus({ status: cohort.status, attention: { kind: "stalled", detail: "worker failed" }, attempts: cohort.attempts, decisions: cohort.decisions }).run).toBe("failed");
+    expect(deriveStatus({ status: cohort.status, attention: { kind: "stalled", failure_code: null, detail: "worker failed" }, attempts: cohort.attempts, decisions: cohort.decisions }).run).toBe("failed");
   });
   it.each(["invalid_instruction", "discovery_unsupported"])("parks a cohort with manual merge confirmation despite a %s PR watcher failure", (code) => {
     const mergeRun = cohortMerge.run as unknown as OperatorRunView;
@@ -118,7 +118,7 @@ describe("run and unit status", () => {
     if (!observedState) throw new Error("captured fixture lacks a PR state artifact");
     const stalled = withUnitFields(mergeUnit, {
       artifacts: [...mergeUnit.artifacts, { ...observedState, artifact_key: "observed_state" }],
-      attention: { kind: "stalled", detail: "pr_watch failed: no pull request reader is configured" },
+      attention: { kind: "stalled", failure_code: null, detail: "pr_watch failed: no pull request reader is configured" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code, detail: "no pull request reader is configured" } }
         : attempt) });
@@ -130,7 +130,7 @@ describe("run and unit status", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
       && decision.submit.decision === "confirm_merged"));
     if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
-    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", detail: "pr_watch failed: missing URL" },
+    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", failure_code: null, detail: "pr_watch failed: missing URL" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code: "invalid_instruction", detail: "missing URL" } }
         : attempt) }).run).toBe("failed");
@@ -139,7 +139,7 @@ describe("run and unit status", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
       && decision.submit.decision === "confirm_merged"));
     if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
-    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", detail: "pr_watch failed: PR branch differs" },
+    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", failure_code: null, detail: "pr_watch failed: PR branch differs" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code: "pull_request_mismatch", detail: "PR branch differs" } }
         : attempt) }).run).toBe("failed");
@@ -147,7 +147,7 @@ describe("run and unit status", () => {
   it("keeps a cohort running while its builder works past a failed PR watcher", () => {
     const template = cohort.attempts[0];
     if (!template) throw new Error("captured fixture lacks an attempt");
-    const watcherFailed = { ...cohort, attention: { kind: "stalled" as const, detail: "pr_watch failed: inputs do not match" },
+    const watcherFailed = { ...cohort, attention: { kind: "stalled" as const, failure_code: null, detail: "pr_watch failed: inputs do not match" },
       attempts: [{ ...template, worker: "pr_watch", status: "failed" as const, failure: { code: "invalid_instruction", detail: "inputs do not match" }, is_current: true, kbbl_session_id: null },
         { ...template, worker: "builder", status: "running" as const, failure: null, is_current: true, kbbl_session_id: "builder-session" }] };
     const detail = runSnapshot({ ...run, status: { kind: "active" } }, [watcherFailed]);
@@ -156,7 +156,7 @@ describe("run and unit status", () => {
   it("keeps a failed builder stuck while a PR watcher retries through a forge outage", () => {
     const template = cohort.attempts[0];
     if (!template) throw new Error("captured fixture lacks an attempt");
-    const builderFailed = { ...cohort, attention: { kind: "stalled" as const, detail: "builder failed: worker ended before publishing" },
+    const builderFailed = { ...cohort, attention: { kind: "stalled" as const, failure_code: null, detail: "builder failed: worker ended before publishing" },
       attempts: [{ ...template, worker: "builder", status: "failed" as const, failure: { code: "no_output", detail: "worker ended before publishing" }, is_current: true, kbbl_session_id: "builder-session" },
         { ...template, worker: "pr_watch", status: "running" as const, failure: null, is_current: true, kbbl_session_id: null }] };
     const detail = runSnapshot({ ...run, status: { kind: "active" } }, [builderFailed]);
@@ -165,7 +165,7 @@ describe("run and unit status", () => {
   it("keeps a commit stall failed even while a worker is live", () => {
     const template = cohort.attempts[0];
     if (!template) throw new Error("captured fixture lacks an attempt");
-    const commitStalled = { ...cohort, attention: { kind: "stalled" as const, detail: "target revision failed validation (refused operator_decided)" },
+    const commitStalled = { ...cohort, attention: { kind: "stalled" as const, failure_code: null, detail: "target revision failed validation (refused operator_decided)" },
       attempts: [{ ...template, worker: "builder", status: "running" as const, failure: null, is_current: true, kbbl_session_id: "builder-session" }] };
     expect(deriveStatus(statusInputOf(commitStalled)).run).toBe("failed");
   });

@@ -6,7 +6,8 @@ import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-
 import type { BlockerAuthor, BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
 import type { ReviewHistoryEngineInputs } from "../effects/session-prompt";
 import type { PinnedPrompt } from "../domain/effect-instruction";
-import type { DecisionOperation, AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
+import { selectReviewedRevision } from "./usage-time";
+import type { ArtifactKind, ReviewWait, ReviewConfirms, Writer, DecisionOperation, AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
 import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { RevisionRef, RunRead, RunSummaryRead, UnitSummaryRecord } from "../storage/read-store";
@@ -69,7 +70,10 @@ export interface ArtifactView {
   readonly run_id: RunId;
   readonly unit_id: UnitId;
   readonly artifact_key: string;
-  /** The schema name the PWA's viewer registry dispatches on. */
+  readonly view: string | null;
+  readonly link_field?: string | null;
+  readonly kind: ArtifactKind;
+  /** The name of the projected schema. */
   readonly schema: string;
   /** An operator review of this artifact is declared. */
   readonly is_reviewable: boolean;
@@ -105,6 +109,11 @@ export interface DecisionDefinition {
 /** A decision recorded on one of a unit's artifact revisions. */
 export interface RevisionDecision {
   readonly id: string;
+  readonly decision_id: string;
+  readonly actor: Writer | null;
+  readonly reviewed_revision_id: string | null;
+  readonly approved_assessment_revision_id: string | null;
+  readonly effect_target_revision_id: string;
   readonly review: string;
   readonly decision: string;
   readonly effect: DeclaredDecisionEffect;
@@ -112,11 +121,43 @@ export interface RevisionDecision {
   readonly payload: BodyValue;
   readonly created_at: Date;
 }
-export function selectRevisionDecision(decision: ReviewDecisionRead): RevisionDecision {
-  return { id: decision.id, review: decision.review, decision: decision.decision,
+export function selectRevisionDecision(read: RunRead, decision: ReviewDecisionRead): RevisionDecision {
+  const stage = read.units.find((unit) => unit.id === decision.unit_id)?.stage;
+  const review = stage ? read.definition.parsed_workflow.stages[stage]?.reviews?.[decision.review] : undefined;
+  const reviewed = review ? selectReviewedRevision(read, decision, review.of) : null;
+  const approval = read.assessment_approvals?.find((candidate) => candidate.decision_id === decision.id);
+  return { id: decision.id, decision_id: decision.id, review: decision.review, decision: decision.decision,
+    actor: decision.actor ?? null, reviewed_revision_id: reviewed?.id ?? null,
+    approved_assessment_revision_id: approval?.assessment_revision_id ?? null, effect_target_revision_id: decision.target_revision_id,
     effect: decision.effect === "dispatch" ? "request_changes" : decision.effect,
     target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue,
     created_at: decision.created_at };
+}
+
+export interface OpenReviewDecision {
+  readonly key: string;
+  readonly label: string;
+  readonly effect: DeclaredDecisionEffect;
+  readonly operation: DecisionOperation;
+  readonly on_artifact: string;
+  readonly target_revision_id: string;
+}
+
+export interface OpenReview {
+  readonly review: string;
+  readonly of_artifact: string;
+  readonly reviewed_revision_id: string;
+  readonly wait: ReviewWait;
+  readonly confirms: ReviewConfirms | null;
+  readonly producer_workers: readonly string[];
+  readonly decisions: readonly OpenReviewDecision[];
+  readonly failure_code: string | null;
+}
+
+export interface ProjectedWorker {
+  readonly key: string;
+  readonly label: string;
+  readonly kind: "agent" | "code";
 }
 
 export interface UnitView {
@@ -136,6 +177,8 @@ export interface UnitView {
   readonly is_terminal: boolean;
   readonly attention: Attention | null;
   readonly decisions: readonly DecisionDefinition[];
+  readonly reviews: readonly OpenReview[];
+  readonly workers: readonly ProjectedWorker[];
   /** Decisions already made on the unit's revisions, oldest first. */
   readonly recorded_decisions: readonly RevisionDecision[];
   readonly attempts: readonly AttemptView[];
@@ -209,14 +252,14 @@ export const isReviewable = (stage: ParsedStage, artifact: string): boolean =>
   Object.values(stage.reviews ?? {}).some((review) => review.of === artifact && review.by === "operator");
 /** The core refuses an operator's edit of an artifact a code worker creates. */
 export const isEditable = (stage: ParsedStage, artifact: string): boolean =>
-  artifact !== "blocker" && Object.values(stage.workers).some((worker) => worker.kind === "agent" && worker.produces.includes(artifact));
+  artifact !== BLOCKER_ARTIFACT && Object.values(stage.workers).some((worker) => worker.kind === "agent" && worker.produces.includes(artifact));
 
 function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly ArtifactView[] {
   const stage = unit.stage === null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
   if (!stage) return [];
   return Object.keys(stage.artifacts).sort().map((artifact) => {
     const revisions = selectRevisionViews({ revisions: revisionsOf(read.revisions, unit.id, artifact), attempts: read.attempts, versions: read.definition.artifact_schema_versions ?? {}, stage: unit.stage ?? "" });
-    return { run_id: unit.run_id, unit_id: unit.id, artifact_key: artifact, schema: selectArtifactSchema(stage, artifact),
+    return { run_id: unit.run_id, unit_id: unit.id, artifact_key: artifact, link_field: stage.artifacts[artifact].link_field ?? null, kind: stage.artifacts[artifact].kind, view: stage.artifacts[artifact].view ?? null, schema: selectArtifactSchema(stage, artifact),
       is_reviewable: isReviewable(stage, artifact), has_assessment_operations: hasAssessmentOperations(stage, artifact), is_editable: isEditable(stage, artifact),
       revision_count: revisions.length, latest_revision: revisions.at(-1) ?? null };
   });
@@ -226,6 +269,22 @@ function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly Artifact
 function decisionKey(stage: ParsedStage, review: string, decision: string): string {
   const reuses = Object.values(stage.reviews ?? {}).filter((candidate) => decision in candidate.decisions).length;
   return reuses > 1 ? `${review}:${decision}` : decision;
+}
+
+function selectOpenReviews(stage: ParsedStage, attention: UnitAttention): readonly OpenReview[] {
+  return attention.awaiting.flatMap((awaiting) => {
+    const review = stage.reviews?.[awaiting.review];
+    if (!review) return [];
+    const decisions = awaiting.decisions.flatMap((resolved): OpenReviewDecision[] => {
+      const decision = review.decisions[resolved.decision];
+      return decision ? [{ key: resolved.decision, label: decision.label, effect: decision.effect,
+        operation: decision.operation ?? "plain", on_artifact: decision.on ?? review.of, target_revision_id: resolved.target }] : [];
+    });
+    return [{ review: awaiting.review, of_artifact: review.of, reviewed_revision_id: awaiting.target,
+      wait: review.wait ?? "operator", confirms: review.confirms ?? null, failure_code: awaiting.failure_code,
+      producer_workers: Object.entries(stage.workers).filter(([, worker]) => worker.produces.includes(review.of)).map(([key]) => key),
+      decisions }];
+  });
 }
 
 function reviewDecisions(stage: ParsedStage, attention: UnitAttention): readonly DecisionDefinition[] {
@@ -269,6 +328,7 @@ export function selectUnitInputFields(unit: UnitView, fields: readonly string[])
 
 export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitAttention): UnitView {
   const tree = selectUnitTree(read.units, read.definition.workflow);
+  const stage = unit.stage === null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
   const reconciliations = read.reconciliations?.filter(({ unit_id }) => unit_id === unit.id) ?? [];
   return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
     blocker: selectBlockerHistory(read, unit),
@@ -279,7 +339,9 @@ export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitA
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),
     attention: selectAttention(attention, read),
     decisions: selectAvailableDecisions(read, unit, attention),
-    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map(selectRevisionDecision),
+    reviews: stage ? selectOpenReviews(stage, attention) : [],
+    workers: Object.entries(stage?.workers ?? {}).map(([key, worker]) => ({ key, label: worker.label ?? key, kind: worker.kind })),
+    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map((decision) => selectRevisionDecision(read, decision)),
     attempts: selectAttemptViews(read.attempts.filter((attempt) => attempt.unit_id === unit.id), read.intents),
     artifacts: selectArtifactViews(read, unit) };
 }

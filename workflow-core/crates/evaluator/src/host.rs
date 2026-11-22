@@ -5,8 +5,8 @@ use workflow_model::protocol::{
     TransportErrorKind, PROTOCOL_VERSION,
 };
 use workflow_model::{
-    BundleDigest, CheckedWorkflow, DomainError, DomainErrorKind, ResourceLimits, StepEntity,
-    StepError,
+    BundleDigest, CheckedGroup, CheckedUnitDependencies, CheckedWorkflow, DomainError, DomainErrorKind,
+    ResourceLimits, StepEntity, StepError, SymbolKey,
 };
 
 const MAX_CACHED_PROGRAMS: usize = 32;
@@ -162,6 +162,7 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
                     .iter()
                     .map(|stage| stage.key.clone())
                     .collect(),
+                unit_dependencies: select_unit_dependencies(&program.root),
                 workflow: Box::new(projected_workflow),
             };
             state.insert(program);
@@ -344,4 +345,25 @@ mod identity_tests {
             }
         }
     }
+}
+
+
+fn select_unit_dependencies(group: &CheckedGroup) -> std::collections::BTreeMap<String, Vec<SymbolKey>> {
+    use std::collections::BTreeMap;
+    fn visit(group: &CheckedGroup, prefix: &str, dependencies: &mut BTreeMap<String, Vec<SymbolKey>>) {
+        for unit in &group.units {
+            let path = format!("{prefix}{}", unit.key);
+            let keys = match &unit.after {
+                CheckedUnitDependencies::Fixed { keys } | CheckedUnitDependencies::Each { keys } => keys.as_slice(),
+                CheckedUnitDependencies::None => &[],
+            };
+            dependencies.insert(path.clone(), keys.iter().map(|key| SymbolKey(format!("{prefix}{key}"))).collect());
+            if let Some(nested) = &unit.group {
+                visit(nested, &format!("{path}/"), dependencies);
+            }
+        }
+    }
+    let mut dependencies = BTreeMap::new();
+    visit(group, "", &mut dependencies);
+    dependencies
 }

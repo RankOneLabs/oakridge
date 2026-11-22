@@ -300,7 +300,7 @@ fn plan() -> Value {
             "id": MODEL, "route": "test/model", "per_attempt_cap_cents": 100,
             "expected_cost_per_attempt": {"cents": 50, "basis": "assumption"}
         }],
-        "slice": {
+        "pilot_selection": {
             "case_ids": SLICE_CASES, "risk_reason": "Qualify the control and one omission.",
             "criteria": [{"id": "sc1", "text": "Both slice cases produce scores."}]
         },
@@ -401,7 +401,7 @@ fn expansion_assessment(head_sha: &str, case_ids: &[&str]) -> Value {
 }
 
 fn pr(branch: &str) -> Value {
-    json!({"pr_url": format!("https://forge/oakridge/{branch}"), "branch": branch, "summary": "Study fixtures"})
+    json!({"change_request_link": format!("https://forge/oakridge/{branch}"), "branch": branch, "summary": "Study fixtures"})
 }
 
 fn slice_output(artifact: &str) -> WorkerOutput<'_> {
@@ -490,7 +490,7 @@ impl Run {
     }
 
     fn observe_pr(&mut self, branch: &str, state: &str) {
-        let body = json!({"state":state,"number":1,"url":pr(branch)["pr_url"]});
+        let body = json!({"state":state,"number":1,"url":pr(branch)["change_request_link"]});
         self.write(
             WorkerOutput {
                 unit: DESIGN,

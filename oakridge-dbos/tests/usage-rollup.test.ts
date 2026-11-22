@@ -115,12 +115,12 @@ test("read boundary fetches each session once per read and degrades failed cover
 
 const reviewRead = (overrides: Record<string, unknown> = {}) => ({ run: { created_at: new Date(0), root_unit_id: "root" }, units: [{ id: "root", status: { kind: "running" } }, { id: "u", stage: "s" }],
   revisions: [{ id: "rev", unit_id: "u", artifact: "pr", seq: 0, created_at: new Date(1000) }], latest_events: [],
-  decisions: ["human","engine","merge_confirmation","pr_closed"].map((review,i) => ({ unit_id: "u", review, target_revision_id: "rev", decision: "approved", created_at: new Date(3000+i*1000) })),
-  definition: { parsed_workflow: { stages: { s: { reviews: { human: { of: "pr", by: "operator", when: "guard" }, engine: { of: "pr", by: "engine" }, merge_confirmation: { of: "pr", by: "operator" }, pr_closed: { of: "pr", by: "operator" } }, workers: { refresh: { kind: "code", every: "1m", produces: ["pr"] } } } } } },
+  decisions: ["human","engine","release_checked","remote_closed"].map((review,i) => ({ unit_id: "u", review, target_revision_id: "rev", decision: "approved", created_at: new Date(3000+i*1000) })),
+  definition: { parsed_workflow: { stages: { s: { reviews: { human: { of: "pr", by: "operator", when: "guard" }, engine: { of: "pr", by: "engine" }, release_checked: { of: "pr", by: "operator", wait: "external" }, remote_closed: { of: "pr", by: "operator", wait: "external" } }, workers: { refresh: { kind: "code", every: "1m", produces: ["pr"] } } } } } },
   ...overrides }) as unknown as RunRead;
 test("review time separates operator, engine and external waits and flags approximations", async () => {
  const { reviewTimes } = await import("../src/projections/usage-time");
- expect(reviewTimes(reviewRead()).map((r) => [r.review,r.kind,r.wait_ms,r.approximate])).toEqual([["human","human",2000,true],["merge_confirmation","external",4000,true],["pr_closed","external",5000,true]]);
+ expect(reviewTimes(reviewRead()).map((r) => [r.review,r.kind,r.wait_ms,r.approximate])).toEqual([["human","human",2000,true],["release_checked","external",4000,true],["remote_closed","external",5000,true]]);
 });
 test("a redirected decision waits from the reviewed artifact's latest revision, not its effect target", async () => {
  const { reviewTimes } = await import("../src/projections/usage-time");

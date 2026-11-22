@@ -386,9 +386,9 @@ stages:
       brief_value: input.brief
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
-      pr_opened: pr_published and latest(pr).pr_url != ""
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
-      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
+      pr_opened: pr_published and latest(pr).change_request_link != ""
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link
       closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
       merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
@@ -399,6 +399,7 @@ stages:
       pr:
         kind: external_reference
         view: pull_request
+        link_field: change_request_link
         schema: pr_body
       assessment:
         kind: assessment
@@ -523,7 +524,7 @@ stages:
       cohort_id: brief_value.cohort_id
       repository_key: input.brief.repository_key
       title: input.cohort.title
-      pr_url: latest(pr).pr_url
+      change_request_link: latest(pr).change_request_link
       branch: latest(pr).branch
       build_result: latest(build_result)
   integration:

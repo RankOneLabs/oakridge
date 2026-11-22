@@ -208,3 +208,18 @@ fn display_declarations_validate_and_project() {
     assert!(errors.iter().any(|error| error.path.0.ends_with("release.confirms")));
     assert!(errors.iter().any(|error| error.path.0.ends_with("release.wait")));
 }
+
+
+#[test]
+fn external_reference_projects_the_declared_link_field() {
+    let mut raw = source();
+    raw["stages"]["work"]["artifacts"]["draft"] = json!({
+        "kind":"external_reference","schema":{"remote_link":"text"},"link_field":"remote_link"
+    });
+    let workflow = compile(raw.clone()).unwrap();
+    assert_eq!(workflow.stages["work"].artifacts["draft"].link_field.as_ref().map(|key| key.0.as_str()), Some("remote_link"));
+
+    raw["stages"]["work"]["artifacts"]["draft"]["schema"]["remote_link"] = json!("integer");
+    let errors = compile(raw).unwrap_err();
+    assert!(errors.iter().any(|error| error.path.0.ends_with("draft.link_field")));
+}

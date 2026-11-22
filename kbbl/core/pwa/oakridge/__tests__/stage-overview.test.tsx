@@ -30,7 +30,7 @@ it("renders recorded input, attempts, sessions, outputs and grading questions fr
   const unit = sampleUnits.find((candidate) => candidate.attempts.length > 0 && candidate.artifacts.some((artifact) => artifact.latest_revision));
   if (!unit) throw new Error("captured fixture requires a published attempt");
   const revisions = unit.artifacts.flatMap((artifact) => artifact.latest_revision ? [artifact.latest_revision] : []);
-  const source = { unit, index: { run_id: unit.run_id, units: sampleUnits, revisions }, artifacts: unit.artifacts.map((artifact) => ({ ...artifact, revisions: artifact.latest_revision ? [artifact.latest_revision] : [], status: "draft" as const, decisions: [], original_spec: null })) };
+  const source = { unit, index: { run_id: unit.run_id, units: sampleUnits, revisions }, artifacts: unit.artifacts.map((artifact) => ({ ...artifact, revisions: artifact.latest_revision ? [artifact.latest_revision] : [], status: "draft" as const, decisions: [], producing_attempt_inputs: null })) };
   const status = itemStatus([supportQuestion()]);
   const evaluation: StageEvaluation = { stages: { state: "loaded", value: [] }, findings: { state: "loaded", value: [] }, tasks: { state: "loaded", value: [] }, links: [], statuses: [{ state: "loaded", value: status }] };
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><StageOverviewContent runId={unit.run_id} label="Recorded stage" inputs={selectStageInputs(source)} execution={selectStageExecution(source)} evaluation={evaluation} artifactState="loaded" onOpenBeside={() => {}} /></QueryClientProvider>);

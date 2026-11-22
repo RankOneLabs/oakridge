@@ -1,15 +1,14 @@
-import type { CurrentAssessment } from "../lib/current-assessment";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
-export const CURRENT_ASSESSMENT: CurrentAssessment = {
+export const CURRENT_ASSESSMENT = {
   head_sha: "current-head", verdict: "pass_with_notes", test_evidence: { passed: 4, failed: 0 },
   item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "met", observation: "The requested behavior works.", evidence: [{ kind: "test", ref: "build.test.ts" }] }],
   additional_findings: [{ id: "F1", severity: "warning", observation: "An unrelated regression needs investigation.", related_build_item_ids: ["B1"], evidence: [{ kind: "file", ref: "regression.ts", detail: "Existing behavior regressed." }] }],
 
 };
-export const MET_WITH_REGRESSION: CurrentAssessment = { ...CURRENT_ASSESSMENT, verdict: "fail", additional_findings: CURRENT_ASSESSMENT.additional_findings.map(finding => ({ ...finding, severity: "blocking" })) };
-export const PARTIAL_ASSESSMENT: CurrentAssessment = { ...CURRENT_ASSESSMENT, verdict: "fail", item_assessments: CURRENT_ASSESSMENT.item_assessments.map(item => ({ ...item, status: "partial" })) };
-export const NOT_MET_ASSESSMENT: CurrentAssessment = { ...PARTIAL_ASSESSMENT, item_assessments: PARTIAL_ASSESSMENT.item_assessments.map(item => ({ ...item, status: "not_met" })) };
-export const CURRENT_INTEGRATION_ASSESSMENT: CurrentAssessment = { ...CURRENT_ASSESSMENT,
+export const MET_WITH_REGRESSION = { ...CURRENT_ASSESSMENT, verdict: "fail", additional_findings: CURRENT_ASSESSMENT.additional_findings.map(finding => ({ ...finding, severity: "blocking" })) };
+export const PARTIAL_ASSESSMENT = { ...CURRENT_ASSESSMENT, verdict: "fail", item_assessments: CURRENT_ASSESSMENT.item_assessments.map(item => ({ ...item, status: "partial" })) };
+export const NOT_MET_ASSESSMENT = { ...PARTIAL_ASSESSMENT, item_assessments: PARTIAL_ASSESSMENT.item_assessments.map(item => ({ ...item, status: "not_met" })) };
+export const CURRENT_INTEGRATION_ASSESSMENT = { ...CURRENT_ASSESSMENT,
   item_assessments: CURRENT_ASSESSMENT.item_assessments.map(item => ({ ...item, subject: { kind: "requirement", id: "R1" } })) };
 
 /** Study's slice report review with its assessment distinct from all decision targets. */

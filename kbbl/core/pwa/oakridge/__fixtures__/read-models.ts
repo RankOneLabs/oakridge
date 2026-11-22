@@ -1,7 +1,6 @@
 import { CURRENT_ASSESSMENT } from "./current-assessments";
 import type { OperatorJsonValue } from "../operator-contracts/domain/primitives";
 import specBody from "./current-spec.json";
-import { OPERATOR_CURRENT_ARTIFACT_VERSIONS } from "../operator-contracts/artifact-versions";
 import currentParked from "./parked-blocker-unit.json";
 import currentBrief from "./current-brief.json";
 import type { OperatorRunView } from "../operator-contracts/projections/run-view";
@@ -22,9 +21,9 @@ export function retryUnit(unitId: string): OperatorUnitView {
   return {
     input_provenance: { status: "unresolved" }, unit_id: `run-1/unit/${unitId}`, run_id: "run-1", unit_key: unitId, label: unitId,
     stage: "cohort", collection_key: unitId, input: {}, depends_on: [], status: { kind: "active" }, outcome: null,
-    is_terminal: false, attention: { kind: "stalled", detail: "worker failed" }, attempts: [], artifacts: [],
+    is_terminal: false, attention: { kind: "stalled", detail: "worker failed", failure_code: null }, attempts: [], artifacts: [],
     decisions: [{ key: "retry:builder", label: "Retry builder", payload_schema: "{}", operation: "plain", assessment: null, fields: [], submit: { kind: "retry", worker: "builder" } }],
-    recorded_decisions: [],
+    recorded_decisions: [], reviews: [], workers: [],
   };
 }
 
@@ -59,16 +58,16 @@ export function currentParkedCohort(): OperatorUnitView {
 
 export function canonicalSpecUnit(): OperatorUnitView {
   const unit = currentParked as unknown as OperatorUnitView;
-  return { ...unit, input: {}, artifacts: [{ run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", schema: "spec_body", is_reviewable: true, has_assessment_operations: false, is_editable: false, revision_count: 1, latest_revision: { id: "spec:1", run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", artifact_schema_version: OPERATOR_CURRENT_ARTIFACT_VERSIONS.spec_body.version, body: specBody, predecessor_id: null, subject_id: null, attempt_id: null, number: 1, created_at: "2026-11-17" } as OperatorUnitView["artifacts"][number]["latest_revision"] }], recorded_decisions: [{ id: "approve:1", review: "spec_review", decision: "approve", effect: "approve", target_revision_id: "spec:1", payload: {}, created_at: "2026-11-17" }] };
+  return { ...unit, input: {}, artifacts: [{ run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", schema: "spec_body", kind: "document", view: "specification", is_reviewable: true, has_assessment_operations: false, is_editable: false, revision_count: 1, latest_revision: { id: "spec:1", run_id: "run", unit_id: unit.unit_id, artifact_key: "spec", artifact_schema_version: "fixture-spec-v1", body: specBody, predecessor_id: null, subject_id: null, attempt_id: null, number: 1, created_at: "2026-11-17" } as OperatorUnitView["artifacts"][number]["latest_revision"] }], recorded_decisions: [{ id: "approve:1", decision_id: "approve:1", actor: null, reviewed_revision_id: "spec:1", approved_assessment_revision_id: null, effect_target_revision_id: "spec:1", review: "spec_review", decision: "approve", effect: "approve", target_revision_id: "spec:1", payload: {}, created_at: "2026-11-17" }] };
 }
 
 /** Current assessment with the core's production build-result redirection. */
 export function currentAdjudicationUnit(): OperatorUnitView {
   const unit_id = "run/cohort";
   const revision = { id: "assessment:1", run_id: "run", unit_id, artifact_key: "assessment", number: 1,
-    artifact_schema_version: OPERATOR_CURRENT_ARTIFACT_VERSIONS.assessment_body.version, attempt_id: null,
+    artifact_schema_version: "fixture-assessment-v1", attempt_id: null,
     body: JSON.parse(JSON.stringify(CURRENT_ASSESSMENT)) as OperatorJsonValue, predecessor_id: null, subject_id: "build:1", created_at: "2026-11-18T00:00:00Z" };
-  const artifact = { run_id: "run", unit_id, artifact_key: "assessment", schema: "assessment_body", is_reviewable: true, has_assessment_operations: true, is_editable: true, revision_count: 1, latest_revision: revision };
+  const artifact = { run_id: "run", unit_id, artifact_key: "assessment", schema: "assessment_body", kind: "assessment" as const, view: "assessment", is_reviewable: true, has_assessment_operations: true, is_editable: true, revision_count: 1, latest_revision: revision };
   return { ...canonicalSpecUnit(), run_id: "run", unit_id, stage: "cohort", artifacts: [artifact], recorded_decisions: [], decisions: ["accept", "request_build_changes"].map(decision => ({
     key: decision, label: decision, payload_schema: "{}", operation: decision === "accept" ? "approve_assessment" as const : "dispatch_feedback" as const, assessment: "assessment", fields: [], submit: { kind: "review", review: "assessment_review", decision,
       target_revision_id: decision === "accept" ? "assessment:1" : "build:1", effect: decision === "accept" ? "approve" : "request_changes" },

@@ -6,7 +6,7 @@ import type { AttemptRecord, RunRecord, UnitRecord } from "../src/storage/schema
 import type { IngressId, UnitId } from "../src/domain/primitives";
 const ingress = (value: string) => value as IngressId;
 
-const unit = { id: "run/analysis", status: { kind: "active" }, blocked_reason: null } as Pick<UnitRecord, "id" | "status" | "blocked_reason">;
+const unit = { id: "run/analysis", stage: "analysis", status: { kind: "active" }, blocked_reason: null } as Pick<UnitRecord, "id" | "stage" | "status" | "blocked_reason">;
 const attempt = (fields: Partial<AttemptRecord>): AttemptRecord => ({ action_id: "a1", seq: 1, run_id: "run", unit_id: "run/analysis", worker: "writer",
   mode: { kind: "initial" }, cause: { kind: "missing" }, status: { kind: "pending" }, kbbl_session_id: null,
   publication_secret_hash: null, created_at: new Date(0), ...fields } as AttemptRecord);
@@ -14,12 +14,12 @@ const failed = attempt({ status: { kind: "failed", code: "worker_exit", detail: 
 
 test("an active unit's worker whose latest attempt failed, with no retry pending, is stalled", () => {
   expect(selectStalledWorkers({ units: [unit], attempts: [failed], retries: [] })).toEqual([
-    { unit_id: "run/analysis", worker: "writer", action_id: "a1", seq: 1, code: "worker_exit", detail: "session stopped" },
+    { unit_id: "run/analysis", worker: "writer", action_id: "a1", seq: 1, code: "worker_exit", failure_code: null, detail: "session stopped" },
   ]);
 });
 
 test("a blocked unit is not counted as an active stalled worker", () => {
-  const blocked = { ...unit, blocked_reason: { kind: "waiting_on", units: ["run/first"] } } as Pick<UnitRecord, "id" | "status" | "blocked_reason">;
+  const blocked = { ...unit, blocked_reason: { kind: "waiting_on", units: ["run/first"] } } as Pick<UnitRecord, "id" | "stage" | "status" | "blocked_reason">;
   expect(selectStalledWorkers({ units: [blocked], attempts: [failed], retries: [] })).toEqual([]);
 });
 
@@ -33,7 +33,7 @@ test("a retry requested but not yet opened clears the stall for its worker", () 
 });
 
 test("a failed attempt on a unit that is no longer active is not a stall", () => {
-  const done = { ...unit, status: { kind: "done", outcome: {} } } as Pick<UnitRecord, "id" | "status" | "blocked_reason">;
+  const done = { ...unit, status: { kind: "done", outcome: {} } } as Pick<UnitRecord, "id" | "stage" | "status" | "blocked_reason">;
   expect(selectStalledWorkers({ units: [done], attempts: [failed], retries: [] })).toEqual([]);
 });
 
@@ -105,4 +105,12 @@ test("a stall repeated after another moves to the end, so the newest is last", (
 test("a fault the core found advancing another unit shows on that unit", () => {
   const found = fault({ unit_id: "run/plan" as CommitFaultNotice["unit_id"], at_unit: "run/work" as CommitFaultNotice["at_unit"] }, 1);
   expect(selectRunStalls(stallSources({ stalls: [], faults: [found] })).map((item) => [item.kind, item.unit_id])).toEqual([["faulted", "run/work"]]);
+});
+
+test("a renamed code worker exposes its structured failure code", () => {
+  const worker = { ...failed, worker: "watcher" };
+  const definition = { parsed_workflow: { stages: { analysis: { workers: {
+    watcher: { kind: "code" },
+  } } } } } as unknown as NonNullable<Parameters<typeof selectStalledWorkers>[0]["definition"]>;
+  expect(selectStalledWorkers({ units: [unit], attempts: [worker], retries: [], definition })[0]?.failure_code).toBe("worker_exit");
 });

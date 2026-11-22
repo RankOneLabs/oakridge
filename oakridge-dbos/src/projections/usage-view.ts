@@ -24,7 +24,7 @@ export function selectRunUsage({ read, sessions, failed_sessions, verification, 
     const unitAttempts = attempts.filter((a) => read.attempts.some((r) => r.unit_id === u.id && attemptKey(r) === attemptKey(a)));
     return { unit_id: u.id, stage: u.stage, collection_key: u.collection_key, attempts: unitAttempts,
       first_pass: sumUsage(unitAttempts.filter((a) => !a.rework)), rework: sumUsage(unitAttempts.filter((a) => a.rework)),
-      reviews: reviews.filter((r) => r.unit_id === u.id).map(({ unit_id, kind, ...review }) => review) };
+      reviews: reviews.filter((r) => r.unit_id === u.id).map(({ unit_id, ...review }) => review) };
   });
   return { run_id: read.run.id, usd_basis: "list_price_equivalent", totals: { ...sumUsage(turns), usd: nullableSum(deltas.map((d) => d.usd)),
     human_wait_ms: reviews.filter((r) => r.kind === "human").reduce((s,r) => s+r.wait_ms,0), external_wait_ms: reviews.filter((r) => r.kind === "external").reduce((s,r) => s+r.wait_ms,0), elapsed_ms: elapsedTime(read, now) },

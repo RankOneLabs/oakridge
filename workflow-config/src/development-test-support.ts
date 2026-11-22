@@ -40,7 +40,7 @@ export const core = started.value;
 export function stageWorkflow(stage: string): AuthoredWorkflow {
   const input = development.stages[stage].input;
   if (typeof input === "string") throw new Error("Expected record stage input");
-  return { ...development, input, run: { units: { unit: { stage, input: Object.fromEntries(Object.keys(input).map(key => [key, `input.${key}`])) } }, outcome: {} } };
+  return { ...development, label: undefined, input, run: { units: { unit: { stage, input: Object.fromEntries(Object.keys(input).map(key => [key, `input.${key}`])) } }, outcome: {} } };
 }
 
 export class TestRun {
@@ -110,5 +110,5 @@ export function cohort(id = "C1", ids = ["R1", "R2"], depends_on: string[] = [])
 export function brief(c = cohort()): BriefBody { return {cohort_id: c.id, repository_key: c.repository_key, depends_on: c.depends_on, files_in_scope: [], build_items: c.allocations.map((a, i) => ({id: `B${i+1}`, requirement_ids: [a.requirement_id], instructions: a.contribution, verification: ["Verify behavior"]})), technical_decisions: [{id: "D1", build_item_ids: ["B1"], decision: "Existing pattern", rationale: "Precedent"}]}; }
 export function assessment(kind: "build_item" | "requirement" = "build_item"): AssessmentBody { return {head_sha: "sha", item_assessments: (kind === "build_item" ? ["B1", "B2"] : ["R1", "R2"]).map(id => ({subject: {kind, id}, status: "met", observation: "Verified", evidence: []})), additional_findings: [], proposals: [], verifications: [], test_evidence: {passed: 1, failed: 0}, verdict: "pass"}; }
 export const buildResult = {head_sha: "sha", summary: "Built", changed_files: [], tests: {passed: 1, failed: 0}, known_issues: []};
-export const pr = {pr_url: "https://example.com/pr/1", branch: "feature", summary: "Change", review_status: "draft"};
+export const pr = {change_request_link: "https://example.com/pr/1", branch: "feature", summary: "Change", review_status: "draft"};
 export function validationFeedback(run: TestRun): string { return JSON.stringify(run.result.snapshot.decisions); }

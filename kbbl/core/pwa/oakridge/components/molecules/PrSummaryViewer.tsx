@@ -4,8 +4,8 @@ import { isWebUrl, parsePrSummary, selectPullRequestLabel } from "../../lib/pr-s
 import { selectStatusTone } from "../../lib/status-tone";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 
-export function PrSummaryViewer({ body, source }: ViewerProps) {
-  const parsed = parsePrSummary(body);
+export function PrSummaryViewer({ body, source, linkField }: ViewerProps) {
+  const parsed = parsePrSummary(body, linkField ?? "");
   if (!parsed.ok) {
     return <div className="or-error" role="alert">This PR summary does not match the registered contract ({parsed.error.field}: {parsed.error.detail}).</div>;
   }

@@ -5,14 +5,12 @@ import type { OperatorEvent, OperatorUnitStatus, OperatorWriter } from "../core-
 import type { OperatorPrIntegration } from "../domain/pr-integration";
 import type { OperatorRunStall } from "./attention";
 import type { OperatorActionHistoryEntry } from "./operator-actions";
-import type { OperatorRequirementRollup } from "./requirement-rollup";
 import type { OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition } from "./unit-view";
 
 export interface OperatorRunPage { readonly items: readonly OperatorRunView[]; readonly next_cursor: string | null }
 
 export interface OperatorRunView extends OperatorRunSummary {
   readonly operator_actions?: readonly OperatorActionHistoryEntry[];
-  readonly requirement_rollup?: readonly OperatorRequirementRollup[];
   readonly open_blockers?: readonly { readonly unit_id: string; readonly revision_id: string }[];
   readonly units: readonly OperatorRunUnitSummary[]
 }

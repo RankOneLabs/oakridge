@@ -9,7 +9,7 @@ import { BuildResultViewer } from "../molecules/BuildResultViewer";
 export function BuildResultReview({ body, source, onOpenTask, onOpenItem, itemGrading }: ViewerProps) {
   const parsed = useMemo(() => parseBuildResult(body), [body]);
   const cohortLabel = source?.label ?? (parsed.ok ? parsed.value.delegated_session_metadata?.cohort_id ?? null : null);
-  const brief = useCohortArtifact({ source, cohort_label: cohortLabel, type_id: "dev.build_brief", read: readBuildBrief });
+  const brief = useCohortArtifact({ source, cohort_label: cohortLabel, view: "build_brief", read: readBuildBrief });
 
   if (!parsed.ok) {
     return <div className="or-error" role="alert">This build result does not match the registered contract ({parsed.error.field}: {parsed.error.detail}).</div>;

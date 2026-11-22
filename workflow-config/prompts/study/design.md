@@ -10,7 +10,7 @@ Every `plan_body` field is required.
 - `outcomes` with `{id, rule}` entries, each with a mechanical rule
 - `decision_rule` with ordered `{condition, next_step}` rows
 - `models` with `{id, route, per_attempt_cap_cents, expected_cost_per_attempt: {cents, basis}}` entries, where `basis` is `measured` or `assumption`
-- `slice` with `{case_ids, risk_reason, criteria}`, with `{id, text}` for each criterion
+- `pilot_selection` with `{case_ids, risk_reason, criteria}`, with `{id, text}` for each criterion
 - `full_study_repeats` for the full study
 - `slice_paid` with `{models, repeats, cap_cents}`
 - `iteration_triggers` with `{id, text}` entries

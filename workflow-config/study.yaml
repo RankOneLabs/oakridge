@@ -50,7 +50,7 @@ schemas:
     outcomes: list(plan_outcome)
     decision_rule: list(decision_row)
     models: list(plan_model)
-    slice: plan_slice
+    pilot_selection: plan_slice
     slice_paid: slice_paid_plan
     full_study_repeats: integer
     iteration_triggers: list(plan_item)
@@ -62,7 +62,7 @@ schemas:
     changed_files: list(text)
   completed_cohort:
     repository_key: ident
-    pr_url: text
+    change_request_link: text
     branch: text
     build_result: build_summary
   case_qualification:
@@ -168,13 +168,13 @@ run:
         slice_cap_cents: input.slice_cap_cents
         approved_plan: input.approved_plan
     expansion:
-      for_each: filter(design.outcome.plan.groups, len(filter(item.case_ids, not contains(design.outcome.plan.slice.case_ids, item))) > 0)
+      for_each: filter(design.outcome.plan.groups, len(filter(item.case_ids, not contains(design.outcome.plan.pilot_selection.case_ids, item))) > 0)
       key: each.id
       stage: expand
       pool: expanders
       input:
         group_id: each.id
-        case_ids: filter(each.case_ids, not contains(design.outcome.plan.slice.case_ids, item))
+        case_ids: filter(each.case_ids, not contains(design.outcome.plan.pilot_selection.case_ids, item))
         generator_digest: design.outcome.generator_digest
         digest_recipe: design.outcome.digest_recipe
         plan: design.outcome.plan
@@ -218,9 +218,9 @@ stages:
       spend_matches_build: published(slice_build) and published(spend_request) and latest(spend_request).generator_digest == latest(slice_build).generator_digest and every(latest(spend_request).case_ids, contains(latest(slice_build).case_ids, item)) and every(latest(slice_build).case_ids, contains(latest(spend_request).case_ids, item))
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
-      pr_opened: pr_published and latest(pr).pr_url != ""
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
-      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
+      pr_opened: pr_published and latest(pr).change_request_link != ""
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link
       closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
       merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
@@ -233,7 +233,7 @@ stages:
             message: "The plan needs at least one outcome."
           - check: len(plan.decision_rule) > 0
             message: "The plan needs at least one decision rule."
-          - check: len(plan.slice.criteria) > 0
+          - check: len(plan.pilot_selection.criteria) > 0
             message: "The slice needs at least one criterion."
           - check: len(plan.iteration_triggers) > 0
             message: "The plan needs at least one iteration trigger."
@@ -241,11 +241,11 @@ stages:
             message: "The full study needs at least one repeat."
           - check: len(plan.cases) > 0 and len(plan.hypotheses) > 0
             message: "The plan needs at least one case and one hypothesis."
-          - check: every(plan.slice.case_ids, contains(map(plan.cases, item.id), item))
+          - check: every(plan.pilot_selection.case_ids, contains(map(plan.cases, item.id), item))
             message: "Every slice id must be a case id."
-          - check: len(plan.slice.case_ids) <= input.slice_case_limit
+          - check: len(plan.pilot_selection.case_ids) <= input.slice_case_limit
             message: "The slice may hold at most the workflow's slice case limit."
-          - check: len(filter(plan.cases, item.is_control == true)) == 0 or len(filter(plan.cases, item.is_control == true and contains(plan.slice.case_ids, item.id))) > 0
+          - check: len(filter(plan.cases, item.is_control == true)) == 0 or len(filter(plan.cases, item.is_control == true and contains(plan.pilot_selection.case_ids, item.id))) > 0
             message: "When any case is a control, the slice must include a control case."
           - check: plan.slice_paid.cap_cents > 0 and plan.slice_paid.cap_cents <= input.slice_cap_cents
             message: "The paid slice cap must be above zero and at most the workflow's slice cap."
@@ -261,13 +261,13 @@ stages:
             message: "Paid slice models must be plan models."
           - check: unique(map(plan.groups, item.id)) and unique(map(plan.hypotheses, item.id))
             message: "Group and hypothesis ids must be unique."
-          - check: len(plan.slice.case_ids) > 0
+          - check: len(plan.pilot_selection.case_ids) > 0
             message: "The slice needs at least one case."
           - check: len(plan.slice_paid.models) > 0
             message: "The paid slice needs at least one model."
           - check: plan.slice_paid.repeats > 0
             message: "The paid slice needs at least one repeat."
-          - check: unique(map(plan.slice.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.slice.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))
+          - check: unique(map(plan.pilot_selection.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.pilot_selection.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))
             message: "Slice criteria and iteration triggers must have distinct ids."
       slice_build:
         kind: document
@@ -277,7 +277,7 @@ stages:
             message: "Every slice case must pass qualification: reference passes, omissions isolated and controls replayed."
           - check: len(slice_build.digest_recipe.files) > 0 and slice_build.digest_recipe.command != ""
             message: "The digest recipe needs files and a hashing command."
-          - check: published(plan) and every(slice_build.case_ids, contains(latest(plan).slice.case_ids, item)) and every(latest(plan).slice.case_ids, contains(slice_build.case_ids, item))
+          - check: published(plan) and every(slice_build.case_ids, contains(latest(plan).pilot_selection.case_ids, item)) and every(latest(plan).pilot_selection.case_ids, contains(slice_build.case_ids, item))
             message: "The slice build must cover exactly the plan's slice cases."
           - check: every(slice_build.qualifications, contains(slice_build.case_ids, item.case_id)) and every(slice_build.case_ids, contains(map(slice_build.qualifications, item.case_id), item))
             message: "Every slice case needs a qualification result."
@@ -304,7 +304,7 @@ stages:
             message: "Paid results may name only the plan's paid slice models."
           - check: published(spend_request) and len(slice_report.paid_results) <= latest(spend_request).attempt_count
             message: "A report may hold at most the approved attempt count of results."
-          - check: published(plan) and every(slice_report.criteria_marks, contains(map(latest(plan).slice.criteria, item.id), item.id))
+          - check: published(plan) and every(slice_report.criteria_marks, contains(map(latest(plan).pilot_selection.criteria, item.id), item.id))
             message: "Criterion marks may name only plan slice criteria."
           - check: published(plan) and every(slice_report.trigger_marks, contains(map(latest(plan).iteration_triggers, item.id), item.id))
             message: "Trigger marks may name only plan iteration triggers."
@@ -312,13 +312,13 @@ stages:
             message: "The paid run produced no results. Revise the report from the same execution; do not request new spend."
           - check: approved(spend_request)
             message: "Paid results need an approved spend request."
-          - check: published(plan) and every(map(latest(plan).slice.criteria, item.id), contains(map(slice_report.criteria_marks, item.id), item))
+          - check: published(plan) and every(map(latest(plan).pilot_selection.criteria, item.id), contains(map(slice_report.criteria_marks, item.id), item))
             message: "Every plan slice criterion must be marked."
           - check: published(plan) and every(map(latest(plan).iteration_triggers, item.id), contains(map(slice_report.trigger_marks, item.id), item))
             message: "Every plan iteration trigger must be marked."
-          - check: published(plan) and every(map(slice_report.qualifications, item.case_id), contains(latest(plan).slice.case_ids, item)) and every(latest(plan).slice.case_ids, contains(map(slice_report.qualifications, item.case_id), item))
+          - check: published(plan) and every(map(slice_report.qualifications, item.case_id), contains(latest(plan).pilot_selection.case_ids, item)) and every(latest(plan).pilot_selection.case_ids, contains(map(slice_report.qualifications, item.case_id), item))
             message: "The report's case ids must equal the plan's slice ids."
-          - check: published(plan) and every(slice_report.paid_results, contains(latest(plan).slice.case_ids, item.case_id))
+          - check: published(plan) and every(slice_report.paid_results, contains(latest(plan).pilot_selection.case_ids, item.case_id))
             message: "Paid results may name only slice cases."
           - check: published(slice_build) and slice_report.generator_digest == latest(slice_build).generator_digest
             message: "The report's generator digest must equal the latest slice build's."
@@ -335,9 +335,9 @@ stages:
             message: A cited proposal must name its source revision.
           - check: published(slice_build) and slice_assessment.head_sha == latest(slice_build).build.head_sha
             message: "The slice assessment's head must equal the latest slice build's."
-          - check: published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == "case"), contains(latest(plan).slice.case_ids, item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == "case"), contains(latest(plan).slice.case_ids, item.id))
+          - check: published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == "case"), contains(latest(plan).pilot_selection.case_ids, item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == "case"), contains(latest(plan).pilot_selection.case_ids, item.id))
             message: "Case subjects and related subjects must resolve within the reviewed scope."
-          - check: published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == "criterion"), contains(map(latest(plan).slice.criteria, item.id), item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == "criterion"), contains(map(latest(plan).slice.criteria, item.id), item.id))
+          - check: published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == "criterion"), contains(map(latest(plan).pilot_selection.criteria, item.id), item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == "criterion"), contains(map(latest(plan).pilot_selection.criteria, item.id), item.id))
             message: "Criterion subjects and related subjects must resolve within the reviewed scope."
           - check: published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == "trigger"), contains(map(latest(plan).iteration_triggers, item.id), item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == "trigger"), contains(map(latest(plan).iteration_triggers, item.id), item.id))
             message: "Trigger subjects and related subjects must resolve within the reviewed scope."
@@ -345,7 +345,7 @@ stages:
             message: "Slice assessments cannot link cohort_file subjects."
           - check: published(slice_report) and slice_assessment.run_key == latest(slice_report).run_key
             message: "The assessment must name the latest slice report's run key."
-          - check: published(plan) and every(map(latest(plan).slice.criteria, item.id), contains(map(filter(slice_assessment.item_assessments, item.subject.kind == "criterion"), item.subject.id), item))
+          - check: published(plan) and every(map(latest(plan).pilot_selection.criteria, item.id), contains(map(filter(slice_assessment.item_assessments, item.subject.kind == "criterion"), item.subject.id), item))
             message: "Every slice criterion must be assessed."
           - check: published(plan) and every(map(latest(plan).iteration_triggers, item.id), contains(map(filter(slice_assessment.item_assessments, item.subject.kind == "trigger"), item.subject.id), item))
             message: "Every iteration trigger must be assessed."
@@ -360,6 +360,7 @@ stages:
       pr:
         kind: external_reference
         view: pull_request
+        link_field: change_request_link
         schema: pr_body
       pr_state:
         kind: status_record
@@ -558,7 +559,7 @@ stages:
       generator_digest: latest(slice_build).generator_digest
       digest_recipe: latest(slice_build).digest_recipe
       slice_report: latest(slice_report)
-      cohort: "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(slice_build).build}"
+      cohort: "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(slice_build).build}"
   expand:
     input:
       group_id: ident
@@ -571,9 +572,9 @@ stages:
     let:
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
-      pr_opened: pr_published and latest(pr).pr_url != ""
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
-      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
+      pr_opened: pr_published and latest(pr).change_request_link != ""
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link
       closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
       merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
@@ -623,6 +624,7 @@ stages:
       pr:
         kind: external_reference
         view: pull_request
+        link_field: change_request_link
         schema: pr_body
       pr_state:
         kind: status_record
@@ -719,7 +721,7 @@ stages:
     done_when: approved(assessment) and published(expansion) and pr_published and (merged_pr or approved(pr))
     outcome:
       repository_key: input.repository.key
-      pr_url: latest(pr).pr_url
+      change_request_link: latest(pr).change_request_link
       branch: latest(pr).branch
       build_result: latest(expansion).build
   freeze:
@@ -734,9 +736,9 @@ stages:
     let:
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
-      pr_opened: pr_published and latest(pr).pr_url != ""
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
-      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
+      pr_opened: pr_published and latest(pr).change_request_link != ""
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link
       closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
       merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
@@ -765,6 +767,7 @@ stages:
       pr:
         kind: external_reference
         view: pull_request
+        link_field: change_request_link
         schema: pr_body
       pr_state:
         kind: status_record
@@ -838,7 +841,7 @@ stages:
     done_when: approved(freeze) and pr_published and (merged_pr or approved(pr))
     outcome:
       freeze: latest(freeze)
-      cohort: "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(freeze).build}"
+      cohort: "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(freeze).build}"
   integration:
     input:
       slice_cohort: completed_cohort

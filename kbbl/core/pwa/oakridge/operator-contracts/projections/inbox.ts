@@ -9,7 +9,7 @@ export type OperatorInboxItem =
     /** The awaiting review's prompt, rendered with its resolved inputs; null for a retry. */
     readonly prompt: string | null }
   | { readonly kind: "waiting"; readonly run_id: string; readonly unit_id: string; readonly reason: string; readonly label: string }
-  | { readonly kind: "stalled"; readonly run_id: string; readonly unit_id: string; readonly detail: string };
+  | { readonly kind: "stalled"; readonly run_id: string; readonly unit_id: string; readonly detail: string; readonly failure_code: string | null };
 
 export interface OperatorInboxPage { readonly items: readonly OperatorInboxItem[]; readonly next_cursor: string | null }
 

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { invalidateCachedRunUnits, refreshReviewInboxRun } from "../client";
-import { replaceDevelopmentInboxRun } from "../adapters/inbox";
+import { replaceInboxRun } from "../adapters/inbox";
 import type { OperatorStreamInvalidation } from "../operator-contracts/projections/operator-event";
 import type { ArtifactDetail, ReviewInbox } from "../artifact-types";
 import { subscribeOakridgeStream } from "./useOakridgeRunEventStream";
@@ -28,7 +28,7 @@ export function useOakridgeInvalidationStream(isEnabled: boolean): void {
       void refreshReviewInboxRun(runId, current).then((updated) => {
         if (!isActive || latestRefresh.get(runId) !== generation) return;
         client.setQueryData<ReviewInbox>(["oakridge", "review-inbox"], (latest) =>
-          latest ? replaceDevelopmentInboxRun(latest, runId, updated) : updated);
+          latest ? replaceInboxRun(latest, runId, updated) : updated);
       }).catch(() => {
         if (isActive && latestRefresh.get(runId) === generation)
           void client.invalidateQueries({ queryKey: ["oakridge", "review-inbox"] });

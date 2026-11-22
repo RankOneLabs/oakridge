@@ -1,6 +1,6 @@
 // The validator's recorded rejection of a revision, read from the authority's decision history; never re-derived from the rules.
 import type { OperatorDecisionDefinition, OperatorRevisionDecision } from "../operator-contracts/projections/unit-view";
-import { VALIDATION_REVIEW } from "../operator-contracts/validation";
+import { VALIDATION_REVIEW } from "../operator-contracts/constants";
 
 const selectFeedbackText = (payload: OperatorRevisionDecision["payload"]): string | null =>
   typeof payload === "object" && payload !== null && "feedback" in payload && typeof payload.feedback === "string" ? payload.feedback : null;

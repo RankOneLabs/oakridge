@@ -16,7 +16,7 @@ export const studyBodies: Readonly<Record<string, JsonValue>> = {
     cases: [{ id: "A1", group: "group", is_control: true }], groups: [{ id: "group", case_ids: ["A1"] }],
     outcomes: [{ id: "O1", rule: "Compare the control" }], decision_rule: [{ condition: "Comparable", next_step: "Expand" }],
     models: [{ id: "M1", route: "test/model", per_attempt_cap_cents: 50, expected_cost_per_attempt: { cents: 20, basis: "assumption" } }],
-    slice: { case_ids: ["A1"], risk_reason: "Control", criteria: [{ id: "A1", text: "Control scores" }] },
+    pilot_selection: { case_ids: ["A1"], risk_reason: "Control", criteria: [{ id: "A1", text: "Control scores" }] },
     slice_paid: { models: ["M1"], repeats: 1, cap_cents: 50 },
     full_study_repeats: 1, iteration_triggers: [{ id: "T1", text: "Revisit if its control fails" }],
   },

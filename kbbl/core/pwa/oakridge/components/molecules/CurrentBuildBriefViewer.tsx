@@ -1,6 +1,5 @@
 import type { ViewerProps } from "../../artifactRegistry";
-import { parseCurrentBrief } from "../../lib/build-brief";
-import type { CurrentBrief } from "../../lib/current-contract";
+import { parseCurrentBrief, type CurrentBrief } from "../../lib/current-contract";
 import { selectBriefSections, selectCurrentBuildItems, type BriefSection } from "../../lib/current-brief";
 import { selectFindingSelections } from "../../lib/grading";
 import { selectBriefItemPaths } from "../../lib/current-item-paths";
@@ -48,8 +47,7 @@ function EnvelopePanel({ brief }: { brief: CurrentBrief }) {
 }
 
 export function CurrentBuildBriefViewer(props: ViewerProps) {
-  const parsed = props.currentRead?.ok === false ? props.currentRead
-    : props.currentRead?.value?.kind === "brief" ? { ok: true as const, value: props.currentRead.value.body } : parseCurrentBrief(props.body);
+  const parsed = parseCurrentBrief(props.body);
   if (!parsed.ok) return <CurrentParseFailure body={props.body} detail={parsed.error.detail} />;
   const brief = parsed.value;
   return <article className="space-y-4" data-testid="or-current-brief-viewer">

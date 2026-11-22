@@ -1,14 +1,14 @@
 // Generated from oakridge-dbos/src/http/operator-api.ts. Run bun kbbl/scripts/generate-operator-contracts.ts.
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
-import type { OperatorAuthoredWorkflow, OperatorParsedWorkflow, OperatorWorkflow } from "../core-client/core-types";
+import type { OperatorAuthoredWorkflow, OperatorCompiledWorkflow, OperatorParsedWorkflow, OperatorWorkflow } from "../core-client/core-types";
 import type { OperatorSchema } from "./schema-view";
 
 export interface OperatorDefinitionPage { readonly items: readonly OperatorDefinitionSummary[]; readonly next_cursor: string | null }
 
 export interface OperatorDefinitionSummary { readonly definition_id: string; readonly bundle: OperatorDefinitionBundle }
 
-export interface OperatorDefinitionDetail extends OperatorDefinitionSummary { readonly prompts: OperatorDefinitionPrompts; readonly workflow: OperatorWorkflow | OperatorAuthoredWorkflow; readonly effective_workflow: OperatorParsedWorkflow; readonly graph: OperatorDefinitionGraph }
+export interface OperatorDefinitionDetail extends OperatorDefinitionSummary { readonly prompts: OperatorDefinitionPrompts; readonly workflow: OperatorWorkflow | OperatorAuthoredWorkflow; readonly effective_workflow: OperatorParsedWorkflow; readonly graph: OperatorDefinitionGraph; readonly worker_names?: Readonly<Record<string, readonly string[]>>; readonly assessment_embeddings: OperatorCompiledWorkflow["assessments"] }
 
 export interface OperatorPinnedDefinition extends OperatorDefinitionSummary { readonly effective_workflow: OperatorParsedWorkflow }
 

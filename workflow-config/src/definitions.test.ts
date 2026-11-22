@@ -655,6 +655,7 @@ test("authored audiences travel with the committed definitions", () => {
     development: "user",
     study: "user",
     "fan-out": "test_fixture",
+    portability: "test_fixture",
     "review-loop": "test_fixture",
   });
   expect(Object.values(catalog).every((entry) => resolveDefinition(entry.definition_id).ok)).toBe(true);

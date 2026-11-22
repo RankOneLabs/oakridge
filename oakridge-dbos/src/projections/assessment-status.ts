@@ -15,9 +15,21 @@ export function selectRoundProgress(facts: AssessmentFacts, round: AssignmentRou
     ? "accepted_by_operator" : "returned_for_update";
 }
 
-export function selectAssessmentStatus(facts: AssessmentFacts): AssessmentStatus {
+export interface AssessmentItemSource {
+  readonly item: string;
+  readonly proposal_key: string | null;
+  readonly instruction: string;
+}
+
+export interface AssessmentRead extends AssessmentStatus {
+  readonly item_sources: readonly AssessmentItemSource[];
+}
+
+export function selectAssessmentStatus(facts: AssessmentFacts): AssessmentRead {
   return {
     unit: facts.unit, assessment_artifact: facts.artifact, assessment_revision: facts.revision,
+    item_sources: facts.items.map((item) => ({ item: item.id, instruction: item.instruction,
+      proposal_key: item.origin.kind === "proposal" && item.origin.revision === facts.revision ? item.origin.key : null })),
     approval: facts.approval?.assessment_revision === facts.revision
       ? { kind: "approved", approval: facts.approval.id } : { kind: "pending" },
     unresolved_proposals: facts.items.filter(item => item.origin.kind === "proposal"

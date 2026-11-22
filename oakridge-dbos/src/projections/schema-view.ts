@@ -136,7 +136,8 @@ export function selectWorkflowSchemas(workflow: ParsedWorkflow, order?: SchemaOr
       for (const decision of Object.values(review.decisions)) nodes.push(selectDecisionPayloadType(decision, reviewKey));
   }
   const aliases = workflow.schemas ?? {};
-  const all = [...(order?.schema_names ?? Object.keys(aliases)).flatMap((name) => aliasSchemas(name, aliases)), ...nodes.flatMap(nodeSchemas)];
+  const names = new Set([...(order?.schema_names ?? []), ...Object.keys(aliases)]);
+  const all = [...[...names].flatMap((name) => aliasSchemas(name, aliases)), ...nodes.flatMap(nodeSchemas)];
   const seen = new Set<string>();
   return all.filter((schema) => !seen.has(schema.key) && !!seen.add(schema.key));
 }

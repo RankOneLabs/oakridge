@@ -1,6 +1,7 @@
 import type { RuntimeModelSelection } from "../../types";
 import type { CreateRunContext, LaunchSessionSettings } from "../project-types";
 import type { ModelRole } from "./runtime-selection";
+import type { OperatorDefinitionGraph } from "../operator-contracts/projections/definition-view";
 import type { Result } from "../../lib/result";
 
 /** Anything the launch form offers one runtime/model picker for. */
@@ -31,6 +32,8 @@ export type SessionModelMode = "by_role" | "by_session";
 interface AgentWorkerDeclaration {
   readonly kind?: string | null;
   readonly template?: string;
+  readonly label?: string | null;
+  readonly overrides?: { readonly label?: string | null } | null;
 }
 export interface AgentWorkerWorkflow {
   readonly workflow: string;
@@ -38,29 +41,38 @@ export interface AgentWorkerWorkflow {
   readonly stages: Readonly<{ [stage: string]: { readonly workers: Readonly<{ [worker: string]: AgentWorkerDeclaration }> } }>;
 }
 
-const DEVELOPMENT_STAGE_ORDER = ["analysis", "planning", "brief", "cohort", "integration"] as const;
-const developmentOrder = (stage: string): number => {
-  const index = DEVELOPMENT_STAGE_ORDER.findIndex((candidate) => candidate === stage);
-  return index < 0 ? DEVELOPMENT_STAGE_ORDER.length : index;
-};
+function stageLevels(graph: OperatorDefinitionGraph): ReadonlyMap<string, number> {
+  const levels = new Map<string, number>();
+  const nodes = new Map(graph.nodes.map((node) => [node.key, node]));
+  const visiting = new Set<string>();
+  const level = (key: string): number => {
+    const cached = levels.get(key);
+    if (cached !== undefined) return cached;
+    const node = nodes.get(key);
+    if (!node || visiting.has(key)) return -1;
+    visiting.add(key);
+    const depth = Math.max(-1, ...node.depends_on.map(level)) + 1;
+    visiting.delete(key);
+    levels.set(key, depth);
+    return depth;
+  };
+  const stages = new Map<string, number>();
+  for (const node of graph.nodes) stages.set(node.stage, Math.min(stages.get(node.stage) ?? Infinity, level(node.key)));
+  return stages;
+}
 
-const suggestedRole = (workflow: string, stage: string, worker: string): ModelRole =>
-  workflow === "development" && (["analysis", "planning", "brief", "integration"].includes(stage) || (stage === "cohort" && worker === "assessor"))
-    ? "planner" : "worker";
-
-/** The workflow definition, rather than a hard-coded cohort list, determines
- * which sessions the launch form can configure. Code workers have no model. */
-export function selectAgentSessionTargets(workflow: AgentWorkerWorkflow): readonly AgentSessionTarget[] {
-  const targets = Object.entries(workflow.stages).flatMap(([stage, definition]) =>
-    Object.entries(definition.workers).filter(([, declaration]) =>
-      (declaration.template ? workflow.workers?.[declaration.template]?.kind : declaration.kind) === "agent")
-      .map(([worker]) => ({
-      key: JSON.stringify([stage, worker]), stage, worker, label: `${stage} · ${worker}`,
-      suggested_role: suggestedRole(workflow.workflow, stage, worker),
-    })));
-  return targets.sort((left, right) => developmentOrder(left.stage) - developmentOrder(right.stage)
-    || (left.stage === "cohort" ? (left.worker === "builder" ? -1 : right.worker === "builder" ? 1 : 0) : 0)
-    || left.key.localeCompare(right.key));
+export function selectAgentSessionTargets(workflow: AgentWorkerWorkflow, graph?: OperatorDefinitionGraph, workerNames?: Readonly<Record<string, readonly string[]>>): readonly AgentSessionTarget[] {
+  const levels = graph ? stageLevels(graph) : new Map<string, number>();
+  return Object.entries(workflow.stages)
+    .sort(([left], [right]) => (levels.get(left) ?? Infinity) - (levels.get(right) ?? Infinity))
+    .flatMap(([stage, definition]) => (workerNames?.[stage] ?? Object.keys(definition.workers)).flatMap((worker): AgentSessionTarget[] => {
+      const declaration = definition.workers[worker];
+      if (!declaration) return [];
+      const template = declaration.template ? workflow.workers?.[declaration.template] : undefined;
+      if ((template?.kind ?? declaration.kind) !== "agent") return [];
+      const label = declaration.overrides?.label ?? declaration.label ?? template?.label ?? worker;
+      return [{ key: JSON.stringify([stage, worker]), stage, worker, label: `${stage} · ${label}`, suggested_role: "worker" }];
+    }));
 }
 
 export type SessionSelectionMap = Readonly<{ [key: string]: RuntimeModelSelection }>;
@@ -104,7 +116,5 @@ export function selectLaunchSessionSettings(targets: readonly AgentSessionTarget
     workers.set(target.worker, { harness: selection.runtime, model: selection.model, effort: selection.effort ?? null });
     settings.set(target.stage, workers);
   }
-  if (settings.size === 0)
-    return { ok: false, error: { operation: "select_session_settings", detail: "The selected workflow has no agent sessions." } };
   return { ok: true, value: Object.fromEntries([...settings].map(([stage, workers]) => [stage, Object.fromEntries(workers)])) };
 }

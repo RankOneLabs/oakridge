@@ -8,5 +8,5 @@ export interface ManualMergeInput {
 }
 export function selectManualMergeIndication({ run, unit, definition }: ManualMergeInput): boolean {
   if (run.pr_integration !== "github-cli" || unit.stage === null) return false;
-  return Boolean(definition.effective_workflow.stages[unit.stage]?.reviews?.merge_confirmation?.decisions.confirm_merged);
+  return Object.values(definition.effective_workflow.stages[unit.stage]?.reviews ?? {}).some((review) => review.confirms === "merge");
 }

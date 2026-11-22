@@ -11,7 +11,7 @@ export interface UsageAmount { tokens: UsageTokens; usd: number | null; agent_ms
 export interface AttributedTurn extends UsageAmount { sid: string; turn_key: string; source: UsageTurn["source"]; kind: "delivered" | "incidental"; status: UsageTurn["status"]; coverage: "reported" | "partial" | "absent"; queue_ms: number | null }
 export interface UsageBackground { usd: number | null }
 export interface UsageAttempt extends UsageAmount { action_id: ActionId; seq: number; worker: string; rework: boolean; turns: AttributedTurn[]; background: UsageBackground }
-export interface UsageReview { review: string; decision: string; wait_ms: number; approximate: boolean }
+export interface UsageReview { review: string; decision: string; kind: "human" | "external"; wait_ms: number; approximate: boolean }
 export interface UsageUnit { unit_id: UnitId; stage: string | null; collection_key: string | null; first_pass: UsageAmount; rework: UsageAmount; attempts: UsageAttempt[]; reviews: UsageReview[] }
 export interface UsageTotals extends UsageAmount { human_wait_ms: number; external_wait_ms: number; elapsed_ms: number }
 export interface UsageVerification { usd: number; usd_basis: "provider_charged" }

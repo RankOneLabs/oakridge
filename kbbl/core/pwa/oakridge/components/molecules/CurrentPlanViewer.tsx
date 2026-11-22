@@ -46,8 +46,7 @@ function CohortCard({ row: { cohort, cohort_index: cohortIndex, wave_number }, i
 
 export function CurrentPlanViewer(props: ViewerProps) {
   const [selectedCohortId, setSelectedCohortId] = useState<CurrentCohort["id"] | null>(null);
-  const parsed = props.currentRead?.ok === false ? props.currentRead
-    : props.currentRead?.value?.kind === "plan" ? { ok: true as const, value: props.currentRead.value.body } : parseCurrentPlan(props.body);
+  const parsed = parseCurrentPlan(props.body);
   const cohorts = parsed.ok ? parsed.value.cohorts : null;
   const layout = useMemo(() => cohorts ? selectPlanGraphLayout(cohorts) : null, [cohorts]);
   if (!parsed.ok) return <CurrentParseFailure body={props.body} detail={parsed.error.detail} />;

@@ -32,7 +32,7 @@ export interface PlanRisk {
   mitigation: string;
 }
 
-/** Mirrors the registered oakridge-dbos `dev.plan` artifact body. */
+/** Mirrors the registered plan artifact body. */
 export interface Plan {
   summary: string;
   cohorts: PlanCohort[];

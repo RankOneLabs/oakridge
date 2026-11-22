@@ -106,6 +106,7 @@ impl<'a> From<&'a Artifact> for ArtifactFingerprint<'a> {
         let Artifact {
             kind: _, // Presentation metadata is deliberately absent from the fingerprint.
             view: _,
+            link_field: _,
             schema,
             edit_policy,
             validate,

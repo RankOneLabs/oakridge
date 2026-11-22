@@ -10,7 +10,7 @@ import sample from "../__fixtures__/v2-adapter-sample.json";
 import definitionFixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { compositeId } from "../adapters/core";
-import { classifyDevelopmentInbox } from "../adapters/inbox";
+import { classifyRunInbox } from "../adapters/inbox";
 import { withUnitFields } from "../__fixtures__/read-models";
 
 const WEB_REPOSITORY_KEY = parseRepositoryKey("web")!;
@@ -102,7 +102,7 @@ describe("ReviewInboxView", () => {
       stage: "synthesis", collection_key: null, unit_key: "synthesis",
       decisions: [approve, requestChanges], input: { repository_key: "oakridge" },
     });
-    const studyInbox = classifyDevelopmentInbox({ run_id: runId, items: [
+    const studyInbox = classifyRunInbox({ run_id: runId, items: [
       { kind: "decision", run_id: runId, unit_id: unit.unit_id, key: approve.key,
         label: approve.label, submit: approve.submit, prompt: null },
     ] }, [unit], { workflow_name: "study", run_title: "Study run" });
@@ -121,7 +121,7 @@ describe("ReviewInboxView", () => {
       submit: { kind: "review", review: "expansion_review", decision: "accept", effect: "approve", target_revision_id: approveTarget },
     };
     const unit = withUnitFields(v2Unit, { stage: "expand", collection_key: "g2", unit_key: "g2", decisions: [accept], input: { repository_key: "oakridge" } });
-    const studyInbox = classifyDevelopmentInbox({ run_id: runId, items: [
+    const studyInbox = classifyRunInbox({ run_id: runId, items: [
       { kind: "decision", run_id: runId, unit_id: unit.unit_id, key: accept.key, label: accept.label, submit: accept.submit, prompt: null },
     ] }, [unit], { workflow_name: "study", run_title: "Study run" });
     if (!studyInbox.ok) throw new Error(studyInbox.error.detail);
@@ -224,7 +224,7 @@ describe("ReviewInboxView", () => {
   });
 
   it("names every lifecycle state in operator language", async () => {
-    const states: CohortLifecycle[] = ["building", "artifact_review", "revision_requested", "merge_confirmation", "assessing", "github_review", "pull_request_mismatch", "complete", "failed"];
+    const states: CohortLifecycle[] = ["building", "artifact_review", "revision_requested", "merge_review", "assessing", "github_review", "pull_request_mismatch", "complete", "failed"];
     const labels = ["Building", "Waiting for your review", "Changes requested", "Waiting for merge confirmation", "Checking the result", "Waiting for GitHub review or merge", "Pull request needs attention", "Needs recovery"];
     renderInbox({
       items: [],
@@ -248,8 +248,8 @@ describe("ReviewInboxView", () => {
       items: [{
         ...inbox.items[0],
         id: "merge-web",
-        kind: "merge_confirmation",
-        lifecycle: "merge_confirmation",
+        kind: "merge_review",
+        lifecycle: "merge_review",
         resume_actions: ["confirm_merged"],
       }],
     });

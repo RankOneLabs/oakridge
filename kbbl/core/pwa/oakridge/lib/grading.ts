@@ -269,7 +269,7 @@ export function selectItemText(value: unknown): string {
   return selectCapturedItemText(value) ?? "No description recorded.";
 }
 
-export { selectSpecTaskId, selectRequirementGradingRows } from "./grading-identity";
+export { selectSpecTaskId } from "./grading-identity";
 
 export const taskLinkLabel = (link: ObservationLogicalLinkRead): string => link.state === "resolved" ? link.producer_local_id : `${link.producer_local_id} (unresolved)`;
 

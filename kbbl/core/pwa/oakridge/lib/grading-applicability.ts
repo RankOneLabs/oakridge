@@ -1,3 +1,4 @@
+import { ROOT_DECLARATION } from "../operator-contracts/constants";
 import type { OperatorDefinitionSummary } from "../operator-contracts/projections/definition-view";
 import type { ObservationGradingDefinition } from "../grading-contracts/grading/configuration";
 import type { ObservationJsonValue as Json } from "../grading-contracts/domain/primitives";
@@ -6,7 +7,7 @@ export interface GradingTargetSource { readonly id: string; readonly targets: re
 export interface GradingMatch<T extends GradingTargetSource = GradingTargetSource> { source: T; artifact: WorkflowArtifactTarget; selectors: string[] }
 export interface GradingRequirements { question_text: string | null; response: string; scope: string; evaluators: { runner: string; model: string | null }[]; evidence: { capability: string; params: Json | null }[] }
 export function selectWorkflowArtifactTargets(summary: OperatorDefinitionSummary): WorkflowArtifactTarget[] {
-  const targets = summary.bundle.units.filter(unit => unit.key !== "$root" && unit.stage !== null).flatMap(unit => unit.artifacts.map(artifact => ({ definition_id: summary.definition_id, workflow: summary.bundle.key, stage: unit.stage as string, artifact: artifact.key })));
+  const targets = summary.bundle.units.filter(unit => unit.key !== ROOT_DECLARATION && unit.stage !== null).flatMap(unit => unit.artifacts.map(artifact => ({ definition_id: summary.definition_id, workflow: summary.bundle.key, stage: unit.stage as string, artifact: artifact.key })));
   return targets.filter((target, index) => targets.findIndex(other => other.stage === target.stage && other.artifact === target.artifact) === index);
 }
 export function selectGradingMatches<T extends GradingTargetSource>(sources: readonly T[], artifacts: readonly WorkflowArtifactTarget[]): GradingMatch<T>[] {

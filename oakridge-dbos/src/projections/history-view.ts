@@ -1,7 +1,7 @@
 import type { Event, ResolvedDecision, Writer } from "../core-client/core-types";
 import type { UnitId } from "../domain/primitives";
 import type { AuthorityEffectStatus } from "../storage/db-types";
-import type { HistoryPage, UnitDiagnosticsRead } from "../storage/read-store";
+import type { HistoryPage, RecordedFeedbackDisposition, UnitDiagnosticsRead } from "../storage/read-store";
 import { selectAttemptViews, type AttemptView } from "./unit-view";
 
 /** One event that addressed the unit. */
@@ -11,6 +11,7 @@ export interface EventHistory {
   readonly ingress_id: string | null;
   readonly event: Event;
   readonly writer: Writer;
+  readonly feedback_dispositions: readonly RecordedFeedbackDisposition[];
   readonly created_at: Date;
 }
 /** The events that addressed a unit, newest first, paged. */
@@ -18,8 +19,8 @@ export interface UnitHistory { readonly unit_id: UnitId; readonly events: readon
 
 export function selectUnitHistory(unit_id: UnitId, page: HistoryPage, next_cursor: string | null): UnitHistory {
   // A declaration addresses the run and no unit, so a unit's history never holds one.
-  return { unit_id, next_cursor, events: page.items.flatMap(({ event }) => {
-    return [{ id: event.id, ingress_id: event.ingress_id, event: event.payload, writer: event.writer, created_at: event.created_at }];
+  return { unit_id, next_cursor, events: page.items.flatMap(({ event, feedback_dispositions }) => {
+    return [{ id: event.id, ingress_id: event.ingress_id, event: event.payload, writer: event.writer, feedback_dispositions: feedback_dispositions ?? [], created_at: event.created_at }];
   }) };
 }
 

@@ -59,7 +59,7 @@ schemas:
     ref: text
     detail: optional(text)
   pr_body:
-    pr_url: text
+    change_request_link: text
     branch: text
     summary: text
     review_status: optional(enum(draft, ready, changes_requested, approved, merged, closed))
@@ -82,7 +82,7 @@ workers:
     inputs:
       query: "{owner: input.repository.forge.owner, name: input.repository.forge.name,
         head_owner: input.workspace.push_remote_owner, head_branch:
-        latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
+        latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
     every: 2m
     produces:
       - pr_state
@@ -135,6 +135,7 @@ stages:
       pr:
         kind: external_reference
         view: pull_request
+        link_field: change_request_link
         schema: pr_body
       pr_state:
         kind: status_record
@@ -142,6 +143,7 @@ stages:
       manual_merge_target:
         kind: external_reference
         view: pull_request
+        link_field: change_request_link
         schema: pr_body
       observed_state:
         kind: status_record
@@ -191,12 +193,12 @@ stages:
           of: pr
     let:
       pr_published: published(pr)
-      pr_opened: pr_published and latest(pr).pr_url != ""
+      pr_opened: pr_published and latest(pr).change_request_link != ""
       watch_base: input.repository.forge.final_base
       pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url
-        == latest(pr).pr_url
+        == latest(pr).change_request_link
       observed_state_current: published(pr) and published(observed_state) and
-        latest(observed_state).url == latest(pr).pr_url
+        latest(observed_state).url == latest(pr).change_request_link
       closed_pr: input.final_merge_policy == "require_merge" and pr_state_current and
         latest(pr_state).state == "closed_unmerged"
       final_state: pr_state_current and (latest(pr_state).state == "merged" or
@@ -209,6 +211,6 @@ stages:
       "closed_unmerged"))))
     outcome:
       repository_key: input.repository.key
-      pr_url: latest(pr).pr_url
+      change_request_link: latest(pr).change_request_link
       is_merged: approved(manual_merge_target) or (observed_state_current and
         latest(observed_state).state == "merged")

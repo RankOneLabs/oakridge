@@ -20,7 +20,7 @@ const pinnedPrompt = (value: unknown): value is OperatorPinnedPrompt => record(v
 const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const instructionRevision = (value: unknown): value is OperatorRevisionState => record(value) && string(value.id)
   && string(value.unit) && string(value.artifact) && count(value.seq) && "body" in value
-  && (value.by === undefined || nullableString(value.by)) && (value.predecessor === undefined || nullableString(value.predecessor))
+  && (value.by == null || record(value.by) && string(value.by.action) && count(value.by.seq)) && (value.predecessor === undefined || nullableString(value.predecessor))
   && (value.subject === undefined || nullableString(value.subject)) && (value.decision_cursor === undefined || count(value.decision_cursor));
 const nullableInstructionRevision = (value: unknown): value is OperatorRevisionState | null => value === null || instructionRevision(value);
 const feedbackEntry = (value: unknown): value is OperatorFeedbackEntry => record(value) && string(value.id) && string(value.review)
@@ -39,7 +39,7 @@ const artifact = (value: unknown): boolean => record(value) && string(value.run_
 const attempt = (value: unknown): boolean => record(value) && string(value.id) && string(value.unit_id) && string(value.worker)
   && typeof value.number === "number" && ["pending", "running", "succeeded", "failed"].includes(String(value.status))
   && ["initial", "revise", "review"].includes(String(value.mode)) && record(value.cause)
-  && ["missing", "changes_requested", "review_of", "retry", "periodic"].includes(String(value.cause.kind))
+  && ["missing", "changes_requested", "review_of", "retry", "periodic", "assignment_round", "reassessment"].includes(String(value.cause.kind))
   && (value.failure === null || record(value.failure) && string(value.failure.code) && string(value.failure.detail))
   && nullableString(value.kbbl_session_id) && attemptIntent(value.intent) && string(value.created_at) && typeof value.is_current === "boolean";
 const submit = (value: unknown): boolean => record(value) && (
@@ -83,7 +83,7 @@ export function parseUnitView(value: unknown): AdapterResult<OperatorUnitView> {
 export function parseArtifactDetail(value: unknown): AdapterResult<OperatorArtifactDetail> {
   if (!record(value) || !string(value.run_id) || !string(value.unit_id) || !string(value.artifact_key)
       || !string(value.schema) || !array(value.revisions) || !value.revisions.every(revision)
-      || !array(value.decisions) || !(value.original_spec === undefined || value.original_spec === null || string(value.original_spec)))
+      || !array(value.decisions))
     return fail("parse artifact", "invalid artifact detail");
   return ok(value as unknown as OperatorArtifactDetail);
 }

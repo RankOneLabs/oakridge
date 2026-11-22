@@ -16,10 +16,8 @@ import type { OperatorUnitView } from "../operator-contracts/projections/unit-vi
 import type { ArtifactSource } from "../artifact-types";
 import type { ItemGradingSlots } from "../artifactRegistry";
 import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
-import { CurrentAssessmentViewer } from "../components/molecules/CurrentAssessmentViewer";
 import { compositeId } from "../adapters/core";
-import { CURRENT_ASSESSMENT } from "../__fixtures__/current-assessments";
-const source: ArtifactSource = { run_id: "run", revision_id: "spec:1", label: null, as_of: "2026-11-17", original_spec: "Original requirements as submitted" };
+const source: ArtifactSource = { run_id: "run", revision_id: "spec:1", label: null, as_of: "2026-11-17", producing_attempt_inputs: { original_spec: "Original requirements as submitted" } };
 const parsedAnalysis = parseCurrentAnalysis(analysis), parsedSpec = parseCanonicalSpec(spec);
 if (!parsedAnalysis.ok || !parsedSpec.ok) throw new Error("fixture");
 const context = { analysis: parsedAnalysis.value, spec: parsedSpec.value, requirements: parsedSpec.value.requirements };
@@ -100,7 +98,6 @@ const gradedViewers = [
   ["specification", () => <CurrentSpecViewer body={spec} source={gradedSource} context={context} itemGrading={recordingGrading} />],
   ["plan", () => <CurrentPlanViewer body={plan} source={gradedSource} context={context} itemGrading={recordingGrading} />],
   ["brief", () => <CurrentBuildBriefViewer body={brief} source={gradedSource} context={context} itemGrading={recordingGrading} />],
-  ["assessment", () => <CurrentAssessmentViewer assessment={CURRENT_ASSESSMENT} source={gradedSource} itemGrading={recordingGrading} />],
 ] as const;
 test.each(gradedViewers)("current %s offers Show automatic grades over every item it grades", (_, renderViewer) => {
   render(renderViewer());

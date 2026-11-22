@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { id, IMPLEMENTATION, item } from "../__fixtures__/grading";
 import type { ObservationLineageEntry } from "../grading-contracts/grading/composite";
-import { selectTaskLineageGroups } from "./task-lineage";
+import { selectRepositoryJudgments, selectRevisionDecisionRoles, selectTaskLineageGroups } from "./task-lineage";
 
 test("groups task definitions, plan contributions, build items, findings and unresolved associations by kind", () => {
   const entries: ObservationLineageEntry[] = [
@@ -10,7 +10,7 @@ test("groups task definitions, plan contributions, build items, findings and unr
     { kind: "unresolved", item: item(IMPLEMENTATION, { item_kind: "build_item" }), relation_id: id("missing"), unresolved_target_ref: "T-missing", evidence_ref: "/task_ids/0" },
   ];
   const groups = selectTaskLineageGroups(entries);
-  expect(groups.map((group) => [group.label, group.entries.length])).toEqual([["Task definition", 1], ["Plan contributions", 1], ["Brief build items", 2], ["Assessment findings", 1]]);
+  expect(groups.map((group) => [group.label, group.entries.length])).toEqual([["task", 1], ["acceptance entry", 1], ["build item", 2], ["assessment finding", 1]]);
   expect(groups[2]?.entries[1]).toBe(entries[4]);
 });
 test("an assessment finding retains its explicit two-hop build-item association", () => {
@@ -19,4 +19,24 @@ test("an assessment finding retains its explicit two-hop build-item association"
     { relation_id: id("contributes"), type: "addresses", evidence_ref: "/task_ids/0", asserted_by: "producer_explicit" },
   ] } };
   expect(selectTaskLineageGroups([entry])[0]?.entries).toEqual([entry]);
+});
+
+const recorded = {
+  id: "decision", decision_id: "decision", review: "appraisal_desk", decision: "endorse", effect: "approve" as const,
+  actor: null, reviewed_revision_id: "folio:1", approved_assessment_revision_id: "appraisal:1",
+  effect_target_revision_id: "appendix:1", target_revision_id: "appendix:1", payload: {}, created_at: "2026-11-01",
+};
+
+test("records three exact revision roles and ignores similar ids", () => {
+  expect(["folio:1", "appraisal:1", "appendix:1", "folio:10"].map((revision) =>
+    selectRevisionDecisionRoles(revision, [recorded]).map((result) => result.role),
+  )).toEqual([["reviewed"], ["assessment approved"], ["effect target"], []]);
+});
+
+test("judgments stay pending without an approval for the same assessment revision", () => {
+  const rows = selectRepositoryJudgments([
+    { repository_key: "first", judgments: [{ assessment_revision_id: id("appraisal:2"), status: "partial" }] },
+    { repository_key: "second", judgments: [{ assessment_revision_id: id("appraisal:1"), status: "met" }] },
+  ], [recorded]);
+  expect(rows.map(({ status }) => status)).toEqual(["pending", "met"]);
 });

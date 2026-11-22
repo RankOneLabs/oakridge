@@ -119,7 +119,7 @@ export function RunWorkspaceSidebar({
         slotsOf={(id) => selectPaneSlots(workspace, (pane) => pane.kind === "session" && pane.session_id === id)}
         renderRow={renderRow}
       />
-      <RunSidebarArtifacts rows={visibleArtifacts} totalCount={artifacts.length} filter={artifactFilter}
+      <RunSidebarArtifacts rows={visibleArtifacts} allRows={artifacts} totalCount={artifacts.length} filter={artifactFilter}
         onFilterChange={setArtifactFilter}
         slotsOf={(id) => selectPaneSlots(workspace, (pane) => pane.kind === "artifact" && pane.artifact_id === id)} onOpen={openArtifact} />
     </aside>

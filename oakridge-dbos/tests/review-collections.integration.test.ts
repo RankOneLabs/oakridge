@@ -119,7 +119,7 @@ test("an event refused because its group cannot materialize stalls the run at th
   expect({ refusal, inbox: await inboxOf(run_id), refused: read?.stalls.map((stall) => [stall.unit_id, stall.stall.unit_id, stall.stall.event.kind]) })
     .toEqual({
       refusal: `run stalled at ${work}: collection item has illegal or duplicate key`,
-      inbox: [{ kind: "stalled", run_id, unit_id: work as UnitId,
+      inbox: [{ kind: "stalled", run_id, unit_id: work as UnitId, failure_code: null,
         detail: `run stalled at ${work}: collection item has illegal or duplicate key (refused revision_published)` }],
       refused: [[unitOf(run_id, "prepare"), work, "revision_published"]],
     });

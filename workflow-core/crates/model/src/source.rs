@@ -824,6 +824,9 @@ pub struct Artifact {
     pub kind: ArtifactKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<String>,
+    /// Text field in an external reference that holds its link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_field: Option<SymbolKey>,
     pub schema: TypeExpression,
     #[serde(default, skip_serializing_if = "EditPolicy::is_always")]
     pub edit_policy: EditPolicy,

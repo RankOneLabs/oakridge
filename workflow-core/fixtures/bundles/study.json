@@ -21,7 +21,7 @@
       "operation": "pull_request.observe",
       "when": "pr_opened",
       "inputs": {
-        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
+        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
       },
       "every": "2m",
       "produces": [
@@ -132,7 +132,7 @@
       "detail": "optional(text)"
     },
     "pr_body": {
-      "pr_url": "text",
+      "change_request_link": "text",
       "branch": "text",
       "summary": "text",
       "review_status": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
@@ -191,7 +191,7 @@
       "outcomes": "list(plan_outcome)",
       "decision_rule": "list(decision_row)",
       "models": "list(plan_model)",
-      "slice": "plan_slice",
+      "pilot_selection": "plan_slice",
       "slice_paid": "slice_paid_plan",
       "full_study_repeats": "integer",
       "iteration_triggers": "list(plan_item)"
@@ -205,7 +205,7 @@
     },
     "completed_cohort": {
       "repository_key": "ident",
-      "pr_url": "text",
+      "change_request_link": "text",
       "branch": "text",
       "build_result": "build_summary"
     },
@@ -332,13 +332,13 @@
         }
       },
       "expansion": {
-        "for_each": "filter(design.outcome.plan.groups, len(filter(item.case_ids, not contains(design.outcome.plan.slice.case_ids, item))) > 0)",
+        "for_each": "filter(design.outcome.plan.groups, len(filter(item.case_ids, not contains(design.outcome.plan.pilot_selection.case_ids, item))) > 0)",
         "key": "each.id",
         "stage": "expand",
         "pool": "expanders",
         "input": {
           "group_id": "each.id",
-          "case_ids": "filter(each.case_ids, not contains(design.outcome.plan.slice.case_ids, item))",
+          "case_ids": "filter(each.case_ids, not contains(design.outcome.plan.pilot_selection.case_ids, item))",
           "generator_digest": "design.outcome.generator_digest",
           "digest_recipe": "design.outcome.digest_recipe",
           "plan": "design.outcome.plan",
@@ -424,9 +424,9 @@
         "spend_matches_build": "published(slice_build) and published(spend_request) and latest(spend_request).generator_digest == latest(slice_build).generator_digest and every(latest(spend_request).case_ids, contains(latest(slice_build).case_ids, item)) and every(latest(slice_build).case_ids, contains(latest(spend_request).case_ids, item))",
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
-        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
         "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
@@ -445,7 +445,7 @@
               "message": "The plan needs at least one decision rule."
             },
             {
-              "check": "len(plan.slice.criteria) > 0",
+              "check": "len(plan.pilot_selection.criteria) > 0",
               "message": "The slice needs at least one criterion."
             },
             {
@@ -461,15 +461,15 @@
               "message": "The plan needs at least one case and one hypothesis."
             },
             {
-              "check": "every(plan.slice.case_ids, contains(map(plan.cases, item.id), item))",
+              "check": "every(plan.pilot_selection.case_ids, contains(map(plan.cases, item.id), item))",
               "message": "Every slice id must be a case id."
             },
             {
-              "check": "len(plan.slice.case_ids) <= input.slice_case_limit",
+              "check": "len(plan.pilot_selection.case_ids) <= input.slice_case_limit",
               "message": "The slice may hold at most the workflow's slice case limit."
             },
             {
-              "check": "len(filter(plan.cases, item.is_control == true)) == 0 or len(filter(plan.cases, item.is_control == true and contains(plan.slice.case_ids, item.id))) > 0",
+              "check": "len(filter(plan.cases, item.is_control == true)) == 0 or len(filter(plan.cases, item.is_control == true and contains(plan.pilot_selection.case_ids, item.id))) > 0",
               "message": "When any case is a control, the slice must include a control case."
             },
             {
@@ -501,7 +501,7 @@
               "message": "Group and hypothesis ids must be unique."
             },
             {
-              "check": "len(plan.slice.case_ids) > 0",
+              "check": "len(plan.pilot_selection.case_ids) > 0",
               "message": "The slice needs at least one case."
             },
             {
@@ -513,7 +513,7 @@
               "message": "The paid slice needs at least one repeat."
             },
             {
-              "check": "unique(map(plan.slice.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.slice.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))",
+              "check": "unique(map(plan.pilot_selection.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.pilot_selection.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))",
               "message": "Slice criteria and iteration triggers must have distinct ids."
             }
           ]
@@ -531,7 +531,7 @@
               "message": "The digest recipe needs files and a hashing command."
             },
             {
-              "check": "published(plan) and every(slice_build.case_ids, contains(latest(plan).slice.case_ids, item)) and every(latest(plan).slice.case_ids, contains(slice_build.case_ids, item))",
+              "check": "published(plan) and every(slice_build.case_ids, contains(latest(plan).pilot_selection.case_ids, item)) and every(latest(plan).pilot_selection.case_ids, contains(slice_build.case_ids, item))",
               "message": "The slice build must cover exactly the plan's slice cases."
             },
             {
@@ -583,7 +583,7 @@
               "message": "A report may hold at most the approved attempt count of results."
             },
             {
-              "check": "published(plan) and every(slice_report.criteria_marks, contains(map(latest(plan).slice.criteria, item.id), item.id))",
+              "check": "published(plan) and every(slice_report.criteria_marks, contains(map(latest(plan).pilot_selection.criteria, item.id), item.id))",
               "message": "Criterion marks may name only plan slice criteria."
             },
             {
@@ -599,7 +599,7 @@
               "message": "Paid results need an approved spend request."
             },
             {
-              "check": "published(plan) and every(map(latest(plan).slice.criteria, item.id), contains(map(slice_report.criteria_marks, item.id), item))",
+              "check": "published(plan) and every(map(latest(plan).pilot_selection.criteria, item.id), contains(map(slice_report.criteria_marks, item.id), item))",
               "message": "Every plan slice criterion must be marked."
             },
             {
@@ -607,11 +607,11 @@
               "message": "Every plan iteration trigger must be marked."
             },
             {
-              "check": "published(plan) and every(map(slice_report.qualifications, item.case_id), contains(latest(plan).slice.case_ids, item)) and every(latest(plan).slice.case_ids, contains(map(slice_report.qualifications, item.case_id), item))",
+              "check": "published(plan) and every(map(slice_report.qualifications, item.case_id), contains(latest(plan).pilot_selection.case_ids, item)) and every(latest(plan).pilot_selection.case_ids, contains(map(slice_report.qualifications, item.case_id), item))",
               "message": "The report's case ids must equal the plan's slice ids."
             },
             {
-              "check": "published(plan) and every(slice_report.paid_results, contains(latest(plan).slice.case_ids, item.case_id))",
+              "check": "published(plan) and every(slice_report.paid_results, contains(latest(plan).pilot_selection.case_ids, item.case_id))",
               "message": "Paid results may name only slice cases."
             },
             {
@@ -641,11 +641,11 @@
               "message": "The slice assessment's head must equal the latest slice build's."
             },
             {
-              "check": "published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == \"case\"), contains(latest(plan).slice.case_ids, item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == \"case\"), contains(latest(plan).slice.case_ids, item.id))",
+              "check": "published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == \"case\"), contains(latest(plan).pilot_selection.case_ids, item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == \"case\"), contains(latest(plan).pilot_selection.case_ids, item.id))",
               "message": "Case subjects and related subjects must resolve within the reviewed scope."
             },
             {
-              "check": "published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == \"criterion\"), contains(map(latest(plan).slice.criteria, item.id), item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == \"criterion\"), contains(map(latest(plan).slice.criteria, item.id), item.id))",
+              "check": "published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == \"criterion\"), contains(map(latest(plan).pilot_selection.criteria, item.id), item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == \"criterion\"), contains(map(latest(plan).pilot_selection.criteria, item.id), item.id))",
               "message": "Criterion subjects and related subjects must resolve within the reviewed scope."
             },
             {
@@ -661,7 +661,7 @@
               "message": "The assessment must name the latest slice report's run key."
             },
             {
-              "check": "published(plan) and every(map(latest(plan).slice.criteria, item.id), contains(map(filter(slice_assessment.item_assessments, item.subject.kind == \"criterion\"), item.subject.id), item))",
+              "check": "published(plan) and every(map(latest(plan).pilot_selection.criteria, item.id), contains(map(filter(slice_assessment.item_assessments, item.subject.kind == \"criterion\"), item.subject.id), item))",
               "message": "Every slice criterion must be assessed."
             },
             {
@@ -689,6 +689,7 @@
         "pr": {
           "kind": "external_reference",
           "view": "pull_request",
+          "link_field": "change_request_link",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -954,7 +955,7 @@
         "generator_digest": "latest(slice_build).generator_digest",
         "digest_recipe": "latest(slice_build).digest_recipe",
         "slice_report": "latest(slice_report)",
-        "cohort": "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(slice_build).build}"
+        "cohort": "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(slice_build).build}"
       }
     },
     "expand": {
@@ -970,9 +971,9 @@
       "let": {
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
-        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
         "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
@@ -1052,6 +1053,7 @@
         "pr": {
           "kind": "external_reference",
           "view": "pull_request",
+          "link_field": "change_request_link",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -1181,7 +1183,7 @@
       "done_when": "approved(assessment) and published(expansion) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
         "repository_key": "input.repository.key",
-        "pr_url": "latest(pr).pr_url",
+        "change_request_link": "latest(pr).change_request_link",
         "branch": "latest(pr).branch",
         "build_result": "latest(expansion).build"
       }
@@ -1199,9 +1201,9 @@
       "let": {
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
-        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
         "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
@@ -1251,6 +1253,7 @@
         "pr": {
           "kind": "external_reference",
           "view": "pull_request",
+          "link_field": "change_request_link",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -1352,23 +1355,23 @@
       "done_when": "approved(freeze) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
         "freeze": "latest(freeze)",
-        "cohort": "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(freeze).build}"
+        "cohort": "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(freeze).build}"
       }
     },
     "integration": {
       "let": {
         "pr_published": "published(pr)",
-        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
+        "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
         "watch_base": "input.repository.forge.final_base",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
         "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "final_state": "pr_state_current and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))"
       },
       "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
       "outcome": {
         "repository_key": "input.repository.key",
-        "pr_url": "latest(pr).pr_url",
+        "change_request_link": "latest(pr).change_request_link",
         "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
       },
       "input": {
@@ -1385,6 +1388,7 @@
         "pr": {
           "kind": "external_reference",
           "view": "pull_request",
+          "link_field": "change_request_link",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -1394,6 +1398,7 @@
         "manual_merge_target": {
           "kind": "external_reference",
           "view": "pull_request",
+          "link_field": "change_request_link",
           "schema": "pr_body"
         },
         "observed_state": {

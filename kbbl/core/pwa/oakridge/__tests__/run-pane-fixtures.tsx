@@ -116,7 +116,7 @@ const ARTIFACT: ArtifactDetail = {
     viewer: "json",
     layout: "report",
     sections: ["summary"],
-    action_labels: { approve: "Approve the build" },
+
   },
   run_id: "run-1",
   producing_stage: "build",

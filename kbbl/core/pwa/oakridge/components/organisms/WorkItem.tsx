@@ -6,13 +6,13 @@ import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../artifact-types";
 
 function itemToGate(item: ReviewInboxItem): ParkedGate | null {
-  if (item.kind !== "artifact_gate" && item.kind !== "merge_confirmation") return null;
+  if (item.kind !== "artifact_gate" && item.kind !== "merge_review") return null;
   if (!item.gate_id || !item.artifact_revision_id || (item.resume_actions.length === 0 && !item.requires_adjudication)) return null;
-  const mergeConfirmation = item.kind === "merge_confirmation";
+  const mergeConfirmation = item.kind === "merge_review";
   return {
     id: item.gate_id,
-    gate_type: mergeConfirmation ? "merge_confirmation" : "artifact_approval",
-    gate_step: mergeConfirmation ? "merge_confirmation" : "artifact_approval",
+    gate_type: mergeConfirmation ? "merge" : "artifact_approval",
+    gate_step: null,
     run_id: item.run_id,
     stage_name: item.stage_name,
     unit_id: item.unit_id,

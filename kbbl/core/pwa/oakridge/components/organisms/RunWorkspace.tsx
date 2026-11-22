@@ -154,7 +154,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   });
   const sidebarArtifacts = selectRunArtifacts(run);
   const activity: RunActivityRead = activityQuery.data !== undefined
-    ? { kind: "loaded", items: selectRunActivity(activityQuery.data, runId) }
+    ? { kind: "loaded", items: selectRunActivity(activityQuery.data.events, runId), dispositions: activityQuery.data.dispositions }
     : activityQuery.isError && !activityQuery.isPending
       ? { kind: "unavailable" }
       : { kind: "pending" };

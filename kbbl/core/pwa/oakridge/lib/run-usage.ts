@@ -2,10 +2,10 @@ import type { OperatorRunUsage, OperatorUsageReview } from "../operator-contract
 
 // Matches the external review categories in the usage rollup.
 const isHumanUsageReview = (review: OperatorUsageReview) =>
-  review.review !== "merge_confirmation" && review.review !== "pr_closed";
+  review.kind === "human";
 
 export function selectUsageCohorts(usage: OperatorRunUsage) {
-  return usage.units.filter((unit) => unit.stage === "cohort").map((unit) => ({
+  return usage.units.filter((unit) => unit.collection_key !== null).map((unit) => ({
     unit_id: unit.unit_id, label: unit.collection_key ?? unit.unit_id,
     first_pass_usd: unit.first_pass.usd, rework_usd: unit.rework.usd,
     agent_ms: unit.first_pass.agent_ms === null && unit.rework.agent_ms === null ? null : (unit.first_pass.agent_ms ?? 0) + (unit.rework.agent_ms ?? 0),

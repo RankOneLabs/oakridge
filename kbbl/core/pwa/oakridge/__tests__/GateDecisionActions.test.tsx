@@ -278,7 +278,7 @@ it("offers only the plain assessment changes action on an adjudicating gate", ()
   expect(view.getAllByRole("button").map(button => button.getAttribute("data-testid"))).toEqual(["or-decision-request_assessment_changes"]);
 });
 it("shows the validator's message on an adjudicated gate whose revision it rejected", () => {
-  const unit = { ...currentAdjudicationUnit(), recorded_decisions: [{ id: "v1", review: "engine:validator", decision: "request_changes", effect: "request_changes" as const,
+  const unit = { ...currentAdjudicationUnit(), recorded_decisions: [{ id: "v1", decision_id: "v1", actor: null, reviewed_revision_id: "assessment:1", approved_assessment_revision_id: null, effect_target_revision_id: "assessment:1", review: "engine:validator", decision: "request_changes", effect: "request_changes" as const,
     target_revision_id: "assessment:1", payload: { feedback: "Assessment verdict must match item statuses and additional finding severities." }, created_at: "2026-11-20T00:00:00Z" }] };
   const gates = reviewToGates(unit);
   if (!gates.ok || !gates.value[0]) throw new Error("gate missing");

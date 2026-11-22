@@ -87,6 +87,20 @@ pub(super) fn compile_stage(
                 }
             }
         }
+        if let Some(field) = &artifact.link_field {
+            let valid = artifact.kind == ArtifactKind::ExternalReference
+                && matches!(
+                    resolve_type(&artifact.schema, &workflow.schemas),
+                    Type::Record { fields } if fields.get(&field.0) == Some(&Type::Text)
+                );
+            if !valid {
+                state.error(
+                    CheckKind::Schema,
+                    &format!("stages.{key}.artifacts.{artifact_key}.link_field"),
+                    "link_field must name a text field on an external reference",
+                );
+            }
+        }
         let schema = state.capture(checked_type(
             &artifact.schema,
             &workflow.schemas,

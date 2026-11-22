@@ -103,7 +103,7 @@ describe("ArtifactReview", () => {
         viewer: "json",
         layout: "report",
         sections: ["summary", "details"],
-        action_labels: { approve: "Approve discrepancy report" },
+
       },
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

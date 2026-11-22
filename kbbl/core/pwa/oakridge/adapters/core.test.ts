@@ -7,7 +7,7 @@ import { retryUnit, sampleCohort as cohort, sampleRun as run, sampleUnits as uni
 import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
 import type { OperatorRunEvent } from "../operator-contracts/projections/run-event";
 import type { OperatorAttemptView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
-import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, developmentPullRequestUrl, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, unitToStages } from "./core";
+import { attemptToWorkOrder, compositeId, decisionAction, selectReviewPullRequestUrl, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, unitToStages } from "./core";
 import { parseUnitViews } from "./parse";
 import { selectRunSessionRows } from "../lib/run-sessions";
 import { selectRunSidebarSessions } from "../lib/run-overview";
@@ -154,10 +154,6 @@ describe("v2 development adapters", () => {
   it("maps revisions and dispatches the analysis, spec, and implementation viewers", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
     expect(artifact.ok && artifact.value.component_id).toBe("dev-build-result-viewer");
-    expect(artifactTypes().map((type) => type.component_id)).toEqual([
-      "dev-current-analysis-viewer", "dev-current-spec-viewer", "dev-current-plan-viewer", "dev-current-brief-viewer",
-      "dev-current-assessment-viewer", "dev-build-result-viewer", "dev-pr-summary-viewer",
-    ]);
   });
   it("retains the cohort label so assessment revisions can find their brief", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
@@ -219,9 +215,12 @@ describe("v2 development adapters", () => {
     if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
     const unsafe = withUnitFields(mergeUnit, { artifacts: mergeUnit.artifacts.map((artifact) =>
       artifact.artifact_key === "pr" && artifact.latest_revision
-        ? { ...artifact, latest_revision: { ...artifact.latest_revision, body: { pr_url: "javascript:alert(1)" } } }
+        ? { ...artifact, kind: "external_reference", link_field: "change_request_link", latest_revision: { ...artifact.latest_revision, body: { change_request_link: "javascript:alert(1)" } } }
         : artifact) });
-    expect(developmentPullRequestUrl(unsafe)).toBeNull();
+    expect(selectReviewPullRequestUrl(unsafe, {
+      review: "verify_release", of_artifact: "pr", reviewed_revision_id: "proposal-revision", wait: "external",
+      confirms: "merge", failure_code: null, producer_workers: [], decisions: [],
+    })).toBeNull();
   });
   it.each([cohortMerge, integrationMerge])("captures confirm_merged on the unit's current revision", (fixture) => {
     const unit = fixture.units.find((candidate) => candidate.decisions.some((decision) => decision.key === "confirm_merged"));
