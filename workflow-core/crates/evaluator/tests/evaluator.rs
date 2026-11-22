@@ -58,10 +58,7 @@ fn a_serialized_null_launch_input_remains_resolved_after_a_child_completes() {
                 body: serde_json::json!("done"),
                 predecessor: None,
                 subject: None,
-                by: Some(PublishingAttempt {
-                    action: action,
-                    seq: 1,
-                }),
+                by: Some(PublishingAttempt { action, seq: 1 }),
             },
             "publish",
         ),
@@ -1829,10 +1826,7 @@ fn every_event_kind_preserves_unit_status_order() {
                     body: serde_json::json!({"title":"x","body":"x"}),
                     predecessor: None,
                     subject: None,
-                    by: Some(PublishingAttempt {
-                        action: action,
-                        seq: 1,
-                    }),
+                    by: Some(PublishingAttempt { action, seq: 1 }),
                 },
                 Event::OperatorDecided {
                     unit: unit.clone(),
@@ -3050,10 +3044,7 @@ fn list_check_holds(check: &str, groups: Value) -> Result<bool, StepError> {
                 body: serde_json::json!("body"),
                 predecessor: None,
                 subject: None,
-                by: Some(PublishingAttempt {
-                    action: action,
-                    seq: 1,
-                }),
+                by: Some(PublishingAttempt { action, seq: 1 }),
             },
             "publish",
         ),

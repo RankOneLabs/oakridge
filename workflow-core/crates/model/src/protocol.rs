@@ -76,7 +76,7 @@ pub enum Operation {
     Step {
         workflow_digest: BundleDigest,
         snapshot: Box<StepSnapshot>,
-        incoming: Incoming,
+        incoming: Box<Incoming>,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
