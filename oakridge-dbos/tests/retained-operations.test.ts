@@ -38,7 +38,7 @@ test("the domain directory holds only leaf support types", () => {
   expect(readdirSync(resolve(root, "oakridge-dbos/src/domain")).sort()).toEqual([
     "analysis-link-declaration.ts",
     "assessment-embeddings.ts",
-    "delegated-session.ts", "dispatch-policy.ts", "effect-instruction.ts", "pr-integration.ts", "primitives.ts", "projects.ts", "prompt-template.ts",
+    "delegated-session.ts", "dispatch-policy.ts", "effect-instruction.ts", "keyed-execution.ts", "pr-integration.ts", "primitives.ts", "projects.ts", "prompt-template.ts",
     "pull-request.ts", "repository-provisioning.ts", "round-delivery.ts", "run-config.ts", "unit-status.ts", "usage.ts",
   ]);
 });

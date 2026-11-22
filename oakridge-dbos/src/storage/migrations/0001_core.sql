@@ -287,6 +287,27 @@ CREATE TABLE authority.wanted_log (
   FOREIGN KEY (run_id, event_id) REFERENCES authority.event(run_id, id)
 );
 
+CREATE TYPE authority.keyed_execution_state AS ENUM ('unclaimed', 'claimed', 'evidence_attached', 'reconcile');
+
+CREATE TABLE authority.keyed_execution (
+  id text PRIMARY KEY,
+  run_id text NOT NULL,
+  unit_id text NOT NULL,
+  worker text NOT NULL,
+  authorizing_revision_id text NOT NULL,
+  state authority.keyed_execution_state NOT NULL DEFAULT 'unclaimed',
+  claim_count integer NOT NULL DEFAULT 0 CHECK (claim_count >= 0),
+  claimed_by_action_id text,
+  evidence jsonb,
+  reconciliation jsonb,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (run_id, authorizing_revision_id),
+  FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
+  FOREIGN KEY (run_id, authorizing_revision_id) REFERENCES authority.artifact_revision(run_id, id),
+  CHECK ((state = 'evidence_attached') = (evidence IS NOT NULL))
+);
+
 CREATE TABLE authority.effect_intent (
   id text PRIMARY KEY,
   run_id text NOT NULL,
@@ -302,6 +323,7 @@ CREATE TABLE authority.effect_intent (
   last_error text,
   stop_error text,
   -- Set with the stop request, and kept once it settles; null while none was requested.
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   stop_origin authority.stop_origin CHECK (status <> 'stop_requested' OR stop_origin IS NOT NULL),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (action_id, seq),
@@ -408,6 +430,8 @@ COMMENT ON COLUMN authority.review_decision.payload IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.event.payload IS '@type {CoreEvent}';
 COMMENT ON COLUMN authority.event.writer IS '@type {Writer}';
 COMMENT ON COLUMN authority.wanted_log.actions IS '@type {WantedWorkers}';
+COMMENT ON COLUMN authority.keyed_execution.evidence IS '@type {ExecutionEvidence}';
+COMMENT ON COLUMN authority.keyed_execution.reconciliation IS '@type {ExecutionReconciliation}';
 COMMENT ON COLUMN authority.effect_intent.payload IS '@type {EffectInstruction}';
 COMMENT ON COLUMN authority.ingress_receipt.result IS '@type {CommitReceipt}';
 COMMENT ON COLUMN authority.collaboration_thread.context IS '@type {CollaborationThreadContext}';

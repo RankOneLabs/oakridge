@@ -75,7 +75,10 @@ test("a registered route the table does not classify is refused before its handl
 
 test("only operator routes demand the control token; publish authenticates with its session secret", () => {
   expect(HTTP_ROUTES.filter((route) => route.authority !== "operator").map((route) => `${route.authority} ${route.method} ${route.path}`))
-    .toEqual(["open GET /health", "session PUT /api/runs/:run_id/units/:unit_id/artifacts/:artifact"]);
+    .toEqual(["open GET /health",
+      "session POST /api/runs/:run_id/units/:unit_id/executions/:key/claim",
+      "session PUT /api/runs/:run_id/units/:unit_id/executions/:key/evidence",
+      "session PUT /api/runs/:run_id/units/:unit_id/artifacts/:artifact"]);
 });
 
 test("control auth has no early-exit token comparison", () => {

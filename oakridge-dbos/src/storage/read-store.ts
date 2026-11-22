@@ -1,3 +1,4 @@
+import { decodePullRequestObserveInput, type PullRequestObserveInput } from "../operations/pull-request-observe";
 import { readAssessmentFacts } from "./assessment-facts";
 import { artifactSchemaVersions } from "../adapters/observation-schema-version";
 import { CoreClient, compileDefinition } from "../core-client/client";
@@ -105,6 +106,7 @@ export interface RunSummaryRead {
  */
 export type ReviewDecisionRead = ReviewDecisionRecord & { readonly actor?: Writer | null };
 export interface RunRead extends RunSummaryRead {
+  readonly reconciliations?: readonly { readonly id: string; readonly unit_id: string; readonly worker: string }[];
   readonly run: RunRecord;
   readonly units: readonly UnitRecord[];
   readonly dependencies: readonly UnitDependencyRecord[];
@@ -170,7 +172,7 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
 async function runRead(trx: DatabaseTransaction, run_id: string): Promise<RunRead | null> {
   const [summary] = await runSummaryReads(trx, [run_id]);
   if (!summary) return null;
-  const [run, units, dependencies, revisions, decisions, intents, decision_events] = await Promise.all([
+  const [run, units, dependencies, revisions, decisions, intents, decision_events, reconciliations] = await Promise.all([
     trx.selectFrom("authority.run").selectAll().where("id", "=", run_id).executeTakeFirstOrThrow(),
     trx.selectFrom("authority.unit").selectAll().where("run_id", "=", run_id).orderBy("id").execute(),
     trx.selectFrom("authority.unit_dependency").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("depends_on_id").execute(),
@@ -178,8 +180,9 @@ async function runRead(trx: DatabaseTransaction, run_id: string): Promise<RunRea
     trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.effect_intent").select(["action_id", "seq", "payload"]).where("run_id", "=", run_id).execute(),
     trx.selectFrom("authority.event").select(["payload", "writer"]).where("run_id", "=", run_id).execute(),
+    trx.selectFrom("authority.keyed_execution").select(["id", "unit_id", "worker"]).where("run_id", "=", run_id).where("state", "=", "reconcile").execute(),
   ]);
-  return { ...summary, intents: intents.map((intent) => ({ ...intent, action_id: intent.action_id as ActionId })), run: runRecord(run), units: units.map(unitRecord), dependencies: dependencies.map(dependencyRecord),
+  return { ...summary, reconciliations, intents: intents.map((intent) => ({ ...intent, action_id: intent.action_id as ActionId })), run: runRecord(run), units: units.map(unitRecord), dependencies: dependencies.map(dependencyRecord),
     revisions: revisions.map(revisionRecord), decisions: decisions.map((row) => ({ ...decisionRecord(row), actor: decision_events.find(({ payload }) =>
       payload.kind === "operator_decided" && payload.unit === row.unit_id && payload.review === row.review
         && payload.decision === row.decision && payload.target === row.target_revision_id)?.writer ?? null })) };
@@ -189,21 +192,35 @@ export async function readRun(db: Kysely<DB>, run_id: string): Promise<RunRead |
   return consistent(db, (trx) => runRead(trx, run_id));
 }
 
-/** The current PR and resolved unit input needed to check a manual merge confirmation. */
+/** The query dispatched by the latest watch and the revisions it can speak for. */
 export interface MergeStatusSource {
-  readonly stage: UnitRecord["stage"];
-  readonly input: UnitRecord["input"];
-  readonly pr_body: ArtifactRevisionRecord["body"] | null;
+  readonly intent: { readonly input: PullRequestObserveInput | null; readonly observed_revision_id: string | null } | null;
+  readonly latest_revision_id: string | null;
 }
 export async function readMergeStatusSource(db: Kysely<DB>, location: UnitLocation): Promise<MergeStatusSource | null> {
   return consistent(db, async (trx) => {
-    const unit = await trx.selectFrom("authority.unit").select(["stage", "input"])
-      .where("run_id", "=", location.run_id).where("id", "=", location.unit_id).executeTakeFirst();
+    const { run_id, unit_id } = location;
+    const unit = await trx.selectFrom("authority.unit").select("id")
+      .where("run_id", "=", run_id).where("id", "=", unit_id).executeTakeFirst();
     if (!unit) return null;
-    const pr = await trx.selectFrom("authority.artifact_revision").select("body")
-      .where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id).where("artifact", "=", "pr")
-      .orderBy("seq", "desc").executeTakeFirst();
-    return { stage: unit.stage, input: unit.input, pr_body: pr?.body ?? null };
+    const [pr, intent] = await Promise.all([
+      trx.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id).where("unit_id", "=", unit_id)
+        .where("artifact", "=", "pr").orderBy("seq", "desc").executeTakeFirst(),
+      trx.selectFrom("authority.effect_intent").select("payload").where("run_id", "=", run_id).where("unit_id", "=", unit_id)
+        .where((eb) => eb(eb.ref("payload", "->>").key("worker").key("kind"), "=", "code"))
+        .where((eb) => eb(eb.ref("payload", "->>").key("worker").key("operation"), "=", "pull_request.observe"))
+        .orderBy("created_at", "desc").orderBy("id", "desc").executeTakeFirst(),
+    ]);
+    if (!intent) return { intent: null, latest_revision_id: pr?.id ?? null };
+    const provenance = intent.payload.input_provenance;
+    const candidates = provenance?.status === "recorded"
+      ? provenance.entries.filter((entry) => entry.unit === unit_id && entry.input === "query").map((entry) => entry.revision_id) : [];
+    const observed = candidates.length ? await trx.selectFrom("authority.artifact_revision").select("id")
+      .where("run_id", "=", run_id).where("unit_id", "=", unit_id).where("artifact", "=", "pr")
+      .where("id", "in", candidates).orderBy("seq", "desc").executeTakeFirst() : undefined;
+    return { latest_revision_id: pr?.id ?? null, intent: {
+      input: decodePullRequestObserveInput(intent.payload.inputs), observed_revision_id: observed?.id ?? null,
+    } };
   });
 }
 

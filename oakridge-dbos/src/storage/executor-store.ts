@@ -34,8 +34,13 @@ export async function readIntent(db: Reader, intent_id: string): Promise<EffectI
 export interface OwedIntent { readonly id: IntentId; readonly status: EffectStatus }
 /** Intents a run still owes the outside world: starts to carry and stops to confirm. */
 export async function listOwedIntents(db: Reader, run_id: string): Promise<readonly OwedIntent[]> {
-  return (await db.selectFrom("authority.effect_intent").select(["id", "status"]).where("run_id", "=", run_id)
-    .where("status", "in", OWED_STATUSES).orderBy("id").execute()).map((row) => ({ ...row, id: row.id as IntentId }));
+  return (await db.selectFrom("authority.effect_intent as intent").select(["intent.id", "intent.status"]).where("intent.run_id", "=", run_id)
+    .where("intent.status", "in", OWED_STATUSES)
+    .where((eb) => eb.or([eb("intent.status", "!=", "pending"), eb.not(eb.exists(
+      eb.selectFrom("authority.keyed_execution as execution").select("execution.id")
+        .where("execution.state", "=", "reconcile").whereRef("execution.run_id", "=", "intent.run_id")
+        .whereRef("execution.id", "=", eb.ref("intent.payload", "->>").key("execution_key")),
+    ))])).orderBy("intent.id").execute()).map((row) => ({ ...row, id: row.id as IntentId }));
 }
 
 /** Per-run work holds the run row; this is the one serialization mechanism for a run. */
@@ -59,8 +64,13 @@ export type StartClaim = { readonly kind: "claimed"; readonly tries: number } | 
 export async function claimStart(db: Database, input: { readonly intent_id: string; readonly max_tries: number }): Promise<StartClaim> {
   return db.transaction().execute(async (trx) => {
     if (!await lockRunOf(trx, input.intent_id)) return { kind: "missing" };
-    const intent = await trx.selectFrom("authority.effect_intent").select(["status", "tries"]).where("id", "=", input.intent_id).executeTakeFirstOrThrow();
+    const intent = await trx.selectFrom("authority.effect_intent").select(["status", "tries", "payload"]).where("id", "=", input.intent_id).executeTakeFirstOrThrow();
     if (intent.status !== "pending") return { kind: "not_pending", status: intent.status };
+    if (intent.payload.execution_key) {
+      const execution = await trx.selectFrom("authority.keyed_execution").select("state")
+        .where("id", "=", intent.payload.execution_key).executeTakeFirst();
+      if (execution?.state === "reconcile") return { kind: "not_pending", status: intent.status };
+    }
     if (intent.tries >= input.max_tries) return { kind: "exhausted", tries: intent.tries };
     const claimed = await trx.updateTable("authority.effect_intent").set((eb) => ({ tries: eb("tries", "+", 1), next_try_at: null, updated_at: new Date() }))
       .where("id", "=", input.intent_id).returning("tries").executeTakeFirstOrThrow();

@@ -29,7 +29,7 @@ test("active schema and symbols reflect the authority", () => {
     "authority.feedback_item", "authority.assessment_feedback", "authority.dispatch_authorization",
     "authority.feedback_assignment", "authority.feedback_rejection", "authority.assignment_round",
     "authority.assignment_update", "authority.assignment_verification", "authority.assessment_approval",
-    "authority.event", "authority.wanted_log", "authority.effect_intent", "authority.ingress_receipt",
+    "authority.event", "authority.wanted_log", "authority.keyed_execution", "authority.effect_intent", "authority.ingress_receipt",
     "authority.collaboration_thread",
     "authority.collaboration_message", "authority.review_item", "authority.operator_event",
   ]);

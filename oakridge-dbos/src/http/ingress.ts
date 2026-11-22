@@ -1,3 +1,4 @@
+import { parseExecutionEvidence, type ExecutionReconciliation, type KeyedExecutionRecovery } from "../domain/keyed-execution";
 import type { AssessmentDecisionReceipt } from "../storage/json-column-types";
 import type { AssessmentDecisionCommand, Citation, DispatchAuthorizationRequest, FeedbackItemRequest } from "../core-client/core-types";
 import { readPinnedDefinition } from "../storage/read-store";
@@ -11,7 +12,7 @@ import type { Event, Writer } from "../core-client/core-types";
 import { acceptsAnalysisLinkDeclarations, selectApplicableEntries, type AnalysisLinkEntry } from "../domain/analysis-link-declaration";
 import { err, ok, type ProjectId, type Result, type RunId } from "../domain/primitives";
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
-import { commitAnalysisLinkDeclaration, commitAssessmentMutation, commitDecisionWithLinks, commitEvent, launchRunId, replayLaunch, type LaunchRequestContent, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
+import { commitAnalysisLinkDeclaration, commitAssessmentMutation, commitDecisionWithLinks, commitEvent, commitExecutionMutation, launchRunId, replayLaunch, type LaunchRequestContent, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
 import { readSessionAttempt } from "../storage/read-store";
 import { hasProject } from "../storage/operator-store";
 import { operatorWriterFromCredential } from "./control-auth";
@@ -160,6 +161,7 @@ export interface PrLaunchDependencies {
   readonly probe_pr_integration?: (integration: PrIntegration) => Promise<PrIntegrationHealth>;
 }
 export interface IngressDependencies extends CommitDependencies, PrLaunchDependencies {
+  readonly keyed_execution_recovery?: KeyedExecutionRecovery;
   /** Whether a request on the publish route carries the operator's credential (see `operatorCredentialCheck`). */
   readonly is_operator_request: (request: Request) => boolean;
 }
@@ -299,6 +301,36 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
     } catch (cause) { return fault(cause); }
   });
 
+  async function handleExecution(c: Context, operation: "claim" | "evidence" | "reconcile"): Promise<Response> {
+    const raw = await requestBody(c.req.raw);
+    if (raw instanceof MalformedRequestError) return errorResponse(raw);
+    if (!isFields(raw) || !isRequestId(raw.request_id)) return errorResponse(new MalformedRequestError("request_id is required"));
+    const run_id = param(c, "run_id");
+    const unit_id = param(c, "unit_id");
+    const scope = { run_id, unit_id, key: param(c, "key"), request_id: raw.request_id };
+    try {
+      if (operation === "reconcile") {
+        if (!deps.is_operator_request(c.req.raw)) return errorResponse(new UnauthorizedError("operator credential refused"));
+        const outcome = parseExecutionReconciliation(raw.outcome);
+        if (!outcome) return errorResponse(new MalformedRequestError("outcome must supply evidence or never_accepted"));
+        return executionResponse(await commitExecutionMutation(deps, { ...scope, mutation: { kind: "reconcile", outcome } },
+          operatorWriterFromCredential(c.req.raw)));
+      }
+      const publisher = await resolvePublisher(c.req.raw, { run_id: run_id as RunId, unit: unit_id });
+      if (!publisher?.by || publisher.writer.kind !== "session") return refusedSecret();
+      if (operation === "claim") return executionResponse(await commitExecutionMutation(deps, { ...scope,
+        mutation: { kind: "claim", recovery: deps.keyed_execution_recovery ?? "off", action_id: publisher.by } }, publisher.writer));
+      const evidence = parseExecutionEvidence(raw.evidence);
+      if (!evidence) return errorResponse(new MalformedRequestError("evidence requires external_id, store_path and detail"));
+      return executionResponse(await commitExecutionMutation(deps, { ...scope,
+        mutation: { kind: "evidence", evidence, action_id: publisher.by } }, publisher.writer));
+    } catch (cause) { return fault(cause); }
+  }
+
+  app.post("/api/runs/:run_id/units/:unit_id/executions/:key/claim", (c) => handleExecution(c, "claim"));
+  app.put("/api/runs/:run_id/units/:unit_id/executions/:key/evidence", (c) => handleExecution(c, "evidence"));
+  app.post("/api/runs/:run_id/units/:unit_id/executions/:key/reconciliation", (c) => handleExecution(c, "reconcile"));
+
   /**
    * Publish. A session secret names the running attempt, which is both the
    * writer's attempt and the revision's `by`. Failing that, the operator's
@@ -328,5 +360,23 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
     if (attempt) return attempt.unit_id === scope.unit
       ? { writer: { kind: "session", session: attempt.kbbl_session_id, attempt: attempt.action_id }, by: attempt.action_id } : null;
     return deps.is_operator_request(request) ? { writer: operatorWriterFromCredential(request), by: null } : null;
+  }
+}
+
+
+function parseExecutionReconciliation(raw: unknown): ExecutionReconciliation | null {
+  if (!isFields(raw)) return null;
+  if (raw.kind === "never_accepted") return { kind: raw.kind };
+  if (raw.kind !== "evidence") return null;
+  const evidence = parseExecutionEvidence(raw.evidence);
+  return evidence ? { kind: raw.kind, evidence } : null;
+}
+
+function executionResponse(result: Awaited<ReturnType<typeof commitExecutionMutation>>): Response {
+  switch (result.kind) {
+    case "ok": return Response.json(result.answer ?? { kind: "committed", event_id: result.event_id });
+    case "missing": return errorResponse(new MissingEntityError(result.detail));
+    case "conflict": return errorResponse(new ConflictError(result.detail));
+    case "unauthorized": return errorResponse(new UnauthorizedError(result.detail));
   }
 }

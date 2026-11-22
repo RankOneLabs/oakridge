@@ -8,6 +8,9 @@ import { openDatabase } from "./storage/database";
 import { migrateEmptyDatabase } from "./storage/migrate";
 
 const optional = (name: string): string | null => process.env[name]?.trim() || null;
+const keyed_execution_recovery = process.env.OAKRIDGE_KEYED_EXECUTION_RECOVERY ?? "off";
+if (keyed_execution_recovery !== "off" && keyed_execution_recovery !== "by_key")
+  throw new Error("OAKRIDGE_KEYED_EXECUTION_RECOVERY must be off or by_key");
 const database_url = process.env.DBOS_SYSTEM_DATABASE_URL;
 if (!database_url) throw new Error("DBOS_SYSTEM_DATABASE_URL is required");
 const host = process.env.OAKRIDGE_DBOS_HOST ?? "127.0.0.1";
@@ -43,7 +46,7 @@ if (!gated_review_url) console.warn("OAKRIDGE_GATED_REVIEW_URL is unset: pull_re
 const migration_db = openDatabase(database_url);
 try { await migrateEmptyDatabase(migration_db); }
 finally { await migration_db.destroy(); }
-const composition = await createProductionComposition({ pr_integration_default, database_url, host, control_token: process.env.OAKRIDGE_CONTROL_TOKEN,
+const composition = await createProductionComposition({ keyed_execution_recovery, pr_integration_default, database_url, host, control_token: process.env.OAKRIDGE_CONTROL_TOKEN,
   operator_access: { bind_host: process.env.OAKRIDGE_OPERATOR_BIND_HOST ?? host, has_control_token: Boolean(process.env.OAKRIDGE_CONTROL_TOKEN?.trim()), allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" },
   observation,
   executor: { kbbl_base_url, kbbl_control_token, publication_key: optional("OAKRIDGE_PUBLICATION_KEY"), publish_base_url, agent_workdir, gated_review_url } });

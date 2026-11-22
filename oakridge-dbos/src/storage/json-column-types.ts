@@ -1,3 +1,5 @@
+import type { ClaimAnswer } from "../domain/keyed-execution";
+export type { ExecutionEvidence, ExecutionReconciliation } from "../domain/keyed-execution";
 /**
  * TypeScript types of the authority's jsonb columns. The baseline names one of
  * these per column with `COMMENT ON COLUMN ... IS '@type {Name}'`, and
@@ -42,7 +44,7 @@ export interface AssessmentDecisionReceipt {
 }
 
 export type CommitReceipt =
-  | { readonly kind: "committed"; readonly event_id: string; readonly assessment_decision?: AssessmentDecisionReceipt }
+  | { readonly kind: "committed"; readonly event_id: string; readonly assessment_decision?: AssessmentDecisionReceipt; readonly execution_answer?: ClaimAnswer }
   /** `stall` is set when step refused the event because advancing the run past it failed (D-V4). */
   | { readonly kind: "rejected"; readonly reason: string; readonly stall?: StallRecord };
 /**

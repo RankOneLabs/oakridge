@@ -26,3 +26,5 @@ export type { RunUsage } from "../domain/usage";
 
 export type { AssessmentStatus } from "../core-client/core-types";
 export type { DecideAssessmentRequest, AuthorizeFeedbackRequest, CreateFeedbackRequest, AuthorizationResponse, CreateFeedbackResponse } from "./ingress";
+
+export type { ReconcileExecutionRequest } from "../domain/keyed-execution";

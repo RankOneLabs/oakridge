@@ -40,6 +40,7 @@ export interface ExecutorOptions {
 }
 export interface ProductionOptions {
   readonly operator_access?: AccessModeInput;
+  readonly keyed_execution_recovery?: import("../domain/keyed-execution").KeyedExecutionRecovery;
   readonly pr_integration_default?: PrIntegration;
   readonly database_url: string; readonly host: string; readonly control_token?: string;
   readonly executor?: ExecutorOptions;
@@ -100,7 +101,7 @@ export async function createProductionComposition(options: ProductionOptions): P
       probe_integration: () => probePrIntegration(pr_launch.pr_integration_default ?? "none", executor?.gated_review_url ?? null),
       kbbl: executor?.kbbl_base_url ? new KbblClient({ base_url: executor.kbbl_base_url, control_token: executor.kbbl_control_token ?? null }) : null,
       observation_url: options.observation?.url ?? null, core_ready: true,
-    }), observation: options.observation, kbbl: executor?.kbbl_base_url ? new KbblClient({ base_url: executor.kbbl_base_url, control_token: executor.kbbl_control_token ?? null }) : null, ...pr_launch, db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
+    }), observation: options.observation, kbbl: executor?.kbbl_base_url ? new KbblClient({ base_url: executor.kbbl_base_url, control_token: executor.kbbl_control_token ?? null }) : null, ...pr_launch, keyed_execution_recovery: options.keyed_execution_recovery, db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
     const sweep = startRunSweep(() => sweepRunsNeedingWork(db));
     const observation = options.observation ? startObservationPublisher(db, options.observation) : null;
     return { app, application_version, async close() {
