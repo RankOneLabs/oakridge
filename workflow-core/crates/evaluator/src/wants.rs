@@ -96,6 +96,64 @@ pub(super) fn holds(
             == Some(Value::Bool(true)),
     )
 }
+struct OpenRound<'a> {
+    request: &'a RoundRequest,
+    assessment: &'a SymbolKey,
+    update: Option<usize>,
+}
+
+fn assignment_rounds<'a>(
+    stage: &'a CheckedStage,
+    state: &'a StepSnapshot,
+    unit: &UnitId,
+) -> Vec<OpenRound<'a>> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut current = Vec::new();
+    for decision in state.decisions.iter().rev() {
+        let DecisionState::Review {
+            unit: owner,
+            review,
+            effect: DecisionEffect::Dispatch { rounds },
+            ..
+        } = decision
+        else {
+            continue;
+        };
+        if owner != unit {
+            continue;
+        }
+        let Some(assessment) = stage.reviews.iter().find_map(|checked| match checked {
+            CheckedReview::Operator {
+                key, assessment, ..
+            } if key == review => assessment.as_ref(),
+            _ => None,
+        }) else {
+            continue;
+        };
+        for request in rounds.iter().rev() {
+            if !seen.insert(&request.assignment) {
+                continue;
+            }
+            let self_assessing = stage.workers.iter().any(|worker| {
+                worker.key().0 == request.worker.0 && worker.creates().contains(assessment)
+            });
+            let update = state.revisions.iter().position(|revision| revision.unit == *unit
+                && revision.artifact.0 != BLOCKER_ARTIFACT
+                && (!self_assessing || revision.artifact == *assessment)
+                && !has_failed_validation(state, &revision.id)
+                && state.attempts.iter().any(|attempt| revision.by.as_ref() == Some(&attempt.action_id)
+                    && matches!(&attempt.cause, Cause::AssignmentRound { round, .. } if round == &request.round)));
+            current.push(OpenRound {
+                request,
+                assessment,
+                update,
+            });
+        }
+    }
+    current.reverse();
+    current
+}
+
 pub fn stage_actions(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
@@ -143,8 +201,54 @@ pub fn stage_actions(
         }
         return Ok(wanted);
     }
+    let rounds = assignment_rounds(checked, state, &unit.id);
     for checked_worker in &checked.workers {
         let worker_key = checked_worker.key();
+        if matches!(checked_worker, CheckedWorker::Agent { .. }) {
+            let pending = rounds
+                .iter()
+                .filter(|round| round.request.worker.0 == worker_key.0 && round.update.is_none());
+            let mut owes_update = false;
+            for round in pending {
+                owes_update = true;
+                let mut cause = Cause::AssignmentRound {
+                    round: round.request.round.clone(),
+                    retry: None,
+                };
+                let original = action_id(&unit.id, worker_key, &Mode::Revise, &cause);
+                if let Readiness::RetryAuthorized { event } = can_run(state, &unit.id, worker_key) {
+                    if state.attempts.iter().any(|attempt| attempt.action_id == original
+                        && matches!(attempt.status, AttemptStatus::Failed { .. }))
+                        && attempt(state, &unit.id, worker_key).is_some_and(|attempt|
+                            matches!(&attempt.cause, Cause::AssignmentRound { round: previous, .. } if previous == &round.request.round))
+                    {
+                        cause = Cause::AssignmentRound { round: round.request.round.clone(), retry: Some(event) };
+                    }
+                }
+                let id = action_id(&unit.id, worker_key, &Mode::Revise, &cause);
+                if state
+                    .attempts
+                    .iter()
+                    .find(|attempt| attempt.action_id == id)
+                    .is_none_or(|attempt| {
+                        matches!(
+                            attempt.status,
+                            AttemptStatus::Pending | AttemptStatus::Running
+                        )
+                    })
+                {
+                    wanted.push(Action::RunWorker {
+                        unit: unit.id.clone(),
+                        worker: worker_key.clone(),
+                        mode: Mode::Revise,
+                        cause,
+                    });
+                }
+            }
+            if owes_update {
+                continue;
+            }
+        }
         let readiness = can_run(state, &unit.id, worker_key);
         if readiness == Readiness::Blocked {
             continue;
@@ -154,6 +258,10 @@ pub fn stage_actions(
         }
         let candidate = match checked_worker {
             CheckedWorker::Agent {
+                reviews: Some(subject),
+                ..
+            } if is_creator_working(checked, state, &unit.id, subject) => None,
+            CheckedWorker::Agent {
                 creates,
                 reviews: Some(subject),
                 ..
@@ -161,9 +269,6 @@ pub fn stage_actions(
                 // The subject's creator may still replace it (a revise
                 // publishes the new build before its PR): review only what
                 // a finished attempt left.
-                if is_creator_working(checked, state, &unit.id, subject) {
-                    continue;
-                }
                 let Some(subject) = latest(state, &unit.id, subject) else {
                     continue;
                 };
@@ -256,6 +361,29 @@ pub fn stage_actions(
                 }
             }
         };
+        let candidate = candidate.or_else(|| {
+            if !matches!(checked_worker, CheckedWorker::Agent { .. }) {
+                return None;
+            }
+            rounds.iter().find_map(|round| {
+                let update = round.update?;
+                if !checked_worker.creates().contains(round.assessment)
+                    || state.revisions[update..].iter().any(|revision| {
+                        revision.unit == unit.id
+                            && revision.artifact == *round.assessment
+                            && !has_failed_validation(state, &revision.id)
+                    })
+                {
+                    return None;
+                }
+                Some((
+                    Mode::Review,
+                    Cause::Reassessment {
+                        round: round.request.round.clone(),
+                    },
+                ))
+            })
+        });
         if let Some((mode, cause)) = candidate {
             let cause = match readiness {
                 Readiness::RetryAuthorized { event } => Cause::Retry {
@@ -377,6 +505,7 @@ pub(super) fn resolve_reviews(
             inputs,
             when,
             decisions,
+            ..
         } = review
         else {
             continue;
@@ -428,7 +557,7 @@ pub(super) fn is_decided_by(
 ) -> bool {
     state.decisions.iter().any(|decision| {
         matches!(decision, DecisionState::Review { unit: decided_unit, review: decided_review, target: decided_target, .. }
-            if decided_unit == unit && decided_review == review && decided_target == target)
+            if decided_unit == unit && decided_review == review && decided_target == target && !matches!(decision.effect(), Some(DecisionEffect::Dispatch { .. })))
     })
 }
 /// Whether a revision's declared artifact validation failed on publication.
@@ -571,6 +700,7 @@ pub(super) fn resolve_run_worker(
         _ => None,
     };
     let (previous, feedback) = match action.mode {
+        Mode::Revise if matches!(action.cause, Cause::AssignmentRound { .. }) => (None, Vec::new()),
         Mode::Revise => match if parked_blocker(state, &unit.id).is_none()
             && matches!(action.cause, Cause::Retry { .. })
             && matches!(

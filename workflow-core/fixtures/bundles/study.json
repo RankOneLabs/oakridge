@@ -60,38 +60,6 @@
       "summary": "optional(text)",
       "cargo_test_output": "optional(text)"
     },
-    "next_action": {
-      "id": "uuid(generated)",
-      "audience": "enum(rework, operator)",
-      "source": "action_source",
-      "text": "text"
-    },
-    "action_source": {
-      "kind": "enum(item_assessment, additional_finding)",
-      "id": "ident"
-    },
-    "action_disposition": {
-      "action_id": "text",
-      "disposition": "enum(accepted, modified, rejected)",
-      "original_text": "text",
-      "final_text": "optional(text)",
-      "audience": "enum(rework, operator)",
-      "source": "action_source",
-      "reason": "optional(text)"
-    },
-    "added_action": {
-      "action_id": "text",
-      "origin": "enum(operator)",
-      "final_text": "text",
-      "audience": "enum(rework, operator)",
-      "source": "action_source",
-      "reason": "optional(text)"
-    },
-    "adjudication": {
-      "entries": "list(action_disposition)",
-      "added_actions": "list(added_action)",
-      "rework_feedback": "text"
-    },
     "pr_body": {
       "pr_url": "text",
       "branch": "text",
@@ -233,7 +201,8 @@
       "head_sha": "text",
       "item_assessments": "list(item_assessment)",
       "additional_findings": "list(additional_finding)",
-      "next_actions": "list(next_action)",
+      "proposals": "list(feedback_proposal)",
+      "verifications": "list(assignment_verification)",
       "test_evidence": "test_evidence",
       "verdict": "enum(pass, pass_with_notes, fail)"
     },
@@ -241,7 +210,8 @@
       "head_sha": "text",
       "item_assessments": "list(item_assessment)",
       "additional_findings": "list(additional_finding)",
-      "next_actions": "list(next_action)",
+      "proposals": "list(feedback_proposal)",
+      "verifications": "list(assignment_verification)",
       "test_evidence": "test_evidence",
       "verdict": "enum(pass, pass_with_notes, fail)",
       "run_key": "text"
@@ -613,10 +583,6 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "every(slice_assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(slice_assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(slice_assessment.additional_findings, item.id), item.source.id)))",
-              "message": "Every next action source must resolve to an assessed item or additional finding."
-            },
-            {
               "check": "(slice_assessment.verdict == \"fail\" and (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (slice_assessment.verdict == \"pass_with_notes\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)) or (slice_assessment.verdict == \"pass\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
@@ -774,17 +740,14 @@
           "decisions": {
             "expand": {
               "effect": "approve",
-              "adjudication": "accept",
-              "label": "Expand",
-              "payload": "adjudication"
+              "operation": "approve_assessment",
+              "label": "Expand"
             },
             "send_feedback_to_builder": {
               "effect": "request_changes",
-              "adjudication": "feedback",
+              "operation": "dispatch_feedback",
               "on": "slice_build",
-              "label": "Send actions to builder",
-              "payload": "adjudication",
-              "feedback_field": "rework_feedback"
+              "label": "Send actions to builder"
             },
             "send_to_builder": {
               "effect": "request_changes",
@@ -904,10 +867,6 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "every(assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(assessment.additional_findings, item.id), item.source.id)))",
-              "message": "Every next action source must resolve to an assessed item or additional finding."
-            },
-            {
               "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
@@ -998,9 +957,8 @@
           "decisions": {
             "accept": {
               "effect": "approve",
-              "adjudication": "accept",
-              "label": "Accept",
-              "payload": "adjudication"
+              "operation": "approve_assessment",
+              "label": "Accept"
             },
             "request_assessment_changes": {
               "effect": "request_changes",
@@ -1011,11 +969,9 @@
             },
             "send_to_expander": {
               "effect": "request_changes",
-              "adjudication": "feedback",
+              "operation": "dispatch_feedback",
               "on": "expansion",
-              "label": "Send to expander",
-              "payload": "adjudication",
-              "feedback_field": "rework_feedback"
+              "label": "Send to expander"
             }
           }
         },
@@ -1248,10 +1204,6 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "every(assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(assessment.additional_findings, item.id), item.source.id)))",
-              "message": "Every next action source must resolve to an assessed item or additional finding."
-            },
-            {
               "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
@@ -1346,16 +1298,13 @@
           "decisions": {
             "accept": {
               "effect": "approve",
-              "adjudication": "accept",
-              "label": "Accept",
-              "payload": "adjudication"
+              "operation": "approve_assessment",
+              "label": "Accept"
             },
             "request_changes": {
               "effect": "request_changes",
-              "adjudication": "feedback",
+              "operation": "dispatch_feedback",
               "label": "Send to integrator",
-              "payload": "adjudication",
-              "feedback_field": "rework_feedback",
               "on": "assessment"
             }
           }

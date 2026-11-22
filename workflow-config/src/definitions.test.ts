@@ -587,17 +587,18 @@ test("generation refuses an authored source that declares the removed grant", ()
 });
 
 for (const name of ["assess", "assess-revise"]) {
-  test(`${name} prompts link audience-specific actions and leave generated ids to the server`, () => {
+  test(`${name} prompts describe proposal citations and round verification`, () => {
     const definition = unwrap(resolveLaunchableDefinition("development"));
     const prompt = definition.prompts[`development/${name}.md`];
-    expect(prompt).toContain("source: {kind: item_assessment|additional_finding, id}");
-    expect(prompt).toContain("audience: rework|operator");
-    expect(prompt).toContain("Omit their id on publication; the server generates it.");
+    expect(prompt).toContain("{key, instruction, citation?}");
+    expect(prompt).toContain("{revision_id, pointer}");
+    expect(prompt).toContain("needs_further_work");
   });
 }
 
-test("development pins the build-item contract after the prior task-contract definition", () => {
-  expect(unwrap(readLaunchableCatalog()).development).not.toBe("478dfc8194eb060c438c916adbe9b80b9b5010ad2d339b629448ddbde376fc34");
+test("development pins the assessment operations contract", () => {
+  const current = unwrap(resolveLaunchableDefinition("development"));
+  expect(current.source.schemas?.assessment_body).toMatchObject({ proposals: "list(feedback_proposal)" });
 });
 
 test("skill bundle index pins verified bundles with the shared operation contract", () => {
@@ -630,25 +631,6 @@ test("skill source byte drift fails generator check and retains old pins on gene
   expect(runGenerator(root).exitCode).toBe(0);
   const old = JSON.parse(before) as { "github-cli": string };
   expect(existsSync(resolve(root, "workflow-config/definitions/skills", old["github-cli"], "SKILL.md"))).toBe(true);
-});
-
-test("development prompts use the integration-neutral skill while historical pins retain their instructions", () => {
-  const store = DEFINITION_STORE_ROOT;
-  const catalog = unwrap(readLaunchableCatalog(store));
-  expect(catalog.development).not.toBe("46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222");
-  const current = unwrap(resolveLaunchableDefinition("development"));
-  const previous = JSON.parse(readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8")) as CommittedDefinition;
-  for (const name of ["build", "build-revise", "assess", "assess-revise", "integrate", "integrate-revise"]) {
-    const prompt = readFileSync(resolve(import.meta.dir, "../prompts/development", `${name}.md`), "utf8");
-    const pinned = current.prompt_sources[`development/${name}.md`];
-    expect(pinned).toBe(prompt);
-    const historicalPrompt = readFileSync(resolve(store, "prompts", `${previous.prompts[`development/${name}.md`]}.md`), "utf8");
-    expect(historicalPrompt).toContain("gated-review");
-    expect(prompt).toContain("pr-operations");
-    expect(prompt).not.toMatch(/gated-review|mcp__|pr_status|review gate/i);
-  }
-  const historical = readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8");
-  expect(historical).toContain("development");
 });
 
 test("authored audiences travel with the committed definitions", () => {
@@ -728,11 +710,30 @@ test("published prompt survives regeneration and check without altering the auth
   expect(readFileSync(resolve(store, "launchable.json"))).toEqual(launchable);
 });
 
-test("development and study schemas use rework and operator audiences", () => {
+test("development and study use core proposal and verification schemas", () => {
   for (const name of ["development", "study"] as const) {
     const definition = unwrap(resolveLaunchableDefinition(name));
-    for (const schema of ["next_action", "action_disposition", "added_action"]) {
-      expect(definition.source.schemas?.[schema]).toMatchObject({ audience: "enum(rework, operator)" });
-    }
+    expect(definition.source.schemas?.assessment_body).toMatchObject({
+      proposals: "list(feedback_proposal)", verifications: "list(assignment_verification)",
+    });
   }
+});
+
+test("development prompts use the integration-neutral skill while historical pins retain their instructions", () => {
+  const store = DEFINITION_STORE_ROOT;
+  const catalog = unwrap(readLaunchableCatalog(store));
+  expect(catalog.development.definition_id).not.toBe("46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222");
+  const current = unwrap(resolveLaunchableDefinition("development"));
+  const previous = JSON.parse(readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8")) as CommittedDefinition;
+  for (const name of ["build", "build-revise", "assess", "assess-revise", "integrate", "integrate-revise"]) {
+    const prompt = readFileSync(resolve(import.meta.dir, "../prompts/development", `${name}.md`), "utf8");
+    const pinned = current.prompt_sources[`development/${name}.md`];
+    expect(pinned).toBe(prompt);
+    const historicalPrompt = readFileSync(resolve(store, "prompts", `${previous.prompts[`development/${name}.md`]}.md`), "utf8");
+    expect(historicalPrompt).toContain("gated-review");
+    expect(prompt).toContain("pr-operations");
+    expect(prompt).not.toMatch(/gated-review|mcp__|pr_status|review gate/i);
+  }
+  const historical = readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8");
+  expect(historical).toContain("development");
 });

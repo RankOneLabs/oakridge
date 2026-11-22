@@ -378,7 +378,7 @@ fn met_item(kind: &str, id: &str) -> Value {
 fn assessment(head_sha: &str, items: Vec<Value>) -> Value {
     json!({
         "head_sha": head_sha, "item_assessments": items, "additional_findings": [],
-        "next_actions": [], "test_evidence": {"passed": 1, "failed": 0}, "verdict": "pass"
+        "proposals": [], "verifications": [], "test_evidence": {"passed": 1, "failed": 0}, "verdict": "pass"
     })
 }
 
@@ -411,10 +411,6 @@ fn expansion_assessment(head_sha: &str, case_ids: &[&str]) -> Value {
 
 fn pr(branch: &str) -> Value {
     json!({"pr_url": format!("https://forge/oakridge/{branch}"), "branch": branch, "summary": "Study fixtures"})
-}
-
-fn adjudication() -> Value {
-    json!({"entries": [], "added_actions": [], "rework_feedback": ""})
 }
 
 fn slice_output(artifact: &str) -> WorkerOutput<'_> {
@@ -691,41 +687,6 @@ fn send_to_builder_rebuilds_and_needs_a_fresh_spend_approval() {
 }
 
 #[test]
-fn slice_adjudication_sends_only_rework_feedback_to_the_builder() {
-    let mut run = assessed_slice();
-    let mut payload = adjudication();
-    payload["rework_feedback"] = json!("Fix X");
-    run.decide(Decision {
-        review: ReviewOf {
-            unit: DESIGN,
-            review: "slice_report_review",
-            artifact: "slice_build",
-        },
-        decision: "send_feedback_to_builder",
-        payload,
-    })
-    .unwrap();
-    let wanted = run
-        .last
-        .wanted
-        .iter()
-        .find(|wanted| {
-            matches!(&wanted.action,
-                Action::RunWorker { unit, worker, mode: Mode::Revise, .. }
-                if unit.0 == DESIGN && worker.0 == "slice_builder"
-            )
-        })
-        .expect("slice builder revises");
-    let feedback: Vec<_> = wanted
-        .resolved
-        .feedback
-        .iter()
-        .map(|entry| &entry.payload)
-        .collect();
-    assert_eq!(feedback, vec![&json!({"feedback": "Fix X"})]);
-}
-
-#[test]
 fn change_design_reruns_the_slice_after_the_plan_is_reapproved() {
     let mut run = assessed_slice();
     run.decide(Decision {
@@ -775,7 +736,7 @@ fn slice_approved() -> Run {
             artifact: "slice_report",
         },
         decision: "expand",
-        payload: adjudication(),
+        payload: json!({}),
     })
     .unwrap();
     run.confirm_merged(DESIGN);
@@ -841,7 +802,7 @@ impl Run {
                 artifact: "assessment",
             },
             decision: "accept",
-            payload: adjudication(),
+            payload: json!({}),
         })
         .unwrap();
         self.confirm_merged(&unit);

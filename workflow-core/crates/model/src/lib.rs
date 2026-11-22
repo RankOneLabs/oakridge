@@ -1,11 +1,13 @@
 //! Source contracts from the core replacement specification, sections 3–5.
 //! JSON is accepted as source literals, ingress payloads and run state;
 //! every raw value crosses the wire under the safe-integer guard.
+pub mod assessment;
 mod checked;
 pub mod protocol;
 mod source;
 mod values;
 pub mod wire_numbers;
+pub use assessment::*;
 pub use checked::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -89,5 +91,12 @@ id!(
     DecisionId,
     EventId,
     OperatorId,
-    SessionId
+    SessionId,
+    FeedbackItemId,
+    FeedbackAssignmentId,
+    AssignmentRoundId,
+    DispatchAuthorizationId,
+    AssessmentApprovalId,
+    FeedbackRejectionId,
+    AssignmentVerificationId
 );

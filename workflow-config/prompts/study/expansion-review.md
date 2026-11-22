@@ -1,8 +1,8 @@
 # Review study expansion assessment
 
-Verify that the assessment covers each allocated case and that its head matches the expansion build. {{> shared/adjudication.md}}
+Verify that the assessment covers each allocated case and that its head matches the expansion build. {{> shared/assessment-review.md}}
 
-Use request_assessment_changes with feedback and no adjudication payload for inaccurate assessment prose or evidence. Use send_to_expander (“Send to expander”) with the adjudication payload to send its rework actions to the worker that reworks this artifact (the expander). Accept approves the assessment with the adjudication payload.
+Use request_assessment_changes with feedback for inaccurate assessment prose or evidence. Send to expander dispatches to the expander. Accept records final approval.
 
 ## Allocated cases
 

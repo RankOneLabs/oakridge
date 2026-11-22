@@ -69,9 +69,10 @@ pub(super) fn eval_expression_inner(
                 && state.decisions.iter().any(|decision| {
                     decision.unit() == &unit.id
                         && decision.target() == &revision.id
-                        && decision.effect().is_some_and(|effect| {
-                            matches!(effect, DecisionEffect::RequestChanges { .. })
-                                == is_request_changes
+                        && decision.effect().is_some_and(|effect| match effect {
+                            DecisionEffect::Approve => !is_request_changes,
+                            DecisionEffect::RequestChanges { .. } => is_request_changes,
+                            DecisionEffect::Dispatch { .. } => false,
                         })
                 })
         }))

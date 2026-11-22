@@ -52,33 +52,6 @@ schemas:
     output: optional(text)
     summary: optional(text)
     cargo_test_output: optional(text)
-  next_action:
-    id: uuid(generated)
-    audience: enum(rework, operator)
-    source: action_source
-    text: text
-  action_source:
-    kind: enum(item_assessment, additional_finding)
-    id: ident
-  action_disposition:
-    action_id: text
-    disposition: enum(accepted, modified, rejected)
-    original_text: text
-    final_text: optional(text)
-    audience: enum(rework, operator)
-    source: action_source
-    reason: optional(text)
-  added_action:
-    action_id: text
-    origin: enum(operator)
-    final_text: text
-    audience: enum(rework, operator)
-    source: action_source
-    reason: optional(text)
-  adjudication:
-    entries: list(action_disposition)
-    added_actions: list(added_action)
-    rework_feedback: text
   pr_body:
     pr_url: text
     branch: text
@@ -197,14 +170,16 @@ schemas:
     head_sha: text
     item_assessments: list(item_assessment)
     additional_findings: list(additional_finding)
-    next_actions: list(next_action)
+    proposals: list(feedback_proposal)
+    verifications: list(assignment_verification)
     test_evidence: test_evidence
     verdict: enum(pass, pass_with_notes, fail)
   slice_assessment_body:
     head_sha: text
     item_assessments: list(item_assessment)
     additional_findings: list(additional_finding)
-    next_actions: list(next_action)
+    proposals: list(feedback_proposal)
+    verifications: list(assignment_verification)
     test_evidence: test_evidence
     verdict: enum(pass, pass_with_notes, fail)
     run_key: text
@@ -451,8 +426,6 @@ stages:
             message: Assessment item ids must be unique.
           - check: unique(map(slice_assessment.additional_findings, item.id))
             message: Additional finding ids must be unique.
-          - check: every(slice_assessment.next_actions, (item.source.kind == "item_assessment" and contains(map(slice_assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == "additional_finding" and contains(map(slice_assessment.additional_findings, item.id), item.source.id)))
-            message: Every next action source must resolve to an assessed item or additional finding.
           - check: (slice_assessment.verdict == "fail" and (len(filter(slice_assessment.item_assessments, item.status != "met")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0)) or (slice_assessment.verdict == "pass_with_notes" and not (len(filter(slice_assessment.item_assessments, item.status != "met")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0)) or (slice_assessment.verdict == "pass" and not (len(filter(slice_assessment.item_assessments, item.status != "met")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0))
             message: Assessment verdict must match item statuses and additional finding severities.
           - check: slice_assessment.test_evidence.failed == 0 or (len(filter(slice_assessment.item_assessments, item.status != "met")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0)
@@ -572,16 +545,13 @@ stages:
         decisions:
           expand:
             effect: approve
-            adjudication: accept
+            operation: approve_assessment
             label: Expand
-            payload: adjudication
           send_feedback_to_builder:
             effect: request_changes
-            adjudication: feedback
+            operation: dispatch_feedback
             on: slice_build
             label: Send actions to builder
-            payload: adjudication
-            feedback_field: rework_feedback
           send_to_builder:
             effect: request_changes
             label: Send to builder
@@ -663,9 +633,6 @@ stages:
           - &a2
             check: unique(map(assessment.additional_findings, item.id))
             message: Additional finding ids must be unique.
-          - &a3
-            check: every(assessment.next_actions, (item.source.kind == "item_assessment" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == "additional_finding" and contains(map(assessment.additional_findings, item.id), item.source.id)))
-            message: Every next action source must resolve to an assessed item or additional finding.
           - &a4
             check: (assessment.verdict == "fail" and (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0)) or (assessment.verdict == "pass_with_notes" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)) or (assessment.verdict == "pass" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(assessment.additional_findings, item.severity == "warning")) > 0))
             message: Assessment verdict must match item statuses and additional finding severities.
@@ -732,9 +699,8 @@ stages:
         decisions:
           accept:
             effect: approve
-            adjudication: accept
+            operation: approve_assessment
             label: Accept
-            payload: adjudication
           request_assessment_changes:
             effect: request_changes
             label: Request assessment changes
@@ -742,11 +708,9 @@ stages:
               feedback: What must the assessment change?
           send_to_expander:
             effect: request_changes
-            adjudication: feedback
+            operation: dispatch_feedback
             on: expansion
             label: Send to expander
-            payload: adjudication
-            feedback_field: rework_feedback
       merge_confirmation:
         of: pr
         by: operator
@@ -905,7 +869,6 @@ stages:
             message: "Every frozen cohort file must be assessed."
           - *a1
           - *a2
-          - *a3
           - *a4
           - *a5
       pr:
@@ -973,15 +936,12 @@ stages:
         decisions:
           accept:
             effect: approve
-            adjudication: accept
+            operation: approve_assessment
             label: Accept
-            payload: adjudication
           request_changes:
             effect: request_changes
-            adjudication: feedback
+            operation: dispatch_feedback
             label: Send to integrator
-            payload: adjudication
-            feedback_field: rework_feedback
             on: assessment
       merge_confirmation:
         of: manual_merge_target

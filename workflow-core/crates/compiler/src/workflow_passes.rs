@@ -337,7 +337,28 @@ fn resolve_at(
 pub(super) fn resolve(parsed: ParsedWorkflow) -> Result<ResolvedWorkflow, Vec<CompileError>> {
     let mut source = parsed.source;
     let original = source.clone();
-    let aliases = source.schemas.clone();
+    let builtins = core_schemas();
+    let mut errors = reserved_key_errors(KeyNamespace::Stage, source.stages.keys());
+    errors.extend(assessment::check(&source));
+    errors.extend(
+        source
+            .schemas
+            .keys()
+            .filter(|key| builtins.contains_key(key.as_str()))
+            .map(|key| {
+                CompileError::new(
+                    CheckKind::Name,
+                    format!("schemas.{key}"),
+                    source_span(key),
+                    format!("schema {key} shadows a core type"),
+                )
+            }),
+    );
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let mut aliases = source.schemas.clone();
+    aliases.extend(builtins.into_iter().map(|(key, ty)| (key.to_owned(), ty)));
     check_schema_sizes(&aliases)?;
     let outcomes = outcomes::infer_outcomes(&source, &aliases)?;
     let mut errors = Vec::new();

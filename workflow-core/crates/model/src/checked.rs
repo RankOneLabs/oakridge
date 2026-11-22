@@ -86,6 +86,8 @@ pub struct CheckedArtifactValidation {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedDecision {
+    #[serde(default, skip_serializing_if = "DecisionOperation::is_plain")]
+    pub operation: DecisionOperation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<CheckedDecisionGuard>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -111,6 +113,8 @@ pub struct CheckedEngineDecision {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CheckedReview {
     Operator {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assessment: Option<SymbolKey>,
         key: SymbolKey,
         of: SymbolKey,
         inputs: Vec<CheckedNamedExpression>,

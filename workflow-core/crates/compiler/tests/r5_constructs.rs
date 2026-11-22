@@ -155,7 +155,7 @@ fn worker_templates_and_decision_sets_expand_typed_overrides() {
         json!({"template": "watch", "overrides": {"every": "2m"}});
     value["stages"]["cohort"]["reviews"]["assessment_review"]["decisions"] = json!({
         "set": "assessment", "overrides": {
-            "accept": {"payload": "text"},
+            "accept": {"label": "Approve assessment"},
             "request_build_changes": {"label": "Revise build"}
         }
     });

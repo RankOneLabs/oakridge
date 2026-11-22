@@ -494,10 +494,8 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
         "input": "assessment_body",
         "schemas": {
             "assessment_body": schemas["assessment_body"],
-            "next_action": schemas["next_action"],
             "item_assessment": schemas["item_assessment"],
             "additional_finding": schemas["additional_finding"],
-            "action_source": schemas["action_source"],
             "severity": schemas["severity"],
             "assessment_subject": schemas["assessment_subject"],
             "evidence_ref": schemas["evidence_ref"],
@@ -514,7 +512,8 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
         "item_assessments": [{"subject": {"kind": "build_item", "id": "item-a"},
             "status": "met", "observation": "Verified", "evidence": [{"kind": "test", "ref": "assessment-schema"}]}],
         "additional_findings": [],
-        "next_actions": [],
+        "proposals": [],
+        "verifications": [],
         "test_evidence": {"passed": 1, "failed": 0}
     });
 
@@ -530,7 +529,8 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
         "verdict",
         "item_assessments",
         "additional_findings",
-        "next_actions",
+        "proposals",
+        "verifications",
         "test_evidence",
     ] {
         let mut missing_required = body.clone();

@@ -8,21 +8,16 @@ pub(super) fn compile_stage(
     operations: &[CodeOperation],
     prompts: &BTreeMap<String, String>,
 ) -> Result<(CheckedStage, TypeExpression), Vec<CompileError>> {
-    let reserved_errors: Vec<_> = stage
-        .artifacts
-        .keys()
-        .map(|key| ("artifacts", key))
-        .chain(stage.reviews.keys().map(|key| ("reviews", key)))
-        .filter(|(_, key)| matches!(key.as_str(), BLOCKER_ARTIFACT | BLOCKER_REVIEW))
-        .map(|(section, name)| {
-            CompileError::new(
-                CheckKind::Name,
-                format!("stages.{key}.{section}.{name}"),
-                SourceSpan::default(),
-                format!("reserved name {name}"),
-            )
-        })
-        .collect();
+    let mut reserved_errors =
+        reserved_key_errors(KeyNamespace::Artifact(key), stage.artifacts.keys());
+    reserved_errors.extend(reserved_key_errors(
+        KeyNamespace::Review(key),
+        stage.reviews.keys(),
+    ));
+    reserved_errors.extend(reserved_key_errors(
+        KeyNamespace::Worker(key),
+        stage.workers.keys(),
+    ));
     if !reserved_errors.is_empty() {
         return Err(reserved_errors);
     }
@@ -135,17 +130,6 @@ pub(super) fn compile_stage(
             }
         };
         state.capture(result);
-        let adjudication_errors =
-            adjudication::check_adjudication(adjudication::AdjudicationCheck {
-                review_key,
-                review,
-                stage_key: key,
-                stage,
-                path: &path,
-            });
-        for error in adjudication_errors {
-            state.error(error.check, &error.path.0, error.detail);
-        }
         let input_before = state.errors.len();
         let review_inputs = state.fields(
             &review.inputs,
@@ -208,18 +192,12 @@ pub(super) fn compile_stage(
                 })
             });
             if let Some(payload) = state.capture(payload) {
-                if let Some(field) = &decision.feedback_field {
-                    if decision.on.is_none()
-                        || !matches!(&payload, Some(Type::Record { fields }) if fields.get(field) == Some(&Type::Text))
-                    {
-                        state.error(CheckKind::Review, &format!("{decision_path}.feedback_field"), "feedback_field requires an on target and a text field in the payload record");
-                    }
-                }
                 decisions.insert(
                     decision_key.clone(),
                     CheckedDecision {
                         when: guard,
-                        feedback_field: decision.feedback_field.clone(),
+                        feedback_field: None,
+                        operation: decision.operation,
                         effect: decision.effect.clone(),
                         on: normalized_decision_target(decision.on.as_ref(), &review.of),
                         payload,
@@ -234,7 +212,8 @@ pub(super) fn compile_stage(
                     format!("decision target {target} absent"),
                 ),
                 Some(owner)
-                    if decision.effect == DeclaredDecisionEffect::RequestChanges
+                    if decision.operation.is_plain()
+                        && decision.effect == DeclaredDecisionEffect::RequestChanges
                         && !matches!(stage.workers.get(owner), Some(Worker::Agent { .. })) =>
                 {
                     state.error(
@@ -253,6 +232,20 @@ pub(super) fn compile_stage(
         reviews.push(match review.by {
             ReviewBy::Operator => CheckedReview::Operator {
                 key: review_key_value,
+                assessment: review.assessment.clone().or_else(|| {
+                    if review
+                        .decisions
+                        .values()
+                        .all(|decision| decision.operation.is_plain())
+                    {
+                        return None;
+                    }
+                    stage
+                        .artifacts
+                        .get(&review.of.0)
+                        .filter(|artifact| artifact.kind == ArtifactKind::Assessment)
+                        .map(|_| review.of.clone())
+                }),
                 of: review.of.clone(),
                 inputs: review_inputs.expect("valid review inputs"),
                 when,
@@ -283,21 +276,6 @@ pub(super) fn compile_stage(
                 }
             }
         });
-    }
-    for artifact in &artifacts {
-        if stage.artifacts[&artifact.key.0].kind == ArtifactKind::Assessment
-            && matches!(&artifact.schema, Type::Record { fields } if fields.contains_key("next_actions"))
-            && !adjudication::has_adjudication_coverage(stage, &artifact.key)
-        {
-            state.error(
-                CheckKind::Review,
-                &format!("stages.{key}.artifacts.{}", artifact.key),
-                format!(
-                    "assessment {} has next_actions but no review adjudicates it with accept and feedback",
-                    artifact.key
-                ),
-            );
-        }
     }
     let done = match stage.done_when.as_deref() {
         Some(text) => {
@@ -348,6 +326,7 @@ pub(super) fn compile_stage(
         });
         reviews.push(CheckedReview::Operator {
             key: SymbolKey::from(BLOCKER_REVIEW),
+            assessment: None,
             of: SymbolKey::from(BLOCKER_ARTIFACT),
             inputs: vec![],
             when: None,
@@ -362,7 +341,8 @@ pub(super) fn compile_stage(
                             on: value.on,
                             payload: value.payload,
                             when: None,
-                            feedback_field: value.feedback_field,
+                            feedback_field: Some("answer".into()),
+                            operation: DecisionOperation::Plain,
                         },
                     )
                 })
