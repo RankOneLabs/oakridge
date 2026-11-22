@@ -51,6 +51,7 @@ pub(super) fn reads_artifact(expression: &Expression, artifact: &SymbolKey) -> b
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Readiness {
     Blocked,
@@ -154,6 +155,24 @@ fn assignment_rounds<'a>(
     current
 }
 
+fn keyed_worker_approved(
+    program: &CheckedWorkflow,
+    state: &StepSnapshot,
+    unit: &UnitState,
+    worker: &CheckedWorker,
+) -> bool {
+    match worker {
+        CheckedWorker::Agent {
+            keyed_execution: true,
+            reviews,
+            ..
+        } => reviews.as_ref().is_some_and(|subject| {
+            super::expression::decided(Some(program), state, unit, subject, false)
+        }),
+        _ => true,
+    }
+}
+
 pub fn stage_actions(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
@@ -182,6 +201,14 @@ pub fn stage_actions(
                 && decision.target() == blocker
         });
         if let Some(decision) = decision {
+            if checked
+                .workers
+                .iter()
+                .find(|worker| worker.key() == &publisher.worker)
+                .is_some_and(|worker| !keyed_worker_approved(program, state, unit, worker))
+            {
+                return Ok(wanted);
+            }
             let cause = match can_run(state, &unit.id, &publisher.worker) {
                 Readiness::Blocked => return Ok(wanted),
                 Readiness::RetryAuthorized { event } => Cause::Retry {
@@ -214,6 +241,9 @@ pub fn stage_actions(
     };
     for checked_worker in &checked.workers {
         let worker_key = checked_worker.key();
+        if !keyed_worker_approved(program, state, unit, checked_worker) {
+            continue;
+        }
         if matches!(checked_worker, CheckedWorker::Agent { .. }) {
             let pending = rounds
                 .iter()
@@ -346,9 +376,11 @@ pub fn stage_actions(
             // Part 1 §5.2 rule 4: wanted only once its inputs resolve.
             CheckedWorker::Code { every: Some(_), .. } => {
                 eval_fields(checked_worker.inputs(), unit, state, None, context)?.map(|inputs| {
+                    let digest =
+                        periodic_inputs_digest(checked, checked_worker, state, unit, &inputs);
                     (
                         Mode::Initial,
-                        periodic_cause(state, &unit.id, worker_key, inputs_digest(&inputs)),
+                        periodic_cause(state, &unit.id, worker_key, digest),
                     )
                 })
             }
@@ -820,10 +852,27 @@ pub(super) fn resolve_run_worker(
     } else {
         vec![]
     };
+    let keyed_execution = match checked {
+        CheckedWorker::Agent {
+            keyed_execution: true,
+            reviews: Some(of),
+            ..
+        } => latest(state, &unit.id, of).map(|revision| KeyedExecutionWant {
+            authorizing_revision: revision.id.clone(),
+        }),
+        _ => None,
+    };
+    let mut input_provenance = unit.input_provenance.clone();
+    if matches!(checked, CheckedWorker::Code { .. }) {
+        input_provenance
+            .get_or_insert_with(Vec::new)
+            .extend(artifact_input_provenance(stage, checked, state, unit));
+    }
     Ok(ResolvedRunWorker {
         prompt,
+        keyed_execution,
         review_history,
-        input_provenance: unit.input_provenance.clone(),
+        input_provenance,
         action_id: action_id(&unit.id, action.worker, action.mode, action.cause),
         inputs: Value::Object(inputs),
         previous,

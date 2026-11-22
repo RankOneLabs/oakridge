@@ -4,7 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import YAML from "yaml";
-import { WORKFLOW_SOURCES } from "./workflow-sources";
+import { expandIncludes } from "./workflow-include";
+import { discoverWorkflowSources } from "./workflow-sources";
 import { listPromptCatalog } from "./prompt-catalog";
 
 const root = resolve(import.meta.dir, "../..");
@@ -12,17 +13,18 @@ const digest = (text: string): string => createHash("sha256").update(text).diges
 
 // The Rust compiler and replay tests read the JSON; the YAML is what a person
 // edits. These assertions are what generate.ts --check enforces in CI.
-for (const [name, { path }] of Object.entries(WORKFLOW_SOURCES)) {
+for (const { name, path } of discoverWorkflowSources(root)) {
+  const document = expandIncludes(YAML.parseDocument(readFileSync(resolve(root, path), "utf8")),
+    (include) => YAML.parseDocument(readFileSync(resolve(root, "workflow-config", include), "utf8")));
+  if (!document.ok) throw new Error(document.error.detail);
   test(`${name}.json is the committed derivation of ${path}`, () => {
-    const source = readFileSync(resolve(root, path), "utf8");
-    const document = YAML.parseDocument(source, { uniqueKeys: true });
-    expect(document.errors).toEqual([]);
+    expect(document.value.errors).toEqual([]);
     const fixture = readFileSync(resolve(root, "workflow-core/fixtures/bundles", `${name}.json`), "utf8");
-    expect(fixture).toBe(`${JSON.stringify(document.toJS(), null, 2)}\n`);
+    expect(fixture).toBe(`${JSON.stringify(document.value.toJS(), null, 2)}\n`);
   });
 
   test(`${path} names only prompt files that exist`, () => {
-    const workflow = YAML.parse(readFileSync(resolve(root, path), "utf8")) as {
+    const workflow = document.value.toJS() as {
       stages: Record<string, { workers: Record<string, { prompts?: Record<string, string> }>;
         reviews?: Record<string, { prompt?: string }> }>;
     };

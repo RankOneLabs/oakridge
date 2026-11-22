@@ -55,9 +55,11 @@ export function selectSessionTaskContext(instruction: EffectInstruction, history
   };
 }
 
-const inputValues = (instruction: EffectInstruction): { readonly [key: string]: unknown } =>
-  typeof instruction.inputs === "object" && instruction.inputs !== null && !Array.isArray(instruction.inputs)
+function inputValues(instruction: EffectInstruction): { readonly [key: string]: unknown } {
+  const inputs = typeof instruction.inputs === "object" && instruction.inputs !== null && !Array.isArray(instruction.inputs)
     ? instruction.inputs as { readonly [key: string]: unknown } : {};
+  return instruction.execution_key ? { ...inputs, execution_key: instruction.execution_key } : inputs;
+}
 
 /** Additive instruction input retained by the existing instruction decoder. */
 export interface ReviewHistoryEngineInputs extends EngineInputs {
@@ -159,8 +161,17 @@ export function renderSessionTask(instruction: EffectInstruction, context: Sessi
     ? `This task belongs to unit \`${instruction.action.unit}\`. Publish only to the endpoints below.` : null;
   const blocker_answer = instruction.engine_inputs.feedback.some((entry) => entry.review === BLOCKER_REVIEW)
     ? "The operator answered your blocker. Resume with this answer as feedback and publish your normal artifacts. If clarification is still needed, publish a successor blocker using its latest revision as predecessor." : null;
-  return [unit, handoff, blocker_answer, renderModePrompt(instruction, context.prompt_text), roundDelivery ?? null, renderTaskPublication(instruction, context)]
+  const execution = instruction.execution_key ? renderExecutionTask(instruction, instruction.execution_key) : null;
+  return [unit, handoff, blocker_answer, renderModePrompt(instruction, context.prompt_text), roundDelivery ?? null, renderTaskPublication(instruction, context), execution]
     .filter((part): part is string => part !== null).join("\n\n");
+}
+
+function renderExecutionTask(instruction: EffectInstruction, key: string): string {
+  const endpoint = `/api/runs/${encodeURIComponent(instruction.run_id)}/units/${encodeURIComponent(instruction.action.unit)}/executions/${encodeURIComponent(key)}`;
+  return ["## Keyed execution", `Execution key: \`${key}\``,
+    `Claim: POST \`${endpoint}/claim\` with {request_id}.`,
+    `Evidence: PUT \`${endpoint}/evidence\` with {request_id, evidence}.`,
+    "Use the same origin and publication secret as for artifact publication."].join("\n\n");
 }
 
 /** What a session's preamble is rendered from: all of it fixed for the session, so every attempt's ensure sends the same spec. */

@@ -98,6 +98,7 @@ pub(super) fn compile_stage(
                 schema: schema.expect("valid artifact schema"),
                 edit_policy: artifact.edit_policy.clone(),
                 validations,
+                equivalent_subject_fields: artifact.equivalent_subject_fields.clone(),
             });
         }
     }
@@ -323,6 +324,7 @@ pub(super) fn compile_stage(
             schema: blocker_schema(),
             edit_policy: EditPolicy::Always,
             validations: vec![],
+            equivalent_subject_fields: vec![],
         });
         reviews.push(CheckedReview::Operator {
             key: SymbolKey::from(BLOCKER_REVIEW),

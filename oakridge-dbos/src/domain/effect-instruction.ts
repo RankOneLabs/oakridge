@@ -45,6 +45,7 @@ export interface EngineInputs {
  * publication secret is minted when a session starts.
  */
 export interface EffectInstruction {
+  readonly execution_key?: string;
   readonly input_provenance?: InputProvenanceView;
   readonly version: 1;
   readonly run_id: RunId;

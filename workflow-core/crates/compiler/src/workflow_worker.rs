@@ -59,6 +59,23 @@ impl StageCheck<'_> {
             }
         };
         let before = self.errors.len();
+        if matches!(
+            worker,
+            Worker::Code {
+                keyed_execution: true,
+                ..
+            } | Worker::Agent {
+                keyed_execution: true,
+                evaluates: None,
+                ..
+            }
+        ) {
+            self.error(
+                CheckKind::Worker,
+                &format!("{path}.keyed_execution"),
+                "keyed_execution requires an agent worker that evaluates an artifact",
+            );
+        }
         if produces.is_empty() {
             self.error(
                 CheckKind::Worker,
@@ -107,6 +124,7 @@ impl StageCheck<'_> {
                 prompts: modes,
                 inputs,
                 evaluates,
+                keyed_execution,
                 workspace,
                 session,
                 ..
@@ -174,11 +192,15 @@ impl StageCheck<'_> {
                     } else {
                         MODE_ENGINE_INPUTS
                     };
+                    let mut engine_inputs = engine_inputs.to_vec();
+                    if *keyed_execution {
+                        engine_inputs.push("execution_key");
+                    }
                     self.capture(prompt(
                         file,
                         inputs,
                         self.prompts,
-                        engine_inputs,
+                        &engine_inputs,
                         &format!("{path}.prompts.{mode}"),
                     ));
                 }
@@ -195,6 +217,7 @@ impl StageCheck<'_> {
                         .chain([SymbolKey::from(BLOCKER_ARTIFACT)])
                         .collect(),
                     reviews: evaluates.clone(),
+                    keyed_execution: *keyed_execution,
                     workspace: workspace.expect("valid workspace").map(Box::new),
                     when: when.map(|(expression, _)| expression),
                 })
@@ -272,6 +295,7 @@ impl StageCheck<'_> {
                     inputs: input_fields.expect("valid worker inputs"),
                     creates: produces.clone(),
                     every: every.clone(),
+                    track_input_revisions: operation.0 == "pull_request.observe",
                     when: when.map(|(expression, _)| expression),
                 })
             }

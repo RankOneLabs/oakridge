@@ -16,6 +16,7 @@ pub fn step_with_limits(
     limits: &ResourceLimits,
 ) -> Result<StepResult, StepError> {
     let mut context = EvaluationContext::new(limits);
+    context.program = Some(program);
     for unit in &snapshot.units {
         if let Some(input) = &unit.input {
             context.check_value(input)?;

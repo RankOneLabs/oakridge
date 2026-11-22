@@ -2,6 +2,7 @@ import type { AssignmentVerification, FeedbackProposal } from "../../oakridge-db
 import { readFileSync, readdirSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import YAML from "yaml";
+import { expandIncludes } from "./workflow-include";
 import { CoreClient, compileWorkflow } from "../../oakridge-dbos/src/core-client/client";
 import type { Event, StepResult, StepSnapshot, WantedWorker } from "../../oakridge-dbos/src/core-client/core-types";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
@@ -10,9 +11,16 @@ import { referencedPromptPaths } from "./definition-objects";
 import { expandPrompts } from "../../oakridge-dbos/src/runtime/prompt-includes";
 
 export const root = resolve(import.meta.dir, "../..");
-const decoded = decodeWorkflowSource(YAML.parse(readFileSync(resolve(root, "workflow-config/development.yaml"), "utf8")));
-if (!decoded) throw new Error("Invalid development source");
-export const development = decoded;
+export function readAuthoredWorkflow(name: string): AuthoredWorkflow {
+  const document = YAML.parseDocument(readFileSync(resolve(root, "workflow-config", `${name}.yaml`), "utf8"));
+  const expanded = expandIncludes(document, (path) =>
+    YAML.parseDocument(readFileSync(resolve(root, "workflow-config", path), "utf8")));
+  if (!expanded.ok) throw new Error(expanded.error.detail);
+  const workflow = decodeWorkflowSource(expanded.value.toJS());
+  if (!workflow) throw new Error(`Invalid ${name} workflow source`);
+  return workflow;
+}
+export const development = readAuthoredWorkflow("development");
 const promptRoot = resolve(root, "workflow-config/prompts");
 const authoredPrompts = Object.fromEntries(readdirSync(promptRoot, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()).map(entry => {
   const path = resolve(entry.parentPath, entry.name);

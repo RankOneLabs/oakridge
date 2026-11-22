@@ -120,6 +120,7 @@ export function selectRevisionDecision(decision: ReviewDecisionRead): RevisionDe
 }
 
 export interface UnitView {
+  readonly awaiting_execution_reconciliation?: readonly { readonly id: string; readonly worker: string }[];
   readonly blocker?: BlockerHistory | null;
   readonly input_provenance: InputProvenanceView;
   readonly unit_id: UnitId;
@@ -270,8 +271,10 @@ export function selectUnitInputFields(unit: UnitView, fields: readonly string[])
 
 export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitAttention): UnitView {
   const tree = selectUnitTree(read.units, read.definition.workflow);
+  const reconciliations = read.reconciliations?.filter(({ unit_id }) => unit_id === unit.id) ?? [];
   return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
     blocker: selectBlockerHistory(read, unit),
+    ...(reconciliations.length > 0 ? { awaiting_execution_reconciliation: reconciliations.map(({ id, worker }) => ({ id, worker })) } : {}),
     input_provenance: selectInputProvenance(unit.input_provenance),
     stage: unit.stage, collection_key: selectCollectionKey(unit), input: unit.input as BodyValue,
     depends_on: read.dependencies.filter((edge) => edge.unit_id === unit.id).map((edge) => edge.depends_on_id),

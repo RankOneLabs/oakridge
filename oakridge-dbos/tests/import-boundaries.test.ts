@@ -46,7 +46,7 @@ test("core calls stay in commit and the core client, and an injected one elsewhe
 
 import { rustLibraryGraph, rustCapabilityViolations, selectDeclaredNames, workflowLiteralViolations } from "./rust-boundary";
 import type { Workflow } from "../src/core-client/core-types";
-const DEVELOPMENT_NAMES = selectDeclaredNames(Bun.YAML.parse(readFileSync(resolve(import.meta.dir, "../../workflow-config/development.yaml"), "utf8")) as Workflow);
+const DEVELOPMENT_NAMES = selectDeclaredNames(JSON.parse(readFileSync(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/development.json"), "utf8")) as Workflow);
 test("reachable Rust library modules and Cargo dependencies have no declared IO capability", () => {
   const files = rustLibraryGraph(root);
   expect(files.length).toBeGreaterThan(5);

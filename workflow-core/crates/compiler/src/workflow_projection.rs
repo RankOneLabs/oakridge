@@ -76,6 +76,7 @@ pub(super) fn workflow(declared: &Workflow, resolved: &Workflow) -> Workflow {
                     schema: blocker_schema(),
                     edit_policy: EditPolicy::Always,
                     validate: vec![],
+                    equivalent_subject_fields: vec![],
                 },
             );
             stage

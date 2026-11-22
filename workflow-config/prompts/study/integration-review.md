@@ -1,6 +1,6 @@
 # Review study integration assessment
 
-{{> shared/assessment-review.md}}
+{{> shared/adjudication.md}}
 
 Verify that the assessment covers each plan case and each frozen cohort file once. Check that combined behavior, fixtures, and manifests agree with the approved study inputs. Send to integrator dispatches to the integrator. Accept records final approval.
 

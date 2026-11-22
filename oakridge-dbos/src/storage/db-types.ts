@@ -1,7 +1,7 @@
 // Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
-import type { AttemptStatus, BlockedReason, Cause, Citation, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ForgeRepository, InputProvenanceEntries, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
+import type { AttemptStatus, BlockedReason, Cause, Citation, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ExecutionEvidence, ExecutionReconciliation, ForgeRepository, InputProvenanceEntries, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
 import type { ColumnType } from "kysely";
 
 export type AuthorityDecisionEffect = "approve" | "dispatch" | "request_changes";
@@ -13,6 +13,8 @@ export type AuthorityEffectStatus = "acknowledged" | "failed" | "pending" | "sto
 export type AuthorityFeedbackAssociation = "carried" | "proposed";
 
 export type AuthorityFeedbackOrigin = "operator" | "proposal";
+
+export type AuthorityKeyedExecutionState = "claimed" | "evidence_attached" | "reconcile" | "unclaimed";
 
 export type AuthorityStopOrigin = "commit" | "executor";
 
@@ -153,6 +155,7 @@ export interface AuthorityDispatchAuthorization {
 
 export interface AuthorityEffectIntent {
   action_id: string;
+  created_at: Generated<Timestamp>;
   id: string;
   last_error: string | null;
   next_try_at: Timestamp | null;
@@ -235,6 +238,27 @@ export interface AuthorityIngressReceipt {
   result: JsonColumn<CommitReceipt>;
   run_id: string;
   unit_id: string | null;
+}
+
+export interface AuthorityKeyedExecution {
+  authorizing_revision_id: string;
+  claim_count: Generated<number>;
+  claimed_by_action_id: string | null;
+  created_at: Generated<Timestamp>;
+  /**
+   * @type {ExecutionEvidence}
+   */
+  evidence: NullableJsonColumn<ExecutionEvidence>;
+  id: string;
+  /**
+   * @type {ExecutionReconciliation}
+   */
+  reconciliation: NullableJsonColumn<ExecutionReconciliation>;
+  run_id: string;
+  state: Generated<AuthorityKeyedExecutionState>;
+  unit_id: string;
+  updated_at: Generated<Timestamp>;
+  worker: string;
 }
 
 export interface AuthorityOperatorEvent {
@@ -372,6 +396,7 @@ export interface DB {
   "authority.feedback_item": AuthorityFeedbackItem;
   "authority.feedback_rejection": AuthorityFeedbackRejection;
   "authority.ingress_receipt": AuthorityIngressReceipt;
+  "authority.keyed_execution": AuthorityKeyedExecution;
   "authority.operator_event": AuthorityOperatorEvent;
   "authority.project": AuthorityProject;
   "authority.review_decision": AuthorityReviewDecision;

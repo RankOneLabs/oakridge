@@ -74,6 +74,8 @@ pub struct CheckedArtifact {
     pub schema: CheckedType,
     pub edit_policy: EditPolicy,
     pub validations: Vec<CheckedArtifactValidation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub equivalent_subject_fields: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -156,6 +158,8 @@ pub enum CheckedWorker {
         inputs: Vec<CheckedNamedExpression>,
         creates: Vec<SymbolKey>,
         reviews: Option<SymbolKey>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keyed_execution: bool,
         workspace: Option<Box<CheckedStageExpression>>,
         when: Option<CheckedStageExpression>,
     },
@@ -164,6 +168,8 @@ pub enum CheckedWorker {
         inputs: Vec<CheckedNamedExpression>,
         creates: Vec<SymbolKey>,
         every: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        track_input_revisions: bool,
         when: Option<CheckedStageExpression>,
     },
 }

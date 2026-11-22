@@ -36,6 +36,77 @@ pub fn eval_expression(
     }
     Ok(result)
 }
+/// Whether a decision still applies after a replacement of the reviewed subject.
+fn current_subject(
+    program: Option<&CheckedWorkflow>,
+    state: &StepSnapshot,
+    unit: &UnitState,
+    revision: &RevisionState,
+) -> bool {
+    let Some(subject) = &revision.subject else {
+        return true;
+    };
+    let Some(replaced) = state
+        .revisions
+        .iter()
+        .find(|candidate| candidate.id == *subject)
+    else {
+        return false;
+    };
+    let Some(current) = latest(state, &replaced.unit, &replaced.artifact) else {
+        return false;
+    };
+    if current.id == replaced.id {
+        return true;
+    }
+    if super::wants::has_failed_validation(state, &current.id) {
+        return false;
+    }
+    let Some(artifact) = program
+        .and_then(|program| checked_stage(program, unit).ok())
+        .and_then(|stage| {
+            stage
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.key == revision.artifact)
+        })
+    else {
+        return false;
+    };
+    !artifact.equivalent_subject_fields.is_empty()
+        && artifact.equivalent_subject_fields.iter().all(|field| {
+            match (replaced.body.get(field), current.body.get(field)) {
+                (Some(Value::Array(left)), Some(Value::Array(right))) => {
+                    left.iter().all(|value| right.contains(value))
+                        && right.iter().all(|value| left.contains(value))
+                }
+                (Some(left), Some(right)) => left == right,
+                _ => false,
+            }
+        })
+}
+
+pub(super) fn decided(
+    program: Option<&CheckedWorkflow>,
+    state: &StepSnapshot,
+    unit: &UnitState,
+    artifact: &SymbolKey,
+    is_request_changes: bool,
+) -> bool {
+    latest(state, &unit.id, artifact).is_some_and(|revision| {
+        current_subject(program, state, unit, revision)
+            && state.decisions.iter().any(|decision| {
+                decision.unit() == &unit.id
+                    && decision.target() == &revision.id
+                    && decision.effect().is_some_and(|effect| match effect {
+                        DecisionEffect::Approve => !is_request_changes,
+                        DecisionEffect::RequestChanges { .. } => is_request_changes,
+                        DecisionEffect::Dispatch { .. } => false,
+                    })
+            })
+    })
+}
+
 pub(super) fn eval_expression_inner(
     expression: &Expression,
     unit: &UnitState,
@@ -44,39 +115,6 @@ pub(super) fn eval_expression_inner(
     context: &mut EvaluationContext<'_>,
 ) -> Result<Option<Value>, EvalError> {
     context.charge()?;
-    fn decided(
-        state: &StepSnapshot,
-        unit: &UnitState,
-        artifact: &SymbolKey,
-        is_request_changes: bool,
-    ) -> Value {
-        // A review decides only while what it reviewed is still current: a
-        // decision on the review of a replaced revision no longer holds.
-        let is_current = |revision: &RevisionState| {
-            revision.subject.as_ref().is_none_or(|subject| {
-                state
-                    .revisions
-                    .iter()
-                    .find(|r| r.id == *subject)
-                    .is_some_and(|reviewed| {
-                        latest(state, &reviewed.unit, &reviewed.artifact)
-                            .is_some_and(|current| current.id == reviewed.id)
-                    })
-            })
-        };
-        Value::Bool(latest(state, &unit.id, artifact).is_some_and(|revision| {
-            is_current(revision)
-                && state.decisions.iter().any(|decision| {
-                    decision.unit() == &unit.id
-                        && decision.target() == &revision.id
-                        && decision.effect().is_some_and(|effect| match effect {
-                            DecisionEffect::Approve => !is_request_changes,
-                            DecisionEffect::RequestChanges { .. } => is_request_changes,
-                            DecisionEffect::Dispatch { .. } => false,
-                        })
-                })
-        }))
-    }
     macro_rules! resolved {
         ($value:expr) => {
             match $value {
@@ -318,10 +356,20 @@ pub(super) fn eval_expression_inner(
                 ReferenceRoot::Published { artifact } => {
                     Some(Value::Bool(latest(state, &unit.id, artifact).is_some()))
                 }
-                ReferenceRoot::Approved { artifact } => Some(decided(state, unit, artifact, false)),
-                ReferenceRoot::ChangesRequested { artifact } => {
-                    Some(decided(state, unit, artifact, true))
-                }
+                ReferenceRoot::Approved { artifact } => Some(Value::Bool(decided(
+                    context.program,
+                    state,
+                    unit,
+                    artifact,
+                    false,
+                ))),
+                ReferenceRoot::ChangesRequested { artifact } => Some(Value::Bool(decided(
+                    context.program,
+                    state,
+                    unit,
+                    artifact,
+                    true,
+                ))),
                 ReferenceRoot::MemberOutcomes { unit: collection } => {
                     let mut values = Vec::new();
                     let mut children: Vec<_> = state

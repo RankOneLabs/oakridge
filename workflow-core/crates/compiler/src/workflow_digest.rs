@@ -31,6 +31,8 @@ struct ArtifactFingerprint<'a> {
     #[serde(skip_serializing_if = "EditPolicy::is_always")]
     edit_policy: &'a EditPolicy,
     validate: &'a Vec<ValidationCheck>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    equivalent_subject_fields: &'a Vec<String>,
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -44,6 +46,8 @@ enum WorkerFingerprint<'a> {
         workspace: &'a Option<String>,
         session: &'a Option<SessionMode>,
         when: &'a Option<String>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        keyed_execution: bool,
     },
     Code {
         operation: &'a SymbolKey,
@@ -61,6 +65,7 @@ impl<'a> From<&'a Worker> for WorkerFingerprint<'a> {
                 inputs,
                 produces,
                 evaluates,
+                keyed_execution,
                 runtime,
                 workspace,
                 session,
@@ -70,6 +75,7 @@ impl<'a> From<&'a Worker> for WorkerFingerprint<'a> {
                 inputs,
                 creates: produces,
                 reviews: evaluates,
+                keyed_execution: *keyed_execution,
                 runtime,
                 workspace,
                 session,
@@ -81,6 +87,7 @@ impl<'a> From<&'a Worker> for WorkerFingerprint<'a> {
                 produces,
                 every,
                 when,
+                ..
             } => Self::Code {
                 operation,
                 inputs,
@@ -98,11 +105,13 @@ impl<'a> From<&'a Artifact> for ArtifactFingerprint<'a> {
             schema,
             edit_policy,
             validate,
+            equivalent_subject_fields,
         } = artifact;
         Self {
             schema,
             edit_policy,
             validate,
+            equivalent_subject_fields,
         }
     }
 }

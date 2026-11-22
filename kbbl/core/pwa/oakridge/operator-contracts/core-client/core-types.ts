@@ -45,7 +45,7 @@ export type OperatorReview = { readonly "assessment"?: string | null; readonly "
 
 export type OperatorAuthoredStage = { readonly "artifacts": { readonly [key: string]: OperatorArtifact }; readonly "done_when"?: string | null; readonly "input": OperatorTypeExpression; readonly "let"?: { readonly [key: string]: string }; readonly "outcome": { readonly [key: string]: string }; readonly "reviews"?: { readonly [key: string]: OperatorAuthoredReview }; readonly "workers": { readonly [key: string]: OperatorAuthoredWorker } };
 
-export type OperatorWorker = { readonly "evaluates"?: string | null; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "agent"; readonly "produces": (string)[]; readonly "prompts": OperatorPrompts; readonly "runtime"?: OperatorWorkerRuntime | null; readonly "session"?: OperatorSessionMode | null; readonly "when"?: string | null; readonly "workspace"?: string | null } | { readonly "every"?: string | null; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "code"; readonly "operation": string; readonly "produces": (string)[]; readonly "when"?: string | null };
+export type OperatorWorker = { readonly "evaluates"?: string | null; readonly "inputs": { readonly [key: string]: string }; readonly "keyed_execution"?: boolean; readonly "kind": "agent"; readonly "produces": (string)[]; readonly "prompts": OperatorPrompts; readonly "runtime"?: OperatorWorkerRuntime | null; readonly "session"?: OperatorSessionMode | null; readonly "when"?: string | null; readonly "workspace"?: string | null } | { readonly "every"?: string | null; readonly "inputs": { readonly [key: string]: string }; readonly "keyed_execution"?: boolean; readonly "kind": "code"; readonly "operation": string; readonly "produces": (string)[]; readonly "when"?: string | null };
 
 export type OperatorType = { readonly "kind": "text" } | { readonly "generated": boolean; readonly "kind": "uuid" } | { readonly "kind": "ident" } | { readonly "kind": "repo_path" } | { readonly "kind": "boolean" } | { readonly "kind": "integer" } | { readonly "kind": "enum"; readonly "variants": (string)[] } | { readonly "kind": "optional"; readonly "value": OperatorType } | { readonly "item": OperatorType; readonly "kind": "list" } | { readonly "fields": { readonly [key: string]: OperatorType }; readonly "kind": "record" } | { readonly "kind": "named"; readonly "schema": string } | { readonly "kind": "outcome_of"; readonly "stage": string };
 
@@ -67,7 +67,7 @@ export type OperatorAttemptStatus = { readonly "kind": "pending" } | { readonly 
 
 export type OperatorUnit = { readonly "after"?: OperatorUnitDependencies; readonly "for_each"?: string | null; readonly "group"?: OperatorGroup | null; readonly "input"?: { readonly [key: string]: string }; readonly "key"?: string | null; readonly "order"?: string | null; readonly "pool"?: string | null; readonly "stage"?: string | null };
 
-export type OperatorArtifact = { readonly "edit_policy"?: OperatorEditPolicy; readonly "kind": OperatorArtifactKind; readonly "schema": OperatorTypeExpression; readonly "validate"?: (OperatorValidationCheck)[] };
+export type OperatorArtifact = { readonly "edit_policy"?: OperatorEditPolicy; readonly "equivalent_subject_fields"?: (string)[]; readonly "kind": OperatorArtifactKind; readonly "schema": OperatorTypeExpression; readonly "validate"?: (OperatorValidationCheck)[] };
 
 export type OperatorDecisionGuard = { readonly "check": string; readonly "reason": string };
 
@@ -83,7 +83,7 @@ export type OperatorWorkerRuntime = { readonly "harness": string; readonly "mode
 
 export type OperatorSessionMode = "resume" | "fresh" | "shared";
 
-export type OperatorParsedArtifact = { readonly "edit_policy"?: OperatorEditPolicy; readonly "kind": OperatorArtifactKind; readonly "schema": OperatorType; readonly "validate"?: (OperatorValidationCheck)[] };
+export type OperatorParsedArtifact = { readonly "edit_policy"?: OperatorEditPolicy; readonly "equivalent_subject_fields"?: (string)[]; readonly "kind": OperatorArtifactKind; readonly "schema": OperatorType; readonly "validate"?: (OperatorValidationCheck)[] };
 
 export type OperatorParsedReview = { readonly "assessment"?: string | null; readonly "by": OperatorReviewBy; readonly "decisions": { readonly [key: string]: OperatorParsedReviewDecision }; readonly "inputs"?: { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null; readonly "when"?: string | null };
 

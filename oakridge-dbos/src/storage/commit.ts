@@ -1,3 +1,4 @@
+import { ensureKeyedExecution, mutateKeyedExecution } from "./keyed-execution-store";
 import { parseAssessmentDecision, resolveCitation, selectPublicationFacts, type AssessmentFactError } from "../domain/assessment-embeddings";
 import { assessmentFactId, authorizeDispatch, selectAuthorizationId, validateRecipients } from "../domain/dispatch-policy";
 import { renderRoundDelivery } from "../domain/round-delivery";
@@ -40,6 +41,7 @@ export interface CommitRequest {
   readonly event: Event;
   readonly writer: Writer;
   readonly assessment_decision?: unknown;
+  readonly execution_reconciliation?: string;
   /** Required with `launched`: the run is created pinned to this definition. */
   readonly launch?: { readonly definition_id: DefinitionId; readonly project_id: ProjectId | null; readonly config: RunConfig | null };
   /**
@@ -515,6 +517,19 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
   const definition = resolved.value;
   const snapshot = await readStepSnapshot(trx, run_id, unit_id.value);
   if (!snapshot) return reject(`unit ${unit_id.value} is not part of run ${run_id}`, null);
+  if (request.event.kind === "retry_requested") {
+    const event = request.event;
+    const latest = snapshot.attempts.findLast((attempt) => attempt.unit === event.unit && attempt.worker === event.worker);
+    const intent = latest && await trx.selectFrom("authority.effect_intent").select("payload")
+      .where("run_id", "=", run_id).where("action_id", "=", latest.action_id).where("seq", "=", latest.seq).executeTakeFirst();
+    const key = intent?.payload.execution_key;
+    if (request.execution_reconciliation && request.execution_reconciliation !== key)
+      return reject("execution is no longer current for this worker", unit_id.value);
+    if (key && request.execution_reconciliation !== key) {
+      const record = await trx.selectFrom("authority.keyed_execution").select("state").where("id", "=", key).executeTakeFirst();
+      if (record?.state === "reconcile") return reject("execution is awaiting reconciliation", unit_id.value);
+    }
+  }
   let effectiveRequest = request;
   let assessmentDecision: AssessmentDecisionPlan | null = null;
   if (request.event.kind === "revision_published") {
@@ -800,7 +815,7 @@ async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInp
 }
 
 interface PlannedIntent { readonly unit_id: string; readonly action_id: ActionId; readonly seq: number;
-  readonly instruction: ReviewHistoryInstruction }
+  readonly instruction: ReviewHistoryInstruction; readonly authorizing_revision?: string }
 interface ReviewUpdate { readonly unit_id: string; readonly prompts: ReviewPrompts }
 interface BlockedUpdate { readonly unit_id: string; readonly reason: BlockedReason | null }
 export interface CommitPlan {
@@ -847,7 +862,7 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
       prompts: Object.fromEntries(Object.entries(prompts).map(([path, text]) => [path, createHash("sha256").update(text).digest("hex")])), stage: unit.kind.stage, config,
       action, seq: attempt_seq, resolved });
     if (!instruction.ok) return violation(run_id, instruction.error.detail);
-    intents.push({ unit_id: worker.unit, action_id: action_id as ActionId, seq: attempt_seq, instruction: withReviewHistory(instruction.value, resolved) });
+    intents.push({ unit_id: worker.unit, action_id: action_id as ActionId, seq: attempt_seq, instruction: withReviewHistory(instruction.value, resolved), authorizing_revision: resolved.keyed_execution?.authorizing_revision });
     known.add(action_id);
     const replaced = selectReplacedAction(action);
     if (replaced !== null) replaced_actions.push(replaced);
@@ -910,8 +925,14 @@ export async function applyCommitPlan(trx: DatabaseTransaction, plan: CommitPlan
   const event = await trx.insertInto("authority.event").values({ id: plan.event_id, run_id, unit_id: plan.unit_id,
     ingress_id: plan.request.ingress_id, payload: jsonText(plan.request.event), writer: jsonText(plan.request.writer) })
     .returning("created_at").executeTakeFirstOrThrow();
-  for (const intent of plan.intents) await trx.insertInto("authority.effect_intent").values({ id: crypto.randomUUID(), run_id,
-    unit_id: intent.unit_id, action_id: intent.action_id, seq: intent.seq, payload: jsonText(intent.instruction) }).execute();
+  for (const intent of plan.intents) {
+    const execution_key = intent.authorizing_revision === undefined ? undefined : await ensureKeyedExecution(trx, {
+      run_id, unit_id: intent.unit_id, worker: intent.instruction.action.worker, authorizing_revision_id: intent.authorizing_revision,
+    });
+    const instruction = execution_key ? { ...intent.instruction, execution_key } : intent.instruction;
+    await trx.insertInto("authority.effect_intent").values({ id: crypto.randomUUID(), run_id,
+      unit_id: intent.unit_id, action_id: intent.action_id, seq: intent.seq, payload: jsonText(instruction) }).execute();
+  }
   for (const action_id of plan.replaced_actions) await trx.updateTable("authority.effect_intent")
     .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
     .where("run_id", "=", run_id).where("action_id", "=", action_id).where("status", "in", START_OWED_STATUSES).execute();
@@ -1242,4 +1263,19 @@ export async function commitAssessmentMutation(deps: CommitDependencies, input: 
   } catch (cause) {
     return traced("commit_assessment_mutation", run_id, String(cause));
   }
+}
+
+
+// Reconciliation and the retry commit succeed or fail under the same run lock.
+export async function commitExecutionMutation(deps: CommitDependencies, request: Parameters<typeof mutateKeyedExecution>[1], writer: Writer) {
+  const result = await mutateKeyedExecution(deps.db, request, async (trx, worker) => {
+    const run_id = request.run_id as RunId;
+    const retry = await commitToRun(trx, deps.core, { run_id, ingress_id: scopeIngressId(writer, `execution-retry:${request.key}:${request.request_id}`), writer,
+      execution_reconciliation: request.key, event: { kind: "retry_requested", unit: request.unit_id, worker } });
+    if (!retry.ok) throw new Error(retry.error.error.detail);
+    if (retry.value.kind === "committed") return { event_id: retry.value.event_id };
+    return { reason: retry.value.kind === "rejected" ? retry.value.reason : `retry ${retry.value.kind}` };
+  });
+  if (result.kind === "ok" && request.mutation.kind === "reconcile") deps.wake(request.run_id as RunId);
+  return result;
 }

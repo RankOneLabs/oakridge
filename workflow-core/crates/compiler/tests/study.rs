@@ -65,12 +65,15 @@ fn slice_artifacts_share_one_stage() {
     let [creates] = builders.as_slice() else {
         panic!("expected exactly one slice_builder agent");
     };
-    for name in ["slice_build", "spend_request", "slice_report"] {
+    for name in ["slice_build", "pr"] {
         assert!(
             creates.contains(&SymbolKey::from(name)),
             "slice_builder does not create {name}"
         );
     }
+    assert!(design.workers.iter().any(|worker| matches!(worker,
+        CheckedWorker::Agent { key, reviews: Some(of), creates, keyed_execution: true, .. }
+            if key.0 == "slice_runner" && of.0 == "spend_request" && creates.contains(&SymbolKey::from("slice_report")))));
 }
 
 #[test]
@@ -81,4 +84,42 @@ fn study_stages_run_in_order() {
         definition["stage_names"],
         serde_json::json!(["prepare", "design", "expand", "freeze", "integration"])
     );
+}
+
+#[test]
+fn keyed_execution_requires_an_agent_with_a_subject() {
+    let (definition, _) = study_definition();
+    for (stage, worker) in [("prepare", "git"), ("design", "designer")] {
+        let mut source = definition["source"].clone();
+        source["stages"][stage]["workers"][worker]["keyed_execution"] = serde_json::json!(true);
+        let decoded = decode_workflow(&serde_json::to_vec(&source).unwrap()).unwrap();
+        let config = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../workflow-config/definitions");
+        let registry = definition["operation_registry_id"].as_str().unwrap();
+        let operations: Vec<CodeOperation> = serde_json::from_str(
+            &std::fs::read_to_string(config.join(format!("operations/{registry}.json"))).unwrap(),
+        )
+        .unwrap();
+        let prompts = definition["prompts"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(path, digest)| {
+                (
+                    path.clone(),
+                    std::fs::read_to_string(
+                        config.join(format!("prompts/{}.md", digest.as_str().unwrap())),
+                    )
+                    .unwrap(),
+                )
+            })
+            .collect();
+        let failure = compile_workflow(&decoded, &operations, &prompts).unwrap_err();
+        assert!(
+            failure
+                .detail
+                .contains("keyed_execution requires an agent worker that evaluates an artifact"),
+            "{failure:?}"
+        );
+    }
 }

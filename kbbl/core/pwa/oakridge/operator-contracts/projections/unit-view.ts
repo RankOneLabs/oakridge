@@ -10,6 +10,7 @@ import type { OperatorAttention } from "./attention";
 import type { OperatorBlockerHistory } from "./history-view";
 
 export interface OperatorUnitView {
+  readonly awaiting_execution_reconciliation?: readonly { readonly id: string; readonly worker: string }[];
   readonly blocker?: OperatorBlockerHistory | null;
   readonly input_provenance: OperatorInputProvenanceView;
   readonly unit_id: string;

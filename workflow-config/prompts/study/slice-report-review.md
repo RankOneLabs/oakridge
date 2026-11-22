@@ -1,13 +1,17 @@
-# Review slice report
+# Review the slice
 
-Read the assessment's findings and the report's criterion and trigger marks first. Choose one of these decisions.
+Check the report's criterion marks (`met` or `not_met`) and trigger marks (`fired` or `not_fired`) against the assessment and evidence.
 
-- **Expand** approves the slice assessment after its proposals and assignments are resolved. The generator digest in the slice build becomes fixed for expansion.
-- **Send actions to builder** dispatches authorized instructions to the slice builder. A rebuild resets paid validation and requires new spend approval.
-- **Send to builder** (request changes on the slice build with free-text feedback). Submit the feedback directly. The builder fixes fixtures or tests and qualifies the slice again. Any rebuild resets paid validation. A new spend request needs your approval before another paid run.
-- **Change design** (request changes on the plan). The designer revises the plan. After you approve it, the whole slice runs again, including a new spend request and a new paid run.
+- **Approve assessment** finalizes the assessment after proposals are disposed and assignments are resolved.
+- **Correct the assessment** sends an authorized direct correction to the assessor.
+- **Send selected feedback to builder** dispatches authorized assignments to the slice builder. The builder’s update goes back to the assessor for verification.
+- **Expand** approves the reviewed report separately, after assessment approval and only when all triggers are `not_fired`. Expansion starts after the slice PR merges or you confirm the merge.
 
-## Study plan
+Use **Change design** to request a revision to the plan.
+
+{{> shared/adjudication.md}}
+
+## Plan
 
 {{plan}}
 
@@ -15,7 +19,7 @@ Read the assessment's findings and the report's criterion and trigger marks firs
 
 {{slice_build}}
 
-## Paid slice report
+## Slice report
 
 {{slice_report}}
 

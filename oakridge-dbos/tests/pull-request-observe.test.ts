@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 
 import { PROVIDER_ERROR_CODES } from "../src/effects/provider-catalog";
-import { observePullRequest, selectObserveReader, selectDevelopmentMergeQuery, selectPullRequestRef, type PullRequestWatchQuery } from "../src/operations/pull-request-observe";
+import { observePullRequest, selectObserveReader, selectPullRequestRef, type PullRequestWatchQuery } from "../src/operations/pull-request-observe";
+import { selectMergeStatusInput } from "../src/http/merge-status";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 
 const query: PullRequestWatchQuery = { owner: "RankOneLabs", name: "oakridge", head_owner: "RankOneLabs",
@@ -26,16 +27,13 @@ const forgeReturning = (payload: unknown) => {
 
 const refFor = (pr_url: string) => selectPullRequestRef({ ...query, pr_url });
 
-test("merge confirmation checks the current PR against the unit's intended base", () => {
-  const input = { repository: { forge: { owner: "RankOneLabs", name: "oakridge", build_base: "develop", final_base: "main" } },
-    workspace: { push_remote_owner: "RankOneLabs" } };
-  const pr = { pr_url: query.pr_url, branch: "cohort/foundation" };
-  expect([selectDevelopmentMergeQuery("cohort", input, pr), selectDevelopmentMergeQuery("integration", input, pr)])
-    .toEqual([{ ok: true, value: { ...query, base_branch: "develop" } }, { ok: true, value: { ...query, base_branch: "main" } }]);
+test("merge confirmation uses the dispatched query verbatim", () => {
+  expect(selectMergeStatusInput({ latest_revision_id: "pr-1", intent: { input: { query }, observed_revision_id: "pr-1" } })).toEqual({ query });
 });
 
-test("merge confirmation refuses a missing current PR identity", () => {
-  expect(selectDevelopmentMergeQuery("cohort", {}, null).ok).toBe(false);
+test("merge confirmation waits for a watch after the PR is republished", () => {
+  expect(selectMergeStatusInput({ latest_revision_id: "pr-2", intent: { input: { query }, observed_revision_id: "pr-1" } }))
+    .toEqual({ kind: "unavailable", detail: "the pull request was republished; status returns after the next watch" });
 });
 
 test("a pull request url names its number in the query's repository", () => {
