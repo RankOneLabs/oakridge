@@ -15,7 +15,7 @@ const PRODUCER = "oakridge";
 const authorityEventsSchema = z.array(z.object({ id: z.string(), commit_txid: z.string(), kind: z.string(), artifact: z.string().nullable() }));
 const outcomesSchema = z.array(z.object({ event_id: z.string(), event_kind: z.string(), outcome_kind: z.string(),
   reason: z.string().nullable(), revision_id: z.string().nullable() }));
-const cursorSchema = z.object({ cursor: z.object({ commit_txid: z.string(), id: z.string() }) });
+const cursorSchema = z.object({ cursor: z.object({ commit_txid: z.string(), event_id: z.string() }) });
 const servedRevisionSchema = z.object({ revision_id: z.string(), run_id: z.string(), artifact_kind: z.string() });
 type AuthorityEvent = z.infer<typeof authorityEventsSchema>[number];
 type Outcome = z.infer<typeof outcomesSchema>[number];
@@ -23,7 +23,7 @@ type SourceCursor = z.infer<typeof cursorSchema>["cursor"];
 
 const position = (cursor: { readonly commit_txid: string; readonly id: string }): string => `${cursor.commit_txid}/${cursor.id}`;
 const reachedEvent = (cursor: SourceCursor, event: AuthorityEvent): boolean =>
-  BigInt(cursor.commit_txid) > BigInt(event.commit_txid) || cursor.commit_txid === event.commit_txid && cursor.id >= event.id;
+  BigInt(cursor.commit_txid) > BigInt(event.commit_txid) || cursor.commit_txid === event.commit_txid && cursor.event_id >= event.id;
 
 async function readRows<Row>(io: ProofIo, database: string, query: string, schema: z.ZodType<Row[]>): Promise<Result<Row[], ProofFailure>> {
   const text = await io.shadowQuery(database, query);
@@ -40,7 +40,7 @@ const readAuthorityEvents = (io: ProofIo, run_id: string) => readRows(io, io.sta
 
 const readOutcomes = (io: ProofIo, run_id: string) => readRows(io, io.state.observation.database,
   `SELECT coalesce(json_agg(json_build_object('event_id', event_id, 'event_kind', event_kind, 'outcome_kind', outcome_kind,
-    'reason', detail->>'reason', 'revision_id', detail->'revision'->'source'->>'revision_id') ORDER BY commit_txid, event_id), '[]')
+    'reason', detail->>'reason', 'revision_id', detail->'revision_ids'->>-1) ORDER BY commit_txid, event_id), '[]')
     FROM observation.source_event_outcome WHERE producer = '${PRODUCER}' AND namespace = '${io.state.observation.namespace}' AND run_id = '${run_id}'`, outcomesSchema);
 
 async function readCursor(io: ProofIo): Promise<Result<SourceCursor, ProofFailure>> {
@@ -52,8 +52,9 @@ async function readCursor(io: ProofIo): Promise<Result<SourceCursor, ProofFailur
 
 /** The newest published revision of the target, as the service recorded it. */
 function targetRevisionId(request: RunCaptureRequest, events: readonly AuthorityEvent[], outcomes: readonly Outcome[]): string | null {
-  const published = events.findLast((event) => event.kind === "revision_published" && event.artifact === request.target_artifact);
-  return outcomes.find((outcome) => outcome.event_id === published?.id)?.revision_id ?? null;
+  const byEvent = new Map(outcomes.map((outcome) => [outcome.event_id, outcome.revision_id]));
+  const published = events.findLast((event) => event.kind === "revision_published" && event.artifact === request.target_artifact && byEvent.get(event.id));
+  return published ? byEvent.get(published.id) ?? null : null;
 }
 
 async function readServedRevision(io: ProofIo, request: RunCaptureRequest, revision_id: string): Promise<Result<string, ProofFailure>> {
@@ -78,7 +79,7 @@ export async function readRunCapture(io: ProofIo, request: RunCaptureRequest): P
   const target_id = request.target_artifact === null ? null : targetRevisionId(request, authority, delivered);
   const served = target_id === null ? null : await readServedRevision(io, request, target_id);
   return { ...request, authority_events: authority.length, delivered_events: authority.filter((event) => delivered_ids.has(event.id)).length,
-    authority_last: last ? position(last) : null, service_cursor: cursor.ok ? position(cursor.value) : null,
+    authority_last: last ? position(last) : null, service_cursor: cursor.ok ? position({ ...cursor.value, id: cursor.value.event_id }) : null,
     cursor_reached_run: cursor.ok && last !== null && reachedEvent(cursor.value, last),
     undelivered_event_ids: authority.filter((event) => !delivered_ids.has(event.id)).map((event) => event.id), unmapped,
     source_revisions: delivered.flatMap((outcome) => outcome.revision_id ?? []), target_revision: served?.ok ? served.value : null,

@@ -80,6 +80,7 @@ pub(super) fn attribute_event(
 pub struct EvaluationContext<'a> {
     pub(super) limits: &'a ResourceLimits,
     pub(super) remaining: usize,
+    pub(super) input_reads: Option<Vec<(UnitId, RevisionId)>>,
     pub(super) program: Option<&'a CheckedWorkflow>,
 }
 
@@ -106,6 +107,7 @@ impl<'a> EvaluationContext<'a> {
         Self {
             limits,
             remaining: limits.evaluation_budget,
+            input_reads: None,
             program: None,
         }
     }
@@ -355,7 +357,7 @@ pub(super) fn is_output_in_progress(
                 .iter()
                 .filter(|created| {
                     state.revisions.iter().any(|revision| {
-                        revision.by.as_ref() == Some(&current.action_id)
+                        revision.by.as_ref().is_some_and(|by| by.matches(current))
                             && revision.artifact == **created
                     })
                 })
@@ -599,7 +601,7 @@ pub(super) fn publishing_worker<'a>(
             state
                 .attempts
                 .iter()
-                .find(|attempt| &attempt.action_id == action)
+                .find(|attempt| action.matches(attempt))
         })
         .map(|attempt| &attempt.worker)
 }

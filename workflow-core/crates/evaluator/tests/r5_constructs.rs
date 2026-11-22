@@ -146,7 +146,17 @@ impl Run {
                 body,
                 predecessor,
                 subject,
-                by: Some(by),
+                by: Some(PublishingAttempt {
+                    seq: self
+                        .state
+                        .attempts
+                        .iter()
+                        .rev()
+                        .find(|attempt| attempt.action_id == by)
+                        .unwrap()
+                        .seq,
+                    action: by,
+                }),
             },
             writer,
         )
@@ -537,7 +547,7 @@ fn a_revision_names_an_attempt_exactly_when_its_writer_is_not_the_operator() {
         body: json!({ "summary": "edited" }),
         predecessor: predecessor.clone(),
         subject: None,
-        by,
+        by: by.map(|action| PublishingAttempt { action, seq: 1 }),
     };
     let builder = run.action(COHORT, "builder");
     for (event, writer, reason) in [

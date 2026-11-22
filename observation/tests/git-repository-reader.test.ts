@@ -14,7 +14,7 @@ import { CaptureArtifactSource } from "../src/storage/capture-artifact-source";
 import { collectPinnedQuestion, readOccurrenceEvidence } from "../src/storage/captured-evidence-store";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
 import { listRunItems } from "../src/storage/projection-store";
-import { OAKRIDGE_QUESTIONS, createFeed, evaluator, evaluatorId, fixtureBody, integration, scopeOf, scratchDatabase, targetOf, tenant } from "./grading-fixture";
+import { OAKRIDGE_QUESTIONS, createFeed, evaluator, evaluatorId, integration, scopeOf, scratchDatabase, targetOf, tenant } from "./grading-fixture";
 
 let root = "";
 let primary = "";
@@ -109,7 +109,7 @@ test("the collector reads a citation range from the non-primary launch repositor
   const sources: CapturedSources = { repository: createGitRepositoryReader(), readRevisionAt: async () => null, readLogicalItemAt: async () => ({ revision_id: "tasks-1" as ArtifactRevisionId, item_path: "/tasks/0", item_kind: "task", selected_value: { id: "T7" } }), readLinkedItems: async () => [],
     readRunInput: async () => ({ spec: "s", primary_repository_key: "primary", repositories: [
       { key: "primary", preparation: { repository_path: primary } }, { key: "other", preparation: { repository_path: other } }] }),
-    readRevision: async (revision_id) => ({ revision_id: revision_id as ArtifactRevisionId, stage: "implementation", artifact_kind: "assessment", subject_id: null, body: { head_sha: cited_commit } }) };
+    readRevision: async (revision_id) => ({ revision_id: revision_id as ArtifactRevisionId, stage: "implementation", artifact_kind: "assessment", subject_id: null, input_bindings: [], body: { head_sha: cited_commit } }) };
   const collected = await oakridgeEvidence.collect(artifact, { task_id: "task-7" as import("../src/domain/identity").LogicalItemId, question_id: EVIDENCE_SUPPORT_ID, question_version: questionVersion(EVIDENCE_SUPPORT_ID) }, sources);
   expect(collected).toMatchObject({ state: "ready", references: [{ ref: "subject" },
     { source: "repository", repository_key: "other", commit_sha: cited_commit, path: "core/decision-record.ts", line_range: { start: 18, end: 31 },
@@ -128,7 +128,7 @@ test("a text file beside a binary one is still read as text", async () => {
     .toEqual({ state: "present", content: "# Demo\n" });
 });
 
-const binaryFinding: JsonValue = { task_ids: ["T7"], criterion: "The demo is shown", status: "met",
+const binaryFinding: JsonValue = { subject: { kind: "requirement", id: "T7" }, observation: "The demo is shown", status: "met",
   evidence: [{ kind: "file", ref: "docs/demo.png", detail: "PNG screenshot" }, { kind: "file", ref: "README.md" }] };
 
 test("the collector cites a binary file as present, binary and sized, with no content", async () => {
@@ -137,7 +137,7 @@ test("the collector cites a binary file as present, binary and sized, with no co
   const sources: CapturedSources = { repository: createGitRepositoryReader(), readRevisionAt: async () => null, readLinkedItems: async () => [],
     readLogicalItemAt: async () => ({ revision_id: "tasks-1" as ArtifactRevisionId, item_path: "/tasks/0", item_kind: "task", selected_value: { id: "T7" } }),
     readRunInput: async () => ({ spec: "s", primary_repository_key: "binary", repositories: [{ key: "binary", preparation: { repository_path: binary } }] }),
-    readRevision: async (revision_id) => ({ revision_id: revision_id as ArtifactRevisionId, stage: "implementation", artifact_kind: "assessment", subject_id: null, body: { head_sha: binary_commit } }) };
+    readRevision: async (revision_id) => ({ revision_id: revision_id as ArtifactRevisionId, stage: "implementation", artifact_kind: "assessment", subject_id: null, input_bindings: [], body: { head_sha: binary_commit } }) };
   const collected = await oakridgeEvidence.collect(artifact, { task_id: "task-7" as import("../src/domain/identity").LogicalItemId, question_id: EVIDENCE_SUPPORT_ID, question_version: questionVersion(EVIDENCE_SUPPORT_ID) }, sources);
   expect(collected).toMatchObject({ state: "ready", references: [{ ref: "subject" },
     { ref: "citation:0", source: "repository", path: "docs/demo.png", is_absent: false, is_binary: true, byte_size: PNG.byteLength, content: null },
@@ -150,10 +150,10 @@ integration("a cited binary file freezes as ready evidence instead of failing th
   await registerEvaluator(db, tenant, evaluator("human"));
   const feed = createFeed(db, tenant, { pins: [{ ...scopeOf(EVIDENCE_SUPPORT_ID), ...question, ...targetOf(EVIDENCE_SUPPORT_ID), ...pinProvenance(question), evaluator_definition_ids: [evaluatorId("human")] }] });
   await feed.launch({ spec: "s", primary_repository_key: "binary", repositories: [{ key: "binary", preparation: { repository_path: binary } }] });
-  await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
-  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment",
-    body: { ...(await fixtureBody("assessment") as { readonly [key: string]: JsonValue }), head_sha: binary_commit, findings: [binaryFinding] } });
-  const occurrence = (await listRunItems(db, tenant, "run-1", { limit: 50, offset: 0 })).items.find((item) => item.item_kind === "assessment_finding")!;
+  await feed.revision({ revision_id: "spec-1", artifact_kind: "spec", body: { requirements: [{ id: "T7", analysis_finding_ids: [] }] } });
+  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", stage: "integration",
+    body: { head_sha: binary_commit, item_assessments: [binaryFinding] } });
+  const occurrence = (await listRunItems(db, tenant, "run-1", { limit: 50, offset: 0 })).items.find((item) => item.item_kind === "item_assessment")!;
   const [pinned] = await readOccurrenceEvidence(db, tenant, occurrence.occurrence_id as ItemOccurrenceId);
   const source = new CaptureArtifactSource({ db, tenant, run_id: "run-1", collector: oakridgeEvidence, repository: createGitRepositoryReader() });
   const collected = await collectPinnedQuestion(db, tenant, source, pinned!);

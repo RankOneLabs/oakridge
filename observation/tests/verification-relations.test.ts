@@ -33,7 +33,7 @@ test("the composite must open the very observations the item had before the link
 
 test("lineage must reach its definitions and both contributing stages", () => {
   const lineage = (entries: readonly unknown[]) => ({ items: entries }) as unknown as LogicalItemLineage;
-  const definitions = ["tasks", "plan", "brief"].map((artifact_kind) => ({ kind: "occurrence", artifact_kind }));
+  const definitions = ["spec", "plan", "brief"].map((artifact_kind) => ({ kind: "occurrence", artifact_kind }));
   const contributions = ["analysis", "cohort"].map((stage) => ({ kind: "contribution", item: { stage } }));
   expect(failed(lineageChecks(lineage([...definitions, ...contributions])))).toEqual([]);
   expect(failed(lineageChecks(lineage(contributions)))).toHaveLength(1);
@@ -54,7 +54,7 @@ const sharedReads = (overrides: Partial<SharedRunReads> = {}): SharedRunReads =>
   const occurrence = (artifact_kind: string, unit_id: string, is_current: boolean) => ({ kind: "occurrence", artifact_kind, unit_id, is_current });
   return { shared: { producer_local_id: "T1", stages } as never, other: { producer_local_id: "T2", stages: [{ stage: "analysis", totals: { contributing_items: 1 } }] } as never,
     implementation_rows: { items: [row("run/implementation/alpha"), row("run/implementation/beta")] } as never,
-    lineage: { items: [occurrence("tasks", "run/analysis", true), occurrence("plan", "run/planning", false), occurrence("plan", "run/planning", true),
+    lineage: { items: [occurrence("spec", "run/analysis", true), occurrence("plan", "run/planning", false), occurrence("plan", "run/planning", true),
       occurrence("brief", "run/briefs/alpha", false), occurrence("brief", "run/briefs/alpha", true), occurrence("brief", "run/briefs/beta", true)] } as never,
     unlinked_control: true, unresolved_visible: true, ...overrides };
 };
@@ -62,7 +62,7 @@ test("a real shared run must reach both cohorts, real revisions and pending inte
   expect(failed(sharedRunChecks(sharedReads()))).toEqual([]);
   const oneCohort = { items: [{ item: { unit_id: "run/implementation/alpha" }, questions: { items: [{ answers: { total: 1 } }] } }] } as never;
   expect(failed(sharedRunChecks(sharedReads({ implementation_rows: oneCohort })))).toEqual(["real: one task stands under both cohorts' implementation assessments", "real: the provider answered findings of that task in both cohorts"]);
-  const unrevised = { items: [{ kind: "occurrence", artifact_kind: "tasks", unit_id: "a", is_current: true }, { kind: "occurrence", artifact_kind: "plan", unit_id: "p", is_current: true }] } as never;
+  const unrevised = { items: [{ kind: "occurrence", artifact_kind: "spec", unit_id: "a", is_current: true }, { kind: "occurrence", artifact_kind: "plan", unit_id: "p", is_current: true }] } as never;
   expect(failed(sharedRunChecks(sharedReads({ lineage: unrevised })))).toEqual(["real: the task is one logical item through its task list, the revised plan and both revised briefs"]);
   expect(failed(sharedRunChecks(sharedReads({ unlinked_control: false, unresolved_visible: false })))).toEqual(["real: the unlinked control stays listed", "real: the unknown task stays a visible reference"]);
   expect(UNRESOLVED_TASK).toBe("T-not-in-this-run");

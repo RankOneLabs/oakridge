@@ -190,7 +190,10 @@ impl Run {
             body,
             predecessor: self.latest_id(output.unit, output.artifact),
             subject,
-            by: Some(self.action(output.unit, output.worker)),
+            by: Some(PublishingAttempt {
+                action: self.action(output.unit, output.worker),
+                seq: 1,
+            }),
         };
         self.apply(event, Writer::Engine).unwrap();
     }

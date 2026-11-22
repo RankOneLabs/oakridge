@@ -1,6 +1,7 @@
 // Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.
 import type { Generated } from "kysely";
 import type { JsonValue } from "../domain/primitives";
+import type { InputBinding, RevisionOrigin } from "../ingest/dbos-revision-delivery";
 
 export interface ObservationSchemaBaseline {
   id: Generated<boolean>;
@@ -24,11 +25,15 @@ export interface ObservationSourceRevision {
   captured_at: Generated<Date>;
   predecessor_id: string | null;
   subject_id: string | null;
+  origin: RevisionOrigin;
+  input_bindings: readonly InputBinding[];
 }
 
 export interface ObservationExtractorDefinition {
   producer: string;
   namespace: string;
+  definition_id: string;
+  stage: string;
   artifact_kind: string;
   schema_version: string;
   extractor_id: string;
@@ -43,6 +48,7 @@ export interface ObservationLogicalItem {
   logical_item_id: string;
   run_id: string;
   scope: string;
+  task_kind: string | null;
   producer_local_id: string;
 }
 
@@ -52,6 +58,8 @@ export interface ObservationItemOccurrence {
   occurrence_id: string;
   revision_id: string;
   run_id: string;
+  definition_id: string;
+  stage: string;
   artifact_kind: string;
   schema_version: string;
   extractor_id: string;
@@ -78,6 +86,7 @@ export interface ObservationItemRelation {
   type: string;
   asserted_by: string;
   evidence_ref: string;
+  qualifier: JsonValue | null;
   algorithm: string | null;
   algorithm_version: string | null;
   recorded_at: Generated<Date>;

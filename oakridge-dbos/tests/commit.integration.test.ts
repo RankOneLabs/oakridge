@@ -105,7 +105,7 @@ test("an older run advances after later compilations evict its core program", as
     event: { kind: "worker_started", action, kbbl_session_id: "after-eviction" } });
   const published = await submit({ run_id, writer: executor(action),
     event: { kind: "revision_published", unit: unitOf(run_id, "document"), artifact: "draft",
-      body: { title: "Recovered", body: "The older run still advances." }, by: action } });
+      body: { title: "Recovered", body: "The older run still advances." }, by: { action: action, seq: 1 } } });
   expect([started, published].map((result) => result.ok ? result.value.kind : result.error))
     .toEqual(["committed", "committed"]);
 });
@@ -116,7 +116,7 @@ test("a revise instruction carries the requested revision and the decision paylo
   const unit = unitOf(run_id, "document");
   const action = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
-  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Long" }, by: action }, writer: executor(action) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Long" }, by: { action: action, seq: 1 } }, writer: executor(action) });
   await submit({ run_id, event: { kind: "worker_ended", action, result: { kind: "succeeded" } }, writer: executor(action) });
   await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "request_changes",
     target: `${unit}:draft:1`, payload: { feedback: "shorter" } } });
@@ -132,14 +132,14 @@ test("a revision after a decision persists its position in the decision history"
   const unit = unitOf(run_id, "document");
   const first = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_started", action: first, kbbl_session_id: "sid-first" }, writer: executor(first) });
-  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Long" }, by: first }, writer: executor(first) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Long" }, by: { action: first, seq: 1 } }, writer: executor(first) });
   await submit({ run_id, event: { kind: "worker_ended", action: first, result: { kind: "succeeded" } }, writer: executor(first) });
   await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "request_changes",
     target: `${unit}:draft:1`, payload: { feedback: "shorter" } } });
   const revised = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_started", action: revised, kbbl_session_id: "sid-revised" }, writer: executor(revised) });
   await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Short" },
-    by: revised, predecessor: `${unit}:draft:1` }, writer: executor(revised) });
+    by: { action: revised, seq: 1 }, predecessor: `${unit}:draft:1` }, writer: executor(revised) });
   const rows = await authority.db.selectFrom("authority.artifact_revision").select(["seq", "decision_cursor"])
     .where("run_id", "=", run_id).where("artifact", "=", "draft").orderBy("seq").execute();
   expect(rows.map((row) => [row.seq, row.decision_cursor])).toEqual([[1, 0], [2, 1]]);
@@ -172,7 +172,7 @@ test("nested generated action IDs are assigned once and an edit keeps predecesso
   const submit = submitter(authority);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid-generated" }, writer: executor(action) });
   const body = { title: "T", body: "Long", actions: [{ text: "A" }, { text: "B" }] };
-  const publish = { kind: "revision_published" as const, unit, artifact: "draft", body, by: action, predecessor: null, subject: null };
+  const publish = { kind: "revision_published" as const, unit, artifact: "draft", body, by: { action: action, seq: 1 }, predecessor: null, subject: null };
   const ingress_id = crypto.randomUUID();
   const first = await submit({ run_id, event: publish, writer: executor(action), ingress_id });
   const replay = await submit({ run_id, event: publish, writer: executor(action), ingress_id });
@@ -250,7 +250,7 @@ test("an event that leaves a unit's wanted set unchanged logs nothing for the un
   const unit = unitOf(run_id, "document");
   const submit = submitter(authority);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
-  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "first" }, by: action }, writer: executor(action) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "first" }, by: { action: action, seq: 1 } }, writer: executor(action) });
   const logged = await authority.db.selectFrom("authority.wanted_log as wanted").innerJoin("authority.event as event", "event.id", "wanted.event_id")
     .select("wanted.actions").where("wanted.run_id", "=", run_id).where("wanted.unit_id", "=", unit)
     .orderBy("event.created_at").orderBy("event.id").execute();
@@ -294,9 +294,9 @@ test("C4: a decision on a non-latest revision is refused at commit", async () =>
   const unit = unitOf(run_id, "document");
   const action = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
-  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "one" }, by: action }, writer: executor(action) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "one" }, by: { action: action, seq: 1 } }, writer: executor(action) });
   await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "two" },
-    predecessor: `${unit}:draft:1`, by: action }, writer: executor(action) });
+    predecessor: `${unit}:draft:1`, by: { action: action, seq: 1 } }, writer: executor(action) });
   const stale = await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "approve", target: `${unit}:draft:1`, payload: {} } });
   expect(stale.ok && stale.value.kind).toBe("rejected");
 });
@@ -328,7 +328,7 @@ test("C4: a revision published by an attempt that is not current is refused at c
   const run_id = await launched();
   const unit = unitOf(run_id, "document");
   const published = await submitter(authority)({ run_id, event: { kind: "revision_published", unit, artifact: "draft",
-    body: { title: "T", body: "B" }, by: `${unit}:critic:Review:Missing` }, writer: executor(await writerAction(run_id)) });
+    body: { title: "T", body: "B" }, by: { action: `${unit}:critic:Review:Missing`, seq: 1 } }, writer: executor(await writerAction(run_id)) });
   expect(published.ok && published.value.kind).toBe("rejected");
 });
 
@@ -441,7 +441,7 @@ test("an awaiting operator review's prompt is rendered with its resolved inputs,
   const prompts = async () => (await authority.db.selectFrom("authority.unit").select("review_prompts").where("run_id", "=", run_id)
     .where("id", "=", unit).executeTakeFirstOrThrow()).review_prompts;
   await submit({ run_id, event: { kind: "worker_started", action: writer, kbbl_session_id: "sid-w" }, writer: executor(writer) });
-  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "A long draft" }, predecessor: null, subject: null, by: writer },
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "A long draft" }, predecessor: null, subject: null, by: { action: writer, seq: 1 } },
     writer: { kind: "session", session: "sid-w", attempt: writer } });
   const drafted = await prompts();
   // The critic reviews the draft once the writer's attempt has ended.
@@ -450,7 +450,7 @@ test("an awaiting operator review's prompt is rendered with its resolved inputs,
     .executeTakeFirstOrThrow()).action_id;
   await submit({ run_id, event: { kind: "worker_started", action: critic, kbbl_session_id: "sid-c" }, writer: executor(critic) });
   await submit({ run_id, event: { kind: "revision_published", unit, artifact: "critique", body: { notes: ["tighten the opening"] }, predecessor: null,
-    subject: `${unit}:draft:1`, by: critic }, writer: { kind: "session", session: "sid-c", attempt: critic } });
+    subject: `${unit}:draft:1`, by: { action: critic, seq: 1 } }, writer: { kind: "session", session: "sid-c", attempt: critic } });
   const critiqued = await prompts();
   await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "approve", target: `${unit}:draft:1`, payload: {} } });
   expect({ target: drafted.editor?.target, topic: drafted.editor?.prompt.includes("topic Oakridge"), draft: drafted.editor?.prompt.includes("A long draft"),
@@ -476,7 +476,7 @@ test("a templated operator review renders its pinned prompt", async () => {
   const submit = submitter(authority);
   await submit({ run_id, event: { kind: "worker_started", action: writer, kbbl_session_id: "sid-template" }, writer: executor(writer) });
   await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Body" },
-    predecessor: null, subject: null, by: writer },
+    predecessor: null, subject: null, by: { action: writer, seq: 1 } },
     writer: { kind: "session", session: "sid-template", attempt: writer } });
   const row = await authority.db.selectFrom("authority.unit").select("review_prompts")
     .where("run_id", "=", run_id).where("id", "=", unit).executeTakeFirstOrThrow();
@@ -515,7 +515,7 @@ test("a unit that starts after its dependency persists the input it resolved, an
     const action = (await attemptsOf(run_id, "writer")).at(-1)!.action_id;
     await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: null }, writer: executor(action) });
     await submit({ run_id, event: { kind: "revision_published", unit: unitOf(run_id, key), artifact: "draft", body: "hello", predecessor: null, subject: null,
-      by: action }, writer: executor(action) });
+      by: { action: action, seq: 1 } }, writer: executor(action) });
   };
   await publish("first");
   const second = await authority.db.selectFrom("authority.unit").select(["input", "status"]).where("run_id", "=", run_id)
@@ -560,7 +560,7 @@ test("a retry that already ran is not reused when a later attempt fails", async 
   const retried = (await attemptsOf(run_id, "writer")).at(-1)!.action_id;
   await submit({ run_id, event: { kind: "worker_started", action: retried, kbbl_session_id: null }, writer: executor(retried) });
   await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Long" }, predecessor: null, subject: null,
-    by: retried }, writer: executor(retried) });
+    by: { action: retried, seq: 1 } }, writer: executor(retried) });
   await submit({ run_id, event: { kind: "worker_ended", action: retried, result: { kind: "succeeded" } }, writer: executor(retried) });
   await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "request_changes", target: `${unit}:draft:1`,
     payload: { feedback: "shorter" } } });

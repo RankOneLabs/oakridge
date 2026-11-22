@@ -7,7 +7,7 @@ import { err, ok } from "../src/domain/primitives";
 import { configurationHash, machineGraders, parseGradingDefinitions, planRegistration, type GradingDefinitions, type PublishedConfiguration } from "../src/grading/configuration";
 import { isPinTarget } from "../src/grading/evidence";
 import { fixtureDefinitions, oakridgeGradingRegistry } from "./grading-fixture";
-import { ASSESSMENT_FINDING_KIND, FINDING_KIND } from "../src/producers/oakridge/catalogue";
+import { FINDING_KIND } from "../src/producers/oakridge/catalogue";
 import { runProof } from "../verification/proof";
 import { editedGraders, pinChecks, registrationScenario, type ItemReadback, type RegistrationSource } from "../verification/registration";
 import { launcherStateSchema, NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, scenarioStatus, type LauncherState,
@@ -57,10 +57,10 @@ const outcomeOf = (event: FeedEvent): FeedOutcome => ({ event_id: event.id, even
   outcome_kind: event.artifact ? "artifact_revision" : "run_input", revision_id: event.artifact ? `oakridge:shadow-test:unit:${event.artifact}:1` : null });
 
 /** A run's two sides of the feed: what the authority holds and what the service recorded. */
-interface Feed { readonly events: readonly FeedEvent[]; readonly outcomes: readonly FeedOutcome[]; readonly cursor: { readonly commit_txid: string; readonly id: string } }
+interface Feed { readonly events: readonly FeedEvent[]; readonly outcomes: readonly FeedOutcome[]; readonly cursor: { readonly commit_txid: string; readonly event_id: string } }
 const caughtUp = (artifact: string): Feed => {
   const events = [launched, published(artifact)];
-  return { events, outcomes: events.map(outcomeOf), cursor: { commit_txid: "6", id: "e2" } };
+  return { events, outcomes: events.map(outcomeOf), cursor: { commit_txid: "6", event_id: "e2" } };
 };
 /** IO that answers capture reads from `feed`, which a test may swap between reads. */
 const feedIo = (feed: () => Feed): Pick<ProofIo, "shadowQuery" | "observationGet"> => ({
@@ -129,7 +129,7 @@ test.each(["assessment-on", "analysis-concurrent"] as const)("grading restores c
       if (path.includes("/grading-spend")) return ok({ is_grading_enabled: !path.includes("analysis-off"), captured_config: { grading_enabled: !path.includes("analysis-off") },
         committed: 0, requests_sent: 0, attempts: 0, executions: {} });
       if (path.includes("/runs/")) return ok({ items: [{ occurrence_id: label, revision_id: "analysis", json_pointer: "/findings/0",
-        artifact_kind: "analysis", item_selector: "/findings/*", item_kind: FINDING_KIND }] });
+        artifact_kind: "analysis", item_selector: "/requirements/*/findings/*", item_kind: FINDING_KIND }] });
       if (path.includes("/evidence?")) return ok({ items: [] });
       const in_flight = !provider_refuses && (label === "analysis-failing" || label === "analysis-concurrent");
       return ok({ questions: { items: [{ evidence: { evidence_set_id: "evidence", question_id: "q", question_version: "1", readiness: { state: "ready" } },
@@ -250,7 +250,7 @@ describe("the runtime refresh proof", () => {
     let captures = 0;
     const publications: GradingDefinitions[] = [];
     const item = { occurrence_id: "finding", revision_id: "analysis", json_pointer: "/findings/0",
-      artifact_kind: "analysis", item_selector: "/findings/*", item_kind: FINDING_KIND };
+      artifact_kind: "analysis", item_selector: "/requirements/*/findings/*", item_kind: FINDING_KIND };
     const original_pins = planned(original).capture.pins.filter((pin) => isPinTarget(pin, item));
     const io = fakeIo({
       stackAnswers: async () => true,
@@ -316,26 +316,26 @@ describe("a run's capture", () => {
 
   test("a cursor past the run does not stand in for the run's own outcomes", async () => {
     const feed = caughtUp("plan");
-    const capture = await read({ ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "9", id: "other-run" } });
+    const capture = await read({ ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "9", event_id: "other-run" } });
     expect(isRunCaptured(capture)).toBe(false);
     expect(capture.undelivered_event_ids).toEqual(["e2"]);
   });
 
   test("outcomes without a cursor at the run are not captured", async () => {
-    expect(isRunCaptured(await read({ ...caughtUp("plan"), cursor: { commit_txid: "5", id: "e1" } }))).toBe(false);
+    expect(isRunCaptured(await read({ ...caughtUp("plan"), cursor: { commit_txid: "5", event_id: "e1" } }))).toBe(false);
   });
 
   test("the cursor compares by number, not as text", async () => {
-    expect(isRunCaptured(await read({ ...caughtUp("plan"), cursor: { commit_txid: "10", id: "a" } }))).toBe(true);
+    expect(isRunCaptured(await read({ ...caughtUp("plan"), cursor: { commit_txid: "10", event_id: "a" } }))).toBe(true);
   });
 
   test("a run the authority holds no events for is not captured", async () => {
-    expect(isRunCaptured(await read({ events: [], outcomes: [], cursor: { commit_txid: "6", id: "e2" } }))).toBe(false);
+    expect(isRunCaptured(await read({ events: [], outcomes: [], cursor: { commit_txid: "6", event_id: "e2" } }))).toBe(false);
   });
 
   test("no target revision among the run's events is not captured", async () => {
     const events = [launched];
-    expect(isRunCaptured(await read({ events, outcomes: events.map(outcomeOf), cursor: { commit_txid: "5", id: "e1" } }))).toBe(false);
+    expect(isRunCaptured(await read({ events, outcomes: events.map(outcomeOf), cursor: { commit_txid: "5", event_id: "e1" } }))).toBe(false);
   });
 
   test("a revision the service will not serve back is not captured", async () => {
@@ -356,7 +356,7 @@ describe("a run's capture", () => {
   test("the wait is bounded, and lag retains what is missing and why", async () => {
     let reads = 0;
     const feed = caughtUp("plan");
-    const lagging: Feed = { ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "5", id: "e1" } };
+    const lagging: Feed = { ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "5", event_id: "e1" } };
     const capture = await awaitRunCapture(fakeIo({ ...feedIo(() => { reads += 1; return lagging; }),
       publisherFailures: async () => ["observation publisher: observation delivery HTTP 400"] }), request, 5_000);
     expect(isRunCaptured(capture)).toBe(false);
@@ -386,9 +386,9 @@ test("a relations run that gave the proof none of its steps cannot read as a pas
   const graders = await Bun.file(resolve(import.meta.dir, "./fixtures/grading-definitions.json")).text();
   const run = { run_id: "run-1", definition_id: "definition-1" };
   const report = await relationsScenario(fakeIo({ readGradingConfiguration: async () => publishedFixture(graders) }), { shared_input: {} as SourceRunInput,
-    run: async () => ({ report: { id: "source-run", status: "passed", checks: [], evidence: NO_EVIDENCE }, run }),
+    run: async () => ({ report: { id: "source-run", status: "failed", checks: [{ name: "source run did not finish", passed: false, detail: run.run_id }], evidence: NO_EVIDENCE }, run: null }),
     openObservation: async () => ok({ db: {} as never, tenant: { producer: "oakridge", namespace: "n" }, close: async () => {} }) }, "matrix");
-  expect([report.status, failing(report)]).toEqual(["failed", ["the links run gave the proof its findings and tasks"]]);
+  expect([report.status, failing(report)]).toEqual(["failed", ["source run did not finish"]]);
 });
 
 describe("the source run", () => {
@@ -438,28 +438,26 @@ describe("the source run", () => {
     expect([report.status, decided]).toEqual(["passed", [["request_changes", "a1"], ["request_changes", "b1"], ["accept", "a2"], ["accept", "b2"]]]);
   });
 
-  test("the target waits for as many units as asked, and an acceptance carries the links its review supplies", async () => {
-    const posted: { readonly analysis_links?: unknown }[] = [];
+  test("the target waits for as many units as asked, before moving on", async () => {
+    const posted: unknown[] = [];
     const reached = { artifacts: [{ artifact_key: "plan", latest_revision: { id: "p1" } }], attention: [awaiting("plan_review")] };
     const views = [reached, { artifacts: [{ artifact_key: "plan", latest_revision: { id: "p1" } }, { artifact_key: "plan", latest_revision: { id: "p2" } }], attention: [] }];
     const directory = mkdtempSync(join(tmpdir(), "source-run-"));
     let reads = 0;
-    const links = [{ source_revision_id: "analysis:1", item_path: "/findings/0", task_ids: ["T1"] }];
     const report = await sourceRunScenario(fakeIo({ dbos: async (path, body) => {
       if (path === "/api/runs") return ok({ run_id: "run-1" });
       if (path.endsWith("/inspect")) { reads += 1; return ok(views[Math.min(reads, views.length) - 1]); }
-      if (path.endsWith("/decide")) posted.push(body as { analysis_links?: unknown });
+      if (path.endsWith("/decide")) posted.push(body);
       return ok({});
-    }, ...feedIo(() => caughtUp("plan")) }), { input, directory, through: "plan", timeout_ms: 60_000, capture_timeout_ms: 5_000, target_units: 2, reviews: [{ review: "plan_review", analysis_links: () => links }] });
+    }, ...feedIo(() => caughtUp("plan")) }), { input, directory, through: "plan", timeout_ms: 60_000, capture_timeout_ms: 5_000, target_units: 2, reviews: [{ review: "plan_review" }] });
     rmSync(directory, { recursive: true, force: true });
-    expect([report.status, reads, posted.map((body) => body.analysis_links)]).toEqual(["passed", 2, [links]]);
+    expect([report.status, reads, posted.length]).toEqual(["passed", 2, 1]);
   });
 
   describe("a decision whose result is not known", () => {
     const passed = { name: "step", passed: true, detail: "" };
-    const links = [{ source_revision_id: "analysis:1", item_path: "/findings/0", task_ids: ["T1"] }];
     const reached = { artifacts: [{ artifact_key: "plan", latest_revision: { id: "revision-1" } }], attention: [] };
-    interface Sent { readonly request_id: string; readonly analysis_links?: unknown }
+    interface Sent { readonly request_id: string }
     async function accepting(script: { readonly views: readonly unknown[]; readonly answer: (attempt: number) => ReturnType<ProofIo["dbos"]>; readonly reviews?: readonly ReviewCheckpoint[] }) {
       const steps: string[] = [];
       const sent: Sent[] = [];
@@ -470,8 +468,7 @@ describe("the source run", () => {
         if (path.endsWith("/inspect")) { reads += 1; return ok(script.views[Math.min(reads, script.views.length) - 1]); }
         if (path.endsWith("/decide")) { sent.push(body as Sent); return script.answer(sent.length); }
         return ok({});
-      }, ...feedIo(() => caughtUp("plan")) }), { input, directory, through: "plan", timeout_ms: 60_000, capture_timeout_ms: 5_000, reviews: script.reviews ?? [{ review: "plan_review", analysis_links: () => links,
-        before: async () => { steps.push("before"); return passed; }, after: async () => { steps.push("after"); return passed; } }] });
+      }, ...feedIo(() => caughtUp("plan")) }), { input, directory, through: "plan", timeout_ms: 60_000, capture_timeout_ms: 5_000, reviews: script.reviews ?? [{ review: "plan_review",   before: async () => { steps.push("before"); return passed; }, after: async () => { steps.push("after"); return passed; } }] });
       rmSync(directory, { recursive: true, force: true });
       return { report, steps, sent };
     }
@@ -480,7 +477,7 @@ describe("the source run", () => {
     test("a committed acceptance whose response was lost is asked again under the same id, and its steps still run", async () => {
       // The review has gone from the next view: only repeating the request can learn the outcome.
       const { report, steps, sent } = await accepting({ views: [{ artifacts: [], attention: [awaiting("plan_review")] }, reached], answer: (attempt) => attempt === 1 ? lostResponse() : Promise.resolve(ok({ kind: "committed" })) });
-      expect([report.status, steps, sent.map((body) => body.analysis_links), new Set(sent.map((body) => body.request_id)).size]).toEqual(["passed", ["before", "after"], [links, links], 1]);
+      expect([report.status, steps, new Set(sent.map((body) => body.request_id)).size]).toEqual(["passed", ["before", "after"], 1]);
     });
     test("a decision that never becomes known fails the proof and skips nothing silently", async () => {
       const { report, steps, sent } = await accepting({ views: [{ artifacts: [], attention: [awaiting("plan_review")] }], answer: lostResponse });
@@ -535,7 +532,7 @@ describe("the source run", () => {
     const directory = mkdtempSync(join(tmpdir(), "source-run-"));
     let hooked = "";
     const report = await sourceRunScenario(fakeIo({ dbos: async (path) => ok(path === "/api/runs" ? { run_id: "run-1" } : path.endsWith("/inspect") ? reached[0] : {}),
-      ...feedIo(() => ({ events: [launched], outcomes: [], cursor: { commit_txid: "0", id: "e0" } })) }),
+      ...feedIo(() => ({ events: [launched], outcomes: [], cursor: { commit_txid: "0", event_id: "e0" } })) }),
       { input, directory, through: "plan", capture: "deferred",
         after_launch: async (run) => { hooked = run.run_id; return { name: "observation is down", passed: true, detail: "" }; } });
     rmSync(directory, { recursive: true, force: true });
@@ -589,7 +586,7 @@ describe("the source run", () => {
 
   test("capture that stays behind fails, though the run reached its target", async () => {
     const feed = caughtUp("plan");
-    const { report } = await drive(reached, "plan", feedIo(() => ({ ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "5", id: "e1" } })));
+    const { report } = await drive(reached, "plan", feedIo(() => ({ ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "5", event_id: "e1" } })));
     expect(report.status).toBe("failed");
     expect(report.checks[0]).toMatchObject({ name: "the run reaches its target", passed: true });
     expect(report.evidence.run_capture?.undelivered_event_ids).toEqual(["e2"]);
@@ -597,7 +594,7 @@ describe("the source run", () => {
 
   test("capture refused by the service fails, and the publisher's reason is kept", async () => {
     const feed = caughtUp("plan");
-    const { report } = await drive(reached, "plan", { ...feedIo(() => ({ ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "5", id: "e1" } })),
+    const { report } = await drive(reached, "plan", { ...feedIo(() => ({ ...feed, outcomes: feed.outcomes.slice(0, 1), cursor: { commit_txid: "5", event_id: "e1" } })),
       publisherFailures: async () => ["observation publisher: observation delivery HTTP 400"] });
     expect(report.status).toBe("failed");
     expect(report.checks.find((check) => !check.passed)?.detail).toContain("observation delivery HTTP 400");
@@ -722,10 +719,10 @@ describe("the stack's startup wait", () => {
 describe("the registration scenario", () => {
   test("a pin check expects a question only on items of its declared artifact and selector", () => {
     const registration = plan(committedText);
-    const coverage = registration.capture.pins.find((pin) => pin.question_id === "acceptance_entry.task_coverage")!;
+    const coverage = registration.capture.pins.find((pin) => pin.question_id === "allocation.task_coverage")!;
     const entry = (id: string, artifact_kind: string, item_selector: string, item_path: string): ItemReadback =>
-      ({ occurrence_id: id, revision_id: `${artifact_kind}-1`, item_path, artifact_kind, item_selector, item_kind: "acceptance_entry" });
-    const plan_entry = entry("plan-entry", "plan", "/cohorts/*/acceptance_criteria/*", "/cohorts/0/acceptance_criteria/0");
+      ({ occurrence_id: id, revision_id: `${artifact_kind}-1`, item_path, artifact_kind, item_selector, item_kind: "allocation" });
+    const plan_entry = entry("plan-entry", "plan", "/cohorts/*/allocations/*", "/cohorts/0/allocations/0");
     const brief_entry = entry("brief-entry", "brief", "/acceptance_criteria/*", "/acceptance_criteria/0");
     const pin = { checkpoint: "capture", run_id: "run-1", occurrence_id: plan_entry.occurrence_id, revision_id: plan_entry.revision_id,
       item_path: plan_entry.item_path, item_kind: plan_entry.item_kind, question_id: coverage.question_id, question_version: coverage.question_version,
@@ -736,7 +733,7 @@ describe("the registration scenario", () => {
     expect(checks.map((check) => [check.passed, check.detail])).toEqual([[true, "1 pinned question(s) on 3 item(s)"], [true, "all match"]]);
   });
 
-  const committedText = readFileSync(resolve(repository, "observation/tests/fixtures/grading-definitions.json"), "utf8");
+  const committedText = JSON.stringify(JSON.parse(readFileSync(resolve(repository, "observation/tests/fixtures/grading-definitions-current.json"), "utf8")).definitions, null, 2) + "\n";
   const plan = (text: string) => {
     const parsed = parseGradingDefinitions(JSON.parse(text), oakridgeGradingRegistry);
     if (!parsed.ok) throw new Error(parsed.error.detail);
@@ -828,10 +825,10 @@ describe("the registration scenario", () => {
         const run_id = `run-${label}`;
         const item = (id: string, artifact_kind: string, item_path: string, item_kind: string, cites_file: boolean) =>
           occurrences.push({ run_id, id: `${run_id}-${id}`, revision_id: `${artifact_kind}-${run_id}`, item_path, artifact_kind,
-            item_selector: "/findings/*", item_kind, cites_file, pinned: null, ready_at: null });
-        item("finding", "analysis", "/findings/0", FINDING_KIND, false);
-        item("cited", "assessment", "/findings/0", ASSESSMENT_FINDING_KIND, !options.nothing_cited);
-        item("uncited", "assessment", "/findings/1", ASSESSMENT_FINDING_KIND, false);
+            item_selector: artifact_kind === "analysis" ? "/requirements/*/findings/*" : "/item_assessments/*", item_kind, cites_file, pinned: null, ready_at: null });
+        item("finding", "analysis", "/requirements/0/findings/0", FINDING_KIND, false);
+        item("cited", "assessment", "/item_assessments/0", "item_assessment", !options.nothing_cited);
+        item("uncited", "assessment", "/item_assessments/1", "item_assessment", false);
         const launched = await run_options.after_launch({ run_id, definition_id: "development" });
         if (run_options.capture === "deferred") deferred = run_id;
         else {
@@ -857,12 +854,12 @@ describe("the registration scenario", () => {
     expect(failing(report)).toEqual([]);
     expect(report.evidence.registrations.map((entry) => entry.checkpoint)).toEqual(["committed", "committed, repository withheld",
       "edited, repository withheld", "edited, repository supplied"]);
-    const pinOf = (checkpoint: string) => report.evidence.pins.find((pin) => pin.checkpoint === checkpoint && pin.item_path === "/findings/0"
-      && pin.item_kind === ASSESSMENT_FINDING_KIND)!;
+    const pinOf = (checkpoint: string) => report.evidence.pins.find((pin) => pin.checkpoint === checkpoint && pin.item_path === "/item_assessments/0"
+      && pin.item_kind === "item_assessment")!;
     expect(pinOf("first-capture")).toMatchObject({ readiness: "not_ready", not_ready_code: "repository_unavailable" });
     expect(pinOf("first-after-arrival")).toMatchObject({ readiness: "ready", pinned_evaluator_definition_ids: pinOf("first-capture").pinned_evaluator_definition_ids });
     expect(pinOf("second").pinned_evaluator_definition_ids).not.toEqual(pinOf("first-capture").pinned_evaluator_definition_ids);
-    expect(report.evidence.frozen_evidence.find((set) => set.run_id === "run-first" && set.item_path === "/findings/0" && set.question_id.endsWith("correctness"))
+    expect(report.evidence.frozen_evidence.find((set) => set.run_id === "run-first" && set.item_path === "/item_assessments/0" && set.question_id.endsWith("correctness"))
       ?.references).toContainEqual(expect.objectContaining({ source: "repository", commit_sha: "abc", path: "core/a.ts", content: "two\nthree" }));
     expect(report.evidence.provider_request_count).toBe(0);
     expect(stack.graders()).toBe(committedText);

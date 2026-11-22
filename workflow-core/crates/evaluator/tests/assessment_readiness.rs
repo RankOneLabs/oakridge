@@ -100,7 +100,10 @@ impl Run {
             body,
             predecessor: None,
             subject,
-            by: Some(action.clone()),
+            by: Some(PublishingAttempt {
+                action: action.clone(),
+                seq: 1,
+            }),
         });
         self.apply(Event::WorkerEnded {
             action,

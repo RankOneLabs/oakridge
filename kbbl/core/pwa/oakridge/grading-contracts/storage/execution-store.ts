@@ -3,14 +3,14 @@
 
 import type { ObservationRunId } from "../domain/identity";
 import type { ObservationExecutionStatus } from "../grading/execution";
-import type { ObservationRunConfigWire } from "../ingest/cursor";
+import type { ObservationDeliveryRunConfig } from "../ingest/dbos-revision-delivery";
 
 export interface ObservationRunSpend {
   readonly run_id: ObservationRunId;
   /** The choice the run's captured launch committed. */
   readonly is_grading_enabled: boolean;
   /** The exact config the launch delivered, or null when it carried none. */
-  readonly captured_config: ObservationRunConfigWire | null;
+  readonly captured_config: ObservationDeliveryRunConfig | null;
   readonly committed: number;
   readonly requests_sent: number;
   readonly attempts: number;

@@ -79,7 +79,7 @@ test("rework propagates through revision publishing attempts", () => {
  const first = { ...attempt(1), cause: { kind: "missing" as const } };
  const retry = { ...attempt(2), cause: { kind: "changes_requested" as const, decision: "no" } };
  const review = { ...attempt(3), cause: { kind: "review_of" as const, revision: "rev" } };
- expect([...classifyRework([review,retry,first], [{ id: "rev" as never, by_id: first.action_id, created_at: new Date(2500) }])]).toEqual(["action:2","action:3"]);
+ expect([...classifyRework([review,retry,first], [{ id: "rev" as never, by_action_id: first.action_id, by_seq: 2 }])]).toEqual(["action:2","action:3"]);
 });
 test("kbbl usage transport refusals and network errors are values", async () => {
  for (const fetcher of [async () => new Response("bad", { status: 500 }), async (): Promise<Response> => { throw new Error("offline"); }]) {
@@ -156,5 +156,5 @@ test("observation failures yield verification null", async () => {
 
 test("operator revisions and periodic refreshes remain first pass", () => {
  const attempts = [{ ...attempt(1), cause: { kind:"periodic" as const, inputs:"digest" } }, { ...attempt(2), cause: { kind:"review_of" as const, revision:"operator-edit" } }];
- expect([...classifyRework(attempts,[{ id:"operator-edit" as never,by_id:null,created_at:new Date(1500) }])]).toEqual([]);
+ expect([...classifyRework(attempts,[{ id:"operator-edit" as never,by_action_id:null,by_seq:null }])]).toEqual([]);
 });

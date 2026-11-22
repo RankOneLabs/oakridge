@@ -377,12 +377,12 @@
       ]
     },
     {
-      "id": "next_action.correctness",
+      "id": "feedback_proposal.correctness",
       "scope": "per_item",
       "targets": [
         {
           "artifact": "assessment",
-          "selector": "/next_actions/*"
+          "selector": "/proposals/*"
         }
       ],
       "evidence": [
@@ -392,7 +392,7 @@
         "test_evidence"
       ],
       "question": {
-        "text": "Does this next action address its explicitly identified source assessment or additional finding and give its audience an actionable instruction?",
+        "text": "Is the feedback proposal’s instruction actionable, consistent with the available evidence, and responsive to what it cites when a citation is present?",
         "response": "choice",
         "values": [
           "supported",
@@ -401,8 +401,8 @@
         ],
         "missing_evidence_policy": "abstain",
         "abstain_semantics": "Abstain only when the evidence set is marked incomplete; low confidence alone is not abstention.",
-        "unclear_semantics": "Choose unclear when the named source or available evidence cannot establish whether the action addresses it.",
-        "interpretation_caveats": "Only source.kind and source.id identify the source. An item assessment is identified by subject.id; an additional finding by id. Judge the proposed action, not whether it has already been implemented."
+        "unclear_semantics": "Choose unclear when the cited content or other evidence needed to assess the instruction is unavailable or inconclusive.",
+        "interpretation_caveats": "The proposal key identifies the proposal. Its optional citation identifies the source by exact revision_id and JSON pointer. A proposal without a citation may still be supported by other supplied evidence. Assess the instruction independently of implementation."
       },
       "evaluators": [
         {
@@ -412,11 +412,11 @@
           "instructions": {
             "system_one": {
               "type": "choice",
-              "instructions": "Each entry of state is an evidence reference; judge its content. state.subject is a next action with source, audience and text. state.contribution_context is the exact containing assessment. Resolve source.kind and source.id only: for item_assessment match item_assessments[].subject.id, and for additional_finding match additional_findings[].id. Use the source observation and status or severity, with build_result and test_evidence when present, to assess the proposed instruction. Choose supported when the action concretely addresses its source and is actionable for its declared audience; contradicted when it conflicts with that source or available evidence; unclear when the source or evidence cannot establish either. Do not invent source associations, assume file contents that were not collected, or grade implementation success.",
+              "instructions": "Each entry of state is an evidence reference. Read state.subject.content.instruction as the proposed action. When state.subject.content.citation is present, match citation.revision_id to the revision_id of a supplied reference. Use its content when item_path matches citation.pointer, or resolve the JSON pointer in content when the reference contains the full revision with item_path null. The containing assessment in state.contribution_context can supply the cited content when its revision matches. Use build_result and test_evidence when relevant. Choose supported when the instruction is actionable, is backed by the supplied evidence, and addresses its citation when present. Choose contradicted when the instruction conflicts with its cited content or other supplied evidence. Choose unclear when the available evidence cannot establish either, including when the cited address is unavailable. Do not substitute a different revision or source item, infer an audience, or grade implementation success.",
               "criteria": {
-                "supported": "The action concretely addresses its named source and is actionable for its audience",
-                "contradicted": "The action conflicts with its named source or available evidence",
-                "unclear": "The named source or evidence cannot establish whether the action addresses it"
+                "supported": "The instruction is actionable and supported by the available evidence, including the exact cited content when present",
+                "contradicted": "The instruction conflicts with the exact cited content or other available evidence",
+                "unclear": "The cited content or other evidence needed to assess the instruction is unavailable or inconclusive"
               }
             }
           }

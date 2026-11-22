@@ -9,16 +9,16 @@ function attempt(seq: number, created_at: string, session: string | null): Attem
     run_id: "run-1", mode: { kind: "initial" }, cause: { kind: "missing" }, status: { kind: "started" }, publication_secret_hash: null } as unknown as AttemptRecord;
 }
 
-test("a blocker revision's author is the latest attempt of its action that started before publication", () => {
+test("a blocker revision's author is the exact stored attempt", () => {
   const attempts = [attempt(1, "2026-11-17T10:00:00Z", "s-1"), attempt(2, "2026-11-17T11:00:00Z", "s-2"), attempt(3, "2026-11-17T13:00:00Z", "s-3")];
-  expect(selectRevisionAuthor(attempts, { by_id: action, created_at: new Date("2026-11-17T12:00:00Z") }))
+  expect(selectRevisionAuthor(attempts, { by_action_id: action, by_seq: 2 }))
     .toEqual({ worker: "writer", action_id: action, attempt_seq: 2, session_id: "s-2" });
 });
 
 test("an operator edit has no author", () => {
-  expect(selectRevisionAuthor([attempt(1, "2026-11-17T10:00:00Z", "s-1")], { by_id: null as unknown as ActionId, created_at: new Date("2026-11-17T12:00:00Z") })).toBeNull();
+  expect(selectRevisionAuthor([attempt(1, "2026-11-17T10:00:00Z", "s-1")], { by_action_id: null, by_seq: null })).toBeNull();
 });
 
 test("a revision whose action has no recorded attempt has no author", () => {
-  expect(selectRevisionAuthor([], { by_id: action, created_at: new Date("2026-11-17T12:00:00Z") })).toBeNull();
+  expect(selectRevisionAuthor([], { by_action_id: action, by_seq: 2 })).toBeNull();
 });

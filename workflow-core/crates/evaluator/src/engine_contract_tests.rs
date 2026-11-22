@@ -104,7 +104,10 @@ impl Run {
             )
             .map(|revision| revision.id.clone()),
             subject,
-            by: Some(attempt.action_id.clone()),
+            by: Some(PublishingAttempt {
+                action: attempt.action_id.clone(),
+                seq: attempt.seq,
+            }),
         })
         .unwrap();
     }

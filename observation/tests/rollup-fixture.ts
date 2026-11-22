@@ -27,7 +27,7 @@ export const answer = (set: EvidenceSet): CompositeAnswer => ({ observation_id: 
   confidence: null, rationale: null, comments: null, recorded_at: new Date(0) });
 export const inputs = (overrides: Partial<CompositeInputs> = {}): CompositeInputs => ({ run_id: "fixture-run" as RunId, is_grading_enabled: true,
   stages: [], pins: [], is_run_complete: false, revisions: [], occurrences: [], relations: [], evidence_sets: [], answers: [], questions: [question],
-  logical_items: [{ logical_item_id: task, scope: "task", producer_local_id: "T1" }, { logical_item_id: otherTask, scope: "task", producer_local_id: "T2" }],
+  logical_items: [{ logical_item_id: task, scope: "task", task_kind: "requirement", producer_local_id: "T1" }, { logical_item_id: otherTask, scope: "task", task_kind: "requirement", producer_local_id: "T2" }],
   evaluators: [{ evaluator_definition_id: grader, kind: "code", backend_kind: "fixture", provider: "fixture", model: null }], ...overrides,
   executions: overrides.executions ?? (overrides.answers ?? []).map((answer) => ({ task_id: answer.task_id, occurrence_id: answer.occurrence_id,
     execution_id: answer.execution_id, evidence_set_id: answer.evidence_set_id, evaluator_definition_id: answer.evaluator_definition_id,

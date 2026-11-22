@@ -527,7 +527,7 @@
               "message": "The slice build must cover exactly the plan's slice cases."
             },
             {
-              "check": "every(slice_build.case_ids, contains(map(slice_build.qualifications, item.case_id), item))",
+              "check": "every(slice_build.qualifications, contains(slice_build.case_ids, item.case_id)) and every(slice_build.case_ids, contains(map(slice_build.qualifications, item.case_id), item))",
               "message": "Every slice case needs a qualification result."
             },
             {
@@ -624,6 +624,10 @@
           },
           "validate": [
             {
+              "check": "every(slice_assessment.proposals, not present(item.citation) or require(item.citation).revision_id != \"\")",
+              "message": "A cited proposal must name its source revision."
+            },
+            {
               "check": "published(slice_build) and slice_assessment.head_sha == latest(slice_build).build.head_sha",
               "message": "The slice assessment's head must equal the latest slice build's."
             },
@@ -656,7 +660,7 @@
               "message": "Every iteration trigger must be assessed."
             },
             {
-              "check": "unique(map(slice_assessment.item_assessments, item.subject.id))",
+              "check": "unique(map(filter(slice_assessment.item_assessments, item.subject.kind == \"case\"), item.subject.id)) and unique(map(filter(slice_assessment.item_assessments, item.subject.kind == \"criterion\"), item.subject.id)) and unique(map(filter(slice_assessment.item_assessments, item.subject.kind == \"trigger\"), item.subject.id))",
               "message": "Assessment item ids must be unique."
             },
             {
@@ -989,6 +993,10 @@
           },
           "validate": [
             {
+              "check": "every(assessment.proposals, not present(item.citation) or require(item.citation).revision_id != \"\")",
+              "message": "A cited proposal must name its source revision."
+            },
+            {
               "check": "every(assessment.item_assessments, contains(input.case_ids, item.subject.id)) and every(flatten(map(assessment.additional_findings, item.related_subjects)), item.kind == \"case\" and contains(input.case_ids, item.id))",
               "message": "Expansion case subjects and related subjects must resolve to allocated cases."
             },
@@ -1178,7 +1186,7 @@
           "schema": "freeze_body",
           "validate": [
             {
-              "check": "every(map(input.plan.cases, item.id), contains(flatten(map(freeze.cohorts, item.case_ids)), item)) and every(flatten(map(freeze.cohorts, item.case_ids)), contains(map(input.plan.cases, item.id), item))",
+              "check": "every(flatten(map(freeze.cohorts, item.case_ids)), contains(map(input.plan.cases, item.id), item)) and every(map(input.plan.cases, item.id), contains(flatten(map(freeze.cohorts, item.case_ids)), item)) and every(flatten(map(freeze.cohorts, item.case_ids)), contains(map(input.plan.cases, item.id), item))",
               "message": "The frozen cohorts' cases must be exactly the plan's cases."
             },
             {
@@ -1367,6 +1375,10 @@
             "kind": "frozen_when_accepted"
           },
           "validate": [
+            {
+              "check": "every(assessment.proposals, not present(item.citation) or require(item.citation).revision_id != \"\")",
+              "message": "A cited proposal must name its source revision."
+            },
             {
               "check": "every(filter(assessment.item_assessments, item.subject.kind == \"case\"), contains(map(input.cases, item.id), item.subject.id)) and every(filter(flatten(map(assessment.additional_findings, item.related_subjects)), item.kind == \"case\"), contains(map(input.cases, item.id), item.id))",
               "message": "Case subjects and related subjects must resolve within the reviewed scope."

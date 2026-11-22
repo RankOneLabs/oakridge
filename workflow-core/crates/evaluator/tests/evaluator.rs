@@ -58,7 +58,7 @@ fn a_serialized_null_launch_input_remains_resolved_after_a_child_completes() {
                 body: serde_json::json!("done"),
                 predecessor: None,
                 subject: None,
-                by: Some(action),
+                by: Some(PublishingAttempt { action, seq: 1 }),
             },
             "publish",
         ),
@@ -248,7 +248,10 @@ fn an_accepted_artifact_with_a_freeze_policy_rejects_operator_edits() {
                 body: serde_json::json!("first"),
                 predecessor: None,
                 subject: None,
-                by: Some(launched.attempts[0].action_id.clone()),
+                by: Some(PublishingAttempt {
+                    action: launched.attempts[0].action_id.clone(),
+                    seq: 1,
+                }),
             },
         },
     )
@@ -403,7 +406,16 @@ fn event(spec: &Value, state: &StepSnapshot) -> Event {
             body: spec["body"].clone(),
             predecessor: spec["predecessor"].as_str().map(RevisionId::from),
             subject: spec["subject"].as_str().map(RevisionId::from),
-            by: Some(action()),
+            by: Some({
+                let action = action();
+                let seq = state
+                    .attempts
+                    .iter()
+                    .rev()
+                    .find(|attempt| attempt.action_id == action)
+                    .map_or(1, |attempt| attempt.seq);
+                PublishingAttempt { action, seq }
+            }),
         },
         "decide" => Event::OperatorDecided {
             unit: UnitId::from(unit),
@@ -705,7 +717,10 @@ fn reviewer_needs_every_output_for_its_subject() {
         body: serde_json::json!({"notes": []}),
         predecessor: None,
         subject: Some(RevisionId::from("run/document:draft:1")),
-        by: Some(ActionKey::from("previous-review")),
+        by: Some(PublishingAttempt {
+            action: ActionKey::from("previous-review"),
+            seq: 1,
+        }),
     });
     let unit = state
         .units
@@ -1811,7 +1826,7 @@ fn every_event_kind_preserves_unit_status_order() {
                     body: serde_json::json!({"title":"x","body":"x"}),
                     predecessor: None,
                     subject: None,
-                    by: Some(action),
+                    by: Some(PublishingAttempt { action, seq: 1 }),
                 },
                 Event::OperatorDecided {
                     unit: unit.clone(),
@@ -2286,7 +2301,10 @@ fn watching_one(program: &CheckedWorkflow) -> StepSnapshot {
                 body: serde_json::json!("one"),
                 predecessor: None,
                 subject: None,
-                by: Some(builder.clone()),
+                by: Some(PublishingAttempt {
+                    action: builder.clone(),
+                    seq: 1,
+                }),
             },
             "builder:publish",
         ),
@@ -2548,7 +2566,10 @@ fn stale_review_retry_and_publication_are_rejected() {
                     body: serde_json::json!({"title":"x","body":"x"}),
                     predecessor: None,
                     subject: None,
-                    by: Some(ActionKey::from("forged"))
+                    by: Some(PublishingAttempt {
+                        action: ActionKey::from("forged"),
+                        seq: 1
+                    })
                 },
                 "forged"
             )
@@ -2596,7 +2617,10 @@ fn fan_out_preparing(items: Value) -> (CheckedWorkflow, StepSnapshot, Incoming) 
         body: serde_json::json!({"repository_path":"/tmp/repo","push_remote_owner":"owner","head":"abc","base_branch":"epic/x"}),
         predecessor: None,
         subject: None,
-        by: Some(git),
+        by: Some(PublishingAttempt {
+            action: git,
+            seq: 1,
+        }),
     };
     (program, launched, incoming(publish, "publish"))
 }
@@ -2840,6 +2864,10 @@ fn w6_projection(result: &StepResult) -> Value {
         .iter()
         .map(|block| (&block.unit.0, &block.reason))
         .collect();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("publication_bindings");
     let snapshot = value["snapshot"].as_object_mut().unwrap();
     snapshot["run"]["status"] = serde_json::to_value(&root_unit.status).unwrap();
     snapshot["run"]["input"] = root_unit.input.clone().unwrap_or(Value::Null);
@@ -2866,6 +2894,9 @@ fn w6_projection(result: &StepResult) -> Value {
         attempt["cause"].as_object_mut().unwrap().remove("mode");
     }
     for revision in snapshot["revisions"].as_array_mut().unwrap() {
+        if revision["by"].is_object() {
+            revision["by"] = revision["by"]["action"].clone();
+        }
         revision.as_object_mut().unwrap().remove("seq");
         revision.as_object_mut().unwrap().remove("decision_cursor");
     }
@@ -2902,6 +2933,10 @@ fn w6_projection(result: &StepResult) -> Value {
         wanted["resolved"]
             .as_object_mut()
             .unwrap()
+            .remove("input_bindings");
+        wanted["resolved"]
+            .as_object_mut()
+            .unwrap()
             .remove("review_history");
         wanted["resolved"].as_object_mut().unwrap().remove("prompt");
         wanted["action"]["cause"]
@@ -2910,6 +2945,9 @@ fn w6_projection(result: &StepResult) -> Value {
             .remove("mode");
         for key in ["previous", "subject"] {
             if let Some(revision) = wanted["resolved"][key].as_object_mut() {
+                if let Some(by) = revision.get_mut("by").filter(|by| by.is_object()) {
+                    *by = by["action"].clone();
+                }
                 revision.remove("seq");
                 revision.remove("decision_cursor");
             }
@@ -3006,7 +3044,7 @@ fn list_check_holds(check: &str, groups: Value) -> Result<bool, StepError> {
                 body: serde_json::json!("body"),
                 predecessor: None,
                 subject: None,
-                by: Some(action),
+                by: Some(PublishingAttempt { action, seq: 1 }),
             },
             "publish",
         ),

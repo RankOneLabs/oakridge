@@ -54,6 +54,9 @@ test("run deletion removes a run containing rows in all nine assessment tables",
   for (const intent of await run.rows("authority.effect_intent")) {
     await settleIntent(authority.db, { intent_id: intent.id as import("../src/domain/primitives").IntentId, status: "stopped", last_error: null });
   }
+  const deliveries = () => authority.db.selectFrom("authority.revision_delivery").select("revision_id").where("run_id", "=", run.run_id).execute();
+  expect((await deliveries()).length).toBeGreaterThan(0);
   expect(await deleteRun(authority.db, run.run_id)).toEqual({ kind: "deleted" });
   expect(await Promise.all(tables.map(async table => (await run.rows(table)).length))).toEqual(tables.map(() => 0));
+  expect(await deliveries()).toEqual([]);
 });

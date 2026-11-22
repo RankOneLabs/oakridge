@@ -82,6 +82,7 @@ CREATE TABLE authority.attempt (
   cause jsonb NOT NULL,
   status jsonb NOT NULL,
   kbbl_session_id text,
+  input_bindings jsonb NOT NULL,
   publication_secret_hash text CHECK (publication_secret_hash IS NULL OR publication_secret_hash ~ '^[0-9a-f]{64}$'),
   -- When commit opened the attempt, stamped after it took the run row lock
   -- (clock_timestamp, not the transaction's start), so it orders after every
@@ -93,6 +94,8 @@ CREATE TABLE authority.attempt (
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id)
 );
 
+CREATE TYPE authority.revision_origin AS ENUM ('worker', 'operator_edit');
+
 CREATE TABLE authority.artifact_revision (
   id text PRIMARY KEY,
   run_id text NOT NULL,
@@ -102,7 +105,13 @@ CREATE TABLE authority.artifact_revision (
   decision_cursor integer NOT NULL DEFAULT 0,
   body jsonb NOT NULL,
   -- The attempt that published it; null for an operator's edit (part 1 §12, D2).
-  by_id text,
+  origin_kind authority.revision_origin NOT NULL,
+  by_action_id text,
+  by_seq integer,
+  input_bindings jsonb NOT NULL,
+  CHECK ((origin_kind = 'worker') = (by_action_id IS NOT NULL AND by_seq IS NOT NULL)),
+  CHECK ((by_action_id IS NULL) = (by_seq IS NULL)),
+  FOREIGN KEY (by_action_id, by_seq) REFERENCES authority.attempt(action_id, seq),
   predecessor_id text,
   subject text,
   -- Stamped at insert, under the run row lock, so revisions and attempts of a
@@ -380,6 +389,18 @@ CREATE TABLE authority.review_item (
   FOREIGN KEY (run_id, thread_id) REFERENCES authority.collaboration_thread(run_id, id)
 );
 
+-- Exact revisions inserted by each committed event, in insertion order.
+CREATE TABLE authority.revision_delivery (
+  run_id text NOT NULL,
+  event_id text NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal >= 0),
+  revision_id text NOT NULL,
+  PRIMARY KEY (run_id, event_id, ordinal),
+  UNIQUE (run_id, revision_id),
+  FOREIGN KEY (run_id, event_id) REFERENCES authority.event(run_id, id),
+  FOREIGN KEY (run_id, revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
 -- The operator stream's outbox. Written by commit and the registry store in the
 -- transaction that causes it; never read by step. A deleted run leaves its
 -- rows in the stream with no run (D12).
@@ -422,6 +443,8 @@ COMMENT ON COLUMN authority.unit.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.unit.status IS '@type {UnitStatus}';
 COMMENT ON COLUMN authority.unit.blocked_reason IS '@type {BlockedReason}';
 COMMENT ON COLUMN authority.unit.review_prompts IS '@type {ReviewPrompts}';
+COMMENT ON COLUMN authority.attempt.input_bindings IS '@type {InputBindings}';
+COMMENT ON COLUMN authority.artifact_revision.input_bindings IS '@type {InputBindings}';
 COMMENT ON COLUMN authority.attempt.mode IS '@type {Mode}';
 COMMENT ON COLUMN authority.attempt.cause IS '@type {Cause}';
 COMMENT ON COLUMN authority.attempt.status IS '@type {AttemptStatus}';

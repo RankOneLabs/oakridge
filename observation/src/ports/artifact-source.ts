@@ -25,7 +25,7 @@ export interface ArtifactSource {
 }
 
 export interface CapturedRevision {
-  readonly brief_revision_ids?: readonly string[] | null;
+  readonly input_bindings: readonly import("../ingest/dbos-revision-delivery").InputBinding[];
   readonly stage: string;
   readonly revision_id: ArtifactRevisionId;
   readonly artifact_kind: string;

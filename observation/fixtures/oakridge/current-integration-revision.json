@@ -39,10 +39,11 @@
     }
   ],
   "additional_findings": [],
-  "next_actions": [],
   "test_evidence": {
     "passed": 2,
     "failed": 0
   },
-  "verdict": "pass"
+  "verdict": "pass",
+  "proposals": [],
+  "verifications": []
 }

@@ -40,6 +40,7 @@ export async function deleteRun(db: Database, run_id: RunId): Promise<DeleteRunR
     await trx.deleteFrom("authority.feedback_item").where("run_id", "=", run_id).execute();
     await trx.deleteFrom("authority.review_decision").where("run_id", "=", run_id).execute();
     await trx.deleteFrom("authority.effect_intent").where("run_id", "=", run_id).execute();
+    await trx.deleteFrom("authority.revision_delivery").where("run_id", "=", run_id).execute();
     await trx.deleteFrom("authority.event").where("run_id", "=", run_id).execute();
     await trx.deleteFrom("authority.keyed_execution").where("run_id", "=", run_id).execute();
     await trx.deleteFrom("authority.artifact_revision").where("run_id", "=", run_id).execute();

@@ -5,8 +5,7 @@ import { canonicalDigest } from "canonical-json";
 import { Client } from "pg";
 import { sql } from "kysely";
 import { configuredRunnerNames, credentialsForRunners } from "../src/grading/provider-credentials";
-// Historical definitions keep legacy capture and pinning regressions independent of new configuration.
-const GRADING_FIXTURE = new URL("./fixtures/grading-definitions-legacy.json", import.meta.url);
+const GRADING_FIXTURE = new URL("./fixtures/grading-definitions-test.json", import.meta.url);
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest, type EvaluatorDefinition } from "../src/grading/evaluator";
@@ -17,7 +16,9 @@ import { NO_CAPTURE_PINS, type CaptureConfiguration } from "../src/grading/evide
 import { deliverSourceEvent } from "../src/storage/capture-store";
 import { openDatabase, type Database, type TenantScope } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
-import type { RunConfigWire, SourceEventCursor, SourceEventDelivery, SourceEventOutcome } from "../src/ingest/cursor";
+import { INITIAL_SOURCE_CURSOR, type RunConfigWire, type SourceEventCursor } from "../src/ingest/cursor";
+import type { CommittedEventDelivery, InputBinding } from "../src/ingest/dbos-revision-delivery";
+import { ARTIFACT_KEYS, ARTIFACT_KEY_LIST, type ArtifactKey } from "../src/producers/oakridge/artifact-versions";
 import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
@@ -30,7 +31,7 @@ export function integration(name: string, fn: () => unknown, timeout: number = I
 }
 export const tenant: TenantScope = { producer: "oakridge", namespace: "grading-test" };
 export const SCHEMA_VERSION = "schema-1";
-export const DEFINITION_ID = "definition-1";
+export const DEFINITION_ID = ARTIFACT_KEYS.development.analysis.analysis.definition_id;
 
 export const question: QuestionDefinition = {
   question_id: "relevance" as QuestionId, question_version: "1", item_kind: "finding", question_text: "Is it relevant?",
@@ -72,66 +73,74 @@ export interface FixtureRevision {
   readonly run_id?: string;
   readonly unit_id?: string;
   readonly subject_id?: string;
-  readonly brief_revision_ids?: readonly string[] | null;
+  readonly input_bindings?: readonly InputBinding[];
+  readonly definition_id?: string;
+  readonly schema_version?: string;
   readonly predecessor_id?: string;
   readonly recorded_at?: string;
 }
 export const fixtureBody = async (name: string): Promise<JsonValue> =>
   await Bun.file(new URL(`../fixtures/oakridge/${name}-revision.json`, import.meta.url)).json() as JsonValue;
 
-const provenance = { format: "observation.source-event/v1", definition_id: DEFINITION_ID, artifact_schema_version: SCHEMA_VERSION } as const;
+export const developmentKeys = {
+  analysis: ARTIFACT_KEYS.development.analysis.analysis, spec: ARTIFACT_KEYS.development.analysis.spec,
+  plan: ARTIFACT_KEYS.development.planning.plan, brief: ARTIFACT_KEYS.development.brief.brief,
+  assessment: ARTIFACT_KEYS.development.cohort.assessment, blocker: ARTIFACT_KEYS.$core["*"].blocker,
+};
+export function fixtureKey(artifact: string, stage?: string, definition_id?: string): ArtifactKey | undefined {
+  return ARTIFACT_KEY_LIST.find((key) => key.artifact === artifact && key.stage === stage && key.definition_id === (definition_id ?? DEFINITION_ID)) ??
+    developmentKeys[artifact as keyof typeof developmentKeys];
+}
+export type FixtureEvent = Pick<CommittedEventDelivery, "run_id" | "event_id" | "event">;
 
-/** The envelope the ordered feed carries for one revision. */
-export function revisionOutcome(input: FixtureRevision, scope: TenantScope = tenant, event_id = `event:${input.revision_id}`): SourceEventOutcome {
+export function revisionOutcome(input: FixtureRevision, event_id = `event:${input.revision_id}`): FixtureEvent {
   const digest = canonicalDigest(input.body);
   if (!digest.ok) throw new Error(digest.error.detail);
-  const prefix = `${scope.producer}:${scope.namespace}:`;
   const run_id = input.run_id ?? "run-1";
-  return { ...provenance, kind: "artifact_revision", event_kind: "revision_published", run_id, event_id,
-    revision: { format: input.brief_revision_ids === undefined ? "observation.artifact-revision/v3" : "observation.artifact-revision/v4", source: { ...scope, revision_id: `${prefix}${input.revision_id}`, run_id,
-      unit_id: input.unit_id ?? input.artifact_kind, stage: input.stage ?? (input.artifact_kind === "assessment" ? (input.unit_id?.split("/")[1] === "integration" ? "integration" : "implementation") : input.artifact_kind), artifact_kind: input.artifact_kind, artifact_schema_version: SCHEMA_VERSION,
-      definition_id: DEFINITION_ID, predecessor_id: input.predecessor_id ? `${prefix}${input.predecessor_id}` : null,
-      subject_id: input.subject_id ? `${prefix}${input.subject_id}` : null,
-      brief_revision_ids: input.brief_revision_ids?.map((id) => `${prefix}${id}`) ?? null },
-    recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z", body: input.body,
-    body_digest: digest.value as `canonical-json/v1:${string}` & { readonly __brand: "CanonicalDigest" } } };
+  const stage = input.stage ?? (input.artifact_kind === "assessment" && input.unit_id?.includes("/integration/") ? "integration" : undefined);
+  const key = fixtureKey(input.artifact_kind, stage, input.definition_id);
+  const artifact = input.artifact_kind;
+  return { run_id, event_id, event: { kind: "revisions", revisions: [{
+    revision_id: input.revision_id, run_id, artifact, body: input.body, body_digest: digest.value,
+    unit_id: input.unit_id ?? artifact, stage: stage ?? (key?.stage === "*" ? "analysis" : key?.stage) ?? artifact,
+    definition_id: input.definition_id ?? key?.definition_id ?? DEFINITION_ID, schema_version: input.schema_version ?? key?.schema_version ?? SCHEMA_VERSION,
+    predecessor_id: input.predecessor_id ?? null, subject_id: input.subject_id ?? null,
+    origin: { kind: "operator_edit" }, input_bindings: input.input_bindings ?? [],
+    recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z",
+  }] } };
+}
+export const runConfig = (grading_enabled: boolean): RunConfigWire => ({ sessions: {}, grading_enabled });
+export const launchOutcome = (input: JsonValue, run_id = "run-1", config: RunConfigWire | null = null): FixtureEvent =>
+  ({ run_id, event_id: `launch:${run_id}`, event: { kind: "launched", input, input_schema_version: SCHEMA_VERSION, config: config ?? runConfig(false) } });
+
+export function fixtureDelivery(scope: TenantScope, outcome: FixtureEvent, previous: SourceEventCursor = INITIAL_SOURCE_CURSOR): CommittedEventDelivery {
+  return { ...outcome, producer: "oakridge", namespace: scope.namespace, previous,
+    cursor: { commit_txid: String(BigInt(previous.commit_txid) + 1n), event_id: outcome.event_id } };
 }
 
-/** The run setting a launch commits: automatic grading on or off, no session overrides. */
-export const runConfig = (grading_enabled: boolean): RunConfigWire => ({ sessions: {}, grading_enabled });
-/** The launch event that captures a run's input and its committed config. A launch that
- * committed no config carries null, which leaves automatic grading off. */
-export const launchOutcome = (input: JsonValue, run_id = "run-1", config: RunConfigWire | null = null): SourceEventOutcome => ({ ...provenance,
-  kind: "run_input", event_kind: "launched", run_id, event_id: `launch:${run_id}`, input, input_schema_version: SCHEMA_VERSION, config });
-
 export interface Feed {
-  send(outcome: SourceEventOutcome, override?: CaptureConfiguration): Promise<SourceEventCursor>;
-  /** A configuration override stands for a restart under an edited configuration. */
+  send(outcome: FixtureEvent, override?: CaptureConfiguration): Promise<SourceEventCursor>;
   revision(input: FixtureRevision, override?: CaptureConfiguration): Promise<SourceEventCursor>;
   launch(input: JsonValue, run_id?: string, config?: RunConfigWire | null): Promise<SourceEventCursor>;
   decide(event_kind: "operator_decided", run_id?: string): Promise<SourceEventCursor>;
 }
 
-/** Drives the real ordered capture path, one acknowledged event at a time. */
 export function createFeed(db: Database, scope: TenantScope = tenant, configuration: CaptureConfiguration = NO_CAPTURE_PINS): Feed {
-  let cursor: SourceEventCursor = { commit_txid: "0", id: "" };
-  let sequence = 0;
-  const send = async (outcome: SourceEventOutcome, override: CaptureConfiguration = configuration): Promise<SourceEventCursor> => {
-    const next = { commit_txid: String(++sequence), id: outcome.event_id };
-    const delivery: SourceEventDelivery = { previous: cursor, cursor: next, outcome };
+  let cursor: SourceEventCursor = INITIAL_SOURCE_CURSOR;
+  const send = async (outcome: FixtureEvent, override: CaptureConfiguration = configuration): Promise<SourceEventCursor> => {
+    const delivery = fixtureDelivery(scope, outcome, cursor);
     const result = await deliverSourceEvent(db, scope, delivery, { extraction: oakridgeProfile.extraction, configuration: override });
     if (result.status !== 200) throw new Error(`delivery refused: ${JSON.stringify(result.body)}`);
-    cursor = next;
+    cursor = delivery.cursor;
     return cursor;
   };
   return {
     send,
-    revision: (input, override) => send(revisionOutcome(input, scope), override),
-    launch: (input, run_id = "run-1", config = null) => send(launchOutcome(input, run_id, config)),
-    decide: (event_kind, run_id = "run-1") => send({ ...provenance, kind: "ignored", event_kind, run_id, event_id: `decision:${sequence}` }),
+    revision: (input, override) => send(revisionOutcome(input), override),
+    launch: (input, run_id, config) => send(launchOutcome(input, run_id, config)),
+    decide: (event_kind, run_id = "run-1") => send({ run_id, event_id: `decision:${cursor.commit_txid}`, event: { kind: "other", event_kind } }),
   };
 }
-
 export const occurrenceIdOf = (value: string): ItemOccurrenceId => value as ItemOccurrenceId;
 
 /** Test-owned definitions; runtime code never reads this fixture. */

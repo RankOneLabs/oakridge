@@ -21,13 +21,13 @@ import { oakridgeProfile } from "../../observation/src/producers/oakridge/profil
 import { openDatabase as openObservationDatabase, withTenant, type Database as ObservationDatabase } from "../../observation/src/storage/database";
 import { migrateEmptyDatabase as migrateObservation } from "../../observation/src/storage/migrate";
 import { publishObservationOnce, type ObservationOptions } from "../src/adapters/observation";
-import { INITIAL_SOURCE_CURSOR, type SourceEventCursor } from "../src/adapters/observation-wire";
+import { INITIAL_DELIVERY_CURSOR, type DeliveryCursor } from "../src/adapters/revision-delivery";
 import { openDatabase, type Database } from "../src/storage/database";
 import { createScratchDatabase } from "./scratch-database";
 
 /** The delivery the service refused: its position, what it carried, and why. */
 export interface RefusedDelivery {
-  readonly cursor: SourceEventCursor | null;
+  readonly cursor: DeliveryCursor | null;
   readonly outcome_kind: string | null;
   readonly event_kind: string | null;
   readonly run_id: string | null;
@@ -47,14 +47,15 @@ export interface ReplayInput {
   readonly observation: ObservationDatabase;
   readonly namespace: string;
   /** The position delivery resumes after; the initial cursor replays the whole history. */
-  readonly start: SourceEventCursor;
+  readonly start: DeliveryCursor;
   /** How long delivery may stall short of the stream's end before the replay reports it blocked. */
   readonly wait_ms?: number;
 }
 
 interface DeliveryShape {
-  readonly cursor?: SourceEventCursor;
-  readonly outcome?: { readonly kind?: string; readonly event_kind?: string; readonly run_id?: string };
+  readonly cursor?: DeliveryCursor;
+  readonly run_id?: string;
+  readonly event?: { readonly kind?: string; readonly event_kind?: string; readonly run_id?: string };
 }
 
 const TOKEN = "observation-replay";
@@ -63,7 +64,7 @@ const TOKEN = "observation-replay";
 export async function replayIntoObservation(input: ReplayInput): Promise<ReplayReport> {
   const tenant = { producer: "oakridge", namespace: input.namespace };
   await withTenant(input.observation, tenant, (trx) => sql`INSERT INTO observation.source_event_cursor
-    (producer, namespace, commit_txid, event_id) VALUES (${tenant.producer}, ${tenant.namespace}, ${input.start.commit_txid}::bigint, ${input.start.id})
+    (producer, namespace, commit_txid, event_id) VALUES (${tenant.producer}, ${tenant.namespace}, ${input.start.commit_txid}::bigint, ${input.start.event_id})
     ON CONFLICT (producer, namespace) DO UPDATE SET commit_txid = EXCLUDED.commit_txid, event_id = EXCLUDED.event_id`.execute(trx));
   const app = createApp({ db: input.observation, credentials: { ingest: [{ ...tenant, token: TOKEN }], read: [] }, profile: oakridgeProfile([]) });
   // What the last refused delivery carried, and the exception behind a 500, for the report.
@@ -97,30 +98,30 @@ export async function replayIntoObservation(input: ReplayInput): Promise<ReplayR
       await Bun.sleep(500);
     } catch (error) {
       const detail = failure.exception ?? failure.response ?? (error instanceof Error ? error.message : String(error));
-      return { kind: "stopped", delivered, refused: { cursor: failure.sent?.cursor ?? null, outcome_kind: failure.sent?.outcome?.kind ?? null,
-        event_kind: failure.sent?.outcome?.event_kind ?? null, run_id: failure.sent?.outcome?.run_id ?? null, detail } };
+      return { kind: "stopped", delivered, refused: { cursor: failure.sent?.cursor ?? null, outcome_kind: failure.sent?.event?.kind ?? null,
+        event_kind: failure.sent?.event?.event_kind ?? null, run_id: failure.sent?.run_id ?? null, detail } };
     }
   }
 }
 
 /** The last committed event, whether or not the reader can see it yet. */
-async function readStreamEnd(authority: Database): Promise<SourceEventCursor | null> {
+async function readStreamEnd(authority: Database): Promise<DeliveryCursor | null> {
   const row = await sql<{ txid: string; id: string }>`SELECT commit_txid::text AS txid, id FROM authority.event
     ORDER BY commit_txid DESC, id DESC LIMIT 1`.execute(authority);
-  return row.rows[0] ? { commit_txid: row.rows[0].txid, id: row.rows[0].id } : null;
+  return row.rows[0] ? { commit_txid: row.rows[0].txid, event_id: row.rows[0].id } : null;
 }
 
-async function readServiceCursor(app: ReturnType<typeof createApp>): Promise<SourceEventCursor> {
+async function readServiceCursor(app: ReturnType<typeof createApp>): Promise<DeliveryCursor> {
   const ack = await (await app.request("/v1/sources/oakridge/cursor", { headers: { authorization: `Bearer ${TOKEN}` } })).json() as
-    { readonly cursor: SourceEventCursor };
+    { readonly cursor: DeliveryCursor };
   return ack.cursor;
 }
 
 /** Events strictly after `after` and up to and including `through`, in numeric commit order. */
-async function countEvents(authority: Database, after: SourceEventCursor, through: SourceEventCursor): Promise<number> {
+async function countEvents(authority: Database, after: DeliveryCursor, through: DeliveryCursor): Promise<number> {
   const counted = await sql<{ count: string }>`SELECT count(*)::text AS count FROM authority.event
-    WHERE (commit_txid, id) > (${after.commit_txid}::bigint, ${after.id})
-    AND (commit_txid, id) <= (${through.commit_txid}::bigint, ${through.id})`.execute(authority);
+    WHERE (commit_txid, id) > (${after.commit_txid}::bigint, ${after.event_id})
+    AND (commit_txid, id) <= (${through.commit_txid}::bigint, ${through.event_id})`.execute(authority);
   return Number(counted.rows[0]?.count ?? 0);
 }
 
@@ -128,20 +129,20 @@ async function countEvents(authority: Database, after: SourceEventCursor, throug
  * Counts the stream independently of the publisher: every event between the start
  * and the service's final position must have been delivered exactly once.
  */
-async function checkCompleteness(input: ReplayInput, cursor: SourceEventCursor, delivered: number): Promise<ReplayReport> {
+async function checkCompleteness(input: ReplayInput, cursor: DeliveryCursor, delivered: number): Promise<ReplayReport> {
   const expected = await countEvents(input.authority, input.start, cursor);
   return expected === delivered ? { kind: "reached_head", delivered } : { kind: "skipped_events", delivered, expected };
 }
 
 /** The live service's position, read without writing. */
-async function readLiveCursor(observation_url: string, namespace: string): Promise<SourceEventCursor> {
+async function readLiveCursor(observation_url: string, namespace: string): Promise<DeliveryCursor> {
   const tenant = { producer: "oakridge", namespace };
   const live = openObservationDatabase(observation_url);
   try {
     const row = await withTenant(live, tenant, (trx) => trx.selectFrom("observation.source_event_cursor")
       .select(["commit_txid", "event_id"]).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .executeTakeFirst());
-    return row ? { commit_txid: String(row.commit_txid), id: row.event_id } : INITIAL_SOURCE_CURSOR;
+    return row ? { commit_txid: String(row.commit_txid), event_id: row.event_id } : INITIAL_DELIVERY_CURSOR;
   } finally { await live.destroy(); }
 }
 
@@ -150,7 +151,7 @@ async function main(args: readonly string[]): Promise<ReplayReport> {
   const observation_url = process.env.OBSERVATION_DATABASE_URL;
   if (!authority_url || !observation_url) throw new Error("DBOS_SYSTEM_DATABASE_URL and OBSERVATION_DATABASE_URL are required");
   const namespace = process.env.OAKRIDGE_OBSERVATION_NAMESPACE ?? "default";
-  const start = args.includes("--from-start") ? INITIAL_SOURCE_CURSOR : await readLiveCursor(observation_url, namespace);
+  const start = args.includes("--from-start") ? INITIAL_DELIVERY_CURSOR : await readLiveCursor(observation_url, namespace);
   const scratch = await createScratchDatabase(observation_url, `observation_replay_${Date.now()}`);
   const authority = openDatabase(authority_url);
   const observation = openObservationDatabase(scratch.url);

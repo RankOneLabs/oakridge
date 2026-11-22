@@ -18,7 +18,6 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "domain/assessment-embeddings.ts",
   "domain/dispatch-policy.ts",
   "domain/round-delivery.ts",
-  "domain/analysis-link-declaration.ts",
   "domain/effect-instruction.ts",
   "domain/keyed-execution.ts",
   "domain/run-config.ts",

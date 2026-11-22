@@ -18,21 +18,17 @@ const plan = (definitions: GradingDefinitions) => {
 const editFirst = (definitions: GradingDefinitions, edit: (definition: GradingDefinition) => unknown): unknown =>
   definitions.map((definition, index) => index === 0 ? edit(definition) : definition);
 
-test("committed definitions select six targets under five question keys", async () => {
+test("committed definitions select five targets under five question keys", async () => {
   const definitions = await fixtureDefinitions();
   expect(parse(definitions).ok).toBe(true);
   expect(plan(definitions).capture.pins.map(({ question_id, item_kind, artifact_kind, item_selector }) =>
     [question_id, item_kind, artifact_kind, item_selector])).toEqual([
-    ["finding.relevance", "finding", "analysis", "/findings/*"],
-    ["assessment_finding.correctness", "assessment_finding", "assessment", "/findings/*"],
-    ["assessment_finding.evidence_support", "assessment_finding", "assessment", "/findings/*"],
-    ["task.requirement_coverage", "task", "tasks", "/tasks/*"],
-    ["acceptance_entry.task_coverage", "acceptance_entry", "plan", "/cohorts/*/acceptance_criteria/*"],
-    ["acceptance_entry.task_coverage", "acceptance_entry", "brief", "/acceptance_criteria/*"],
+    ["finding.relevance", "finding", "analysis", "/requirements/*/findings/*"],
+    ["assessment_finding.correctness", "item_assessment", "assessment", "/item_assessments/*"],
+    ["assessment_finding.evidence_support", "item_assessment", "assessment", "/item_assessments/*"],
+    ["task.requirement_coverage", "requirement", "spec", "/requirements/*"],
+    ["acceptance_entry.task_coverage", "allocation", "plan", "/cohorts/*/allocations/*"],
   ]);
-  const pins = plan(definitions).capture.pins.slice(-2);
-  expect(pins[0]!.question_version).toBe(pins[1]!.question_version);
-  expect(pins[0]!.evaluator_definition_ids).toEqual(pins[1]!.evaluator_definition_ids);
 });
 
 test("derived questions preserve the previous wording, values and semantics verbatim", async () => {
@@ -57,10 +53,10 @@ const refusals: readonly Refusal[] = [
   { name: "invalid capability params", kind: "invalid_capability_params", edit: (d) => ({ ...d, evidence: [{ capability: "spec_task", params: { artifact: "tasks", list: 9 } }] }) },
   { name: "unknown selector", kind: "unknown_selector", field: "targets.selector", edit: (d) => ({ ...d, targets: [{ ...d.targets[0], selector: "/absent/*" }] }) },
   { name: "selector registered for a different artifact", kind: "unknown_selector", edit: (d) => ({ ...d, targets: [{ ...d.targets[0], artifact: "brief" }] }) },
-  { name: "mixed item kinds", kind: "mixed_item_kinds", edit: (d) => ({ ...d, targets: [...d.targets, { artifact: "analysis", selector: "/risks/*" }] }) },
+  { name: "mixed item kinds", kind: "mixed_item_kinds", edit: (d) => ({ ...d, targets: [...d.targets, { artifact: "spec", selector: "/requirements/*" }] }) },
   { name: "duplicate targets", kind: "duplicate_target", edit: (d) => ({ ...d, targets: [...d.targets, ...d.targets] }) },
   { name: "empty targets", kind: "invalid_definitions", edit: (d) => ({ ...d, targets: [] }) },
-  { name: "missing subject fields", kind: "unsupported_subject", edit: (d) => ({ ...d, evidence: ["citation"] }) },
+  { name: "missing subject fields", kind: "unsupported_subject", edit: (d) => ({ ...d, evidence: ["build_item_context"] }) },
   { name: "missing task scope", kind: "unsupported_subject", edit: (d) => ({ ...d, evidence: [{ capability: "task_context", params: { artifact: "tasks", item_kind: "task" } }] }) },
   { name: "task_ids on per_item", kind: "invalid_task_ids", field: "task_ids", edit: (d) => ({ ...d, scope: "per_item", task_ids: "/task_ids" }) },
   { name: "missing per_task task_ids", kind: "invalid_task_ids", field: "task_ids", edit: (d) => ({ ...d, scope: "per_task" }) },
@@ -111,7 +107,7 @@ test("question versions digest only the question block and complete target", asy
     if (!question.ok) throw new Error(JSON.stringify(question.error));
     return question.value.question_version;
   };
-  const contribution = definitions.find((definition) => definition.id === "acceptance_entry.task_coverage")!;
+  const contribution = { ...first, targets: [...first.targets, { artifact: "other", selector: "/findings/*" }] };
   expect(version({ ...contribution, targets: contribution.targets.slice(0, 1) })).not.toBe(version(contribution));
   expect(version({ ...contribution, targets: [...contribution.targets].reverse() })).not.toBe(version(contribution));
   const original = version(first);
@@ -207,7 +203,7 @@ const LEGACY_QUESTIONS = [
   },
   {
     "question_id": "assessment_finding.correctness",
-    "item_kind": "assessment_finding",
+    "item_kind": "item_assessment",
     "question_text": "Is this assessment finding correct, given its cited evidence and the build it assesses?",
     "response_kind": "choice",
     "allowed_values": [
@@ -222,7 +218,7 @@ const LEGACY_QUESTIONS = [
   },
   {
     "question_id": "assessment_finding.evidence_support",
-    "item_kind": "assessment_finding",
+    "item_kind": "item_assessment",
     "question_text": "Does this assessment finding's cited evidence support it?",
     "response_kind": "choice",
     "allowed_values": [
@@ -237,7 +233,7 @@ const LEGACY_QUESTIONS = [
   },
   {
     "question_id": "task.requirement_coverage",
-    "item_kind": "task",
+    "item_kind": "requirement",
     "question_text": "How well does this spec task account for the specification requirements it explicitly references?",
     "response_kind": "choice",
     "allowed_values": [
@@ -253,7 +249,7 @@ const LEGACY_QUESTIONS = [
   },
   {
     "question_id": "acceptance_entry.task_coverage",
-    "item_kind": "acceptance_entry",
+    "item_kind": "allocation",
     "question_text": "How well does this cohort contribution cover its assigned spec task?",
     "response_kind": "choice",
     "allowed_values": [
@@ -284,23 +280,23 @@ test("the shared output validator derives response types and enumerated values f
 test("resolved_assesses is a strict alternative to the legacy task pointer", async () => {
   const definitions = await fixtureDefinitions();
   const finding = definitions.find((definition) => definition.id === "assessment_finding.correctness")!;
-  const { task_ids: _pointer, ...fields } = finding as GradingDefinition & { task_ids: string };
+  const { task_source: _resolved, ...fields } = finding as GradingDefinition & { task_source: "resolved_assesses" };
   expect(parse([{ ...fields, task_source: "resolved_assesses" }]).ok).toBe(true);
-  expect(parse([{ ...finding, task_source: "resolved_assesses" }])).toMatchObject({ ok: false, error: { kind: "invalid_task_ids" } });
+  expect(parse([{ ...finding, task_ids: "/subject/id" }])).toMatchObject({ ok: false, error: { kind: "invalid_task_ids" } });
 });
 
 test("current fixture registers build-item grading and exact assessed-item evidence", async () => {
-  const raw = await Bun.file(new URL("./fixtures/grading-definitions.json", import.meta.url)).json();
-  const parsed = parse(raw);
+  const raw = await Bun.file(new URL("./fixtures/grading-definitions-current.json", import.meta.url)).json();
+  const parsed = parse(raw.definitions);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   const registration = plan(parsed.value);
-  expect(registration.capture.pins.find((pin) => pin.question_id === "build_item.task_support")).toMatchObject({ item_selector: "/build_items/*", scope: "per_task", task_ids: "/task_ids" });
-  expect(parsed.value.filter((d) => d.id.startsWith("assessment_finding.")).every((d) => d.evidence.includes("assessed_build_items"))).toBe(true);
-  expect(parsed.value.find((d) => d.id === "acceptance_entry.task_coverage")!.targets).toEqual([{ artifact: "plan", selector: "/cohorts/*/acceptance_criteria/*" }]);
+  expect(registration.capture.pins.find((pin) => pin.question_id === "build_item.task_support")).toMatchObject({ item_selector: "/build_items/*", scope: "per_task", task_ids: "/requirement_ids" });
+  expect(parsed.value.filter((d) => d.id.startsWith("item_assessment.")).every((d) => d.evidence.includes("assessed_build_items"))).toBe(true);
+  expect(parsed.value.find((d) => d.id === "allocation.task_coverage")!.targets).toEqual([{ artifact: "plan", selector: "/cohorts/*/allocations/*" }]);
 });
 
 test("every current fixture definition is graded automatically, brief build items included", async () => {
-  const parsed = parse(await Bun.file(new URL("./fixtures/grading-definitions.json", import.meta.url)).json());
+  const parsed = parse((await Bun.file(new URL("./fixtures/grading-definitions-current.json", import.meta.url)).json()).definitions);
   if (!parsed.ok) throw new Error(parsed.error.detail);
   expect(parsed.value.filter((definition) => machineGraders(definition).length === 0).map((definition) => definition.id)).toEqual([]);
 });

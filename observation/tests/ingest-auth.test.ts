@@ -5,7 +5,7 @@ import { createApp } from "../src/http/app";
 import { credentialsFromEnv } from "../src/http/ingest-auth";
 import { openDatabase } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
-import { oakridgeProfile, revisionOutcome } from "./grading-fixture";
+import { fixtureDelivery, oakridgeProfile, revisionOutcome } from "./grading-fixture";
 import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
@@ -16,9 +16,8 @@ const credentials = { ingest: [
 ], read: [{ token: "alpha-read", producer: "oakridge", namespace: "alpha" }] };
 
 function delivery(namespace: string, revision: string): object {
-  return { previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: `event:${revision}` },
-    outcome: revisionOutcome({ revision_id: revision, artifact_kind: "result", body: { value: revision } },
-      { producer: "oakridge", namespace }) };
+  return fixtureDelivery({ producer: "oakridge", namespace },
+    revisionOutcome({ revision_id: revision, artifact_kind: "result", body: { value: revision } }));
 }
 async function send(app: ReturnType<typeof createApp>, token: string, namespace: string, revision: string): Promise<Response> {
   return await app.request("/v1/sources/oakridge/events", { method: "POST", headers: { authorization: `Bearer ${token}`,
@@ -50,12 +49,12 @@ integration("ingest credential rejects another tenant and all read or grade rout
       const existing = await send(app, "alpha-ingest", "beta", "present");
       expect(existing.status).toBe(403);
       expect(await existing.text()).toBe(absentResponse);
-      for (const [method, path] of [["GET", "/v1/source-revisions/oakridge:beta:present"],
+      for (const [method, path] of [["GET", "/v1/source-revisions/present"],
         ["GET", "/v1/items/item-1"], ["GET", "/v1/items/item-1/grades"]] as const) {
         const response = await app.request(path, { method, headers: { authorization: "Bearer alpha-ingest" } });
         expect(response.status).toBe(403);
       }
-      const tenantRead = await app.request("/v1/source-revisions/oakridge:beta:present", { headers: { authorization: "Bearer alpha-read" } });
+      const tenantRead = await app.request("/v1/source-revisions/present", { headers: { authorization: "Bearer alpha-read" } });
       expect(tenantRead.status).toBe(404);
     } finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }

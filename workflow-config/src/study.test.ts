@@ -59,7 +59,7 @@ async function launchPlan(plan: Plan, limits = defaultLimits) {
   if (!designer) throw new Error("Missing pending designer attempt");
   const published = await step(launched.snapshot, {
     kind: "revision_published", unit, artifact: "plan", body: plan,
-    by: designer.action_id, predecessor: null, subject: null,
+    by: { action: designer.action_id, seq: designer.seq }, predecessor: null, subject: null,
   });
   const revision = published.snapshot.revisions.find(revision => revision.unit === unit && revision.artifact === "plan");
   if (!revision) throw new Error("Missing plan revision");
@@ -261,7 +261,7 @@ async function validationRun(stageName: string, stageInput: object) {
     const producer = snapshot.attempts.filter((attempt) => attempt.unit === unit && attempt.worker === worker).at(-1);
     if (!producer) throw new Error(`Missing producer ${worker}`);
     const published = await apply(snapshot, { kind: "revision_published", unit, artifact, body, subject,
-      by: producer.action_id, predecessor: latest(snapshot, artifact)?.id ?? null });
+      by: { action: producer.action_id, seq: producer.seq }, predecessor: latest(snapshot, artifact)?.id ?? null });
     const revision = latest(published, artifact);
     const messages = published.decisions.flatMap((decision) =>
       decision.kind === "validation" && decision.target === revision?.id ? decision.messages : []);

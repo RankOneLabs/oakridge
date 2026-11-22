@@ -40,7 +40,7 @@ test("a second event on a run waits for the first to commit before it reaches st
   const first = commit("started", { kind: "worker_started", action, kbbl_session_id: "sid" });
   await first_in_step;
   const second = commit("published", { kind: "revision_published", unit: unitOf(run_id, "document"), artifact: "draft",
-    body: { title: "T", body: "B" }, by: action });
+    body: { title: "T", body: "B" }, by: { action: action, seq: 1 } });
   await Bun.sleep(200);
   const steps_while_held = steps;
   release_first();
@@ -84,7 +84,7 @@ test("concurrent events on one run serialize on the run row", async () => {
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
   // Each publication names no predecessor: under the run lock exactly one sees none and the rest see a stale one.
   const results = await Promise.all(Array.from({ length: 8 }, (_, index) => submit({ run_id, event: { kind: "revision_published", unit,
-    artifact: "draft", body: { title: "T", body: `body ${index}` }, by: action }, writer: executor(action) })));
+    artifact: "draft", body: { title: "T", body: `body ${index}` }, by: { action: action, seq: 1 } }, writer: executor(action) })));
   const revisions = await authority.db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id).where("artifact", "=", "draft").execute();
   expect({ kinds: results.map((result) => result.ok ? result.value.kind : "error").sort(), ids: revisions.map((row) => row.id) })
     .toEqual({ kinds: ["committed", ...Array.from({ length: 7 }, () => "rejected" as const)], ids: [`${unit}:draft:1`] });

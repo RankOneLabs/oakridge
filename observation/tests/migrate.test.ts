@@ -162,13 +162,13 @@ integration("execution tasks must match their evidence including null against no
   try {
     await migrateEmptyDatabase(db);
     const row = await baselineSubject(db);
-    for (const task of ["oakridge:grading-test:run-1:task:T3", "oakridge:grading-test:run-1:task:T7"]) await db.insertInto("observation.logical_item").values({
-      producer: row.producer, namespace: row.namespace, logical_item_id: task, run_id: "run-1", scope: "task", producer_local_id: task.split(":").at(-1)!,
+    for (const task of ["oakridge:grading-test:run-1:task:requirement:T3", "oakridge:grading-test:run-1:task:requirement:T7"]) await db.insertInto("observation.logical_item").values({
+      producer: row.producer, namespace: row.namespace, logical_item_id: task, run_id: "run-1", scope: "task", task_kind: "requirement", producer_local_id: task.split(":").at(-1)!,
     }).execute();
-    await db.insertInto("observation.evidence_set").values({ ...row, evidence_refs: jsonText(row.evidence_refs), task_id: "oakridge:grading-test:run-1:task:T3",
+    await db.insertInto("observation.evidence_set").values({ ...row, evidence_refs: jsonText(row.evidence_refs), task_id: "oakridge:grading-test:run-1:task:requirement:T3",
       evidence_set_id: `canonical-json/v1:${"e".repeat(64)}`, readiness: "ready", not_ready_code: null,
       not_ready_detail: null, ready_at: new Date() }).execute();
-    for (const task of [null, "oakridge:grading-test:run-1:task:T7"]) {
+    for (const task of [null, "oakridge:grading-test:run-1:task:requirement:T7"]) {
       await expect(sql`INSERT INTO observation.evaluation_execution
         (producer, namespace, execution_id, run_id, subject_occurrence_id, task_id, evidence_set_id,
          question_id, question_version, evaluator_definition_id, attempt_label, idempotency_digest, status)

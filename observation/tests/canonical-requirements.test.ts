@@ -1,4 +1,4 @@
-import { createFeed, integration, revisionOutcome, scratchDatabase, tenant } from "./grading-fixture";
+import { createFeed, integration, developmentKeys, scratchDatabase, tenant } from "./grading-fixture";
 import { registerDefinitions } from "../src/storage/grading-store";
 import { readItemAt, listRunComposites } from "../src/storage/grading-record-store";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
@@ -8,32 +8,35 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { JsonValue } from "../src/domain/primitives";
 import type { ItemOccurrenceId, LogicalItemId } from "../src/domain/identity";
-import { DEVELOPMENT_ARTIFACT_VERSIONS } from "../src/producers/oakridge/artifact-versions";
-import { oakridgeCatalogue, TASK_SCOPE } from "../src/producers/oakridge/catalogue";
+import { selectRegistration, TASK_SCOPE } from "../src/producers/oakridge/catalogue";
 import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { selectRevision } from "../src/projection/extractor";
 import { logicalItemId, logicalItemRelation } from "../src/projection/relations";
 import { gradingSubjects } from "../src/grading/evidence";
 import { parseGradingDefinitions, planRegistration, stampCapture } from "../src/grading/configuration";
 const fixture = (kind: string): JsonValue => JSON.parse(readFileSync(new URL(`../../kbbl/core/pwa/oakridge/__fixtures__/current-${kind}.json`, import.meta.url), "utf8"));
-const versions = DEVELOPMENT_ARTIFACT_VERSIONS;
+const versions = developmentKeys;
+const extractors = (key: (typeof versions)[keyof typeof versions]) => selectRegistration({
+  definition_id: "definition_id" in key ? key.definition_id : "", stage: key.stage,
+  artifact_kind: key.artifact, artifact_schema_version: key.schema_version,
+})?.extractors ?? [];
 const bodies = { analysis: fixture("analysis"), spec: fixture("spec"), plan: fixture("plan"), brief: fixture("brief") };
 test.each([
-  ["analysis", versions.analysis_body.version, ["/requirements/0/findings/0", "/requirements/0/findings/1", "/requirements/1/findings/0", "/requirements/1/findings/1", "/requirements/2/findings/0"]],
-  ["spec", versions.spec_body.version, ["/requirements/0", "/requirements/1", "/requirements/2"]],
-  ["plan", versions.plan_body.version, ["/cohorts/0/allocations/0", "/cohorts/1/allocations/0", "/cohorts/2/allocations/0"]],
-  ["brief", versions.brief_body.version, ["/build_items/0", "/build_items/1"]],
-] as const)("current %s extracts exactly the PWA's current item paths", (kind, version, paths) => {
+  ["analysis", versions.analysis.schema_version, ["/requirements/0/findings/0", "/requirements/0/findings/1", "/requirements/1/findings/0", "/requirements/1/findings/1", "/requirements/2/findings/0"]],
+  ["spec", versions.spec.schema_version, ["/requirements/0", "/requirements/1", "/requirements/2"]],
+  ["plan", versions.plan.schema_version, ["/cohorts/0/allocations/0", "/cohorts/1/allocations/0", "/cohorts/2/allocations/0"]],
+  ["brief", versions.brief.schema_version, ["/build_items/0", "/build_items/1"]],
+] as const)("current %s extracts exactly the PWA's current item paths", (kind, _version, paths) => {
   const original = structuredClone(bodies[kind]);
-  const pass = selectRevision(bodies[kind], kind, oakridgeCatalogue(kind, version));
+  const pass = selectRevision(bodies[kind], kind, extractors(versions[kind]));
   expect(pass.issues).toEqual([]);
   expect(pass.items.filter(({ item }) => kind === "analysis" ? item.item_kind === "finding"
     : kind === "brief" ? item.item_kind === "build_item" : true).map(({ item }) => item.path)).toEqual([...paths]);
   expect(bodies[kind]).toEqual(original);
 });
 test("spec ids define canonical roots and a split plan retains both contributions", () => {
-  const spec = selectRevision(bodies.spec, "spec", oakridgeCatalogue("spec", versions.spec_body.version));
-  const plan = selectRevision(bodies.plan, "plan", oakridgeCatalogue("plan", versions.plan_body.version));
+  const spec = selectRevision(bodies.spec, "spec", extractors(versions.spec));
+  const plan = selectRevision(bodies.plan, "plan", extractors(versions.plan));
   expect(spec.items.map(({ item }) => [item.item_kind, item.item_scope, item.producer_local_id])).toEqual([
     ["requirement", TASK_SCOPE, "R1"], ["requirement", TASK_SCOPE, "R2"], ["requirement", TASK_SCOPE, "R3"],
   ]);
@@ -44,16 +47,16 @@ test("spec ids define canonical roots and a split plan retains both contribution
   ]);
 });
 test("nested analysis findings explicitly link their containing canonical requirement", () => {
-  const pass = selectRevision(bodies.analysis, "analysis", oakridgeCatalogue("analysis", versions.analysis_body.version));
-  expect(pass.items[0]?.item.links).toEqual([{ target: "logical_item", type: "addresses", target_scope: TASK_SCOPE, target_local_id: "R1", evidence_ref: "/requirements/0/findings/0" }]);
+  const pass = selectRevision(bodies.analysis, "analysis", extractors(versions.analysis));
+  expect(pass.items[0]?.item.links).toEqual([{ target: "logical_item", type: "addresses", target_scope: TASK_SCOPE, target_task_kind: "requirement", target_local_id: "R1", evidence_ref: "/requirements/0/findings/0" }]);
 });
 test("per_task /requirement_ids config binds build-item grades to only the captured canonical ids", () => {
   canonicalRegistration();
-  const brief = selectRevision(bodies.brief, "brief", oakridgeCatalogue("brief", versions.brief_body.version)).items[0]?.item;
-  const spec = selectRevision(bodies.spec, "spec", oakridgeCatalogue("spec", versions.spec_body.version)).items;
+  const brief = selectRevision(bodies.brief, "brief", extractors(versions.brief)).items[0]?.item;
+  const spec = selectRevision(bodies.spec, "spec", extractors(versions.spec)).items;
   if (!brief) throw new Error("No build item");
   const scope = { producer: "oakridge", namespace: "test", run_id: "current" };
-  const roots = new Map(spec.map(({ item }) => [item.producer_local_id, logicalItemId({ ...scope, scope: TASK_SCOPE, producer_local_id: item.producer_local_id ?? "" }) as LogicalItemId]));
+  const roots = new Map(spec.map(({ item }) => [item.producer_local_id, logicalItemId({ ...scope, scope: TASK_SCOPE, task_kind: "requirement", producer_local_id: item.producer_local_id ?? "" }) as LogicalItemId]));
   const occurrence_id = "brief:B1" as ItemOccurrenceId;
   const relations = brief.links.flatMap((link) => {
     if (link.target !== "logical_item") return [];
@@ -65,12 +68,6 @@ test("per_task /requirement_ids config binds build-item grades to only the captu
   expect(gradingSubjects({ occurrence: { occurrence_id, json_pointer: brief.path, selected_value: brief.selected_value },
     scope: { scope: "per_task", task_ids: "/requirement_ids" }, relations }).map((subject) => subject.task_id)).toEqual([roots.get("R1") ?? null, roots.get("R3") ?? null]);
 });
-test("legacy versions keep legacy selectors even when given a current-shaped body", () => {
-  const legacy = oakridgeCatalogue("analysis", "artifact-schema/v1:4847489074cebfe24f7ecdd9024b351f26ccac021f3f10ce2c788bfa8a5d39e2");
-  expect(legacy.map((definition) => definition.item_selector)).toContain("/findings/*");
-  expect(legacy.map((definition) => definition.item_selector)).not.toContain("/requirements/*/findings/*");
-});
-
 function canonicalRegistration() {
   const parsed = parseGradingDefinitions([{ id: "current.brief.verification", scope: "per_task", task_ids: "/requirement_ids",
     targets: [{ artifact: "brief", selector: "/build_items/*" }], evidence: [], evaluators: [{ runner: "human" }],
@@ -89,13 +86,10 @@ integration("current capture, requirement rollups and human grades share canonic
   const capture = stampCapture(registration.capture, { config_version: 1, config_hash: "canonical-json/v1:" + "a".repeat(64) });
   const feed = createFeed(db, tenant, capture);
   await feed.launch({ spec: "Original requirements" }, "current");
-  for (const [kind, version] of [["analysis", versions.analysis_body.version], ["spec", versions.spec_body.version],
-    ["plan", versions.plan_body.version], ["brief", versions.brief_body.version]] as const) {
-    const original = revisionOutcome({ revision_id: `current-${kind}`, artifact_kind: kind, run_id: "current", stage: kind === "spec" ? "analysis" : kind,
+  for (const [kind, version] of [["analysis", versions.analysis.schema_version], ["spec", versions.spec.schema_version],
+    ["plan", versions.plan.schema_version], ["brief", versions.brief.schema_version]] as const) {
+    await feed.revision({ revision_id: `current-${kind}`, artifact_kind: kind, run_id: "current", schema_version: version,
       body: bodies[kind] });
-    if (original.kind !== "artifact_revision") throw new Error("Expected revision outcome");
-    await feed.send({ ...original, artifact_schema_version: version, revision: { ...original.revision,
-      source: { ...original.revision.source, artifact_schema_version: version } } });
   }
   const profile = oakridgeProfile(registration.questions);
   const rollup = await listRunComposites(db, tenant, profile.composite, "current", { limit: 50, offset: 0 });
@@ -127,15 +121,12 @@ integration("current capture, requirement rollups and human grades share canonic
 integration("a revised finding resolves only in the spec's pinned analysis revision", async () => scratchDatabase(async (db) => {
   const feed = createFeed(db);
   for (const [revision_id, kind, version, body] of [
-    ["analysis-old", "analysis", versions.analysis_body.version, bodies.analysis],
-    ["analysis-revised", "analysis", versions.analysis_body.version, bodies.analysis],
-    ["spec-pinned", "spec", versions.spec_body.version, bodies.spec],
+    ["analysis-old", "analysis", versions.analysis.schema_version, bodies.analysis],
+    ["analysis-revised", "analysis", versions.analysis.schema_version, bodies.analysis],
+    ["spec-pinned", "spec", versions.spec.schema_version, bodies.spec],
   ] as const) {
-    const original = revisionOutcome({ revision_id, artifact_kind: kind, body });
-    if (original.kind !== "artifact_revision") throw new Error("Expected revision");
-    await feed.send({ ...original, artifact_schema_version: version, revision: { ...original.revision, format: "observation.artifact-revision/v4", source: { ...original.revision.source,
-      artifact_schema_version: version, ...(kind === "spec" ? { analysis_revision_ids: ["oakridge:grading-test:analysis-revised"] } : {}),
-    } } });
+    await feed.revision({ revision_id, artifact_kind: kind, schema_version: version, body,
+      input_bindings: kind === "spec" ? [{ input: "analysis", unit: "analysis", revision_id: "analysis-revised" }] : [] });
   }
   const { withTenant } = await import("../src/storage/database");
   const links = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_relation as relation")

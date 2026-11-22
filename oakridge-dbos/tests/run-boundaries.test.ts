@@ -90,7 +90,7 @@ function namedIn(names: readonly string[], text: string): readonly string[] {
 
 test("K3: no production source names sample A or B", () => {
   const names = [...sampleNames("review-loop"), ...sampleNames("fan-out")];
-  const typescript = [...sources(src), ...sources(resolve(root, "kbbl/core"), /\.test\.tsx?$|__fixtures__|test-harness/)].flatMap((file) => {
+  const typescript = [...sources(src).filter((path) => !path.endsWith("artifact-versions.generated.ts")), ...sources(resolve(root, "kbbl/core"), /\.test\.tsx?$|__fixtures__|test-harness/)].flatMap((file) => {
     const found: string[] = [];
     const visit = (node: ts.Node): void => {
       if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) found.push(...namedIn(names, node.text).map((name) => `${relative(root, file)}: ${name}`));

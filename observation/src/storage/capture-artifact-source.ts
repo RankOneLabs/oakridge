@@ -1,4 +1,3 @@
-import { recordedRevisionIds } from "./projection-store";
 import type { ArtifactRevisionId, ItemOccurrenceId, RunId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import { decodeEvidencePlan, type SubjectQuestion } from "../grading/evidence";
@@ -65,12 +64,10 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
   async readRevision(revision_id: string): Promise<CapturedRevision | null> {
     const { db, tenant, run_id } = this.dependencies;
     const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_revision")
-      .select(["revision_id", "stage", "artifact_kind", "subject_id", "body"])
+      .select(["revision_id", "stage", "artifact_kind", "subject_id", "body", "input_bindings"])
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("run_id", "=", run_id).where("revision_id", "=", revision_id).executeTakeFirst());
-    if (!row) return null;
-    const recorded = await withTenant(db, tenant, (trx) => recordedRevisionIds(trx, tenant, row.revision_id, "brief_revision_ids"));
-    return { ...row, revision_id: row.revision_id as ArtifactRevisionId, brief_revision_ids: recorded };
+    return row ? { ...row, revision_id: row.revision_id as ArtifactRevisionId } : null;
   }
 
   async readRevisionAt(artifact_kind: string, subject_revision_id: ArtifactRevisionId): Promise<CapturedRevision | null> {
@@ -79,7 +76,7 @@ export class CaptureArtifactSource implements ArtifactSource, CapturedSources {
       .innerJoin("observation.source_revision as subject", (join) => join.onRef("subject.producer", "=", "context.producer")
         .onRef("subject.namespace", "=", "context.namespace").onRef("subject.run_id", "=", "context.run_id")
         .on("subject.revision_id", "=", subject_revision_id))
-      .select(["context.revision_id", "context.stage", "context.artifact_kind", "context.subject_id", "context.body"])
+      .select(["context.revision_id", "context.stage", "context.artifact_kind", "context.subject_id", "context.body", "context.input_bindings"])
       .where("context.producer", "=", tenant.producer).where("context.namespace", "=", tenant.namespace)
       .where("context.run_id", "=", run_id).where("context.artifact_kind", "=", artifact_kind)
       .where((eb) => eb.or([eb("context.recorded_at", "<", eb.ref("subject.recorded_at")),

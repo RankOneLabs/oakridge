@@ -13,21 +13,32 @@ export interface OccurrenceLink {
   readonly evidence_ref: string;
   /** A shared id links revisions only when the prior item actually exists. */
   readonly if_present?: boolean;
-  /** Capture source field naming the only revisions eligible for resolution. */
-  readonly recorded_revisions_field?: string;
+  /** Resolve only within the revision’s recorded input bindings. */
+  readonly target_bound?: boolean;
 }
 /** A reference to a run-scoped logical item. It stays visible until that item is captured. */
 export interface LogicalItemLink {
   readonly target: "logical_item";
   readonly type: RelationType;
   readonly target_scope: string;
+  readonly target_task_kind: string | null;
+  readonly qualifier?: RelationQualifier;
   readonly target_local_id: string;
   readonly evidence_ref: string;
 }
-export type LinkReference = OccurrenceLink | LogicalItemLink;
+export interface RelationQualifier { readonly repository_key: string }
+export interface AddressLink {
+  readonly target: "address";
+  readonly type: RelationType;
+  readonly revision_id: string;
+  readonly pointer: string;
+  readonly evidence_ref: string;
+}
+export type LinkReference = OccurrenceLink | LogicalItemLink | AddressLink;
 /** Logical identity is independent of an occurrence's local address. */
 export interface SelectedLogicalItem {
   readonly scope: string;
+  readonly task_kind: string | null;
   readonly producer_local_id: string;
 }
 export interface SelectedItem {
@@ -46,7 +57,7 @@ export interface SelectedItem {
 export function logicalIdentityForItem(item: SelectedItem): SelectedLogicalItem | null {
   if (item.logical_item) return item.logical_item;
   return item.item_scope && item.producer_local_id
-    ? { scope: item.item_scope, producer_local_id: item.producer_local_id } : null;
+    ? { scope: item.item_scope, task_kind: null, producer_local_id: item.producer_local_id } : null;
 }
 export interface ExtractionFailure { readonly operation: "select_items"; readonly entity_id: string; readonly detail: string }
 export interface ExtractorDefinition {
@@ -107,8 +118,6 @@ export function selectRevision(body: JsonValue, revision_id: string, definitions
         definition.item_selector, "extraction_failed"));
       continue;
     }
-    if (result.value.length === 0) issues.push(extractionIssue(revision_id, definition.extractor_id,
-      definition.extractor_version, definition.item_selector, "no_matching_items"));
     for (const item of result.value) items.push({ definition, item });
   }
   return { items, issues };
