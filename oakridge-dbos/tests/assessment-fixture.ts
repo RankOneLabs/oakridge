@@ -107,7 +107,7 @@ export async function openAssessmentRun(authority: Authority, source: Workflow =
 }
 
 /** One item with two recipients, one verified and one returned for another round. */
-export async function openReturnedAssessment(authority: Authority) {
+export async function openReturnedAssessment(authority: Authority, firstOutcome: AssignmentVerification["outcome"] = "verified") {
   const run = await openAssessmentRun(authority);
   const publishWork = async (worker: "builder_a" | "builder_b", text: string) => {
     expect(await run.publish({ worker, artifact: worker === "builder_a" ? "part_a" : "part_b", body: { text } }))
@@ -133,7 +133,7 @@ export async function openReturnedAssessment(authority: Authority) {
   await publishWork("builder_a", "updated A");
   await publishWork("builder_b", "updated B");
   expect(await run.publish({ worker: "assessor", artifact: "assessment", subject: (await run.revision("part_a"))!.id,
-    body: { ...cleanAssessment, checks: [{ round_id: a.id, outcome: "verified" }, { round_id: b.id, outcome: "needs_further_work" }] } }))
+    body: { ...cleanAssessment, checks: [{ round_id: a.id, outcome: firstOutcome }, { round_id: b.id, outcome: "needs_further_work" }] } }))
     .toMatchObject({ value: { kind: "committed" } });
   await run.end("assessor");
   return { ...run, item, a, b, late: other.action_id };

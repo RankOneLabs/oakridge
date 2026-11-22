@@ -2,7 +2,7 @@ import { parseAssessmentDecision, resolveCitation, selectPublicationFacts, type 
 import { assessmentFactId, authorizeDispatch, selectAuthorizationId, validateRecipients } from "../domain/dispatch-policy";
 import { renderRoundDelivery } from "../domain/round-delivery";
 import { selectCurrentRound, selectRoundProgress } from "../projections/assessment-status";
-import { readAssessmentFacts, readRoundAssessment, readRoundDelivery, writeAssessmentFacts, type AssessmentFacts, type AssessmentWrites } from "./assessment-facts";
+import { readAssessmentFacts, readRoundAssessment, bindRoundAction, readRoundDelivery, writeAssessmentFacts, type AssessmentFacts, type AssessmentWrites } from "./assessment-facts";
 import type { AssessmentDecisionCommand, AssignmentRound, AssignmentUpdate, CompiledWorkflow, DispatchAuthorization,
   DispatchAuthorizationRequest, DispatchOperation, FeedbackAssignment, FeedbackItem, FeedbackItemRequest, FeedbackRejection, ParsedReview, RevisionState, RoundRequest } from "../core-client/core-types";
 import { ok, traced } from "../domain/primitives";
@@ -250,13 +250,19 @@ export function selectAssessmentDecisionPlan(input: AssessmentDecisionInput): Re
   const rounds: Omit<AssignmentRound, "decision">[] = [];
   const requests: RoundRequest[] = [];
   const disposed = new Set<string>();
+  const disposedAssignments = new Set<string>();
   for (const disposition of command.dispositions) {
     const assignment = disposition.kind === "reject_follow_up" ? facts.assignments.find(value => value.id === disposition.assignment) : undefined;
     const id = disposition.kind === "reject_follow_up" ? assignment?.item : disposition.item;
     const item = facts.items.find(value => value.id === id);
     if (!item) return refusal("disposition does not name feedback associated with the assessment");
-    if (disposed.has(item.id)) return refusal(`feedback item ${item.id} has multiple dispositions`);
-    disposed.add(item.id);
+    if (assignment) {
+      if (disposedAssignments.has(assignment.id)) return refusal(`assignment ${assignment.id} has multiple dispositions`);
+      disposedAssignments.add(assignment.id);
+    } else {
+      if (disposed.has(item.id)) return refusal(`feedback item ${item.id} has multiple dispositions`);
+      disposed.add(item.id);
+    }
     if (facts.rejections.some(value => value.item === item.id && value.assignment == null)) return refusal(`feedback item ${item.id} was rejected`);
     if (disposition.kind === "reject_follow_up" || disposition.kind === "reject") {
       if (disposition.kind === "reject_follow_up") {
@@ -582,19 +588,12 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
   if (assessmentDecision) {
     const decision = planned.value.delta.created_decisions.find(value => value.kind === "review");
     if (!decision) return reject("assessment decision produced no decision", unit_id.value);
-    const rounds = assessmentDecision.rounds.flatMap(round => {
-      const intent = planned.value.intents.find(value => {
-        const cause = value.instruction.action.cause;
-        return cause.kind === "assignment_round" && cause.round === round.id;
-      });
-      return intent ? [{ round: { ...round, decision: decision.id }, action: intent.action_id }] : [];
-    });
-    if (rounds.length !== assessmentDecision.rounds.length) return reject("dispatch did not produce a worker intent for each round", unit_id.value);
+    const rounds = assessmentDecision.rounds.map(round => ({ ...round, decision: decision.id }));
     const rejections = assessmentDecision.rejections.map(value => ({ ...value, decision: decision.id }));
     const approval = assessmentDecision.approval && { ...assessmentDecision.approval, decision: decision.id };
     assessmentWrites = { assignments: assessmentDecision.assignments, rounds, rejections, approval };
     assessmentReceipt = { decision_id: decision.id, rejection_ids: rejections.map(value => value.id),
-      approval_id: approval?.id ?? null, round_ids: rounds.map(value => value.round.id) };
+      approval_id: approval?.id ?? null, round_ids: rounds.map(value => value.id) };
   }
   await applyCommitPlan(trx, planned.value);
   await writeAssessmentFacts(trx, run_id, assessmentWrites);
@@ -1140,8 +1139,12 @@ async function attachRoundDeliveries(trx: DatabaseTransaction, plan: CommitPlan)
     if (cause.kind === "assignment_round" || cause.kind === "reassessment") {
       const delivery = await readRoundDelivery(trx, { run_id: plan.run_id, round: cause.round });
       if (!delivery) throw new Error(`missing committed facts for ${cause.round}`);
-      round_delivery = cause.kind === "assignment_round" ? renderRoundDelivery(delivery.round, delivery.item)
-        : renderReassessment(delivery.facts).join("\n\n");
+      if (cause.kind === "assignment_round") {
+        await bindRoundAction(trx, { run_id: plan.run_id, round: cause.round, action: intent.action_id });
+        round_delivery = renderRoundDelivery(delivery.round, delivery.item);
+      } else {
+        round_delivery = renderReassessment(delivery.facts).join("\n\n");
+      }
     } else if (cause.kind === "review_of" && instruction.worker.kind === "agent") {
       // A new work revision can independently want the same assessment worker.
       const facts = await Promise.all(instruction.worker.creates.filter(value => value.key !== BLOCKER_ARTIFACT)

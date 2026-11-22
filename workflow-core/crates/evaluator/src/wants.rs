@@ -202,50 +202,57 @@ pub fn stage_actions(
         return Ok(wanted);
     }
     let rounds = assignment_rounds(checked, state, &unit.id);
+    let creator_has_work = |artifact: &SymbolKey| {
+        is_creator_working(checked, state, &unit.id, artifact)
+            || rounds.iter().any(|round| {
+                round.update.is_none()
+                    && checked.workers.iter().any(|worker| {
+                        worker.key().0 == round.request.worker.0
+                            && worker.creates().contains(artifact)
+                    })
+            })
+    };
     for checked_worker in &checked.workers {
         let worker_key = checked_worker.key();
         if matches!(checked_worker, CheckedWorker::Agent { .. }) {
             let pending = rounds
                 .iter()
-                .filter(|round| round.request.worker.0 == worker_key.0 && round.update.is_none());
-            let mut owes_update = false;
-            for round in pending {
-                owes_update = true;
-                let mut cause = Cause::AssignmentRound {
-                    round: round.request.round.clone(),
-                    retry: None,
-                };
-                let original = action_id(&unit.id, worker_key, &Mode::Revise, &cause);
-                if let Readiness::RetryAuthorized { event } = can_run(state, &unit.id, worker_key) {
-                    if state.attempts.iter().any(|attempt| attempt.action_id == original
-                        && matches!(attempt.status, AttemptStatus::Failed { .. }))
-                        && attempt(state, &unit.id, worker_key).is_some_and(|attempt|
-                            matches!(&attempt.cause, Cause::AssignmentRound { round: previous, .. } if previous == &round.request.round))
-                    {
-                        cause = Cause::AssignmentRound { round: round.request.round.clone(), retry: Some(event) };
+                .find(|round| round.request.worker.0 == worker_key.0 && round.update.is_none());
+            if let Some(round) = pending {
+                let previous = attempt(state, &unit.id, worker_key);
+                let on_round = previous.is_some_and(|attempt| {
+                    matches!(&attempt.cause, Cause::AssignmentRound { round: id, .. } if id == &round.request.round)
+                });
+                if let Some(previous) = previous.filter(|attempt| {
+                    matches!(
+                        attempt.status,
+                        AttemptStatus::Pending | AttemptStatus::Running
+                    )
+                }) {
+                    if on_round {
+                        wanted.push(Action::RunWorker {
+                            unit: unit.id.clone(),
+                            worker: worker_key.clone(),
+                            mode: Mode::Revise,
+                            cause: previous.cause.clone(),
+                        });
                     }
+                    continue;
                 }
-                let id = action_id(&unit.id, worker_key, &Mode::Revise, &cause);
-                if state
-                    .attempts
-                    .iter()
-                    .find(|attempt| attempt.action_id == id)
-                    .is_none_or(|attempt| {
-                        matches!(
-                            attempt.status,
-                            AttemptStatus::Pending | AttemptStatus::Running
-                        )
-                    })
-                {
-                    wanted.push(Action::RunWorker {
-                        unit: unit.id.clone(),
-                        worker: worker_key.clone(),
-                        mode: Mode::Revise,
-                        cause,
-                    });
-                }
-            }
-            if owes_update {
+                let retry = match can_run(state, &unit.id, worker_key) {
+                    Readiness::RetryAuthorized { event } if on_round => Some(event),
+                    _ if on_round => continue,
+                    _ => None,
+                };
+                wanted.push(Action::RunWorker {
+                    unit: unit.id.clone(),
+                    worker: worker_key.clone(),
+                    mode: Mode::Revise,
+                    cause: Cause::AssignmentRound {
+                        round: round.request.round.clone(),
+                        retry,
+                    },
+                });
                 continue;
             }
         }
@@ -260,7 +267,7 @@ pub fn stage_actions(
             CheckedWorker::Agent {
                 reviews: Some(subject),
                 ..
-            } if is_creator_working(checked, state, &unit.id, subject) => None,
+            } if creator_has_work(subject) => None,
             CheckedWorker::Agent {
                 creates,
                 reviews: Some(subject),
@@ -365,8 +372,21 @@ pub fn stage_actions(
             if !matches!(checked_worker, CheckedWorker::Agent { .. }) {
                 return None;
             }
+            if let CheckedWorker::Agent {
+                reviews: Some(subject),
+                ..
+            } = checked_worker
+            {
+                if creator_has_work(subject) {
+                    return None;
+                }
+            }
             rounds.iter().find_map(|round| {
                 let update = round.update?;
+                let revision = &state.revisions[update];
+                if creator_has_work(&revision.artifact) {
+                    return None;
+                }
                 if !checked_worker.creates().contains(round.assessment)
                     || state.revisions[update..].iter().any(|revision| {
                         revision.unit == unit.id

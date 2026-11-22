@@ -61,7 +61,7 @@ export interface AuthorityAssessmentFeedback {
 }
 
 export interface AuthorityAssignmentRound {
-  action_id: string;
+  action_id: string | null;
   assignment_id: string;
   authorization_id: string;
   created_at: Generated<Timestamp>;

@@ -169,27 +169,24 @@ fn one_dispatch_opens_both_recipient_rounds_and_replay_opens_none() {
 }
 
 #[test]
-fn one_update_wants_reassessment_while_the_other_builder_owes_an_update() {
+fn reassessment_waits_until_the_builder_finishes_publishing() {
     let mut run = Run::seeded();
-    run.apply(run.dispatch(&[
-        ("round-a", "item-a", "builder_a"),
-        ("round-b", "item-b", "builder_b"),
-    ]));
-    run.publish("builder_b", "part_b", json!("updated b"), None);
-    run.end("builder_b");
-    assert!(run.owes("builder_a", "round-a"));
-    assert!(run.result.wanted.iter().any(|wanted| wanted.worker.0 == "builder_a"
-        && matches!(&wanted.action, Action::RunWorker { cause: Cause::AssignmentRound { round, .. }, .. } if round.0 == "round-a")));
-    assert!(run
+    run.apply(run.dispatch(&[("round-b", "item-b", "builder_b")]));
+    run.publish("builder_b", "part_b", json!("early b"), None);
+    assert!(!run
         .result
-        .snapshot
-        .attempts
+        .wanted
         .iter()
-        .any(|attempt| attempt.worker.0 == "assessor"
-            && matches!(&attempt.cause, Cause::Reassessment { round } if round.0 == "round-b")));
-    run.assess();
-    run.publish("builder_a", "part_a", json!("updated a"), None);
-    run.end("builder_a");
+        .any(|wanted| wanted.worker.0 == "assessor"));
+    run.publish("builder_b", "part_b", json!("final b"), None);
+    assert!(!run
+        .result
+        .wanted
+        .iter()
+        .any(|wanted| wanted.worker.0 == "assessor"));
+    run.end("builder_b");
+    assert!(run.result.wanted.iter().any(|wanted| wanted.worker.0 == "assessor"
+        && matches!(&wanted.action, Action::RunWorker { cause: Cause::Reassessment { round }, .. } if round.0 == "round-b")));
     run.assess();
     assert!(run.result.wanted.is_empty());
     assert!(run
@@ -197,6 +194,34 @@ fn one_update_wants_reassessment_while_the_other_builder_owes_an_update() {
         .reviews
         .iter()
         .any(|review| review.review.0 == "assessment_review"));
+}
+
+#[test]
+fn two_rounds_for_one_worker_run_in_dispatch_order_without_overlapping() {
+    let mut run = Run::seeded();
+    run.apply(run.dispatch(&[
+        ("first", "item-1", "builder_b"),
+        ("second", "item-2", "builder_b"),
+    ]));
+    assert!(run.owes("builder_b", "first"));
+    assert!(!run.owes("builder_b", "second"));
+    run.publish("builder_b", "part_b", json!("first update"), None);
+    assert!(!run.owes("builder_b", "second"));
+    run.end("builder_b");
+    assert!(!run.owes("builder_b", "first"));
+    assert!(run.owes("builder_b", "second"));
+    assert!(!run
+        .result
+        .wanted
+        .iter()
+        .any(|wanted| wanted.worker.0 == "assessor"));
+    run.publish("builder_b", "part_b", json!("second update"), None);
+    run.end("builder_b");
+    assert!(run
+        .result
+        .wanted
+        .iter()
+        .any(|wanted| wanted.worker.0 == "assessor"));
 }
 
 #[test]

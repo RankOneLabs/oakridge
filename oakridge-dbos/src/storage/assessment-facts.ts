@@ -66,6 +66,12 @@ export async function readRoundAssessment(db: Reader, run: string, round: string
     .where("round.run_id", "=", run).where("round.id", "=", round).executeTakeFirst();
 }
 
+/** Record the first action when the evaluator admits a queued round. */
+export async function bindRoundAction(db: DatabaseTransaction, input: { readonly run_id: string; readonly round: string; readonly action: string }): Promise<void> {
+  await db.updateTable("authority.assignment_round").set({ action_id: input.action })
+    .where("run_id", "=", input.run_id).where("id", "=", input.round).where("action_id", "is", null).execute();
+}
+
 export interface AssessmentWrites {
   readonly items?: readonly FeedbackItem[];
   readonly associations?: readonly AssessmentFeedback[];
@@ -74,7 +80,7 @@ export interface AssessmentWrites {
   readonly authorizations?: readonly DispatchAuthorization[];
   readonly rejections?: readonly FeedbackRejection[];
   readonly assignments?: readonly FeedbackAssignment[];
-  readonly rounds?: readonly { readonly round: AssignmentRound; readonly action: string }[];
+  readonly rounds?: readonly AssignmentRound[];
   readonly approval?: AssessmentApproval;
 }
 
@@ -93,9 +99,9 @@ export async function writeAssessmentFacts(db: DatabaseTransaction, run: string,
   if (assignments?.length) await db.insertInto("authority.feedback_assignment").values(assignments.map(value => ({ id: value.id,
     run_id: run, feedback_item_id: value.item, target_unit_id: value.target_unit, target_artifact: value.target_artifact, recipient: value.recipient })))
     .onConflict(conflict => conflict.doNothing()).execute();
-  if (rounds?.length) await db.insertInto("authority.assignment_round").values(rounds.map(({ round, action }) => ({
+  if (rounds?.length) await db.insertInto("authority.assignment_round").values(rounds.map(round => ({
     id: round.id, run_id: run, assignment_id: round.assignment, ordinal: round.ordinal, authorization_id: round.authorization,
-    instruction: round.instruction, decision_id: round.decision, action_id: action }))).onConflict(conflict => conflict.columns(["assignment_id", "authorization_id"]).doNothing()).execute();
+    instruction: round.instruction, decision_id: round.decision, action_id: null }))).onConflict(conflict => conflict.columns(["assignment_id", "authorization_id"]).doNothing()).execute();
   if (updates?.length) await db.insertInto("authority.assignment_update").values(updates.map(value => ({ run_id: run, round_id: value.round,
     revision_id: value.revision }))).onConflict(conflict => conflict.doNothing()).execute();
   if (verifications?.length) await db.insertInto("authority.assignment_verification").values(verifications.map(value => ({ id: value.id, run_id: run,

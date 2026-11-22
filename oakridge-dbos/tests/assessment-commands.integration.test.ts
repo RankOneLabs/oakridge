@@ -145,6 +145,63 @@ test("dispatch matches the exact authorization, creates a round and intent per r
   expect(intents.map(intent => selectDeliveryKey(intent.payload)).sort()).toEqual((await run.rows("authority.assignment_round")).map(round => round.id).sort());
 });
 
+test("dispatch persists two rounds for one worker and binds each intent when admitted", async () => {
+  const run = await prepared();
+  const body = { ...cleanAssessment, observations: [sampleProposal, { ...sampleProposal, key: "other" }]
+    .map((fix, index) => ({ id: `finding_${index}`, fix })) };
+  expect(await run.publish({ worker: "assessor", artifact: "assessment", subject: run.subject, body }))
+    .toMatchObject({ value: { kind: "committed" } });
+  await run.end("assessor");
+  const items = await run.rows("authority.feedback_item");
+  const recipients = ["builder_b"];
+  const instruction = sampleProposal.instruction;
+  for (const item of items) expect((await run.authorize(item.id, run.subject, instruction, recipients)).status).toBe(201);
+  const before = await run.counts();
+  expect((await run.decide({ decision: "send", dispositions: items.map(item => ({ kind: "dispatch", item: item.id, instruction, recipients })) })).status).toBe(201);
+  expect(await run.counts()).toEqual({ assignments: 2, rounds: 2, intents: before.intents + 1 });
+  const queued = (await run.rows("authority.assignment_round")).find(round => round.action_id === null)!;
+  expect(queued).toBeDefined();
+  expect(await run.publish({ worker: "builder_b", artifact: "part_b", body: { text: "first update" } })).toMatchObject({ value: { kind: "committed" } });
+  expect((await run.rows("authority.assignment_round")).find(round => round.id === queued.id)?.action_id).toBeNull();
+  await run.end("builder_b");
+  const admitted = (await run.rows("authority.assignment_round")).find(round => round.id === queued.id);
+  expect(admitted?.action_id).toBe((await run.action("builder_b")).action_id);
+  expect((await run.rows("authority.effect_intent")).find(intent => intent.action_id === admitted?.action_id)?.payload.engine_inputs.round_delivery)
+    .toContain(queued.id);
+});
+
+test("an explicit retry delivers the same round again without duplicating either delivery", async () => {
+  const run = await assigned();
+  const initial = await run.action("builder_b");
+  const round = (await run.rows("authority.assignment_round")).find(value => value.action_id === initial.action_id)!;
+  const kbbl = startStubKbbl(async turn => turn.delivery_key === round.id ? "failed" : "succeeded");
+  try {
+    const provider = createAgentProvider({ kbbl: new KbblClient({ base_url: kbbl.url, control_token: null }),
+      publication_key: "test-publication-key", publish_base_url: "http://localhost", default_workdir: "/tmp" });
+    const deliver = async (action: string) => {
+      const instruction = (await run.rows("authority.effect_intent")).find(intent => intent.action_id === action)!.payload;
+      const start = await provider.start(instruction);
+      if (start.kind !== "acknowledged") throw new Error(JSON.stringify(start));
+      const material = { task: instruction.engine_inputs.round_delivery! };
+      await provider.observe(instruction, material, start.value.handle);
+      await provider.observe(instruction, material, start.value.handle);
+      return instruction;
+    };
+    const first = await deliver(initial.action_id);
+    expect(await run.send({ run_id: run.run_id, writer: { kind: "executor", attempt: initial.action_id },
+      event: { kind: "worker_ended", action: initial.action_id, result: { kind: "failed", code: "unavailable", detail: "First delivery failed" } } }))
+      .toMatchObject({ value: { kind: "committed" } });
+    expect(await run.send({ run_id: run.run_id, event: { kind: "retry_requested", unit: run.unit, worker: "builder_b" } }))
+      .toMatchObject({ value: { kind: "committed" } });
+    const second = await deliver((await run.action("builder_b")).action_id);
+    expect(second.action.cause).toMatchObject({ kind: "assignment_round", round: round.id, retry: expect.any(String) });
+    expect(second.engine_inputs.round_delivery).toBe(first.engine_inputs.round_delivery);
+    expect(kbbl.sessions.size).toBe(1);
+    expect([...kbbl.sessions.values()].flatMap(session => session.inputs.map(input => input.delivery_key)))
+      .toEqual([round.id, selectDeliveryKey(second)]);
+  } finally { kbbl.stop(); }
+});
+
 test("approval refuses while an assignment awaits update or verification", async () => {
   const run = await assigned();
   expect(await (await run.decide({ decision: "approve" })).text()).toContain("awaits update");
@@ -210,6 +267,21 @@ test("rejecting a follow-up and approving creates no rounds or intents", async (
   const status = await (await run.status()).json() as AssessmentStatus;
   expect(status.items.map(item => item.item)).toEqual([run.item]);
   expect(status.items[0].assignments.map(entry => entry.progress).sort()).toEqual(["accepted_by_operator", "assessor_verified"]);
+});
+
+test("approval can reject two follow-ups on the same item independently", async () => {
+  const run = await openReturnedAssessment(authority, "needs_further_work");
+  const before = await run.counts();
+  const dispositions = [run.a, run.b].map(round => ({
+    kind: "reject_follow_up" as const, assignment: round.assignment_id, reason: "The work is sufficient.",
+  }));
+  expect(await (await run.decide({ decision: "approve", dispositions: [dispositions[0], dispositions[0]] })).text())
+    .toContain("has multiple dispositions");
+  expect(await run.rows("authority.feedback_rejection")).toEqual([]);
+  expect((await run.decide({ decision: "approve", dispositions })).status).toBe(201);
+  expect(await run.counts()).toEqual(before);
+  expect((await run.rows("authority.feedback_rejection")).map(row => row.assignment_id).sort())
+    .toEqual([run.a.assignment_id, run.b.assignment_id].sort());
 });
 
 test("reassessing without a proposal carries the item, and a superseded assessment cannot be approved", async () => {

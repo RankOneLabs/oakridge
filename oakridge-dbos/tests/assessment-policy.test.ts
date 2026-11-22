@@ -52,10 +52,20 @@ test("status groups both recipients under one feedback item", () => {
   expect(status.items).toMatchObject([{ item: item.id, assignments: [{ recipient: "a" }, { recipient: "b" }] }]);
 });
 
-test("round delivery uses committed instruction and citation and keeps its key across attempts", () => {
+test("round delivery uses committed instruction and citation and keeps its key for ordinary redelivery", () => {
   const rendered = renderRoundDelivery(round, item);
   expect(renderRoundDelivery({ ...round }, { ...item })).toBe(rendered);
   expect(rendered).toBe('Assignment round: round\nAuthorized fix\nCitation revision: source\nCitation pointer: "/observations/0"');
   const instruction = { action: { cause: { kind: "assignment_round", round: round.id } } } as EffectInstruction;
   expect(selectDeliveryKey(instruction)).toBe(round.id);
+});
+
+test("explicit assignment retries use a fresh key that stays stable on redelivery", () => {
+  const first = { action: { cause: { kind: "assignment_round", round: round.id } },
+    attempt: { action_id: "initial", seq: 1 } } as EffectInstruction;
+  const retry = { ...first, action: { ...first.action, cause: { kind: "assignment_round", round: round.id, retry: "retry-event" } },
+    attempt: { action_id: "retry-action", seq: 1 } } as EffectInstruction;
+  expect(selectDeliveryKey(first)).toBe(round.id);
+  expect(selectDeliveryKey(retry)).not.toBe(selectDeliveryKey(first));
+  expect(selectDeliveryKey(retry)).toBe(selectDeliveryKey({ ...retry }));
 });

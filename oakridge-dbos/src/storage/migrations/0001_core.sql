@@ -218,7 +218,7 @@ CREATE TABLE authority.assignment_round (
   authorization_id text NOT NULL REFERENCES authority.dispatch_authorization(id),
   instruction text NOT NULL,
   decision_id text NOT NULL REFERENCES authority.review_decision(id),
-  action_id text NOT NULL,
+  action_id text,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   UNIQUE (assignment_id, ordinal),
   UNIQUE (assignment_id, authorization_id)
