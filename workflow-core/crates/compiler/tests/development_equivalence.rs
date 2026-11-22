@@ -45,7 +45,10 @@ fn development_checked_program_matches_base_1c7d8017_in_its_original_shape() {
             if worker["kind"] == "agent" {
                 worker.as_object_mut().unwrap().remove("prompts").unwrap();
             }
-            worker.as_object_mut().unwrap().remove("track_input_revisions");
+            worker
+                .as_object_mut()
+                .unwrap()
+                .remove("track_input_revisions");
         }
     }
     let canonical = serde_json::to_vec(&legacy_program).unwrap();
