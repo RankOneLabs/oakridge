@@ -180,9 +180,9 @@ export function latestUnitAttemptPerSession(units: readonly OperatorUnitView[]):
   const ordered = units.flatMap((unit) => unit.attempts.map((attempt) => ({ unit, attempt })))
     .filter(({ attempt }) => attempt.kbbl_session_id !== null)
     .sort((left, right) => left.attempt.created_at.localeCompare(right.attempt.created_at) || left.attempt.id.localeCompare(right.attempt.id));
-  const latest = new Map<string, { readonly unit: OperatorUnitView; readonly attempt: OperatorAttemptView }>();
-  ordered.forEach((entry) => { if (entry.attempt.kbbl_session_id) latest.set(JSON.stringify([entry.unit.unit_id, entry.attempt.kbbl_session_id]), entry); });
-  return ok([...latest.values()]);
+  const keys = ordered.map(({ unit, attempt }) => JSON.stringify([unit.unit_id, attempt.kbbl_session_id]));
+  const latest = new Map(keys.map((key, index) => [key, index]));
+  return ok(ordered.filter((_, index) => latest.get(keys[index]) === index));
 }
 
 /** A scalar stage's one unit has no collection key; the PWA names it "0", as every stage-scoped consumer expects. */

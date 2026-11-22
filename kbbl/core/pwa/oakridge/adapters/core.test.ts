@@ -6,7 +6,7 @@ import planningRevise from "../__fixtures__/v2-planning-revise.json";
 import { retryUnit, sampleCohort as cohort, sampleRun as run, sampleUnits as units, withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
 import type { OperatorRunEvent } from "../operator-contracts/projections/run-event";
-import type { OperatorAttemptView, OperatorUnitView } from "../operator-contracts/projections/unit-view";
+import type { OperatorAttemptView, OperatorOpenReview, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { attemptToWorkOrder, compositeId, decisionAction, selectReviewPullRequestUrl, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, unitToStages } from "./core";
 import { parseUnitViews } from "./parse";
 import { selectRunSessionRows } from "../lib/run-sessions";
@@ -82,10 +82,17 @@ describe("v2 development adapters", () => {
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve", "request_revision"]);
   });
   it("gives successive assessment targets distinct review identities while retaining the declared decision key", () => {
-    const first = reviewToGates(cohort);
-    const second = reviewToGates({ ...cohort, decisions: cohort.decisions.map((decision) => decision.submit.kind === "review"
-      && decision.submit.review === "assessment_review" ? { ...decision,
-        submit: { ...decision.submit, target_revision_id: "new-assessment-revision" } } : decision) });
+    const offered = cohort.decisions.find((decision) => decision.submit.kind === "review" && decision.submit.decision === "request_build_changes");
+    if (offered?.submit.kind !== "review") throw new Error("Expected a projected assessment decision");
+    const review: OperatorOpenReview = {
+      review: "assessment_review", of_artifact: "assessment", reviewed_revision_id: "assessment:1",
+      confirms: null, wait: "operator", producer_workers: ["assessor"], failure_code: null,
+      decisions: [{ key: offered.submit.decision, label: offered.label, effect: offered.submit.effect,
+        operation: "dispatch_feedback", on_artifact: "build_result", target_revision_id: offered.submit.target_revision_id }],
+    };
+    const unit = { ...cohort, decisions: [{ ...offered, operation: "dispatch_feedback" as const }], reviews: [review] };
+    const first = reviewToGates(unit);
+    const second = reviewToGates({ ...unit, reviews: [{ ...review, reviewed_revision_id: "assessment:2" }] });
     const oldGate = first.ok ? first.value.find((gate) => gate.gate_step === "assessment_review") : null;
     const newGate = second.ok ? second.value.find((gate) => gate.gate_step === "assessment_review") : null;
     expect({ distinct: oldGate?.id !== newGate?.id, offered: newGate?.offered_decisions?.includes("request_build_changes"),
@@ -181,13 +188,13 @@ describe("v2 development adapters", () => {
     expect(selected.ok && selected.value.map((attempt) => [attempt.kbbl_session_id, attempt.mode, attempt.cause.kind]))
       .toEqual([[planningRevise.attempts[0]?.kbbl_session_id, "revise", "changes_requested"]]);
   });
-  it("shows one session when separate brief units share its physical sid", () => {
+  it("lists the same session under both units it served", () => {
     const first = units.find((unit) => unit.stage === "brief" && unit.attempts.length > 0);
     if (!first) throw new Error("captured fixture lacks a brief attempt");
     const second = withUnitFields(first, { unit_id: `${first.unit_id}-other`, attempts: first.attempts.map((attempt) => ({
       ...attempt, id: `${attempt.id}-other`, unit_id: `${first.unit_id}-other`, created_at: "9999-01-01T00:00:00Z" })) });
     const selected = latestUnitAttemptPerSession([first, second]);
-    expect(selected.ok && selected.value.map(({ unit }) => unit.unit_id)).toEqual([second.unit_id]);
+    expect(selected.ok && selected.value.map(({ unit }) => unit.unit_id)).toEqual([first.unit_id, second.unit_id]);
   });
   it("maps a run event kind", () => {
     const event = runEventKind(sample.event as OperatorRunEvent);
@@ -197,12 +204,12 @@ describe("v2 development adapters", () => {
     const event = runEventKind({ ...sample.event, kind: "worker_ended" } as OperatorRunEvent);
     expect(event).toEqual({ ok: true, value: null });
   });
-  it("maps an approve-effect decision onto a v1 action the frozen gate UI renders", () => {
+  it("retains the declared decision key for approve-effect choices", () => {
     const accept = cohort.decisions.find((decision) => decision.key === "accept");
     const merge = (cohortMerge.units as unknown as OperatorUnitView[])
       .flatMap((unit) => unit.decisions).find((decision) => decision.key === "confirm_merged");
     if (!accept || !merge) throw new Error("captured fixtures lack the approve decisions");
-    expect([decisionAction(accept, []), decisionAction(merge, [])]).toEqual(["approve", "confirm_merged"]);
+    expect([decisionAction(accept, []), decisionAction(merge, [])]).toEqual(["accept", "confirm_merged"]);
   });
   it("parses repository keys from untrusted unit input", () => {
     const padded = withUnitFields(cohort, { input: { repository_key: "  app  " } });

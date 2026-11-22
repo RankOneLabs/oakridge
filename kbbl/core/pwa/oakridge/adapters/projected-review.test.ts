@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import { retryUnit, withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorAttemptView, OperatorOpenReview, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import { artifactRevisionId, reviewToGates, selectReviewPullRequestUrl } from "./core";
+import { classifyRunInbox } from "./inbox";
 import { selectArtifactPageGates } from "../lib/artifact-page-gates";
 
 const base = retryUnit("folio");
@@ -64,4 +65,13 @@ test.each(["design", "expand", "freeze"])("a %s merge gate reads the declared li
   expect(selectReviewPullRequestUrl(unit, merge)).toBe(url);
   const gates = reviewToGates(unit);
   expect(gates.ok && gates.value[0].gate_type).toBe("merge");
+});
+
+
+test("the attention list uses a unit label when the stage is absent", () => {
+  const stalled = withUnitFields(input, { decisions: [], attempts: [], attention: { kind: "stalled", detail: "Needs attention", failure_code: null } });
+  const result = classifyRunInbox({ run_id: stalled.run_id, items: [{
+    kind: "stalled", run_id: stalled.run_id, unit_id: stalled.unit_id, detail: "Needs attention", failure_code: null,
+  }] }, [stalled], { workflow_name: "folio", run_title: null });
+  expect(result.ok && result.value.items[0]?.stage_name).toBe(stalled.label);
 });

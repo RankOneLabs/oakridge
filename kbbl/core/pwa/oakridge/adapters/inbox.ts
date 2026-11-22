@@ -106,7 +106,7 @@ export function classifyRunInbox(entry: OperatorRunInboxBatchEntry, units: reado
     const requiresAdjudication = adjudicatingDecision !== undefined;
     return [{ id: `${item.run_id}:${item.unit_id}:${item.kind === "decision" ? item.key : item.kind}`, kind,
       state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: run.workflow_name, stage_instance_id: stageId,
-      stage_name: unit.stage ?? ROOT_DECLARATION, unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
+      stage_name: unit.stage ?? unit.label, unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
       ...attention, title: selectUnitAttentionLabel(attention), run_title: run.run_title, artifact_key: adjudicatingDecision ? adjudicatingDecision.assessment : artifact?.artifact_key ?? null, artifact_revision_id: revisionId,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: kind === "merge_review" || kind === "pull_request_merge" ? selectReviewPullRequestUrl(unit, openReview ?? null) : null, run_unit_id: unit.unit_id,
