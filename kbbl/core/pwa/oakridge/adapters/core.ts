@@ -98,8 +98,7 @@ const awaitsOperator = (decisions: readonly OperatorDecisionDefinition[]): boole
   decisions.some((decision) => decision.submit.kind === "review");
 /** An unavailable PR watcher must not hide a manual merge confirmation that can finish the cohort. */
 export const isMergeWatchFailure = (code: string | null | undefined): boolean =>
-  code === PROVIDER_ERROR_CODES.invalid_instruction || code === PROVIDER_ERROR_CODES.discovery_unsupported
-  || code === PROVIDER_ERROR_CODES.pull_request_mismatch;
+  code === PROVIDER_ERROR_CODES.invalid_instruction || code === PROVIDER_ERROR_CODES.discovery_unsupported;
 const awaitsManualMergeAfterWatchFailure = (input: StatusInput): boolean =>
   Boolean(input.hasManualMergeFallback && input.attention?.kind === "stalled" && isMergeWatchFailure(input.attention.failure_code));
 /**
@@ -112,7 +111,9 @@ const isAgentWorking = (attempt: OperatorAttemptView): boolean =>
 const isWorkerStall = ({ attention, attempts }: StatusInput): boolean => {
   if (attention?.kind !== "stalled") return true;
   return attempts.some((attempt) => attempt.is_current && attempt.failure !== null
-    && attention.detail.startsWith(`${attempt.worker} failed:`));
+    && (attention.failure_code != null
+      ? attempt.failure.code === attention.failure_code
+      : attention.detail.startsWith(`${attempt.worker} failed:`)));
 };
 /** One worker failed while an agent still works the unit, so the unit has not stopped. */
 const isStillWorkingPastFailure = (input: StatusInput): boolean =>

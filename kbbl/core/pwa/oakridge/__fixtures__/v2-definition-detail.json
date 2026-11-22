@@ -581,7 +581,7 @@
           }
         },
         {
-          "key": "tasks_body",
+          "key": "archived_task_record",
           "shape": {
             "kind": "record",
             "fields": [
@@ -1254,7 +1254,7 @@
           }
         },
         {
-          "key": "{repositories: list(repository), repository_key: ident, spec: text, tasks: tasks_body, workspace: workspace}",
+          "key": "{repositories: list(repository), repository_key: ident, spec: text, tasks: archived_task_record, workspace: workspace}",
           "shape": {
             "kind": "record",
             "fields": [
@@ -1272,7 +1272,7 @@
               },
               {
                 "key": "tasks",
-                "schema": "tasks_body"
+                "schema": "archived_task_record"
               },
               {
                 "key": "workspace",
@@ -1398,7 +1398,7 @@
             },
             {
               "key": "tasks",
-              "schema": "tasks_body"
+              "schema": "archived_task_record"
             }
           ]
         },
@@ -1474,7 +1474,7 @@
           "key": "planning",
           "stage": "planning",
           "label": "Planning",
-          "input_schema": "{repositories: list(repository), repository_key: ident, spec: text, tasks: tasks_body, workspace: workspace}",
+          "input_schema": "{repositories: list(repository), repository_key: ident, spec: text, tasks: archived_task_record, workspace: workspace}",
           "artifacts": [
             {
               "key": "plan",
@@ -1775,7 +1775,7 @@
           "id": "ident",
           "text": "text"
         },
-        "tasks_body": {
+        "archived_task_record": {
           "tasks": "list(task)"
         },
         "test_evidence": {
@@ -1805,7 +1805,7 @@
             },
             "tasks": {
               "kind": "record",
-              "schema": "tasks_body"
+              "schema": "archived_task_record"
             }
           },
           "done_when": "approved(analysis) and approved(spec) and approved(tasks)",
@@ -2311,7 +2311,7 @@
             "repositories": "list(repository)",
             "repository_key": "ident",
             "spec": "text",
-            "tasks": "tasks_body",
+            "tasks": "archived_task_record",
             "workspace": "workspace"
           },
           "outcome": {
@@ -3208,7 +3208,7 @@
             }
           }
         },
-        "tasks_body": {
+        "archived_task_record": {
           "kind": "record",
           "fields": {
             "tasks": {
@@ -3393,7 +3393,7 @@
               "kind": "record",
               "schema": {
                 "kind": "named",
-                "schema": "tasks_body"
+                "schema": "archived_task_record"
               },
               "validate": []
             }
@@ -4135,7 +4135,7 @@
               },
               "tasks": {
                 "kind": "named",
-                "schema": "tasks_body"
+                "schema": "archived_task_record"
               },
               "workspace": {
                 "kind": "named",

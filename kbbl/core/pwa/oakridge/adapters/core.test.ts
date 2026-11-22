@@ -27,7 +27,7 @@ describe("v2 development adapters", () => {
   });
   it("groups units into stages with artifacts", () => {
     const stages = unitToStages(units);
-    expect(stages.ok && stages.value.find((stage) => stage.name === "cohort")?.artifacts.some((artifact) => artifact.type_id === "dev.build_result")).toBe(true);
+    expect(stages.ok && stages.value.find((stage) => stage.name === "cohort")?.artifacts.some((artifact) => artifact.type_id === "cohort.build_result")).toBe(true);
   });
   it("shows the prepared workspace as a read-only artifact", () => {
     const prepare = units.find((unit) => unit.stage === "prepare");
@@ -66,7 +66,7 @@ describe("v2 development adapters", () => {
       { ...pr, artifact_key: "manual_merge_target" }] });
     const stages = unitToStages([withObservation]);
     expect(stages.ok && [stages.value[0]?.artifacts.some((artifact) => artifact.type_id === "pr_status"),
-      stages.value[0]?.artifacts.filter((artifact) => artifact.type_id === "dev.pr_summary").length]).toEqual([false, 1]);
+      stages.value[0]?.artifacts.filter((artifact) => artifact.type_id === "cohort.pr").length]).toEqual([false, 1]);
   });
   it("shows builder and assessor as separate cohort sessions, each on its first attempt", () => {
     const sessions = cohort.attempts.filter((attempt) => attempt.kbbl_session_id).map((attempt) =>
@@ -159,7 +159,7 @@ describe("v2 development adapters", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
     const runDetail = runSnapshot(run, units);
     expect(artifact.ok && runDetail.ok && artifact.value.label
-      ? selectCohortArtifactId(runDetail.value, "dev.build_brief", artifact.value.label)
+      ? selectCohortArtifactId(runDetail.value, "build_brief", artifact.value.label)
       : null).not.toBeNull();
   });
   it("maps a v2 attempt to the v1 work order reason and state", () => {

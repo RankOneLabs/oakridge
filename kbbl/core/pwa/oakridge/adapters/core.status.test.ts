@@ -1,3 +1,4 @@
+import { PROVIDER_ERROR_CODES } from "../operator-contracts/constants";
 import { describe, expect, it } from "vitest";
 import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import { sampleCohort as cohort, sampleRun as run, sampleUnits as units, withUnitFields } from "../__fixtures__/read-models";
@@ -118,7 +119,11 @@ describe("run and unit status", () => {
     if (!observedState) throw new Error("captured fixture lacks a PR state artifact");
     const stalled = withUnitFields(mergeUnit, {
       artifacts: [...mergeUnit.artifacts, { ...observedState, artifact_key: "observed_state" }],
-      attention: { kind: "stalled", failure_code: null, detail: "pr_watch failed: no pull request reader is configured" },
+      reviews: [{
+        review: "land_change", of_artifact: "pr", reviewed_revision_id: "release:1", confirms: "merge",
+        wait: "external", producer_workers: [], decisions: [], failure_code: code,
+      }],
+      attention: { kind: "stalled", failure_code: code, detail: "No pull request reader is configured" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code, detail: "no pull request reader is configured" } }
         : attempt) });
@@ -130,7 +135,7 @@ describe("run and unit status", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
       && decision.submit.decision === "confirm_merged"));
     if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
-    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", failure_code: null, detail: "pr_watch failed: missing URL" },
+    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", failure_code: PROVIDER_ERROR_CODES.invalid_instruction, detail: "Missing URL" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code: "invalid_instruction", detail: "missing URL" } }
         : attempt) }).run).toBe("failed");
@@ -139,7 +144,7 @@ describe("run and unit status", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
       && decision.submit.decision === "confirm_merged"));
     if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
-    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", failure_code: null, detail: "pr_watch failed: PR branch differs" },
+    expect(deriveStatus({ ...statusInputOf(mergeUnit), hasManualMergeFallback: true, attention: { kind: "stalled", failure_code: PROVIDER_ERROR_CODES.pull_request_mismatch, detail: "PR branch differs" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code: "pull_request_mismatch", detail: "PR branch differs" } }
         : attempt) }).run).toBe("failed");
@@ -147,7 +152,7 @@ describe("run and unit status", () => {
   it("keeps a cohort running while its builder works past a failed PR watcher", () => {
     const template = cohort.attempts[0];
     if (!template) throw new Error("captured fixture lacks an attempt");
-    const watcherFailed = { ...cohort, attention: { kind: "stalled" as const, failure_code: null, detail: "pr_watch failed: inputs do not match" },
+    const watcherFailed = { ...cohort, attention: { kind: "stalled" as const, failure_code: PROVIDER_ERROR_CODES.invalid_instruction, detail: "Inputs do not match" },
       attempts: [{ ...template, worker: "pr_watch", status: "failed" as const, failure: { code: "invalid_instruction", detail: "inputs do not match" }, is_current: true, kbbl_session_id: null },
         { ...template, worker: "builder", status: "running" as const, failure: null, is_current: true, kbbl_session_id: "builder-session" }] };
     const detail = runSnapshot({ ...run, status: { kind: "active" } }, [watcherFailed]);

@@ -63,7 +63,7 @@ function renderForm() {
 }
 
 async function choose(name: string) {
-  await screen.findByRole("option", { name, exact: true });
+  await screen.findByRole("option", { name });
   fireEvent.change(screen.getByLabelText("Workflow Definition"), { target: { value: `${name}-def` } });
 }
 

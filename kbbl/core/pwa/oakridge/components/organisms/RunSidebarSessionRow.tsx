@@ -19,7 +19,7 @@ export function RunSidebarSessionRow({ row, slots, onOpen }: RunSidebarSessionRo
   const status = useStore((state) => state.sessions.get(row.session_id)?.status ?? null);
   const canEnd = status !== null && !row.is_archived;
   const isTerminal = status === "ended" || status === "fenced" || status === "failed";
-  const actionLabel = isTerminal ? "Hide" : "End and hide";
+  const hideLabel = isTerminal ? "Hide" : "End and hide";
   const { mutation, error } = useEndSession(row.session_id);
 
   useEffect(() => {
@@ -95,7 +95,7 @@ export function RunSidebarSessionRow({ row, slots, onOpen }: RunSidebarSessionRo
           type="button"
           className="or-run-sidebar__row-end"
           disabled={mutation.isPending}
-          aria-label={confirmEnd ? `Confirm ${actionLabel.toLowerCase()} ${row.stage_key} ${row.unit_id}` : `${actionLabel} ${row.stage_key} ${row.unit_id}`}
+          aria-label={confirmEnd ? `Confirm ${hideLabel.toLowerCase()} ${row.stage_key} ${row.unit_id}` : `${hideLabel} ${row.stage_key} ${row.unit_id}`}
           title={isTerminal
             ? "Hide this session while keeping its transcript."
             : "End and hide this session while keeping its transcript."}

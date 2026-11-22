@@ -105,7 +105,7 @@ describe("development inbox", () => {
     if (!observation || !confirm || confirm.submit.kind !== "review") throw new Error("captured fixture lacks PR evidence");
     const stalled = withUnitFields(mergeUnit, {
       artifacts: [...mergeUnit.artifacts, { ...observation, artifact_key: "observed_state" }],
-      attention: { kind: "stalled", failure_code: null, detail: "pr_watch failed: no pull request reader is configured" },
+      attention: { kind: "stalled", failure_code: null, detail: "No pull request reader is configured" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code: "discovery_unsupported", detail: "no pull request reader is configured" } }
         : attempt) });
@@ -115,7 +115,7 @@ describe("development inbox", () => {
       { kind: "decision", run_id: stalled.run_id, unit_id: stalled.unit_id, key: "retry:pr_watch",
         label: "Retry PR watch", submit: { kind: "retry", worker: "pr_watch" }, prompt: null },
       { kind: "stalled", failure_code: null, run_id: stalled.run_id, unit_id: stalled.unit_id,
-        detail: "pr_watch failed: no pull request reader is configured" },
+        detail: "No pull request reader is configured" },
     ] };
     const inbox = classifyRunInbox(entry, [stalled], { workflow_name: "development", run_title: null });
     expect(inbox.ok && [inbox.value.items.map((item) => item.kind), inbox.value.cohorts[0]?.lifecycle])

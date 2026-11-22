@@ -145,7 +145,7 @@ describe("ArtifactReview", () => {
   });
 
   it.each([false, true])("shows a decision box only for a declared plain action (plain action offered: %s)", async hasPlain => {
-    const assessment: ArtifactDetail = { ...ARTIFACT_FIXTURE, type_id: "dev.assessment", component_id: "dev-current-assessment-viewer",
+    const assessment: ArtifactDetail = { ...ARTIFACT_FIXTURE, type_id: "cohort.assessment", component_id: "dev-current-assessment-viewer",
       revisions: [{ ...REVISION_FIXTURE, status: "draft", body: CURRENT_ASSESSMENT }] };
     const gate: ParkedGate = { ...PARKED_GATE_FIXTURE, run_id: "run-1", gate_step: "assessment_review", artifact_revision_id: "rev-1", assessment_revision_id: "rev-1", requires_adjudication: true,
       resume_actions: hasPlain ? ["request_assessment_changes"] : [], offered_decisions: hasPlain ? ["accept", "request_assessment_changes"] : ["accept"], decision_definitions: [{ key: "accept", label: "Accept", payload_schema: "{}", operation: "approve_assessment" as const, assessment: "assessment", fields: [],
