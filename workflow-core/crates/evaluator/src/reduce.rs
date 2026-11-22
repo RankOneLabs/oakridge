@@ -116,7 +116,7 @@ fn reduce_event(
                 .ok_or_else(|| invalid("attempt unit absent"))?;
             let definition = worker(checked_stage(program, unit)?, &attempt.worker)?;
             let has_blocker = state.revisions.iter().any(|revision| {
-                revision.by.as_ref() == Some(&attempt.action_id)
+                revision.by.as_ref().is_some_and(|by| by.matches(&attempt))
                     && revision.artifact.0 == BLOCKER_ARTIFACT
             });
             let status = match result {
@@ -131,7 +131,8 @@ fn reduce_event(
                     if !is_periodic(definition)
                         && definition.required_creates().iter().any(|artifact| {
                             !state.revisions.iter().any(|r| {
-                                r.by.as_ref() == Some(&attempt.action_id) && r.artifact == *artifact
+                                r.by.as_ref().is_some_and(|by| by.matches(&attempt))
+                                    && r.artifact == *artifact
                             })
                         }) =>
                 {
@@ -177,7 +178,7 @@ fn reduce_event(
                         state
                             .attempts
                             .iter()
-                            .find(|attempt| &attempt.action_id == action)
+                            .find(|attempt| action.matches(attempt))
                     })
                     .map(|attempt| &attempt.worker);
                 // A code worker (a periodic watch) keeps observing while the
@@ -232,7 +233,7 @@ fn reduce_event(
                         .attempts
                         .iter()
                         .rposition(|a| {
-                            a.action_id == *by
+                            by.matches(a)
                                 && a.unit == *unit
                                 && (matches!(
                                     a.status,

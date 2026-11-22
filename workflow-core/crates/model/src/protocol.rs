@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 /// v9 adds the resolved agent prompt path to a wanted worker and agent
 /// prompts to the checked worker.
 /// v10 introduces the assessment contracts and assignment rounds.
-pub const PROTOCOL_VERSION: u32 = 10;
+/// v11 records exact publishing attempts and resolved revision bindings.
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// One wanted worker and the identity of the attempt that runs it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

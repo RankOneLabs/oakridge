@@ -73,7 +73,7 @@ pub enum Event {
         subject: Option<RevisionId>,
         /// The attempt that published it; None only for an operator's edit
         /// (`Writer::Operator`), which no attempt produced.
-        by: Option<ActionKey>,
+        by: Option<PublishingAttempt>,
     },
     OperatorDecided {
         unit: UnitId,
@@ -195,7 +195,7 @@ pub struct RevisionState {
     pub predecessor: Option<RevisionId>,
     pub subject: Option<RevisionId>,
     /// None for an operator's edit.
-    pub by: Option<ActionKey>,
+    pub by: Option<PublishingAttempt>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -266,6 +266,29 @@ impl DecisionState {
             }
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PublishingAttempt {
+    pub action: ActionKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
+    pub seq: u32,
+}
+
+impl PublishingAttempt {
+    pub fn matches(&self, attempt: &AttemptState) -> bool {
+        self.action == attempt.action_id && self.seq == attempt.seq
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InputBinding {
+    pub input: SymbolKey,
+    pub unit: UnitId,
+    pub revision_id: RevisionId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -351,6 +374,8 @@ pub struct StepSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StepResult {
+    #[serde(default)]
+    pub publication_bindings: Option<Vec<InputBinding>>,
     pub snapshot: StepSnapshot,
     pub wanted: Vec<crate::protocol::WantedWorker>,
     /// Each operator review awaiting a decision, with its `inputs` evaluated
@@ -419,6 +444,8 @@ pub struct ResolvedRunWorker {
     pub review_history: Vec<FeedbackEntry>,
     #[serde(default)]
     pub input_provenance: Option<Vec<InputProvenance>>,
+    #[serde(default)]
+    pub input_bindings: Vec<InputBinding>,
     pub action_id: ActionKey,
     #[serde(with = "crate::wire_numbers::json")]
     #[schemars(with = "Value")]
@@ -500,6 +527,7 @@ mod engine_serde_tests {
         assert!(resolved.review_history.is_empty());
         assert!(resolved.prompt.is_none());
         wire["prompt"] = serde_json::Value::Null;
+        wire["input_bindings"] = serde_json::json!([]);
         assert_eq!(serde_json::to_value(resolved).unwrap(), wire);
     }
 

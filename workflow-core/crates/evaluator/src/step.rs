@@ -41,6 +41,49 @@ pub fn step_with_limits(
         incoming,
     )
     .map_err(|error| attribute_event(error, snapshot, incoming))?;
+    let publication_bindings = match (&incoming.event, &incoming.writer) {
+        (
+            Event::RevisionPublished {
+                unit,
+                artifact,
+                predecessor,
+                subject,
+                ..
+            },
+            Writer::Operator { .. },
+        ) if deltas
+            .iter()
+            .any(|delta| matches!(delta, Delta::PushRevision(_))) =>
+        {
+            let owner = snapshot
+                .units
+                .iter()
+                .find(|candidate| candidate.id == *unit)
+                .ok_or_else(|| invalid("publication unit absent"))?;
+            let producer = checked_stage(program, owner)?
+                .workers
+                .iter()
+                .find(|worker| worker.creates().contains(artifact))
+                .ok_or_else(|| invalid("artifact has no creator"))?;
+            let (_, mut bindings) =
+                wants::resolve_worker_inputs(producer, owner, snapshot, &mut context)?;
+            for (name, id) in [
+                ("$subject", subject.as_ref()),
+                ("$previous", predecessor.as_ref()),
+            ] {
+                if let Some(revision) = id.and_then(|id| {
+                    snapshot
+                        .revisions
+                        .iter()
+                        .find(|revision| revision.id == *id)
+                }) {
+                    bindings.push(wants::revision_binding(name, revision));
+                }
+            }
+            Some(bindings)
+        }
+        _ => None,
+    };
     apply_all(&mut state, &mut context, deltas);
     match advance_reduced(program, state, &mut context) {
         // A launch that cannot advance never started: it is refused, as a
@@ -53,7 +96,10 @@ pub fn step_with_limits(
                 entity: StepEntity::Unit { unit },
             })
         }
-        other => other,
+        other => other.map(|mut result| {
+            result.publication_bindings = publication_bindings;
+            result
+        }),
     }
 }
 /// Everything after the event is applied: advance to a fixpoint, then
@@ -93,6 +139,7 @@ pub(super) fn advance_reduced(
     apply_all(&mut state, context, pending);
     let blocked = blocked_units(program, &state, context)?;
     Ok(StepResult {
+        publication_bindings: None,
         snapshot: state,
         wanted,
         reviews,

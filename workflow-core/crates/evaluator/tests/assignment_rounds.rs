@@ -104,7 +104,10 @@ impl Run {
             body,
             predecessor: self.latest(artifact),
             subject,
-            by: Some(action),
+            by: Some(PublishingAttempt {
+                action: action,
+                seq: 1,
+            }),
         });
     }
     fn publish(&mut self, worker: &str, artifact: &str, body: Value, subject: Option<RevisionId>) {

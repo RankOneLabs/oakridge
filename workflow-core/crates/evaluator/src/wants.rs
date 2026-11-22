@@ -142,7 +142,7 @@ fn assignment_rounds<'a>(
                 && revision.artifact.0 != BLOCKER_ARTIFACT
                 && (!self_assessing || revision.artifact == *assessment)
                 && !has_failed_validation(state, &revision.id)
-                && state.attempts.iter().any(|attempt| revision.by.as_ref() == Some(&attempt.action_id)
+                && state.attempts.iter().any(|attempt| revision.by.as_ref().is_some_and(|by| by.matches(attempt))
                     && matches!(&attempt.cause, Cause::AssignmentRound { round, .. } if round == &request.round)));
             current.push(OpenRound {
                 request,
@@ -190,7 +190,7 @@ pub fn stage_actions(
                 state
                     .attempts
                     .iter()
-                    .find(|attempt| &attempt.action_id == action)
+                    .find(|attempt| action.matches(attempt))
             })
             .ok_or_else(|| invalid("blocker publisher absent"))?;
         let decision = state.decisions.iter().rev().find(|decision| {
@@ -714,6 +714,45 @@ pub(super) fn resolve_agent_prompt(
 }
 
 /// Evaluate what a wanted `RunWorker` runs with against the stepped state.
+pub(super) fn revision_binding(input: &str, revision: &RevisionState) -> InputBinding {
+    InputBinding {
+        input: SymbolKey::from(input),
+        unit: revision.unit.clone(),
+        revision_id: revision.id.clone(),
+    }
+}
+
+pub(super) fn resolve_worker_inputs(
+    worker: &CheckedWorker,
+    unit: &UnitState,
+    state: &StepSnapshot,
+    context: &mut EvaluationContext<'_>,
+) -> Result<(serde_json::Map<String, Value>, Vec<InputBinding>), StepError> {
+    let mut inputs = serde_json::Map::new();
+    let mut bindings: Vec<_> = unit
+        .input_provenance
+        .iter()
+        .flatten()
+        .map(|entry| InputBinding {
+            input: entry.input.clone(),
+            unit: entry.unit.clone(),
+            revision_id: entry.revision_id.clone(),
+        })
+        .collect();
+    for field in worker.inputs() {
+        context.input_reads = Some(Vec::new());
+        let value = eval_expression(&field.value.expression, unit, state, None, None, context);
+        let reads = context.input_reads.take().unwrap_or_default();
+        inputs.insert(field.key.clone(), value?.unwrap_or(Value::Null));
+        bindings.extend(reads.into_iter().map(|(unit, revision_id)| InputBinding {
+            input: SymbolKey::from(field.key.as_str()),
+            unit,
+            revision_id,
+        }));
+    }
+    Ok((inputs, bindings))
+}
+
 pub(super) fn resolve_run_worker(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
@@ -726,11 +765,7 @@ pub(super) fn resolve_run_worker(
         .iter()
         .find(|candidate| candidate.key() == action.worker)
         .ok_or_else(|| invalid(format!("checked worker {} absent", action.worker)))?;
-    let mut inputs = serde_json::Map::new();
-    for field in checked.inputs() {
-        let value = eval_expression(&field.value.expression, unit, state, None, None, context)?;
-        inputs.insert(field.key.clone(), value.unwrap_or(Value::Null));
-    }
+    let (inputs, mut input_bindings) = resolve_worker_inputs(checked, unit, state, context)?;
     let workspace_expression = match checked {
         CheckedWorker::Agent { workspace, .. } => workspace.as_deref(),
         CheckedWorker::Code { .. } => None,
@@ -868,7 +903,16 @@ pub(super) fn resolve_run_worker(
             .get_or_insert_with(Vec::new)
             .extend(artifact_input_provenance(stage, checked, state, unit));
     }
+    for (name, revision) in [
+        ("$subject", subject.as_ref()),
+        ("$previous", previous.as_ref()),
+    ] {
+        if let Some(revision) = revision {
+            input_bindings.push(revision_binding(name, revision));
+        }
+    }
     Ok(ResolvedRunWorker {
+        input_bindings,
         prompt,
         keyed_execution,
         review_history,

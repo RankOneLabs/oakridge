@@ -351,7 +351,14 @@ pub(super) fn eval_expression_inner(
                     (bound == artifact.0).then(|| read(body)).flatten()
                 }
                 ReferenceRoot::Latest { artifact } => {
-                    read(&resolved!(latest(state, &unit.id, artifact)).body)
+                    let revision = resolved!(latest(state, &unit.id, artifact));
+                    if let Some(reads) = &mut context.input_reads {
+                        let identity = (revision.unit.clone(), revision.id.clone());
+                        if !reads.contains(&identity) {
+                            reads.push(identity);
+                        }
+                    }
+                    read(&revision.body)
                 }
                 ReferenceRoot::Published { artifact } => {
                     Some(Value::Bool(latest(state, &unit.id, artifact).is_some()))
