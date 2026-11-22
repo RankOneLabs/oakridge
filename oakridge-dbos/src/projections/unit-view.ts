@@ -1,5 +1,5 @@
 import { hasAssessmentOperations } from "./artifact-view";
-import { BLOCKER_ARTIFACT, BLOCKER_REVIEW, type BlockerAnswerBody, type BlockerBody, type Writer } from "../core-client/core-types";
+import { BLOCKER_ARTIFACT, BLOCKER_REVIEW, type BlockerAnswerBody, type BlockerBody } from "../core-client/core-types";
 import type { ReviewDecisionRead } from "../storage/read-store";
 import type { ArtifactSchemaVersions } from "../storage/read-store";
 import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
