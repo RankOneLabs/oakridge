@@ -39,14 +39,15 @@ test("merge status uses the watch intent on design, expansion, freeze and integr
     await run.publish("freezer", "pr", pr("freeze", 4), { location: freezer });
     await run.end("freezer", freezer);
     await check(freezer, 4);
+    await run.code("pr_watch", freezer);
     expect((await run.decide("freeze_review", "request_changes", "freeze", { payload: { feedback: "Confirm manifests" } }, freezer)).status).toBe(201);
     await run.publish("freezer", "freeze", freeze, { location: freezer });
     await run.publish("freezer", "pr", pr("freeze", 4), { location: freezer });
     await run.end("freezer", freezer);
-    const replaced = await run.request("GET", "/merge-status", undefined, undefined, freezer);
-    expect(await replaced.json()).toMatchObject({ kind: "unavailable", detail: "the pull request was republished; status returns after the next watch" });
+    await check(freezer, 4);
+    await run.code("pr_watch", freezer);
+    await run.code("prepare_observed_state", freezer);
     expect((await run.decide("freeze_review", "accept", "freeze", { payload: {} }, freezer)).status).toBe(201);
-    expect((await run.decide("merge_confirmation", "confirm_merged", "pr", { payload: {} }, freezer)).status).toBe(201);
     const integration = run.unit("integration");
     const integrated = await run.publish("integrator", "pr", pr("integration", 5), { location: integration });
     await run.publish("integrator", "assessment", assessment("integration", [

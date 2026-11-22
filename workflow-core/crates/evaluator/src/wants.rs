@@ -51,6 +51,7 @@ pub(super) fn reads_artifact(expression: &Expression, artifact: &SymbolKey) -> b
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Readiness {
     Blocked,
@@ -375,9 +376,11 @@ pub fn stage_actions(
             // Part 1 §5.2 rule 4: wanted only once its inputs resolve.
             CheckedWorker::Code { every: Some(_), .. } => {
                 eval_fields(checked_worker.inputs(), unit, state, None, context)?.map(|inputs| {
+                    let digest =
+                        periodic_inputs_digest(checked, checked_worker, state, unit, &inputs);
                     (
                         Mode::Initial,
-                        periodic_cause(state, &unit.id, worker_key, inputs_digest(&inputs)),
+                        periodic_cause(state, &unit.id, worker_key, digest),
                     )
                 })
             }
@@ -861,21 +864,9 @@ pub(super) fn resolve_run_worker(
     };
     let mut input_provenance = unit.input_provenance.clone();
     if matches!(checked, CheckedWorker::Code { .. }) {
-        let sources = stage.artifacts.iter().flat_map(|artifact| {
-            checked.inputs().iter().filter_map(move |field| {
-                if !reads_artifact(&field.value.expression, &artifact.key) {
-                    return None;
-                }
-                latest(state, &unit.id, &artifact.key).map(|revision| InputProvenance {
-                    input: SymbolKey::from(field.key.as_str()),
-                    unit: unit.id.clone(),
-                    revision_id: revision.id.clone(),
-                })
-            })
-        });
         input_provenance
             .get_or_insert_with(Vec::new)
-            .extend(sources);
+            .extend(artifact_input_provenance(stage, checked, state, unit));
     }
     Ok(ResolvedRunWorker {
         prompt,

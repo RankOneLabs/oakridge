@@ -234,8 +234,50 @@ pub(super) fn json_digest(value: &Value) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
-/// The digest a periodic watch is pinned to: its resolved inputs.
-pub(super) fn inputs_digest(inputs: &Value) -> String {
+/// Record the unit's artifact revisions behind a worker's input expressions.
+pub(super) fn artifact_input_provenance(
+    stage: &CheckedStage,
+    worker: &CheckedWorker,
+    state: &StepSnapshot,
+    unit: &UnitState,
+) -> Vec<InputProvenance> {
+    stage
+        .artifacts
+        .iter()
+        .flat_map(|artifact| {
+            worker.inputs().iter().filter_map(move |field| {
+                if !reads_artifact(&field.value.expression, &artifact.key) {
+                    return None;
+                }
+                latest(state, &unit.id, &artifact.key).map(|revision| InputProvenance {
+                    input: SymbolKey::from(field.key.as_str()),
+                    unit: unit.id.clone(),
+                    revision_id: revision.id.clone(),
+                })
+            })
+        })
+        .collect()
+}
+
+/// Pin an observe intent to its input revisions as well as its query, so
+/// equivalent republications still dispatch a watch with current provenance.
+pub(super) fn periodic_inputs_digest(
+    stage: &CheckedStage,
+    worker: &CheckedWorker,
+    state: &StepSnapshot,
+    unit: &UnitState,
+    inputs: &Value,
+) -> String {
+    if matches!(
+        worker,
+        CheckedWorker::Code {
+            track_input_revisions: true,
+            ..
+        }
+    ) {
+        let provenance = artifact_input_provenance(stage, worker, state, unit);
+        return json_digest(&serde_json::json!([inputs, provenance]));
+    }
     json_digest(inputs)
 }
 /// Which watch a periodic worker wants (D-V1). Its latest watch while that
@@ -346,7 +388,7 @@ pub(super) fn unobserved_watch_artifacts(
         let Some(inputs) = eval_fields(checked_worker.inputs(), unit, state, None, context)? else {
             continue;
         };
-        let digest = inputs_digest(&inputs);
+        let digest = periodic_inputs_digest(checked, checked_worker, state, unit, &inputs);
         let is_observed = attempt(state, &unit.id, worker_key).is_some_and(|latest| {
             matches!(&latest.cause, Cause::Periodic { inputs: pinned, .. } if *pinned == digest)
                 && state.attempts.iter().any(|candidate| {

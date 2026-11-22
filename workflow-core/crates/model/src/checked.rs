@@ -168,6 +168,8 @@ pub enum CheckedWorker {
         inputs: Vec<CheckedNamedExpression>,
         creates: Vec<SymbolKey>,
         every: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        track_input_revisions: bool,
         when: Option<CheckedStageExpression>,
     },
 }

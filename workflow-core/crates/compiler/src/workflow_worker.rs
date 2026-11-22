@@ -295,6 +295,7 @@ impl StageCheck<'_> {
                     inputs: input_fields.expect("valid worker inputs"),
                     creates: produces.clone(),
                     every: every.clone(),
+                    track_input_revisions: operation.0 == "pull_request.observe",
                     when: when.map(|(expression, _)| expression),
                 })
             }
