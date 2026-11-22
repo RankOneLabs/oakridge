@@ -79,7 +79,7 @@ export class TestRun {
     if (!attempt) throw new Error(`Missing attempt ${worker}`);
     const previous = this.result.snapshot.revisions.filter(r => r.unit === unit && r.artifact === artifact).at(-1);
     const subject = worker === "assessor" ? this.latest("build_result", unit).id : null;
-    await this.apply({ kind: "revision_published", unit, artifact, body, by: attempt.action_id, predecessor: previous?.id ?? null, subject });
+    await this.apply({ kind: "revision_published", unit, artifact, body, by: { action: attempt.action_id, seq: attempt.seq }, predecessor: previous?.id ?? null, subject });
   }
   async end(worker: string, unit = "run/unit"): Promise<void> {
     const attempt = this.result.snapshot.attempts.filter(a => a.unit === unit && a.worker === worker).at(-1);

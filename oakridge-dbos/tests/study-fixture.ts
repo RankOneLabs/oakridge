@@ -113,8 +113,8 @@ export async function openStudy(authority: Authority, options: { readonly source
   };
   const publish = async (worker: string, artifact: string, body: unknown, options: { location?: string; subject?: string } = {}) => {
     const location = options.location ?? unit();
-    const by = (await action(worker, location)).action_id;
-    const outcome = await send({ run_id, event: { kind: "revision_published", unit: location, artifact, body, by,
+    const { action_id: by, seq } = await action(worker, location);
+    const outcome = await send({ run_id, event: { kind: "revision_published", unit: location, artifact, body, by: { action: by, seq },
       subject: options.subject ?? null, predecessor: (await revision(artifact, location))?.id ?? null },
       writer: { kind: "session", session: worker, attempt: by } });
     expect(outcome).toMatchObject({ value: { kind: "committed" } });

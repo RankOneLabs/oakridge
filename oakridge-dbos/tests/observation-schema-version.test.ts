@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { artifactSchemaVersion, declarationDigest } from "../src/adapters/observation-schema-version";
+import { artifactSchemaVersion, runInputSchemaVersion } from "../src/adapters/observation-schema-version";
 import type { ParsedWorkflow, Type } from "../src/core-client/core-types";
 import type { PinnedDefinitionRead } from "../src/storage/read-store";
 
@@ -39,14 +39,6 @@ test("resolved versions ignore alias names, prompt/definition changes and unrela
     version({ artifact: { kind: "named", schema: "renamed" }, schemas: { ...schemas, renamed: schemas.analysis_body! } }),
   ]).toEqual([original, original, original, original]);
 });
-test("historical contracts retain their exact named-declaration digests on replay", () => {
-  expect(version({ artifact: named, schemas, has_tasks: true })).toBe(declarationDigest(named));
-});
-test("the epoch gives unchanged current blockers a version distinct from historical blockers", () => {
-  const current = artifactSchemaVersion(definition({ artifact: named, schemas }), "analysis", "blocker");
-  const legacy = artifactSchemaVersion(definition({ artifact: named, schemas, has_tasks: true }), "analysis", "blocker");
-  expect([current?.split(":")[0], legacy?.split(":")[0], current === legacy]).toEqual(["artifact-schema/v2", "artifact-schema/v1", false]);
-});
 test("unresolvable and recursive names produce no artifact version", () => {
   expect([
     version({ artifact: { kind: "named", schema: "missing" }, schemas }),
@@ -54,43 +46,30 @@ test("unresolvable and recursive names produce no artifact version", () => {
   ]).toEqual([null, null]);
 });
 
-test("the real pinned requirement definition emits every published current extractor version", async () => {
+test("each launchable development and study artifact and run input use resolved versions", async () => {
   const { CoreClient, compileDefinition } = await import("../src/core-client/client");
   const { readLaunchableCatalog } = await import("../src/runtime/definition-store");
-  const { CURRENT_SCHEMA_VERSIONS, oakridgeCatalogue } = await import("../../observation/src/producers/oakridge/catalogue");
   const core = CoreClient.start();
   if (!core.ok) throw new Error(JSON.stringify(core.error));
   try {
     const catalog = readLaunchableCatalog();
     if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
-    const compiled = await compileDefinition(core.value, catalog.value.development.definition_id);
-    if (!compiled.ok) throw new Error(JSON.stringify(compiled.error));
-    for (const [stage, definition] of Object.entries(compiled.value.checked_program.workflow.stages)) {
-      for (const kind of Object.keys(definition.artifacts)) {
-        if (!Object.hasOwn(CURRENT_SCHEMA_VERSIONS, kind)) continue;
-        const version = artifactSchemaVersion(compiled.value, stage, kind);
-        expect(version).toBe(CURRENT_SCHEMA_VERSIONS[kind as keyof typeof CURRENT_SCHEMA_VERSIONS]);
-        expect(oakridgeCatalogue(kind, version!).length).toBeGreaterThan(0);
+    for (const key of ["development", "study"] as const) {
+      const compiled = await compileDefinition(core.value, catalog.value[key].definition_id);
+      if (!compiled.ok) throw new Error(JSON.stringify(compiled.error));
+      const workflow = compiled.value.checked_program.workflow;
+      expect(runInputSchemaVersion(workflow)).toMatch(/^artifact-schema\/v2:[a-f0-9]{64}$/);
+      for (const [stage, definition] of Object.entries(workflow.stages)) {
+        for (const artifact of Object.keys(definition.artifacts)) {
+          expect(artifactSchemaVersion(compiled.value, stage, artifact)).toMatch(/^artifact-schema\/v2:[a-f0-9]{64}$/);
+        }
       }
     }
   } finally { core.value.close(); }
 });
 
-test("the historical pinned definition keeps v1 versions and legacy extractors", async () => {
-  const { CoreClient, compileDefinition } = await import("../src/core-client/client");
-  const { oakridgeCatalogue } = await import("../../observation/src/producers/oakridge/catalogue");
-  const core = CoreClient.start();
-  if (!core.ok) throw new Error(JSON.stringify(core.error));
-  try {
-    const compiled = await compileDefinition(core.value, "74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4" as PinnedDefinitionRead["definition_id"]);
-    if (!compiled.ok) throw new Error(JSON.stringify(compiled.error));
-    for (const [stage, definition] of Object.entries(compiled.value.checked_program.workflow.stages)) {
-      for (const [kind, declaration] of Object.entries(definition.artifacts)) {
-        const version = artifactSchemaVersion(compiled.value, stage, kind);
-        expect(version).toBe(declarationDigest(declaration.schema));
-        expect(oakridgeCatalogue(kind, version!).map((definition) => definition.extractor_id))
-          .toEqual(oakridgeCatalogue(kind, "development-v1").map((definition) => definition.extractor_id));
-      }
-    }
-  } finally { core.value.close(); }
+test("run inputs expand named fields before hashing", () => {
+  const original = { input: { kind: "record", fields: { requirement: { kind: "named", schema: "requirement" } } }, schemas } satisfies Pick<ParsedWorkflow, "input" | "schemas">;
+  const revised = { ...original, schemas: { ...schemas, requirement: { kind: "record" as const, fields: { id: { kind: "ident" as const } } } } };
+  expect(runInputSchemaVersion(original)).not.toBe(runInputSchemaVersion(revised));
 });

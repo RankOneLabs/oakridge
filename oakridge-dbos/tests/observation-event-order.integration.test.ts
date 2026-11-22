@@ -85,7 +85,7 @@ test("a replay reports blocked, not finished, while an open transaction hides co
     await authority.db.insertInto("authority.event").values({ id: crypto.randomUUID(), ...cancel }).execute();
     await migrateObservation(observation);
     const report = await replayIntoObservation({ authority: authority.db, observation, namespace: "blocked",
-      start: { commit_txid: String(latest.commit_txid), id: latest.id }, wait_ms: 500 });
+      start: { commit_txid: String(latest.commit_txid), event_id: latest.id }, wait_ms: 500 });
     expect(report).toEqual({ kind: "blocked", delivered: 0, remaining: 1 });
   } finally { release(); await pending; await holder.destroy(); await observation.destroy(); await target.drop(); }
 });

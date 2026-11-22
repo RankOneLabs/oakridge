@@ -8,7 +8,7 @@ const published = (predecessor: string | null): ExecutorReport => ({ run_id: "ru
 test("code worker output carries the predecessor the executor resolved, so a changed value follows the latest revision", () => {
   const { event } = selectReportEvent(published("u:pr_state:1"));
   expect(event.kind === "revision_published" ? { predecessor: event.predecessor, by: event.by } : null)
-    .toEqual({ predecessor: "u:pr_state:1", by: "u:poll:Initial:Periodic" });
+    .toEqual({ predecessor: "u:pr_state:1", by: { action: "u:poll:Initial:Periodic", seq: 2 } });
 });
 
 test("a re-sent publication report is the same event under the same ingress id", () => {

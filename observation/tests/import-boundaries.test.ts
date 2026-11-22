@@ -93,7 +93,7 @@ test("only the composition root names a producer implementation", () => {
 
 test("core code, tables and rules never name a producer concept", () => {
   const named = coreFiles.flatMap((path) => readFileSync(path, "utf8").split("\n")
-    .flatMap((line, index) => namesProducerConcept(line.replaceAll("brief_revision_ids", "recorded_revision_ids")) ? [`${relative(sourceRoot, path)}:${index + 1}: ${line.trim()}`] : []));
+    .flatMap((line, index) => namesProducerConcept(line) ? [`${relative(sourceRoot, path)}:${index + 1}: ${line.trim()}`] : []));
   expect(named).toEqual([]);
 });
 
@@ -104,7 +104,7 @@ test("the vocabulary check sees a concept inside an identifier", () => {
 });
 
 test("core hard-codes no producer item kind or artifact selection", () => {
-  const selecting = /["'](assessment|assessment_finding|analysis|plan|build_result|task)["']/;
+  const selecting = /["'](assessment|assessment_finding|analysis|plan|build_result)["']/;
   const named = coreFiles.filter((path) => selecting.test(readFileSync(path, "utf8"))).map((path) => relative(sourceRoot, path));
   expect(named).toEqual([]);
 });
@@ -113,4 +113,9 @@ test("a stray producer import in core is detected", () => {
   const source = 'import { oakridgeProfile } from "../producers/oakridge/profile";';
   const names = importNames(resolve(sourceRoot, "storage/injected.ts"), source);
   expect(names.some((name) => name.includes("producers/"))).toBe(true);
+});
+
+test("the local generated DBOS contract has no runtime imports", () => {
+  const path = resolve(sourceRoot, "ingest/dbos-revision-delivery.ts");
+  expect(importNames(path, readFileSync(path, "utf8"))).toEqual([]);
 });

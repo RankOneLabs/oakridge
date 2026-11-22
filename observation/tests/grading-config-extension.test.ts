@@ -25,8 +25,8 @@ for (const is_valid of [true, false]) integration(`a configuration-only question
   if (!registered.ok) throw new Error(registered.error.detail);
   const feed = createFeed(db, tenant, stampCapture(registration.value.capture, pinIdentity));
   await feed.launch({ spec: "Ship organization reads" }, "run-1", runConfig(true));
-  await feed.revision({ revision_id: "analysis", artifact_kind: "analysis", body: { summary: "Reads", findings: [
-    { id: "F1", description: "Organization reads are required", severity: "warning" }], requirements: [], risks: [], proposed_spec_updates: [] } });
+  await feed.revision({ revision_id: "analysis", artifact_kind: "analysis", body: { summary: "Reads", requirements: [{ id: "R1", findings: [
+    { id: "F1", description: "Organization reads are required", severity: "warning" }] }] } });
   await createEvidenceReconciler({ db, collector: registration.value.collector, repository, admission: { retry_limit: 1 }, log: () => undefined })
     .reconcileRun(tenant, "run-1");
   const workers = { db, tenants: [tenant], lease_owner: "config-extension", log: () => undefined,

@@ -49,7 +49,7 @@ class Run {
     return run;
   }
   async apply(event: Event) {
-    const incoming: Incoming = { event, writer: event.kind === "revision_published" ? { kind: "executor", attempt: event.by ?? "none" } : OPERATOR, ingress_id: crypto.randomUUID() };
+    const incoming: Incoming = { event, writer: event.kind === "revision_published" ? { kind: "executor", attempt: event.by?.action ?? "none" } : OPERATOR, ingress_id: crypto.randomUUID() };
     const stepped = await core.request("step", { workflow_digest: this.compiled.digest, snapshot: this.state, incoming });
     if (!stepped.ok || stepped.value.kind !== "stepped") throw new Error(JSON.stringify(stepped));
     const result = stepped.value.value;
@@ -69,7 +69,7 @@ class Run {
   latest(artifact: string) { return this.state.revisions.filter((revision) => revision.unit === "run/a" && revision.artifact === artifact).at(-1); }
   attempt() { const attempt = this.state.attempts.filter((attempt) => attempt.unit === "run/a").at(-1); if (!attempt) throw new Error("attempt absent"); return attempt; }
   async publish(artifact: string, body: unknown) {
-    return this.apply({ kind: "revision_published", unit: "run/a", artifact, body, predecessor: this.latest(artifact)?.id ?? null, subject: null, by: this.attempt().action_id });
+    return this.apply({ kind: "revision_published", unit: "run/a", artifact, body, predecessor: this.latest(artifact)?.id ?? null, subject: null, by: { action: this.attempt().action_id, seq: 1 } });
   }
   async answer(decision: "clarify" | "discuss" | "override") {
     const target = this.latest("blocker")?.id;

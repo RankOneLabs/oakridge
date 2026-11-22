@@ -6,9 +6,9 @@ import { sql } from "kysely";
 import type { JsonValue } from "../src/domain/primitives";
 import { parseGradingDefinitions, planRegistration, type GradingDefinitions } from "../src/grading/configuration";
 import type { EvidenceSet } from "../src/grading/evidence";
-import type { SourceEventCursor, SourceEventOutcome } from "../src/ingest/cursor";
+import { INITIAL_SOURCE_CURSOR } from "../src/ingest/cursor";
+import { fixtureDelivery, type FixtureEvent } from "./grading-fixture";
 import type { RepositoryFile, RepositoryReader } from "../src/ports/artifact-source";
-import { TASK_SCOPE } from "../src/producers/oakridge/catalogue";
 import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "./grading-fixture";
 import { oakridgeProfile, oakridgeGradingRegistry } from "./grading-fixture";
 import { createGradingConfigStore } from "../src/grading/configuration-store";
@@ -20,7 +20,6 @@ import type { RunnerResolver } from "../src/grading/worker";
 import type { GradeRunner } from "../src/ports/grade-runner";
 import { withTenant, type Database } from "../src/storage/database";
 import { registerQuestion } from "../src/storage/grading-store";
-import { declareRelationInTransaction } from "../src/storage/projection-store";
 import { fixtureDefinitions, credentialEnv, databaseUrl, fixtureBody, integration, launchOutcome, revisionOutcome, runConfig, scratchDatabase,
   tenant } from "./grading-fixture";
 
@@ -46,11 +45,11 @@ interface Service { readonly port: number; stop(): Promise<void> }
 interface Harness {
   start(graders: GradingDefinitions | unknown, runners?: RunnerResolver): Promise<Service>;
   publish(service: Service, definitions: GradingDefinitions): Promise<void>;
-  send(service: Service, outcome: SourceEventOutcome): Promise<void>;
+  send(service: Service, outcome: FixtureEvent): Promise<void>;
   get(service: Service, path: string): Promise<unknown>;
 }
 async function harness(db: Database, reader: RepositoryReader, directory: string): Promise<Harness> {
-  let cursor: SourceEventCursor = { commit_txid: "0", id: "" };
+  let cursor = INITIAL_SOURCE_CURSOR;
   const url = await databaseUrl(db);
   return {
     async start(graders, runners) {
@@ -85,12 +84,12 @@ async function harness(db: Database, reader: RepositoryReader, directory: string
       expect(response.status).toBe(201);
     },
     async send(service, outcome) {
-      const next = { commit_txid: String(Number(cursor.commit_txid) + 1), id: outcome.event_id };
+      const delivery = fixtureDelivery(tenant, outcome, cursor);
       const response = await fetch(`http://127.0.0.1:${service.port}/v1/sources/oakridge/events`, { method: "POST",
         headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
-        body: JSON.stringify({ previous: cursor, cursor: next, outcome }) });
+        body: JSON.stringify(delivery) });
       expect(response.status).toBe(200);
-      cursor = next;
+      cursor = delivery.cursor;
     },
     async get(service, path) {
       const response = await fetch(`http://127.0.0.1:${service.port}${path}`, { headers: { authorization: "Bearer read-secret" } });
@@ -236,8 +235,7 @@ integration("not-ready capture, config swap and restart, readiness arrival and a
     body: await fixtureBody("assessment") }));
   const cited = await itemAt(h, first, "assessment-1", "/findings/0", "assessment_finding");
   const uncited = await itemAt(h, first, "assessment-1", "/findings/1", "assessment_finding");
-  const unlinked = await itemAt(h, first, "assessment-1", "/findings/2", "assessment_finding");
-  const finding = await itemAt(h, first, "analysis-1", "/findings/0", "finding");
+  const finding = await itemAt(h, first, "analysis-1", "/requirements/0/findings/0", "finding");
 
   // Relevance is ready from the captured spec; the cited finding waits on its repository for both
   // questions; the uncited finding's Evidence support is ready while its Correctness waits for build-1.
@@ -276,15 +274,6 @@ integration("not-ready capture, config swap and restart, readiness arrival and a
   for (const set of later) expect(set.pinned_evaluator_definition_ids).toEqual(pinsOf(after, set.question_id));
   expect(pinsOf(after, CORRECTNESS_ID)).not.toEqual(pinsOf(before, CORRECTNESS_ID));
 
-  // A late link changes the tracking view only.
-  const unlinkedReady = await settled(h, second, unlinked, (sets) => sets.every((set) => set.readiness.state === "ready"));
-  const linked = await withTenant(db, tenant, (trx) => declareRelationInTransaction(trx, tenant, { run_id: "run-1", source_revision_id: "assessment-1",
-    item_path: "/findings/2", link: { target: "logical_item", type: "assesses", target_scope: TASK_SCOPE, target_local_id: "T8",
-      evidence_ref: "declaration:late" } }));
-  expect(linked.ok).toBe(true);
-  await h.send(second, revisionOutcome({ revision_id: "tasks-2", artifact_kind: "tasks", body: { tasks: [{ id: "T404", description: "Arrives late", requirement_ids: [] }] } }));
-  expect(await evidenceOf(h, second, unlinked)).toEqual(unlinkedReady);
-  expect(await itemAt(h, second, "assessment-1", "/findings/2", "assessment_finding")).toEqual(unlinked);
   await second.stop();
 
   // Both configurations' definitions are retained; nothing executed, called a provider or answered.
@@ -370,7 +359,7 @@ integration("an enabled run grades with the evaluators pinned at capture across 
   const sent = requests.length;
   const third = await h.start(after, recordingRunners(requests));
   await h.send(third, revisionOutcome({ revision_id: "assessment-1", artifact_kind: "assessment", subject_id: "build-1",
-    body: await fixtureBody("assessment") }, tenant, "event:assessment-1-replayed"));
+    body: await fixtureBody("assessment") }, "event:assessment-1-replayed"));
   await Bun.sleep(300);
   await third.stop();
   expect([(await executionsBy(db)).length, requests.length, sent]).toEqual([16, sent, 16]);

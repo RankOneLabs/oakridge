@@ -224,7 +224,7 @@ test("every pre-cleanup question/catalogue target has a capture pin", async () =
   const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   expect(registration.value.capture.pins).toMatchObject([
-    { question_id: "finding.relevance", item_kind: "finding", artifact_kind: "analysis", item_selector: "/findings/*" },
+    { question_id: "finding.relevance", item_kind: "finding", artifact_kind: "analysis", item_selector: "/requirements/*/findings/*" },
     { question_id: "assessment_finding.correctness", item_kind: "assessment_finding", artifact_kind: "assessment", item_selector: "/findings/*" },
     { question_id: "assessment_finding.evidence_support", item_kind: "assessment_finding", artifact_kind: "assessment", item_selector: "/findings/*" },
     { question_id: "task.requirement_coverage", item_kind: "task", artifact_kind: "tasks", item_selector: "/tasks/*" },

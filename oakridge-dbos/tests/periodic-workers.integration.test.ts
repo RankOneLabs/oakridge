@@ -76,7 +76,7 @@ async function intentsOf(run_id: RunId, worker: string) {
     return decoded.ok ? [{ action_id: row.action_id, status: row.status, instruction: decoded.value }] : [];
   }));
 }
-const revisionsOf = (run_id: RunId, artifact: string) => authority.db.selectFrom("authority.artifact_revision").select(["id", "body", "by_id"])
+const revisionsOf = (run_id: RunId, artifact: string) => authority.db.selectFrom("authority.artifact_revision").select(["id", "body", "by_action_id"])
   .where("run_id", "=", run_id).where("artifact", "=", artifact).orderBy("created_at").execute();
 
 /** One attempt as the executor carries it: started, its output published (when it has one), ended. Returns any refusal. */

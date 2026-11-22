@@ -25,7 +25,7 @@ async function drafted(count: number): Promise<{ readonly run_id: RunId; readonl
   const revisions: string[] = [];
   for (let index = 1; index <= count; index++) {
     await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: `v${index}` },
-      predecessor: revisions.at(-1) ?? null, by: action }, writer: executor(action) });
+      predecessor: revisions.at(-1) ?? null, by: { action: action, seq: 1 } }, writer: executor(action) });
     revisions.push(`${unit}:draft:${index}`);
   }
   return { run_id, unit, revisions };
@@ -49,7 +49,7 @@ test("a superseded revision refuses new threads, messages and review items", asy
   if (opened.kind !== "written") throw new Error("thread not written");
   const action = await actionOf(authority, run_id, "writer");
   await submitter(authority)({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "v2" },
-    predecessor: revisions[0]!, by: action }, writer: executor(action) });
+    predecessor: revisions[0]!, by: { action: action, seq: 1 } }, writer: executor(action) });
   const late_thread = await thread(run_id, unit, revisions[0]!, "late");
   const message = await addCollaborationMessage(authority.db, { id: "m-late", run_id, unit_id: unit, thread_id: opened.value.id,
     body: { text: "hi", author: "op" } });
@@ -77,7 +77,7 @@ test("the thread view spans the revision chain, with write capability only on th
   await addReviewItem(authority.db, { id: "r-old", run_id, unit_id: unit, thread_id: old_thread.value.id, body: { title: "t", detail: "d", status: "open" } });
   const action = await actionOf(authority, run_id, "writer");
   await submitter(authority)({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "v2" },
-    predecessor: revisions[0]!, by: action }, writer: executor(action) });
+    predecessor: revisions[0]!, by: { action: action, seq: 1 } }, writer: executor(action) });
   const latest = `${unit}:draft:2`;
   await thread(run_id, unit, latest, "new");
   const views = await readCollaborationThreads(authority.db, { run_id, unit_id: unit, revision_id: latest });

@@ -377,12 +377,12 @@
       ]
     },
     {
-      "id": "next_action.correctness",
+      "id": "feedback_proposal.correctness",
       "scope": "per_item",
       "targets": [
         {
           "artifact": "assessment",
-          "selector": "/next_actions/*"
+          "selector": "/proposals/*"
         }
       ],
       "evidence": [

@@ -18,7 +18,7 @@ import { withTenant, type Database } from "../src/storage/database";
 import { createEvidenceReconciler, type EvidenceReconciler } from "../src/storage/evidence-pipeline";
 import { claimNext, completeExecution, failExecution, markRequestSent, readItemMeasurements, readRunSpend } from "../src/storage/execution-store";
 import { registerDefinitions } from "../src/storage/grading-store";
-import { fixtureDefinitions, createFeed, databaseUrl, DEFINITION_ID, fixtureBody, integration, runConfig, SCHEMA_VERSION, scratchDatabase, tenant,
+import { fixtureDefinitions, createFeed, databaseUrl, fixtureBody, integration, runConfig, scratchDatabase, tenant,
   type Feed } from "./grading-fixture";
 
 const HEAD = "1111111111111111111111111111111111111111";
@@ -128,7 +128,7 @@ integration("an enabled run's unlinked analysis is admitted and answered before 
   expect(executions.map((row) => [row.item_kind, row.question_id, row.status])).toEqual([["finding", RELEVANCE_ID, "queued"]]);
   expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.logical_item").select("scope").where("scope", "=", "task").execute())).toEqual([]);
   await life.drain(life.worker(firstAllowed));
-  const measured = await readItemMeasurements(db, tenant, await occurrenceAt(db, "run-1-analysis", "/findings/0"));
+  const measured = await readItemMeasurements(db, tenant, await occurrenceAt(db, "run-1-analysis", "/requirements/0/findings/0"));
   expect(measured?.questions.map((entry) => [entry.evidence.question_id, entry.is_human_ready, entry.machine.map((machine) => machine.measurement)])).toEqual([
     [RELEVANCE_ID, true, [expect.objectContaining({ state: "answered", answer: { state: "answered", kind: "choice", value: "relevant" } })]]]);
   expect(await life.counts()).toMatchObject({ executions: 1, completed: 1, attempts: 1, sent: 1, answers: 1 });
@@ -291,7 +291,7 @@ integration("retries exhausted by provider failures end failed with no grade", a
   await life.drain(life.worker(() => err({ operation: "test", entity_id: "", detail: "timeout", category: "timeout" })));
   const [execution] = await executionsOf(db);
   expect([execution?.status, execution?.terminal_cause, life.requests.sent.length]).toEqual(["failed", "retry_exhausted", 2]);
-  const measured = await readItemMeasurements(db, tenant, await occurrenceAt(db, "run-1-analysis", "/findings/0"));
+  const measured = await readItemMeasurements(db, tenant, await occurrenceAt(db, "run-1-analysis", "/requirements/0/findings/0"));
   expect(measured?.questions[0]?.machine[0]?.measurement).toMatchObject({ state: "failed", terminal_cause: "retry_exhausted" });
   expect(await life.counts()).toMatchObject({ answers: 0 });
 }));
@@ -484,11 +484,10 @@ integration("accept and request-changes delivered over HTTP start no pass and ad
     reconcileRun: (scope, run_id) => { passes.push(run_id); return life.reconciler.reconcileRun(scope, run_id); } };
   const app = createApp({ db, credentials: { ingest: [{ ...tenant, token: "ingest-secret" }], read: [] }, profile: oakridgeProfile, evidence });
   for (const [index, decision] of ["accept", "request-changes"].entries()) {
-    const next = { commit_txid: String(3 + index), id: `decision:${decision}` };
+    const next = { commit_txid: String(3 + index), event_id: `decision:${decision}` };
     const response = await app.request("/v1/sources/oakridge/events", { method: "POST",
       headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
-      body: JSON.stringify({ previous: cursor, cursor: next, outcome: { format: "observation.source-event/v1", definition_id: DEFINITION_ID,
-        artifact_schema_version: SCHEMA_VERSION, kind: "ignored", event_kind: "operator_decided", run_id: "run-1", event_id: next.id } }) });
+      body: JSON.stringify({ ...tenant, previous: cursor, cursor: next, event: { kind: "other", event_kind: "operator_decided" }, run_id: "run-1", event_id: next.event_id }) });
     expect(response.status).toBe(200);
     cursor = next;
   }
@@ -518,7 +517,7 @@ integration("a task first published after its finding makes both assessment ques
   for (const question of ready.questions) {
     expect(question.evidence.readiness).toMatchObject({ state: "ready", references: [{ ref: "subject" },
       { ref: "task_context:0", source: "revision", revision_id: "first-late-task", item_path: "/tasks/0", content: task }] });
-    expect(String(question.evidence.task_id)).toBe("oakridge:grading-test:run-1:task:LATE");
+    expect(String(question.evidence.task_id)).toBe("oakridge:grading-test:run-1:task:requirement:LATE");
   }
   await life.drain(life.worker(firstAllowed));
   const measured = (await readItemMeasurements(db, tenant, occurrence_id))!;

@@ -111,7 +111,7 @@ async function reviewedRun(): Promise<{ readonly run_id: RunId; readonly unit: s
   const unit = unitOf(run_id, "document");
   const action = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
-  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "first" }, by: action }, writer: executor(action) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "first" }, by: { action: action, seq: 1 } }, writer: executor(action) });
   await submit({ run_id, event: { kind: "worker_ended", action, result: { kind: "succeeded" } }, writer: executor(action) });
   await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "request_changes", target: `${unit}:draft:1`, payload: { feedback: "more" } } });
   await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "approve", target: `${unit}:draft:9`, payload: {} } });

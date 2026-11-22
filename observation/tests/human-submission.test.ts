@@ -1,5 +1,3 @@
-import { stampCapture } from "../src/grading/configuration";
-import { pinIdentity } from "./grading-fixture";
 import { pinProvenance } from "./grading-fixture";
 import { targetOf } from "./grading-fixture";
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -43,14 +41,14 @@ async function setup(db: Database, grading_enabled = false) {
   const feed = createFeed(db, tenant, pins);
   await feed.launch({ spec: "the spec" }, "run-1", runConfig(grading_enabled));
   await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one",
-    body: { head_sha: "abc", verdict: "pass", findings: [{ task_ids: [], status: "met", evidence: [], description: "narrow finding" }], recommended_next_actions: [] } });
-  const item = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select("occurrence_id").where("item_kind", "=", "assessment_finding").executeTakeFirstOrThrow());
+    body: { head_sha: "abc", verdict: "pass", item_assessments: [{ subject: { kind: "requirement", id: "R1" }, status: "met", evidence: [], observation: "Narrow assessment" }], additional_findings: [], proposals: [], verifications: [] } });
+  const item = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select("occurrence_id").where("item_kind", "=", "item_assessment").executeTakeFirstOrThrow());
   const occurrence_id = item.occurrence_id as ItemOccurrenceId;
   const sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
   const support = sets.find((set) => set.question_id === EVIDENCE_SUPPORT_ID)!;
   const correctness = sets.find((set) => set.question_id === CORRECTNESS_ID)!;
   const ready = (evidence_set_id: typeof support.evidence_set_id) => recordCollection(db, tenant, evidence_set_id, { state: "ready",
-    references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "assessment-1" as ArtifactRevisionId, item_path: "/findings/0", content: "frozen" }] });
+    references: [{ source: "reported", reported_by: "agent", ref: "subject", revision_id: "assessment-1" as ArtifactRevisionId, item_path: "/item_assessments/0", content: "frozen" }] });
   await ready(support.evidence_set_id);
   return { app: createApp({ db, credentials, profile: oakridgeProfile }), occurrence_id, support, correctness, ready };
 }
@@ -177,15 +175,21 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
   await registerEvaluator(db, tenant, human);
   const feed = createFeed(db, tenant, configuration);
   await feed.launch({ spec: "the spec" });
+  await feed.revision({ revision_id: "brief-scoped", artifact_kind: "brief", body: {
+    cohort_id: "one", repository_key: "oakridge", build_items: [{ id: "B1", requirement_ids: ["T3", "T7", "T99"], instructions: "Build", verification: ["Test"] }],
+    technical_decisions: [],
+  } });
   await feed.revision({ revision_id: "scoped", artifact_kind: "assessment", unit_id: "run-1/implementation/one",
-    body: { findings: [{ task_ids: ["T3", "T7", "T7", "T99"], evidence: [], status: "met" }] } });
+    input_bindings: [{ input: "assignment", unit: "brief", revision_id: "brief-scoped" }],
+    body: { item_assessments: [{ subject: { kind: "build_item", id: "B1" }, evidence: [], status: "met", observation: "Verified" }],
+      additional_findings: [], proposals: [], verifications: [] } });
   const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").selectAll()
-    .where("item_kind", "=", "assessment_finding").executeTakeFirstOrThrow());
+    .where("item_kind", "=", "item_assessment").executeTakeFirstOrThrow());
   const occurrence_id = row.occurrence_id as ItemOccurrenceId;
   expect(await readOccurrenceEvidence(db, tenant, occurrence_id)).toEqual([]);
-  const task = (id: string) => `oakridge:grading-test:run-1:task:${id}` as import("../src/domain/identity").LogicalItemId;
-  const taskBody = (ids: readonly string[]) => ({ tasks: ids.map((id) => ({ id, description: `Definition for ${id}`, requirement_ids: [] })) });
-  await feed.revision({ revision_id: "tasks", artifact_kind: "tasks", recorded_at: "2026-11-01T00:00:01Z", body: taskBody(["T3", "T7", "T9"]) });
+  const task = (id: string) => `oakridge:grading-test:run-1:task:requirement:${id}` as import("../src/domain/identity").LogicalItemId;
+  const taskBody = (ids: readonly string[]) => ({ requirements: ids.map((id) => ({ id, text: `Definition for ${id}`, analysis_finding_ids: [] })) });
+  await feed.revision({ revision_id: "tasks", artifact_kind: "spec", recorded_at: "2026-11-01T00:00:01Z", body: taskBody(["T3", "T7", "T9"]) });
   const sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
   expect(sets.map((set) => [set.question_id, set.task_id])).toEqual([
     [CORRECTNESS_ID, task("T3")], [CORRECTNESS_ID, task("T7")], [EVIDENCE_SUPPORT_ID, task("T3")], [EVIDENCE_SUPPORT_ID, task("T7")] ]);
@@ -202,8 +206,8 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
     if (!collected.ok || collected.value.readiness.state !== "ready") throw new Error("collection failed");
     const context = collected.value.readiness.references.filter((reference) => reference.ref.startsWith("task_context:"));
     expect(context).toEqual([{ source: "revision", ref: "task_context:0", revision_id: "tasks" as ArtifactRevisionId,
-      item_path: set.task_id === task("T3") ? "/tasks/0" : "/tasks/1",
-      content: { id: set.task_id === task("T3") ? "T3" : "T7", description: set.task_id === task("T3") ? "Definition for T3" : "Definition for T7", requirement_ids: [] } }]);
+      item_path: set.task_id === task("T3") ? "/requirements/0" : "/requirements/1",
+      content: { id: set.task_id === task("T3") ? "T3" : "T7", text: set.task_id === task("T3") ? "Definition for T3" : "Definition for T7", analysis_finding_ids: [] } }]);
   }
   const app = createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: configuration });
   const send = (body: unknown) => app.request(`/v1/items/${encodeURIComponent(occurrence_id)}/answers`,
@@ -230,18 +234,18 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
   }
   // Resolving the last reference creates only its two subjects and never changes existing pins.
   const next_version = "late-version";
-  for (const question of OAKRIDGE_QUESTIONS.filter((question) => question.item_kind === "assessment_finding"))
+  for (const question of OAKRIDGE_QUESTIONS.filter((question) => question.item_kind === "item_assessment"))
     await registerQuestion(db, tenant, { ...question, question_version: next_version });
   const later_configuration: CaptureConfiguration = { pins: configuration.pins.map((pin) =>
     pin.scope === "per_task" ? { ...pin, question_version: next_version, collection_plan: { ...pin.collection_plan, question_version: next_version } } : pin) };
-  await feed.revision({ revision_id: "tasks-later", artifact_kind: "tasks", body: taskBody(["T3", "T7", "T9", "T99"]) }, later_configuration);
+  await feed.revision({ revision_id: "tasks-later", artifact_kind: "spec", body: taskBody(["T3", "T7", "T9", "T99"]) }, later_configuration);
   const later_sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
   expect(later_sets.filter((set) => set.task_id === task("T99")).map((set) => set.question_version)).toEqual([next_version, next_version]);
   expect(later_sets.filter((set) => set.task_id === task("T3")).every((set) => set.question_version !== next_version)).toBe(true);
-  await feed.revision({ revision_id: "tasks-later", artifact_kind: "tasks", body: taskBody(["T3", "T7", "T9", "T99"]) }, later_configuration);
+  await feed.revision({ revision_id: "tasks-later", artifact_kind: "spec", body: taskBody(["T3", "T7", "T9", "T99"]) }, later_configuration);
   expect(await readOccurrenceEvidence(db, tenant, occurrence_id)).toHaveLength(6);
   const per_item = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select("occurrence_id")
-    .where("item_kind", "=", "task").executeTakeFirstOrThrow());
+    .where("item_kind", "=", "requirement").executeTakeFirstOrThrow());
   const request = { question_id: "task.requirement_coverage", question_version: questionVersion("task.requirement_coverage"), submission_id: "bad-task", answer: "unclear", task_id: task("T3") };
   const rejected = await app.request(`/v1/items/${encodeURIComponent(per_item.occurrence_id)}/answers`, { method: "POST",
     headers: { authorization: "Bearer grade", "content-type": "application/json" }, body: JSON.stringify(request) });
@@ -254,50 +258,29 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
   expect(provider_calls).toBe(0);
 }));
 
-integration("empty task_ids pins one task-less subject; unresolved ids wait and later gain tasked subjects", async () => scratchDatabase(async (db) => {
-  const { fixtureDefinitions, oakridgeGradingRegistry, oakridgeEvidence } = await import("./grading-fixture");
-  const { planRegistration } = await import("../src/grading/configuration");
-  const { registerDefinitions } = await import("../src/storage/grading-store");
-  const { collectPinnedQuestion } = await import("../src/storage/captured-evidence-store");
-  const { CaptureArtifactSource } = await import("../src/storage/capture-artifact-source");
-  const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
-  if (!registration.ok) throw new Error(registration.error.detail);
-  await registerDefinitions(db, tenant, registration.value);
-  const feed = createFeed(db, tenant, stampCapture(registration.value.capture, pinIdentity));
-  await feed.launch({ spec: "the spec" });
-  await feed.revision({ revision_id: "assessment", artifact_kind: "assessment", body: { findings: [
-    { task_ids: [], evidence: [], description: "General finding" },
-    { task_ids: ["T404"], evidence: [], description: "Unresolved finding" }] } });
-  const items = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").selectAll()
-    .where("item_kind", "=", "assessment_finding").orderBy("json_pointer").execute());
-  const empty = items[0]!.occurrence_id as ItemOccurrenceId;
-  const unresolved = items[1]!.occurrence_id as ItemOccurrenceId;
-  const pinned = await readOccurrenceEvidence(db, tenant, empty);
-  expect(pinned.map((set) => [set.question_id, set.task_id])).toEqual([[CORRECTNESS_ID, null], [EVIDENCE_SUPPORT_ID, null]]);
-  expect(await readOccurrenceEvidence(db, tenant, unresolved)).toEqual([]);
-  expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_relation").select("unresolved_target_ref")
-    .where("source_occurrence_id", "=", unresolved).execute())).toMatchObject([{ unresolved_target_ref: expect.stringContaining("T404") }]);
-  const source = new CaptureArtifactSource({ db, tenant, run_id: "run-1", collector: oakridgeEvidence,
-    repository: { hasCommit: async () => false, readFile: async () => ({ state: "absent" }) } });
-  for (const set of pinned) {
-    const result = await collectPinnedQuestion(db, tenant, source, set);
-    expect(result).toMatchObject({ ok: true, value: { task_id: null, readiness: { state: "ready", references: [{ ref: "subject" }] } } });
-  }
-  const app = createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: stampCapture(registration.value.capture, pinIdentity) });
-  const send = (occurrence: string, body: unknown) => app.request(`/v1/items/${encodeURIComponent(occurrence)}/answers`,
-    { method: "POST", headers: { authorization: "Bearer grade", "content-type": "application/json" }, body: JSON.stringify(body) });
-  expect((await send(empty, answer("taskless", "supports", { task_id: null }))).status).toBe(201);
-  expect(await (await send(unresolved, answer("unresolved", "supports", { task_id: null }))).json()).toMatchObject({ error: { code: "task_required" } });
-  expect((await send(empty, answer("invalid-value", "invented"))).status).toBe(422);
-  const filter = `question_id=${EVIDENCE_SUPPORT_ID}&question_version=${questionVersion(EVIDENCE_SUPPORT_ID)}`;
-  for (const surface of ["answers", "evidence"]) {
-    const read = (query: string) => app.request(`/v1/items/${encodeURIComponent(empty)}/${surface}?${query}`, { headers: { authorization: "Bearer read" } });
-    expect((await read(filter)).status).toBe(200);
-    expect((await read(`${filter}&task_id=T404`)).status).toBe(400);
-  }
-  await feed.revision({ revision_id: "tasks", artifact_kind: "tasks", body: { tasks: [{ id: "T404", description: "Resolved", requirement_ids: [] }] } });
-  const resolved = await readOccurrenceEvidence(db, tenant, unresolved);
-  expect(resolved.map((set) => set.task_id)).toEqual([expect.stringContaining("T404"), expect.stringContaining("T404")]);
-  expect(await readOccurrenceEvidence(db, tenant, empty)).toHaveLength(2);
-  expect(provider_calls).toBe(0);
+integration("an unresolved requirement assessment gains isolated grading subjects when the requirement arrives", async () => scratchDatabase(async (db) => {
+  const { runConfig, scopeOf } = await import("./grading-fixture");
+  const configuration: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({
+    ...question, ...scopeOf(question.question_id), ...targetOf(question.question_id), ...pinProvenance(question),
+    evaluator_definition_ids: [human.evaluator_definition_id as EvaluatorDefinitionId],
+  })) };
+  for (const question of OAKRIDGE_QUESTIONS) await registerQuestion(db, tenant, question);
+  await registerEvaluator(db, tenant, human);
+  const feed = createFeed(db, tenant, configuration);
+  await feed.launch({ spec: "the spec" }, "run-1", runConfig(false));
+  await feed.revision({ revision_id: "assessment", stage: "integration", artifact_kind: "assessment", body: {
+    item_assessments: [{ subject: { kind: "requirement", id: "T404" }, observation: "Verified", status: "met", evidence: [] }],
+    additional_findings: [], proposals: [], verifications: [],
+  } });
+  const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence").select("occurrence_id")
+    .where("revision_id", "=", "assessment").executeTakeFirstOrThrow());
+  const id = row.occurrence_id as ItemOccurrenceId;
+  expect(await readOccurrenceEvidence(db, tenant, id)).toEqual([]);
+  await feed.revision({ revision_id: "spec", artifact_kind: "spec", body: {
+    requirements: [{ id: "T404", text: "Verify this", analysis_finding_ids: [] }],
+  } });
+  const sets = await readOccurrenceEvidence(db, tenant, id);
+  expect(sets.map((set) => set.task_id)).toEqual([
+    expect.stringContaining(":task:requirement:T404"), expect.stringContaining(":task:requirement:T404"),
+  ]);
 }));

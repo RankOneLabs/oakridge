@@ -4,13 +4,12 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, ItemOccurrenceId, UnitId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
-import { pageOf, selectCurrentAnswers, selectRevisionStandings, uniformDrilldownPages, type AnswerCount, type CompositeRevision, type CompositeSelector, type DrilldownPages, type DrilldownRow, type LogicalItemComposite,
+import { pageOf, selectCurrentAnswers, selectRevisionStandings, uniformDrilldownPages, type AnswerCount, type CompositeRevision, type CompositeSelector, type DrilldownPages, type LogicalItemComposite,
   type StageComposite } from "../src/grading/composite";
 import type { CaptureConfiguration } from "../src/grading/evidence";
 import { evaluationDigest, submissionAttemptLabel, submissionDigest } from "../src/grading/execution";
 import type { GradeAnswer } from "../src/grading/observation";
-import type { SourceEventOutcome } from "../src/ingest/cursor";
-import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID, RELEVANCE_ID } from "./grading-fixture";
+import { CORRECTNESS_ID, EVIDENCE_SUPPORT_ID } from "./grading-fixture";
 import { scopeOf, OAKRIDGE_QUESTIONS, oakridgeProfile, createFeed, evaluator, evaluatorId, fixtureBody, integration, runConfig, scratchDatabase, tenant, type Feed } from "./grading-fixture";
 import { readOccurrenceEvidence, recordCollection } from "../src/storage/captured-evidence-store";
 import { jsonText, withTenant, type Database, type TenantScope } from "../src/storage/database";
@@ -90,13 +89,6 @@ const stageOf = (read: LogicalItemComposite, stage: string): StageComposite => r
 const answersIn = (stage: StageComposite): readonly (readonly [string, string, JsonValue, number])[] => stage.answers.map((count: AnswerCount) =>
   [count.question.question_id, count.grader.kind === "human" ? `human:${count.grader.reviewer_id}` : count.grader.evaluator_definition_id,
     count.answer.state === "answered" ? count.answer.value : count.answer.state, count.count] as const);
-const declare = (input: { readonly source: string; readonly path: string; readonly tasks: readonly string[]; readonly tasks_revision?: string; readonly run_id?: string }): SourceEventOutcome => {
-  const run_id = input.run_id ?? "run-1";
-  return { format: "observation.source-event/v1", definition_id: "definition-1", artifact_schema_version: null, kind: "relation_declaration", event_kind: "analysis_links_declared", run_id,
-    event_id: `declaration:${randomUUID()}`, declaration: { run_id, tasks_revision_id: input.tasks_revision ?? "tasks-1",
-      entries: [{ source_revision_id: input.source, item_path: input.path, task_ids: [...input.tasks] }] } };
-};
-const analysisBody = (ids: readonly string[]): JsonValue => ({ summary: "s", source_spec_refs: [], findings: ids.map((id) => ({ id, title: id, detail: id, severity: "info" })), requirements: [], risks: [], proposed_spec_updates: [] });
 
 describe("current revisions", () => {
   const at = (minute: number): Date => new Date(Date.UTC(2026, 10, 1, 0, minute));
@@ -144,46 +136,7 @@ test("a page reports the whole list's size, and every boundary continues without
   expect(pageOf(list, { limit: 2, offset: 5 }).items).toEqual([]);
 });
 
-integration("an item graded before any task appears under its task as soon as an explicit link arrives, and changes nowhere else", async () => scratchDatabase(async (db) => {
-  const h = await harness(db);
-  await h.feed.launch({ spec: "s" }, "run-1", runConfig(true));
-  await h.feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body: analysisBody(["F1", "F2"]) });
-  const [linked, control] = [await occurrenceAt(h, "analysis-1", "/findings/0"), await occurrenceAt(h, "analysis-1", "/findings/1")];
-  await readyAll(h, linked);
-  await readyAll(h, control);
-  for (const occurrence_id of [linked, control]) {
-    await measure(h, { occurrence_id, question_id: RELEVANCE_ID, evaluator_id: MACHINE_A, answer: choice("relevant") });
-    await measure(h, { occurrence_id, question_id: RELEVANCE_ID, evaluator_id: MACHINE_B, answer: choice("irrelevant") });
-  }
-  const facts = () => withTenant(h.db, h.scope, async (trx) => ({
-    occurrences: await trx.selectFrom("observation.item_occurrence").selectAll().where("producer", "=", h.scope.producer).where("namespace", "=", h.scope.namespace).orderBy("occurrence_id").execute(),
-    evidence: await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", h.scope.producer).where("namespace", "=", h.scope.namespace).orderBy("evidence_set_id").execute(),
-    executions: await trx.selectFrom("observation.evaluation_execution").selectAll().where("producer", "=", h.scope.producer).where("namespace", "=", h.scope.namespace).orderBy("execution_id").execute(),
-    attempts: await trx.selectFrom("observation.grading_provider_attempt").selectAll().where("producer", "=", h.scope.producer).where("namespace", "=", h.scope.namespace).execute(),
-    observations: await trx.selectFrom("observation.grade_observation").selectAll().where("producer", "=", h.scope.producer).where("namespace", "=", h.scope.namespace).orderBy("observation_id").execute(),
-  }));
-  await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
-  await h.feed.decide("operator_decided");
-  const beforeLink = await facts();
-  // An approval on its own links nothing, so the task reads as a coverage gap, never a pass or a zero.
-  const gap = await composite(h, "T7");
-  expect([gap.coverage, stageOf(gap, "analysis").state, stageOf(gap, "analysis").answers]).toEqual(["linked", "gap", []]);
-  await h.feed.send(declare({ source: "analysis-1", path: "/findings/0", tasks: ["T7"] }));
-  const read = await composite(h, "T7");
-  expect(read.coverage).toBe("linked");
-  expect(answersIn(stageOf(read, "analysis"))).toEqual([]);
-  expect(await facts()).toEqual(beforeLink);
-  // The control is still whole on its own.
-  const unlinked = await listRunUnlinkedItems(h.db, h.scope, path, "run-1", all);
-  expect(unlinked.items.map((item) => [item.occurrence_id, item.stage, item.is_current])).toEqual([[control, "analysis", true]]);
-  // The original answer and its frozen evidence are what a count opens.
-  const rows = await readCompositeDrilldown(h.db, h.scope, path, "run-1", stageOf(read, "analysis").items, pages);
-  expect(rows.total).toBe(1);
-  const [question] = rows.items[0]!.questions.items;
-  expect([rows.items[0]!.item.occurrence_id, question!.answers.items.map((answer) => answer.occurrence_id), question!.evidence.readiness.state]).toEqual([linked, [linked, linked], "ready"]);
-  expect(question!.is_linked_context).toBe(true);
-  expect(question!.evidence.readiness.state === "ready" && question!.evidence.readiness.references[0]?.content).toBe(`evidence of ${linked}`);
-}));
+
 
 /** One run: tasks, a revised plan, a brief and assessment per cohort, and the assessments as given. */
 async function sharedTaskRun(h: Harness, implementation: { readonly alpha: readonly JsonValue[]; readonly beta: readonly JsonValue[] }): Promise<void> {
@@ -206,7 +159,7 @@ integration("one task through both cohorts, revised plan and briefs: one logical
   const read = await composite(h, "T7");
   const implementation = stageOf(read, "implementation");
   expect([implementation.publication, implementation.totals.contributing_items, stageOf(read, "integration").publication, stageOf(read, "analysis").publication.state, read.logical_item_id as string]).toEqual([
-    { state: "published", is_final: false, unit_ids: ["run-1/implementation/alpha" as UnitId, "run-1/implementation/beta" as UnitId] }, 4, { state: "pending" }, "pending", `oakridge:${h.scope.namespace}:run-1:task:T7`]);
+    { state: "published", is_final: false, unit_ids: ["run-1/implementation/alpha" as UnitId, "run-1/implementation/beta" as UnitId] }, 4, { state: "pending" }, "pending", `oakridge:${h.scope.namespace}:run-1:task:requirement:T7`]);
   // A finding naming two tasks contributes once to each, and copies nothing.
   const other = await composite(h, "T8");
   expect(stageOf(other, "implementation").totals.contributing_items).toBe(1);
@@ -355,29 +308,15 @@ integration("an unknown task stays visible until the task arrives, then counts u
   await h.feed.launch({ spec: "s" }, "run-1", runConfig(true));
   await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/alpha", body: { findings: [finding(["T7"])] } });
   expect(await readLogicalItemComposite(h.db, h.scope, path, "run-1", "T7")).toBeNull();
-  expect((await listRunUnresolvedReferences(h.db, h.scope, path, "run-1", all)).items.map((reference) => reference.unresolved_target_ref)).toEqual(["logical_item:task:T7"]);
+  expect((await listRunUnresolvedReferences(h.db, h.scope, path, "run-1", all)).items.map((reference) => reference.unresolved_target_ref)).toEqual(["logical_item:task:requirement:T7"]);
   const lineage = await readLogicalItemLineage(h.db, h.scope, path, "run-1", "T7", all);
   expect([lineage.is_captured, lineage.items.map((entry) => entry.kind)]).toEqual([false, ["unresolved"]]);
   await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", unit_id: "run-1/analysis", body: await fixtureBody("tasks") });
-  expect((await listRunUnresolvedReferences(h.db, h.scope, path, "run-1", all)).items.every((reference) => reference.unresolved_target_ref !== "logical_item:task:T7")).toBe(true);
+  expect((await listRunUnresolvedReferences(h.db, h.scope, path, "run-1", all)).items.every((reference) => reference.unresolved_target_ref !== "logical_item:task:requirement:T7")).toBe(true);
   expect(stageOf(await composite(h, "T7"), "implementation").totals.contributing_items).toBe(1);
 }));
 
-integration("the same statement along two paths still counts its item once", async () => scratchDatabase(async (db) => {
-  const h = await harness(db);
-  await h.feed.launch({ spec: "s" }, "run-1", runConfig(true));
-  await h.feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", unit_id: "run-1/analysis", body: analysisBody(["F1"]) });
-  await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", unit_id: "run-1/analysis", body: await fixtureBody("tasks") });
-  const occurrence_id = await occurrenceAt(h, "analysis-1", "/findings/0");
-  await readyAll(h, occurrence_id);
-  await measure(h, { occurrence_id, question_id: RELEVANCE_ID, evaluator_id: MACHINE_A, answer: choice("relevant") });
-  await h.feed.send(declare({ source: "analysis-1", path: "/findings/0", tasks: ["T7"] }));
-  await h.feed.send(declare({ source: "analysis-1", path: "/findings/0", tasks: ["T7"], tasks_revision: "tasks-2" }));
-  const stage = stageOf(await composite(h, "T7"), "analysis");
-  expect([stage.totals.contributing_items, answersIn(stage)]).toEqual([1, []]);
-  const rows: readonly DrilldownRow[] = (await readCompositeDrilldown(h.db, h.scope, path, "run-1", stage.items, pages)).items;
-  expect(rows.map((row) => row.links.total)).toEqual([2]);
-}));
+
 
 integration("every list pages to its whole population, nested lists included, and a count covers more than any page", async () => scratchDatabase(async (db) => {
   const h = await harness(db);
@@ -519,4 +458,33 @@ integration("a finding naming two tasks yields independent grades counted only u
   expect(drill.items[0]!.questions.items.flatMap((question) => question.answers.items)).toEqual([]);
   const sets = await readOccurrenceEvidence(db, tenant, occurrence_id);
   expect(sets.filter((set) => set.question_id === CORRECTNESS_ID)).toHaveLength(2);
+}));
+
+integration("requirement composites include technical decisions, additional findings and exact-citation proposals with their hops", async () => scratchDatabase(async (db) => {
+  const h = await harness(db);
+  const run_id = "lineage";
+  await h.feed.revision({ run_id, revision_id: "spec:1", artifact_kind: "spec", body: { requirements: [
+    { id: "R1", analysis_finding_ids: [], text: "Required", acceptance_conditions: ["Works"], source_refs: [] },
+  ] } });
+  await h.feed.revision({ run_id, revision_id: "brief:1", artifact_kind: "brief", body: { cohort_id: "first", repository_key: "oakridge",
+    build_items: [{ id: "B1", requirement_ids: ["R1"], instructions: "Build", verification: ["Test"] }],
+    technical_decisions: [{ id: "D1", build_item_ids: ["B1"], decision: "Use the checked input", rationale: "It is authoritative" }] } });
+  await h.feed.revision({ run_id, revision_id: "assessment:1", artifact_kind: "assessment",
+    input_bindings: [{ input: "assignment", unit: "brief", revision_id: "brief:1" }],
+    body: { item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "met", observation: "Verified", evidence: [] }],
+      additional_findings: [{ id: "F1", severity: "warning", observation: "Follow up", related_build_item_ids: ["B1"], evidence: [] }],
+      proposals: [{ key: "P1", instruction: "Add another test", citation: { revision_id: "assessment:1", pointer: "/item_assessments/0" } }],
+      verifications: [] } });
+  const loaded = await readLogicalItemComposite(db, h.scope, path, run_id, "R1");
+  expect(loaded).not.toBeNull();
+  const lineage = await readLogicalItemLineage(db, h.scope, path, run_id, "R1", all);
+  const contributions = new Map(lineage.items.flatMap((entry) => entry.kind === "contribution" ?
+    [[entry.item.item_kind, entry.provenance.hops.map((hop) => hop.type)] as const] : []));
+  expect(contributions.get("technical_decision")).toEqual(["addresses", "addresses"]);
+  expect(contributions.get("additional_finding")).toEqual(["addresses", "addresses"]);
+  expect(contributions.get("feedback_proposal")).toEqual(["addresses", "assesses", "derived_from"]);
+  const drilled = await Promise.all(loaded!.stages.map((stage) => readCompositeDrilldown(db, h.scope, path, run_id, stage.items, pages)));
+  expect(drilled.flatMap((stage) => stage.items.map((row) => row.item.item_kind))).toEqual(expect.arrayContaining([
+    "technical_decision", "additional_finding", "feedback_proposal",
+  ]));
 }));

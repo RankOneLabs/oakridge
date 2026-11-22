@@ -65,7 +65,7 @@ export function parsedArtifactSchemaVersion(workflow: ParsedWorkflow, stage: str
   return resolved.ok ? schemaDigest(resolved.value) : null;
 }
 
-export function runInputSchemaVersion(workflow: ParsedWorkflow): string {
+export function runInputSchemaVersion(workflow: Pick<ParsedWorkflow, "input" | "schemas">): string {
   const resolved = resolveSchema({ type: workflow.input, schemas: workflow.schemas ?? {}, visiting: new Set() });
   if (!resolved.ok) throw new Error(`Cannot resolve run input: ${resolved.error.entity_id} ${resolved.error.detail}`);
   return schemaDigest(resolved.value);

@@ -41,6 +41,10 @@ pub fn step_with_limits(
         incoming,
     )
     .map_err(|error| attribute_event(error, snapshot, incoming))?;
+    let inserted_revision = deltas
+        .iter()
+        .any(|delta| matches!(delta, Delta::PushRevision(_)));
+    apply_all(&mut state, &mut context, deltas);
     let publication_bindings = match (&incoming.event, &incoming.writer) {
         (
             Event::RevisionPublished {
@@ -51,10 +55,7 @@ pub fn step_with_limits(
                 ..
             },
             Writer::Operator { .. },
-        ) if deltas
-            .iter()
-            .any(|delta| matches!(delta, Delta::PushRevision(_))) =>
-        {
+        ) if inserted_revision => {
             let owner = snapshot
                 .units
                 .iter()
@@ -84,7 +85,6 @@ pub fn step_with_limits(
         }
         _ => None,
     };
-    apply_all(&mut state, &mut context, deltas);
     match advance_reduced(program, state, &mut context) {
         // A launch that cannot advance never started: it is refused, as a
         // launch whose input fails, not a stall of a run that is going.

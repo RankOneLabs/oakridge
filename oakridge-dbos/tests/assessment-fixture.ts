@@ -76,10 +76,11 @@ export async function openAssessmentRun(authority: Authority, source: Workflow =
   }
   const publish = async (input: Publication) => {
     const targetUnit = input.unit ?? unit;
-    const by = input.by ?? (await action(input.worker, targetUnit)).action_id;
+    const current = await action(input.worker, targetUnit);
+    const by = input.by ?? current.action_id;
     const predecessor = input.predecessor !== undefined ? input.predecessor : (await revision(input.artifact, targetUnit))?.id ?? null;
     return await send({ run_id, ingress_id: input.request_id, writer: { kind: "session", session: input.worker, attempt: by },
-      event: { kind: "revision_published", unit: targetUnit, artifact: input.artifact, body: input.body, predecessor, subject: input.subject ?? null, by } });
+      event: { kind: "revision_published", unit: targetUnit, artifact: input.artifact, body: input.body, predecessor, subject: input.subject ?? null, by: { action: by, seq: input.by ? 1 : current.seq } } });
   };
   const end = async (worker: string, targetUnit = unit) => {
     const by = (await action(worker, targetUnit)).action_id;

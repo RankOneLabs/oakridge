@@ -157,8 +157,8 @@ integration("publication leaves nonempty capture pins, grades, evidence and exec
   if (!registered.ok) throw new Error(registered.error.detail);
   const feed = createFeed(db, tenant, initial.capture_configuration);
   await feed.launch({ spec: "Ship reads" }, "run-1", runConfig(true));
-  await feed.revision({ revision_id: "analysis", artifact_kind: "analysis", body: { summary: "Reads", findings: [
-    { id: "F1", description: "Reads required", severity: "warning" }], requirements: [], risks: [], proposed_spec_updates: [] } });
+  await feed.revision({ revision_id: "analysis", artifact_kind: "analysis", body: { summary: "Reads", requirements: [{ id: "R1", findings: [
+    { id: "F1", description: "Reads required", severity: "warning" }] }] } });
   await createEvidenceReconciler({ db, collector: initial.profile.evidence,
     repository: { hasCommit: async () => false, readFile: async () => ({ state: "absent" as const }) },
     admission: { retry_limit: 1 }, log: () => undefined }).reconcileRun(tenant, "run-1");

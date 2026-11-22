@@ -135,7 +135,7 @@ test("K4: publish takes its writer and its `by` from the session secret, not the
   const response = await publish(run_id, draft({ writer: { kind: "operator", subject: "forged" }, by: "someone-else" }), "Bearer publish-secret");
   const last = (await events(run_id)).at(-1);
   expect({ status: response.status, writer: last?.writer, by: last?.payload.kind === "revision_published" ? last.payload.by : null })
-    .toEqual({ status: 201, writer: { kind: "session", session: sid, attempt: await writerAction(run_id) }, by: await writerAction(run_id) });
+    .toEqual({ status: 201, writer: { kind: "session", session: sid, attempt: await writerAction(run_id) }, by: { action: await writerAction(run_id), seq: 1 } });
 });
 
 test("K4: an executor report is written by the executor, bound to the attempt it reports", async () => {
@@ -189,9 +189,9 @@ test("D2: the control token on the publish route is the operator's edit, which n
   const run_id = await sessionRun("edit-secret");
   const response = await publish(run_id, draft({ by: "forged" }), `Bearer ${CONTROL_TOKEN}`);
   const last = (await events(run_id)).at(-1);
-  const revision = await authority.db.selectFrom("authority.artifact_revision").select("by_id").where("run_id", "=", run_id).executeTakeFirst();
+  const revision = await authority.db.selectFrom("authority.artifact_revision").select("by_action_id").where("run_id", "=", run_id).executeTakeFirst();
   expect({ status: response.status, writer: last?.writer, by: last?.payload.kind === "revision_published" ? last.payload.by : "absent",
-    by_id: revision?.by_id }).toEqual({ status: 201, writer: { kind: "operator", subject: OPERATOR_SUBJECT }, by: null, by_id: null });
+    by_action_id: revision?.by_action_id }).toEqual({ status: 201, writer: { kind: "operator", subject: OPERATOR_SUBJECT }, by: null, by_action_id: null });
 });
 
 test("D2: a loopback-open publication requires explicit operator intent when no session secret is supplied", async () => {

@@ -86,9 +86,9 @@ const at = (ms: number) => new Date(ms);
 const act = "act" as ActionId, other = "other" as ActionId;
 const attempts = [{ action_id: act, seq: 1, created_at: at(10) }, { action_id: act, seq: 2, created_at: at(30) }, { action_id: other, seq: 1, created_at: at(5) }];
 test("a revision names the attempt of its action that was open when it was written, not a later retry", () => {
-  expect([selectPublishingAttemptId({ by_id: act, created_at: at(20) }, attempts), selectPublishingAttemptId({ by_id: act, created_at: at(40) }, attempts)])
+  expect([selectPublishingAttemptId({ by_action_id: act, by_seq: 1 }, attempts), selectPublishingAttemptId({ by_action_id: act, by_seq: 2 }, attempts)])
     .toEqual(["act:1", "act:2"]);
 });
 test("an operator's edit names no attempt", () => {
-  expect(selectPublishingAttemptId({ by_id: null, created_at: at(40) }, attempts)).toBeNull();
+  expect(selectPublishingAttemptId({ by_action_id: null, by_seq: null }, attempts)).toBeNull();
 });

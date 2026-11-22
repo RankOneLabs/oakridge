@@ -10,12 +10,12 @@ function edge(source: string, target: string, type: CompositeRelation["type"], l
     target_occurrence_id: logical ? null : target as ItemOccurrenceId, target_logical_item_id: logical ? target as LogicalItemId : null,
     type, unresolved_target_ref: null, evidence_ref: "field", asserted_by: "producer_explicit" };
 }
-test("addresses establishes task association without propagation; derived_from and unresolved edges do not seed", () => {
+test("addresses seeds a task and derived_from propagates only through resolved occurrences", () => {
   const relations = [edge("derived", "task", "derived_from", true), edge("addressed", "task", "addresses", true),
     edge("linked", "task", "assesses", true), edge("derived", "linked", "derived_from"), edge("addressed", "own", "addresses"),
     { ...edge("unresolved", "task", "assesses", true), unresolved_target_ref: "missing" }];
   expect(associateTask({ task_id, occurrences: ["own", "linked", "derived", "addressed", "unresolved"].map(occurrence), relations }).map((item) => String(item.occurrence_id)))
-    .toEqual(["own", "addressed", "linked"]);
+    .toEqual(["own", "addressed", "linked", "derived"]);
 });
 test("supersedes cycles terminate once per occurrence with shortest provenance in traversal order", () => {
   const relations = [edge("a", "task", "assesses", true), edge("b", "a", "supersedes"), edge("c", "b", "split_from"), edge("a", "c", "merged_from")];
@@ -48,4 +48,15 @@ test("resolved_assesses keeps a legacy cross-cutting finding task-less", async (
   const subject = { occurrence_id: "legacy-finding" as ItemOccurrenceId, json_pointer: "/findings/0", selected_value: { task_ids: [] } };
   expect(gradingSubjects({ occurrence: subject, scope: { scope: "per_task", task_source: "resolved_assesses" }, relations: [] }))
     .toEqual([{ subject_occurrence_id: subject.occurrence_id, task_id: null }]);
+});
+
+test("decisions, findings and cited proposals associate with the same requirement through their authored hops", () => {
+  const relations = [edge("build", "task", "addresses", true), edge("decision", "build", "addresses"),
+    edge("finding", "build", "addresses"), edge("judgment", "build", "assesses"), edge("proposal", "judgment", "derived_from")];
+  const occurrences = ["build", "decision", "finding", "judgment", "proposal"].map(occurrence);
+  const associations = associateTask({ task_id, occurrences, relations });
+  expect(Object.fromEntries(associations.map((entry) => [entry.occurrence_id, entry.provenance.hops.map((hop) => hop.type)]))).toEqual({
+    build: ["addresses"], decision: ["addresses", "addresses"], finding: ["addresses", "addresses"],
+    judgment: ["addresses", "assesses"], proposal: ["addresses", "assesses", "derived_from"],
+  });
 });

@@ -1,22 +1,20 @@
 import { expect, test } from "bun:test";
-import type { JsonValue } from "../src/domain/primitives";
-import { oakridgeCatalogue } from "../src/producers/oakridge/catalogue";
+import { selectRegistration } from "../src/producers/oakridge/catalogue";
 import { selectRevision } from "../src/projection/extractor";
+import { developmentKeys } from "./grading-fixture";
+
+const key = developmentKeys.analysis;
+const extractors = selectRegistration({ definition_id: key.definition_id, stage: key.stage, artifact_kind: key.artifact,
+  artifact_schema_version: key.schema_version })!.extractors;
 
 test("a malformed selector records a redacted failure while independent selections proceed", () => {
-  const body = { findings: [{ id: "finding-a", description: "private secret", severity: "warning" }],
-    requirements: "invalid private secret", risks: [], proposed_spec_updates: [] } as unknown as JsonValue;
-  const pass = selectRevision(body, "analysis-1", oakridgeCatalogue("analysis", "development-v1"));
-  expect(pass.items.some(({ item }) => item.item_kind === "finding")).toBe(true);
-  const failure = pass.issues.find((issue) => issue.kind === "extraction_failed");
-  expect(failure?.is_retriable).toBe(true);
-  expect(failure?.detail.includes("private secret")).toBe(false);
-  expect(pass.items.some(({ item }) => item.item_kind === "requirement_status")).toBe(false);
+  const pass = selectRevision({ requirements: [{ id: "R1", findings: "invalid private secret" }] }, "analysis-1", extractors);
+  expect(pass.items.map(({ item }) => item.item_kind)).toEqual(["requirement"]);
+  expect(pass.issues).toHaveLength(1);
+  expect(pass.issues[0]).toMatchObject({ kind: "extraction_failed", is_retriable: true });
+  expect(pass.issues[0]?.detail).not.toContain("private secret");
 });
 
-test("an empty match is a recorded outcome and never a gradeable item", () => {
-  const pass = selectRevision({ findings: [], requirements: [], risks: [], proposed_spec_updates: [] }, "analysis-2",
-    oakridgeCatalogue("analysis", "development-v1"));
-  expect(pass.items).toEqual([]);
-  expect(pass.issues.map((issue) => issue.kind)).toEqual(Array(4).fill("no_matching_items"));
+test("an authored empty list produces no gradeable item or extraction issue", () => {
+  expect(selectRevision({ requirements: [] }, "analysis-2", extractors)).toEqual({ items: [], issues: [] });
 });
