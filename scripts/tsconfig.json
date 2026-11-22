@@ -4,5 +4,5 @@
     "types": ["bun"],
     "typeRoots": ["../node_modules/@types", "../observation/node_modules/@types"]
   },
-  "include": ["tests/**/*.ts"]
+  "include": ["tests/**/*.ts", "check-workflow-names.ts", "check-workflow-names.test.ts", "legacy-symbols.test.ts"]
 }
