@@ -30,6 +30,7 @@ CREATE TABLE authority.run (
   project_id text REFERENCES authority.project(id),
   root_unit_id text,
   input jsonb,
+  label jsonb,
   -- The operator's launch-time session settings, by stage and worker (RunConfig).
   config jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -438,6 +439,7 @@ CREATE INDEX review_item_thread_idx ON authority.review_item(run_id, thread_id);
 
 COMMENT ON COLUMN authority.project.forge_repository IS '@type {ForgeRepository}';
 COMMENT ON COLUMN authority.run.input IS '@type {RuntimeValue}';
+COMMENT ON COLUMN authority.run.label IS '@type {RunLabel}';
 COMMENT ON COLUMN authority.run.config IS '@type {RunConfig}';
 COMMENT ON COLUMN authority.unit.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.unit.status IS '@type {UnitStatus}';

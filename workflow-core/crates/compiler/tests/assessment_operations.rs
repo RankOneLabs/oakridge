@@ -178,3 +178,33 @@ fn authored_schemas_cannot_shadow_builtin_assessment_types() {
         .iter()
         .any(|e| e.detail == "schema feedback_proposal shadows a core type"));
 }
+
+#[test]
+fn display_declarations_validate_and_project() {
+    let mut raw = source();
+    raw["input"] = json!({"caption":"text","targets":"list(ident)"});
+    raw["label"] = json!({"title":"input.caption","repositories":"input.targets"});
+    raw["stages"]["work"]["artifacts"]["draft"]["kind"] = json!("external_reference");
+    raw["stages"]["work"]["artifacts"]["draft"]["view"] = json!("custom_viewer");
+    raw["stages"]["work"]["workers"]["builder"]["label"] = json!("Author");
+    let workflow = compile(raw.clone()).unwrap();
+    assert_eq!(workflow.stages["work"].reviews["review"].wait, workflow_model::ReviewWait::Operator);
+    raw["stages"]["work"]["reviews"]["release"] = json!({
+        "by":"operator","of":"draft","wait":"external","confirms":"merge","prompt":"p",
+        "decisions":{"land":{"effect":"approve","label":"Land"}}
+    });
+    let workflow = compile(raw.clone()).unwrap();
+    let stage = &workflow.stages["work"];
+    assert_eq!(stage.artifacts["draft"].view.as_deref(), Some("custom_viewer"));
+    assert_eq!(stage.reviews["release"].wait, workflow_model::ReviewWait::External);
+    assert_eq!(stage.reviews["release"].confirms, Some(workflow_model::ReviewConfirms::Merge));
+    assert!(matches!(&stage.workers["builder"], workflow_model::Worker::Agent {
+        label: Some(label), .. } if label == "Author"));
+
+    raw["label"]["title"] = json!("input.targets");
+    raw["stages"]["work"]["reviews"]["release"]["by"] = json!("engine");
+    let errors = compile(raw).unwrap_err();
+    assert!(errors.iter().any(|error| error.path.0 == "label.title"));
+    assert!(errors.iter().any(|error| error.path.0.ends_with("release.confirms")));
+    assert!(errors.iter().any(|error| error.path.0.ends_with("release.wait")));
+}

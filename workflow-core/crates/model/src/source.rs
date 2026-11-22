@@ -304,11 +304,20 @@ pub struct FieldExpression {
 #[serde(deny_unknown_fields)]
 pub struct Workflow {
     pub workflow: SymbolKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<WorkflowLabel>,
     pub input: TypeExpression,
     #[serde(default)]
     pub schemas: BTreeMap<String, TypeExpression>,
     pub run: Group,
     pub stages: BTreeMap<String, Stage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowLabel {
+    pub title: String,
+    pub repositories: String,
 }
 
 /// The authoring surface before reusable declarations are expanded into a
@@ -317,6 +326,8 @@ pub struct Workflow {
 #[serde(deny_unknown_fields)]
 pub struct AuthoredWorkflow {
     pub workflow: SymbolKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<WorkflowLabel>,
     pub input: TypeExpression,
     #[serde(default)]
     pub schemas: BTreeMap<String, TypeExpression>,
@@ -365,6 +376,10 @@ pub struct AuthoredReviewDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assessment: Option<SymbolKey>,
     pub by: ReviewBy,
+    #[serde(default, skip_serializing_if = "ReviewWait::is_operator")]
+    pub wait: ReviewWait,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirms: Option<ReviewConfirms>,
     pub prompt: Option<String>,
     #[serde(default)]
     pub inputs: BTreeMap<String, String>,
@@ -382,6 +397,7 @@ pub enum AuthoredDecisions {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerOverrides {
+    pub label: Option<String>,
     pub inputs: Option<BTreeMap<String, String>>,
     pub when: Option<String>,
     pub every: Option<String>,
@@ -429,6 +445,8 @@ pub struct DecisionSetUse {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewOverrides {
+    pub wait: Option<ReviewWait>,
+    pub confirms: Option<ReviewConfirms>,
     pub of: Option<SymbolKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assessment: Option<SymbolKey>,
@@ -804,6 +822,8 @@ pub struct Stage {
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
     pub kind: ArtifactKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
     pub schema: TypeExpression,
     #[serde(default, skip_serializing_if = "EditPolicy::is_always")]
     pub edit_policy: EditPolicy,
@@ -850,6 +870,8 @@ pub struct ValidationCheck {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Worker {
     Agent {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
         prompts: Prompts,
         inputs: BTreeMap<String, String>,
         produces: Vec<SymbolKey>,
@@ -864,6 +886,8 @@ pub enum Worker {
         when: Option<String>,
     },
     Code {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         keyed_execution: bool,
         operation: SymbolKey,
@@ -931,6 +955,10 @@ pub struct Review {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assessment: Option<SymbolKey>,
     pub by: ReviewBy,
+    #[serde(default, skip_serializing_if = "ReviewWait::is_operator")]
+    pub wait: ReviewWait,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirms: Option<ReviewConfirms>,
     pub prompt: Option<String>,
     #[serde(default)]
     pub inputs: BTreeMap<String, String>,
@@ -946,6 +974,26 @@ pub enum ReviewBy {
     Operator,
     /// Decided by the engine, once per target revision, when `when` holds.
     Engine,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewWait {
+    #[default]
+    Operator,
+    External,
+}
+
+impl ReviewWait {
+    pub fn is_operator(&self) -> bool {
+        *self == Self::Operator
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewConfirms {
+    Merge,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -1041,6 +1089,8 @@ pub fn blocker_review() -> Review {
         of: SymbolKey::from(BLOCKER_ARTIFACT),
         assessment: None,
         by: ReviewBy::Operator,
+        wait: ReviewWait::Operator,
+        confirms: None,
         prompt: None,
         inputs: BTreeMap::new(),
         when: None,

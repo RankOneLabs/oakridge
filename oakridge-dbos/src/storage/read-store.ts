@@ -115,7 +115,7 @@ export interface RunRead extends RunSummaryRead {
 }
 
 const RUN_SUMMARY_COLUMNS = ["run.config", "run.id", "run.definition_id", "run.project_id", "run.root_unit_id",
-  "run.created_at", "run.archived_at", "run.input"] as const;
+  "run.created_at", "run.archived_at", "run.input", "run.label"] as const;
 const UNIT_SUMMARY_COLUMNS = ["id", "run_id", "parent_id", "declaration", "stage", "collection_key", "pool", "status", "blocked_reason", "review_prompts"] as const;
 const REVISION_REF_COLUMNS = ["id", "run_id", "unit_id", "artifact", "seq", "created_at"] as const;
 const of = <Row extends { readonly run_id: string }>(rows: readonly Row[], run_id: string): Row[] => rows.filter((row) => row.run_id === run_id);

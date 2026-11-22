@@ -114,6 +114,16 @@ pub(super) fn compile_stage(
                 format!("review {review_key} artifact absent"),
             );
         }
+        if review.wait == ReviewWait::External && review.by != ReviewBy::Operator {
+            state.error(CheckKind::Review, &format!("{path}.wait"), "external wait requires an operator review");
+        }
+        if review.confirms == Some(ReviewConfirms::Merge)
+            && (review.by != ReviewBy::Operator
+                || review.decisions.values().filter(|decision| decision.effect == DeclaredDecisionEffect::Approve).count() != 1
+                || !stage.artifacts.get(&review.of.0).is_some_and(|artifact| artifact.kind == ArtifactKind::ExternalReference))
+        {
+            state.error(CheckKind::Review, &format!("{path}.confirms"), "merge confirmation requires an operator review of an external reference with exactly one approve decision");
+        }
         let when = review.when.as_deref().and_then(|text| {
             let result = checked_guard(
                 text,

@@ -9,6 +9,8 @@ use serde::Serialize;
 #[derive(Serialize)]
 pub(super) struct WorkflowFingerprint<'a> {
     workflow: &'a SymbolKey,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: &'a Option<WorkflowLabel>,
     input: &'a TypeExpression,
     schemas: &'a BTreeMap<String, TypeExpression>,
     run: &'a Group,
@@ -70,6 +72,7 @@ impl<'a> From<&'a Worker> for WorkerFingerprint<'a> {
                 workspace,
                 session,
                 when,
+                label: _,
             } => Self::Agent {
                 prompts,
                 inputs,
@@ -102,6 +105,7 @@ impl<'a> From<&'a Artifact> for ArtifactFingerprint<'a> {
     fn from(artifact: &'a Artifact) -> Self {
         let Artifact {
             kind: _, // Presentation metadata is deliberately absent from the fingerprint.
+            view: _,
             schema,
             edit_policy,
             validate,
@@ -153,6 +157,7 @@ impl<'a> From<&'a Workflow> for WorkflowFingerprint<'a> {
     fn from(source: &'a Workflow) -> Self {
         let Workflow {
             workflow,
+            label,
             input,
             schemas,
             run,
@@ -160,6 +165,7 @@ impl<'a> From<&'a Workflow> for WorkflowFingerprint<'a> {
         } = source;
         Self {
             workflow,
+            label,
             input,
             schemas,
             run,

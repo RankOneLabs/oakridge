@@ -17,6 +17,7 @@
   "workers": {
     "pr_watch": {
       "kind": "code",
+      "label": "PR watcher",
       "operation": "pull_request.observe",
       "when": "pr_opened",
       "inputs": {
@@ -32,6 +33,7 @@
     "pr_closed": {
       "of": "build_result",
       "by": "operator",
+      "wait": "external",
       "when": "closed_pr",
       "prompt": "development/pr-closed.md",
       "inputs": {
@@ -50,6 +52,10 @@
     }
   },
   "workflow": "study",
+  "label": {
+    "title": "input.title",
+    "repositories": "map(input.repositories, item.key)"
+  },
   "input": {
     "title": "text",
     "spec": "text",
@@ -386,6 +392,7 @@
       "workers": {
         "git": {
           "kind": "code",
+          "label": "Git",
           "operation": "repository.prepare",
           "inputs": {
             "repository_path": "input.repository.preparation.repository_path",
@@ -426,6 +433,7 @@
       "artifacts": {
         "plan": {
           "kind": "document",
+          "view": "cohort_plan",
           "schema": "plan_body",
           "validate": [
             {
@@ -618,6 +626,7 @@
         },
         "slice_assessment": {
           "kind": "assessment",
+          "view": "assessment",
           "schema": "slice_assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
@@ -679,6 +688,7 @@
         },
         "pr": {
           "kind": "external_reference",
+          "view": "pull_request",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -693,6 +703,7 @@
       "workers": {
         "designer": {
           "kind": "agent",
+          "label": "Designer",
           "prompts": {
             "initial": "study/design.md",
             "revise": "study/design-revise.md"
@@ -711,6 +722,7 @@
         },
         "slice_builder": {
           "kind": "agent",
+          "label": "Slice builder",
           "prompts": {
             "initial": "study/slice-build.md",
             "revise": "study/slice-build-revise.md"
@@ -731,6 +743,7 @@
         },
         "spend_requester": {
           "kind": "agent",
+          "label": "Spend requester",
           "prompts": {
             "initial": "study/spend-request.md",
             "review": "study/spend-request.md",
@@ -750,6 +763,7 @@
         },
         "slice_runner": {
           "kind": "agent",
+          "label": "Paid runner",
           "prompts": {
             "review": "study/slice-run.md",
             "revise": "study/slice-run-revise.md"
@@ -771,6 +785,7 @@
         },
         "slice_assessor": {
           "kind": "agent",
+          "label": "Slice assessor",
           "prompts": {
             "review": "study/slice-assess.md",
             "revise": "study/slice-assess-revise.md"
@@ -791,6 +806,7 @@
         },
         "prepare_observed_state": {
           "kind": "code",
+          "label": "Prepare observed state",
           "operation": "value.publish",
           "when": "pr_state_current",
           "inputs": {
@@ -910,6 +926,8 @@
         "merge_confirmation": {
           "of": "pr",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "pr_published and approved(slice_report) and not merged_pr and not approved(pr)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
@@ -987,6 +1005,7 @@
         },
         "assessment": {
           "kind": "assessment",
+          "view": "assessment",
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
@@ -1032,6 +1051,7 @@
         },
         "pr": {
           "kind": "external_reference",
+          "view": "pull_request",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -1046,6 +1066,7 @@
       "workers": {
         "expander": {
           "kind": "agent",
+          "label": "Expander",
           "prompts": {
             "initial": "study/expand.md",
             "revise": "study/expand-revise.md"
@@ -1068,6 +1089,7 @@
         },
         "assessor": {
           "kind": "agent",
+          "label": "Assessor",
           "prompts": {
             "review": "study/expand-assess.md",
             "revise": "study/expand-assess-revise.md"
@@ -1088,6 +1110,7 @@
         },
         "prepare_observed_state": {
           "kind": "code",
+          "label": "Prepare observed state",
           "operation": "value.publish",
           "when": "pr_state_current",
           "inputs": {
@@ -1133,6 +1156,8 @@
         "merge_confirmation": {
           "of": "pr",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "pr_published and approved(assessment) and not merged_pr and not approved(pr)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
@@ -1225,6 +1250,7 @@
         },
         "pr": {
           "kind": "external_reference",
+          "view": "pull_request",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -1239,6 +1265,7 @@
       "workers": {
         "freezer": {
           "kind": "agent",
+          "label": "Freezer",
           "prompts": {
             "initial": "study/freeze.md",
             "revise": "study/freeze-revise.md"
@@ -1264,6 +1291,7 @@
         },
         "prepare_observed_state": {
           "kind": "code",
+          "label": "Prepare observed state",
           "operation": "value.publish",
           "when": "pr_state_current",
           "inputs": {
@@ -1299,6 +1327,8 @@
         "merge_confirmation": {
           "of": "pr",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "pr_published and approved(freeze) and not merged_pr and not approved(pr)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
@@ -1354,6 +1384,7 @@
       "artifacts": {
         "pr": {
           "kind": "external_reference",
+          "view": "pull_request",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -1362,6 +1393,7 @@
         },
         "manual_merge_target": {
           "kind": "external_reference",
+          "view": "pull_request",
           "schema": "pr_body"
         },
         "observed_state": {
@@ -1370,6 +1402,7 @@
         },
         "assessment": {
           "kind": "assessment",
+          "view": "assessment",
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
@@ -1428,6 +1461,7 @@
         },
         "prepare_manual_merge": {
           "kind": "code",
+          "label": "Prepare manual merge",
           "operation": "value.publish",
           "when": "pr_published",
           "inputs": {
@@ -1440,6 +1474,7 @@
         },
         "prepare_observed_state": {
           "kind": "code",
+          "label": "Prepare observed state",
           "operation": "value.publish",
           "when": "pr_state_current",
           "inputs": {
@@ -1452,6 +1487,7 @@
         },
         "integrator": {
           "kind": "agent",
+          "label": "Integrator",
           "prompts": {
             "initial": "study/integrate.md",
             "revise": "study/integrate-revise.md"
@@ -1475,6 +1511,8 @@
         "merge_confirmation": {
           "of": "manual_merge_target",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {

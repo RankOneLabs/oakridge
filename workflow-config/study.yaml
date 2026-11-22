@@ -1,4 +1,5 @@
 workflow: study
+label: {title: "input.title", repositories: "map(input.repositories, item.key)"}
 include: [shared/workflow-common.yaml]
 input:
   slice_case_limit: integer
@@ -225,6 +226,7 @@ stages:
     artifacts:
       plan:
         kind: document
+        view: cohort_plan
         schema: plan_body
         validate:
           - check: len(plan.outcomes) > 0
@@ -324,6 +326,7 @@ stages:
             message: "The paid report needs its run key."
       slice_assessment:
         kind: assessment
+        view: assessment
         schema: slice_assessment_body
         edit_policy:
           kind: frozen_when_accepted
@@ -356,6 +359,7 @@ stages:
             message: Failed tests require an unmet item or a blocking or warning additional finding.
       pr:
         kind: external_reference
+        view: pull_request
         schema: pr_body
       pr_state:
         kind: status_record
@@ -366,6 +370,7 @@ stages:
     workers:
       designer:
         kind: agent
+        label: Designer
         prompts:
           initial: study/design.md
           revise: study/design-revise.md
@@ -379,6 +384,7 @@ stages:
         produces: [plan]
       slice_builder:
         kind: agent
+        label: Slice builder
         prompts:
           initial: study/slice-build.md
           revise: study/slice-build-revise.md
@@ -393,6 +399,7 @@ stages:
         produces: [slice_build, pr]
       spend_requester:
         kind: agent
+        label: Spend requester
         prompts:
           initial: study/spend-request.md
           review: study/spend-request.md
@@ -407,6 +414,7 @@ stages:
         produces: [spend_request]
       slice_runner:
         kind: agent
+        label: Paid runner
         prompts:
           review: study/slice-run.md
           revise: study/slice-run-revise.md
@@ -423,6 +431,7 @@ stages:
         produces: [slice_report]
       slice_assessor:
         kind: agent
+        label: Slice assessor
         prompts:
           review: study/slice-assess.md
           revise: study/slice-assess-revise.md
@@ -437,6 +446,7 @@ stages:
         template: pr_watch
       prepare_observed_state:
         kind: code
+        label: Prepare observed state
         operation: value.publish
         when: pr_state_current
         inputs:
@@ -527,6 +537,8 @@ stages:
       merge_confirmation:
         of: pr
         by: operator
+        wait: external
+        confirms: merge
         when: pr_published and approved(slice_report) and not merged_pr and not approved(pr)
         prompt: development/merge-confirmation.md
         inputs:
@@ -581,6 +593,7 @@ stages:
             message: "The expansion's cohort_id is its group id."
       assessment:
         kind: assessment
+        view: assessment
         schema: assessment_body
         edit_policy:
           kind: frozen_when_accepted
@@ -609,6 +622,7 @@ stages:
             message: Failed tests require an unmet item or a blocking or warning additional finding.
       pr:
         kind: external_reference
+        view: pull_request
         schema: pr_body
       pr_state:
         kind: status_record
@@ -619,6 +633,7 @@ stages:
     workers:
       expander:
         kind: agent
+        label: Expander
         prompts:
           initial: study/expand.md
           revise: study/expand-revise.md
@@ -635,6 +650,7 @@ stages:
         produces: [expansion, pr]
       assessor:
         kind: agent
+        label: Assessor
         prompts:
           review: study/expand-assess.md
           revise: study/expand-assess-revise.md
@@ -649,6 +665,7 @@ stages:
         template: pr_watch
       prepare_observed_state:
         kind: code
+        label: Prepare observed state
         operation: value.publish
         when: pr_state_current
         inputs:
@@ -684,6 +701,8 @@ stages:
       merge_confirmation:
         of: pr
         by: operator
+        wait: external
+        confirms: merge
         when: pr_published and approved(assessment) and not merged_pr and not approved(pr)
         prompt: development/merge-confirmation.md
         inputs:
@@ -745,6 +764,7 @@ stages:
             message: "The freeze's cohort_id is freeze."
       pr:
         kind: external_reference
+        view: pull_request
         schema: pr_body
       pr_state:
         kind: status_record
@@ -755,6 +775,7 @@ stages:
     workers:
       freezer:
         kind: agent
+        label: Freezer
         prompts:
           initial: study/freeze.md
           revise: study/freeze-revise.md
@@ -773,6 +794,7 @@ stages:
         template: pr_watch
       prepare_observed_state:
         kind: code
+        label: Prepare observed state
         operation: value.publish
         when: pr_state_current
         inputs:
@@ -798,6 +820,8 @@ stages:
       merge_confirmation:
         of: pr
         by: operator
+        wait: external
+        confirms: merge
         when: pr_published and approved(freeze) and not merged_pr and not approved(pr)
         prompt: development/merge-confirmation.md
         inputs:
@@ -825,6 +849,7 @@ stages:
     artifacts:
       assessment:
         kind: assessment
+        view: assessment
         schema: assessment_body
         edit_policy:
           kind: frozen_when_accepted
@@ -850,6 +875,7 @@ stages:
     workers:
       integrator:
         kind: agent
+        label: Integrator
         prompts:
           initial: study/integrate.md
           revise: study/integrate-revise.md
