@@ -8,8 +8,7 @@ const instruction = "Correct the test evidence.";
 async function committed(response: Response) {
   expect({ status: response.status, body: await response.json() }).toMatchObject({ status: 201 });
 }
-async function approveSpend(run: StudyRun) {
-  await committed(await run.decide("spend_request_review", "approve", "spend_request"));
+async function claimAndAttachEvidence(run: StudyRun) {
   const runner = await run.startRunner();
   const endpoint = `/executions/${runner.key}`;
   const claim = await run.request("POST", `${endpoint}/claim`, { request_id: crypto.randomUUID() }, runner.secret);
@@ -21,7 +20,8 @@ async function approveSpend(run: StudyRun) {
 async function seedAssessment(run: StudyRun, proposals: readonly { key: string; instruction: string }[] = []) {
   const authorization = await prepareSlice(run);
   await run.end("spend_requester");
-  const runner = await approveSpend(run);
+  await committed(await run.decide("spend_request_review", "approve", "spend_request"));
+  const runner = await claimAndAttachEvidence(run);
   const report = await run.publish("slice_runner", "slice_report", paid(runner.key), { subject: authorization.id });
   await run.end("slice_runner");
   const assessment = await run.publish("slice_assessor", "slice_assessment", { ...sliceAssessment(runner.key), proposals }, { subject: report.id });
@@ -63,7 +63,7 @@ test("direct correction wants the assessor alone and reopens assessment review",
   } finally { await authority.close(); }
 });
 
-test("dispatch to the builder withholds expansion after merge until reassessment and explicit approval", async () => {
+test("dispatch to the builder withholds expansion after merge and sends the build for reassessment", async () => {
   const authority = await openAuthority();
   try {
     const run = await openStudy(authority);
@@ -92,35 +92,96 @@ test("dispatch to the builder withholds expansion after merge until reassessment
       ...sliceAssessment(key), verifications: [{ round_id: round.id, outcome: "verified" }],
     }, { subject: report.id });
     await run.end("slice_assessor");
+    expect((await run.reviews()).slice_report_review).toBeUndefined();
+    expect((await run.reviews()).slice_assessment_review).toBeDefined();
+  } finally { await authority.close(); }
+});
+
+test("approve_assessment opens a separate slice_report_review decision to expand", async () => {
+  const authority = await openAuthority();
+  try {
+    const run = await openStudy(authority);
+    const { report } = await seedAssessment(run);
+    await run.code("pr_watch", run.unit());
+    await run.code("prepare_observed_state", run.unit());
+    const expansions = () => authority.db.selectFrom("authority.unit").select("id").where("stage", "=", "expand").execute();
+
+    expect((await run.reviews()).slice_report_review).toBeUndefined();
     await committed(await run.decide("slice_assessment_review", "approve_assessment", "slice_assessment", {
       assessed_revision: report.id, dispositions: [],
     }));
     expect((await run.reviews()).slice_report_review?.decisions.some((decision) => decision.decision === "expand" && decision.is_available !== false)).toBe(true);
-    expect(await authority.db.selectFrom("authority.unit").select("id").where("stage", "=", "expand").execute()).toEqual([]);
+    expect(await expansions()).toEqual([]);
+
     await committed(await run.decide("slice_report_review", "expand", "slice_report"));
-    expect(await authority.db.selectFrom("authority.unit").select("id").where("stage", "=", "expand").execute()).toHaveLength(2);
+    expect(await expansions()).toHaveLength(2);
   } finally { await authority.close(); }
 });
 
-test("spend changes revise the request and a refused paid report resumes the same execution", async () => {
+test("spend_request_review requests changes and approves the revised request", async () => {
   const authority = await openAuthority();
   try {
     const run = await openStudy(authority);
     const initial = await prepareSlice(run);
     await run.end("spend_requester");
+
     await committed(await run.decide("spend_request_review", "request_changes", "spend_request", { payload: { feedback: "Clarify cap" } }));
     expect(await authority.db.selectFrom("authority.keyed_execution").select("id").execute()).toEqual([]);
-    const authorized = await run.publish("spend_requester", "spend_request", spend, { subject: initial.subject! });
+    const revised = await run.publish("spend_requester", "spend_request", spend, { subject: initial.subject! });
     await run.end("spend_requester");
-    const first = await approveSpend(run);
-    await run.publish("slice_runner", "slice_report", paid(first.key, false), { subject: authorized.id });
+    expect(revised.id).not.toBe(initial.id);
+    expect((await run.reviews()).spend_request_review?.target).toBe(revised.id);
+
+    await committed(await run.decide("spend_request_review", "approve", "spend_request"));
+    expect((await run.reviews()).spend_request_review).toBeUndefined();
+    expect(await authority.db.selectFrom("authority.keyed_execution").select("authorizing_revision_id").execute())
+      .toEqual([{ authorizing_revision_id: revised.id }]);
+  } finally { await authority.close(); }
+});
+
+test("slice runner claims its keyed execution and attaches evidence before publishing", async () => {
+  const authority = await openAuthority();
+  try {
+    const run = await openStudy(authority);
+    const authorized = await prepareSlice(run);
+    await run.end("spend_requester");
+    await committed(await run.decide("spend_request_review", "approve", "spend_request"));
+
+    const runner = await claimAndAttachEvidence(run);
+    expect(await authority.db.selectFrom("authority.keyed_execution").select(["id", "state", "evidence"]).execute())
+      .toEqual([{ id: runner.key, state: "evidence_attached", evidence }]);
+    const report = await run.publish("slice_runner", "slice_report", paid(runner.key), { subject: authorized.id });
+    await run.end("slice_runner");
+    expect(report.body).toMatchObject({ run_key: runner.key });
+  } finally { await authority.close(); }
+});
+
+test("a zero-result paid report is corrected from the same execution without new spend", async () => {
+  const authority = await openAuthority();
+  try {
+    const run = await openStudy(authority);
+    const authorized = await prepareSlice(run);
+    await run.end("spend_requester");
+    const requester = await run.action("spend_requester");
+    await committed(await run.decide("spend_request_review", "approve", "spend_request"));
+    const first = await claimAndAttachEvidence(run);
+
+    const refused = await run.publish("slice_runner", "slice_report", paid(first.key, false), { subject: authorized.id });
+    expect(await authority.db.selectFrom("authority.review_decision").select(["effect", "validation_messages"])
+      .where("target_revision_id", "=", refused.id).execute()).toEqual([{
+      effect: "request_changes",
+      validation_messages: ["The paid run produced no results. Revise the report from the same execution; do not request new spend."],
+    }]);
     await run.end("slice_runner");
     const revised = await run.startRunner();
     expect(revised.key).toBe(first.key);
     expect(await (await run.request("POST", `/executions/${revised.key}/claim`, { request_id: crypto.randomUUID() }, revised.secret)).json())
       .toEqual({ kind: "resume", evidence });
-    await run.publish("slice_runner", "slice_report", paid(revised.key), { subject: authorized.id });
+    const corrected = await run.publish("slice_runner", "slice_report", paid(revised.key), { subject: authorized.id });
     await run.end("slice_runner");
+
+    expect(corrected.body).toMatchObject({ run_key: first.key });
+    expect((await run.action("spend_requester")).action_id).toBe(requester.action_id);
     expect((await run.revision("spend_request"))?.id).toBe(authorized.id);
     expect((await run.reviews()).spend_request_review).toBeUndefined();
   } finally { await authority.close(); }
