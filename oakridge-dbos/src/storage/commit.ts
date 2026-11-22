@@ -886,6 +886,8 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
     if (unit?.kind.kind !== "stage") return violation(run_id, `wanted worker ${worker.unit}/${worker.worker} is not on a stage`);
     const instruction = selectEffectInstruction({ run_id, workflow: source, parsed_workflow: existing.parsed_workflow,
       prompts: Object.fromEntries(Object.entries(prompts).map(([path, text]) => [path, createHash("sha256").update(text).digest("hex")])), stage: unit.kind.stage, config,
+      ...(unit.parent && unit.collection_key != null && step.snapshot.units.some((parent) => parent.id === unit.parent && parent.kind.kind === "group")
+        ? { collection: { parent: unit.parent, key: unit.collection_key } } : {}),
       action, seq: attempt_seq, resolved });
     if (!instruction.ok) return violation(run_id, instruction.error.detail);
     intents.push({ unit_id: worker.unit, action_id: action_id as ActionId, seq: attempt_seq, instruction: withReviewHistory(instruction.value, resolved), authorizing_revision: resolved.keyed_execution?.authorizing_revision });

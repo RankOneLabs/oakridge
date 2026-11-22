@@ -44,7 +44,13 @@ export interface EngineInputs {
  * `effect_intent.payload` (rescue spec §2.5). It carries no secret: a
  * publication secret is minted when a session starts.
  */
+export interface CollectionMembership {
+  readonly parent: string;
+  readonly key: string;
+}
+
 export interface EffectInstruction {
+  readonly collection?: CollectionMembership;
   readonly execution_key?: string;
   readonly input_provenance?: InputProvenanceView;
   readonly version: 1;
@@ -85,6 +91,7 @@ export function selectSessionKey(action: RunWorkerAction, action_id: string, ses
 export const selectSharedSessionUnit = (unit: string): string => unit.slice(0, unit.lastIndexOf("/"));
 
 export interface InstructionSource {
+  readonly collection?: CollectionMembership;
   readonly run_id: RunId;
   readonly workflow: import("../core-client/source-types").WorkflowDefinitionDescriptor;
   readonly parsed_workflow: ParsedWorkflow;
@@ -198,6 +205,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     worker = { kind: "code", operation: declared.operation, every, artifact };
   }
   return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id as ActionId, seq: source.seq }, worker,
+    ...(source.collection ? { collection: source.collection } : {}),
     inputs: resolved.inputs,
     input_provenance: selectInputProvenance(resolved.input_provenance),
     engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? [], subject: resolved.subject ?? null, ...(self_assessment.length > 0 ? { self_assessment } : {}) },
@@ -275,6 +283,9 @@ export function decodeEffectInstruction(value: unknown): Result<EffectInstructio
   const refuse = (detail: string): Result<never, InstructionError> =>
     ({ ok: false, error: { operation: "decode_effect_instruction", entity_id: isFields(value) && isFields(value.attempt) && isString(value.attempt.action_id) ? value.attempt.action_id : "unknown", detail } });
   if (!isFields(value) || value.version !== 1) return refuse("unsupported instruction version");
+  const collection = value.collection;
+  if (collection !== undefined && (!isFields(collection) || !isString(collection.parent) || !isString(collection.key)))
+    return refuse("collection membership is malformed");
   if (!isString(value.run_id)) return refuse("run id is missing");
   if (!isRunWorkerAction(value.action)) return refuse("action is not a run_worker action");
   const attempt = value.attempt;
