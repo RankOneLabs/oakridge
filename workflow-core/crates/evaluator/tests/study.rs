@@ -822,6 +822,29 @@ fn design_readiness() {
     assert!(run.is_done(DESIGN) && run.has_unit("run/expansion/g2"));
 }
 
+#[test]
+fn replacement_with_changed_digest_withholds_expansion_after_pr_confirmation() {
+    let mut run = assessed_slice(plan(), false);
+    run.decided(
+        "slice_assessment_review",
+        "slice_assessment",
+        "approve_assessment",
+        json!({}),
+    );
+    run.decided("slice_report_review", "slice_report", "expand", json!({}));
+    run.observe_pr("slice", "closed_unmerged");
+    run.decided(
+        "pr_closed",
+        "pr",
+        "replace_pr",
+        json!({"feedback":"Replace the closed branch."}),
+    );
+    run.build("d2", "replacement");
+    assert!(run.wants(DESIGN, "spend_requester"));
+    run.confirm_merged(DESIGN);
+    assert!(!run.is_done(DESIGN) && !run.has_unit("run/expansion/g2"));
+}
+
 fn slice_approved() -> Run {
     let mut run = assessed_slice(plan(), false);
     run.decided(

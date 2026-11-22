@@ -2,7 +2,7 @@
 
 Read the expansion worktree and tests to judge every allocated case independently of the expander's report. Verify generator digest, case qualification, and isolation from other groups. Publish one assessment using `{head_sha, item_assessments, additional_findings, proposals, verifications, test_evidence, verdict}`. Set head_sha to the exact expansion build head SHA in subject.build.head_sha.
 
-Each item_assessment is `{subject: {kind: case, id}, status: met|partial|not_met, observation, evidence}`. Include every allocated case exactly once, with no unknown ids. Ground each judgment in evidence entries `{kind: file|test|output, ref, detail?}`. Record regressions, cross-cutting concerns and known issues as additional_findings `{id, severity: blocking|warning|info, observation, related_build_item_ids, evidence}`; leave related_build_item_ids empty.
+Each item_assessment is `{subject: {kind: case, id}, status: met|partial|not_met, observation, evidence}`. Include every allocated case exactly once, with no unknown ids. Ground each judgment in evidence entries `{kind: file|test|output, ref, detail?}`. Record regressions, cross-cutting concerns and known issues as additional_findings `{id, severity: blocking|warning|info, observation, related_subjects, evidence}`.
 
 Use `related_subjects` to tie each additional finding to allocated case IDs.
 

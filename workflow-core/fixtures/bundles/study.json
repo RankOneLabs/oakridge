@@ -926,7 +926,7 @@
           }
         }
       },
-      "done_when": "approved(plan) and approved(slice_assessment) and approved(slice_report) and published(slice_build) and pr_published and (merged_pr or approved(pr))",
+      "done_when": "approved(plan) and spend_matches_build and approved(spend_request) and approved(slice_report) and approved(slice_assessment) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
         "plan": "latest(plan)",
         "generator_digest": "latest(slice_build).generator_digest",
