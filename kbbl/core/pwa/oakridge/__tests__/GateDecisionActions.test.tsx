@@ -270,7 +270,7 @@ it("offers only the plain assessment changes action on an adjudicating gate", ()
   const action = "request_assessment_changes";
   const gates = reviewToGates({ ...unit, decisions: [...unit.decisions, {
     key: action, label: "Request assessment changes", fields: [{ key: "feedback", label: "Feedback" }],
-    payload_schema: "{feedback: text}", adjudication: null, assessment: "assessment",
+    payload_schema: "{feedback: text}", operation: "plain", assessment: "assessment",
     submit: { kind: "review", review: "assessment_review", decision: action, effect: "request_changes", target_revision_id: "assessment:1" },
   }] });
   if (!gates.ok || !gates.value[0]) throw new Error("assessment gate missing");

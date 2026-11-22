@@ -1,5 +1,5 @@
 // The current reader lives in current-assessment; the finding parser below reads the findings grading evidence addresses.
-export { parseCurrentAssessment, selectItemAssessmentGroups, selectAdditionalFindings, selectAssessmentActions, selectDerivedVerdict } from "./current-assessment";
+export { parseCurrentAssessment, selectItemAssessmentGroups, selectAdditionalFindings, selectDerivedVerdict } from "./current-assessment";
 export type { CurrentAssessment } from "./current-assessment";
 import type { CohortId } from "../run-types";
 import type { PlanTraceId } from "./plan";

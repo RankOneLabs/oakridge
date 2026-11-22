@@ -17,7 +17,7 @@ export function selectUnitRequirementIds(unit: OperatorUnitView): readonly strin
   const ids = unit.artifacts.flatMap((artifact): readonly string[] => {
     const revision = artifact.latest_revision;
     if (!revision) return [];
-    const parsed = parseVersionedBody({ schema: artifact.schema, version: artifactSchemaVersion(revision), is_adjudicated: artifact.is_adjudicated, body: revision.body });
+    const parsed = parseVersionedBody({ schema: artifact.schema, version: artifactSchemaVersion(revision), is_adjudicated: artifact.has_assessment_operations, body: revision.body });
     if (!parsed.ok || !parsed.value) return [];
     switch (parsed.value.kind) {
       case "analysis": case "spec": return parsed.value.body.requirements.map((requirement) => requirement.id);

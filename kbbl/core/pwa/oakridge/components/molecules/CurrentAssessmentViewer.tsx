@@ -1,26 +1,24 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Chip } from "../../../components/atoms/Chip";
 import { Select } from "../../../components/atoms/Select";
 import { selectStatusTone } from "../../lib/status-tone";
 import { selectFindingSelections } from "../../lib/grading";
 import type { AssessmentVerdict } from "../../artifact-types";
-import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
+import { artifactLabelClass } from "./ArtifactSection";
 import { CRITERION_STATUS_LABEL } from "./CriterionCheckItem";
 import { TestEvidenceBlock } from "./TestEvidenceBlock";
-import { selectAdditionalFindings, selectAssessmentActions, selectAssessmentSections, selectDerivedVerdict, selectItemAssessmentGroups, type AssessmentItemLabel, type AssessmentSection, type AssessmentStatusFilter, type AttributedFinding, type CurrentAssessment } from "../../lib/current-assessment";
+import { selectAdditionalFindings, selectAssessmentSections, selectDerivedVerdict, selectItemAssessmentGroups, type AssessmentItemLabel, type AssessmentSection, type AssessmentStatusFilter, type AttributedFinding, type CurrentAssessment } from "../../lib/current-assessment";
 import { CurrentBuildItemAssessmentViewer } from "./BuildItemAssessmentViewer";
 import { EvidenceRefList } from "./EvidenceRefList";
 import { ArtifactItemGrade } from "./ArtifactItemGrade";
 import { ArtifactSectionTabs } from "./ArtifactSectionTabs";
 import { selectAssessmentItemPaths } from "../../lib/current-item-paths";
 interface CurrentAssessmentProps extends Pick<import("../../artifactRegistry").ViewerProps, "source" | "itemGrading" | "onOpenItem"> {
-  assessment: CurrentAssessment; itemLabels?: readonly AssessmentItemLabel[]; handoff?: ReactNode;
-  /** The open review's decisions, shown above the sections so the operator never hunts for them. */
-  decisionBar?: ReactNode;
+  assessment: CurrentAssessment; itemLabels?: readonly AssessmentItemLabel[];
   initialSection?: AssessmentSection;
 }
 const VERDICT_LABEL: Record<AssessmentVerdict, string> = { pass: "Pass", pass_with_notes: "Pass with notes", fail: "Fail" };
-type AssessmentReviewSlots = Omit<CurrentAssessmentProps, "assessment" | "itemLabels" | "handoff" | "decisionBar" | "initialSection">;
+type AssessmentReviewSlots = Omit<CurrentAssessmentProps, "assessment" | "itemLabels" | "initialSection">;
 
 function CurrentAssessmentHeader({ assessment, review }: { assessment: CurrentAssessment; review: AssessmentReviewSlots }) {
   const verdict = selectDerivedVerdict(assessment);
@@ -56,23 +54,13 @@ function FindingsPanel({ assessment, findings, review }: { assessment: CurrentAs
   </section>;
 }
 
-function ActionsPanel({ assessment, handoff }: { assessment: CurrentAssessment; handoff: ReactNode }) {
-  if (handoff) return <>{handoff}</>;
-  const actions = selectAssessmentActions(assessment);
-  return <>{(["rework", "operator"] as const).map(audience => <ArtifactSection key={audience} title={`${audience === "rework" ? "Rework" : "Operator"} actions (${actions[audience].length})`} testId={`or-${audience}-actions`}>
-    {actions[audience].length === 0 ? <p className="text-sm text-[var(--text-muted)]">None.</p> : <ul>{actions[audience].map(action => <li key={action.id}>{action.text}</li>)}</ul>}
-  </ArtifactSection>)}</>;
-}
-
-export function CurrentAssessmentViewer({ assessment, itemLabels, handoff, decisionBar, initialSection = "items", ...review }: CurrentAssessmentProps) {
+export function CurrentAssessmentViewer({ assessment, itemLabels, initialSection = "items", ...review }: CurrentAssessmentProps) {
   const findings = selectAdditionalFindings(assessment, itemLabels);
   return <article className="flex flex-col gap-4" data-testid="or-assessment-viewer">
     <CurrentAssessmentHeader assessment={assessment} review={review} />
-    {decisionBar}
     <ArtifactSectionTabs<AssessmentSection> label="Assessment sections" sections={selectAssessmentSections(assessment)} initial={initialSection}>{() => ({
       items: <ItemsPanel assessment={assessment} review={review} />,
       findings: <FindingsPanel assessment={assessment} findings={findings} review={review} />,
-      actions: <ActionsPanel assessment={assessment} handoff={handoff} />,
       tests: <TestEvidenceBlock tests={{ ...assessment.test_evidence, output: assessment.test_evidence.output ?? null, summary: assessment.test_evidence.summary ?? null, cargo_test_output: assessment.test_evidence.cargo_test_output ?? null }} testId="or-assessment-tests" />,
     })}</ArtifactSectionTabs>
   </article>;

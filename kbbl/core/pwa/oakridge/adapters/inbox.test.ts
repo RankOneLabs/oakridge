@@ -145,7 +145,7 @@ describe("development inbox", () => {
       latest_revision: { ...source.latest_revision, id: "integration-assessment:2", run_id: integration.run_id, unit_id: integration.unit_id } };
     const adjudicated = withUnitFields(integration, { artifacts: [...integration.artifacts, assessment], decisions: integration.decisions.map(decision =>
       decision.submit.kind === "review" && decision.submit.review === "integration_review"
-        ? { ...decision, adjudication: decision.submit.effect === "approve" ? "accept" : "feedback", assessment: assessment.artifact_key }
+        ? { ...decision, operation: decision.submit.effect === "approve" ? "approve_assessment" : "dispatch_feedback", assessment: assessment.artifact_key }
         : decision) });
     const items = adjudicated.decisions.flatMap((decision) => decision.submit.kind === "review" ? [{ kind: "decision" as const,
       run_id: integration.run_id, unit_id: integration.unit_id, key: decision.key, label: decision.label, submit: decision.submit, prompt: null }] : []);
@@ -163,12 +163,12 @@ describe("study inbox", () => {
   if (!revision) throw new Error("captured fixture lacks an artifact revision");
 
   const approve: OperatorDecisionDefinition = {
-    key: "approve", label: "Approve", fields: [], payload_schema: "{}", adjudication: null, assessment: null,
+    key: "approve", label: "Approve", fields: [], payload_schema: "{}", operation: "plain", assessment: null,
     submit: { kind: "review", review: "report_review", decision: "approve", effect: "approve", target_revision_id: revision.id },
   };
   const requestChanges: OperatorDecisionDefinition = {
     key: "request_changes", label: "Request changes", fields: [{ key: "feedback", label: "What needs to change?" }],
-    payload_schema: "{feedback: text}", adjudication: null, assessment: null,
+    payload_schema: "{feedback: text}", operation: "plain", assessment: null,
     submit: { kind: "review", review: "report_review", decision: "request_changes", effect: "request_changes", target_revision_id: revision.id },
   };
   const unit = withUnitFields(cohort, {
@@ -207,7 +207,7 @@ describe("study inbox", () => {
   });
 
   it("marks a review whose decisions declare adjudication roles as needing adjudication", () => {
-    const adjudicated = withUnitFields(unit, { decisions: [{ ...approve, adjudication: "accept", assessment: "assessment" }, { ...requestChanges, adjudication: "feedback", assessment: "assessment" }] });
+    const adjudicated = withUnitFields(unit, { decisions: [{ ...approve, operation: "approve_assessment", assessment: "assessment" }, { ...requestChanges, operation: "dispatch_feedback", assessment: "assessment" }] });
     const inbox = classifyDevelopmentInbox(entry, [adjudicated], { workflow_name: "study", run_title: null });
     if (!inbox.ok) throw new Error(inbox.error.detail);
     expect(inbox.value.items[0]?.requires_adjudication).toBe(true);

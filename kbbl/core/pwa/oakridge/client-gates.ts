@@ -54,7 +54,7 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
     const currentGate = unwrapAdapter(path, reviewToGates(unit)).find((candidate) => candidate.id === gateId
       || (candidate.run_id === gate.runId && candidate.gate_step === review));
     const requestedRevision = parseCompositeId(req.artifact_revision_id, "artifact");
-    const currentRevisionId = req.adjudication ? currentGate?.assessment_revision_id : currentGate?.artifact_revision_id;
+    const currentRevisionId = currentGate?.artifact_revision_id;
     const currentRevision = currentRevisionId ? parseCompositeId(currentRevisionId, "artifact") : null;
     const requestedTarget = requestedRevision.ok
       ? requestedRevision.value.name.slice(requestedRevision.value.name.indexOf(":") + 1) : req.artifact_revision_id;
@@ -63,18 +63,17 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
     if (!currentTarget || requestedTarget !== currentTarget)
       throw new Error(`oakridge ${gateId}: review artifact changed; refresh before deciding`);
     const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review
-      && isAdjudicationDecision(candidate) === Boolean(req.adjudication) && decisionAction(candidate, unit.decisions) === req.action);
+      && !isAdjudicationDecision(candidate) && decisionAction(candidate, unit.decisions) === req.action);
     if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${gateId}: decision ${req.action} unavailable`);
     if (decision.is_available === false)
       throw new Error(`oakridge ${gateId}: ${decision.disabled_reason ?? `decision ${req.action} unavailable`}`);
     if (decision.fields.length > 1)
       throw new Error(`oakridge ${gateId}: decision requires unsupported fields`);
-    if (!req.adjudication && req.action === "request_revision" && decision.fields.length === 0 && req.feedback.trim())
+    if (req.action === "request_revision" && decision.fields.length === 0 && req.feedback.trim())
       throw new Error(`oakridge ${gateId}: decision does not accept feedback`);
     const field = decision.fields[0];
-    const payload = req.adjudication ?? (field ? { [field.key]: req.feedback } : {});
-    await decide(gate.runId, gate.unitId, review, { decision: decision.submit.decision, target: decision.submit.target_revision_id, payload, request_id: req.idempotency_key,
-      ...(req.adjudication ? { expected_assessment_revision_id: requestedTarget } : {}) });
+    const payload = field ? { [field.key]: req.feedback } : {};
+    await decide(gate.runId, gate.unitId, review, { decision: decision.submit.decision, target: decision.submit.target_revision_id, payload, request_id: req.idempotency_key });
     invalidateCachedRunUnits(gate.runId);
     return { gate_id: gateId, resumed: true };
   }

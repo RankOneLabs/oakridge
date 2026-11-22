@@ -9,8 +9,8 @@ export interface OperatorArtifactDetail {
   readonly artifact_key: string;
   readonly schema: string;
   readonly is_reviewable: boolean;
-  /** A review of this artifact declares an adjudication decision, so the operator adjudicates its next actions. */
-  readonly is_adjudicated: boolean;
+  /** A review of this artifact declares assessment operations. */
+  readonly has_assessment_operations: boolean;
   readonly is_editable: boolean;
   /** Of the latest revision: its latest decision's effect, or draft while it has none. */
   readonly status: OperatorArtifactRevisionStatus;
