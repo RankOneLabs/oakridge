@@ -9,6 +9,7 @@ if [[ "$suite" == integration && -z "${OAKRIDGE_TEST_DATABASE_URL:-}" ]]; then
   echo "OAKRIDGE_TEST_DATABASE_URL is required for test:integration" >&2
   exit 2
 fi
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 # Integration files run against a real PostgreSQL server: each creates and drops its own scratch database.
 mapfile -d '' files < <(find src tests -name '*.test.ts' -print0 | sort -z)
 selected=()
