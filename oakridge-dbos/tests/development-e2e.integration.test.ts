@@ -125,8 +125,8 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
       case "builder": {
         timeline.set(`build:${member}`, Date.now());
         const pr_url = forge.open(`cohort-${member}`, "develop");
-        await publish("build_result", { assigned_repository: "app", head_sha: "abc123", change_overview: `Built ${member}.`, changed_files: [`${member}.ts`],
-          tests: { passed: 1, failing_tests: 0, output: null, test_notes: null, cargo_test_output: null }, delegated_session_metadata: null, known_issues: [] });
+        await publish("build_result", { assigned_repository: "app", committed_revision: "abc123", change_overview: `Built ${member}.`, changed_files: [`${member}.ts`],
+          tests: { passed: 1, failing_tests: 0, output: null, test_notes: null, cargo_test_output: null }, delegated_session_metadata: null, delivery_issues: [] });
         await publish("pr", { change_request_link: pr_url, source_branch: `cohort-${member}`, change_overview: `Cohort ${member}.`, review_status: "ready" });
         break;
       }

@@ -451,7 +451,7 @@
         },
         {
           "key": "build_result",
-          "schema": "{assigned_repository: optional(ident), change_overview: text, changed_files: list(text), delegated_session_metadata: optional({cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)}), head_sha: text, known_issues: list({description: text, severity: enum(blocking, warning, info)}), tests: {cargo_test_output: optional(text), failing_tests: integer, output: optional(text), passed: integer, test_notes: optional(text)}}"
+          "schema": "{assigned_repository: optional(ident), change_overview: text, changed_files: list(text), committed_revision: text, delegated_session_metadata: optional({cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)}), delivery_issues: list({description: text, severity: enum(blocking, warning, info)}), tests: {cargo_test_output: optional(text), failing_tests: integer, output: optional(text), passed: integer, test_notes: optional(text)}}"
         },
         {
           "key": "change_request_link",
@@ -473,7 +473,7 @@
     }
   },
   {
-    "key": "{assigned_repository: optional(ident), change_overview: text, changed_files: list(text), delegated_session_metadata: optional({cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)}), head_sha: text, known_issues: list({description: text, severity: enum(blocking, warning, info)}), tests: {cargo_test_output: optional(text), failing_tests: integer, output: optional(text), passed: integer, test_notes: optional(text)}}",
+    "key": "{assigned_repository: optional(ident), change_overview: text, changed_files: list(text), committed_revision: text, delegated_session_metadata: optional({cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)}), delivery_issues: list({description: text, severity: enum(blocking, warning, info)}), tests: {cargo_test_output: optional(text), failing_tests: integer, output: optional(text), passed: integer, test_notes: optional(text)}}",
     "shape": {
       "kind": "record",
       "fields": [
@@ -490,15 +490,15 @@
           "schema": "list(text)"
         },
         {
+          "key": "committed_revision",
+          "schema": "text"
+        },
+        {
           "key": "delegated_session_metadata",
           "schema": "optional({cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)})"
         },
         {
-          "key": "head_sha",
-          "schema": "text"
-        },
-        {
-          "key": "known_issues",
+          "key": "delivery_issues",
           "schema": "list({description: text, severity: enum(blocking, warning, info)})"
         },
         {
@@ -1112,15 +1112,15 @@
           "schema": "list(text)"
         },
         {
+          "key": "committed_revision",
+          "schema": "text"
+        },
+        {
           "key": "delegated_session_metadata",
           "schema": "optional(build_metadata)"
         },
         {
-          "key": "head_sha",
-          "schema": "text"
-        },
-        {
-          "key": "known_issues",
+          "key": "delivery_issues",
           "schema": "list(issue)"
         },
         {

@@ -41,7 +41,7 @@ function IssueList({ issues }: { issues: BuildIssue[] }) {
 
 export function BuildResultViewer({ result, brief, cohortLabel, briefReview }: Props) {
   const branch = result.delegated_session_metadata?.branch ?? null;
-  const issues = selectOrderedIssues(result.known_issues);
+  const issues = selectOrderedIssues(result.issues);
 
   return (
     <article className="flex flex-col gap-5" data-testid="or-build-result-viewer">
@@ -53,7 +53,7 @@ export function BuildResultViewer({ result, brief, cohortLabel, briefReview }: P
           {branch && <Chip tone="muted" className="font-mono">{branch}</Chip>}
         </div>
         {brief.kind === "found" && <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{brief.value.title}</h2>}
-        <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-build-head-sha">Commit: <code className="or-code">{result.head_sha ?? "Not recorded"}</code></p>
+        <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-build-head-sha">Commit: <code className="or-code">{result.commit_sha ?? "Not recorded"}</code></p>
       </header>
 
       <ArtifactSection title="What was built" testId="or-build-summary">

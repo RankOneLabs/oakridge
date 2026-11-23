@@ -78,12 +78,12 @@ schemas:
     technical_decisions: list(technical_decision)
   build_body:
     assigned_repository: optional(ident)
-    head_sha: text
+    committed_revision: text
     change_overview: text
     changed_files: list(text)
     tests: test_evidence
     delegated_session_metadata: optional(build_metadata)
-    known_issues: list(issue)
+    delivery_issues: list(issue)
   build_metadata:
     cohort_id: optional(ident)
     delegated_session: optional(ident)
@@ -418,8 +418,8 @@ stages:
             message: Cohort assessment items must name brief build items.
           - check: every(flatten(map(assessment.additional_findings, item.related_build_item_ids)), contains(map(input.brief.build_items, item.id), item))
             message: Additional finding links must name brief build items.
-          - check: published(build_result) and assessment.head_sha == latest(build_result).head_sha
-            message: Assessment head_sha must match the latest build result.
+          - check: published(build_result) and assessment.head_sha == latest(build_result).committed_revision
+            message: Assessment head_sha must match the latest build result's committed_revision.
           - &a1
             check: unique(map(assessment.item_assessments, item.subject.id))
             message: Assessment item ids must be unique.

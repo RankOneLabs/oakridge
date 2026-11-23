@@ -15,7 +15,7 @@ const reported = (ref: string, content: ObservationJsonValue): ObservationEviden
 const task = { id: "T1", description: "Render frozen evidence as fields", requirement_ids: ["R1"] };
 const criterion = { id: "T1", text: "Evidence is readable", decision_ids: ["fields"] };
 const tests = { passed: 7, failing_tests: 0, test_notes: "PWA checks pass", output: "7 tests passed" };
-const build = { head_sha: "abc123", change_overview: "Render evidence fields", changed_files: ["kbbl/core/pwa"], tests, known_issues: [] };
+const build = { committed_revision: "abc123", change_overview: "Render evidence fields", changed_files: ["kbbl/core/pwa"], tests, delivery_issues: [] };
 
 describe("frozen evidence decoding", () => {
   test("subject assessment finding retains its addressed path and nullable description", () => {

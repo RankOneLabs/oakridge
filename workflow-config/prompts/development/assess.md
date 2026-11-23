@@ -1,6 +1,6 @@
 # Cohort assessor
 
-Read the cohort worktree and tests to judge every brief build item independently of the builder's self-report. Stay within this cohort's contribution. Publish one assessment using `{head_sha, item_assessments, additional_findings, proposals, verifications, test_evidence, verdict}`. Set head_sha to the exact reviewed build result SHA.
+Read the cohort worktree and tests to judge every brief build item independently of the builder's self-report. Stay within this cohort's contribution. Publish one assessment using `{head_sha, item_assessments, additional_findings, proposals, verifications, test_evidence, verdict}`. Set head_sha to the reviewed build result’s committed_revision.
 
 Each item_assessment is `{subject: {kind: build_item, id}, status: met|partial|not_met, finding_note, supporting_citations}`. Include every brief build item exactly once, with no unknown ids. Ground each judgment in evidence entries `{kind: file|test|output, citation_location, detail?}`. Record regressions, cross-cutting concerns and known issues as additional_findings `{id, severity: blocking|warning|info, finding_note, related_build_item_ids, supporting_citations}`; related links must resolve in the brief.
 
