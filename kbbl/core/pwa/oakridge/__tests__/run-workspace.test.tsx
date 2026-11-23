@@ -120,6 +120,22 @@ describe("the run route", () => {
 });
 
 describe("opening a pane from the sidebar", () => {
+  it("shows recorded operator actions only in their workspace pane", async () => {
+    const history = "The change was already applied.";
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(["oakridge", "run", RUN.id], RUN);
+    client.setQueryData(["oakridge", "run", RUN.id, "activity"], { events: [], dispositions: [{
+      decision_id: "decision", kind: "proposal_rejected", reason: history, actor: "operator", created_at: "2026-10-01T09:00:00Z",
+    }] });
+    render(<QueryClientProvider client={client}><RunDetailView runId={RUN.id} routePane={null} onBack={() => {}} /></QueryClientProvider>);
+    await screen.findByTestId("or-run-overview");
+    expect(screen.queryByText(history)).toBeNull();
+    fireEvent.click(screen.getByTestId("or-sidebar-pane-operator-actions"));
+    expect(await screen.findByText(history)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("or-sidebar-pane-overview"));
+    expect(screen.queryByText(history)).toBeNull();
+  });
+
   it("filters artifact rows and restores them when All is selected", async () => {
     renderWorkspace();
     const filter = await screen.findByTestId("or-sidebar-artifact-filter");

@@ -1,4 +1,3 @@
-import { OperatorActionsHistory } from "./OperatorActionsHistory";
 import { selectStageRows, type StageRead } from "../../lib/stage-overview";
 import type { OperatorUnitView } from "../../operator-contracts/projections/unit-view";
 import { GRADING_PANE } from "../../lib/run-workspace";
@@ -119,8 +118,6 @@ export function RunOverviewPane({ overview, activity, units, onOpenPane }: RunOv
           </ol>
         )}
       </section>
-
-      {activity.kind === "loaded" && <OperatorActionsHistory facts={activity.dispositions ?? []} />}
 
       <section>
         <h4 className="or-run-overview__heading">Recent releases</h4>

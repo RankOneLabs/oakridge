@@ -8,9 +8,8 @@ const descriptions: Record<OperatorRecordedFeedbackDisposition["kind"], string> 
 };
 
 export function OperatorActionsHistory({ facts }: { facts: readonly OperatorRecordedFeedbackDisposition[] }) {
-  if (!facts.length) return null;
+  if (!facts.length) return <p>No operator actions recorded yet.</p>;
   return <section aria-label="Assessment actions">
-    <h4 className="or-run-overview__heading">Assessment actions</h4>
     <ul className="or-run-overview__list">
       {facts.map((fact, index) => <li key={`${fact.decision_id}/${index}`} className="text-sm">
         <div>{descriptions[fact.kind]}</div>

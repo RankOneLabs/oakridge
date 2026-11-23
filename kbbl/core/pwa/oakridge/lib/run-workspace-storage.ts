@@ -16,6 +16,7 @@ import { artifactRevisionIdOf, logicalItemIdOf } from "./grading-ids";
 import {
   DEFAULT_RUN_WORKSPACE_STATE,
   GRADING_PANE,
+  OPERATOR_ACTIONS_PANE,
   USAGE_PANE,
   LIST_PANE,
   OVERVIEW_PANE,
@@ -66,6 +67,8 @@ const parseStoredPane = (value: unknown): RunWorkspacePane | null => {
       return LIST_PANE;
     case "grading":
       return GRADING_PANE;
+    case "operator_actions":
+      return OPERATOR_ACTIONS_PANE;
     case "usage":
       return USAGE_PANE;
     case "item": {

@@ -137,6 +137,7 @@ export const isPaneResolvable = (pane: RunWorkspacePane, index: RunEntityIndex):
     case "prompt":
     case "unit":
     case "grading":
+    case "operator_actions":
     case "usage":
     case "item":
     case "task":
