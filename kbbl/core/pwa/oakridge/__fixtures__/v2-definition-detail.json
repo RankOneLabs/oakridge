@@ -2397,7 +2397,7 @@
             "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
           },
           "kind": "code",
-          "operation": "pull_request.observe",
+          "operation": "pull_request.inspect",
           "produces": [
             "pr_state"
           ],
@@ -3766,7 +3766,7 @@
             },
             "pr_watch": {
               "kind": "code",
-              "operation": "pull_request.observe",
+              "operation": "pull_request.inspect",
               "inputs": {
                 "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
               },
@@ -3998,7 +3998,7 @@
             },
             "pr_watch": {
               "kind": "code",
-              "operation": "pull_request.observe",
+              "operation": "pull_request.inspect",
               "inputs": {
                 "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
               },

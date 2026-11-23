@@ -99,7 +99,7 @@ fi
 if [ ! -f "$MCP_CONFIG" ]; then
   echo "oakridge: gated-review is not configured (no .mcp.json); copy .mcp.example.json to .mcp.json to enable it"
 elif [ -z "$GATED_REVIEW_URL" ]; then
-  echo "oakridge: $MCP_CONFIG names no gated-review server; pull_request.observe will fail with discovery_unsupported" >&2
+  echo "oakridge: $MCP_CONFIG names no gated-review server; pull_request.inspect will fail with discovery_unsupported" >&2
 fi
 if [ "${OAKRIDGE_PR_INTEGRATION+x}" = x ]; then
   case "$OAKRIDGE_PR_INTEGRATION" in
