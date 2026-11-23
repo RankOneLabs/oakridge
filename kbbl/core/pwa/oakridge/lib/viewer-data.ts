@@ -20,27 +20,23 @@ interface FindingResolution {
   kind: "spec_update" | "operator_decision" | "implementation_note";
   text: string;
   decision_prompt?: string | null;
-  question?: string | null;
   alternatives?: { option: string; consequence: string }[] | null;
   chosen?: string | null;
 }
 
 interface FindingCitation {
   kind: "file" | "search" | "test" | "output";
-  ref?: string;
-  citation_location?: string;
+  citation_location: string;
   detail: string;
 }
 
 export interface CurrentFinding {
   id: string;
   severity: FindingSeverity;
-  observation: string;
-  supporting_citations?: FindingCitation[];
-  evidence?: FindingCitation[];
+  finding_note: string;
+  supporting_citations: FindingCitation[];
   expected_change_locations: { path: string; symbol?: string | null }[];
   finding_resolution?: FindingResolution | null;
-  resolution?: FindingResolution | null;
 }
 
 export interface CurrentAnalysis {
@@ -49,12 +45,11 @@ export interface CurrentAnalysis {
 
 export interface CurrentCohort {
   id: string;
-  repository_key: RepositoryKey;
+  assigned_repository: RepositoryKey;
   title: string;
-  scope?: string;
-  change_scope?: string;
+  change_scope: string;
   allocations: { requirement_id: string; contribution: string }[];
-  depends_on: string[];
+  prerequisite_cohorts: string[];
   rationale: string;
 }
 
@@ -62,8 +57,8 @@ export interface CurrentPlan { cohorts: CurrentCohort[] }
 
 export interface CurrentBrief {
   cohort_id: string;
-  repository_key: RepositoryKey;
-  depends_on: string[];
+  assigned_repository: RepositoryKey;
+  prerequisite_cohorts: string[];
   files_in_scope: string[];
   build_items: { id: string; requirement_ids: string[]; instructions: string; verification: string[] }[];
   technical_decisions: { id: string; build_item_ids: string[]; decision: string; rationale: string }[];
@@ -96,7 +91,7 @@ export function parseCurrentAnalysis(body: unknown): ViewerResult<CurrentAnalysi
   const canDisplay = Array.isArray(requirements) && requirements.every((item) => {
     const entry = record(item);
     return typeof entry?.id === "string" && Array.isArray(entry.source_refs)
-      && rows(entry.findings, ["id", "severity", "observation", "expected_change_locations"]);
+      && rows(entry.findings, ["id", "severity", "finding_note", "supporting_citations", "expected_change_locations"]);
   });
   return presentation(body, canDisplay);
 }
@@ -109,7 +104,7 @@ export function parseCanonicalSpec(body: unknown): ViewerResult<CanonicalSpec> {
 
 export function readCohort(value: unknown): CurrentCohort | null {
   const entry = record(value);
-  return entry && typeof entry.id === "string" && Array.isArray(entry.depends_on) && rows(entry.allocations, ["requirement_id", "contribution"])
+  return entry && typeof entry.id === "string" && Array.isArray(entry.prerequisite_cohorts) && rows(entry.allocations, ["requirement_id", "contribution"])
     ? value as CurrentCohort : null;
 }
 
@@ -120,7 +115,7 @@ export function parseCurrentPlan(body: unknown): ViewerResult<CurrentPlan> {
 
 export function parseCurrentBrief(body: unknown): ViewerResult<CurrentBrief> {
   const value = record(body);
-  return presentation(body, typeof value?.cohort_id === "string" && Array.isArray(value.depends_on) && Array.isArray(value.files_in_scope)
+  return presentation(body, typeof value?.cohort_id === "string" && Array.isArray(value.prerequisite_cohorts) && Array.isArray(value.files_in_scope)
     && rows(value.build_items, ["id", "requirement_ids", "instructions", "verification"])
     && rows(value.technical_decisions, ["id", "build_item_ids", "decision", "rationale"]));
 }

@@ -1,5 +1,5 @@
 import type { PrIntegration } from "../domain/pr-integration";
-import type { PullRequestObservation } from "../domain/pull-request";
+import type { PullRequestInspection } from "../domain/pull-request";
 import { err, ok, type Result } from "../domain/primitives";
 import { PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
 import type { ForgePullRequest, PullRequestReader, PullRequestRef } from "../runtime/github-pull-requests";
@@ -18,7 +18,7 @@ export interface PullRequestWatchQuery {
   readonly base_branch: string;
   readonly pr_url: string;
 }
-/** `pull_request.observe` input, as OPERATION_REGISTRY declares it. */
+/** `pull_request.inspect` input, as OPERATION_REGISTRY declares it. */
 export interface PullRequestObserveInput { readonly query: PullRequestWatchQuery }
 export function decodePullRequestObserveInput(value: unknown): PullRequestObserveInput | null {
   if (!isFields(value) || !isFields(value.query)) return null;
@@ -60,17 +60,6 @@ export function selectBranchMismatch(query: PullRequestWatchQuery, pull_request:
   return null;
 }
 
-export const selectObservation = (pull_request: ForgePullRequest): PullRequestObservation => ({ state: pull_request.state,
-  number: pull_request.number, url: pull_request.url, head_sha: pull_request.head_sha, merged_at: pull_request.merged_at });
-
-interface PullRequestInspection {
-  readonly status: PullRequestObservation["state"];
-  readonly pr_sequence: number;
-  readonly observed_link: string;
-  readonly head_sha: string | null;
-  readonly merged_at: string | null;
-}
-
 export const selectInspection = (pull_request: ForgePullRequest): PullRequestInspection => ({
   status: pull_request.state, pr_sequence: pull_request.number, observed_link: pull_request.url,
   head_sha: pull_request.head_sha, merged_at: pull_request.merged_at,
@@ -91,7 +80,7 @@ export const selectObserveReader = (integration: PrIntegration, reader: PullRequ
   integration === "gated-review" ? reader : null;
 
 export async function observePullRequest(reader: PullRequestReader | null, input: PullRequestObserveInput,
-  options: OperationCallOptions = {}, selectBody: (pull_request: ForgePullRequest) => PullRequestObservation | PullRequestInspection = selectObservation): Promise<OperationOutcome> {
+  options: OperationCallOptions = {}): Promise<OperationOutcome> {
   const integration = options.pr_integration ?? "gated-review";
   reader = selectObserveReader(integration, reader);
   if (!reader) return { kind: "failed", code: PROVIDER_ERROR_CODES.discovery_unsupported,
@@ -108,5 +97,5 @@ export async function observePullRequest(reader: PullRequestReader | null, input
   if (!pull_request) return mismatch(`${ref.value.owner}/${ref.value.name} has no pull request #${ref.value.number}`);
   const branch_mismatch = selectBranchMismatch(input.query, pull_request);
   if (branch_mismatch) return mismatch(branch_mismatch);
-  return { kind: "succeeded", body: selectBody(pull_request) };
+  return { kind: "succeeded", body: selectInspection(pull_request) };
 }

@@ -1,6 +1,6 @@
 {
   "cohort_id": "alpha",
-  "repository_key": "oakridge",
+  "assigned_repository": "oakridge",
   "title": "Alpha",
   "depends_on": [],
   "goal": "Build alpha",

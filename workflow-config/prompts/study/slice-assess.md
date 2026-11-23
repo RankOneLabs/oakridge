@@ -4,7 +4,7 @@ Evaluate the slice report under review (`subject`) against the plan and slice bu
 
 Publish `slice_assessment` using the development assessment shape with `run_key` copied from the report. Set `head_sha` to the slice build's `build.head_sha`.
 
-- `item_assessments` entries are `{subject: {kind, id}, status, observation, supporting_citations}`. Use kind `criterion`, `trigger`, or `case`, and status `met`, `partial`, or `not_met`. Cover every criterion and trigger exactly once. Criteria are marked `met` or `not_met`; triggers are marked `fired` or `not_fired`. A trigger item’s status records whether its mark is supported by the evidence. Ground judgments in `{kind: file|test|output, citation_location, detail?}` evidence.
+- `item_assessments` entries are `{subject: {kind, id}, status, finding_note, supporting_citations}`. Use kind `criterion`, `trigger`, or `case`, and status `met`, `partial`, or `not_met`. Cover every criterion and trigger exactly once. Criteria are marked `met` or `not_met`; triggers are marked `fired` or `not_fired`. A trigger item’s status records whether its mark is supported by the evidence. Ground judgments in `{kind: file|test|output, citation_location, detail?}` evidence.
 - `additional_findings` record other issues with stable IDs, severity (`blocking`, `warning`, or `info`), observations, and evidence.
 Use `related_subjects` to tie each additional finding to slice case, criterion, or trigger IDs.
 

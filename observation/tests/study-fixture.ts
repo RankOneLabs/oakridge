@@ -1,6 +1,6 @@
 import type { JsonValue } from "../src/domain/primitives";
 
-export const subject = (kind: string, id: string) => ({ subject: { kind, id }, status: "met", observation: "Verified", supporting_citations: [] });
+export const subject = (kind: string, id: string) => ({ subject: { kind, id }, status: "met", finding_note: "Verified", supporting_citations: [] });
 export const assessment = (head_sha: string, item_assessments: readonly JsonValue[], additional_findings: readonly JsonValue[] = []) => ({
   head_sha, item_assessments, additional_findings, proposals: [], verifications: [], test_evidence: { passed: 1, failing_tests: 0 },
   verdict: additional_findings.length ? "pass_with_notes" : "pass",
@@ -8,8 +8,8 @@ export const assessment = (head_sha: string, item_assessments: readonly JsonValu
 const build = (cohort_id: string, head_sha: string) => ({ cohort_id, head_sha, title: cohort_id, change_overview: "Study fixture", changed_files: [] });
 const qualification = { case_id: "A1", reference_passes: true, omissions_isolated: true, controls_replayed: true, detail: "Qualified" };
 const digest = "sha256:fixture";
-const pr = { pr_url: "https://example.test/oakridge/pull/1", branch: "study-fixture", change_overview: "Study fixture" };
-const pr_state = { url: pr.pr_url, state: "open", number: 1, head_sha: null, merged_at: null };
+const pr = { change_request_link: "https://example.test/oakridge/pull/1", source_branch: "study-fixture", change_overview: "Study fixture" };
+const pr_state = { observed_link: pr.change_request_link, status: "open", pr_sequence: 1, head_sha: null, merged_at: null };
 export const studyBodies: Readonly<Record<string, JsonValue>> = {
   plan: {
     research_question: "Does the result generalize?", hypotheses: [{ id: "H1", statement: "Case omissions affect scores" }],
@@ -28,14 +28,14 @@ export const studyBodies: Readonly<Record<string, JsonValue>> = {
     criteria_marks: [{ id: "A1", status: "met", mark_reason: "Scored" }], trigger_marks: [{ id: "T1", status: "not_fired", mark_reason: "Control scored" }],
     proposed_changes: [] },
   slice_assessment: { ...assessment("slice-head", [subject("case", "A1"), subject("criterion", "A1"), subject("trigger", "T1")],
-    [{ id: "F1", severity: "warning", observation: "Monitor the control", related_subjects: [{ kind: "case", id: "A1" }], supporting_citations: [] }]),
+    [{ id: "F1", severity: "warning", finding_note: "Monitor the control", related_subjects: [{ kind: "case", id: "A1" }], supporting_citations: [] }]),
     proposals: [{ key: "control", instruction: "Retain the control's score", citation: { revision_id: "design:slice_report:1", pointer: "/criteria_marks/0" } }],
     run_key: "slice-paid" },
   expansion: { build: build("group", "expand-head"), generator_digest: digest, case_ids: ["A1"], qualifications: [qualification] },
   "expand.assessment": assessment("expand-head", [subject("case", "A1")]),
   "integration.assessment": assessment("integration-head", [subject("case", "A1"), subject("cohort_file", "C1")]),
   freeze: { build: build("freeze", "freeze-head"), generator_digest: digest, image_digest: "image", is_byte_identical: true,
-    cohorts: [{ id: "C1", case_ids: ["A1"], groups: ["group"], file: "cohort.json", digest, attempt_count: 1, cap_cents: 50, cost_basis: "per_attempt_cap" }] },
+    cohorts: [{ id: "C1", case_ids: ["A1"], groups: ["group"], manifest_path: "cohort.json", digest, attempt_count: 1, cap_cents: 50, cost_basis: "per_attempt_cap" }] },
   pr, pr_state, observed_state: pr_state,
   manual_merge_target: pr,
   workspace: { repository_path: "/tmp/study", push_remote_owner: "example", head: "abc", base_branch: "capture" },

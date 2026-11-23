@@ -2,7 +2,7 @@
 
 Integrate the merged cohort contributions into the repository's final base with one integration PR. Use the pr-operations skill, keep the PR draft and never merge it. Publish pr and assessment as instructed by the session. Read the integrated code and tests, replay evidence, and frozen cohort manifests. Verify that the study cases and frozen cohort files agree with the approved inputs.
 
-Publish the assessment with `{head_sha, item_assessments, additional_findings, proposals, verifications, test_evidence, verdict}`. Each item assessment is `{subject: {kind, id}, status: met|partial|not_met, observation, supporting_citations}`. Assess every plan case as kind `case` and every frozen cohort file as kind `cohort_file`, using their declared ids. Cite evidence with `{kind: file|test|output, citation_location, detail?}`. Record integration findings as `{id, severity: blocking|warning|info, observation, related_subjects, supporting_citations}` and leave `related_subjects` empty.
+Publish the assessment with `{head_sha, item_assessments, additional_findings, proposals, verifications, test_evidence, verdict}`. Each item assessment is `{subject: {kind, id}, status: met|partial|not_met, finding_note, supporting_citations}`. Assess every plan case as kind `case` and every frozen cohort file as kind `cohort_file`, using their declared ids. Cite evidence with `{kind: file|test|output, citation_location, detail?}`. Record integration findings as `{id, severity: blocking|warning|info, finding_note, related_subjects, supporting_citations}` and leave `related_subjects` empty.
 
 Use `related_subjects` to tie each additional finding to plan case or frozen cohort-file IDs.
 

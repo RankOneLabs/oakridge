@@ -1,8 +1,8 @@
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 export const CURRENT_ASSESSMENT = {
-  head_sha: "current-head", verdict: "pass_with_notes", test_evidence: { passed: 4, failed: 0 },
-  item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "met", observation: "The requested behavior works.", evidence: [{ kind: "test", ref: "build.test.ts" }] }],
-  additional_findings: [{ id: "F1", severity: "warning", observation: "An unrelated regression needs investigation.", related_build_item_ids: ["B1"], evidence: [{ kind: "file", ref: "regression.ts", detail: "Existing behavior regressed." }] }],
+  head_sha: "current-head", verdict: "pass_with_notes", test_evidence: { passed: 4, failing_tests: 0 },
+  item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "met", finding_note: "The requested behavior works.", supporting_citations: [{ kind: "test", citation_location: "build.test.ts" }] }],
+  additional_findings: [{ id: "F1", severity: "warning", finding_note: "An unrelated regression needs investigation.", related_build_item_ids: ["B1"], supporting_citations: [{ kind: "file", citation_location: "regression.ts", detail: "Existing behavior regressed." }] }],
   proposals: [],
   verifications: [],
 };

@@ -3,8 +3,8 @@ import { isWebUrl, parsePrSummary, selectPullRequestLabel } from "./pr-summary";
 
 const body = {
   change_request_link: "https://github.com/RankOneLabs/assay/pull/50",
-  branch: "cohort/run/cm-api",
-  summary: "Adds analyze().",
+  source_branch: "cohort/run/cm-api",
+  change_overview: "Adds analyze().",
   base_branch: "epic/metrics-update",
   repository_key: "assay",
 };
@@ -21,8 +21,8 @@ describe("parsePrSummary", () => {
   });
 
   test("names a missing required field", () => {
-    const parsed = parsePrSummary({ ...body, branch: undefined }, "change_request_link");
-    expect(parsed.ok ? null : parsed.error.field).toBe("branch");
+    const parsed = parsePrSummary({ ...body, source_branch: undefined }, "change_request_link");
+    expect(parsed.ok ? null : parsed.error.field).toBe("source_branch");
   });
 });
 

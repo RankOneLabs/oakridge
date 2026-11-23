@@ -223,7 +223,7 @@ integration("startup fails on the latest version with its identity and never fal
 }));
 
 const assessedBuild = {
-  cohort_id: "startup", repository_key: "oakridge", technical_decisions: [],
+  cohort_id: "startup", assigned_repository: "oakridge", technical_decisions: [],
   build_items: [["T7", "T8"], ["T7"], ["T9"]].map((requirement_ids, index) => ({ id: `B${index}`, requirement_ids })),
 };
 const assessBindings = [{ input: "reviewed", unit: "brief", revision_id: "brief-context" }];

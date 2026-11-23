@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import type { PullRequestObservation } from "../domain/pull-request";
+import type { PullRequestInspection } from "../domain/pull-request";
 import type { PullRequestObserveInput } from "../operations/pull-request-observe";
 import { OPERATION_KEYS } from "../operations/registry";
 import type { OperationRunner } from "../operations/runner";
@@ -14,11 +14,11 @@ export type MergeStatusView =
   | { readonly kind: "not_merged"; readonly pr_url: string; readonly state: "open" | "closed_unmerged" }
   | { readonly kind: "unavailable"; readonly detail: string };
 
-type MergeObservation = Pick<PullRequestObservation, "state" | "url" | "merged_at">;
+type MergeObservation = Pick<PullRequestInspection, "status" | "observed_link" | "merged_at">;
 const isObservation = (value: unknown): value is MergeObservation =>
-  value !== null && typeof value === "object" && "state" in value
-  && (value.state === "open" || value.state === "merged" || value.state === "closed_unmerged")
-  && "url" in value && typeof value.url === "string"
+  value !== null && typeof value === "object" && "status" in value
+  && (value.status === "open" || value.status === "merged" || value.status === "closed_unmerged")
+  && "observed_link" in value && typeof value.observed_link === "string"
   && "merged_at" in value && (value.merged_at === null || typeof value.merged_at === "string");
 
 export function selectMergeStatusInput(source: MergeStatusSource): PullRequestObserveInput | Extract<MergeStatusView, { kind: "unavailable" }> {
@@ -40,14 +40,14 @@ export function installMergeStatus(app: Hono, deps: { readonly db: Database; rea
       if (!deps.operations) return c.json({ kind: "unavailable", detail: "PR status reader is not configured" } satisfies MergeStatusView);
       const pr_integration = selectCommittedPrIntegration(await readCommittedRunConfig(deps.db, run_id));
       if (pr_integration === null) return c.json({ kind: "unavailable", detail: "recorded run config is malformed" } satisfies MergeStatusView);
-      const result = await deps.operations.run({ operation: OPERATION_KEYS.pull_request_observe, inputs: input },
+      const result = await deps.operations.run({ operation: OPERATION_KEYS.pull_request_inspect, inputs: input },
         { signal: c.req.raw.signal, pr_integration });
       if (result.kind !== "succeeded") return c.json({ kind: "unavailable", detail: result.detail } satisfies MergeStatusView);
-      if (!isObservation(result.body) || result.body.url !== input.query.pr_url)
+      if (!isObservation(result.body) || result.body.observed_link !== input.query.pr_url)
         return c.json({ kind: "unavailable", detail: "PR status did not match the current pull request" } satisfies MergeStatusView);
-      return result.body.state === "merged"
-        ? c.json({ kind: "merged", pr_url: result.body.url, merged_at: result.body.merged_at } satisfies MergeStatusView)
-        : c.json({ kind: "not_merged", pr_url: result.body.url, state: result.body.state } satisfies MergeStatusView);
+      return result.body.status === "merged"
+        ? c.json({ kind: "merged", pr_url: result.body.observed_link, merged_at: result.body.merged_at } satisfies MergeStatusView)
+        : c.json({ kind: "not_merged", pr_url: result.body.observed_link, state: result.body.status } satisfies MergeStatusView);
     } catch (cause) { return c.json({ kind: "unavailable", detail: String(cause) } satisfies MergeStatusView); }
   });
 }

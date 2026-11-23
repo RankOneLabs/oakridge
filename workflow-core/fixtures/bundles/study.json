@@ -21,7 +21,7 @@
       "operation": "pull_request.inspect",
       "when": "pr_opened",
       "inputs": {
-        "query": "{owner: input.repository.forge.namespace, name: input.repository.forge.path, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
+        "query": "{owner: input.repository.forge.namespace, name: input.repository.forge.path, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).source_branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
       },
       "every": "2m",
       "produces": [
@@ -114,7 +114,7 @@
     "item_assessment": {
       "subject": "assessment_subject",
       "status": "enum(met, partial, not_met)",
-      "observation": "text",
+      "finding_note": "text",
       "supporting_citations": "list(evidence_ref)"
     },
     "assessment_body": {
@@ -133,7 +133,7 @@
     },
     "pr_body": {
       "change_request_link": "text",
-      "branch": "text",
+      "source_branch": "text",
       "change_overview": "text",
       "review_status": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
     },
@@ -204,9 +204,9 @@
       "changed_files": "list(text)"
     },
     "completed_cohort": {
-      "repository_key": "ident",
+      "assigned_repository": "ident",
       "change_request_link": "text",
-      "branch": "text",
+      "source_branch": "text",
       "build_result": "build_summary"
     },
     "case_qualification": {
@@ -269,7 +269,7 @@
     "additional_finding": {
       "id": "ident",
       "severity": "severity",
-      "observation": "text",
+      "finding_note": "text",
       "related_subjects": "list(assessment_subject)",
       "supporting_citations": "list(evidence_ref)"
     },
@@ -293,7 +293,7 @@
       "id": "ident",
       "case_ids": "list(ident)",
       "groups": "list(ident)",
-      "file": "text",
+      "manifest_path": "text",
       "digest": "text",
       "attempt_count": "integer",
       "cap_cents": "integer",
@@ -714,7 +714,7 @@
             "approved_plan": "input.approved_plan",
             "slice_case_limit": "input.slice_case_limit",
             "slice_cap_cents": "input.slice_cap_cents",
-            "repository_key": "input.repository.key"
+            "assigned_repository": "input.repository.key"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -955,7 +955,7 @@
         "generator_digest": "latest(slice_build).generator_digest",
         "digest_recipe": "latest(slice_build).digest_recipe",
         "slice_report": "latest(slice_report)",
-        "cohort": "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(slice_build).build}"
+        "cohort": "{assigned_repository: input.repository.key, change_request_link: latest(pr).change_request_link, source_branch: latest(pr).source_branch, build_result: latest(slice_build).build}"
       }
     },
     "expand": {
@@ -1182,9 +1182,9 @@
       },
       "done_when": "approved(assessment) and published(expansion) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
-        "repository_key": "input.repository.key",
+        "assigned_repository": "input.repository.key",
         "change_request_link": "latest(pr).change_request_link",
-        "branch": "latest(pr).branch",
+        "source_branch": "latest(pr).source_branch",
         "build_result": "latest(expansion).build"
       }
     },
@@ -1355,7 +1355,7 @@
       "done_when": "approved(freeze) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
         "freeze": "latest(freeze)",
-        "cohort": "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(freeze).build}"
+        "cohort": "{assigned_repository: input.repository.key, change_request_link: latest(pr).change_request_link, source_branch: latest(pr).source_branch, build_result: latest(freeze).build}"
       }
     },
     "integration": {
@@ -1370,7 +1370,7 @@
       },
       "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).status == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).status == \"closed_unmerged\"))))",
       "outcome": {
-        "repository_key": "input.repository.key",
+        "assigned_repository": "input.repository.key",
         "change_request_link": "latest(pr).change_request_link",
         "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).status == \"merged\")"
       },

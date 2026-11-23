@@ -189,8 +189,8 @@ describe("navigation inside the review", () => {
 describe("artifact presentation", () => {
   it("defaults to rendered and uses the same pinned revision in the structured tree and raw formats", async () => {
     const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "pull_request", link_field: "change_request_link", schema: "pr_body", projected_schemas: projectedSchemas as OperatorSchema[],
-      revisions: [{ ...REVISION_FIXTURE, body: { summary: "Earlier content", branch: "feature", change_request_link: "https://github.com/acme/app/pull/1" } },
-        { ...REVISION_FIXTURE, id: "rev-2", body: { summary: "Latest content", branch: "feature", change_request_link: "https://github.com/acme/app/pull/1" } }] };
+      revisions: [{ ...REVISION_FIXTURE, body: { change_overview: "Earlier content", source_branch: "feature", change_request_link: "https://github.com/acme/app/pull/1" } },
+        { ...REVISION_FIXTURE, id: "rev-2", body: { change_overview: "Latest content", source_branch: "feature", change_request_link: "https://github.com/acme/app/pull/1" } }] };
     wrap(<ArtifactReview artifactId="art-1" revisionId="rev-1" />, artifact);
     expect(screen.getByRole("tab", { name: "rendered" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "structured" }));

@@ -35,16 +35,16 @@ function nullableText(value: unknown): string | null {
 
 export function parsePrSummary(body: unknown, linkField: string): Result<PrSummary, PrSummaryParseError> {
   if (!isRecord(body)) return fail("body", "expected an object");
-  for (const field of [linkField, "branch"]) {
+  for (const field of [linkField, "source_branch"]) {
     if (typeof body[field] !== "string") return fail(field, "expected a string");
   }
-  const summary = body.change_overview ?? body.summary;
+  const summary = body.change_overview;
   if (typeof summary !== "string") return fail("summary", "expected a string");
   return {
     ok: true,
     value: {
       pr_url: body[linkField] as string,
-      branch: body.branch as string,
+      branch: body.source_branch as string,
       summary,
       review_status: REVIEW_STATUSES.find((status) => status === body.review_status) ?? null,
       base_branch: nullableText(body.base_branch),

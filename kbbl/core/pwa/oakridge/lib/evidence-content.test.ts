@@ -14,8 +14,8 @@ const reported = (ref: string, content: ObservationJsonValue): ObservationEviden
   ({ source: "reported", reported_by: "agent", revision_id: id("assessment:2"), ref, item_path: "/findings/0/evidence/0", content });
 const task = { id: "T1", description: "Render frozen evidence as fields", requirement_ids: ["R1"] };
 const criterion = { id: "T1", text: "Evidence is readable", decision_ids: ["fields"] };
-const tests = { passed: 7, failed: 0, summary: "PWA checks pass", output: "7 tests passed" };
-const build = { head_sha: "abc123", summary: "Render evidence fields", changed_files: ["kbbl/core/pwa"], tests, known_issues: [] };
+const tests = { passed: 7, failing_tests: 0, test_notes: "PWA checks pass", output: "7 tests passed" };
+const build = { head_sha: "abc123", change_overview: "Render evidence fields", changed_files: ["kbbl/core/pwa"], tests, known_issues: [] };
 
 describe("frozen evidence decoding", () => {
   test("subject assessment finding retains its addressed path and nullable description", () => {
@@ -37,8 +37,8 @@ describe("frozen evidence decoding", () => {
   test("whole plan", () => expect(decodeEvidenceContent(revision("plan", plan))).toEqual({ kind: "plan", value: plan }));
   test("contribution cohort", () => expect(decodeEvidenceContent(revision("contribution_context", plan.cohorts[0]!, "/cohorts/0"))).toEqual({ kind: "plan_cohort", value: plan.cohorts[0] }));
   test("contribution brief", () => expect(decodeEvidenceContent(revision("contribution_context", brief))).toEqual({ kind: "brief", value: { ...brief, shape: "legacy" } }));
-  test("build result uses parser defaults", () => expect(decodeEvidenceContent(revision("build_result", build))).toMatchObject({ kind: "build_result", value: { ...build, repository_key: null, delegated_session_metadata: null } }));
-  test("reported test evidence uses parser defaults", () => expect(decodeEvidenceContent(reported("test_evidence", tests))).toEqual({ kind: "test_evidence", value: { ...tests, cargo_test_output: null } }));
+  test("build result uses parser defaults", () => expect(decodeEvidenceContent(revision("build_result", build))).toMatchObject({ kind: "build_result", value: { summary: build.change_overview, repository_key: null, delegated_session_metadata: null } }));
+  test("reported test evidence uses parser defaults", () => expect(decodeEvidenceContent(reported("test_evidence", tests))).toEqual({ kind: "test_evidence", value: { passed: 7, failed: 0, summary: tests.test_notes, output: tests.output, cargo_test_output: null } }));
   test("reported citation mirrors the producer", () => {
     const value = { kind: "test", citation: "bun run test:pwa", detail: null };
     expect(decodeEvidenceContent(reported("citation:1", value))).toEqual({ kind: "reported_citation", value });

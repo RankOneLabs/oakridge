@@ -21,7 +21,7 @@ test("development references retain bindings and outcome paths", () => {
   expect(result.references).toContainEqual({ downstream: "planning", binding: { kind: "input", field: "spec" }, upstream: "analysis", outcome_path: ["spec"] });
   expect(result.references).toContainEqual({ downstream: "briefs", binding: { kind: "input", field: "assignment" }, upstream: "analysis", outcome_path: ["spec", "requirements"] });
   expect(result.references).toContainEqual({ downstream: "integration", binding: { kind: "input", field: "requirements" }, upstream: "analysis", outcome_path: ["spec", "requirements"] });
-  expect(result.per_member_after).toEqual([{ unit: "implementation", expression: "require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id)).depends_on" }]);
+  expect(result.per_member_after).toEqual([{ unit: "implementation", expression: "require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id)).prerequisite_cohorts" }]);
 });
 test("fan-out recurses with declaration paths and preserves per-member after", () => {
   const result = selectDefinitionDependencies(source("fan-out"));

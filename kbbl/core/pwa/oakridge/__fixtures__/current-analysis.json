@@ -10,11 +10,11 @@
         {
           "id": "F1",
           "severity": "blocking",
-          "observation": "Observation F1",
-          "evidence": [
+          "finding_note": "Observation F1",
+          "supporting_citations": [
             {
               "kind": "file",
-              "ref": "src/shared.ts",
+              "citation_location": "src/shared.ts",
               "detail": "Existing implementation"
             }
           ],
@@ -28,11 +28,11 @@
         {
           "id": "F2",
           "severity": "blocking",
-          "observation": "Observation F2",
-          "evidence": [
+          "finding_note": "Observation F2",
+          "supporting_citations": [
             {
               "kind": "file",
-              "ref": "src/shared.ts",
+              "citation_location": "src/shared.ts",
               "detail": "Existing implementation"
             }
           ],
@@ -55,11 +55,11 @@
         {
           "id": "F3",
           "severity": "warning",
-          "observation": "Observation F3",
-          "evidence": [
+          "finding_note": "Observation F3",
+          "supporting_citations": [
             {
               "kind": "file",
-              "ref": "src/shared.ts",
+              "citation_location": "src/shared.ts",
               "detail": "Existing implementation"
             }
           ],
@@ -73,11 +73,11 @@
         {
           "id": "F4",
           "severity": "info",
-          "observation": "Observation F4",
-          "evidence": [
+          "finding_note": "Observation F4",
+          "supporting_citations": [
             {
               "kind": "file",
-              "ref": "src/shared.ts",
+              "citation_location": "src/shared.ts",
               "detail": "Existing implementation"
             }
           ],
@@ -100,11 +100,11 @@
         {
           "id": "F5",
           "severity": "info",
-          "observation": "Observation F5",
-          "evidence": [
+          "finding_note": "Observation F5",
+          "supporting_citations": [
             {
               "kind": "file",
-              "ref": "src/shared.ts",
+              "citation_location": "src/shared.ts",
               "detail": "Existing implementation"
             }
           ],
@@ -114,7 +114,7 @@
               "symbol": "shared"
             }
           ],
-          "resolution": {
+          "finding_resolution": {
             "kind": "operator_decision",
             "text": "Choose a display",
             "decision_prompt": "Which display?",

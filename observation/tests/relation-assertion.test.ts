@@ -9,7 +9,7 @@ const developmentFields: Readonly<Record<string, readonly string[]>> = {
   "analysis.analysis": ["analysis.requirements", "item.findings"],
   "analysis.spec": ["spec.requirements", "item.analysis_finding_ids"],
   "planning.plan": ["plan.cohorts", "item.allocations", "item.requirement_id"],
-  "brief.brief": ["brief.repository_key", "item.requirement_ids", "item.build_item_ids"],
+  "brief.brief": ["brief.assigned_repository", "item.requirement_ids", "item.build_item_ids"],
   "cohort.assessment": ["item.subject.kind", "item.subject.id", "item.related_build_item_ids", "item.citation"],
   "integration.assessment": ["item.subject.kind", "item.subject.id", "item.related_build_item_ids", "item.citation"],
 };

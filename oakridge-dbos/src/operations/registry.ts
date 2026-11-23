@@ -22,12 +22,6 @@ export const OPERATION_REGISTRY = [
     error_codes: [PROVIDER_ERROR_CODES.worktree_unrecoverable, PROVIDER_ERROR_CODES.head_changed, PROVIDER_ERROR_CODES.provider_rejected],
   },
   {
-    key: "pull_request.observe",
-    input_schema: pullRequestQuery,
-    output_schema: { state: "enum(open, merged, closed_unmerged)", number: "integer", url: "text", head_sha: "optional(text)", merged_at: "optional(text)" },
-    error_codes: pullRequestErrors,
-  },
-  {
     // Publishes its input as the artifact it creates. `$value` is the type
     // variable `compile` binds to the workflow's type (part 1 §12, R5 E5): it
     // lets an operator review a value that arrived as stage input.
@@ -48,7 +42,6 @@ export const OPERATION_REGISTRY = [
 export type OperationKey = typeof OPERATION_REGISTRY[number]["key"];
 export const OPERATION_KEYS = {
   repository_prepare: OPERATION_REGISTRY[0].key,
-  pull_request_observe: OPERATION_REGISTRY[1].key,
-  value_publish: OPERATION_REGISTRY[2].key,
-  pull_request_inspect: OPERATION_REGISTRY[3].key,
+  value_publish: OPERATION_REGISTRY[1].key,
+  pull_request_inspect: OPERATION_REGISTRY[2].key,
 } as const satisfies { readonly [name: string]: OperationKey };

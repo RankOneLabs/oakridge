@@ -29,7 +29,7 @@ function briefList(field: string, map: (value: JsonValue, path: string, scope: {
     if (!object.ok) return object;
     const cohort = referenceId(body, "cohort_id", "");
     if (!cohort.ok) return cohort;
-    const repository = referenceId(body, "repository_key", "");
+    const repository = referenceId(body, "assigned_repository", "");
     if (!repository.ok) return repository;
     const values = listAt(body, [field]);
     return values.ok ? mapped(values.value, `/${field}`, (value, path) => map(value, path, { cohort_id: cohort.value, repository_key: repository.value })) : values;

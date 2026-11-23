@@ -2,7 +2,7 @@ import type { GitCommandRunner } from "../domain/repository-provisioning";
 import { PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
 import type { PullRequestReader } from "../runtime/github-pull-requests";
 import { isFields, type OperationCallOptions, type OperationOutcome } from "./outcome";
-import { decodePullRequestObserveInput, observePullRequest, selectInspection } from "./pull-request-observe";
+import { decodePullRequestObserveInput, observePullRequest } from "./pull-request-observe";
 import { OPERATION_KEYS, type OperationKey } from "./registry";
 import { decodeRepositoryPrepareInput, prepareRepository } from "./repository-prepare";
 
@@ -15,7 +15,7 @@ export interface OperationRunner {
 
 export interface OperationServices {
   readonly git: GitCommandRunner;
-  /** Absent without a forge token: `pull_request.observe` then fails with `discovery_unsupported`. */
+  /** Absent without a forge token: `pull_request.inspect` then fails with `discovery_unsupported`. */
   readonly pull_requests: PullRequestReader | null;
 }
 
@@ -30,13 +30,9 @@ export function createOperationRunner(services: OperationServices): OperationRun
       const input = decodeRepositoryPrepareInput(inputs);
       return input ? prepareRepository(services.git, input, options) : invalidInput(OPERATION_KEYS.repository_prepare);
     },
-    [OPERATION_KEYS.pull_request_observe]: async (inputs, options) => {
-      const input = decodePullRequestObserveInput(inputs);
-      return input ? observePullRequest(services.pull_requests, input, options) : invalidInput(OPERATION_KEYS.pull_request_observe);
-    },
     [OPERATION_KEYS.pull_request_inspect]: async (inputs, options) => {
       const input = decodePullRequestObserveInput(inputs);
-      return input ? observePullRequest(services.pull_requests, input, options, selectInspection) : invalidInput(OPERATION_KEYS.pull_request_inspect);
+      return input ? observePullRequest(services.pull_requests, input, options) : invalidInput(OPERATION_KEYS.pull_request_inspect);
     },
     // Step resolved the input against the workflow's type, and commit checks the output against the artifact's schema.
     [OPERATION_KEYS.value_publish]: async (inputs) => isFields(inputs) && "value" in inputs

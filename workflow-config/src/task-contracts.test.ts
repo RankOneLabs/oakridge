@@ -73,7 +73,7 @@ const planCases: {name: string; cohorts: PlanCohort[]; message: string}[] = [
   {name: "unallocated requirement", cohorts: [cohort("C1", ["R1"])], message: "Every specification requirement must be allocated to at least one cohort."},
   {name: "unknown requirement", cohorts: [cohort("C1", ["R1", "R2", "unknown"])], message: "Every allocation must name a canonical specification requirement."},
   {name: "duplicate allocation", cohorts: [cohort("C1", ["R1", "R2", "R2"])], message: "A requirement may be allocated only once within a cohort."},
-  {name: "unknown repository", cohorts: [{...cohort(), repository_key: "unknown"}], message: "Every cohort's repository_key must be the key of one of the run's repositories."},
+  {name: "unknown repository", cohorts: [{...cohort(), assigned_repository: "unknown"}], message: "Every cohort's assigned_repository must be the key of one of the run's repositories."},
   {name: "missing dependency", cohorts: [cohort("C1", ["R1", "R2"], ["missing"])], message: "Cohort ids must be unique idents"},
   {name: "cycle", cohorts: [cohort("C1", ["R1"], ["C2"]), cohort("C2", ["R2"], ["C1"])], message: "Cohort ids must be unique idents"},
   {name: "empty allocations", cohorts: [cohort(), cohort("C2", [])], message: "Every cohort needs at least one allocation."},
@@ -90,8 +90,8 @@ test("planner sees every run repository key and permits a split requirement", as
 });
 const briefCases: {name: string; change: (b: BriefBody) => void; message: string}[] = [
   {name: "wrong cohort", change: b => {b.cohort_id = "unknown";}, message: "The brief's cohort_id"},
-  {name: "wrong repository", change: b => {b.repository_key = "unknown";}, message: "The brief's repository_key"},
-  {name: "wrong dependencies", change: b => {b.depends_on = ["unknown"];}, message: "The brief's depends_on"},
+  {name: "wrong repository", change: b => {b.assigned_repository = "unknown";}, message: "The brief's assigned_repository"},
+  {name: "wrong dependencies", change: b => {b.prerequisite_cohorts = ["unknown"];}, message: "The brief's prerequisite_cohorts"},
   {name: "duplicate build item", change: b => {b.build_items.push(b.build_items[0]);}, message: "Build-item ids must be unique."},
   {name: "unassigned requirement", change: b => {b.build_items[0].requirement_ids.push("unknown");}, message: "Build-item requirement ids must belong to the resolved assignment."},
   {name: "uncovered requirement", change: b => {b.build_items.pop();}, message: "Every assigned requirement must appear in a build item."},
@@ -119,12 +119,12 @@ const assessmentCases: {name: string; change: (b: AssessmentBody) => void; messa
   {name: "duplicate item", change: b => {b.item_assessments.push(b.item_assessments[0]);}, message: "Assessment item ids must be unique."},
   {name: "wrong kind", change: b => {b.item_assessments[0].subject.kind = "requirement";}, message: "Cohort assessment items must be build items."},
   {name: "wrong head", change: b => {b.head_sha = "wrong";}, message: "Assessment head_sha must match"},
-  {name: "unknown related item", change: b => {b.additional_findings.push({id: "F1", severity: "info", observation: "Note", related_build_item_ids: ["unknown"], supporting_citations: []});}, message: "Additional finding links must name brief build items."},
+  {name: "unknown related item", change: b => {b.additional_findings.push({id: "F1", severity: "info", finding_note: "Note", related_build_item_ids: ["unknown"], supporting_citations: []});}, message: "Additional finding links must name brief build items."},
   {name: "unexplained test failure", change: b => {b.test_evidence.failing_tests = 1;}, message: "Failed tests require an unmet item"},
 ];
 for (const c of assessmentCases) test(`assessment refuses ${c.name}`, async () => {const body = assessment();c.change(body);expect(validationFeedback(await assessmentRun(body))).toContain(c.message);});
 for (const integration of [false, true]) for (const severity of ["blocking", "warning", "info"] as const) for (const verdict of ["pass", "pass_with_notes", "fail"] as const) test(`${integration ? "integration" : "cohort"} verdict ${verdict} with ${severity} finding`, async () => {
-  const body = assessment(integration ? "requirement" : "build_item"); body.additional_findings = [{id: "F1", severity, observation: "Evidence", related_build_item_ids: [], supporting_citations: []}];body.verdict = verdict;
+  const body = assessment(integration ? "requirement" : "build_item"); body.additional_findings = [{id: "F1", severity, finding_note: "Evidence", related_build_item_ids: [], supporting_citations: []}];body.verdict = verdict;
   const run = await assessmentRun(body, integration);
   const expected = severity === "blocking" ? "fail" : severity === "warning" ? "pass_with_notes" : "pass";
   expect(validationFeedback(run).includes("Assessment verdict must match")).toBe(verdict !== expected);
@@ -253,7 +253,7 @@ test("assessment decisions declare operations while assessment changes stay plai
 
 test("duplicate additional finding ids are refused", async () => {
   const body = assessment();
-  const finding = {id: "F1", severity: "info" as const, observation: "Note", related_build_item_ids: [], supporting_citations: [] as []};
+  const finding = {id: "F1", severity: "info" as const, finding_note: "Note", related_build_item_ids: [], supporting_citations: [] as []};
   body.additional_findings = [finding, finding];
   expect(validationFeedback(await assessmentRun(body))).toContain("Additional finding ids must be unique.");
 });

@@ -20,7 +20,7 @@ function AnalysisFindingLink({ id, reference, props }: { id: string; reference: 
       props.onOpenItem({ source_revision_id: artifactRevisionIdOf(props.context.analysis_revision_id), item_path: reference.path });
     } else navigateArtifactAnchor(event, `analysis-finding-${id}`);
   };
-  const resolution = reference.finding.resolution;
+  const resolution = reference.finding.finding_resolution;
   return <div className="space-y-1">
     <div className="flex flex-wrap items-center gap-2">
       <a className="underline" href={`#analysis-finding-${id}`} onClick={openFinding}><code className="or-code">{id}</code></a>
@@ -29,7 +29,7 @@ function AnalysisFindingLink({ id, reference, props }: { id: string; reference: 
       {resolution?.chosen && <Chip tone="success">Chosen: {resolution.chosen}</Chip>}
     </div>
     <details id={`analysis-finding-${id}`}><summary>{reference.requirement_id}/{id}</summary>
-      <p>{reference.finding.observation}</p>{resolution && <p>{resolution.text}</p>}
+      <p>{reference.finding.finding_note}</p>{resolution && <p>{resolution.text}</p>}
     </details>
   </div>;
 }

@@ -31,7 +31,7 @@ test("plan selector supplies each cohort's dependency-derived wave number", () =
 });
 
 test("invalid dependency ordering keeps cohort content visible with an error value", () => {
-  const plan = parseCurrentPlan({ ...planBody, cohorts: planBody.cohorts.map((cohort) => ({ ...cohort, depends_on: ["missing"] })) });
+  const plan = parseCurrentPlan({ ...planBody, cohorts: planBody.cohorts.map((cohort) => ({ ...cohort, prerequisite_cohorts: ["missing"] })) });
   if (!plan.ok) throw new Error("fixture");
   const selected = selectParallelCohortRows(plan.value);
   expect([selected.error?.kind, selected.rows.map((row) => row.wave_number)]).toEqual(["unknown_dependency", [null, null, null]]);

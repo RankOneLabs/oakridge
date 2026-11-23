@@ -298,7 +298,7 @@ const sliceReport = { generator_digest: digest, run_key: "test", qualifications:
   paid_results: [paidResult], criteria_marks: fixture.pilot_selection.criteria.map(({ id }) => ({ id, status: "met", mark_reason: "Measured" })),
   trigger_marks: fixture.iteration_triggers.map(({ id }) => ({ id, status: "not_fired", mark_reason: "Measured" })), proposed_changes: [] };
 const assessItem = (kind: string, id: string, status = "met") =>
-  ({ subject: { kind, id }, status, observation: "Verified", supporting_citations: [{ kind: "test", citation_location: id }] });
+  ({ subject: { kind, id }, status, finding_note: "Verified", supporting_citations: [{ kind: "test", citation_location: id }] });
 const baseAssessment = (item_assessments: readonly ReturnType<typeof assessItem>[]) => ({
   head_sha: "head", item_assessments, additional_findings: [], proposals: [], verifications: [],
   test_evidence: { passed: 1, failing_tests: 0 }, verdict: "pass",
@@ -309,8 +309,8 @@ const sliceAssessment = { ...baseAssessment([
   assessItem("case", plannedCase),
 ]), run_key: sliceReport.run_key };
 const findings = (kind: string, id: string) =>
-  [{ id: "finding", severity: "info", observation: "Linked", supporting_citations: [], related_subjects: [{ kind, id }] }];
-const studyPr = { change_request_link: "https://github.com/acme/study/pull/1", change_overview: "Built", branch: "slice" };
+  [{ id: "finding", severity: "info", finding_note: "Linked", supporting_citations: [], related_subjects: [{ kind, id }] }];
+const studyPr = { change_request_link: "https://github.com/acme/study/pull/1", change_overview: "Built", source_branch: "slice" };
 
 test("slice qualification, paid evidence, and task-link checks report specific refusals", async () => {
   const harness = await validationRun("design", { spec: fixture.research_question, repository, workspace, ...defaultLimits, approved_plan: null });
@@ -360,7 +360,7 @@ test("slice qualification, paid evidence, and task-link checks report specific r
 });
 
 const coveringFreeze = { build: build("freeze"), generator_digest: digest, image_digest: "image", is_byte_identical: true,
-  cohorts: [{ id: "full", file: "full.json", digest: "manifest", attempt_count: 10, cap_cents: 10,
+  cohorts: [{ id: "full", manifest_path: "full.json", digest: "manifest", attempt_count: 10, cap_cents: 10,
     cost_basis: "measured", case_ids: fixture.cases.map(({ id }) => id), groups: fixture.groups.map(({ id }) => id) }] };
 
 test("freeze requires exactly the plan case set and coverage for every plan group", async () => {
@@ -397,7 +397,7 @@ test("expansion and integration resolve their task links against their own input
     expect((await checkExpansion(extra)).messages).toContain("Expansion case subjects and related subjects must resolve to allocated cases.");
   }
 
-  const cohort = { repository_key: repository.key, ...studyPr, build_result: build("slice") };
+  const cohort = { assigned_repository: repository.key, ...studyPr, build_result: build("slice") };
   const integration = await validationRun("integration", { cases: fixture.cases, freeze: coveringFreeze,
     slice_cohort: cohort, expansion_cohorts: [], freeze_cohort: cohort, repository, workspace, final_merge_policy: "require_merge" });
   const publishedPr = await integration.publish(integration.launched, { worker: "integrator", artifact: "pr", body: studyPr });

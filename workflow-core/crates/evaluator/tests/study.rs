@@ -362,7 +362,7 @@ fn paid_report(digest: &str, run_key: &str) -> Value {
 fn met_item(kind: &str, id: &str) -> Value {
     json!({
         "subject": {"kind": kind, "id": id}, "status": "met",
-        "observation": "Evidence verified", "supporting_citations": [{"kind": "test", "citation_location": id}]
+        "finding_note": "Evidence verified", "supporting_citations": [{"kind": "test", "citation_location": id}]
     })
 }
 
@@ -401,7 +401,7 @@ fn expansion_assessment(head_sha: &str, case_ids: &[&str]) -> Value {
 }
 
 fn pr(branch: &str) -> Value {
-    json!({"change_request_link": format!("https://forge/oakridge/{branch}"), "branch": branch, "change_overview": "Study fixtures"})
+    json!({"change_request_link": format!("https://forge/oakridge/{branch}"), "source_branch": branch, "change_overview": "Study fixtures"})
 }
 
 fn slice_output(artifact: &str) -> WorkerOutput<'_> {

@@ -1,4 +1,5 @@
 import { decodePullRequestObserveInput, type PullRequestObserveInput } from "../operations/pull-request-observe";
+import { isFields } from "../operations/outcome";
 import { OPERATION_KEYS } from "../operations/registry";
 import { readAssessmentFacts } from "./assessment-facts";
 import { artifactSchemaVersions } from "../adapters/observation-schema-version";
@@ -243,29 +244,32 @@ export interface MergeStatusSource {
 export async function readMergeStatusSource(db: Kysely<DB>, location: UnitLocation): Promise<MergeStatusSource | null> {
   return consistent(db, async (trx) => {
     const { run_id, unit_id } = location;
-    const unit = await trx.selectFrom("authority.unit").select("id")
+    const unit = await trx.selectFrom("authority.unit").select("stage")
       .where("run_id", "=", run_id).where("id", "=", unit_id).executeTakeFirst();
     if (!unit) return null;
-    const [pr, intent] = await Promise.all([
-      trx.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id).where("unit_id", "=", unit_id)
-        .where("artifact", "=", "pr").orderBy("seq", "desc").executeTakeFirst(),
-      trx.selectFrom("authority.effect_intent").select("payload").where("run_id", "=", run_id).where("unit_id", "=", unit_id)
+    const intent = await trx.selectFrom("authority.effect_intent").select("payload").where("run_id", "=", run_id).where("unit_id", "=", unit_id)
         .where((eb) => eb(eb.ref("payload", "->>").key("worker").key("kind"), "=", "code"))
-        .where((eb) => eb(eb.ref("payload", "->>").key("worker").key("operation"), "in", [
-          OPERATION_KEYS.pull_request_observe, OPERATION_KEYS.pull_request_inspect,
-        ]))
-        .orderBy("created_at", "desc").orderBy("id", "desc").executeTakeFirst(),
-    ]);
-    if (!intent) return { intent: null, latest_revision_id: pr?.id ?? null };
+        .where((eb) => eb(eb.ref("payload", "->>").key("worker").key("operation"), "=", OPERATION_KEYS.pull_request_inspect))
+        .orderBy("created_at", "desc").orderBy("id", "desc").executeTakeFirst();
+    if (!intent) return { intent: null, latest_revision_id: null };
+    const input = decodePullRequestObserveInput(intent.payload.inputs);
+    const unresolved = { latest_revision_id: null, intent: { input, observed_revision_id: null } };
     const provenance = intent.payload.input_provenance;
-    const candidates = provenance?.status === "recorded"
-      ? provenance.entries.filter((entry) => entry.unit === unit_id && entry.input === "query").map((entry) => entry.revision_id) : [];
-    const observed = candidates.length ? await trx.selectFrom("authority.artifact_revision").select("id")
-      .where("run_id", "=", run_id).where("unit_id", "=", unit_id).where("artifact", "=", "pr")
-      .where("id", "in", candidates).orderBy("seq", "desc").executeTakeFirst() : undefined;
-    return { latest_revision_id: pr?.id ?? null, intent: {
-      input: decodePullRequestObserveInput(intent.payload.inputs), observed_revision_id: observed?.id ?? null,
-    } };
+    if (!input || unit.stage == null || provenance?.status !== "recorded") return unresolved;
+    const candidates = provenance.entries.filter((entry) => entry.unit === unit_id && entry.input === "query").map((entry) => entry.revision_id);
+    if (!candidates.length) return unresolved;
+    const definition = await readPinnedDefinition(trx, run_id);
+    const artifacts = definition?.checked_program.workflow.stages[unit.stage]?.artifacts;
+    const revisions = trx.selectFrom("authority.artifact_revision").where("run_id", "=", run_id).where("unit_id", "=", unit_id);
+    const matching = (await revisions.select(["id", "artifact", "body"]).where("id", "in", candidates).execute()).filter((revision) => {
+      const declaration = artifacts?.[revision.artifact];
+      return declaration?.kind === "external_reference" && declaration.link_field
+        && isFields(revision.body) && revision.body[declaration.link_field] === input.query.pr_url;
+    });
+    if (matching.length !== 1) return unresolved;
+    const [observed] = matching;
+    const latest = await revisions.select("id").where("artifact", "=", observed.artifact).orderBy("seq", "desc").executeTakeFirst();
+    return { latest_revision_id: latest?.id ?? null, intent: { input, observed_revision_id: observed.id } };
   });
 }
 

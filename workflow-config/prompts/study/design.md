@@ -59,7 +59,7 @@ Use integer cents for all money. Include one to `slice_case_limit` cases in the 
 
 ## Repository key
 
-{{repository_key}}
+{{assigned_repository}}
 
 {{> study/shared/long-steps.md}}
 

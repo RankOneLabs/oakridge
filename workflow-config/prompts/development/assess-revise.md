@@ -2,7 +2,7 @@
 
 Read the cohort worktree and tests to judge every brief build item independently of the builder's self-report. Stay within this cohort's contribution. Publish one assessment using `{head_sha, item_assessments, additional_findings, proposals, verifications, test_evidence, verdict}`. Set head_sha to the exact reviewed build result SHA.
 
-Each item_assessment is `{subject: {kind: build_item, id}, status: met|partial|not_met, observation, supporting_citations}`. Include every brief build item exactly once, with no unknown ids. Ground each judgment in evidence entries `{kind: file|test|output, citation_location, detail?}`. Record regressions, cross-cutting concerns and known issues as additional_findings `{id, severity: blocking|warning|info, observation, related_build_item_ids, supporting_citations}`; related links must resolve in the brief.
+Each item_assessment is `{subject: {kind: build_item, id}, status: met|partial|not_met, finding_note, supporting_citations}`. Include every brief build item exactly once, with no unknown ids. Ground each judgment in evidence entries `{kind: file|test|output, citation_location, detail?}`. Record regressions, cross-cutting concerns and known issues as additional_findings `{id, severity: blocking|warning|info, finding_note, related_build_item_ids, supporting_citations}`; related links must resolve in the brief.
 
 Write each actionable proposal as `{key, instruction, citation?}` with a stable identifier and a concrete correction. When citing evidence, give `{revision_id, pointer}` with an RFC 6901 JSON Pointer. On reassessment, record one `{round_id, outcome}` for each delivered round, using `verified` or `needs_further_work`. Use empty lists when there are no proposals or verifications.
 

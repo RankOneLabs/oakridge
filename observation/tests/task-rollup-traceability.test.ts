@@ -71,7 +71,7 @@ integration("requirement rollup reports both repositories and only the bound ass
   ] } });
   for (const repository_key of ["alpha", "beta"]) await feed.revision({
     revision_id: `${repository_key}:brief:1`, unit_id: repository_key, artifact_kind: "brief",
-    body: { cohort_id: repository_key, repository_key, build_items: [{ id: "B1", requirement_ids: ["R1"], instructions: "Build", verification: ["Verify"] }], technical_decisions: [] },
+    body: { cohort_id: repository_key, assigned_repository: repository_key, build_items: [{ id: "B1", requirement_ids: ["R1"], instructions: "Build", verification: ["Verify"] }], technical_decisions: [] },
   });
   await feed.revision({ revision_id: "alpha:assessment:1", artifact_kind: "assessment",
     input_bindings: [{ input: "assignment", unit: "alpha", revision_id: "alpha:brief:1" }],

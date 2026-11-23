@@ -33,7 +33,7 @@ const finding = (requirement_ids: readonly string[], extra: { readonly note?: Js
   ({ requirement_ids, ...extra });
 const spec = (ids: readonly string[] = ["T7", "T8"]) => ({ requirements: ids.map((id) => ({ id, text: id, analysis_finding_ids: [] })) });
 const brief = (id: string, findings: readonly AssessmentFixture[]) => ({
-  cohort_id: id, repository_key: id, technical_decisions: [],
+  cohort_id: id, assigned_repository: id, technical_decisions: [],
   build_items: findings.map((finding, index) => ({ id: `B${index}`, requirement_ids: [...new Set(finding.requirement_ids)] })),
 });
 const assess = (findings: readonly AssessmentFixture[]) => ({ item_assessments: findings.map(({ note }, index) =>
@@ -480,7 +480,7 @@ integration("requirement composites include technical decisions, additional find
   await h.feed.revision({ run_id, revision_id: "spec:1", artifact_kind: "spec", body: { requirements: [
     { id: "R1", analysis_finding_ids: [], text: "Required", acceptance_conditions: ["Works"], source_refs: [] },
   ] } });
-  await h.feed.revision({ run_id, revision_id: "brief:1", artifact_kind: "brief", body: { cohort_id: "first", repository_key: "oakridge",
+  await h.feed.revision({ run_id, revision_id: "brief:1", artifact_kind: "brief", body: { cohort_id: "first", assigned_repository: "oakridge",
     build_items: [{ id: "B1", requirement_ids: ["R1"], instructions: "Build", verification: ["Test"] }],
     technical_decisions: [{ id: "D1", build_item_ids: ["B1"], decision: "Use the checked input", rationale: "It is authoritative" }] } });
   await h.feed.revision({ run_id, revision_id: "assessment:1", artifact_kind: "assessment",

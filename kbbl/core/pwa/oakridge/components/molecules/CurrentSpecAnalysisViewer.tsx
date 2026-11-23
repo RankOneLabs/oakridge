@@ -39,7 +39,7 @@ function FindingCard({ finding, itemPath, grading }: { finding: CurrentFinding; 
       {resolution && <Chip tone="neutral">{resolution.kind}</Chip>}
       <span className="ml-auto"><ArtifactItemGrade source={grading.source} itemPath={itemPath} onOpenItem={grading.onOpenItem} itemGrading={grading.itemGrading} /></span>
     </div>
-    <p className="text-sm text-[var(--text-secondary)]">{finding.observation}</p>
+    <p className="text-sm text-[var(--text-secondary)]">{finding.finding_note}</p>
     <div className={artifactLabelClass}>Evidence</div>
     <ul>{selectFindingCitations(finding).map((entry, index) => <li key={index}><Chip tone="muted">{entry.kind}</Chip> <code>{entry.location}</code> — {entry.detail}</li>)}</ul>
     <div className={artifactLabelClass}>Anticipated change locations</div>

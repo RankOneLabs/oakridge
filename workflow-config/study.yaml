@@ -61,9 +61,9 @@ schemas:
     change_overview: text
     changed_files: list(text)
   completed_cohort:
-    repository_key: ident
+    assigned_repository: ident
     change_request_link: text
-    branch: text
+    source_branch: text
     build_result: build_summary
   case_qualification:
     case_id: ident
@@ -116,7 +116,7 @@ schemas:
   additional_finding:
     id: ident
     severity: severity
-    observation: text
+    finding_note: text
     related_subjects: list(assessment_subject)
     supporting_citations: list(evidence_ref)
   slice_assessment_body:
@@ -137,7 +137,7 @@ schemas:
     id: ident
     case_ids: list(ident)
     groups: list(ident)
-    file: text
+    manifest_path: text
     digest: text
     attempt_count: integer
     cap_cents: integer
@@ -380,7 +380,7 @@ stages:
           approved_plan: input.approved_plan
           slice_case_limit: input.slice_case_limit
           slice_cap_cents: input.slice_cap_cents
-          repository_key: input.repository.key
+          assigned_repository: input.repository.key
         workspace: repository(input.workspace)
         produces: [plan]
       slice_builder:
@@ -559,7 +559,7 @@ stages:
       generator_digest: latest(slice_build).generator_digest
       digest_recipe: latest(slice_build).digest_recipe
       slice_report: latest(slice_report)
-      cohort: "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(slice_build).build}"
+      cohort: "{assigned_repository: input.repository.key, change_request_link: latest(pr).change_request_link, source_branch: latest(pr).source_branch, build_result: latest(slice_build).build}"
   expand:
     input:
       group_id: ident
@@ -720,9 +720,9 @@ stages:
           of: pr
     done_when: approved(assessment) and published(expansion) and pr_published and (merged_pr or approved(pr))
     outcome:
-      repository_key: input.repository.key
+      assigned_repository: input.repository.key
       change_request_link: latest(pr).change_request_link
-      branch: latest(pr).branch
+      source_branch: latest(pr).source_branch
       build_result: latest(expansion).build
   freeze:
     input:
@@ -841,7 +841,7 @@ stages:
     done_when: approved(freeze) and pr_published and (merged_pr or approved(pr))
     outcome:
       freeze: latest(freeze)
-      cohort: "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(freeze).build}"
+      cohort: "{assigned_repository: input.repository.key, change_request_link: latest(pr).change_request_link, source_branch: latest(pr).source_branch, build_result: latest(freeze).build}"
   integration:
     input:
       slice_cohort: completed_cohort

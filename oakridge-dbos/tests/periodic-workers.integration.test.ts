@@ -52,14 +52,14 @@ const WATCH: Workflow = {
 const QUERY = { owner: "oakridge-e2e", name: "app", head_owner: "oakridge-e2e", head_branch: "cohort-a", base_branch: "develop",
   pr_url: "https://github.com/oakridge-e2e/app/pull/7" };
 const QUERY_SCHEMA = { owner: "ident", name: "ident", head_owner: "ident", head_branch: "text", base_branch: "text", pr_url: "text" };
-const PR_STATUS = { state: "enum(open, merged, closed_unmerged)", number: "integer", url: "text", head_sha: "optional(text)", merged_at: "optional(text)" };
+const PR_STATUS = { status: "enum(open, merged, closed_unmerged)", pr_sequence: "integer", observed_link: "text", head_sha: "optional(text)", merged_at: "optional(text)" };
 /** `pr_watch` alone, its query given at launch. */
 const PR_WATCH: Workflow = {
   workflow: "pr_watch", input: { query: QUERY_SCHEMA },
   run: { units: { watch: { stage: "watch", input: { query: "input.query" } } }, outcome: {} },
   stages: { watch: { input: { query: QUERY_SCHEMA },
     artifacts: { pr_state: { kind: "status_record", schema: PR_STATUS } },
-    workers: { pr_watch: { kind: "code", operation: "pull_request.observe", inputs: { query: "input.query" }, every: "1s", produces: ["pr_state"] } },
+    workers: { pr_watch: { kind: "code", operation: "pull_request.inspect", inputs: { query: "input.query" }, every: "1s", produces: ["pr_state"] } },
     done_when: "false", outcome: {} } },
 };
 
@@ -213,11 +213,11 @@ test("a transient pr_watch outage backs off and observes a merge, while a termin
   const calls: number[] = [];
   const operation_runner: OperationRunner = { async run(call) {
     const input = decodePullRequestObserveInput(call.inputs);
-    if (call.operation !== "pull_request.observe" || !input) throw new Error("unexpected operation call");
+    if (call.operation !== "pull_request.inspect" || !input) throw new Error("unexpected operation call");
     if (input.query.head_branch === "terminal") return { kind: "failed", code: "pull_request_mismatch", detail: "repository deleted" };
     calls.push(Date.now());
     if (calls.length <= 3) return { kind: "unavailable", detail: "forge unavailable" };
-    return { kind: "succeeded", body: { state: "merged", number: 7, url: QUERY.pr_url,
+    return { kind: "succeeded", body: { status: "merged", pr_sequence: 7, observed_link: QUERY.pr_url,
       head_sha: "abc123", merged_at: "2026-10-15T12:00:00Z" } };
   } };
   const composition = await createProductionComposition({ ...prIntegrationOptions(), database_url: live.url, host: "127.0.0.1", operation_runner,
@@ -264,7 +264,7 @@ test("a watch rolls over during repeated unavailable operations and resumes its 
     operation_runner: { async run() {
       calls++;
       return calls <= 5 ? { kind: "unavailable", detail: "forge unavailable" } :
-        { kind: "succeeded", body: { state: "merged", number: 7, url: QUERY.pr_url,
+        { kind: "succeeded", body: { status: "merged", pr_sequence: 7, observed_link: QUERY.pr_url,
           head_sha: "abc123", merged_at: "2026-10-15T12:00:00Z" } };
     } },
     timing: { retry_initial_seconds: 0.02, retry_cap_seconds: 0.02, carrier_max_iterations: 2 } });

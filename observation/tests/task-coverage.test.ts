@@ -25,7 +25,7 @@ const allocation = { requirement_id: "R1", contribution: "Read and expose organi
 const cohort = { id: "api", allocations: [allocation] };
 const plan = { cohorts: [cohort] };
 const buildItem = { id: "B1", instructions: "Implement the allocation", requirement_ids: ["R1"], verification: ["Run tests"] };
-const brief = { cohort_id: "api", repository_key: "oakridge", build_items: [buildItem], technical_decisions: [] };
+const brief = { cohort_id: "api", assigned_repository: "oakridge", build_items: [buildItem], technical_decisions: [] };
 const revision = (id: string, artifact_kind: string, body: JsonValue): CapturedRevision =>
   ({ revision_id: id as ArtifactRevisionId, stage: artifact_kind, artifact_kind, body, subject_id: null, input_bindings: [] });
 const revisions = [revision("analysis-1", "analysis", analysis), revision("spec-1", "spec", specifications),

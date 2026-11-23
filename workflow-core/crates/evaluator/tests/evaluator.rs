@@ -522,7 +522,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
         "head_sha": "abc123",
         "verdict": "pass",
         "item_assessments": [{"subject": {"kind": "build_item", "id": "item-a"},
-            "status": "met", "observation": "Verified", "supporting_citations": [{"kind": "test", "citation_location": "assessment-schema"}]}],
+            "status": "met", "finding_note": "Verified", "supporting_citations": [{"kind": "test", "citation_location": "assessment-schema"}]}],
         "additional_findings": [],
         "proposals": [],
         "verifications": [],

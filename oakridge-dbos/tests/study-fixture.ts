@@ -36,7 +36,7 @@ export const plan = {
   iteration_triggers: [{ id: "trigger", text: "Control does not replay" }], full_study_repeats: 2,
 };
 export const digestRecipe = { files: ["generator.py"], digest_command: "sha256sum generator.py" };
-export const pr = (key: string, number: number) => ({ change_request_link: `https://github.com/acme/oakridge/pull/${number}`, branch: key, change_overview: key });
+export const pr = (key: string, number: number) => ({ change_request_link: `https://github.com/acme/oakridge/pull/${number}`, source_branch: key, change_overview: key });
 export const build = (key: string) => ({ cohort_id: key, title: key, head_sha: `${key}-head`, change_overview: key, changed_files: [] });
 export const qualifications = (case_ids: readonly string[]) => case_ids.map((case_id) =>
   ({ case_id, reference_passes: true, omissions_isolated: true, controls_replayed: true, detail: "Qualification passed" }));
@@ -52,7 +52,7 @@ export const paid = (key: string, populated = true) => ({
   criteria_marks: [{ id: "criterion", status: "met", mark_reason: "Score" }],
   trigger_marks: [{ id: "trigger", status: "not_fired", mark_reason: "Replay" }], proposed_changes: [],
 });
-export const item = (kind: string, id: string) => ({ subject: { kind, id }, status: "met", observation: "Verified",
+export const item = (kind: string, id: string) => ({ subject: { kind, id }, status: "met", finding_note: "Verified",
   supporting_citations: [{ kind: "test", citation_location: id }] });
 export const assessment = (key: string, items: readonly ReturnType<typeof item>[]) => ({
   head_sha: build(key).head_sha, item_assessments: items, additional_findings: [], proposals: [],
@@ -60,7 +60,7 @@ export const assessment = (key: string, items: readonly ReturnType<typeof item>[
 });
 export const sliceAssessment = (key: string) => ({ ...assessment("slice", [item("criterion", "criterion"), item("trigger", "trigger")]), run_key: key });
 export const freeze = { build: build("freeze"), generator_digest: "digest", image_digest: "image",
-  is_byte_identical: true, cohorts: [{ id: "full", file: "all.json", digest: "manifest", attempt_count: 6, cap_cents: 60,
+  is_byte_identical: true, cohorts: [{ id: "full", manifest_path: "all.json", digest: "manifest", attempt_count: 6, cap_cents: 60,
     cost_basis: "measured", case_ids: ["base", "two", "three"], groups: ["slice", "two", "three"] }] };
 
 export const studyOperations: OperationRunner = {
@@ -68,10 +68,6 @@ export const studyOperations: OperationRunner = {
     if (operation === "repository.prepare") return { kind: "succeeded", body: workspace };
     if (operation === "value.publish" && inputs && typeof inputs === "object" && "value" in inputs) return { kind: "succeeded", body: inputs.value };
     const decoded = decodePullRequestObserveInput(inputs);
-    if (operation === "pull_request.observe" && decoded) {
-      return { kind: "succeeded", body: { state: "merged", number: Number(decoded.query.pr_url.split("/").at(-1)),
-        url: decoded.query.pr_url, head_sha: "head", merged_at: "2026-01-01T00:00:00Z" } };
-    }
     if (operation === "pull_request.inspect" && decoded) {
       return { kind: "succeeded", body: { status: "merged", pr_sequence: Number(decoded.query.pr_url.split("/").at(-1)),
         observed_link: decoded.query.pr_url, head_sha: "head", merged_at: "2026-01-01T00:00:00Z" } };

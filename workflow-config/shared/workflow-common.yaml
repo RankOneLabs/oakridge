@@ -44,7 +44,7 @@ schemas:
   item_assessment:
     subject: assessment_subject
     status: enum(met, partial, not_met)
-    observation: text
+    finding_note: text
     supporting_citations: list(evidence_ref)
   assessment_body:
     head_sha: text
@@ -60,7 +60,7 @@ schemas:
     detail: optional(text)
   pr_body:
     change_request_link: text
-    branch: text
+    source_branch: text
     change_overview: text
     review_status: optional(enum(draft, ready, changes_requested, approved, merged, closed))
 decisions:
@@ -82,7 +82,7 @@ workers:
     inputs:
       query: "{owner: input.repository.forge.namespace, name: input.repository.forge.path,
         head_owner: input.workspace.push_remote_owner, head_branch:
-        latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
+        latest(pr).source_branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
     every: 2m
     produces:
       - pr_state
@@ -210,7 +210,7 @@ stages:
       "allow_close_without_merge" and latest(observed_state).status ==
       "closed_unmerged"))))
     outcome:
-      repository_key: input.repository.key
+      assigned_repository: input.repository.key
       change_request_link: latest(pr).change_request_link
       is_merged: approved(manual_merge_target) or (observed_state_current and
         latest(observed_state).status == "merged")

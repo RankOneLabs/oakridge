@@ -1,6 +1,6 @@
 {
   "cohort_id": "C1",
-  "repository_key": "oakridge",
+  "assigned_repository": "oakridge",
   "depends_on": [],
   "files_in_scope": [
     "src/a.ts"

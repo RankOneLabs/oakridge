@@ -1,5 +1,5 @@
 /**
- * Pull requests as GitHub reports them, read-only: the `pull_request.observe`
+ * Pull requests as GitHub reports them, read-only: the `pull_request.inspect`
  * operation reads one by number. A backend without a token has no reader, and
  * the operation fails rather than guess.
  */

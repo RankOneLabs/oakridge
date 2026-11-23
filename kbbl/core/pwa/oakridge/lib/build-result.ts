@@ -40,18 +40,18 @@ export interface FieldError { field: string; detail: string }
 
 /** Reported evidence has its own capture contract, which allows absent prose. */
 export function parseTestEvidence(value: unknown, field: string): Result<TestEvidence, FieldError> {
-  const failed = isRecord(value) ? (value.failing_tests ?? value.failed) : undefined;
+  const failed = isRecord(value) ? value.failing_tests : undefined;
   if (!isRecord(value) || typeof value.passed !== "number" || typeof failed !== "number")
     return { ok: false, error: { field, detail: "expected test counts" } };
   return { ok: true, value: {
     passed: value.passed, failed,
-    output: textOrNull(value.output), summary: textOrNull(value.test_notes ?? value.summary), cargo_test_output: textOrNull(value.cargo_test_output),
+    output: textOrNull(value.output), summary: textOrNull(value.test_notes), cargo_test_output: textOrNull(value.cargo_test_output),
   } };
 }
 
 /** Select the portion of a schema-checked build publication a specialized view can show. */
 export function asBuildSummary(value: unknown): BuildResult | null {
-  const summary = isRecord(value) ? (value.change_overview ?? value.summary) : undefined;
+  const summary = isRecord(value) ? value.change_overview : undefined;
   if (!isRecord(value) || typeof summary !== "string"
     || !Array.isArray(value.changed_files) || !value.changed_files.every((file) => typeof file === "string")
     || !Array.isArray(value.known_issues) || !value.known_issues.every((issue) =>
@@ -60,8 +60,8 @@ export function asBuildSummary(value: unknown): BuildResult | null {
   if (!tests.ok) return null;
   const metadata = isRecord(value.delegated_session_metadata) ? value.delegated_session_metadata : null;
   return { summary, changed_files: value.changed_files, known_issues: value.known_issues, tests: tests.value,
-    head_sha: textOrNull(value.head_sha), repository_key: textOrNull(value.repository_key),
-    delegated_session_metadata: metadata && { cohort_id: textOrNull(metadata.cohort_id), branch: textOrNull(metadata.branch) } };
+    head_sha: textOrNull(value.head_sha), repository_key: textOrNull(value.assigned_repository),
+    delegated_session_metadata: metadata && { cohort_id: textOrNull(metadata.cohort_id), branch: textOrNull(metadata.source_branch) } };
 }
 
 /** How the files a build changed line up with the files its brief put in scope. */

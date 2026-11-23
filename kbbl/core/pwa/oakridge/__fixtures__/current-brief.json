@@ -1,7 +1,7 @@
 {
   "cohort_id": "A",
-  "repository_key": "oakridge",
-  "depends_on": [],
+  "assigned_repository": "oakridge",
+  "prerequisite_cohorts": [],
   "files_in_scope": [
     "src/shared.ts"
   ],

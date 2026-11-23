@@ -9,7 +9,7 @@ vi.mock("../../hooks/useCohortArtifact", () => ({ useCohortArtifact: () => ({ ki
 afterEach(cleanup);
 test("production result review forwards task navigation and the selected brief grading identity", () => {
   const onOpenTask = vi.fn(), onOpenItem = vi.fn();
-  render(<BuildResultReview body={{ head_sha: "abc", summary: "Built", changed_files: [], tests: { passed: 1, failed: 0 }, known_issues: [] }} source={{ ...briefSource, revision_id: "v2|artifact|run|implementation/pwa|build_result:result" }} onOpenTask={onOpenTask} onOpenItem={onOpenItem} />);
+  render(<BuildResultReview body={{ head_sha: "abc", change_overview: "Built", changed_files: [], tests: { passed: 1, failing_tests: 0 }, known_issues: [] }} source={{ ...briefSource, revision_id: "v2|artifact|run|implementation/pwa|build_result:result" }} onOpenTask={onOpenTask} onOpenItem={onOpenItem} />);
   fireEvent.click(screen.getByRole("button", { name: "Open task criterion-brief" }));
   expect(onOpenTask).toHaveBeenCalledWith("criterion-brief");
   fireEvent.click(screen.getByRole("button", { name: "Open grading at /build_items/0" }));

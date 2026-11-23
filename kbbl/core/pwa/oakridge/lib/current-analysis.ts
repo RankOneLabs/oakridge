@@ -25,8 +25,8 @@ export const selectRequirementsByStatus = (analysis: CurrentAnalysis): readonly 
   .sort((left, right) => REQUIREMENT_STATUS_ORDER.indexOf(left.status) - REQUIREMENT_STATUS_ORDER.indexOf(right.status) || left.index - right.index);
 export interface CodeHotspot { readonly path: string; readonly references: readonly FindingReference[] }
 export function selectFindingCitations(finding: CurrentFinding) {
-  return (finding.supporting_citations ?? finding.evidence ?? []).flatMap((citation) => {
-    const location = citation.citation_location ?? citation.ref;
+  return (finding.supporting_citations).flatMap((citation) => {
+    const location = citation.citation_location;
     return location ? [{ kind: citation.kind, location, detail: citation.detail }] : [];
   });
 }
@@ -39,9 +39,9 @@ export function selectCodeHotspots(analysis: CurrentAnalysis): CodeHotspot[] {
   }
   return [...groups].map(([path, references]) => ({ path, references }));
 }
-export const selectFindingResolution = (finding: CurrentFinding) => finding.finding_resolution ?? finding.resolution;
+export const selectFindingResolution = (finding: CurrentFinding) => finding.finding_resolution;
 export const selectDecisionPrompt = (resolution: ReturnType<typeof selectFindingResolution>) =>
-  resolution?.decision_prompt ?? resolution?.question ?? null;
+  resolution?.decision_prompt ?? null;
 
 export const selectOperatorDecisions = (analysis: CurrentAnalysis) => selectAnalysisFindings(analysis)
   .flatMap((reference) => {

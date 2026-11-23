@@ -35,7 +35,7 @@ const BODY_SCHEMAS = { spec: "spec_body", analysis: "analysis_body", plan: "plan
   assessment: "assessment_body", pr: "pr_body" } as const;
 interface DevelopmentRunOutcome {
   readonly cohorts: readonly { readonly cohort_id: string }[];
-  readonly integrations: readonly { readonly repository_key: string; readonly change_request_link: string; readonly is_merged: boolean }[];
+  readonly integrations: readonly { readonly assigned_repository: string; readonly change_request_link: string; readonly is_merged: boolean }[];
 }
 /**
  * development.yaml as pinned (read through the JSON generate.ts derives from
@@ -125,16 +125,16 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
       case "builder": {
         timeline.set(`build:${member}`, Date.now());
         const pr_url = forge.open(`cohort-${member}`, "develop");
-        await publish("build_result", { repository_key: "app", head_sha: "abc123", change_overview: `Built ${member}.`, changed_files: [`${member}.ts`],
+        await publish("build_result", { assigned_repository: "app", head_sha: "abc123", change_overview: `Built ${member}.`, changed_files: [`${member}.ts`],
           tests: { passed: 1, failing_tests: 0, output: null, test_notes: null, cargo_test_output: null }, delegated_session_metadata: null, known_issues: [] });
-        await publish("pr", { change_request_link: pr_url, branch: `cohort-${member}`, change_overview: `Cohort ${member}.`, review_status: "ready" });
+        await publish("pr", { change_request_link: pr_url, source_branch: `cohort-${member}`, change_overview: `Cohort ${member}.`, review_status: "ready" });
         break;
       }
       case "assessor":
         await publish("assessment", COHORT_ASSESSMENT, turn.subject());
         break;
       case "integrator": {
-        await publish("pr", { change_request_link: forge.open("integration", "main"), branch: "integration", change_overview: "Both cohorts.", review_status: "ready" });
+        await publish("pr", { change_request_link: forge.open("integration", "main"), source_branch: "integration", change_overview: "Both cohorts.", review_status: "ready" });
         const unit = decodeURIComponent(/units\/([^/]+)\/artifacts/.exec(turn.preamble)![1]);
         const prRevision = await db.selectFrom("authority.artifact_revision").select("id").where("unit_id", "=", unit)
           .where("artifact", "=", "pr").orderBy("seq", "desc").executeTakeFirstOrThrow();
@@ -353,7 +353,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   }).toEqual({
     cohorts: ["a", "b"],
     brief_flow: ["a", "b"].map(() => ({ has_one_original: true, has_no_cohort_copy: true, is_passed_to_cohort: true })),
-    integrations: [{ repository_key: "app", change_request_link: pullUrl(3), is_merged: true }],
+    integrations: [{ assigned_repository: "app", change_request_link: pullUrl(3), is_merged: true }],
     b_built_after_a_merged: true,
     schemas: { ...BODY_SCHEMAS, integration_assessment: "assessment_body" },
     integration_assessment: INTEGRATION_ASSESSMENT,
@@ -511,7 +511,7 @@ test(`manual confirmation completes the development run for ${pr_integration}`, 
     integration_target: confirmations.find((decision) => decision.unit_id === integration.id)?.target_revision_id.includes(":manual_merge_target:"),
     integrations: outcome.integrations })
     .toEqual({ confirmations: 3, cohort_done: true, integration_done: "done", confirmation_offered: false, integration_target: true,
-      integrations: [{ repository_key: "app", change_request_link: pullUrl(3), is_merged: true }] });
+      integrations: [{ assigned_repository: "app", change_request_link: pullUrl(3), is_merged: true }] });
   if (pr_integration === "github-cli") expect(reader_calls).toBe(0);
 }, 150_000);
 
@@ -784,7 +784,7 @@ test("allow_close_without_merge completes on an observed close without claiming 
     return root.status.kind === "done" ? root.status : null;
   }, 120_000);
   expect((completed as { readonly outcome: DevelopmentRunOutcome }).outcome.integrations)
-    .toEqual([{ repository_key: "app", change_request_link: pullUrl(3), is_merged: false }]);
+    .toEqual([{ assigned_repository: "app", change_request_link: pullUrl(3), is_merged: false }]);
 }, 150_000);
 
 test("development artifacts declare their registered views independently of schema keys", () => {

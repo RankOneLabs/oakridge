@@ -224,10 +224,10 @@ export async function sharedTaskMatrix(db: Database, tenant: TenantScope, regist
     acceptance_conditions: ["Covered"], analysis_finding_ids: [], source_refs: [] }] });
   for (const repository_key of ["alpha", "beta"]) {
     const brief = `${repository_key}:brief:1`;
-    await capture(development.brief.brief, brief, `${repository_key}:brief`, { cohort_id: repository_key, repository_key,
+    await capture(development.brief.brief, brief, `${repository_key}:brief`, { cohort_id: repository_key, assigned_repository: repository_key,
       build_items: [{ id: "B1", requirement_ids: ["R1"], instructions: "Build", verification: ["Test it"] }], technical_decisions: [] });
     if (repository_key === "alpha") await capture(development.cohort.assessment, "alpha:assessment:1", "alpha:cohort", {
-      item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "met", observation: "Verified", evidence: [] }],
+      item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "met", finding_note: "Verified", supporting_citations: [] }],
       additional_findings: [], proposals: [], verifications: [],
     }, [brief]);
   }
