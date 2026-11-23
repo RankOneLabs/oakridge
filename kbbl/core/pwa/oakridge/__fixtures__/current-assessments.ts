@@ -1,12 +1,12 @@
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 export const CURRENT_ASSESSMENT = {
-  head_sha: "current-head", verdict: "pass_with_notes", test_evidence: { passed: 4, failing_tests: 0 },
-  item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "met", finding_note: "The requested behavior works.", supporting_citations: [{ kind: "test", citation_location: "build.test.ts" }] }],
-  additional_findings: [{ id: "F1", finding_impact: "warning", finding_note: "An unrelated regression needs investigation.", related_build_item_ids: ["B1"], supporting_citations: [{ kind: "file", citation_location: "regression.ts", detail: "Existing behavior regressed." }] }],
+  head_sha: "current-head", verdict: "pass_with_notes", test_evidence: { passed: 4, failed: 0 },
+  item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "met", observation: "The requested behavior works.", evidence: [{ kind: "test", ref: "build.test.ts" }] }],
+  additional_findings: [{ id: "F1", severity: "warning", observation: "An unrelated regression needs investigation.", related_build_item_ids: ["B1"], evidence: [{ kind: "file", ref: "regression.ts", detail: "Existing behavior regressed." }] }],
   proposals: [],
   verifications: [],
 };
-export const MET_WITH_REGRESSION = { ...CURRENT_ASSESSMENT, verdict: "fail", additional_findings: CURRENT_ASSESSMENT.additional_findings.map(finding => ({ ...finding, finding_impact: "blocking" })) };
+export const MET_WITH_REGRESSION = { ...CURRENT_ASSESSMENT, verdict: "fail", additional_findings: CURRENT_ASSESSMENT.additional_findings.map(finding => ({ ...finding, severity: "blocking" })) };
 export const PARTIAL_ASSESSMENT = { ...CURRENT_ASSESSMENT, verdict: "fail", item_assessments: CURRENT_ASSESSMENT.item_assessments.map(item => ({ ...item, status: "partial" })) };
 export const NOT_MET_ASSESSMENT = { ...PARTIAL_ASSESSMENT, item_assessments: PARTIAL_ASSESSMENT.item_assessments.map(item => ({ ...item, status: "not_met" })) };
 export const CURRENT_INTEGRATION_ASSESSMENT = { ...CURRENT_ASSESSMENT,

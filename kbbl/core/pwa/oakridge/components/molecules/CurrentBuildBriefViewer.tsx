@@ -24,7 +24,7 @@ function BuildItemsPanel({ brief, props }: { brief: CurrentBrief; props: ViewerP
       <div className={artifactLabelClass}>Technical decisions</div>
       {item.decisions.map((decision) => <div key={decision.id} className="space-y-1">
         <div className="flex flex-wrap items-center gap-2"><code className="or-code">{decision.id}</code><span className="font-medium">{decision.decision}</span></div>
-        <p className="text-sm text-[var(--text-secondary)]">{decision.decision_reason}</p>
+        <p className="text-sm text-[var(--text-secondary)]">{decision.rationale}</p>
       </div>)}
     </>}
   </section>)}</div>;
@@ -40,8 +40,8 @@ function EnvelopePanel({ brief }: { brief: CurrentBrief }) {
     <p className="text-sm text-[var(--text-muted)]">Projected from the approved plan.</p>
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
       <dt className={artifactLabelClass}>Cohort</dt><dd><code>{brief.cohort_id}</code></dd>
-      <dt className={artifactLabelClass}>Repository</dt><dd><code>{brief.assigned_repository}</code></dd>
-      <dt className={artifactLabelClass}>Dependencies</dt><dd>{brief.prerequisite_cohorts.length > 0 ? brief.prerequisite_cohorts.map((id) => <code key={id} className="mr-2">{id}</code>) : "None"}</dd>
+      <dt className={artifactLabelClass}>Repository</dt><dd><code>{brief.repository_key}</code></dd>
+      <dt className={artifactLabelClass}>Dependencies</dt><dd>{brief.depends_on.length > 0 ? brief.depends_on.map((id) => <code key={id} className="mr-2">{id}</code>) : "None"}</dd>
     </dl>
   </section>;
 }
@@ -52,7 +52,7 @@ export function CurrentBuildBriefViewer(props: ViewerProps) {
   const brief = parsed.value;
   return <article className="space-y-4" data-testid="or-current-brief-viewer">
     <header className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2"><span className={artifactLabelClass}>Cohort</span><code className="or-code">{brief.cohort_id}</code><Chip tone="muted">{brief.assigned_repository}</Chip></div>
+      <div className="flex flex-wrap items-center gap-2"><span className={artifactLabelClass}>Cohort</span><code className="or-code">{brief.cohort_id}</code><Chip tone="muted">{brief.repository_key}</Chip></div>
       {props.itemGrading?.renderShowAll(selectFindingSelections(props.source, selectBriefItemPaths(brief)))}
     </header>
     <ArtifactSectionTabs<BriefSection> label="Brief sections" sections={selectBriefSections(brief)} initial="build_items">{() => ({

@@ -38,9 +38,6 @@ export function decodeRepositoryPrepareInput(value: unknown): RepositoryPrepareI
 const outcomeDetail = (outcome: GitCommandOutcome): string =>
   outcome.stderr.trim() || outcome.stdout.trim() || `exited with code ${outcome.exit_code}`;
 
-type RepositoryPrepareOutcome = Exclude<OperationOutcome, { kind: "succeeded" }>
-  | { readonly kind: "succeeded"; readonly body: RepositoryPrepareOutput };
-
 /**
  * Reads the repository's head and push identity, and makes sure origin has
  * the base branch the run builds on. Ported from v1's `ensureEpicBranchExists`:
@@ -55,8 +52,8 @@ type RepositoryPrepareOutcome = Exclude<OperationOutcome, { kind: "succeeded" }>
  * So a re-run for the same action is the same call: the push happens at most
  * once, and every later call finds the branch.
  */
-export async function prepareRepository(git: GitCommandRunner, input: RepositoryPrepareInput, options: OperationCallOptions = {}): Promise<RepositoryPrepareOutcome> {
-  const aborted = (): RepositoryPrepareOutcome => ({ kind: "unavailable", detail: "repository preparation aborted" });
+export async function prepareRepository(git: GitCommandRunner, input: RepositoryPrepareInput, options: OperationCallOptions = {}): Promise<OperationOutcome> {
+  const aborted = (): OperationOutcome => ({ kind: "unavailable", detail: "repository preparation aborted" });
   const run = (args: readonly string[]) => git.run(input.repository_path, args, options);
   const root = await run(["rev-parse", "--show-toplevel"]);
   if (options.signal?.aborted) return aborted();

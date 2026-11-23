@@ -5,7 +5,7 @@
         "effect": "approve",
         "label": "Accept"
       },
-      "ask_for_revision": {
+      "request_changes": {
         "effect": "request_changes",
         "label": "Request changes",
         "fields": {
@@ -18,10 +18,10 @@
     "pr_watch": {
       "kind": "code",
       "label": "PR watcher",
-      "operation": "pull_request.inspect",
+      "operation": "pull_request.observe",
       "when": "pr_opened",
       "inputs": {
-        "query": "{owner: input.repository.forge.namespace, name: input.repository.forge.path, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).source_branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
+        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.path, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
       },
       "every": "2m",
       "produces": [
@@ -71,51 +71,51 @@
     "repository": {
       "key": "ident",
       "preparation": {
-        "checkout_root": "repo_path",
+        "repository_path": "repo_path",
         "expected_head": "optional(text)"
       },
       "forge": "forge"
     },
     "forge": {
-      "namespace": "ident",
+      "owner": "ident",
       "path": "ident",
       "build_base": "text",
       "final_base": "text"
     },
     "workspace": {
-      "checkout_root": "repo_path",
+      "repository_path": "repo_path",
       "push_remote_owner": "ident",
       "head": "ident",
-      "checkout_branch": "text"
+      "base_branch": "text"
     },
     "prepared": {
       "key": "ident",
       "workspace": "workspace"
     },
-    "pull_request_inspection": {
-      "status": "enum(open, merged, closed_unmerged)",
-      "pr_sequence": "integer",
-      "observed_link": "text",
+    "pr_status": {
+      "state": "enum(open, merged, closed_unmerged)",
+      "number": "integer",
+      "url": "text",
       "head_sha": "optional(text)",
       "merged_at": "optional(text)"
     },
-    "finding_impact": "enum(blocking, warning, info)",
+    "severity": "enum(blocking, warning, info)",
     "issue": {
       "description": "text",
-      "finding_impact": "finding_impact"
+      "severity": "severity"
     },
     "test_evidence": {
       "passed": "integer",
-      "failing_tests": "integer",
-      "test_log": "optional(text)",
-      "test_notes": "optional(text)",
+      "failed": "integer",
+      "output": "optional(text)",
+      "summary": "optional(text)",
       "cargo_test_output": "optional(text)"
     },
     "item_assessment": {
       "subject": "assessment_subject",
       "status": "enum(met, partial, not_met)",
-      "finding_note": "text",
-      "supporting_citations": "list(evidence_ref)"
+      "observation": "text",
+      "evidence": "list(evidence_ref)"
     },
     "assessment_body": {
       "head_sha": "text",
@@ -128,13 +128,13 @@
     },
     "evidence_ref": {
       "kind": "enum(file, test, output)",
-      "citation_location": "text",
+      "ref": "text",
       "detail": "optional(text)"
     },
     "pr_body": {
       "change_request_link": "text",
-      "source_branch": "text",
-      "change_overview": "text",
+      "branch": "text",
+      "summary": "text",
       "review_status": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
     },
     "cost_basis": "enum(measured, assumption)",
@@ -184,7 +184,7 @@
       "cap_cents": "integer"
     },
     "plan_body": {
-      "research_question": "text",
+      "question": "text",
       "hypotheses": "list(plan_hypothesis)",
       "cases": "list(plan_case)",
       "groups": "list(plan_group)",
@@ -200,13 +200,13 @@
       "cohort_id": "ident",
       "title": "text",
       "head_sha": "text",
-      "change_overview": "text",
+      "summary": "text",
       "changed_files": "list(text)"
     },
     "completed_cohort": {
-      "assigned_repository": "ident",
+      "repository_key": "ident",
       "change_request_link": "text",
-      "source_branch": "text",
+      "branch": "text",
       "build_result": "build_summary"
     },
     "case_qualification": {
@@ -246,12 +246,12 @@
     "criterion_mark": {
       "id": "ident",
       "status": "enum(met, not_met)",
-      "mark_reason": "text"
+      "evidence": "text"
     },
     "trigger_mark": {
       "id": "ident",
       "status": "enum(fired, not_fired)",
-      "mark_reason": "text"
+      "evidence": "text"
     },
     "slice_report_body": {
       "run_key": "text",
@@ -268,10 +268,10 @@
     },
     "additional_finding": {
       "id": "ident",
-      "finding_impact": "finding_impact",
-      "finding_note": "text",
+      "severity": "severity",
+      "observation": "text",
       "related_subjects": "list(assessment_subject)",
-      "supporting_citations": "list(evidence_ref)"
+      "evidence": "list(evidence_ref)"
     },
     "slice_assessment_body": {
       "head_sha": "text",
@@ -293,7 +293,7 @@
       "id": "ident",
       "case_ids": "list(ident)",
       "groups": "list(ident)",
-      "manifest_path": "text",
+      "file": "text",
       "digest": "text",
       "attempt_count": "integer",
       "cap_cents": "integer",
@@ -312,10 +312,10 @@
       "expanders": 2
     },
     "units": {
-      "repository_setup": {
+      "prepare": {
         "for_each": "input.repositories",
         "key": "each.key",
-        "stage": "repository_setup",
+        "stage": "prepare",
         "input": {
           "repository": "each"
         }
@@ -325,7 +325,7 @@
         "input": {
           "spec": "input.spec",
           "repository": "require(lookup(input.repositories, key, input.primary_repository_key))",
-          "workspace": "require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace",
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace",
           "slice_case_limit": "input.slice_case_limit",
           "slice_cap_cents": "input.slice_cap_cents",
           "approved_plan": "input.approved_plan"
@@ -343,7 +343,7 @@
           "digest_recipe": "design.outcome.digest_recipe",
           "plan": "design.outcome.plan",
           "repository": "require(lookup(input.repositories, key, input.primary_repository_key))",
-          "workspace": "require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace"
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
         }
       },
       "freeze": {
@@ -355,14 +355,14 @@
           "slice_report": "design.outcome.slice_report",
           "expansions": "map(expansion, expansion.outcome)",
           "repository": "require(lookup(input.repositories, key, input.primary_repository_key))",
-          "workspace": "require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace"
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
         }
       },
       "integration": {
         "stage": "integration",
         "input": {
           "repository": "require(lookup(input.repositories, key, input.primary_repository_key))",
-          "workspace": "require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace",
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace",
           "slice_cohort": "design.outcome.cohort",
           "expansion_cohorts": "map(expansion, expansion.outcome)",
           "freeze_cohort": "freeze.outcome.cohort",
@@ -379,7 +379,7 @@
     }
   },
   "stages": {
-    "repository_setup": {
+    "prepare": {
       "input": {
         "repository": "repository"
       },
@@ -390,12 +390,12 @@
         }
       },
       "workers": {
-        "prepare_repository": {
+        "git": {
           "kind": "code",
           "label": "Git",
-          "operation": "repository.prepare_checkout",
+          "operation": "repository.prepare",
           "inputs": {
-            "repository_path": "input.repository.preparation.checkout_root",
+            "repository_path": "input.repository.preparation.repository_path",
             "expected_head": "input.repository.preparation.expected_head",
             "base_branch": "input.repository.forge.build_base",
             "integration_branch": "input.repository.forge.final_base"
@@ -425,10 +425,10 @@
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
         "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link",
-        "closed_pr": "pr_state_current and latest(pr_state).status == \"closed_unmerged\"",
-        "merged_pr": "observed_state_current and latest(observed_state).status == \"merged\""
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
+        "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
+        "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
       "artifacts": {
         "plan": {
@@ -677,11 +677,11 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "(slice_assessment.verdict == \"fail\" and (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == \"blocking\")) > 0)) or (slice_assessment.verdict == \"pass_with_notes\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and (len(filter(slice_assessment.additional_findings, item.finding_impact == \"warning\")) > 0)) or (slice_assessment.verdict == \"pass\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and not (len(filter(slice_assessment.additional_findings, item.finding_impact == \"warning\")) > 0))",
+              "check": "(slice_assessment.verdict == \"fail\" and (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (slice_assessment.verdict == \"pass_with_notes\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)) or (slice_assessment.verdict == \"pass\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
             {
-              "check": "slice_assessment.test_evidence.failing_tests == 0 or (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) or (len(filter(slice_assessment.additional_findings, item.finding_impact == \"warning\")) > 0)",
+              "check": "slice_assessment.test_evidence.failed == 0 or (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)",
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
@@ -694,11 +694,11 @@
         },
         "pr_state": {
           "kind": "status_record",
-          "schema": "pull_request_inspection"
+          "schema": "pr_status"
         },
         "observed_state": {
           "kind": "status_record",
-          "schema": "pull_request_inspection"
+          "schema": "pr_status"
         }
       },
       "workers": {
@@ -714,7 +714,7 @@
             "approved_plan": "input.approved_plan",
             "slice_case_limit": "input.slice_case_limit",
             "slice_cap_cents": "input.slice_cap_cents",
-            "assigned_repository": "input.repository.key"
+            "repository_key": "input.repository.key"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -831,7 +831,7 @@
           "decisions": {
             "set": "accept_or_request",
             "overrides": {
-              "ask_for_revision": {
+              "request_changes": {
                 "fields": {
                   "feedback": "What must the plan change?"
                 }
@@ -854,7 +854,7 @@
               "effect": "approve",
               "label": "Approve spend"
             },
-            "ask_for_revision": {
+            "request_changes": {
               "effect": "request_changes",
               "label": "Request changes",
               "fields": {
@@ -955,7 +955,7 @@
         "generator_digest": "latest(slice_build).generator_digest",
         "digest_recipe": "latest(slice_build).digest_recipe",
         "slice_report": "latest(slice_report)",
-        "cohort": "{assigned_repository: input.repository.key, change_request_link: latest(pr).change_request_link, source_branch: latest(pr).source_branch, build_result: latest(slice_build).build}"
+        "cohort": "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(slice_build).build}"
       }
     },
     "expand": {
@@ -972,10 +972,10 @@
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
         "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link",
-        "closed_pr": "pr_state_current and latest(pr_state).status == \"closed_unmerged\"",
-        "merged_pr": "observed_state_current and latest(observed_state).status == \"merged\""
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
+        "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
+        "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
       "artifacts": {
         "expansion": {
@@ -1041,11 +1041,11 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0))",
+              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
             {
-              "check": "assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0)",
+              "check": "assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
@@ -1058,11 +1058,11 @@
         },
         "pr_state": {
           "kind": "status_record",
-          "schema": "pull_request_inspection"
+          "schema": "pr_status"
         },
         "observed_state": {
           "kind": "status_record",
-          "schema": "pull_request_inspection"
+          "schema": "pr_status"
         }
       },
       "workers": {
@@ -1182,9 +1182,9 @@
       },
       "done_when": "approved(assessment) and published(expansion) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
-        "assigned_repository": "input.repository.key",
+        "repository_key": "input.repository.key",
         "change_request_link": "latest(pr).change_request_link",
-        "source_branch": "latest(pr).source_branch",
+        "branch": "latest(pr).branch",
         "build_result": "latest(expansion).build"
       }
     },
@@ -1202,10 +1202,10 @@
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
         "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link",
-        "closed_pr": "pr_state_current and latest(pr_state).status == \"closed_unmerged\"",
-        "merged_pr": "observed_state_current and latest(observed_state).status == \"merged\""
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
+        "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
+        "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
       "artifacts": {
         "freeze": {
@@ -1258,11 +1258,11 @@
         },
         "pr_state": {
           "kind": "status_record",
-          "schema": "pull_request_inspection"
+          "schema": "pr_status"
         },
         "observed_state": {
           "kind": "status_record",
-          "schema": "pull_request_inspection"
+          "schema": "pr_status"
         }
       },
       "workers": {
@@ -1319,7 +1319,7 @@
           "decisions": {
             "set": "accept_or_request",
             "overrides": {
-              "ask_for_revision": {
+              "request_changes": {
                 "fields": {
                   "feedback": "What must the freeze change?"
                 }
@@ -1355,7 +1355,7 @@
       "done_when": "approved(freeze) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
         "freeze": "latest(freeze)",
-        "cohort": "{assigned_repository: input.repository.key, change_request_link: latest(pr).change_request_link, source_branch: latest(pr).source_branch, build_result: latest(freeze).build}"
+        "cohort": "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(freeze).build}"
       }
     },
     "integration": {
@@ -1363,16 +1363,16 @@
         "pr_published": "published(pr)",
         "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
         "watch_base": "input.repository.forge.final_base",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link",
-        "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).status == \"closed_unmerged\"",
-        "final_state": "pr_state_current and (latest(pr_state).status == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).status == \"closed_unmerged\"))"
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
+        "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
+        "final_state": "pr_state_current and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))"
       },
-      "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).status == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).status == \"closed_unmerged\"))))",
+      "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
       "outcome": {
-        "assigned_repository": "input.repository.key",
+        "repository_key": "input.repository.key",
         "change_request_link": "latest(pr).change_request_link",
-        "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).status == \"merged\")"
+        "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
       },
       "input": {
         "repository": "repository",
@@ -1393,7 +1393,7 @@
         },
         "pr_state": {
           "kind": "status_record",
-          "schema": "pull_request_inspection"
+          "schema": "pr_status"
         },
         "manual_merge_target": {
           "kind": "external_reference",
@@ -1403,7 +1403,7 @@
         },
         "observed_state": {
           "kind": "status_record",
-          "schema": "pull_request_inspection"
+          "schema": "pr_status"
         },
         "assessment": {
           "kind": "assessment",
@@ -1450,11 +1450,11 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0))",
+              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
             {
-              "check": "assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0)",
+              "check": "assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
@@ -1558,7 +1558,7 @@
               "operation": "approve_assessment",
               "label": "Accept"
             },
-            "ask_for_revision": {
+            "request_changes": {
               "effect": "request_changes",
               "operation": "dispatch_feedback",
               "label": "Send to integrator",

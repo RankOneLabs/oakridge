@@ -3,7 +3,7 @@
 Publish `plan` for approval. If `approved_plan` renders as anything other than none, this is a relaunch after an expansion blocker. Publish the supplied plan unchanged, byte for byte in content. Preserve the design and the order of every entry. Otherwise, design the plan from the spec.
 
 Every `plan_body` field is required.
-- `research_question`
+- `question`
 - `hypotheses` with `{id, statement}` entries
 - `cases` with `{id, group, is_control}` entries
 - `groups` with `{id, case_ids}` entries that partition the case IDs
@@ -59,7 +59,7 @@ Use integer cents for all money. Include one to `slice_case_limit` cases in the 
 
 ## Repository key
 
-{{assigned_repository}}
+{{repository_key}}
 
 {{> study/shared/long-steps.md}}
 

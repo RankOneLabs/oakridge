@@ -4,9 +4,9 @@
     "cohorts": [
       {
         "id": "C1",
-        "assigned_repository": "oakridge",
+        "repository_key": "oakridge",
         "title": "C1",
-        "change_scope": "Scope",
+        "scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R1",
@@ -17,8 +17,8 @@
             "contribution": "C1 contribution"
           }
         ],
-        "prerequisite_cohorts": [],
-        "decision_reason": "Reviewable"
+        "depends_on": [],
+        "rationale": "Reviewable"
       }
     ],
     "ready": [
@@ -31,31 +31,31 @@
     "cohorts": [
       {
         "id": "C1",
-        "assigned_repository": "oakridge",
+        "repository_key": "oakridge",
         "title": "C1",
-        "change_scope": "Scope",
+        "scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R1",
             "contribution": "C1 contribution"
           }
         ],
-        "prerequisite_cohorts": [],
-        "decision_reason": "Reviewable"
+        "depends_on": [],
+        "rationale": "Reviewable"
       },
       {
         "id": "C2",
-        "assigned_repository": "oakridge",
+        "repository_key": "oakridge",
         "title": "C2",
-        "change_scope": "Scope",
+        "scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R2",
             "contribution": "C2 contribution"
           }
         ],
-        "prerequisite_cohorts": [],
-        "decision_reason": "Reviewable"
+        "depends_on": [],
+        "rationale": "Reviewable"
       }
     ],
     "ready": [
@@ -69,33 +69,33 @@
     "cohorts": [
       {
         "id": "C1",
-        "assigned_repository": "oakridge",
+        "repository_key": "oakridge",
         "title": "C1",
-        "change_scope": "Scope",
+        "scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R1",
             "contribution": "C1 contribution"
           }
         ],
-        "prerequisite_cohorts": [],
-        "decision_reason": "Reviewable"
+        "depends_on": [],
+        "rationale": "Reviewable"
       },
       {
         "id": "C2",
-        "assigned_repository": "oakridge",
+        "repository_key": "oakridge",
         "title": "C2",
-        "change_scope": "Scope",
+        "scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R2",
             "contribution": "C2 contribution"
           }
         ],
-        "prerequisite_cohorts": [
+        "depends_on": [
           "C1"
         ],
-        "decision_reason": "Reviewable"
+        "rationale": "Reviewable"
       }
     ],
     "ready": [
@@ -110,9 +110,9 @@
     "cohorts": [
       {
         "id": "C1",
-        "assigned_repository": "oakridge",
+        "repository_key": "oakridge",
         "title": "C1",
-        "change_scope": "Scope",
+        "scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R1",
@@ -123,22 +123,22 @@
             "contribution": "C1 contribution"
           }
         ],
-        "prerequisite_cohorts": [],
-        "decision_reason": "Reviewable"
+        "depends_on": [],
+        "rationale": "Reviewable"
       },
       {
         "id": "C2",
-        "assigned_repository": "oakridge",
+        "repository_key": "oakridge",
         "title": "C2",
-        "change_scope": "Scope",
+        "scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R2",
             "contribution": "C2 contribution"
           }
         ],
-        "prerequisite_cohorts": [],
-        "decision_reason": "Reviewable"
+        "depends_on": [],
+        "rationale": "Reviewable"
       }
     ],
     "ready": [

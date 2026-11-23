@@ -128,16 +128,10 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
       const item = repositoryField.shape.kind === "list" ? inputSchema.schemas.get(repositoryField.shape.item) : undefined;
       const forgeKey = item?.kind === "record" ? item.fields.find((field) => field.key === "forge")?.schema : undefined;
       const forge = forgeKey ? inputSchema.schemas.get(forgeKey) : undefined;
-      const forgeFields = forge?.kind === "record" ? forge.fields.map((field) => field.key) : [];
-      const repositoryNameKey = forgeFields.includes("path") ? "path" : "name";
-      const repositoryOwnerKey = forgeFields.includes("namespace") ? "namespace" : "owner";
-      const preparationKey = item?.kind === "record" ? item.fields.find((field) => field.key === "preparation")?.schema : undefined;
-      const preparation = preparationKey ? inputSchema.schemas.get(preparationKey) : undefined;
-      const repositoryPathKey = preparation?.kind === "record" && preparation.fields.some((field) => field.key === "checkout_root")
-        ? "checkout_root" : "repository_path";
+      const repositoryNameKey = forge?.kind === "record" && forge.fields.some((field) => field.key === "path") ? "path" : "name";
       launchDraft = { ...draft, repositories: JSON.stringify(preset.repositories.map((repository) => ({
-        key: repository.key, preparation: { [repositoryPathKey]: repository.path, expected_head: null },
-        forge: { [repositoryOwnerKey]: repository.forge_owner, [repositoryNameKey]: repository.forge_name,
+        key: repository.key, preparation: { repository_path: repository.path, expected_head: null },
+        forge: { owner: repository.forge_owner, [repositoryNameKey]: repository.forge_name,
           build_base: repository.integration_branch, final_base: repository.integration_branch },
       }))) };
     }

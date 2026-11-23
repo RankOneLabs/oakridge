@@ -10,13 +10,13 @@ import type { CohortId, RepositoryKey } from "../../run-types";
 import { BuildResultViewer } from "./BuildResultViewer";
 
 const result: BuildResult = {
-  commit_sha: null,
+  head_sha: null,
   repository_key: "assay" as RepositoryKey,
   summary: "Built the API.",
   changed_files: ["src/api.py", "ci.yml"],
   tests: { passed: 78, failed: 0, output: "78 passed", summary: null, cargo_test_output: null },
   delegated_session_metadata: { cohort_id: "cm-api", branch: null },
-  issues: [{ severity: "blocking", description: "Fixture table incomplete." }],
+  known_issues: [{ severity: "blocking", description: "Fixture table incomplete." }],
 };
 
 const brief: BuildBrief = {
@@ -45,7 +45,7 @@ describe("BuildResultViewer", () => {
     render(<BuildResultViewer result={result} brief={{ kind: "found", value: brief }} cohortLabel="cm-api" />);
     expect(screen.getByTestId("or-build-head-sha").textContent).toContain("Not recorded");
     cleanup();
-    render(<BuildResultViewer result={{ ...result, commit_sha: "abc123def456" }} brief={{ kind: "found", value: brief }} cohortLabel="cm-api" />);
+    render(<BuildResultViewer result={{ ...result, head_sha: "abc123def456" }} brief={{ kind: "found", value: brief }} cohortLabel="cm-api" />);
     expect(screen.getByTestId("or-build-head-sha").textContent).toContain("abc123def456");
   });
 

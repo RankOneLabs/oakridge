@@ -9,9 +9,9 @@
     "assignment": {
       "cohort": {
         "id": "A",
-        "assigned_repository": "oakridge",
+        "repository_key": "oakridge",
         "title": "Cohort A",
-        "change_scope": "Bounded scope A",
+        "scope": "Bounded scope A",
         "allocations": [
           {
             "requirement_id": "R1",
@@ -22,7 +22,7 @@
             "contribution": "Choice"
           }
         ],
-        "prerequisite_cohorts": [],
+        "depends_on": [],
         "rationale": "Reason A"
       },
       "requirements": [
@@ -70,7 +70,7 @@
       }
     ]
   },
-  "prerequisite_cohorts": [],
+  "depends_on": [],
   "status": {
     "kind": "active"
   },

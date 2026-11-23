@@ -9,12 +9,12 @@
       "findings": [
         {
           "id": "F1",
-          "finding_impact": "blocking",
-          "finding_note": "Observation F1",
-          "supporting_citations": [
+          "severity": "blocking",
+          "observation": "Observation F1",
+          "evidence": [
             {
               "kind": "file",
-              "citation_location": "src/shared.ts",
+              "ref": "src/shared.ts",
               "detail": "Existing implementation"
             }
           ],
@@ -27,12 +27,12 @@
         },
         {
           "id": "F2",
-          "finding_impact": "blocking",
-          "finding_note": "Observation F2",
-          "supporting_citations": [
+          "severity": "blocking",
+          "observation": "Observation F2",
+          "evidence": [
             {
               "kind": "file",
-              "citation_location": "src/shared.ts",
+              "ref": "src/shared.ts",
               "detail": "Existing implementation"
             }
           ],
@@ -54,12 +54,12 @@
       "findings": [
         {
           "id": "F3",
-          "finding_impact": "warning",
-          "finding_note": "Observation F3",
-          "supporting_citations": [
+          "severity": "warning",
+          "observation": "Observation F3",
+          "evidence": [
             {
               "kind": "file",
-              "citation_location": "src/shared.ts",
+              "ref": "src/shared.ts",
               "detail": "Existing implementation"
             }
           ],
@@ -72,12 +72,12 @@
         },
         {
           "id": "F4",
-          "finding_impact": "info",
-          "finding_note": "Observation F4",
-          "supporting_citations": [
+          "severity": "info",
+          "observation": "Observation F4",
+          "evidence": [
             {
               "kind": "file",
-              "citation_location": "src/shared.ts",
+              "ref": "src/shared.ts",
               "detail": "Existing implementation"
             }
           ],
@@ -99,12 +99,12 @@
       "findings": [
         {
           "id": "F5",
-          "finding_impact": "info",
-          "finding_note": "Observation F5",
-          "supporting_citations": [
+          "severity": "info",
+          "observation": "Observation F5",
+          "evidence": [
             {
               "kind": "file",
-              "citation_location": "src/shared.ts",
+              "ref": "src/shared.ts",
               "detail": "Existing implementation"
             }
           ],
@@ -114,10 +114,10 @@
               "symbol": "shared"
             }
           ],
-          "finding_resolution": {
+          "resolution": {
             "kind": "operator_decision",
             "text": "Choose a display",
-            "decision_prompt": "Which display?",
+            "question": "Which display?",
             "alternatives": [
               {
                 "option": "Compact",

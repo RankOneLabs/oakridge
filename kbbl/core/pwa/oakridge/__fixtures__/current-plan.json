@@ -2,48 +2,48 @@
   "cohorts": [
     {
       "id": "A",
-      "assigned_repository": "oakridge",
+      "repository_key": "oakridge",
       "title": "Cohort A",
-      "change_scope": "Bounded scope A",
+      "scope": "Bounded scope A",
       "allocations": [
         {
           "requirement_id": "R1",
           "contribution": "Contribution A"
         }
       ],
-      "prerequisite_cohorts": [],
-      "decision_reason": "Reason A"
+      "depends_on": [],
+      "rationale": "Reason A"
     },
     {
       "id": "B",
-      "assigned_repository": "oakridge",
+      "repository_key": "oakridge",
       "title": "Cohort B",
-      "change_scope": "Bounded scope B",
+      "scope": "Bounded scope B",
       "allocations": [
         {
           "requirement_id": "R1",
           "contribution": "Contribution B"
         }
       ],
-      "prerequisite_cohorts": [],
-      "decision_reason": "Reason B"
+      "depends_on": [],
+      "rationale": "Reason B"
     },
     {
       "id": "C",
-      "assigned_repository": "oakridge",
+      "repository_key": "oakridge",
       "title": "Cohort C",
-      "change_scope": "Bounded scope C",
+      "scope": "Bounded scope C",
       "allocations": [
         {
           "requirement_id": "R1",
           "contribution": "Contribution C"
         }
       ],
-      "prerequisite_cohorts": [
+      "depends_on": [
         "A",
         "B"
       ],
-      "decision_reason": "Reason C"
+      "rationale": "Reason C"
     }
   ]
 }

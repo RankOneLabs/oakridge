@@ -13,7 +13,7 @@ export const notReady = (code: string, detail: string): Extract<EvidenceCollecti
 const ready = (references: readonly EvidenceReference[]): EvidenceCollection => ({ state: "ready", references });
 
 /** A citation mirrors the assessment artifact's evidence entries; `index` is its position in the finding's list. */
-export interface Citation { readonly index: number; readonly item_path: string; readonly kind: "file" | "test" | "output"; readonly ref: string; readonly detail: string | null }
+export interface Citation { readonly index: number; readonly kind: "file" | "test" | "output"; readonly ref: string; readonly detail: string | null }
 export interface FileAddress { readonly path: string; readonly line_range: LineRange | null }
 
 /** `core/decision-record.ts:18-31`, a line, or a bare path. Anything else stays as text. */
@@ -27,23 +27,20 @@ export function parseFileCitation(ref: string): FileAddress | null {
 }
 
 export function citationsOf(finding: JsonValue): readonly Citation[] {
-  const item = objectOf(finding);
-  const field = item && Object.hasOwn(item, "supporting_citations") ? "supporting_citations" : "evidence";
-  const entries = item?.[field];
+  const entries = objectOf(finding)?.evidence;
   if (!Array.isArray(entries)) return [];
   return entries.flatMap((entry: JsonValue, index): Citation[] => {
     const fields = objectOf(entry);
-    const location = fields?.citation_location ?? fields?.ref;
-    if (!fields || typeof location !== "string") return [];
+    if (!fields || typeof fields.ref !== "string") return [];
     if (fields.kind !== "file" && fields.kind !== "test" && fields.kind !== "output") return [];
-    return [{ index, item_path: `/${field}/${index}`, kind: fields.kind, ref: location, detail: typeof fields.detail === "string" ? fields.detail : null }];
+    return [{ index, kind: fields.kind, ref: fields.ref, detail: typeof fields.detail === "string" ? fields.detail : null }];
   });
 }
 
 /** A citation passed through as the agent wrote it, at its exact place in the finding. */
 function reported(ref: string, citation: Citation, artifact: SourceArtifact): EvidenceReference {
   return { source: "reported", reported_by: "agent", ref, revision_id: artifact.revision_id,
-    item_path: `${artifact.item_path}${citation.item_path}`,
+    item_path: `${artifact.item_path}/evidence/${citation.index}`,
     content: { kind: citation.kind, citation: citation.ref, detail: citation.detail } };
 }
 
@@ -74,8 +71,7 @@ function launchRepositories(input: JsonValue | null): readonly RepositoryChoice[
   if (!Array.isArray(repositories)) return [];
   return repositories.flatMap((entry: JsonValue): RepositoryChoice[] => {
     const repository = objectOf(entry);
-    const preparation = objectOf(repository?.preparation);
-    const path = preparation?.checkout_root ?? preparation?.repository_path;
+    const path = objectOf(repository?.preparation)?.repository_path;
     return typeof repository?.key === "string" && typeof path === "string"
       ? [{ repository_key: repository.key, repository_path: path }] : [];
   });

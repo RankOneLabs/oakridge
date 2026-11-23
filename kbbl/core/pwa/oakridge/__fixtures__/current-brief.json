@@ -1,7 +1,7 @@
 {
   "cohort_id": "A",
-  "assigned_repository": "oakridge",
-  "prerequisite_cohorts": [],
+  "repository_key": "oakridge",
+  "depends_on": [],
   "files_in_scope": [
     "src/shared.ts"
   ],
@@ -36,7 +36,7 @@
         "B2"
       ],
       "decision": "Preserve readers",
-      "decision_reason": "Historical compatibility"
+      "rationale": "Historical compatibility"
     }
   ]
 }

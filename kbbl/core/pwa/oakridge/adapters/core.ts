@@ -66,7 +66,7 @@ const worktreeOf = (unit: OperatorUnitView): StageUnit["worktree"] => {
   const input = objectValue(unit.input);
   const workspace = objectValue(input?.workspace);
   const forge = objectValue(objectValue(input?.repository)?.forge);
-  const path = textValue(workspace?.checkout_root ?? workspace?.repository_path), branch = textValue(workspace?.head), base_ref = textValue(forge?.build_base);
+  const path = textValue(workspace?.repository_path), branch = textValue(workspace?.head), base_ref = textValue(forge?.build_base);
   return path && branch && base_ref ? { path, branch, base_ref } : null;
 };
 export const revisionToArtifact = (artifact: OperatorArtifactDetail, unit: OperatorUnitView): AdapterResult<ArtifactDetail> => {

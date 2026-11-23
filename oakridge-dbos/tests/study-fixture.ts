@@ -18,13 +18,13 @@ const study = decodeWorkflowSource(source);
 if (!study) throw new Error("Invalid generated study source");
 export const studySource = study;
 
-export const repository = { key: "oakridge", preparation: { checkout_root: "/repos/oakridge" },
-  forge: { namespace: "acme", path: "oakridge", build_base: "epic", final_base: "main" } };
-export const workspace = { checkout_root: "/repos/oakridge", push_remote_owner: "acme", head: "head", checkout_branch: "epic" };
+export const repository = { key: "oakridge", preparation: { repository_path: "/repos/oakridge" },
+  forge: { owner: "acme", path: "oakridge", build_base: "epic", final_base: "main" } };
+export const workspace = { repository_path: "/repos/oakridge", push_remote_owner: "acme", head: "head", base_branch: "epic" };
 export const studyInput = { title: "Study", spec: "Study inputs", repositories: [repository], primary_repository_key: "oakridge",
   final_merge_policy: "require_merge", slice_case_limit: 2, slice_cap_cents: 100, approved_plan: null };
 export const plan = {
-  research_question: "Do these changes alter scores?",
+  question: "Do these changes alter scores?",
   hypotheses: [{ id: "hypothesis", statement: "They do" }],
   cases: [{ id: "base", group: "slice", is_control: true }, { id: "two", group: "two", is_control: false },
     { id: "three", group: "three", is_control: false }],
@@ -36,8 +36,8 @@ export const plan = {
   iteration_triggers: [{ id: "trigger", text: "Control does not replay" }], full_study_repeats: 2,
 };
 export const digestRecipe = { files: ["generator.py"], digest_command: "sha256sum generator.py" };
-export const pr = (key: string, number: number) => ({ change_request_link: `https://github.com/acme/oakridge/pull/${number}`, source_branch: key, change_overview: key });
-export const build = (key: string) => ({ cohort_id: key, title: key, head_sha: `${key}-head`, change_overview: key, changed_files: [] });
+export const pr = (key: string, number: number) => ({ change_request_link: `https://github.com/acme/oakridge/pull/${number}`, branch: key, summary: key });
+export const build = (key: string) => ({ cohort_id: key, title: key, head_sha: `${key}-head`, summary: key, changed_files: [] });
 export const qualifications = (case_ids: readonly string[]) => case_ids.map((case_id) =>
   ({ case_id, reference_passes: true, omissions_isolated: true, controls_replayed: true, detail: "Qualification passed" }));
 export const expansion = (key: string, case_ids: readonly string[]) => ({
@@ -49,28 +49,28 @@ export const paid = (key: string, populated = true) => ({
   run_key: key, generator_digest: "digest", qualifications: qualifications(["base"]),
   paid_results: populated ? [{ model_id: "model", case_id: "base", outcome: "scored", detail: "Evidence",
     spend_cents: 10, launch_command: "runner start", store_path: "/runs/result" }] : [],
-  criteria_marks: [{ id: "criterion", status: "met", mark_reason: "Score" }],
-  trigger_marks: [{ id: "trigger", status: "not_fired", mark_reason: "Replay" }], proposed_changes: [],
+  criteria_marks: [{ id: "criterion", status: "met", evidence: "Score" }],
+  trigger_marks: [{ id: "trigger", status: "not_fired", evidence: "Replay" }], proposed_changes: [],
 });
-export const item = (kind: string, id: string) => ({ subject: { kind, id }, status: "met", finding_note: "Verified",
-  supporting_citations: [{ kind: "test", citation_location: id }] });
+export const item = (kind: string, id: string) => ({ subject: { kind, id }, status: "met", observation: "Verified",
+  evidence: [{ kind: "test", ref: id }] });
 export const assessment = (key: string, items: readonly ReturnType<typeof item>[]) => ({
   head_sha: build(key).head_sha, item_assessments: items, additional_findings: [], proposals: [],
-  verifications: [], test_evidence: { passed: 1, failing_tests: 0 }, verdict: "pass",
+  verifications: [], test_evidence: { passed: 1, failed: 0 }, verdict: "pass",
 });
 export const sliceAssessment = (key: string) => ({ ...assessment("slice", [item("criterion", "criterion"), item("trigger", "trigger")]), run_key: key });
 export const freeze = { build: build("freeze"), generator_digest: "digest", image_digest: "image",
-  is_byte_identical: true, cohorts: [{ id: "full", manifest_path: "all.json", digest: "manifest", attempt_count: 6, cap_cents: 60,
+  is_byte_identical: true, cohorts: [{ id: "full", file: "all.json", digest: "manifest", attempt_count: 6, cap_cents: 60,
     cost_basis: "measured", case_ids: ["base", "two", "three"], groups: ["slice", "two", "three"] }] };
 
 export const studyOperations: OperationRunner = {
   async run({ operation, inputs }) {
-    if (operation === "repository.prepare_checkout") return { kind: "succeeded", body: workspace };
+    if (operation === "repository.prepare") return { kind: "succeeded", body: workspace };
     if (operation === "value.publish" && inputs && typeof inputs === "object" && "value" in inputs) return { kind: "succeeded", body: inputs.value };
     const decoded = decodePullRequestObserveInput(inputs);
-    if (operation === "pull_request.inspect" && decoded) {
-      return { kind: "succeeded", body: { status: "merged", pr_sequence: Number(decoded.query.pr_url.split("/").at(-1)),
-        observed_link: decoded.query.pr_url, head_sha: "head", merged_at: "2026-01-01T00:00:00Z" } };
+    if (operation === "pull_request.observe" && decoded) {
+      return { kind: "succeeded", body: { state: "merged", number: Number(decoded.query.pr_url.split("/").at(-1)),
+        url: decoded.query.pr_url, head_sha: "head", merged_at: "2026-01-01T00:00:00Z" } };
     }
     throw new Error(`Unexpected operation ${operation}`);
   },
@@ -156,7 +156,7 @@ export async function openStudy(authority: Authority, options: { readonly source
 export type StudyRun = Awaited<ReturnType<typeof openStudy>>;
 
 export async function prepareSlice(run: StudyRun) {
-  await run.code("prepare_repository", run.unit("repository_setup/oakridge"));
+  await run.code("git", run.unit("prepare/oakridge"));
   await run.publish("designer", "plan", plan);
   await run.end("designer");
   expect((await run.decide("plan_review", "accept", "plan")).status).toBe(201);

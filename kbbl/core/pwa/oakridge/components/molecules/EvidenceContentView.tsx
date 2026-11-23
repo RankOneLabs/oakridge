@@ -86,12 +86,12 @@ export function EvidenceContentView({ content, ...review }: EvidenceContentViewP
     </dl>;
     case "build_result": return <dl className="m-0 space-y-1">
       <Field label="Summary" value={content.value.summary} />
-      <Field label="Head sha" value={content.value.commit_sha} />
+      <Field label="Head sha" value={content.value.head_sha} />
       <Field label="Repository key" value={content.value.repository_key} />
       <Field label="Changed files" value={content.value.changed_files} />
       <div><dt className="text-xs font-medium text-[var(--text-muted)]">Tests</dt><dd className="m-0"><TestEvidenceBlock tests={content.value.tests} testId="or-evidence-test-results" /></dd></div>
       <Field label="Delegated session metadata" value={content.value.delegated_session_metadata} />
-      <Field label="Known issues" value={content.value.issues} />
+      <Field label="Known issues" value={content.value.known_issues} />
     </dl>;
     default: {
       const exhaustive: never = content;

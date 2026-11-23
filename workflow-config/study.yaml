@@ -43,7 +43,7 @@ schemas:
     repeats: integer
     cap_cents: integer
   plan_body:
-    research_question: text
+    question: text
     hypotheses: list(plan_hypothesis)
     cases: list(plan_case)
     groups: list(plan_group)
@@ -58,12 +58,12 @@ schemas:
     cohort_id: ident
     title: text
     head_sha: text
-    change_overview: text
+    summary: text
     changed_files: list(text)
   completed_cohort:
-    assigned_repository: ident
+    repository_key: ident
     change_request_link: text
-    source_branch: text
+    branch: text
     build_result: build_summary
   case_qualification:
     case_id: ident
@@ -97,11 +97,11 @@ schemas:
   criterion_mark:
     id: ident
     status: enum(met, not_met)
-    mark_reason: text
+    evidence: text
   trigger_mark:
     id: ident
     status: enum(fired, not_fired)
-    mark_reason: text
+    evidence: text
   slice_report_body:
     run_key: text
     generator_digest: text
@@ -115,10 +115,10 @@ schemas:
     id: ident
   additional_finding:
     id: ident
-    finding_impact: finding_impact
-    finding_note: text
+    severity: severity
+    observation: text
     related_subjects: list(assessment_subject)
-    supporting_citations: list(evidence_ref)
+    evidence: list(evidence_ref)
   slice_assessment_body:
     head_sha: text
     item_assessments: list(item_assessment)
@@ -137,7 +137,7 @@ schemas:
     id: ident
     case_ids: list(ident)
     groups: list(ident)
-    manifest_path: text
+    file: text
     digest: text
     attempt_count: integer
     cap_cents: integer
@@ -152,10 +152,10 @@ run:
   pools:
     expanders: 2
   units:
-    repository_setup:
+    prepare:
       for_each: input.repositories
       key: each.key
-      stage: repository_setup
+      stage: prepare
       input:
         repository: each
     design:
@@ -163,7 +163,7 @@ run:
       input:
         spec: input.spec
         repository: require(lookup(input.repositories, key, input.primary_repository_key))
-        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace
+        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
         slice_case_limit: input.slice_case_limit
         slice_cap_cents: input.slice_cap_cents
         approved_plan: input.approved_plan
@@ -179,7 +179,7 @@ run:
         digest_recipe: design.outcome.digest_recipe
         plan: design.outcome.plan
         repository: require(lookup(input.repositories, key, input.primary_repository_key))
-        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace
+        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
     freeze:
       stage: freeze
       input:
@@ -189,12 +189,12 @@ run:
         slice_report: design.outcome.slice_report
         expansions: map(expansion, expansion.outcome)
         repository: require(lookup(input.repositories, key, input.primary_repository_key))
-        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace
+        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
     integration:
       stage: integration
       input:
         repository: require(lookup(input.repositories, key, input.primary_repository_key))
-        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace
+        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
         slice_cohort: design.outcome.cohort
         expansion_cohorts: map(expansion, expansion.outcome)
         freeze_cohort: freeze.outcome.cohort
@@ -219,10 +219,10 @@ stages:
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
       pr_opened: pr_published and latest(pr).change_request_link != ""
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link
-      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link
-      closed_pr: pr_state_current and latest(pr_state).status == "closed_unmerged"
-      merged_pr: observed_state_current and latest(observed_state).status == "merged"
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link
+      closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
+      merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
       plan:
         kind: document
@@ -353,9 +353,9 @@ stages:
             message: Assessment item ids must be unique.
           - check: unique(map(slice_assessment.additional_findings, item.id))
             message: Additional finding ids must be unique.
-          - check: (slice_assessment.verdict == "fail" and (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == "blocking")) > 0)) or (slice_assessment.verdict == "pass_with_notes" and not (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == "blocking")) > 0) and (len(filter(slice_assessment.additional_findings, item.finding_impact == "warning")) > 0)) or (slice_assessment.verdict == "pass" and not (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == "blocking")) > 0) and not (len(filter(slice_assessment.additional_findings, item.finding_impact == "warning")) > 0))
+          - check: (slice_assessment.verdict == "fail" and (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0)) or (slice_assessment.verdict == "pass_with_notes" and not (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0)) or (slice_assessment.verdict == "pass" and not (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0))
             message: Assessment verdict must match item statuses and additional finding severities.
-          - check: slice_assessment.test_evidence.failing_tests == 0 or (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == "blocking")) > 0) or (len(filter(slice_assessment.additional_findings, item.finding_impact == "warning")) > 0)
+          - check: slice_assessment.test_evidence.failed == 0 or (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0)
             message: Failed tests require an unmet item or a blocking or warning additional finding.
       pr:
         kind: external_reference
@@ -364,10 +364,10 @@ stages:
         schema: pr_body
       pr_state:
         kind: status_record
-        schema: pull_request_inspection
+        schema: pr_status
       observed_state:
         kind: status_record
-        schema: pull_request_inspection
+        schema: pr_status
     workers:
       designer:
         kind: agent
@@ -380,7 +380,7 @@ stages:
           approved_plan: input.approved_plan
           slice_case_limit: input.slice_case_limit
           slice_cap_cents: input.slice_cap_cents
-          assigned_repository: input.repository.key
+          repository_key: input.repository.key
         workspace: repository(input.workspace)
         produces: [plan]
       slice_builder:
@@ -466,7 +466,7 @@ stages:
         decisions:
           set: accept_or_request
           overrides:
-            ask_for_revision:
+            request_changes:
               fields:
                 feedback: What must the plan change?
       spend_request_review:
@@ -482,7 +482,7 @@ stages:
           approve:
             effect: approve
             label: Approve spend
-          ask_for_revision:
+          request_changes:
             effect: request_changes
             label: Request changes
             fields:
@@ -559,7 +559,7 @@ stages:
       generator_digest: latest(slice_build).generator_digest
       digest_recipe: latest(slice_build).digest_recipe
       slice_report: latest(slice_report)
-      cohort: "{assigned_repository: input.repository.key, change_request_link: latest(pr).change_request_link, source_branch: latest(pr).source_branch, build_result: latest(slice_build).build}"
+      cohort: "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(slice_build).build}"
   expand:
     input:
       group_id: ident
@@ -573,10 +573,10 @@ stages:
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
       pr_opened: pr_published and latest(pr).change_request_link != ""
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link
-      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link
-      closed_pr: pr_state_current and latest(pr_state).status == "closed_unmerged"
-      merged_pr: observed_state_current and latest(observed_state).status == "merged"
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link
+      closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
+      merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
       expansion:
         kind: document
@@ -616,10 +616,10 @@ stages:
             check: unique(map(assessment.additional_findings, item.id))
             message: Additional finding ids must be unique.
           - &a4
-            check: (assessment.verdict == "fail" and (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0)) or (assessment.verdict == "pass_with_notes" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0) and (len(filter(assessment.additional_findings, item.finding_impact == "warning")) > 0)) or (assessment.verdict == "pass" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0) and not (len(filter(assessment.additional_findings, item.finding_impact == "warning")) > 0))
+            check: (assessment.verdict == "fail" and (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0)) or (assessment.verdict == "pass_with_notes" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)) or (assessment.verdict == "pass" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(assessment.additional_findings, item.severity == "warning")) > 0))
             message: Assessment verdict must match item statuses and additional finding severities.
           - &a5
-            check: assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0) or (len(filter(assessment.additional_findings, item.finding_impact == "warning")) > 0)
+            check: assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)
             message: Failed tests require an unmet item or a blocking or warning additional finding.
       pr:
         kind: external_reference
@@ -628,10 +628,10 @@ stages:
         schema: pr_body
       pr_state:
         kind: status_record
-        schema: pull_request_inspection
+        schema: pr_status
       observed_state:
         kind: status_record
-        schema: pull_request_inspection
+        schema: pr_status
     workers:
       expander:
         kind: agent
@@ -720,9 +720,9 @@ stages:
           of: pr
     done_when: approved(assessment) and published(expansion) and pr_published and (merged_pr or approved(pr))
     outcome:
-      assigned_repository: input.repository.key
+      repository_key: input.repository.key
       change_request_link: latest(pr).change_request_link
-      source_branch: latest(pr).source_branch
+      branch: latest(pr).branch
       build_result: latest(expansion).build
   freeze:
     input:
@@ -737,10 +737,10 @@ stages:
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
       pr_opened: pr_published and latest(pr).change_request_link != ""
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link
-      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link
-      closed_pr: pr_state_current and latest(pr_state).status == "closed_unmerged"
-      merged_pr: observed_state_current and latest(observed_state).status == "merged"
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link
+      closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
+      merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
       freeze:
         kind: document
@@ -771,10 +771,10 @@ stages:
         schema: pr_body
       pr_state:
         kind: status_record
-        schema: pull_request_inspection
+        schema: pr_status
       observed_state:
         kind: status_record
-        schema: pull_request_inspection
+        schema: pr_status
     workers:
       freezer:
         kind: agent
@@ -817,7 +817,7 @@ stages:
         decisions:
           set: accept_or_request
           overrides:
-            ask_for_revision:
+            request_changes:
               fields:
                 feedback: What must the freeze change?
       merge_confirmation:
@@ -841,7 +841,7 @@ stages:
     done_when: approved(freeze) and pr_published and (merged_pr or approved(pr))
     outcome:
       freeze: latest(freeze)
-      cohort: "{assigned_repository: input.repository.key, change_request_link: latest(pr).change_request_link, source_branch: latest(pr).source_branch, build_result: latest(freeze).build}"
+      cohort: "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(freeze).build}"
   integration:
     input:
       slice_cohort: completed_cohort
@@ -911,7 +911,7 @@ stages:
             effect: approve
             operation: approve_assessment
             label: Accept
-          ask_for_revision:
+          request_changes:
             effect: request_changes
             operation: dispatch_feedback
             label: Send to integrator

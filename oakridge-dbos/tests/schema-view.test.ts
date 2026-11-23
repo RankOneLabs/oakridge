@@ -119,7 +119,7 @@ test("the development bundle lists each direct collection declaration", async ()
       prompts: prompts.value.prompts });
     if (!compiled.ok) throw new Error(compiled.error.detail);
     expect(selectDefinitionBundle(compiled.value.workflow, source).units.map((unit) => [unit.key, unit.stage])).toEqual([["$root", null],
-    ["repository_setup", "repository_setup"], ["analysis", "analysis"], ["planning", "planning"], ["briefs", "brief"],
+    ["prepare", "prepare"], ["analysis", "analysis"], ["planning", "planning"], ["briefs", "brief"],
     ["implementation", "cohort"], ["integration", "integration"]]);
   } finally { started.value.close(); }
 });

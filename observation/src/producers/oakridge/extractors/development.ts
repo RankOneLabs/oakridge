@@ -29,7 +29,7 @@ function briefList(field: string, map: (value: JsonValue, path: string, scope: {
     if (!object.ok) return object;
     const cohort = referenceId(body, "cohort_id", "");
     if (!cohort.ok) return cohort;
-    const repository = referenceId(body, "assigned_repository", "");
+    const repository = referenceId(body, "repository_key", "");
     if (!repository.ok) return repository;
     const values = listAt(body, [field]);
     return values.ok ? mapped(values.value, `/${field}`, (value, path) => map(value, path, { cohort_id: cohort.value, repository_key: repository.value })) : values;
@@ -165,6 +165,6 @@ export const registrations: readonly Registration[] = [
   ...[
     development.cohort.build_result, development.cohort.observed_state, development.cohort.pr, development.cohort.pr_state,
     development.integration.manual_merge_target, development.integration.observed_state, development.integration.pr, development.integration.pr_state,
-    development.repository_setup.workspace,
+    development.prepare.workspace,
   ].map((key) => register(key, [])),
 ];

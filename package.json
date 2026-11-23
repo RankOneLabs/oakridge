@@ -5,22 +5,11 @@
   "type": "module",
   "packageManager": "bun@1.3.13",
   "description": "Multi-agent workspace built on jig and kbbl.",
-  "workspaces": [
-    "kbbl",
-    "oakridge-dbos",
-    "workflow-config",
-    "observation",
-    "canonical-json",
-    "workflow-core"
-  ],
+  "workspaces": ["kbbl", "oakridge-dbos", "workflow-config", "observation", "canonical-json", "workflow-core"],
   "scripts": {
     "oakridge": "./scripts/oakridge-start",
     "test:scripts": "bun test ./scripts",
     "typecheck": "bunx tsc --noEmit -p canonical-json/tsconfig.json && bunx tsc --noEmit -p workflow-config/tsconfig.json && bunx tsc --noEmit -p kbbl/tsconfig.json && bunx tsc --noEmit -p oakridge-dbos/tsconfig.json && bunx tsc --noEmit -p observation/tsconfig.json && bunx tsc --noEmit -p scripts/tsconfig.json",
     "doctor": "./scripts/oakridge-doctor"
-  },
-  "devDependencies": {
-    "typescript": "^5.7.2",
-    "yaml": "^2.9.0"
   }
 }

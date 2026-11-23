@@ -24,7 +24,7 @@
         },
         {
           "key": "preparation",
-          "schema": "{checkout_root: repo_path, expected_head: optional(text)}"
+          "schema": "{expected_head: optional(text), repository_path: repo_path}"
         }
       ]
     }
@@ -38,27 +38,19 @@
     }
   },
   {
-    "key": "{checkout_root: repo_path, expected_head: optional(text)}",
+    "key": "{expected_head: optional(text), repository_path: repo_path}",
     "shape": {
       "kind": "record",
       "fields": [
         {
-          "key": "checkout_root",
-          "schema": "repo_path"
-        },
-        {
           "key": "expected_head",
           "schema": "optional(text)"
+        },
+        {
+          "key": "repository_path",
+          "schema": "repo_path"
         }
       ]
-    }
-  },
-  {
-    "key": "repo_path",
-    "shape": {
-      "kind": "string",
-      "min_length": 0,
-      "max_length": 9007199254740991
     }
   },
   {
@@ -70,6 +62,14 @@
   },
   {
     "key": "text",
+    "shape": {
+      "kind": "string",
+      "min_length": 0,
+      "max_length": 9007199254740991
+    }
+  },
+  {
+    "key": "repo_path",
     "shape": {
       "kind": "string",
       "min_length": 0,
@@ -90,7 +90,7 @@
           "schema": "text"
         },
         {
-          "key": "namespace",
+          "key": "owner",
           "schema": "ident"
         },
         {
@@ -106,12 +106,8 @@
       "kind": "record",
       "fields": [
         {
-          "key": "checkout_branch",
+          "key": "base_branch",
           "schema": "text"
-        },
-        {
-          "key": "checkout_root",
-          "schema": "repo_path"
         },
         {
           "key": "head",
@@ -120,6 +116,10 @@
         {
           "key": "push_remote_owner",
           "schema": "ident"
+        },
+        {
+          "key": "repository_path",
+          "schema": "repo_path"
         }
       ]
     }
@@ -141,7 +141,7 @@
     }
   },
   {
-    "key": "pull_request_inspection",
+    "key": "pr_status",
     "shape": {
       "kind": "record",
       "fields": [
@@ -154,16 +154,16 @@
           "schema": "optional(text)"
         },
         {
-          "key": "observed_link",
-          "schema": "text"
-        },
-        {
-          "key": "pr_sequence",
+          "key": "number",
           "schema": "integer"
         },
         {
-          "key": "status",
+          "key": "state",
           "schema": "enum(open, merged, closed_unmerged)"
+        },
+        {
+          "key": "url",
+          "schema": "text"
         }
       ]
     }
@@ -188,7 +188,7 @@
     }
   },
   {
-    "key": "finding_impact",
+    "key": "severity",
     "shape": {
       "kind": "enum",
       "variants": [
@@ -208,8 +208,8 @@
           "schema": "text"
         },
         {
-          "key": "finding_impact",
-          "schema": "finding_impact"
+          "key": "severity",
+          "schema": "severity"
         }
       ]
     }
@@ -224,19 +224,19 @@
           "schema": "optional(text)"
         },
         {
-          "key": "failing_tests",
+          "key": "failed",
           "schema": "integer"
+        },
+        {
+          "key": "output",
+          "schema": "optional(text)"
         },
         {
           "key": "passed",
           "schema": "integer"
         },
         {
-          "key": "test_log",
-          "schema": "optional(text)"
-        },
-        {
-          "key": "test_notes",
+          "key": "summary",
           "schema": "optional(text)"
         }
       ]
@@ -248,7 +248,11 @@
       "kind": "record",
       "fields": [
         {
-          "key": "finding_note",
+          "key": "evidence",
+          "schema": "list(evidence_ref)"
+        },
+        {
+          "key": "observation",
           "schema": "text"
         },
         {
@@ -258,12 +262,16 @@
         {
           "key": "subject",
           "schema": "assessment_subject"
-        },
-        {
-          "key": "supporting_citations",
-          "schema": "list(evidence_ref)"
         }
       ]
+    }
+  },
+  {
+    "key": "list(evidence_ref)",
+    "shape": {
+      "kind": "list",
+      "item": "evidence_ref",
+      "max_items": 9007199254740991
     }
   },
   {
@@ -275,14 +283,6 @@
         "partial",
         "not_met"
       ]
-    }
-  },
-  {
-    "key": "list(evidence_ref)",
-    "shape": {
-      "kind": "list",
-      "item": "evidence_ref",
-      "max_items": 9007199254740991
     }
   },
   {
@@ -370,16 +370,16 @@
       "kind": "record",
       "fields": [
         {
-          "key": "citation_location",
-          "schema": "text"
-        },
-        {
           "key": "detail",
           "schema": "optional(text)"
         },
         {
           "key": "kind",
           "schema": "enum(file, test, output)"
+        },
+        {
+          "key": "ref",
+          "schema": "text"
         }
       ]
     }
@@ -401,7 +401,7 @@
       "kind": "record",
       "fields": [
         {
-          "key": "change_overview",
+          "key": "branch",
           "schema": "text"
         },
         {
@@ -413,7 +413,7 @@
           "schema": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
         },
         {
-          "key": "source_branch",
+          "key": "summary",
           "schema": "text"
         }
       ]
@@ -446,12 +446,12 @@
       "kind": "record",
       "fields": [
         {
-          "key": "assigned_repository",
-          "schema": "ident"
+          "key": "branch",
+          "schema": "text"
         },
         {
           "key": "build_result",
-          "schema": "{assigned_repository: optional(ident), change_overview: text, changed_files: list(text), committed_revision: text, delegated_session_metadata: optional({cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)}), delivery_issues: list({description: text, finding_impact: enum(blocking, warning, info)}), tests: {cargo_test_output: optional(text), failing_tests: integer, passed: integer, test_log: optional(text), test_notes: optional(text)}}"
+          "schema": "{changed_files: list(text), delegated_session_metadata: optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}), head_sha: text, known_issues: list({description: text, severity: enum(blocking, warning, info)}), repository_key: optional(ident), summary: text, tests: {cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}}"
         },
         {
           "key": "change_request_link",
@@ -462,8 +462,8 @@
           "schema": "ident"
         },
         {
-          "key": "source_branch",
-          "schema": "text"
+          "key": "repository_key",
+          "schema": "ident"
         },
         {
           "key": "title",
@@ -473,37 +473,72 @@
     }
   },
   {
-    "key": "{assigned_repository: optional(ident), change_overview: text, changed_files: list(text), committed_revision: text, delegated_session_metadata: optional({cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)}), delivery_issues: list({description: text, finding_impact: enum(blocking, warning, info)}), tests: {cargo_test_output: optional(text), failing_tests: integer, passed: integer, test_log: optional(text), test_notes: optional(text)}}",
+    "key": "{changed_files: list(text), delegated_session_metadata: optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}), head_sha: text, known_issues: list({description: text, severity: enum(blocking, warning, info)}), repository_key: optional(ident), summary: text, tests: {cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}}",
     "shape": {
       "kind": "record",
       "fields": [
-        {
-          "key": "assigned_repository",
-          "schema": "optional(ident)"
-        },
-        {
-          "key": "change_overview",
-          "schema": "text"
-        },
         {
           "key": "changed_files",
           "schema": "list(text)"
         },
         {
-          "key": "committed_revision",
+          "key": "delegated_session_metadata",
+          "schema": "optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)})"
+        },
+        {
+          "key": "head_sha",
           "schema": "text"
         },
         {
-          "key": "delegated_session_metadata",
-          "schema": "optional({cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)})"
+          "key": "known_issues",
+          "schema": "list({description: text, severity: enum(blocking, warning, info)})"
         },
         {
-          "key": "delivery_issues",
-          "schema": "list({description: text, finding_impact: enum(blocking, warning, info)})"
+          "key": "repository_key",
+          "schema": "optional(ident)"
+        },
+        {
+          "key": "summary",
+          "schema": "text"
         },
         {
           "key": "tests",
-          "schema": "{cargo_test_output: optional(text), failing_tests: integer, passed: integer, test_log: optional(text), test_notes: optional(text)}"
+          "schema": "{cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(text)",
+    "shape": {
+      "kind": "list",
+      "item": "text",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)})",
+    "shape": {
+      "kind": "optional",
+      "item": "{branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}"
+    }
+  },
+  {
+    "key": "{branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "branch",
+          "schema": "optional(ident)"
+        },
+        {
+          "key": "cohort_id",
+          "schema": "optional(ident)"
+        },
+        {
+          "key": "session_id",
+          "schema": "optional(ident)"
         }
       ]
     }
@@ -516,50 +551,15 @@
     }
   },
   {
-    "key": "list(text)",
+    "key": "list({description: text, severity: enum(blocking, warning, info)})",
     "shape": {
       "kind": "list",
-      "item": "text",
+      "item": "{description: text, severity: enum(blocking, warning, info)}",
       "max_items": 9007199254740991
     }
   },
   {
-    "key": "optional({cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)})",
-    "shape": {
-      "kind": "optional",
-      "item": "{cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)}"
-    }
-  },
-  {
-    "key": "{cohort_id: optional(ident), delegated_session: optional(ident), source_branch: optional(ident)}",
-    "shape": {
-      "kind": "record",
-      "fields": [
-        {
-          "key": "cohort_id",
-          "schema": "optional(ident)"
-        },
-        {
-          "key": "delegated_session",
-          "schema": "optional(ident)"
-        },
-        {
-          "key": "source_branch",
-          "schema": "optional(ident)"
-        }
-      ]
-    }
-  },
-  {
-    "key": "list({description: text, finding_impact: enum(blocking, warning, info)})",
-    "shape": {
-      "kind": "list",
-      "item": "{description: text, finding_impact: enum(blocking, warning, info)}",
-      "max_items": 9007199254740991
-    }
-  },
-  {
-    "key": "{description: text, finding_impact: enum(blocking, warning, info)}",
+    "key": "{description: text, severity: enum(blocking, warning, info)}",
     "shape": {
       "kind": "record",
       "fields": [
@@ -568,7 +568,7 @@
           "schema": "text"
         },
         {
-          "key": "finding_impact",
+          "key": "severity",
           "schema": "enum(blocking, warning, info)"
         }
       ]
@@ -586,7 +586,7 @@
     }
   },
   {
-    "key": "{cargo_test_output: optional(text), failing_tests: integer, passed: integer, test_log: optional(text), test_notes: optional(text)}",
+    "key": "{cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}",
     "shape": {
       "kind": "record",
       "fields": [
@@ -595,19 +595,19 @@
           "schema": "optional(text)"
         },
         {
-          "key": "failing_tests",
+          "key": "failed",
           "schema": "integer"
+        },
+        {
+          "key": "output",
+          "schema": "optional(text)"
         },
         {
           "key": "passed",
           "schema": "integer"
         },
         {
-          "key": "test_log",
-          "schema": "optional(text)"
-        },
-        {
-          "key": "test_notes",
+          "key": "summary",
           "schema": "optional(text)"
         }
       ]
@@ -619,16 +619,16 @@
       "kind": "record",
       "fields": [
         {
-          "key": "citation_location",
-          "schema": "text"
-        },
-        {
           "key": "detail",
           "schema": "text"
         },
         {
           "key": "kind",
           "schema": "enum(file, search, test, output)"
+        },
+        {
+          "key": "ref",
+          "schema": "text"
         }
       ]
     }
@@ -662,7 +662,7 @@
     }
   },
   {
-    "key": "finding_resolution",
+    "key": "resolution",
     "shape": {
       "kind": "record",
       "fields": [
@@ -675,12 +675,12 @@
           "schema": "optional(text)"
         },
         {
-          "key": "decision_prompt",
-          "schema": "optional(text)"
-        },
-        {
           "key": "kind",
           "schema": "enum(spec_update, operator_decision, implementation_note)"
+        },
+        {
+          "key": "question",
+          "schema": "optional(text)"
         },
         {
           "key": "text",
@@ -737,30 +737,38 @@
       "kind": "record",
       "fields": [
         {
+          "key": "evidence",
+          "schema": "list(finding_evidence)"
+        },
+        {
           "key": "expected_change_locations",
           "schema": "list(change_location)"
-        },
-        {
-          "key": "finding_impact",
-          "schema": "finding_impact"
-        },
-        {
-          "key": "finding_note",
-          "schema": "text"
-        },
-        {
-          "key": "finding_resolution",
-          "schema": "optional(finding_resolution)"
         },
         {
           "key": "id",
           "schema": "ident"
         },
         {
-          "key": "supporting_citations",
-          "schema": "list(finding_evidence)"
+          "key": "observation",
+          "schema": "text"
+        },
+        {
+          "key": "resolution",
+          "schema": "optional(resolution)"
+        },
+        {
+          "key": "severity",
+          "schema": "severity"
         }
       ]
+    }
+  },
+  {
+    "key": "list(finding_evidence)",
+    "shape": {
+      "kind": "list",
+      "item": "finding_evidence",
+      "max_items": 9007199254740991
     }
   },
   {
@@ -772,18 +780,10 @@
     }
   },
   {
-    "key": "optional(finding_resolution)",
+    "key": "optional(resolution)",
     "shape": {
       "kind": "optional",
-      "item": "finding_resolution"
-    }
-  },
-  {
-    "key": "list(finding_evidence)",
-    "shape": {
-      "kind": "list",
-      "item": "finding_evidence",
-      "max_items": 9007199254740991
+      "item": "resolution"
     }
   },
   {
@@ -928,24 +928,24 @@
           "schema": "list(allocation)"
         },
         {
-          "key": "assigned_repository",
-          "schema": "ident"
-        },
-        {
-          "key": "change_scope",
-          "schema": "text"
-        },
-        {
-          "key": "decision_reason",
-          "schema": "text"
+          "key": "depends_on",
+          "schema": "list(ident)"
         },
         {
           "key": "id",
           "schema": "ident"
         },
         {
-          "key": "prerequisite_cohorts",
-          "schema": "list(ident)"
+          "key": "rationale",
+          "schema": "text"
+        },
+        {
+          "key": "repository_key",
+          "schema": "ident"
+        },
+        {
+          "key": "scope",
+          "schema": "text"
         },
         {
           "key": "title",
@@ -1036,12 +1036,12 @@
           "schema": "text"
         },
         {
-          "key": "decision_reason",
-          "schema": "text"
-        },
-        {
           "key": "id",
           "schema": "ident"
+        },
+        {
+          "key": "rationale",
+          "schema": "text"
         }
       ]
     }
@@ -1052,10 +1052,6 @@
       "kind": "record",
       "fields": [
         {
-          "key": "assigned_repository",
-          "schema": "ident"
-        },
-        {
           "key": "build_items",
           "schema": "list(build_item)"
         },
@@ -1064,12 +1060,16 @@
           "schema": "ident"
         },
         {
+          "key": "depends_on",
+          "schema": "list(ident)"
+        },
+        {
           "key": "files_in_scope",
           "schema": "list(text)"
         },
         {
-          "key": "prerequisite_cohorts",
-          "schema": "list(ident)"
+          "key": "repository_key",
+          "schema": "ident"
         },
         {
           "key": "technical_decisions",
@@ -1100,28 +1100,28 @@
       "kind": "record",
       "fields": [
         {
-          "key": "assigned_repository",
-          "schema": "optional(ident)"
-        },
-        {
-          "key": "change_overview",
-          "schema": "text"
-        },
-        {
           "key": "changed_files",
           "schema": "list(text)"
-        },
-        {
-          "key": "committed_revision",
-          "schema": "text"
         },
         {
           "key": "delegated_session_metadata",
           "schema": "optional(build_metadata)"
         },
         {
-          "key": "delivery_issues",
+          "key": "head_sha",
+          "schema": "text"
+        },
+        {
+          "key": "known_issues",
           "schema": "list(issue)"
+        },
+        {
+          "key": "repository_key",
+          "schema": "optional(ident)"
+        },
+        {
+          "key": "summary",
+          "schema": "text"
         },
         {
           "key": "tests",
@@ -1151,15 +1151,15 @@
       "kind": "record",
       "fields": [
         {
+          "key": "branch",
+          "schema": "optional(ident)"
+        },
+        {
           "key": "cohort_id",
           "schema": "optional(ident)"
         },
         {
-          "key": "delegated_session",
-          "schema": "optional(ident)"
-        },
-        {
-          "key": "source_branch",
+          "key": "session_id",
           "schema": "optional(ident)"
         }
       ]
@@ -1197,24 +1197,24 @@
       "kind": "record",
       "fields": [
         {
-          "key": "finding_impact",
-          "schema": "finding_impact"
-        },
-        {
-          "key": "finding_note",
-          "schema": "text"
+          "key": "evidence",
+          "schema": "list(evidence_ref)"
         },
         {
           "key": "id",
           "schema": "ident"
         },
         {
+          "key": "observation",
+          "schema": "text"
+        },
+        {
           "key": "related_build_item_ids",
           "schema": "list(ident)"
         },
         {
-          "key": "supporting_citations",
-          "schema": "list(evidence_ref)"
+          "key": "severity",
+          "schema": "severity"
         }
       ]
     }

@@ -22,11 +22,11 @@ function CohortCard({ row: { cohort, cohort_index: cohortIndex, wave_number }, i
     <div className="flex flex-wrap items-center gap-2">
       <code className="or-code">{cohort.id}</code>
       {wave_number !== null && <Chip tone="info">Parallel wave {wave_number}</Chip>}
-      <Chip tone="muted">{cohort.assigned_repository}</Chip>
+      <Chip tone="muted">{cohort.repository_key}</Chip>
     </div>
     <p className="font-medium">{cohort.title}</p>
     <div className={artifactLabelClass}>Scope</div>
-    <p className="text-sm text-[var(--text-secondary)]">{cohort.change_scope}</p>
+    <p className="text-sm text-[var(--text-secondary)]">{cohort.scope}</p>
     <div className={artifactLabelClass}>Allocations</div>
     <ul className="space-y-2">{selectAllocations(cohort, props.context?.spec ?? null).map((allocation, index) => <li key={allocation.requirement_id} className="space-y-1">
       <div className="flex flex-wrap items-center gap-2">
@@ -35,12 +35,12 @@ function CohortCard({ row: { cohort, cohort_index: cohortIndex, wave_number }, i
       </div>
       <p className="text-sm text-[var(--text-secondary)]">{allocation.contribution}</p>
     </li>)}</ul>
-    {cohort.prerequisite_cohorts.length > 0 && <>
+    {cohort.depends_on.length > 0 && <>
       <div className={artifactLabelClass}>Depends on</div>
-      <div className="flex flex-wrap gap-2">{cohort.prerequisite_cohorts.map((id) => <a key={id} className="underline" href={`#cohort-${id}`} onClick={(event) => navigateArtifactAnchor(event, `cohort-${id}`)}><code>{id}</code></a>)}</div>
+      <div className="flex flex-wrap gap-2">{cohort.depends_on.map((id) => <a key={id} className="underline" href={`#cohort-${id}`} onClick={(event) => navigateArtifactAnchor(event, `cohort-${id}`)}><code>{id}</code></a>)}</div>
     </>}
     <div className={artifactLabelClass}>Rationale</div>
-    <p className="text-sm text-[var(--text-secondary)]">{cohort.decision_reason}</p>
+    <p className="text-sm text-[var(--text-secondary)]">{cohort.rationale}</p>
   </section>;
 }
 
@@ -48,7 +48,7 @@ export function CurrentPlanViewer(props: ViewerProps) {
   const [selectedCohortId, setSelectedCohortId] = useState<CurrentCohort["id"] | null>(null);
   const parsed = parseCurrentPlan(props.body);
   const cohorts = parsed.ok ? parsed.value.cohorts : null;
-  const layout = useMemo(() => cohorts ? selectPlanGraphLayout(cohorts.map(({ id, title, prerequisite_cohorts }) => ({ id, title, depends_on: prerequisite_cohorts }))) : null, [cohorts]);
+  const layout = useMemo(() => cohorts ? selectPlanGraphLayout(cohorts) : null, [cohorts]);
   if (!parsed.ok) return <CurrentParseFailure body={props.body} detail={parsed.error.detail} />;
   const waves = selectParallelCohortRows(parsed.value);
   return <article className="space-y-4" data-testid="or-current-plan-viewer">

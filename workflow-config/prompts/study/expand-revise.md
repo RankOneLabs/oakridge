@@ -8,7 +8,7 @@ Check that the reference patch passes, each omission patch fails only its own fa
 
 Preserve the generator source, shared visible tests, and hidden-test templates. If the cases need any of those files changed to qualify, publish a blocker that states the needed change and why. That change ends this run. The operator relaunches the study with `approved_plan` set.
 
-Commit the qualified expansion and publish `expansion` as `{build: {cohort_id: group_id, title, head_sha, change_overview, changed_files}, generator_digest, case_ids, qualifications}`. The published case IDs must be exactly the supplied `case_ids`. Validation refuses a digest or case-ID mismatch.
+Commit the qualified expansion and publish `expansion` as `{build: {cohort_id: group_id, title, head_sha, summary, changed_files}, generator_digest, case_ids, qualifications}`. The published case IDs must be exactly the supplied `case_ids`. Validation refuses a digest or case-ID mismatch.
 
 Use the pr-operations skill to push and open or update the draft PR against `build_base`, then publish `pr`.
 

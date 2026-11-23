@@ -35,7 +35,7 @@ export interface ExecutorOptions {
   readonly publish_base_url: string;
   /** Where a `workspace: none` session runs. */
   readonly agent_workdir: string;
-  /** Null leaves `pull_request.inspect` without a reader: it fails with `discovery_unsupported`. */
+  /** Null leaves `pull_request.observe` without a reader: it fails with `discovery_unsupported`. */
   readonly gated_review_url: string | null;
 }
 export interface ProductionOptions {

@@ -7,7 +7,7 @@ const workers = selectEffectiveWorkers(detail);
 const reviews = selectEffectiveReviews(detail);
 
 test.each(["cohort", "integration"])("%s pr_watch is expanded with template provenance", (stage) => {
-  expect(workers.find((worker) => worker.stage === stage && worker.key === "pr_watch")).toMatchObject({ source: { template: "pr_watch" }, worker: { kind: "code", operation: "pull_request.inspect", when: "pr_published", every: "2m", produces: ["pr_state"] } });
+  expect(workers.find((worker) => worker.stage === stage && worker.key === "pr_watch")).toMatchObject({ source: { template: "pr_watch" }, worker: { kind: "code", operation: "pull_request.observe", when: "pr_published", every: "2m", produces: ["pr_state"] } });
 });
 test.each([["cohort", "build_result"], ["integration", "pr"]])("%s pr_closed retains its overridden target", (stage, of) => {
   expect(reviews.find((review) => review.stage === stage && review.key === "pr_closed")).toMatchObject({ source: { template: "pr_closed" }, review: { of, by: "operator", when: "closed_pr" }, decisions: [{ key: "replace_pr", decision: { effect: "request_changes", label: "Replace the closed PR" } }] });

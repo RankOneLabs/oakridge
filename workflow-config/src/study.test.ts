@@ -52,7 +52,7 @@ async function launchPlan(plan: Plan, limits = defaultLimits) {
   };
   const launched = await step(empty, {
     kind: "launched",
-    input: { spec: fixture.research_question, repository, workspace, ...limits, approved_plan: null },
+    input: { spec: fixture.question, repository, workspace, ...limits, approved_plan: null },
   });
   const designer = launched.snapshot.attempts.find(attempt =>
     attempt.unit === unit && attempt.worker === "designer" && attempt.status.kind === "pending"
@@ -285,7 +285,7 @@ async function validationRun(stageName: string, stageInput: object) {
 
 const digest = "test_digest";
 const digest_recipe = { files: ["generate.py"], digest_command: "sha256sum generate.py" };
-const build = (cohort_id: string) => ({ cohort_id, title: cohort_id, head_sha: "head", change_overview: "Worked", changed_files: [] });
+const build = (cohort_id: string) => ({ cohort_id, title: cohort_id, head_sha: "head", summary: "Worked", changed_files: [] });
 const qualification = (case_id: string) => ({ case_id, reference_passes: true, omissions_isolated: true, controls_replayed: true, detail: "Qualified" });
 const plannedCase = fixture.pilot_selection.case_ids[0];
 const sliceBuild = { build: build("slice"), generator_digest: digest, case_ids: fixture.pilot_selection.case_ids,
@@ -295,13 +295,13 @@ const spendRequest = { cohort_file: "slice.json", attempt_count: 1, cap_cents: f
 const paidResult = { case_id: plannedCase, model_id: fixture.slice_paid.paid_model_ids[0], outcome: "scored", detail: "Scored", spend_cents: 1,
   launch_command: "run", store_path: "/runs/test" };
 const sliceReport = { generator_digest: digest, run_key: "test", qualifications: sliceBuild.qualifications,
-  paid_results: [paidResult], criteria_marks: fixture.pilot_selection.criteria.map(({ id }) => ({ id, status: "met", mark_reason: "Measured" })),
-  trigger_marks: fixture.iteration_triggers.map(({ id }) => ({ id, status: "not_fired", mark_reason: "Measured" })), proposed_changes: [] };
+  paid_results: [paidResult], criteria_marks: fixture.pilot_selection.criteria.map(({ id }) => ({ id, status: "met", evidence: "Measured" })),
+  trigger_marks: fixture.iteration_triggers.map(({ id }) => ({ id, status: "not_fired", evidence: "Measured" })), proposed_changes: [] };
 const assessItem = (kind: string, id: string, status = "met") =>
-  ({ subject: { kind, id }, status, finding_note: "Verified", supporting_citations: [{ kind: "test", citation_location: id }] });
+  ({ subject: { kind, id }, status, observation: "Verified", evidence: [{ kind: "test", ref: id }] });
 const baseAssessment = (item_assessments: readonly ReturnType<typeof assessItem>[]) => ({
   head_sha: "head", item_assessments, additional_findings: [], proposals: [], verifications: [],
-  test_evidence: { passed: 1, failing_tests: 0 }, verdict: "pass",
+  test_evidence: { passed: 1, failed: 0 }, verdict: "pass",
 });
 const sliceAssessment = { ...baseAssessment([
   ...fixture.pilot_selection.criteria.map(({ id }) => assessItem("criterion", id)),
@@ -309,11 +309,11 @@ const sliceAssessment = { ...baseAssessment([
   assessItem("case", plannedCase),
 ]), run_key: sliceReport.run_key };
 const findings = (kind: string, id: string) =>
-  [{ id: "finding", finding_impact: "info", finding_note: "Linked", supporting_citations: [], related_subjects: [{ kind, id }] }];
-const studyPr = { change_request_link: "https://github.com/acme/study/pull/1", change_overview: "Built", source_branch: "slice" };
+  [{ id: "finding", severity: "info", observation: "Linked", evidence: [], related_subjects: [{ kind, id }] }];
+const studyPr = { change_request_link: "https://github.com/acme/study/pull/1", summary: "Built", branch: "slice" };
 
 test("slice qualification, paid evidence, and task-link checks report specific refusals", async () => {
-  const harness = await validationRun("design", { spec: fixture.research_question, repository, workspace, ...defaultLimits, approved_plan: null });
+  const harness = await validationRun("design", { spec: fixture.question, repository, workspace, ...defaultLimits, approved_plan: null });
   const designed = await harness.complete(harness.launched, { worker: "designer", artifact: "plan", body: fixture });
   const approved = await harness.approve(designed, "plan_review", "accept", "plan");
   const buildPublication = { worker: "slice_builder", artifact: "slice_build" };
@@ -332,9 +332,9 @@ test("slice qualification, paid evidence, and task-link checks report specific r
     [{ ...sliceReport, paid_results: [] }, "The paid run produced no results. Revise the report from the same execution; do not request new spend."],
     [{ ...sliceReport, paid_results: [{ ...paidResult, model_id: "unknown" }] }, "Paid results may name only the plan's paid slice models."],
     [{ ...sliceReport, paid_results: [paidResult, paidResult] }, "A report may hold at most the approved attempt count of results."],
-    [{ ...sliceReport, criteria_marks: [...sliceReport.criteria_marks, { id: "unknown", status: "met", mark_reason: "Measured" }] },
+    [{ ...sliceReport, criteria_marks: [...sliceReport.criteria_marks, { id: "unknown", status: "met", evidence: "Measured" }] },
       "Criterion marks may name only plan slice criteria."],
-    [{ ...sliceReport, trigger_marks: [...sliceReport.trigger_marks, { id: "unknown", status: "not_fired", mark_reason: "Measured" }] },
+    [{ ...sliceReport, trigger_marks: [...sliceReport.trigger_marks, { id: "unknown", status: "not_fired", evidence: "Measured" }] },
       "Trigger marks may name only plan iteration triggers."],
   ] as const;
   for (const [body, message] of reportRefusals) {
@@ -360,7 +360,7 @@ test("slice qualification, paid evidence, and task-link checks report specific r
 });
 
 const coveringFreeze = { build: build("freeze"), generator_digest: digest, image_digest: "image", is_byte_identical: true,
-  cohorts: [{ id: "full", manifest_path: "full.json", digest: "manifest", attempt_count: 10, cap_cents: 10,
+  cohorts: [{ id: "full", file: "full.json", digest: "manifest", attempt_count: 10, cap_cents: 10,
     cost_basis: "measured", case_ids: fixture.cases.map(({ id }) => id), groups: fixture.groups.map(({ id }) => id) }] };
 
 test("freeze requires exactly the plan case set and coverage for every plan group", async () => {
@@ -397,7 +397,7 @@ test("expansion and integration resolve their task links against their own input
     expect((await checkExpansion(extra)).messages).toContain("Expansion case subjects and related subjects must resolve to allocated cases.");
   }
 
-  const cohort = { assigned_repository: repository.key, ...studyPr, build_result: build("slice") };
+  const cohort = { repository_key: repository.key, ...studyPr, build_result: build("slice") };
   const integration = await validationRun("integration", { cases: fixture.cases, freeze: coveringFreeze,
     slice_cohort: cohort, expansion_cohorts: [], freeze_cohort: cohort, repository, workspace, final_merge_policy: "require_merge" });
   const publishedPr = await integration.publish(integration.launched, { worker: "integrator", artifact: "pr", body: studyPr });

@@ -39,24 +39,24 @@ test("hotspots merge evidence and change locations once per finding across requi
 test("operator choices preserve undecided and explicit chosen values", () => {
   const undecided = selectOperatorDecisions(currentAnalysis)[0];
   const chosen = structuredClone(currentAnalysis);
-  const resolution = chosen.requirements[2].findings[0].finding_resolution;
+  const resolution = chosen.requirements[2].findings[0].resolution;
   if (resolution) resolution.chosen = "Compact";
   expect([undecided.chosen, selectOperatorDecisions(chosen)[0].chosen]).toEqual(["undecided", "Compact"]);
 });
 test("spec references resolve nested finding records and retain unknown ids", () => {
   const requirement = { ...currentSpec.requirements[0], analysis_finding_ids: [...currentSpec.requirements[0].analysis_finding_ids, "missing" as typeof currentSpec.requirements[0]["analysis_finding_ids"][number]] };
-  expect(selectRequirementFindings(requirement, currentAnalysis)).toMatchObject([{ id: "F1", reference: { requirement_id: "R1", path: "/requirements/0/findings/0", finding: { id: "F1", finding_impact: "blocking" } } }, { id: "missing", reference: null }]);
+  expect(selectRequirementFindings(requirement, currentAnalysis)).toMatchObject([{ id: "F1", reference: { requirement_id: "R1", path: "/requirements/0/findings/0", finding: { id: "F1", severity: "blocking" } } }, { id: "missing", reference: null }]);
 });
 test("parallel waves follow only dependency edges and preserve plan order", () => {
   const waves = selectParallelWaves(currentPlan);
   expect(waves.ok && waves.value.map((wave) => wave.map((cohort) => cohort.id))).toEqual([["A", "B"], ["C"]]);
 });
 test("cycles return the cohort identities as an error value", () => {
-  const cycle = structuredClone(currentPlan); cycle.cohorts[0].prerequisite_cohorts = [cycle.cohorts[1].id]; cycle.cohorts[1].prerequisite_cohorts = [cycle.cohorts[0].id];
+  const cycle = structuredClone(currentPlan); cycle.cohorts[0].depends_on = [cycle.cohorts[1].id]; cycle.cohorts[1].depends_on = [cycle.cohorts[0].id];
   expect(selectParallelWaves(cycle)).toMatchObject({ ok: false, error: { kind: "cycle", cohort_ids: ["A", "B", "C"] } });
 });
 test("unknown dependency ids return an error", () => {
-  const unknown = structuredClone(currentPlan); unknown.cohorts[0].prerequisite_cohorts = ["missing" as typeof unknown.cohorts[0]["id"]];
+  const unknown = structuredClone(currentPlan); unknown.cohorts[0].depends_on = ["missing" as typeof unknown.cohorts[0]["id"]];
   expect(selectParallelWaves(unknown)).toMatchObject({ ok: false, error: { kind: "unknown_dependency", cohort_ids: ["missing"] } });
 });
 test("a split requirement keeps its own contribution in each cohort", () => {

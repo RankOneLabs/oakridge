@@ -17,13 +17,13 @@ export interface BuildIssue {
 /** Fields rendered by the build summary. The artifact body is checked by the
  * viewer registry against the run's projected schema. */
 export interface BuildResult {
-  commit_sha?: string | null;
+  head_sha?: string | null;
   repository_key?: string | null;
   summary: string;
   changed_files: string[];
   tests: TestEvidence;
   delegated_session_metadata?: { cohort_id?: string | null; branch?: string | null } | null;
-  issues: BuildIssue[];
+  known_issues: BuildIssue[];
 }
 
 const SEVERITIES: readonly FindingSeverity[] = ["blocking", "warning", "info"];
@@ -40,37 +40,26 @@ export interface FieldError { field: string; detail: string }
 
 /** Reported evidence has its own capture contract, which allows absent prose. */
 export function parseTestEvidence(value: unknown, field: string): Result<TestEvidence, FieldError> {
-  const failed = isRecord(value) ? value.failing_tests : undefined;
-  if (!isRecord(value) || typeof value.passed !== "number" || typeof failed !== "number")
+  if (!isRecord(value) || typeof value.passed !== "number" || typeof value.failed !== "number")
     return { ok: false, error: { field, detail: "expected test counts" } };
   return { ok: true, value: {
-    passed: value.passed, failed,
-    output: textOrNull(value.test_log ?? value.output), summary: textOrNull(value.test_notes), cargo_test_output: textOrNull(value.cargo_test_output),
+    passed: value.passed, failed: value.failed,
+    output: textOrNull(value.output), summary: textOrNull(value.summary), cargo_test_output: textOrNull(value.cargo_test_output),
   } };
 }
 
 /** Select the portion of a schema-checked build publication a specialized view can show. */
 export function asBuildSummary(value: unknown): BuildResult | null {
-  if (!isRecord(value)) return null;
-  const summary = value.change_overview;
-  const issues = value.delivery_issues ?? value.known_issues;
-  const commit = value.committed_revision ?? value.head_sha;
-  if (typeof summary !== "string"
+  if (!isRecord(value) || typeof value.summary !== "string"
     || !Array.isArray(value.changed_files) || !value.changed_files.every((file) => typeof file === "string")
-    || !Array.isArray(issues)) return null;
-  const displayIssues: BuildIssue[] = [];
-  for (const issue of issues) {
-    if (!isRecord(issue) || typeof issue.description !== "string") return null;
-    const severity = SEVERITIES.find((level) => level === (issue.finding_impact ?? issue.severity));
-    if (!severity) return null;
-    displayIssues.push({ description: issue.description, severity });
-  }
+    || !Array.isArray(value.known_issues) || !value.known_issues.every((issue) =>
+      isRecord(issue) && typeof issue.description === "string" && SEVERITIES.some((severity) => severity === issue.severity))) return null;
   const tests = parseTestEvidence(value.tests, "tests");
   if (!tests.ok) return null;
   const metadata = isRecord(value.delegated_session_metadata) ? value.delegated_session_metadata : null;
-  return { summary, changed_files: value.changed_files, issues: displayIssues, tests: tests.value,
-    commit_sha: textOrNull(commit), repository_key: textOrNull(value.assigned_repository),
-    delegated_session_metadata: metadata && { cohort_id: textOrNull(metadata.cohort_id), branch: textOrNull(metadata.source_branch) } };
+  return { summary: value.summary, changed_files: value.changed_files, known_issues: value.known_issues, tests: tests.value,
+    head_sha: textOrNull(value.head_sha), repository_key: textOrNull(value.repository_key),
+    delegated_session_metadata: metadata && { cohort_id: textOrNull(metadata.cohort_id), branch: textOrNull(metadata.branch) } };
 }
 
 /** How the files a build changed line up with the files its brief put in scope. */

@@ -15,7 +15,7 @@ export interface OperationRunner {
 
 export interface OperationServices {
   readonly git: GitCommandRunner;
-  /** Absent without a forge token: `pull_request.inspect` then fails with `discovery_unsupported`. */
+  /** Absent without a forge token: `pull_request.observe` then fails with `discovery_unsupported`. */
   readonly pull_requests: PullRequestReader | null;
 }
 
@@ -30,17 +30,9 @@ export function createOperationRunner(services: OperationServices): OperationRun
       const input = decodeRepositoryPrepareInput(inputs);
       return input ? prepareRepository(services.git, input, options) : invalidInput(OPERATION_KEYS.repository_prepare);
     },
-    [OPERATION_KEYS.repository_prepare_checkout]: async (inputs, options) => {
-      const input = decodeRepositoryPrepareInput(inputs);
-      if (!input) return invalidInput(OPERATION_KEYS.repository_prepare_checkout);
-      const outcome = await prepareRepository(services.git, input, options);
-      if (outcome.kind !== "succeeded") return outcome;
-      const { repository_path, base_branch, ...identity } = outcome.body;
-      return { kind: "succeeded", body: { ...identity, checkout_root: repository_path, checkout_branch: base_branch } };
-    },
-    [OPERATION_KEYS.pull_request_inspect]: async (inputs, options) => {
+    [OPERATION_KEYS.pull_request_observe]: async (inputs, options) => {
       const input = decodePullRequestObserveInput(inputs);
-      return input ? observePullRequest(services.pull_requests, input, options) : invalidInput(OPERATION_KEYS.pull_request_inspect);
+      return input ? observePullRequest(services.pull_requests, input, options) : invalidInput(OPERATION_KEYS.pull_request_observe);
     },
     // Step resolved the input against the workflow's type, and commit checks the output against the artifact's schema.
     [OPERATION_KEYS.value_publish]: async (inputs) => isFields(inputs) && "value" in inputs

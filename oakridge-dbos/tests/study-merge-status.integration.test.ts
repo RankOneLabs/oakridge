@@ -1,27 +1,6 @@
 import { expect, test } from "bun:test";
 import { openAuthority } from "./authority-fixture";
-import { decodeWorkflowSource } from "../src/core-client/source-types";
-import { assessment, expansion, freeze, item, openStudy, paid, plan, pr, prepareSlice, sliceAssessment, sliceBuild, studySource } from "./study-fixture";
-
-test("merge status follows the inspection's source when the external reference is renamed", async () => {
-  const source = decodeWorkflowSource(JSON.parse(JSON.stringify(studySource)
-    .replaceAll('"pr"', '"change_reference"')
-    .replace(/\(pr(?=[),])/g, "(change_reference")
-    .replaceAll('"change_reference":"latest(change_reference)', '"pr":"latest(change_reference)')));
-  if (!source) throw new Error("Invalid renamed study");
-  const authority = await openAuthority();
-  try {
-    const run = await openStudy(authority, { source });
-    await run.code("prepare_repository", run.unit("repository_setup/oakridge"));
-    await run.publish("designer", "plan", plan);
-    await run.end("designer");
-    expect((await run.decide("plan_review", "accept", "plan")).status).toBe(201);
-    await run.publish("slice_builder", "slice_build", sliceBuild);
-    await run.publish("slice_builder", "change_reference", pr("slice", 1));
-    expect(await (await run.request("GET", "/merge-status")).json())
-      .toMatchObject({ kind: "merged", pr_url: pr("slice", 1).change_request_link });
-  } finally { await authority.close(); }
-});
+import { assessment, expansion, freeze, item, openStudy, paid, plan, pr, prepareSlice, sliceAssessment } from "./study-fixture";
 
 test("merge status uses the watch intent on design, expansion, freeze and integration", async () => {
   const authority = await openAuthority();
@@ -61,7 +40,7 @@ test("merge status uses the watch intent on design, expansion, freeze and integr
     await run.end("freezer", freezer);
     await check(freezer, 4);
     await run.code("pr_watch", freezer);
-    expect((await run.decide("freeze_review", "ask_for_revision", "freeze", { payload: { feedback: "Confirm manifests" } }, freezer)).status).toBe(201);
+    expect((await run.decide("freeze_review", "request_changes", "freeze", { payload: { feedback: "Confirm manifests" } }, freezer)).status).toBe(201);
     await run.publish("freezer", "freeze", freeze, { location: freezer });
     await run.publish("freezer", "pr", pr("freeze", 4), { location: freezer });
     await run.end("freezer", freezer);

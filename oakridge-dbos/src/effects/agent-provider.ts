@@ -27,9 +27,7 @@ export { selectDeliveryKey } from "./delivery-key";
 export interface AgentWorkspace { readonly repository_path: string; readonly base_branch: string }
 export function selectAgentWorkspace(workspace: unknown): AgentWorkspace | null {
   if (typeof workspace !== "object" || workspace === null || Array.isArray(workspace)) return null;
-  const fields = workspace as { readonly [key: string]: unknown };
-  const repository_path = fields.checkout_root ?? fields.repository_path;
-  const base_branch = fields.checkout_branch ?? fields.base_branch;
+  const { repository_path, base_branch } = workspace as { readonly [key: string]: unknown };
   return typeof repository_path === "string" && repository_path !== "" && typeof base_branch === "string" && base_branch !== ""
     ? { repository_path, base_branch } : null;
 }

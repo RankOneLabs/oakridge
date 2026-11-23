@@ -5,8 +5,8 @@ export type CurrentRequirementStatus = "blocked" | "warning" | "implementable" |
 export const REQUIREMENT_STATUS_ORDER: readonly CurrentRequirementStatus[] = ["blocked", "warning", "implementable", "not_analyzed"];
 export function requirementStatus(requirement: CurrentAnalysis["requirements"][number]): CurrentRequirementStatus {
   if (requirement.findings.length === 0) return "not_analyzed";
-  if (requirement.findings.some((finding) => finding.finding_impact === "blocking")) return "blocked";
-  return requirement.findings.some((finding) => finding.finding_impact === "warning") ? "warning" : "implementable";
+  if (requirement.findings.some((finding) => finding.severity === "blocking")) return "blocked";
+  return requirement.findings.some((finding) => finding.severity === "warning") ? "warning" : "implementable";
 }
 export interface FindingReference { readonly requirement_id: string; readonly finding: CurrentFinding; readonly path: string }
 export const selectAnalysisFindings = (analysis: CurrentAnalysis): FindingReference[] => analysis.requirements.flatMap((requirement, i) =>
@@ -15,7 +15,7 @@ export function selectAnalysisCounts(analysis: CurrentAnalysis) {
   const findings = selectAnalysisFindings(analysis);
   return {
     requirements: REQUIREMENT_STATUS_ORDER.map((status) => ({ status, count: analysis.requirements.filter((requirement) => requirementStatus(requirement) === status).length })),
-    findings: (["blocking", "warning", "info"] as const).map((severity) => ({ severity, count: findings.filter(({ finding }) => finding.finding_impact === severity).length })),
+    findings: (["blocking", "warning", "info"] as const).map((severity) => ({ severity, count: findings.filter(({ finding }) => finding.severity === severity).length })),
   };
 }
 export interface OrderedRequirement { readonly requirement: CurrentAnalysis["requirements"][number]; readonly index: number; readonly status: CurrentRequirementStatus }
@@ -24,32 +24,18 @@ export const selectRequirementsByStatus = (analysis: CurrentAnalysis): readonly 
   .map((requirement, index) => ({ requirement, index, status: requirementStatus(requirement) }))
   .sort((left, right) => REQUIREMENT_STATUS_ORDER.indexOf(left.status) - REQUIREMENT_STATUS_ORDER.indexOf(right.status) || left.index - right.index);
 export interface CodeHotspot { readonly path: string; readonly references: readonly FindingReference[] }
-export function selectFindingCitations(finding: CurrentFinding) {
-  return (finding.supporting_citations).flatMap((citation) => {
-    const location = citation.citation_location;
-    return location ? [{ kind: citation.kind, location, detail: citation.detail }] : [];
-  });
-}
 export function selectCodeHotspots(analysis: CurrentAnalysis): CodeHotspot[] {
   const groups = new Map<string, FindingReference[]>();
   for (const reference of selectAnalysisFindings(analysis)) {
-    const paths = new Set([...reference.finding.expected_change_locations.map((location) => location.path),
-      ...selectFindingCitations(reference.finding).filter((citation) => citation.kind === "file").map((citation) => citation.location)]);
+    const paths = new Set([...reference.finding.expected_change_locations.map((location) => location.path), ...reference.finding.evidence.filter((evidence) => evidence.kind === "file").map((evidence) => evidence.ref)]);
     for (const path of paths) groups.set(path, [...(groups.get(path) ?? []), reference]);
   }
   return [...groups].map(([path, references]) => ({ path, references }));
 }
-export const selectFindingResolution = (finding: CurrentFinding) => finding.finding_resolution;
-export const selectDecisionPrompt = (resolution: ReturnType<typeof selectFindingResolution>) =>
-  resolution?.decision_prompt ?? null;
-
 export const selectOperatorDecisions = (analysis: CurrentAnalysis) => selectAnalysisFindings(analysis)
-  .flatMap((reference) => {
-    const resolution = selectFindingResolution(reference.finding);
-    return resolution?.kind === "operator_decision"
-      ? [{ ...reference, prompt: selectDecisionPrompt(resolution), alternatives: resolution.alternatives ?? [], chosen: resolution.chosen ?? "undecided" }]
-      : [];
-  });
+  .filter(({ finding }) => finding.resolution?.kind === "operator_decision")
+  .map((reference) => ({ ...reference, question: reference.finding.resolution?.question ?? null,
+    alternatives: reference.finding.resolution?.alternatives ?? [], chosen: reference.finding.resolution?.chosen ?? "undecided" }));
 export function selectRequirementFindings(requirement: CanonicalRequirement, analysis: CurrentAnalysis | null) {
   const references = analysis ? selectAnalysisFindings(analysis) : [];
   return requirement.analysis_finding_ids.map((id) => ({ id, reference: references.find(({ finding }) => finding.id === id) ?? null }));

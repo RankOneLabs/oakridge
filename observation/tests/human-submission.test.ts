@@ -176,7 +176,7 @@ integration("T3 and T7 have isolated subjects, evidence, executions, answers, co
   const feed = createFeed(db, tenant, configuration);
   await feed.launch({ spec: "the spec" });
   await feed.revision({ revision_id: "brief-scoped", artifact_kind: "brief", body: {
-    cohort_id: "one", assigned_repository: "oakridge", build_items: [{ id: "B1", requirement_ids: ["T3", "T7", "T99"], instructions: "Build", verification: ["Test"] }],
+    cohort_id: "one", repository_key: "oakridge", build_items: [{ id: "B1", requirement_ids: ["T3", "T7", "T99"], instructions: "Build", verification: ["Test"] }],
     technical_decisions: [],
   } });
   await feed.revision({ revision_id: "scoped", artifact_kind: "assessment", unit_id: "run-1/implementation/one",

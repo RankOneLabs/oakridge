@@ -40,7 +40,7 @@ test("header, secondary views and raw declaration forms preserve definition acce
   fireEvent.click(screen.getByRole("button", { name: "Raw definition" }));
   expect(screen.getByRole("tabpanel", { name: "Authored" }).textContent).toContain("pr_watch");
   fireEvent.click(screen.getByRole("tab", { name: "Effective" }));
-  expect(screen.getByRole("tabpanel", { name: "Effective" }).textContent).toContain("pull_request.inspect");
+  expect(screen.getByRole("tabpanel", { name: "Effective" }).textContent).toContain("pull_request.observe");
 });
 test("tab changes preserve the graph node and breadcrumbs", () => {
   const view = show({ kind: "stage", stage: "cohort", tab: null });

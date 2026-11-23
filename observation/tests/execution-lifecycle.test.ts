@@ -107,7 +107,7 @@ async function captureAssessment(life: Lifecycle, input: { readonly run_id?: str
     body: requirements }, stampCapture({ pins: [] }, pinIdentity));
   const brief = `${run_id}-brief`;
   await life.feed.revision({ revision_id: brief, artifact_kind: "brief", run_id, body: {
-    cohort_id: "cohort", assigned_repository: "oakridge", technical_decisions: [],
+    cohort_id: "cohort", repository_key: "oakridge", technical_decisions: [],
     build_items: [["T7", "T8"], ["T7"], ["T9"]].map((requirement_ids, index) => ({ id: `B${index}`, requirement_ids })),
   } });
   const assessment: FixtureRevision = { revision_id: `${run_id}-assessment`, artifact_kind: "assessment", run_id, subject_id: input.subject_id,

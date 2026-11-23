@@ -8,24 +8,24 @@ schemas:
   completed_cohort: outcome_of(cohort)
   finding_evidence:
     kind: enum(file, search, test, output)
-    citation_location: text
+    ref: text
     detail: text
   change_location:
     path: text
     symbol: optional(text)
-  finding_resolution:
+  resolution:
     kind: enum(spec_update, operator_decision, implementation_note)
     text: text
-    decision_prompt: optional(text)
+    question: optional(text)
     alternatives: "optional(list({option: text, consequence: text}))"
     chosen: optional(text)
   analysis_finding:
     id: ident
-    finding_impact: finding_impact
-    finding_note: text
-    supporting_citations: list(finding_evidence)
+    severity: severity
+    observation: text
+    evidence: list(finding_evidence)
     expected_change_locations: list(change_location)
-    finding_resolution: optional(finding_resolution)
+    resolution: optional(resolution)
   analysis_requirement:
     id: ident
     text: text
@@ -48,12 +48,12 @@ schemas:
     contribution: text
   plan_cohort:
     id: ident
-    assigned_repository: ident
+    repository_key: ident
     title: text
-    change_scope: text
+    scope: text
     allocations: list(allocation)
-    prerequisite_cohorts: list(ident)
-    decision_reason: text
+    depends_on: list(ident)
+    rationale: text
   plan_body:
     cohorts: list(plan_cohort)
   cohort_assignment:
@@ -68,57 +68,57 @@ schemas:
     id: ident
     build_item_ids: list(ident)
     decision: text
-    decision_reason: text
+    rationale: text
   brief_body:
     cohort_id: ident
-    assigned_repository: ident
-    prerequisite_cohorts: list(ident)
+    repository_key: ident
+    depends_on: list(ident)
     files_in_scope: list(text)
     build_items: list(build_item)
     technical_decisions: list(technical_decision)
   build_body:
-    assigned_repository: optional(ident)
-    committed_revision: text
-    change_overview: text
+    repository_key: optional(ident)
+    head_sha: text
+    summary: text
     changed_files: list(text)
     tests: test_evidence
     delegated_session_metadata: optional(build_metadata)
-    delivery_issues: list(issue)
+    known_issues: list(issue)
   build_metadata:
     cohort_id: optional(ident)
-    delegated_session: optional(ident)
-    source_branch: optional(ident)
+    session_id: optional(ident)
+    branch: optional(ident)
   assessment_subject:
     kind: enum(build_item, requirement)
     id: ident
   additional_finding:
     id: ident
-    finding_impact: finding_impact
-    finding_note: text
+    severity: severity
+    observation: text
     related_build_item_ids: list(ident)
-    supporting_citations: list(evidence_ref)
+    evidence: list(evidence_ref)
 run:
   pools:
     writers: 4
     builders: 4
   units:
-    repository_setup:
+    prepare:
       for_each: input.repositories
       key: each.key
-      stage: repository_setup
+      stage: prepare
       input:
         repository: each
     analysis:
       stage: analysis
       input:
         spec: input.spec
-        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace
+        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
     planning:
       stage: planning
       input:
         spec: analysis.outcome.spec
         repositories: input.repositories
-        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace
+        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
     briefs:
       for_each: planning.outcome.plan.cohorts
       key: each.id
@@ -127,29 +127,29 @@ run:
       pool: writers
       input:
         assignment: "{cohort: each, requirements: filter(analysis.outcome.spec.requirements, contains(map(each.allocations, item.requirement_id), item.id))}"
-        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace
+        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
     implementation:
       for_each: map(briefs, briefs.outcome.brief)
       key: each.cohort_id
-      after: require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id)).prerequisite_cohorts
+      after: require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id)).depends_on
       stage: cohort
       pool: builders
       input:
         brief: each
-        repository: require(lookup(input.repositories, key, each.assigned_repository))
-        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, each.assigned_repository)).workspace
+        repository: require(lookup(input.repositories, key, each.repository_key))
+        workspace: require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace
         cohort: require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id))
     integration:
-      for_each: filter(input.repositories, contains(map(implementation, implementation.outcome.assigned_repository), item.key))
+      for_each: filter(input.repositories, contains(map(implementation, implementation.outcome.repository_key), item.key))
       key: each.key
       stage: integration
       input:
         repository: each
-        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, each.key)).workspace
-        cohorts: filter(map(implementation, implementation.outcome), item.assigned_repository == each.key)
-        briefs: filter(map(briefs, briefs.outcome.brief), item.assigned_repository == each.key)
+        workspace: require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace
+        cohorts: filter(map(implementation, implementation.outcome), item.repository_key == each.key)
+        briefs: filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key)
         final_merge_policy: input.final_merge_policy
-        requirements: filter(analysis.outcome.spec.requirements, contains(flatten(map(filter(map(briefs, briefs.outcome.brief), item.assigned_repository == each.key), flatten(map(item.build_items, item.requirement_ids)))), item.id))
+        requirements: filter(analysis.outcome.spec.requirements, contains(flatten(map(filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key), flatten(map(item.build_items, item.requirement_ids)))), item.id))
   outcome:
     cohorts: map(implementation, implementation.outcome)
     integrations: map(integration, integration.outcome)
@@ -172,7 +172,7 @@ stages:
             message: Every requirement needs at least one finding.
           - check: unique(map(flatten(map(analysis.requirements, item.findings)), item.id))
             message: Finding ids must be unique across the analysis.
-          - check: 'every(flatten(map(analysis.requirements, item.findings)), not present(item.finding_resolution) or require(item.finding_resolution).kind != "operator_decision" or (present(require(item.finding_resolution).decision_prompt) and present(require(item.finding_resolution).alternatives) and len(require(require(item.finding_resolution).alternatives)) >= 2))'
+          - check: 'every(flatten(map(analysis.requirements, item.findings)), not present(item.resolution) or require(item.resolution).kind != "operator_decision" or (present(require(item.resolution).question) and present(require(item.resolution).alternatives) and len(require(require(item.resolution).alternatives)) >= 2))'
             message: An operator_decision resolution needs a question and at least two alternatives.
       spec:
         kind: document
@@ -190,7 +190,7 @@ stages:
           - check: published(analysis) and every(spec.requirements, len(item.acceptance_conditions) > 0)
             message: Every specification requirement needs at least one acceptance condition.
     workers:
-      requirements_analyst:
+      author:
         kind: agent
         label: Author
         prompts:
@@ -227,9 +227,9 @@ stages:
             effect: approve
             label: Accept
             when:
-              check: 'every(flatten(map(analysis.requirements, item.findings)), item.finding_impact != "blocking" and (not present(item.finding_resolution) or require(item.finding_resolution).kind != "operator_decision" or (default(require(item.finding_resolution).chosen, "") != "" and contains(map(require(require(item.finding_resolution).alternatives), item.option), default(require(item.finding_resolution).chosen, "")))))'
+              check: 'every(flatten(map(analysis.requirements, item.findings)), item.severity != "blocking" and (not present(item.resolution) or require(item.resolution).kind != "operator_decision" or (default(require(item.resolution).chosen, "") != "" and contains(map(require(require(item.resolution).alternatives), item.option), default(require(item.resolution).chosen, "")))))'
               reason: Resolve every blocking finding and choose an option for every operator decision before accepting the analysis.
-          ask_for_revision:
+          request_changes:
             effect: request_changes
             label: Request changes
             fields:
@@ -246,7 +246,7 @@ stages:
           accept:
             effect: approve
             label: Accept
-          ask_for_revision:
+          request_changes:
             effect: request_changes
             label: Request changes
             fields:
@@ -273,10 +273,10 @@ stages:
         validate:
           - check: len(plan.cohorts) > 0
             message: The plan must name at least one cohort.
-          - check: every(plan.cohorts, contains(map(input.repositories, item.key), item.assigned_repository))
-            message: Every cohort's assigned_repository must be the key of one of the run's repositories.
-          - check: valid_graph(plan.cohorts, id, prerequisite_cohorts)
-            message: Cohort ids must be unique idents, and each prerequisite_cohorts must name other cohorts without repeats or a cycle.
+          - check: every(plan.cohorts, contains(map(input.repositories, item.key), item.repository_key))
+            message: Every cohort's repository_key must be the key of one of the run's repositories.
+          - check: valid_graph(plan.cohorts, id, depends_on)
+            message: Cohort ids must be unique idents, and each depends_on must name other cohorts without repeats or a cycle.
           - check: every(plan.cohorts, every(item.allocations, contains(map(input.spec.requirements, item.id), item.requirement_id)))
             message: Every allocation must name a canonical specification requirement.
           - check: every(map(input.spec.requirements, item.id), contains(flatten(map(plan.cohorts, map(item.allocations, item.requirement_id))), item))
@@ -309,13 +309,13 @@ stages:
         decisions:
           set: accept_or_request
           overrides:
-            ask_for_revision:
+            request_changes:
               fields:
                 feedback: What must the plan change?
     done_when: approved(plan)
     outcome:
       plan: latest(plan)
-      order: levels(latest(plan).cohorts, id, prerequisite_cohorts)
+      order: levels(latest(plan).cohorts, id, depends_on)
   brief:
     input:
       assignment: cohort_assignment
@@ -328,10 +328,10 @@ stages:
         validate:
           - check: brief.cohort_id == input.assignment.cohort.id
             message: The brief's cohort_id must be its plan cohort's id.
-          - check: brief.assigned_repository == input.assignment.cohort.assigned_repository
-            message: The brief's assigned_repository must be its plan cohort's.
-          - check: brief.prerequisite_cohorts == input.assignment.cohort.prerequisite_cohorts
-            message: The brief's prerequisite_cohorts must be its plan cohort's, in the same order.
+          - check: brief.repository_key == input.assignment.cohort.repository_key
+            message: The brief's repository_key must be its plan cohort's.
+          - check: brief.depends_on == input.assignment.cohort.depends_on
+            message: The brief's depends_on must be its plan cohort's, in the same order.
           - check: unique(map(brief.build_items, item.id))
             message: Build-item ids must be unique.
           - check: every(map(input.assignment.requirements, item.id), contains(flatten(map(brief.build_items, item.requirement_ids)), item))
@@ -370,7 +370,7 @@ stages:
         decisions:
           set: accept_or_request
           overrides:
-            ask_for_revision:
+            request_changes:
               fields:
                 feedback: What must the brief change?
     done_when: approved(brief)
@@ -387,10 +387,10 @@ stages:
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
       pr_opened: pr_published and latest(pr).change_request_link != ""
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link
-      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link
-      closed_pr: pr_state_current and latest(pr_state).status == "closed_unmerged"
-      merged_pr: observed_state_current and latest(observed_state).status == "merged"
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link
+      closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
+      merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
       build_result:
         kind: document
@@ -418,8 +418,8 @@ stages:
             message: Cohort assessment items must name brief build items.
           - check: every(flatten(map(assessment.additional_findings, item.related_build_item_ids)), contains(map(input.brief.build_items, item.id), item))
             message: Additional finding links must name brief build items.
-          - check: published(build_result) and assessment.head_sha == latest(build_result).committed_revision
-            message: Assessment head_sha must match the latest build result's committed_revision.
+          - check: published(build_result) and assessment.head_sha == latest(build_result).head_sha
+            message: Assessment head_sha must match the latest build result.
           - &a1
             check: unique(map(assessment.item_assessments, item.subject.id))
             message: Assessment item ids must be unique.
@@ -427,17 +427,17 @@ stages:
             check: unique(map(assessment.additional_findings, item.id))
             message: Additional finding ids must be unique.
           - &a4
-            check: (assessment.verdict == "fail" and (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0)) or (assessment.verdict == "pass_with_notes" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0) and (len(filter(assessment.additional_findings, item.finding_impact == "warning")) > 0)) or (assessment.verdict == "pass" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0) and not (len(filter(assessment.additional_findings, item.finding_impact == "warning")) > 0))
+            check: (assessment.verdict == "fail" and (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0)) or (assessment.verdict == "pass_with_notes" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)) or (assessment.verdict == "pass" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(assessment.additional_findings, item.severity == "warning")) > 0))
             message: Assessment verdict must match item statuses and additional finding severities.
           - &a5
-            check: assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0) or (len(filter(assessment.additional_findings, item.finding_impact == "warning")) > 0)
+            check: assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)
             message: Failed tests require an unmet item or a blocking or warning additional finding.
       pr_state:
         kind: status_record
-        schema: pull_request_inspection
+        schema: pr_status
       observed_state:
         kind: status_record
-        schema: pull_request_inspection
+        schema: pr_status
     workers:
       builder:
         kind: agent
@@ -522,10 +522,10 @@ stages:
     done_when: approved(assessment) and published(build_result) and pr_published and (merged_pr or approved(pr))
     outcome:
       cohort_id: brief_value.cohort_id
-      assigned_repository: input.brief.assigned_repository
+      repository_key: input.brief.repository_key
       title: input.cohort.title
       change_request_link: latest(pr).change_request_link
-      source_branch: latest(pr).source_branch
+      branch: latest(pr).branch
       build_result: latest(build_result)
   integration:
     input:
@@ -588,7 +588,7 @@ stages:
             effect: approve
             operation: approve_assessment
             label: Accept
-          ask_for_revision:
+          request_changes:
             effect: request_changes
             operation: dispatch_feedback
             label: Send to integrator

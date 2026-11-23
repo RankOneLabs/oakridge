@@ -254,7 +254,7 @@ fn assessment_decisions_keep_distinct_build_and_assessment_targets() {
 #[test]
 fn code_workers_refuse_legacy_creates_and_locate_forbidden_evaluates() {
     let mut source = development();
-    let worker = source["stages"]["repository_setup"]["workers"]["prepare_repository"]
+    let worker = source["stages"]["prepare"]["workers"]["git"]
         .as_object_mut()
         .unwrap();
     let produced = worker.remove("produces").unwrap();
@@ -262,12 +262,8 @@ fn code_workers_refuse_legacy_creates_and_locate_forbidden_evaluates() {
     assert!(decode_workflow(&serde_json::to_vec(&source).unwrap()).is_err());
 
     let mut source = development();
-    source["stages"]["repository_setup"]["workers"]["prepare_repository"]["evaluates"] =
-        json!("workspace");
+    source["stages"]["prepare"]["workers"]["git"]["evaluates"] = json!("workspace");
     let error = decode_workflow(&serde_json::to_vec(&source).unwrap()).unwrap_err();
-    assert_eq!(
-        &*error.path,
-        "stages.repository_setup.workers.prepare_repository.evaluates"
-    );
+    assert_eq!(&*error.path, "stages.prepare.workers.git.evaluates");
     assert!(error.detail.contains("cannot set evaluates"));
 }

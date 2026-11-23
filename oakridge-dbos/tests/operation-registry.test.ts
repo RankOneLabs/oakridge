@@ -7,7 +7,7 @@ import { createOperationRunner } from "../src/operations/runner";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 
 test("the registry declares the in-process operations, and session.run is not one", () => {
-  expect(OPERATION_REGISTRY.map((operation) => operation.key)).toEqual(["repository.prepare", "value.publish", "pull_request.inspect", "repository.prepare_checkout"]);
+  expect(OPERATION_REGISTRY.map((operation) => operation.key)).toEqual(["repository.prepare", "pull_request.observe", "value.publish"]);
   for (const operation of OPERATION_REGISTRY)
     expect(Object.keys(operation).sort()).toEqual(["error_codes", "input_schema", "key", "output_schema"]);
 });
@@ -31,7 +31,7 @@ test("a code worker of each registered operation compiles against its declared c
         stages: { only: { input: bound(operation.input_schema), artifacts: { output: { kind: "document", schema: bound(operation.output_schema) } },
           workers: { call: { kind: "code", operation: operation.key, inputs, produces: ["output"] } }, done_when: "published(output)", outcome: {} } } } });
     }));
-    expect(compiled.map((result) => result.ok ? "compiled" : result.error.detail)).toEqual(["compiled", "compiled", "compiled", "compiled"]);
+    expect(compiled.map((result) => result.ok ? "compiled" : result.error.detail)).toEqual(["compiled", "compiled", "compiled"]);
   } finally { core.close(); }
 });
 
@@ -41,9 +41,9 @@ test("an unregistered operation or a malformed input fails the attempt rather th
   expect(outcomes.map((outcome) => outcome.kind === "failed" ? outcome.code : outcome.kind)).toEqual(["invalid_instruction", "invalid_instruction"]);
 });
 
-test("pull_request.inspect without a reader fails as discovery_unsupported", async () => {
+test("pull_request.observe without a reader fails as discovery_unsupported", async () => {
   const runner = createOperationRunner({ git: new BunGitCommandRunner(), pull_requests: null });
-  const outcome = await runner.run({ operation: "pull_request.inspect",
+  const outcome = await runner.run({ operation: "pull_request.observe",
     inputs: { query: { owner: "o", name: "n", head_owner: "o", head_branch: "b", base_branch: "main", pr_url: "https://github.com/o/n/pull/1" } } });
   expect(outcome.kind === "failed" ? outcome.code : outcome.kind).toBe("discovery_unsupported");
 });

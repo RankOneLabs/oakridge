@@ -47,12 +47,12 @@ export interface ParallelOrderError { readonly operation: "parallel_order"; read
 export function selectParallelWaves(plan: import("./viewer-data").CurrentPlan): import("../../lib/result").Result<readonly (readonly import("./viewer-data").CurrentCohort[])[], ParallelOrderError> {
   const ids = new Set(plan.cohorts.map((cohort) => cohort.id));
   if (ids.size !== plan.cohorts.length) return { ok: false, error: { operation: "parallel_order", kind: "duplicate_id", cohort_ids: plan.cohorts.map((cohort) => cohort.id) } };
-  const unknown = plan.cohorts.flatMap((cohort) => cohort.prerequisite_cohorts.filter((id) => !ids.has(id)));
+  const unknown = plan.cohorts.flatMap((cohort) => cohort.depends_on.filter((id) => !ids.has(id)));
   if (unknown.length) return { ok: false, error: { operation: "parallel_order", kind: "unknown_dependency", cohort_ids: unknown } };
   const done = new Set<string>();
   const waves: import("./viewer-data").CurrentCohort[][] = [];
   while (done.size < plan.cohorts.length) {
-    const wave = plan.cohorts.filter((cohort) => !done.has(cohort.id) && cohort.prerequisite_cohorts.every((id) => done.has(id)));
+    const wave = plan.cohorts.filter((cohort) => !done.has(cohort.id) && cohort.depends_on.every((id) => done.has(id)));
     if (!wave.length) return { ok: false, error: { operation: "parallel_order", kind: "cycle", cohort_ids: plan.cohorts.filter((cohort) => !done.has(cohort.id)).map((cohort) => cohort.id) } };
     waves.push(wave);
     wave.forEach((cohort) => done.add(cohort.id));

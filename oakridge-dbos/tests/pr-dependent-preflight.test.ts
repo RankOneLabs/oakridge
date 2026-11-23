@@ -9,10 +9,10 @@ const definition_id = "0".repeat(64) as DefinitionId;
 function fixture(): WorkflowDefinitionDescriptor {
   return { workflow: "fixture", input: "string", run: { units: { nested: { group: { units: { watch: { stage: "watch" } }, outcome: {} } } }, outcome: {} },
     workers: { watcher: { kind: "code", operation: "repository.prepare", inputs: {}, produces: [] } },
-    stages: { watch: { input: "string", artifacts: {}, workers: { watcher: { template: "watcher", overrides: { operation: "pull_request.inspect" } } }, outcome: {} } } };
+    stages: { watch: { input: "string", artifacts: {}, workers: { watcher: { template: "watcher", overrides: { operation: "pull_request.observe" } } }, outcome: {} } } };
 }
 test("PR dependence follows reachable nested units and template overrides", () => {
-  expect(prOperationKeys(fixture())).toEqual(["pull_request.inspect"]);
+  expect(prOperationKeys(fixture())).toEqual(["pull_request.observe"]);
 });
 test("committed development depends on PR operations; samples do not", () => {
   const catalog = readLaunchableCatalog();

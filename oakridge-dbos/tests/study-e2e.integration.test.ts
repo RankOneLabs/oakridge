@@ -130,7 +130,7 @@ test("study runs from prepare through two expansions, freeze and integration", a
     expect(executionKeys).toHaveLength(1);
     expect(executionKeys[0]).toMatch(/^xk_[0-9a-f]{64}$/);
     const completed = done.filter(({ status }) => status.kind === "done").map(({ id }) => id.slice(run_id.length)).sort();
-    expect(completed).toEqual(["", "/design", "/expansion/three", "/expansion/two", "/freeze", "/integration", "/repository_setup/oakridge"]);
+    expect(completed).toEqual(["", "/design", "/expansion/three", "/expansion/two", "/freeze", "/integration", "/prepare/oakridge"]);
   } catch (error) {
     console.error(error);
     throw error;

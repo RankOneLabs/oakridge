@@ -4,10 +4,6 @@
   "workspaces": {
     "": {
       "name": "oakridge",
-      "devDependencies": {
-        "typescript": "^5.7.2",
-        "yaml": "^2.9.0",
-      },
     },
     "canonical-json": {
       "name": "canonical-json",

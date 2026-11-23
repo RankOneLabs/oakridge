@@ -8,8 +8,8 @@ import type { DefinitionId } from "./definition-identity";
 const guardReason = "Resolve every blocking finding and choose an option for every operator decision before accepting the analysis.";
 async function analysisRun(body = analysis()) {
   const run = await TestRun.launch(stageWorkflow("analysis"), { spec: "Original specification", workspace });
-  await run.publish("requirements_analyst", "analysis", body);
-  await run.end("requirements_analyst");
+  await run.publish("author", "analysis", body);
+  await run.end("author");
   return run;
 }
 async function specRun(body: SpecBody) {
@@ -23,7 +23,7 @@ const analysisCases: {name: string; change: (body: AnalysisBody) => void; messag
   {name: "empty source references", change: b => { b.requirements[0].source_refs = []; }, message: "Every requirement must cite at least one source reference."},
   {name: "missing findings", change: b => { b.requirements[0].findings = []; }, message: "Every requirement needs at least one finding."},
   {name: "globally repeated finding", change: b => { b.requirements[1].findings[0].id = "F1"; }, message: "Finding ids must be unique across the analysis."},
-  {name: "single operator alternative", change: b => { b.requirements[0].findings[0].finding_resolution = {kind: "operator_decision", text: "Choice", decision_prompt: "Which?", alternatives: [{option: "A", consequence: "A"}]}; }, message: "An operator_decision resolution needs a question and at least two alternatives."},
+  {name: "single operator alternative", change: b => { b.requirements[0].findings[0].resolution = {kind: "operator_decision", text: "Choice", question: "Which?", alternatives: [{option: "A", consequence: "A"}]}; }, message: "An operator_decision resolution needs a question and at least two alternatives."},
 ];
 for (const c of analysisCases) test(`analysis refuses ${c.name} with its message`, async () => {
   const body = analysis(); c.change(body);
@@ -31,14 +31,14 @@ for (const c of analysisCases) test(`analysis refuses ${c.name} with its message
 });
 for (const state of ["blocking", "unchosen", "blank", "unknown", "resolved"] as const) test(`analysis accept availability: ${state}`, async () => {
   const body = analysis(), finding = body.requirements[0].findings[0];
-  if (state === "blocking") finding.finding_impact = "blocking";
-  else finding.finding_resolution = {kind: "operator_decision", text: "Choose", decision_prompt: "Which?", alternatives: [{option: "A", consequence: "A"}, {option: "B", consequence: "B"}], ...(state === "unchosen" ? {} : {chosen: state === "resolved" ? "A" : state === "blank" ? "" : "C"})};
+  if (state === "blocking") finding.severity = "blocking";
+  else finding.resolution = {kind: "operator_decision", text: "Choose", question: "Which?", alternatives: [{option: "A", consequence: "A"}, {option: "B", consequence: "B"}], ...(state === "unchosen" ? {} : {chosen: state === "resolved" ? "A" : state === "blank" ? "" : "C"})};
   const run = await analysisRun(body);
   const accept = run.result.reviews.find(r => r.review === "analysis_review")?.decisions.find(d => d.decision === "accept");
   expect([accept ? accept.is_available ?? true : false, accept?.disabled_reason ?? null]).toEqual(state === "resolved" ? [true, null] : [false, guardReason]);
 });
 test("analysis findings with absent optional resolution validate and are acceptable", async () => {
-  const body = analysis(); delete body.requirements[0].findings[0].finding_resolution;
+  const body = analysis(); delete body.requirements[0].findings[0].resolution;
   const run = await analysisRun(body);
   expect(run.result.snapshot.decisions.filter(d => d.kind === "validation")).toEqual([]);
   const accept = run.result.reviews.find(r => r.review === "analysis_review")?.decisions.find(d => d.decision === "accept");
@@ -55,9 +55,9 @@ for (const c of specCases) test(`spec refuses ${c.name}`, async () => {const bod
 test("spec review reopens analysis and reruns the editor in revise mode", async () => {
   const run = await specRun(spec());await run.end("spec_editor");
   await run.decide("spec_review", "request_analysis_changes", "spec", {feedback: "Clarify R1"});
-  expect(run.wanted("requirements_analyst").action.mode.kind).toBe("revise");
+  expect(run.wanted("author").action.mode.kind).toBe("revise");
   const revised = analysis(); revised.requirements[0].text = "Clarified R1";
-  await run.publish("requirements_analyst", "analysis", revised);await run.end("requirements_analyst");
+  await run.publish("author", "analysis", revised);await run.end("author");
   expect(() => run.wanted("spec_editor")).toThrow();
   await run.decide("analysis_review", "accept", "analysis");
   const editor = run.wanted("spec_editor");
@@ -73,7 +73,7 @@ const planCases: {name: string; cohorts: PlanCohort[]; message: string}[] = [
   {name: "unallocated requirement", cohorts: [cohort("C1", ["R1"])], message: "Every specification requirement must be allocated to at least one cohort."},
   {name: "unknown requirement", cohorts: [cohort("C1", ["R1", "R2", "unknown"])], message: "Every allocation must name a canonical specification requirement."},
   {name: "duplicate allocation", cohorts: [cohort("C1", ["R1", "R2", "R2"])], message: "A requirement may be allocated only once within a cohort."},
-  {name: "unknown repository", cohorts: [{...cohort(), assigned_repository: "unknown"}], message: "Every cohort's assigned_repository must be the key of one of the run's repositories."},
+  {name: "unknown repository", cohorts: [{...cohort(), repository_key: "unknown"}], message: "Every cohort's repository_key must be the key of one of the run's repositories."},
   {name: "missing dependency", cohorts: [cohort("C1", ["R1", "R2"], ["missing"])], message: "Cohort ids must be unique idents"},
   {name: "cycle", cohorts: [cohort("C1", ["R1"], ["C2"]), cohort("C2", ["R2"], ["C1"])], message: "Cohort ids must be unique idents"},
   {name: "empty allocations", cohorts: [cohort(), cohort("C2", [])], message: "Every cohort needs at least one allocation."},
@@ -90,8 +90,8 @@ test("planner sees every run repository key and permits a split requirement", as
 });
 const briefCases: {name: string; change: (b: BriefBody) => void; message: string}[] = [
   {name: "wrong cohort", change: b => {b.cohort_id = "unknown";}, message: "The brief's cohort_id"},
-  {name: "wrong repository", change: b => {b.assigned_repository = "unknown";}, message: "The brief's assigned_repository"},
-  {name: "wrong dependencies", change: b => {b.prerequisite_cohorts = ["unknown"];}, message: "The brief's prerequisite_cohorts"},
+  {name: "wrong repository", change: b => {b.repository_key = "unknown";}, message: "The brief's repository_key"},
+  {name: "wrong dependencies", change: b => {b.depends_on = ["unknown"];}, message: "The brief's depends_on"},
   {name: "duplicate build item", change: b => {b.build_items.push(b.build_items[0]);}, message: "Build-item ids must be unique."},
   {name: "unassigned requirement", change: b => {b.build_items[0].requirement_ids.push("unknown");}, message: "Build-item requirement ids must belong to the resolved assignment."},
   {name: "uncovered requirement", change: b => {b.build_items.pop();}, message: "Every assigned requirement must appear in a build item."},
@@ -119,18 +119,18 @@ const assessmentCases: {name: string; change: (b: AssessmentBody) => void; messa
   {name: "duplicate item", change: b => {b.item_assessments.push(b.item_assessments[0]);}, message: "Assessment item ids must be unique."},
   {name: "wrong kind", change: b => {b.item_assessments[0].subject.kind = "requirement";}, message: "Cohort assessment items must be build items."},
   {name: "wrong head", change: b => {b.head_sha = "wrong";}, message: "Assessment head_sha must match"},
-  {name: "unknown related item", change: b => {b.additional_findings.push({id: "F1", finding_impact: "info", finding_note: "Note", related_build_item_ids: ["unknown"], supporting_citations: []});}, message: "Additional finding links must name brief build items."},
-  {name: "unexplained test failure", change: b => {b.test_evidence.failing_tests = 1;}, message: "Failed tests require an unmet item"},
+  {name: "unknown related item", change: b => {b.additional_findings.push({id: "F1", severity: "info", observation: "Note", related_build_item_ids: ["unknown"], evidence: []});}, message: "Additional finding links must name brief build items."},
+  {name: "unexplained test failure", change: b => {b.test_evidence.failed = 1;}, message: "Failed tests require an unmet item"},
 ];
 for (const c of assessmentCases) test(`assessment refuses ${c.name}`, async () => {const body = assessment();c.change(body);expect(validationFeedback(await assessmentRun(body))).toContain(c.message);});
 for (const integration of [false, true]) for (const severity of ["blocking", "warning", "info"] as const) for (const verdict of ["pass", "pass_with_notes", "fail"] as const) test(`${integration ? "integration" : "cohort"} verdict ${verdict} with ${severity} finding`, async () => {
-  const body = assessment(integration ? "requirement" : "build_item"); body.additional_findings = [{id: "F1", finding_impact: severity, finding_note: "Evidence", related_build_item_ids: [], supporting_citations: []}];body.verdict = verdict;
+  const body = assessment(integration ? "requirement" : "build_item"); body.additional_findings = [{id: "F1", severity, observation: "Evidence", related_build_item_ids: [], evidence: []}];body.verdict = verdict;
   const run = await assessmentRun(body, integration);
   const expected = severity === "blocking" ? "fail" : severity === "warning" ? "pass_with_notes" : "pass";
   expect(validationFeedback(run).includes("Assessment verdict must match")).toBe(verdict !== expected);
 });
 for (const status of ["partial", "not_met"] as const) test(`${status} items require fail and explain failed tests`, async () => {
-  const body = assessment();body.item_assessments[0].status = status;body.verdict = "fail";body.test_evidence.failing_tests = 1;
+  const body = assessment();body.item_assessments[0].status = status;body.verdict = "fail";body.test_evidence.failed = 1;
   expect((await assessmentRun(body)).result.snapshot.decisions.filter(d => d.kind === "validation")).toEqual([]);
 });
 for (const defect of ["wrong kind", "missing", "unknown"] as const) test(`integration refuses ${defect} requirement`, async () => {
@@ -156,8 +156,8 @@ interface CohortScenario { name: string; cohorts: PlanCohort[]; ready: string[];
 const scenarios = JSON.parse(readFileSync(resolve(root, "workflow-config/samples/development-cohorts.json"), "utf8")) as CohortScenario[];
 async function planRun(cohorts: PlanCohort[]) {
   const run = await TestRun.launch(development, {title: "Contract", spec: "Original", repositories: [repository], primary_repository_key: "oakridge", final_merge_policy: "require_merge"});
-  await run.publish("prepare_repository", "workspace", workspace, "run/repository_setup/oakridge");await run.end("prepare_repository", "run/repository_setup/oakridge");
-  await run.publish("requirements_analyst", "analysis", analysis(), "run/analysis");await run.end("requirements_analyst", "run/analysis");await run.decide("analysis_review", "accept", "analysis", {}, "run/analysis");
+  await run.publish("git", "workspace", workspace, "run/prepare/oakridge");await run.end("git", "run/prepare/oakridge");
+  await run.publish("author", "analysis", analysis(), "run/analysis");await run.end("author", "run/analysis");await run.decide("analysis_review", "accept", "analysis", {}, "run/analysis");
   await run.publish("spec_editor", "spec", spec(), "run/analysis");await run.end("spec_editor", "run/analysis");await run.decide("spec_review", "accept", "spec", {}, "run/analysis");
   await run.publish("planner", "plan", {cohorts}, "run/planning");await run.end("planner", "run/planning");await run.decide("plan_review", "accept", "plan", {}, "run/planning");
   return run;
@@ -253,7 +253,7 @@ test("assessment decisions declare operations while assessment changes stay plai
 
 test("duplicate additional finding ids are refused", async () => {
   const body = assessment();
-  const finding = {id: "F1", finding_impact: "info" as const, finding_note: "Note", related_build_item_ids: [], supporting_citations: [] as []};
+  const finding = {id: "F1", severity: "info" as const, observation: "Note", related_build_item_ids: [], evidence: [] as []};
   body.additional_findings = [finding, finding];
   expect(validationFeedback(await assessmentRun(body))).toContain("Additional finding ids must be unique.");
 });
@@ -265,7 +265,7 @@ test("a spec sent back for analysis changes cannot be accepted until the editor 
   const refused = await run.apply({ kind: "operator_decided", unit: "run/unit", review: "spec_review", decision: "accept", target: stale, payload: {} }).then(() => null, (error: unknown) => String(error));
   expect([refused === null ? "applied" : "refused", run.result.snapshot.units.find(u => u.id === "run/unit")?.status.kind]).toEqual(["refused", "active"]);
   const revised = analysis(); revised.requirements[0].text = "Clarified R1";
-  await run.publish("requirements_analyst", "analysis", revised);await run.end("requirements_analyst");await run.decide("analysis_review", "accept", "analysis");
+  await run.publish("author", "analysis", revised);await run.end("author");await run.decide("analysis_review", "accept", "analysis");
   await run.publish("spec_editor", "spec", spec());await run.end("spec_editor");
   const fresh = run.latest("spec").id;
   expect([fresh !== stale, run.result.reviews.find(r => r.review === "spec_review")?.target, run.result.snapshot.units.find(u => u.id === "run/unit")?.status.kind]).toEqual([true, fresh, "active"]);

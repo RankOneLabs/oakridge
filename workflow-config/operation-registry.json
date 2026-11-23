@@ -20,15 +20,7 @@
     ]
   },
   {
-    "key": "value.publish",
-    "input_schema": {
-      "value": "$value"
-    },
-    "output_schema": "$value",
-    "error_codes": []
-  },
-  {
-    "key": "pull_request.inspect",
+    "key": "pull_request.observe",
     "input_schema": {
       "query": {
         "owner": "ident",
@@ -40,9 +32,9 @@
       }
     },
     "output_schema": {
-      "status": "enum(open, merged, closed_unmerged)",
-      "pr_sequence": "integer",
-      "observed_link": "text",
+      "state": "enum(open, merged, closed_unmerged)",
+      "number": "integer",
+      "url": "text",
       "head_sha": "optional(text)",
       "merged_at": "optional(text)"
     },
@@ -54,23 +46,11 @@
     ]
   },
   {
-    "key": "repository.prepare_checkout",
+    "key": "value.publish",
     "input_schema": {
-      "repository_path": "repo_path",
-      "expected_head": "optional(text)",
-      "base_branch": "text",
-      "integration_branch": "text"
+      "value": "$value"
     },
-    "output_schema": {
-      "checkout_root": "repo_path",
-      "push_remote_owner": "ident",
-      "head": "ident",
-      "checkout_branch": "text"
-    },
-    "error_codes": [
-      "worktree_unrecoverable",
-      "head_changed",
-      "provider_rejected"
-    ]
+    "output_schema": "$value",
+    "error_codes": []
   }
 ]

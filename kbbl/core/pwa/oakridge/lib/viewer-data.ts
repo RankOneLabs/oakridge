@@ -16,27 +16,19 @@ export interface CanonicalSpec {
   non_goals: string[];
 }
 
-interface FindingResolution {
-  kind: "spec_update" | "operator_decision" | "implementation_note";
-  text: string;
-  decision_prompt?: string | null;
-  alternatives?: { option: string; consequence: string }[] | null;
-  chosen?: string | null;
-}
-
-interface FindingCitation {
-  kind: "file" | "search" | "test" | "output";
-  citation_location: string;
-  detail: string;
-}
-
 export interface CurrentFinding {
   id: string;
-  finding_impact: FindingSeverity;
-  finding_note: string;
-  supporting_citations: FindingCitation[];
+  severity: FindingSeverity;
+  observation: string;
+  evidence: { kind: "file" | "search" | "test" | "output"; ref: string; detail: string }[];
   expected_change_locations: { path: string; symbol?: string | null }[];
-  finding_resolution?: FindingResolution | null;
+  resolution?: {
+    kind: "spec_update" | "operator_decision" | "implementation_note";
+    text: string;
+    question?: string | null;
+    alternatives?: { option: string; consequence: string }[] | null;
+    chosen?: string | null;
+  } | null;
 }
 
 export interface CurrentAnalysis {
@@ -45,23 +37,23 @@ export interface CurrentAnalysis {
 
 export interface CurrentCohort {
   id: string;
-  assigned_repository: RepositoryKey;
+  repository_key: RepositoryKey;
   title: string;
-  change_scope: string;
+  scope: string;
   allocations: { requirement_id: string; contribution: string }[];
-  prerequisite_cohorts: string[];
-  decision_reason: string;
+  depends_on: string[];
+  rationale: string;
 }
 
 export interface CurrentPlan { cohorts: CurrentCohort[] }
 
 export interface CurrentBrief {
   cohort_id: string;
-  assigned_repository: RepositoryKey;
-  prerequisite_cohorts: string[];
+  repository_key: RepositoryKey;
+  depends_on: string[];
   files_in_scope: string[];
   build_items: { id: string; requirement_ids: string[]; instructions: string; verification: string[] }[];
-  technical_decisions: { id: string; build_item_ids: string[]; decision: string; decision_reason: string }[];
+  technical_decisions: { id: string; build_item_ids: string[]; decision: string; rationale: string }[];
 }
 
 export interface ResolvedAssignment { cohort: CurrentCohort; requirements: CanonicalRequirement[] }
@@ -91,7 +83,7 @@ export function parseCurrentAnalysis(body: unknown): ViewerResult<CurrentAnalysi
   const canDisplay = Array.isArray(requirements) && requirements.every((item) => {
     const entry = record(item);
     return typeof entry?.id === "string" && Array.isArray(entry.source_refs)
-      && rows(entry.findings, ["id", "finding_impact", "finding_note", "supporting_citations", "expected_change_locations"]);
+      && rows(entry.findings, ["id", "severity", "observation", "evidence", "expected_change_locations"]);
   });
   return presentation(body, canDisplay);
 }
@@ -104,7 +96,7 @@ export function parseCanonicalSpec(body: unknown): ViewerResult<CanonicalSpec> {
 
 export function readCohort(value: unknown): CurrentCohort | null {
   const entry = record(value);
-  return entry && typeof entry.id === "string" && Array.isArray(entry.prerequisite_cohorts) && rows(entry.allocations, ["requirement_id", "contribution"])
+  return entry && typeof entry.id === "string" && Array.isArray(entry.depends_on) && rows(entry.allocations, ["requirement_id", "contribution"])
     ? value as CurrentCohort : null;
 }
 
@@ -115,9 +107,9 @@ export function parseCurrentPlan(body: unknown): ViewerResult<CurrentPlan> {
 
 export function parseCurrentBrief(body: unknown): ViewerResult<CurrentBrief> {
   const value = record(body);
-  return presentation(body, typeof value?.cohort_id === "string" && Array.isArray(value.prerequisite_cohorts) && Array.isArray(value.files_in_scope)
+  return presentation(body, typeof value?.cohort_id === "string" && Array.isArray(value.depends_on) && Array.isArray(value.files_in_scope)
     && rows(value.build_items, ["id", "requirement_ids", "instructions", "verification"])
-    && rows(value.technical_decisions, ["id", "build_item_ids", "decision", "decision_reason"]));
+    && rows(value.technical_decisions, ["id", "build_item_ids", "decision", "rationale"]));
 }
 
 export function readAssignment(body: unknown): ResolvedAssignment | null {

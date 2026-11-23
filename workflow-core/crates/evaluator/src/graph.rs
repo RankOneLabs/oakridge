@@ -144,5 +144,5 @@ pub(super) fn is_ident(text: &str) -> bool {
 /// The longest `ident`. Collection keys are idents taken from runtime data
 /// and every id under a member embeds its key, so an unbounded ident would
 /// make unbounded ids. 100 fits a GitHub repository or owner name, which
-/// `pull_request.inspect` carries as idents.
+/// `pull_request.observe` carries as idents.
 pub const MAX_IDENT_CHARS: usize = 100;

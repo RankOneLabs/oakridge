@@ -1,7 +1,7 @@
 import type { MouseEvent } from "react";
 import type { ViewerProps } from "../../artifactRegistry";
 import { parseCurrentAnalysis } from "../../lib/spec-analysis";
-import { selectAnalysisCounts, selectAnalysisSections, selectCodeHotspots, selectDecisionPrompt, selectFindingCitations, selectFindingResolution, selectOperatorDecisions, selectRequirementsByStatus, type AnalysisSection, type FindingReference } from "../../lib/current-analysis";
+import { selectAnalysisCounts, selectAnalysisSections, selectCodeHotspots, selectOperatorDecisions, selectRequirementsByStatus, type AnalysisSection, type FindingReference } from "../../lib/current-analysis";
 import type { CurrentAnalysis, CurrentFinding } from "../../lib/viewer-data";
 import { selectCurrentRequirementTone, selectStatusTone } from "../../lib/status-tone";
 import { selectFindingSelections } from "../../lib/grading";
@@ -30,24 +30,23 @@ function AnalysisCounts({ analysis }: { analysis: CurrentAnalysis }) {
 }
 
 function FindingCard({ finding, itemPath, grading }: { finding: CurrentFinding; itemPath: string; grading: GradeSlots }) {
-  const resolution = selectFindingResolution(finding);
-  const prompt = selectDecisionPrompt(resolution);
+  const resolution = finding.resolution;
   return <section id={`finding-${finding.id}`} className="ml-3 space-y-2 border-l border-[var(--border-muted)] pl-3" data-testid="or-analysis-finding">
     <div className="flex flex-wrap items-center gap-2">
       <code className="or-code">{finding.id}</code>
-      <Chip tone={selectStatusTone(finding.finding_impact)}>{finding.finding_impact}</Chip>
+      <Chip tone={selectStatusTone(finding.severity)}>{finding.severity}</Chip>
       {resolution && <Chip tone="neutral">{resolution.kind}</Chip>}
       <span className="ml-auto"><ArtifactItemGrade source={grading.source} itemPath={itemPath} onOpenItem={grading.onOpenItem} itemGrading={grading.itemGrading} /></span>
     </div>
-    <p className="text-sm text-[var(--text-secondary)]">{finding.finding_note}</p>
+    <p className="text-sm text-[var(--text-secondary)]">{finding.observation}</p>
     <div className={artifactLabelClass}>Evidence</div>
-    <ul>{selectFindingCitations(finding).map((entry, index) => <li key={index}><Chip tone="muted">{entry.kind}</Chip> <code>{entry.location}</code> — {entry.detail}</li>)}</ul>
+    <ul>{finding.evidence.map((entry, index) => <li key={index}><Chip tone="muted">{entry.kind}</Chip> <code>{entry.ref}</code> — {entry.detail}</li>)}</ul>
     <div className={artifactLabelClass}>Anticipated change locations</div>
     <ul>{finding.expected_change_locations.map((entry, index) => <li key={index}><code>{entry.path}{entry.symbol ? ` · ${entry.symbol}` : ""}</code></li>)}</ul>
     {resolution && <div className="space-y-1">
       <div className={artifactLabelClass}>Resolution</div>
       <p>{resolution.text}</p>
-      {prompt && <p>{prompt}</p>}
+      {resolution.question && <p>{resolution.question}</p>}
       <ul>{resolution.alternatives?.map((alternative, index) => <li key={index}>{alternative.option}: {alternative.consequence}</li>)}</ul>
       {resolution.kind === "operator_decision" && <ChosenOption chosen={resolution.chosen ?? null} />}
     </div>}
@@ -86,10 +85,10 @@ function DecisionsPanel({ analysis, onOpenFinding }: { analysis: CurrentAnalysis
   return <div className="space-y-3">{decisions.map((entry) => <section key={entry.finding.id} className="space-y-1 rounded border border-[var(--border-muted)] p-3">
     <div className="flex flex-wrap items-center gap-2">
       <FindingLink reference={entry} onOpenFinding={onOpenFinding}>{entry.finding.id}</FindingLink>
-      <Chip tone={selectStatusTone(entry.finding.finding_impact)}>{entry.finding.finding_impact}</Chip>
-      <ChosenOption chosen={selectFindingResolution(entry.finding)?.chosen ?? null} />
+      <Chip tone={selectStatusTone(entry.finding.severity)}>{entry.finding.severity}</Chip>
+      <ChosenOption chosen={entry.finding.resolution?.chosen ?? null} />
     </div>
-    <p>{entry.prompt}</p>
+    <p>{entry.question}</p>
     <ul>{entry.alternatives.map((alternative, index) => <li key={index}>{alternative.option}: {alternative.consequence}</li>)}</ul>
   </section>)}</div>;
 }

@@ -15,9 +15,8 @@ export const DECISION_OPERATIONS = [
 ] as const;
 export const OPERATION_KEYS = {
   "repository_prepare": "repository.prepare",
-  "value_publish": "value.publish",
-  "pull_request_inspect": "pull_request.inspect",
-  "repository_prepare_checkout": "repository.prepare_checkout"
+  "pull_request_observe": "pull_request.observe",
+  "value_publish": "value.publish"
 } as const;
 export const PROVIDER_ERROR_CODES = {
   "discovery_unsupported": "discovery_unsupported",

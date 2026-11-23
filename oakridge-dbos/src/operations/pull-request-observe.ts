@@ -1,5 +1,5 @@
 import type { PrIntegration } from "../domain/pr-integration";
-import type { PullRequestInspection } from "../domain/pull-request";
+import type { PullRequestObservation } from "../domain/pull-request";
 import { err, ok, type Result } from "../domain/primitives";
 import { PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
 import type { ForgePullRequest, PullRequestReader, PullRequestRef } from "../runtime/github-pull-requests";
@@ -18,8 +18,10 @@ export interface PullRequestWatchQuery {
   readonly base_branch: string;
   readonly pr_url: string;
 }
-/** `pull_request.inspect` input, as OPERATION_REGISTRY declares it. */
+/** `pull_request.observe` input, as OPERATION_REGISTRY declares it. */
 export interface PullRequestObserveInput { readonly query: PullRequestWatchQuery }
+export type PullRequestObserveOutput = PullRequestObservation;
+
 export function decodePullRequestObserveInput(value: unknown): PullRequestObserveInput | null {
   if (!isFields(value) || !isFields(value.query)) return null;
   const { owner, name, head_owner, head_branch, base_branch, pr_url } = value.query;
@@ -60,10 +62,8 @@ export function selectBranchMismatch(query: PullRequestWatchQuery, pull_request:
   return null;
 }
 
-export const selectInspection = (pull_request: ForgePullRequest): PullRequestInspection => ({
-  status: pull_request.state, pr_sequence: pull_request.number, observed_link: pull_request.url,
-  head_sha: pull_request.head_sha, merged_at: pull_request.merged_at,
-});
+export const selectObservation = (pull_request: ForgePullRequest): PullRequestObservation => ({ state: pull_request.state,
+  number: pull_request.number, url: pull_request.url, head_sha: pull_request.head_sha, merged_at: pull_request.merged_at });
 
 const mismatch = (detail: string): OperationOutcome => ({ kind: "failed", code: PROVIDER_ERROR_CODES.pull_request_mismatch, detail });
 
@@ -97,5 +97,6 @@ export async function observePullRequest(reader: PullRequestReader | null, input
   if (!pull_request) return mismatch(`${ref.value.owner}/${ref.value.name} has no pull request #${ref.value.number}`);
   const branch_mismatch = selectBranchMismatch(input.query, pull_request);
   if (branch_mismatch) return mismatch(branch_mismatch);
-  return { kind: "succeeded", body: selectInspection(pull_request) };
+  const body: PullRequestObserveOutput = selectObservation(pull_request);
+  return { kind: "succeeded", body };
 }

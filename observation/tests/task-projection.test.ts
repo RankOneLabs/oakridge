@@ -26,7 +26,7 @@ integration("an explicit logical reference resolves in place only when its own r
 
 integration("bound occurrence links await the exact brief revision and ignore a matching build item in another revision", async () => scratchDatabase(async (db) => {
   const feed = createFeed(db);
-  const brief = { cohort_id: "cohort", assigned_repository: "oakridge", build_items: [{ id: "B1", requirement_ids: ["R1"], instructions: "Build", verification: ["Test"] }],
+  const brief = { cohort_id: "cohort", repository_key: "oakridge", build_items: [{ id: "B1", requirement_ids: ["R1"], instructions: "Build", verification: ["Test"] }],
     technical_decisions: [] };
   await feed.revision({ revision_id: "spec", artifact_kind: "spec", body: spec });
   await feed.revision({ revision_id: "brief-new", artifact_kind: "brief", body: brief });

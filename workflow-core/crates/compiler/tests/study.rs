@@ -82,23 +82,14 @@ fn study_stages_run_in_order() {
     // The store canonicalizes object keys and records authored order separately.
     assert_eq!(
         definition["stage_names"],
-        serde_json::json!([
-            "repository_setup",
-            "design",
-            "expand",
-            "freeze",
-            "integration"
-        ])
+        serde_json::json!(["prepare", "design", "expand", "freeze", "integration"])
     );
 }
 
 #[test]
 fn keyed_execution_requires_an_agent_with_a_subject() {
     let (definition, _) = study_definition();
-    for (stage, worker) in [
-        ("repository_setup", "prepare_repository"),
-        ("design", "designer"),
-    ] {
+    for (stage, worker) in [("prepare", "git"), ("design", "designer")] {
         let mut source = definition["source"].clone();
         source["stages"][stage]["workers"][worker]["keyed_execution"] = serde_json::json!(true);
         let decoded = decode_workflow(&serde_json::to_vec(&source).unwrap()).unwrap();
