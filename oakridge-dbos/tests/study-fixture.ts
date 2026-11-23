@@ -156,7 +156,7 @@ export async function openStudy(authority: Authority, options: { readonly source
 export type StudyRun = Awaited<ReturnType<typeof openStudy>>;
 
 export async function prepareSlice(run: StudyRun) {
-  await run.code("git", run.unit("repository_setup/oakridge"));
+  await run.code("prepare_repository", run.unit("repository_setup/oakridge"));
   await run.publish("designer", "plan", plan);
   await run.end("designer");
   expect((await run.decide("plan_review", "accept", "plan")).status).toBe(201);

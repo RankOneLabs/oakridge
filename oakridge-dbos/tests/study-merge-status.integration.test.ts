@@ -12,7 +12,7 @@ test("merge status follows the inspection's source when the external reference i
   const authority = await openAuthority();
   try {
     const run = await openStudy(authority, { source });
-    await run.code("git", run.unit("repository_setup/oakridge"));
+    await run.code("prepare_repository", run.unit("repository_setup/oakridge"));
     await run.publish("designer", "plan", plan);
     await run.end("designer");
     expect((await run.decide("plan_review", "accept", "plan")).status).toBe(201);

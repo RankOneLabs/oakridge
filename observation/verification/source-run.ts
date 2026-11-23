@@ -154,7 +154,7 @@ export async function sourceRunScenario(io: ProofIo, options: SourceRunOptions):
     checks: [{ name: "observation is reachable before the run launches", passed: false, detail: `health ${observation.health}; launcher ${observation.launcher}` }] };
   const settings = { harness: "codex", model: defaultModelForRuntime("codex"), effort: null };
   const launched = await io.dbos("/api/runs", { request_id: crypto.randomUUID(), definition_id: definition.value.definition_id, input: options.input,
-    config: { sessions: { analysis: { author: settings, spec_editor: settings }, planning: { planner: settings }, brief: { writer: settings },
+    config: { sessions: { analysis: { requirements_analyst: settings, spec_editor: settings }, planning: { planner: settings }, brief: { writer: settings },
       cohort: { builder: settings, assessor: settings } }, grading_enabled: options.grading_enabled ?? false } });
   const run_id = launched.ok ? (launched.value as { readonly run_id?: string }).run_id ?? null : null;
   if (!run_id) return { id: "source-run", status: "failed", evidence: NO_EVIDENCE,
