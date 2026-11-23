@@ -3,7 +3,7 @@ import type { AnalysisBody, SpecBody, PlanCohort, BriefBody, AssessmentBody } fr
 /** Bodies mirror the canonical contract in workflow-config/development.yaml. */
 export const APPROVED_ANALYSIS: AnalysisBody = {
   requirements: [{ id: "req-a", text: "Build the thing.", source_refs: ["Goal"], findings: [{
-    id: "finding-a", severity: "info", finding_note: "Approved analysis for spec update.",
+    id: "finding-a", finding_impact: "info", finding_note: "Approved analysis for spec update.",
     supporting_citations: [{ kind: "file", citation_location: "README.md", detail: "The existing implementation supports this change." }],
     expected_change_locations: [], finding_resolution: { kind: "implementation_note", text: "Use the existing implementation pattern." },
   }] }],
@@ -22,14 +22,14 @@ export const APPROVED_SPEC: SpecBody = {
 export const COHORTS: PlanCohort[] = [{ id: "a", prerequisite_cohorts: [] }, { id: "b", prerequisite_cohorts: ["a"] }].map(cohort => ({
   ...cohort, assigned_repository: "app", title: `Cohort ${cohort.id}`, change_scope: "part",
   allocations: [{ requirement_id: "req-a", contribution: `Contribution ${cohort.id} to the thing.` }],
-  rationale: "Each contribution is independently reviewable.",
+  decision_reason: "Each contribution is independently reviewable.",
 }));
 export function developmentBrief(id: string): BriefBody {
   const cohort = COHORTS.find(cohort => cohort.id === id);
   if (!cohort) throw new Error(`Unknown development cohort ${id}`);
   return { cohort_id: id, assigned_repository: cohort.assigned_repository, prerequisite_cohorts: cohort.prerequisite_cohorts, files_in_scope: [],
     build_items: [{ id: "item-a", requirement_ids: ["req-a"], instructions: cohort.allocations[0].contribution, verification: ["tests"] }],
-    technical_decisions: [{ id: "choice", build_item_ids: ["item-a"], decision: "Use the simple implementation.", rationale: "It meets the requirement." }],
+    technical_decisions: [{ id: "choice", build_item_ids: ["item-a"], decision: "Use the simple implementation.", decision_reason: "It meets the requirement." }],
   };
 }
 export const COHORT_ASSESSMENT: AssessmentBody = {

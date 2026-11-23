@@ -84,7 +84,7 @@ async function writeReport(directory: string, text: string): Promise<string> {
 async function registrationSource(io: ProofIo, input: SourceRunInput, directory: string, proof_id: string): Promise<RegistrationSource> {
   const primary = input.repositories.find((repository) => repository.key === input.primary_repository_key);
   if (!primary) throw new Error(`the input names no ${input.primary_repository_key} repository`);
-  const repository = await createDisposableRepository(primary.preparation.repository_path, join(tmpdir(), "oakridge-proof", proof_id));
+  const repository = await createDisposableRepository(primary.preparation.checkout_root, join(tmpdir(), "oakridge-proof", proof_id));
   if (!repository.ok) throw new Error(`${repository.error.operation}: ${repository.error.detail}`);
   const disposable: SourceRunInput = { ...input, repositories: input.repositories.map((entry) => entry.key === primary.key
     ? { ...entry, preparation: { ...entry.preparation, repository_path: repository.value.path } } : entry) };
@@ -104,7 +104,7 @@ async function registrationSource(io: ProofIo, input: SourceRunInput, directory:
 async function gradingSource(io: ProofIo, input: SourceRunInput, directory: string, proof_id: string): Promise<GradingSource> {
   const primary = input.repositories.find((repository) => repository.key === input.primary_repository_key);
   if (!primary) throw new Error(`the input names no ${input.primary_repository_key} repository`);
-  const repository = await createDisposableRepository(primary.preparation.repository_path, join(tmpdir(), "oakridge-proof", proof_id));
+  const repository = await createDisposableRepository(primary.preparation.checkout_root, join(tmpdir(), "oakridge-proof", proof_id));
   if (!repository.ok) throw new Error(`${repository.error.operation}: ${repository.error.detail}`);
   const disposable: SourceRunInput = { ...input, repositories: input.repositories.map((entry) => entry.key === primary.key
     ? { ...entry, preparation: { ...entry.preparation, repository_path: repository.value.path } } : entry) };

@@ -7,7 +7,7 @@
     {
       "key": "oakridge",
       "preparation": {
-        "repository_path": "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/oakridge/10060d3f-8cc0-4f45-82a7-3367c936c145",
+        "checkout_root": "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/oakridge/10060d3f-8cc0-4f45-82a7-3367c936c145",
         "expected_head": null
       },
       "forge": {

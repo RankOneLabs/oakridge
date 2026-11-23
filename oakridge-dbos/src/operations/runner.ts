@@ -30,6 +30,14 @@ export function createOperationRunner(services: OperationServices): OperationRun
       const input = decodeRepositoryPrepareInput(inputs);
       return input ? prepareRepository(services.git, input, options) : invalidInput(OPERATION_KEYS.repository_prepare);
     },
+    [OPERATION_KEYS.repository_prepare_checkout]: async (inputs, options) => {
+      const input = decodeRepositoryPrepareInput(inputs);
+      if (!input) return invalidInput(OPERATION_KEYS.repository_prepare_checkout);
+      const outcome = await prepareRepository(services.git, input, options);
+      if (outcome.kind !== "succeeded") return outcome;
+      const { repository_path, base_branch, ...identity } = outcome.body;
+      return { kind: "succeeded", body: { ...identity, checkout_root: repository_path, checkout_branch: base_branch } };
+    },
     [OPERATION_KEYS.pull_request_inspect]: async (inputs, options) => {
       const input = decodePullRequestObserveInput(inputs);
       return input ? observePullRequest(services.pull_requests, input, options) : invalidInput(OPERATION_KEYS.pull_request_inspect);

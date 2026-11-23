@@ -9,7 +9,7 @@
       "findings": [
         {
           "id": "F1",
-          "severity": "blocking",
+          "finding_impact": "blocking",
           "finding_note": "Observation F1",
           "supporting_citations": [
             {
@@ -27,7 +27,7 @@
         },
         {
           "id": "F2",
-          "severity": "blocking",
+          "finding_impact": "blocking",
           "finding_note": "Observation F2",
           "supporting_citations": [
             {
@@ -54,7 +54,7 @@
       "findings": [
         {
           "id": "F3",
-          "severity": "warning",
+          "finding_impact": "warning",
           "finding_note": "Observation F3",
           "supporting_citations": [
             {
@@ -72,7 +72,7 @@
         },
         {
           "id": "F4",
-          "severity": "info",
+          "finding_impact": "info",
           "finding_note": "Observation F4",
           "supporting_citations": [
             {
@@ -99,7 +99,7 @@
       "findings": [
         {
           "id": "F5",
-          "severity": "info",
+          "finding_impact": "info",
           "finding_note": "Observation F5",
           "supporting_citations": [
             {

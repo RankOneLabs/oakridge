@@ -115,7 +115,7 @@ schemas:
     id: ident
   additional_finding:
     id: ident
-    severity: severity
+    finding_impact: finding_impact
     finding_note: text
     related_subjects: list(assessment_subject)
     supporting_citations: list(evidence_ref)
@@ -353,9 +353,9 @@ stages:
             message: Assessment item ids must be unique.
           - check: unique(map(slice_assessment.additional_findings, item.id))
             message: Additional finding ids must be unique.
-          - check: (slice_assessment.verdict == "fail" and (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0)) or (slice_assessment.verdict == "pass_with_notes" and not (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0)) or (slice_assessment.verdict == "pass" and not (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0))
+          - check: (slice_assessment.verdict == "fail" and (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == "blocking")) > 0)) or (slice_assessment.verdict == "pass_with_notes" and not (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == "blocking")) > 0) and (len(filter(slice_assessment.additional_findings, item.finding_impact == "warning")) > 0)) or (slice_assessment.verdict == "pass" and not (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == "blocking")) > 0) and not (len(filter(slice_assessment.additional_findings, item.finding_impact == "warning")) > 0))
             message: Assessment verdict must match item statuses and additional finding severities.
-          - check: slice_assessment.test_evidence.failing_tests == 0 or (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(slice_assessment.additional_findings, item.severity == "warning")) > 0)
+          - check: slice_assessment.test_evidence.failing_tests == 0 or (len(filter(slice_assessment.item_assessments, item.status != "met" and item.subject.kind != "trigger")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == "blocking")) > 0) or (len(filter(slice_assessment.additional_findings, item.finding_impact == "warning")) > 0)
             message: Failed tests require an unmet item or a blocking or warning additional finding.
       pr:
         kind: external_reference
@@ -616,10 +616,10 @@ stages:
             check: unique(map(assessment.additional_findings, item.id))
             message: Additional finding ids must be unique.
           - &a4
-            check: (assessment.verdict == "fail" and (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0)) or (assessment.verdict == "pass_with_notes" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)) or (assessment.verdict == "pass" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(assessment.additional_findings, item.severity == "warning")) > 0))
+            check: (assessment.verdict == "fail" and (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0)) or (assessment.verdict == "pass_with_notes" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0) and (len(filter(assessment.additional_findings, item.finding_impact == "warning")) > 0)) or (assessment.verdict == "pass" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0) and not (len(filter(assessment.additional_findings, item.finding_impact == "warning")) > 0))
             message: Assessment verdict must match item statuses and additional finding severities.
           - &a5
-            check: assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)
+            check: assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == "blocking")) > 0) or (len(filter(assessment.additional_findings, item.finding_impact == "warning")) > 0)
             message: Failed tests require an unmet item or a blocking or warning additional finding.
       pr:
         kind: external_reference

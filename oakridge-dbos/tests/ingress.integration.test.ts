@@ -351,7 +351,7 @@ test("a PR-dependent launch commits when its gated-review URL answers an HTTP er
     const response = await app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ request_id: crypto.randomUUID(), definition_id, input: {
         title: "Reachable integration", spec: "test", final_merge_policy: "require_merge", primary_repository_key: "app",
-        repositories: [{ key: "app", preparation: { repository_path: "/tmp", expected_head: null },
+        repositories: [{ key: "app", preparation: { checkout_root: "/tmp", expected_head: null },
           forge: { namespace: "oakridge-test", path: "app", build_base: "develop", final_base: "main" } }] } }) });
     expect(response.status).toBe(201);
     const { run_id } = await response.json();
@@ -370,7 +370,7 @@ test("launch retries replay before defaults, skill pins and health, and reject c
   const request_id = crypto.randomUUID();
   const body = { request_id, definition_id, input: {
     title: "Replay launch", spec: "test", final_merge_policy: "require_merge", primary_repository_key: "app",
-    repositories: [{ key: "app", preparation: { repository_path: "/tmp", expected_head: null },
+    repositories: [{ key: "app", preparation: { checkout_root: "/tmp", expected_head: null },
       forge: { namespace: "oakridge-test", path: "app", build_base: "develop", final_base: "main" } }] } };
   const sendTo = (app: IntegrationApp, content: unknown) => app.request("/api/runs", { method: "POST",
     headers: { "content-type": "application/json" }, body: JSON.stringify(content) });

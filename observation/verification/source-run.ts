@@ -23,7 +23,7 @@ import type { ProofIo } from "./shadow-session";
 /** Mirrors the committed development.yaml input and existing launch settings. */
 export const sourceRunInputSchema = z.object({ title: z.string(), spec: z.string(), primary_repository_key: z.string(),
   final_merge_policy: z.enum(["require_merge", "allow_close_without_merge"]), repositories: z.array(z.object({
-    key: z.string(), preparation: z.object({ repository_path: z.string(), expected_head: z.string().nullable() }),
+    key: z.string(), preparation: z.object({ checkout_root: z.string(), expected_head: z.string().nullable() }),
     forge: z.object({ namespace: z.string(), path: z.string(), build_base: z.string(), final_base: z.string() }),
   })).min(1) });
 export type SourceRunInput = z.infer<typeof sourceRunInputSchema>;

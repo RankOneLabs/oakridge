@@ -32,7 +32,7 @@ interface FindingCitation {
 
 export interface CurrentFinding {
   id: string;
-  severity: FindingSeverity;
+  finding_impact: FindingSeverity;
   finding_note: string;
   supporting_citations: FindingCitation[];
   expected_change_locations: { path: string; symbol?: string | null }[];
@@ -50,7 +50,7 @@ export interface CurrentCohort {
   change_scope: string;
   allocations: { requirement_id: string; contribution: string }[];
   prerequisite_cohorts: string[];
-  rationale: string;
+  decision_reason: string;
 }
 
 export interface CurrentPlan { cohorts: CurrentCohort[] }
@@ -61,7 +61,7 @@ export interface CurrentBrief {
   prerequisite_cohorts: string[];
   files_in_scope: string[];
   build_items: { id: string; requirement_ids: string[]; instructions: string; verification: string[] }[];
-  technical_decisions: { id: string; build_item_ids: string[]; decision: string; rationale: string }[];
+  technical_decisions: { id: string; build_item_ids: string[]; decision: string; decision_reason: string }[];
 }
 
 export interface ResolvedAssignment { cohort: CurrentCohort; requirements: CanonicalRequirement[] }
@@ -91,7 +91,7 @@ export function parseCurrentAnalysis(body: unknown): ViewerResult<CurrentAnalysi
   const canDisplay = Array.isArray(requirements) && requirements.every((item) => {
     const entry = record(item);
     return typeof entry?.id === "string" && Array.isArray(entry.source_refs)
-      && rows(entry.findings, ["id", "severity", "finding_note", "supporting_citations", "expected_change_locations"]);
+      && rows(entry.findings, ["id", "finding_impact", "finding_note", "supporting_citations", "expected_change_locations"]);
   });
   return presentation(body, canDisplay);
 }
@@ -117,7 +117,7 @@ export function parseCurrentBrief(body: unknown): ViewerResult<CurrentBrief> {
   const value = record(body);
   return presentation(body, typeof value?.cohort_id === "string" && Array.isArray(value.prerequisite_cohorts) && Array.isArray(value.files_in_scope)
     && rows(value.build_items, ["id", "requirement_ids", "instructions", "verification"])
-    && rows(value.technical_decisions, ["id", "build_item_ids", "decision", "rationale"]));
+    && rows(value.technical_decisions, ["id", "build_item_ids", "decision", "decision_reason"]));
 }
 
 export function readAssignment(body: unknown): ResolvedAssignment | null {

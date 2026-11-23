@@ -126,7 +126,7 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
         timeline.set(`build:${member}`, Date.now());
         const pr_url = forge.open(`cohort-${member}`, "develop");
         await publish("build_result", { assigned_repository: "app", committed_revision: "abc123", change_overview: `Built ${member}.`, changed_files: [`${member}.ts`],
-          tests: { passed: 1, failing_tests: 0, output: null, test_notes: null, cargo_test_output: null }, delegated_session_metadata: null, delivery_issues: [] });
+          tests: { passed: 1, failing_tests: 0, test_log: null, test_notes: null, cargo_test_output: null }, delegated_session_metadata: null, delivery_issues: [] });
         await publish("pr", { change_request_link: pr_url, source_branch: `cohort-${member}`, change_overview: `Cohort ${member}.`, review_status: "ready" });
         break;
       }
@@ -272,7 +272,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Two cohorts", spec: "Build the thing in two parts.", final_merge_policy: "require_merge", primary_repository_key: "app",
-    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+    repositories: [{ key: "app", preparation: { checkout_root: repository, expected_head: null },
       forge: { namespace: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
@@ -372,7 +372,7 @@ test("analysis and canonical spec need approval after revision", async () => {
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Analysis handoff", spec: "Original specification.", final_merge_policy: "require_merge", primary_repository_key: "app",
-    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+    repositories: [{ key: "app", preparation: { checkout_root: repository, expected_head: null },
       forge: { namespace: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
@@ -445,7 +445,7 @@ test(`manual confirmation completes the development run for ${pr_integration}`, 
   let launched: Response;
   try { launched = await api("POST", "/api/runs", { request_id, definition_id, pr_integration, input: {
     title: "Confirm PRs", spec: "Confirm both PR stages.", final_merge_policy: "require_merge", primary_repository_key: "app",
-    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+    repositories: [{ key: "app", preparation: { checkout_root: repository, expected_head: null },
       forge: { namespace: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   } finally {
     if (previous_path === undefined) delete process.env.PATH; else process.env.PATH = previous_path;
@@ -522,7 +522,7 @@ test("a replacement cohort PR ignores the previous PR's closed observation", asy
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Replace cohort PR", spec: "Require the current cohort PR.", final_merge_policy: "require_merge", primary_repository_key: "app",
-    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+    repositories: [{ key: "app", preparation: { checkout_root: repository, expected_head: null },
       forge: { namespace: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
@@ -576,7 +576,7 @@ test("merge confirmation waits for the accepted assessment and closes again for 
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Gate merge on assessment", spec: "Confirm merges only after the assessment.", final_merge_policy: "require_merge", primary_repository_key: "app",
-    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+    repositories: [{ key: "app", preparation: { checkout_root: repository, expected_head: null },
       forge: { namespace: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
@@ -623,7 +623,7 @@ test("a closed unmerged integration PR asks for replacement, not merge confirmat
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Replace closed PR", spec: "Require a merged integration PR.", final_merge_policy: "require_merge", primary_repository_key: "app",
-    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+    repositories: [{ key: "app", preparation: { checkout_root: repository, expected_head: null },
       forge: { namespace: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
@@ -699,7 +699,7 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   integrationReplacements.add(launchRunId(request_id));
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Replace merged integration PR", spec: "Do not reuse an old merge.", final_merge_policy: "require_merge", primary_repository_key: "app",
-    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+    repositories: [{ key: "app", preparation: { checkout_root: repository, expected_head: null },
       forge: { namespace: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
@@ -768,7 +768,7 @@ test("allow_close_without_merge completes on an observed close without claiming 
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Allow closed PR", spec: "Complete after an unmerged close.", final_merge_policy: "allow_close_without_merge", primary_repository_key: "app",
-    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+    repositories: [{ key: "app", preparation: { checkout_root: repository, expected_head: null },
       forge: { namespace: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);

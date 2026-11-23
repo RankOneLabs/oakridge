@@ -35,7 +35,7 @@ function FindingCard({ finding, itemPath, grading }: { finding: CurrentFinding; 
   return <section id={`finding-${finding.id}`} className="ml-3 space-y-2 border-l border-[var(--border-muted)] pl-3" data-testid="or-analysis-finding">
     <div className="flex flex-wrap items-center gap-2">
       <code className="or-code">{finding.id}</code>
-      <Chip tone={selectStatusTone(finding.severity)}>{finding.severity}</Chip>
+      <Chip tone={selectStatusTone(finding.finding_impact)}>{finding.finding_impact}</Chip>
       {resolution && <Chip tone="neutral">{resolution.kind}</Chip>}
       <span className="ml-auto"><ArtifactItemGrade source={grading.source} itemPath={itemPath} onOpenItem={grading.onOpenItem} itemGrading={grading.itemGrading} /></span>
     </div>
@@ -86,7 +86,7 @@ function DecisionsPanel({ analysis, onOpenFinding }: { analysis: CurrentAnalysis
   return <div className="space-y-3">{decisions.map((entry) => <section key={entry.finding.id} className="space-y-1 rounded border border-[var(--border-muted)] p-3">
     <div className="flex flex-wrap items-center gap-2">
       <FindingLink reference={entry} onOpenFinding={onOpenFinding}>{entry.finding.id}</FindingLink>
-      <Chip tone={selectStatusTone(entry.finding.severity)}>{entry.finding.severity}</Chip>
+      <Chip tone={selectStatusTone(entry.finding.finding_impact)}>{entry.finding.finding_impact}</Chip>
       <ChosenOption chosen={selectFindingResolution(entry.finding)?.chosen ?? null} />
     </div>
     <p>{entry.prompt}</p>

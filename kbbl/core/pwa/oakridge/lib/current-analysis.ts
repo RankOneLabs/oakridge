@@ -5,8 +5,8 @@ export type CurrentRequirementStatus = "blocked" | "warning" | "implementable" |
 export const REQUIREMENT_STATUS_ORDER: readonly CurrentRequirementStatus[] = ["blocked", "warning", "implementable", "not_analyzed"];
 export function requirementStatus(requirement: CurrentAnalysis["requirements"][number]): CurrentRequirementStatus {
   if (requirement.findings.length === 0) return "not_analyzed";
-  if (requirement.findings.some((finding) => finding.severity === "blocking")) return "blocked";
-  return requirement.findings.some((finding) => finding.severity === "warning") ? "warning" : "implementable";
+  if (requirement.findings.some((finding) => finding.finding_impact === "blocking")) return "blocked";
+  return requirement.findings.some((finding) => finding.finding_impact === "warning") ? "warning" : "implementable";
 }
 export interface FindingReference { readonly requirement_id: string; readonly finding: CurrentFinding; readonly path: string }
 export const selectAnalysisFindings = (analysis: CurrentAnalysis): FindingReference[] => analysis.requirements.flatMap((requirement, i) =>
@@ -15,7 +15,7 @@ export function selectAnalysisCounts(analysis: CurrentAnalysis) {
   const findings = selectAnalysisFindings(analysis);
   return {
     requirements: REQUIREMENT_STATUS_ORDER.map((status) => ({ status, count: analysis.requirements.filter((requirement) => requirementStatus(requirement) === status).length })),
-    findings: (["blocking", "warning", "info"] as const).map((severity) => ({ severity, count: findings.filter(({ finding }) => finding.severity === severity).length })),
+    findings: (["blocking", "warning", "info"] as const).map((severity) => ({ severity, count: findings.filter(({ finding }) => finding.finding_impact === severity).length })),
   };
 }
 export interface OrderedRequirement { readonly requirement: CurrentAnalysis["requirements"][number]; readonly index: number; readonly status: CurrentRequirementStatus }

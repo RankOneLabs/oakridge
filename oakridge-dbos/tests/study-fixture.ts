@@ -18,9 +18,9 @@ const study = decodeWorkflowSource(source);
 if (!study) throw new Error("Invalid generated study source");
 export const studySource = study;
 
-export const repository = { key: "oakridge", preparation: { repository_path: "/repos/oakridge" },
+export const repository = { key: "oakridge", preparation: { checkout_root: "/repos/oakridge" },
   forge: { namespace: "acme", path: "oakridge", build_base: "epic", final_base: "main" } };
-export const workspace = { repository_path: "/repos/oakridge", push_remote_owner: "acme", head: "head", base_branch: "epic" };
+export const workspace = { checkout_root: "/repos/oakridge", push_remote_owner: "acme", head: "head", checkout_branch: "epic" };
 export const studyInput = { title: "Study", spec: "Study inputs", repositories: [repository], primary_repository_key: "oakridge",
   final_merge_policy: "require_merge", slice_case_limit: 2, slice_cap_cents: 100, approved_plan: null };
 export const plan = {
@@ -65,7 +65,7 @@ export const freeze = { build: build("freeze"), generator_digest: "digest", imag
 
 export const studyOperations: OperationRunner = {
   async run({ operation, inputs }) {
-    if (operation === "repository.prepare") return { kind: "succeeded", body: workspace };
+    if (operation === "repository.prepare_checkout") return { kind: "succeeded", body: workspace };
     if (operation === "value.publish" && inputs && typeof inputs === "object" && "value" in inputs) return { kind: "succeeded", body: inputs.value };
     const decoded = decodePullRequestObserveInput(inputs);
     if (operation === "pull_request.inspect" && decoded) {

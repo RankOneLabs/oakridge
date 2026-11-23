@@ -9,7 +9,7 @@ schemas:
   repository:
     key: ident
     preparation:
-      repository_path: repo_path
+      checkout_root: repo_path
       expected_head: optional(text)
     forge: forge
   forge:
@@ -18,10 +18,10 @@ schemas:
     build_base: text
     final_base: text
   workspace:
-    repository_path: repo_path
+    checkout_root: repo_path
     push_remote_owner: ident
     head: ident
-    base_branch: text
+    checkout_branch: text
   prepared:
     key: ident
     workspace: workspace
@@ -31,14 +31,14 @@ schemas:
     observed_link: text
     head_sha: optional(text)
     merged_at: optional(text)
-  severity: enum(blocking, warning, info)
+  finding_impact: enum(blocking, warning, info)
   issue:
     description: text
-    severity: severity
+    finding_impact: finding_impact
   test_evidence:
     passed: integer
     failing_tests: integer
-    output: optional(text)
+    test_log: optional(text)
     test_notes: optional(text)
     cargo_test_output: optional(text)
   item_assessment:
@@ -114,9 +114,9 @@ stages:
       prepare_repository:
         kind: code
         label: Git
-        operation: repository.prepare
+        operation: repository.prepare_checkout
         inputs:
-          repository_path: input.repository.preparation.repository_path
+          repository_path: input.repository.preparation.checkout_root
           expected_head: input.repository.preparation.expected_head
           base_branch: input.repository.forge.build_base
           integration_branch: input.repository.forge.final_base

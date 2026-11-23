@@ -309,7 +309,7 @@ const sliceAssessment = { ...baseAssessment([
   assessItem("case", plannedCase),
 ]), run_key: sliceReport.run_key };
 const findings = (kind: string, id: string) =>
-  [{ id: "finding", severity: "info", finding_note: "Linked", supporting_citations: [], related_subjects: [{ kind, id }] }];
+  [{ id: "finding", finding_impact: "info", finding_note: "Linked", supporting_citations: [], related_subjects: [{ kind, id }] }];
 const studyPr = { change_request_link: "https://github.com/acme/study/pull/1", change_overview: "Built", source_branch: "slice" };
 
 test("slice qualification, paid evidence, and task-link checks report specific refusals", async () => {

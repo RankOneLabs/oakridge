@@ -74,7 +74,8 @@ function launchRepositories(input: JsonValue | null): readonly RepositoryChoice[
   if (!Array.isArray(repositories)) return [];
   return repositories.flatMap((entry: JsonValue): RepositoryChoice[] => {
     const repository = objectOf(entry);
-    const path = objectOf(repository?.preparation)?.repository_path;
+    const preparation = objectOf(repository?.preparation);
+    const path = preparation?.checkout_root ?? preparation?.repository_path;
     return typeof repository?.key === "string" && typeof path === "string"
       ? [{ repository_key: repository.key, repository_path: path }] : [];
   });

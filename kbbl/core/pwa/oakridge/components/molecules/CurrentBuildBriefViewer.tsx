@@ -24,7 +24,7 @@ function BuildItemsPanel({ brief, props }: { brief: CurrentBrief; props: ViewerP
       <div className={artifactLabelClass}>Technical decisions</div>
       {item.decisions.map((decision) => <div key={decision.id} className="space-y-1">
         <div className="flex flex-wrap items-center gap-2"><code className="or-code">{decision.id}</code><span className="font-medium">{decision.decision}</span></div>
-        <p className="text-sm text-[var(--text-secondary)]">{decision.rationale}</p>
+        <p className="text-sm text-[var(--text-secondary)]">{decision.decision_reason}</p>
       </div>)}
     </>}
   </section>)}</div>;

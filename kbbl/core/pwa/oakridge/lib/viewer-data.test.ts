@@ -45,7 +45,7 @@ test("operator choices preserve undecided and explicit chosen values", () => {
 });
 test("spec references resolve nested finding records and retain unknown ids", () => {
   const requirement = { ...currentSpec.requirements[0], analysis_finding_ids: [...currentSpec.requirements[0].analysis_finding_ids, "missing" as typeof currentSpec.requirements[0]["analysis_finding_ids"][number]] };
-  expect(selectRequirementFindings(requirement, currentAnalysis)).toMatchObject([{ id: "F1", reference: { requirement_id: "R1", path: "/requirements/0/findings/0", finding: { id: "F1", severity: "blocking" } } }, { id: "missing", reference: null }]);
+  expect(selectRequirementFindings(requirement, currentAnalysis)).toMatchObject([{ id: "F1", reference: { requirement_id: "R1", path: "/requirements/0/findings/0", finding: { id: "F1", finding_impact: "blocking" } } }, { id: "missing", reference: null }]);
 });
 test("parallel waves follow only dependency edges and preserve plan order", () => {
   const waves = selectParallelWaves(currentPlan);

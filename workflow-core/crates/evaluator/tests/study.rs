@@ -36,14 +36,14 @@ fn study_definition() -> (Value, CheckedWorkflow) {
 fn repository(key: &str) -> Value {
     json!({
         "key": key,
-        "preparation": {"repository_path": format!("/repos/{key}"), "expected_head": null},
+        "preparation": {"checkout_root": format!("/repos/{key}"), "expected_head": null},
         "forge": {"namespace": "acme", "path": key, "build_base": "epic", "final_base": "main"}
     })
 }
 
 fn workspace(key: &str) -> Value {
-    json!({"repository_path": format!("/repos/{key}"), "push_remote_owner": "acme",
-           "head": "abc", "base_branch": "epic"})
+    json!({"checkout_root": format!("/repos/{key}"), "push_remote_owner": "acme",
+           "head": "abc", "checkout_branch": "epic"})
 }
 
 /// An artifact one worker of a unit produces.

@@ -52,5 +52,25 @@
       "provider_rejected",
       "pull_request_mismatch"
     ]
+  },
+  {
+    "key": "repository.prepare_checkout",
+    "input_schema": {
+      "repository_path": "repo_path",
+      "expected_head": "optional(text)",
+      "base_branch": "text",
+      "integration_branch": "text"
+    },
+    "output_schema": {
+      "checkout_root": "repo_path",
+      "push_remote_owner": "ident",
+      "head": "ident",
+      "checkout_branch": "text"
+    },
+    "error_codes": [
+      "worktree_unrecoverable",
+      "head_changed",
+      "provider_rejected"
+    ]
   }
 ]

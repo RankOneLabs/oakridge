@@ -24,7 +24,7 @@ function AnalysisFindingLink({ id, reference, props }: { id: string; reference: 
   return <div className="space-y-1">
     <div className="flex flex-wrap items-center gap-2">
       <a className="underline" href={`#analysis-finding-${id}`} onClick={openFinding}><code className="or-code">{id}</code></a>
-      <Chip tone={selectStatusTone(reference.finding.severity)}>{reference.finding.severity}</Chip>
+      <Chip tone={selectStatusTone(reference.finding.finding_impact)}>{reference.finding.finding_impact}</Chip>
       {resolution && <Chip tone="neutral">{resolution.kind}</Chip>}
       {resolution?.chosen && <Chip tone="success">Chosen: {resolution.chosen}</Chip>}
     </div>

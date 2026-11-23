@@ -36,7 +36,7 @@
         "B2"
       ],
       "decision": "Preserve readers",
-      "rationale": "Historical compatibility"
+      "decision_reason": "Historical compatibility"
     }
   ]
 }

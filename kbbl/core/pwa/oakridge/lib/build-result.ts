@@ -45,7 +45,7 @@ export function parseTestEvidence(value: unknown, field: string): Result<TestEvi
     return { ok: false, error: { field, detail: "expected test counts" } };
   return { ok: true, value: {
     passed: value.passed, failed,
-    output: textOrNull(value.output), summary: textOrNull(value.test_notes), cargo_test_output: textOrNull(value.cargo_test_output),
+    output: textOrNull(value.test_log ?? value.output), summary: textOrNull(value.test_notes), cargo_test_output: textOrNull(value.cargo_test_output),
   } };
 }
 
@@ -57,12 +57,18 @@ export function asBuildSummary(value: unknown): BuildResult | null {
   const commit = value.committed_revision ?? value.head_sha;
   if (typeof summary !== "string"
     || !Array.isArray(value.changed_files) || !value.changed_files.every((file) => typeof file === "string")
-    || !Array.isArray(issues) || !issues.every((issue) =>
-      isRecord(issue) && typeof issue.description === "string" && SEVERITIES.some((severity) => severity === issue.severity))) return null;
+    || !Array.isArray(issues)) return null;
+  const displayIssues: BuildIssue[] = [];
+  for (const issue of issues) {
+    if (!isRecord(issue) || typeof issue.description !== "string") return null;
+    const severity = SEVERITIES.find((level) => level === (issue.finding_impact ?? issue.severity));
+    if (!severity) return null;
+    displayIssues.push({ description: issue.description, severity });
+  }
   const tests = parseTestEvidence(value.tests, "tests");
   if (!tests.ok) return null;
   const metadata = isRecord(value.delegated_session_metadata) ? value.delegated_session_metadata : null;
-  return { summary, changed_files: value.changed_files, issues, tests: tests.value,
+  return { summary, changed_files: value.changed_files, issues: displayIssues, tests: tests.value,
     commit_sha: textOrNull(commit), repository_key: textOrNull(value.assigned_repository),
     delegated_session_metadata: metadata && { cohort_id: textOrNull(metadata.cohort_id), branch: textOrNull(metadata.source_branch) } };
 }

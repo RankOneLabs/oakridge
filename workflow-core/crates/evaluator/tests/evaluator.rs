@@ -508,7 +508,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
             "assessment_body": schemas["assessment_body"],
             "item_assessment": schemas["item_assessment"],
             "additional_finding": schemas["additional_finding"],
-            "severity": schemas["severity"],
+            "finding_impact": schemas["finding_impact"],
             "assessment_subject": schemas["assessment_subject"],
             "evidence_ref": schemas["evidence_ref"],
             "test_evidence": schemas["test_evidence"]
@@ -532,7 +532,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
     assert!(check_type(&program.input, &body));
     let mut explicit_nulls = body.clone();
     explicit_nulls["test_evidence"] = serde_json::json!({
-        "passed": 1, "failing_tests": 0, "output": null, "test_notes": null, "cargo_test_output": null
+        "passed": 1, "failing_tests": 0, "test_log": null, "test_notes": null, "cargo_test_output": null
     });
     explicit_nulls["item_assessments"][0]["supporting_citations"][0]["detail"] = Value::Null;
     assert!(check_type(&program.input, &explicit_nulls));

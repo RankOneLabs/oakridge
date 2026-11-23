@@ -7,7 +7,7 @@ import { createOperationRunner } from "../src/operations/runner";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 
 test("the registry declares the in-process operations, and session.run is not one", () => {
-  expect(OPERATION_REGISTRY.map((operation) => operation.key)).toEqual(["repository.prepare", "value.publish", "pull_request.inspect"]);
+  expect(OPERATION_REGISTRY.map((operation) => operation.key)).toEqual(["repository.prepare", "value.publish", "pull_request.inspect", "repository.prepare_checkout"]);
   for (const operation of OPERATION_REGISTRY)
     expect(Object.keys(operation).sort()).toEqual(["error_codes", "input_schema", "key", "output_schema"]);
 });
@@ -31,7 +31,7 @@ test("a code worker of each registered operation compiles against its declared c
         stages: { only: { input: bound(operation.input_schema), artifacts: { output: { kind: "document", schema: bound(operation.output_schema) } },
           workers: { call: { kind: "code", operation: operation.key, inputs, produces: ["output"] } }, done_when: "published(output)", outcome: {} } } } });
     }));
-    expect(compiled.map((result) => result.ok ? "compiled" : result.error.detail)).toEqual(["compiled", "compiled", "compiled"]);
+    expect(compiled.map((result) => result.ok ? "compiled" : result.error.detail)).toEqual(["compiled", "compiled", "compiled", "compiled"]);
   } finally { core.close(); }
 });
 

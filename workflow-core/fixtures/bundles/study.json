@@ -71,7 +71,7 @@
     "repository": {
       "key": "ident",
       "preparation": {
-        "repository_path": "repo_path",
+        "checkout_root": "repo_path",
         "expected_head": "optional(text)"
       },
       "forge": "forge"
@@ -83,10 +83,10 @@
       "final_base": "text"
     },
     "workspace": {
-      "repository_path": "repo_path",
+      "checkout_root": "repo_path",
       "push_remote_owner": "ident",
       "head": "ident",
-      "base_branch": "text"
+      "checkout_branch": "text"
     },
     "prepared": {
       "key": "ident",
@@ -99,15 +99,15 @@
       "head_sha": "optional(text)",
       "merged_at": "optional(text)"
     },
-    "severity": "enum(blocking, warning, info)",
+    "finding_impact": "enum(blocking, warning, info)",
     "issue": {
       "description": "text",
-      "severity": "severity"
+      "finding_impact": "finding_impact"
     },
     "test_evidence": {
       "passed": "integer",
       "failing_tests": "integer",
-      "output": "optional(text)",
+      "test_log": "optional(text)",
       "test_notes": "optional(text)",
       "cargo_test_output": "optional(text)"
     },
@@ -268,7 +268,7 @@
     },
     "additional_finding": {
       "id": "ident",
-      "severity": "severity",
+      "finding_impact": "finding_impact",
       "finding_note": "text",
       "related_subjects": "list(assessment_subject)",
       "supporting_citations": "list(evidence_ref)"
@@ -393,9 +393,9 @@
         "prepare_repository": {
           "kind": "code",
           "label": "Git",
-          "operation": "repository.prepare",
+          "operation": "repository.prepare_checkout",
           "inputs": {
-            "repository_path": "input.repository.preparation.repository_path",
+            "repository_path": "input.repository.preparation.checkout_root",
             "expected_head": "input.repository.preparation.expected_head",
             "base_branch": "input.repository.forge.build_base",
             "integration_branch": "input.repository.forge.final_base"
@@ -677,11 +677,11 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "(slice_assessment.verdict == \"fail\" and (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (slice_assessment.verdict == \"pass_with_notes\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)) or (slice_assessment.verdict == \"pass\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0))",
+              "check": "(slice_assessment.verdict == \"fail\" and (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == \"blocking\")) > 0)) or (slice_assessment.verdict == \"pass_with_notes\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and (len(filter(slice_assessment.additional_findings, item.finding_impact == \"warning\")) > 0)) or (slice_assessment.verdict == \"pass\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and not (len(filter(slice_assessment.additional_findings, item.finding_impact == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
             {
-              "check": "slice_assessment.test_evidence.failing_tests == 0 or (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "check": "slice_assessment.test_evidence.failing_tests == 0 or (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) or (len(filter(slice_assessment.additional_findings, item.finding_impact == \"warning\")) > 0)",
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
@@ -1041,11 +1041,11 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
+              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
             {
-              "check": "assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "check": "assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0)",
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
@@ -1450,11 +1450,11 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
+              "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
             {
-              "check": "assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "check": "assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.finding_impact == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.finding_impact == \"warning\")) > 0)",
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]

@@ -6,7 +6,7 @@ Briefs are written in dependency order in one shared session. Every cohort in as
 
 Build items are `{id, requirement_ids, instructions, verification}`. Write detailed, standalone implementation instructions with specific code changes and observable behavior. Cover every assigned requirement and no unassigned requirement. Items can split an obligation or support several assigned requirements. Every item needs requirement links and testable verification. Preserve scope without adding requirements; leave no obligation only in prose.
 
-Record material technical decisions as `{id, build_item_ids, decision, rationale}` with unique ids and valid build item links. Explain choices grounded in the repository, including relevant tradeoffs. The builder must be able to implement this brief without reconstructing planning or consulting another cohort, so restate the specific upstream fields, signatures and values an instruction relies on.
+Record material technical decisions as `{id, build_item_ids, decision, decision_reason}` with unique ids and valid build item links. Explain choices grounded in the repository, including relevant tradeoffs. The builder must be able to implement this brief without reconstructing planning or consulting another cohort, so restate the specific upstream fields, signatures and values an instruction relies on.
 
 ## Resolved assignment
 

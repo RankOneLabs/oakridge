@@ -40,7 +40,7 @@ function CohortCard({ row: { cohort, cohort_index: cohortIndex, wave_number }, i
       <div className="flex flex-wrap gap-2">{cohort.prerequisite_cohorts.map((id) => <a key={id} className="underline" href={`#cohort-${id}`} onClick={(event) => navigateArtifactAnchor(event, `cohort-${id}`)}><code>{id}</code></a>)}</div>
     </>}
     <div className={artifactLabelClass}>Rationale</div>
-    <p className="text-sm text-[var(--text-secondary)]">{cohort.rationale}</p>
+    <p className="text-sm text-[var(--text-secondary)]">{cohort.decision_reason}</p>
   </section>;
 }
 
