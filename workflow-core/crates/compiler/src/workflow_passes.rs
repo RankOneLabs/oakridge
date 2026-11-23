@@ -429,7 +429,9 @@ pub(super) fn resolve(parsed: ParsedWorkflow) -> Result<ResolvedWorkflow, Vec<Co
     }
 }
 fn check_label(source: &Workflow) -> Result<Option<CheckedWorkflowLabel>, CompileError> {
-    let Some(label) = &source.label else { return Ok(None) };
+    let Some(label) = &source.label else {
+        return Ok(None);
+    };
     let artifacts = BTreeMap::new();
     let outcomes = BTreeMap::new();
     let lets = BTreeMap::new();
@@ -450,13 +452,24 @@ fn check_label(source: &Workflow) -> Result<Option<CheckedWorkflowLabel>, Compil
     let field = |text: &str, path: &str, expected: Type| {
         let expression = checked(text, &scope, path)?;
         if expression.value_type != expected {
-            return Err(CompileError::new(CheckKind::ExpressionType, path, source_span(text), format!("expected {expected:?}")));
+            return Err(CompileError::new(
+                CheckKind::ExpressionType,
+                path,
+                source_span(text),
+                format!("expected {expected:?}"),
+            ));
         }
         Ok(expression)
     };
     Ok(Some(CheckedWorkflowLabel {
         title: field(&label.title, "label.title", Type::Text)?,
-        repositories: field(&label.repositories, "label.repositories", Type::List { item: Box::new(Type::Ident) })?,
+        repositories: field(
+            &label.repositories,
+            "label.repositories",
+            Type::List {
+                item: Box::new(Type::Ident),
+            },
+        )?,
     }))
 }
 pub(super) fn check(
@@ -490,7 +503,10 @@ pub(super) fn check(
     }
     let label = match check_label(&source) {
         Ok(label) => label,
-        Err(error) => { errors.push(error); None }
+        Err(error) => {
+            errors.push(error);
+            None
+        }
     };
     group::check_structure(&source.run, "run", &source, &mut errors);
     if !errors.is_empty() {

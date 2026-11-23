@@ -188,27 +188,44 @@ fn display_declarations_validate_and_project() {
     raw["stages"]["work"]["artifacts"]["draft"]["view"] = json!("custom_viewer");
     raw["stages"]["work"]["workers"]["builder"]["label"] = json!("Author");
     let workflow = compile(raw.clone()).unwrap();
-    assert_eq!(workflow.stages["work"].reviews["review"].wait, workflow_model::ReviewWait::Operator);
+    assert_eq!(
+        workflow.stages["work"].reviews["review"].wait,
+        workflow_model::ReviewWait::Operator
+    );
     raw["stages"]["work"]["reviews"]["release"] = json!({
         "by":"operator","of":"draft","wait":"external","confirms":"merge","prompt":"p",
         "decisions":{"land":{"effect":"approve","label":"Land"}}
     });
     let workflow = compile(raw.clone()).unwrap();
     let stage = &workflow.stages["work"];
-    assert_eq!(stage.artifacts["draft"].view.as_deref(), Some("custom_viewer"));
-    assert_eq!(stage.reviews["release"].wait, workflow_model::ReviewWait::External);
-    assert_eq!(stage.reviews["release"].confirms, Some(workflow_model::ReviewConfirms::Merge));
-    assert!(matches!(&stage.workers["builder"], workflow_model::Worker::Agent {
-        label: Some(label), .. } if label == "Author"));
+    assert_eq!(
+        stage.artifacts["draft"].view.as_deref(),
+        Some("custom_viewer")
+    );
+    assert_eq!(
+        stage.reviews["release"].wait,
+        workflow_model::ReviewWait::External
+    );
+    assert_eq!(
+        stage.reviews["release"].confirms,
+        Some(workflow_model::ReviewConfirms::Merge)
+    );
+    assert!(
+        matches!(&stage.workers["builder"], workflow_model::Worker::Agent {
+        label: Some(label), .. } if label == "Author")
+    );
 
     raw["label"]["title"] = json!("input.targets");
     raw["stages"]["work"]["reviews"]["release"]["by"] = json!("engine");
     let errors = compile(raw).unwrap_err();
     assert!(errors.iter().any(|error| error.path.0 == "label.title"));
-    assert!(errors.iter().any(|error| error.path.0.ends_with("release.confirms")));
-    assert!(errors.iter().any(|error| error.path.0.ends_with("release.wait")));
+    assert!(errors
+        .iter()
+        .any(|error| error.path.0.ends_with("release.confirms")));
+    assert!(errors
+        .iter()
+        .any(|error| error.path.0.ends_with("release.wait")));
 }
-
 
 #[test]
 fn external_reference_projects_the_declared_link_field() {
@@ -217,9 +234,17 @@ fn external_reference_projects_the_declared_link_field() {
         "kind":"external_reference","schema":{"remote_link":"text"},"link_field":"remote_link"
     });
     let workflow = compile(raw.clone()).unwrap();
-    assert_eq!(workflow.stages["work"].artifacts["draft"].link_field.as_ref().map(|key| key.0.as_str()), Some("remote_link"));
+    assert_eq!(
+        workflow.stages["work"].artifacts["draft"]
+            .link_field
+            .as_ref()
+            .map(|key| key.0.as_str()),
+        Some("remote_link")
+    );
 
     raw["stages"]["work"]["artifacts"]["draft"]["schema"]["remote_link"] = json!("integer");
     let errors = compile(raw).unwrap_err();
-    assert!(errors.iter().any(|error| error.path.0.ends_with("draft.link_field")));
+    assert!(errors
+        .iter()
+        .any(|error| error.path.0.ends_with("draft.link_field")));
 }
