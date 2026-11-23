@@ -37,16 +37,6 @@ interface DevelopmentRunOutcome {
   readonly cohorts: readonly { readonly cohort_id: string }[];
   readonly integrations: readonly { readonly repository_key: string; readonly change_request_link: string; readonly is_merged: boolean }[];
 }
-const VIEWER_COMPONENTS = {
-  "dev-current-analysis-viewer": "CurrentSpecAnalysisViewer",
-  "dev-current-spec-viewer": "CurrentSpecViewer",
-  "dev-current-plan-viewer": "CurrentPlanViewer",
-  "dev-current-brief-viewer": "CurrentBuildBriefViewer",
-  "dev-build-result-viewer": "BuildResultReview",
-  "dev-current-assessment-viewer": "CurrentAssessmentReview",
-  "dev-pr-summary-viewer": "PrSummaryViewer",
-} as const;
-
 /**
  * development.yaml as pinned (read through the JSON generate.ts derives from
  * it, which CI holds equal to it), with its periodic PR watches made fast
@@ -797,19 +787,16 @@ test("allow_close_without_merge completes on an observed close without claiming 
     .toEqual([{ repository_key: "app", change_request_link: pullUrl(3), is_merged: false }]);
 }, 150_000);
 
-test("development artifact schemas and PWA viewer component IDs align", () => {
-  // All development bodies now use named schemas, including the canonical spec.
-  // Read the registry as text rather than importing across the PWA boundary.
-  const registry = readFileSync(resolve(root, "kbbl/core/pwa/oakridge/artifactRegistry.tsx"), "utf8");
+test("development artifacts declare their registered views independently of schema keys", () => {
   const workflow = developmentWorkflow();
-  const declared = [workflow.stages.analysis?.artifacts.spec?.schema,
-    ...Object.values(BODY_SCHEMAS).filter((name) => name !== BODY_SCHEMAS.spec && workflow.schemas?.[name] !== undefined)];
-  const registered = Object.entries(VIEWER_COMPONENTS).filter(([componentId, viewer]) =>
-    registry.includes(`"${componentId}": { Viewer: ${viewer} }`));
-  expect({ declared, registered }).toEqual({
-    declared: Object.values(BODY_SCHEMAS),
-    registered: Object.entries(VIEWER_COMPONENTS),
-  });
+  const artifacts = Object.values(workflow.stages).flatMap((stage) => Object.entries(stage.artifacts));
+  const registered = artifacts.flatMap(([key, artifact]) => artifact.view ? [[key, artifact.view]] : []);
+  expect(registered).toEqual(expect.arrayContaining([
+    ["spec", "specification"], ["analysis", "requirements_analysis"], ["plan", "cohort_plan"],
+    ["brief", "build_brief"], ["build_result", "build_result"], ["assessment", "assessment"], ["pr", "pull_request"],
+  ]));
+  expect(artifacts.filter(([key, artifact]) => artifact.view && Object.hasOwn(BODY_SCHEMAS, key))
+    .every(([key, artifact]) => artifact.schema === BODY_SCHEMAS[key as keyof typeof BODY_SCHEMAS])).toBe(true);
 });
 
 /** Replays this file's development runs into a fresh observation database, resuming after `start`. */
