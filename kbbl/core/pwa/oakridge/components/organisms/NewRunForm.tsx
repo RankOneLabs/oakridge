@@ -31,7 +31,7 @@ import { BriefNotesField } from "../molecules/BriefNotesField";
 import { StudySliceFields } from "../molecules/StudySliceFields";
 import { readBriefNotesFile, type BriefNotesSource } from "../../lib/brief-notes";
 import { WorkflowInputFields } from "../molecules/WorkflowInputFields";
-import { DEFAULT_STUDY_SLICE_DRAFT, selectLaunchInputSchema, selectWorkflowLaunchInput, type LaunchInputDraft } from "../../lib/workflow-launch-input";
+import { DEFAULT_STUDY_SLICE_DRAFT, selectHasEpicFields, selectLaunchInputSchema, selectWorkflowLaunchInput, type LaunchInputDraft } from "../../lib/workflow-launch-input";
 import { AutomaticGradingField } from "../molecules/AutomaticGradingField";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
@@ -69,7 +69,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const definitionQuery = useOperatorDefinition(workflowDefId);
   const sessionTargets = useMemo(() => definitionQuery.data ? selectAgentSessionTargets(definitionQuery.data.workflow, definitionQuery.data.graph, definitionQuery.data.worker_names) : [], [definitionQuery.data]);
   const inputSchema = definitionQuery.data ? selectLaunchInputSchema(definitionQuery.data.bundle) : null;
-  const hasEpicFields = inputSchema?.form === "development" || inputSchema?.form === "study";
+  const hasEpicFields = selectHasEpicFields(inputSchema?.form);
   const sessionChoices = useAgentSessionSelections(sessionTargets, runtimeDescriptors, defaultRuntimeId);
   const roleTargets = useMemo(() => selectRoleChoiceTargets(sessionTargets), [sessionTargets]);
   const roleChoices = useAgentSessionSelections(roleTargets, runtimeDescriptors, defaultRuntimeId);

@@ -1,6 +1,6 @@
 import { expect, it, test } from "vitest";
 import type { OperatorDefinitionBundle } from "../operator-contracts/projections/definition-view";
-import { DEFAULT_STUDY_SLICE_DRAFT, selectStudySliceLimits, selectLaunchInputSchema, selectWorkflowLaunchInput, type EpicLaunchDraft } from "./workflow-launch-input";
+import { DEFAULT_STUDY_SLICE_DRAFT, selectStudySliceLimits, selectHasEpicFields, selectLaunchInputSchema, selectWorkflowLaunchInput, type EpicLaunchDraft } from "./workflow-launch-input";
 
 const schemas: OperatorDefinitionBundle["schemas"] = [
   { key: "text", shape: { kind: "string", min_length: 0, max_length: 100 } },
@@ -21,6 +21,15 @@ function launchSchema(workflow: string) {
   if (!schema) throw new Error("Fixture is missing its root input");
   return schema;
 }
+
+test.each([
+  ["development", true],
+  ["study", true],
+  ["generic", false],
+  [undefined, false],
+] as const)("selects epic fields for form %s: %s", (form, expected) => {
+  expect(selectHasEpicFields(form)).toBe(expected);
+});
 
 test("reads the launch fields of an independently authored fixture workflow", () => {
   expect(selectWorkflowLaunchInput(launchSchema("fixture"), { ...emptyControls, fields: { message: "Draft the folio" } })).toEqual({

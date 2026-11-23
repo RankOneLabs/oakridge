@@ -41,7 +41,13 @@ export interface AgentWorkerWorkflow {
   readonly stages: Readonly<{ [stage: string]: { readonly workers: Readonly<{ [worker: string]: AgentWorkerDeclaration }> } }>;
 }
 
-const suggestedRole = (workflow: string, stage: string, worker: string): ModelRole =>
+interface AgentWorkerLocation {
+  readonly workflow: string;
+  readonly stage: string;
+  readonly worker: string;
+}
+
+const suggestedRole = ({ workflow, stage, worker }: AgentWorkerLocation): ModelRole =>
   workflow === "development" && (["analysis", "planning", "brief", "integration"].includes(stage) || (stage === "cohort" && worker === "assessor"))
     ? "planner" : "worker";
 
@@ -75,7 +81,10 @@ export function selectAgentSessionTargets(workflow: AgentWorkerWorkflow, graph?:
       const template = declaration.template ? workflow.workers?.[declaration.template] : undefined;
       if ((template?.kind ?? declaration.kind) !== "agent") return [];
       const label = declaration.overrides?.label ?? declaration.label ?? template?.label ?? worker;
-      return [{ key: JSON.stringify([stage, worker]), stage, worker, label: `${stage} · ${label}`, suggested_role: suggestedRole(workflow.workflow, stage, worker) }];
+      return [{
+        key: JSON.stringify([stage, worker]), stage, worker, label: `${stage} · ${label}`,
+        suggested_role: suggestedRole({ workflow: workflow.workflow, stage, worker }),
+      }];
     }));
 }
 

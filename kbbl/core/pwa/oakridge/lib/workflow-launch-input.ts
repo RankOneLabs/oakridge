@@ -93,6 +93,10 @@ export interface LaunchInputSchema {
   readonly additionalFields: readonly LaunchField[];
 }
 
+export function selectHasEpicFields(form: LaunchInputSchema["form"] | undefined): boolean {
+  return form === "development" || form === "study";
+}
+
 export function selectLaunchInputSchema(bundle: OperatorDefinitionBundle): LaunchInputSchema | null {
   const root = bundle.units.find((unit) => unit.key === bundle.root)?.input_schema;
   const schemas = indexProjectedSchemas(bundle.schemas);
@@ -119,7 +123,7 @@ interface WorkflowLaunchDraft {
 export function selectWorkflowLaunchInput(schema: LaunchInputSchema, draft: WorkflowLaunchDraft):
   Result<Readonly<Record<string, unknown>>, LaunchInputRefusal> {
   const values: [string, unknown][] = [];
-  if (schema.form !== "generic") {
+  if (selectHasEpicFields(schema.form)) {
     const epic = selectEpicInput(draft.epic);
     if (!epic.ok) return epic;
     values.push(...Object.entries(epic.value));
