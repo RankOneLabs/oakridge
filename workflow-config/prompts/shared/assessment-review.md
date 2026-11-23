@@ -1,3 +1,3 @@
-Check coverage, evidence, findings, and the workflow's verdict and test rules. The decision names the exact assessment revision and the exact work revision it evaluates.
+Check coverage, supporting_citations, findings, and the workflow's verdict and test rules. The decision names the exact assessment revision and the exact work revision it evaluates.
 
 To dispatch a proposal, authorize the instruction and chosen agent recipients for the current target revision, then submit the matching dispatch disposition. To dismiss an undispatched proposal, submit a rejection with a reason. Approve once all proposals are resolved and every assignment is verified or its needs-further-work follow-up is rejected with a reason. Approval records the operator decision and leaves the assessment verdict intact.

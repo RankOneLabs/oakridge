@@ -1,5 +1,5 @@
 {
-  "question": "When a change needs a value added or renamed in several places, which kinds of place do models miss?",
+  "research_question": "When a change needs a value added or renamed in several places, which kinds of place do models miss?",
   "hypotheses": [
     {
       "id": "h_shape_vs_control",

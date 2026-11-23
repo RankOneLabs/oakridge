@@ -8,24 +8,24 @@ schemas:
   completed_cohort: outcome_of(cohort)
   finding_evidence:
     kind: enum(file, search, test, output)
-    ref: text
+    citation_location: text
     detail: text
   change_location:
     path: text
     symbol: optional(text)
-  resolution:
+  finding_resolution:
     kind: enum(spec_update, operator_decision, implementation_note)
     text: text
-    question: optional(text)
+    decision_prompt: optional(text)
     alternatives: "optional(list({option: text, consequence: text}))"
     chosen: optional(text)
   analysis_finding:
     id: ident
     severity: severity
     observation: text
-    evidence: list(finding_evidence)
+    supporting_citations: list(finding_evidence)
     expected_change_locations: list(change_location)
-    resolution: optional(resolution)
+    finding_resolution: optional(finding_resolution)
   analysis_requirement:
     id: ident
     text: text
@@ -50,7 +50,7 @@ schemas:
     id: ident
     repository_key: ident
     title: text
-    scope: text
+    change_scope: text
     allocations: list(allocation)
     depends_on: list(ident)
     rationale: text
@@ -79,14 +79,14 @@ schemas:
   build_body:
     repository_key: optional(ident)
     head_sha: text
-    summary: text
+    change_overview: text
     changed_files: list(text)
     tests: test_evidence
     delegated_session_metadata: optional(build_metadata)
     known_issues: list(issue)
   build_metadata:
     cohort_id: optional(ident)
-    session_id: optional(ident)
+    delegated_session: optional(ident)
     branch: optional(ident)
   assessment_subject:
     kind: enum(build_item, requirement)
@@ -96,29 +96,29 @@ schemas:
     severity: severity
     observation: text
     related_build_item_ids: list(ident)
-    evidence: list(evidence_ref)
+    supporting_citations: list(evidence_ref)
 run:
   pools:
     writers: 4
     builders: 4
   units:
-    prepare:
+    repository_setup:
       for_each: input.repositories
       key: each.key
-      stage: prepare
+      stage: repository_setup
       input:
         repository: each
     analysis:
       stage: analysis
       input:
         spec: input.spec
-        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
+        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace
     planning:
       stage: planning
       input:
         spec: analysis.outcome.spec
         repositories: input.repositories
-        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
+        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace
     briefs:
       for_each: planning.outcome.plan.cohorts
       key: each.id
@@ -127,7 +127,7 @@ run:
       pool: writers
       input:
         assignment: "{cohort: each, requirements: filter(analysis.outcome.spec.requirements, contains(map(each.allocations, item.requirement_id), item.id))}"
-        workspace: require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace
+        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace
     implementation:
       for_each: map(briefs, briefs.outcome.brief)
       key: each.cohort_id
@@ -137,7 +137,7 @@ run:
       input:
         brief: each
         repository: require(lookup(input.repositories, key, each.repository_key))
-        workspace: require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace
+        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, each.repository_key)).workspace
         cohort: require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id))
     integration:
       for_each: filter(input.repositories, contains(map(implementation, implementation.outcome.repository_key), item.key))
@@ -145,7 +145,7 @@ run:
       stage: integration
       input:
         repository: each
-        workspace: require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace
+        workspace: require(lookup(map(repository_setup, repository_setup.outcome), key, each.key)).workspace
         cohorts: filter(map(implementation, implementation.outcome), item.repository_key == each.key)
         briefs: filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key)
         final_merge_policy: input.final_merge_policy
@@ -172,7 +172,7 @@ stages:
             message: Every requirement needs at least one finding.
           - check: unique(map(flatten(map(analysis.requirements, item.findings)), item.id))
             message: Finding ids must be unique across the analysis.
-          - check: 'every(flatten(map(analysis.requirements, item.findings)), not present(item.resolution) or require(item.resolution).kind != "operator_decision" or (present(require(item.resolution).question) and present(require(item.resolution).alternatives) and len(require(require(item.resolution).alternatives)) >= 2))'
+          - check: 'every(flatten(map(analysis.requirements, item.findings)), not present(item.finding_resolution) or require(item.finding_resolution).kind != "operator_decision" or (present(require(item.finding_resolution).decision_prompt) and present(require(item.finding_resolution).alternatives) and len(require(require(item.finding_resolution).alternatives)) >= 2))'
             message: An operator_decision resolution needs a question and at least two alternatives.
       spec:
         kind: document
@@ -227,7 +227,7 @@ stages:
             effect: approve
             label: Accept
             when:
-              check: 'every(flatten(map(analysis.requirements, item.findings)), item.severity != "blocking" and (not present(item.resolution) or require(item.resolution).kind != "operator_decision" or (default(require(item.resolution).chosen, "") != "" and contains(map(require(require(item.resolution).alternatives), item.option), default(require(item.resolution).chosen, "")))))'
+              check: 'every(flatten(map(analysis.requirements, item.findings)), item.severity != "blocking" and (not present(item.finding_resolution) or require(item.finding_resolution).kind != "operator_decision" or (default(require(item.finding_resolution).chosen, "") != "" and contains(map(require(require(item.finding_resolution).alternatives), item.option), default(require(item.finding_resolution).chosen, "")))))'
               reason: Resolve every blocking finding and choose an option for every operator decision before accepting the analysis.
           request_changes:
             effect: request_changes
@@ -387,10 +387,10 @@ stages:
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
       pr_opened: pr_published and latest(pr).change_request_link != ""
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link
-      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link
-      closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
-      merged_pr: observed_state_current and latest(observed_state).state == "merged"
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link
+      closed_pr: pr_state_current and latest(pr_state).status == "closed_unmerged"
+      merged_pr: observed_state_current and latest(observed_state).status == "merged"
     artifacts:
       build_result:
         kind: document
@@ -430,14 +430,14 @@ stages:
             check: (assessment.verdict == "fail" and (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0)) or (assessment.verdict == "pass_with_notes" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)) or (assessment.verdict == "pass" and not (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) and not (len(filter(assessment.additional_findings, item.severity == "warning")) > 0))
             message: Assessment verdict must match item statuses and additional finding severities.
           - &a5
-            check: assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)
+            check: assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != "met")) > 0 or len(filter(assessment.additional_findings, item.severity == "blocking")) > 0) or (len(filter(assessment.additional_findings, item.severity == "warning")) > 0)
             message: Failed tests require an unmet item or a blocking or warning additional finding.
       pr_state:
         kind: status_record
-        schema: pr_status
+        schema: pull_request_inspection
       observed_state:
         kind: status_record
-        schema: pr_status
+        schema: pull_request_inspection
     workers:
       builder:
         kind: agent

@@ -117,7 +117,7 @@
           "resolution": {
             "kind": "operator_decision",
             "text": "Choose a display",
-            "question": "Which display?",
+            "decision_prompt": "Which display?",
             "alternatives": [
               {
                 "option": "Compact",

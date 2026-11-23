@@ -129,6 +129,19 @@ test("github-cli observation never calls a reader and requests manual confirmati
 
 import { createOperationRunner } from "../src/operations/runner";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
+
+test("inspection publishes the new status record while observation keeps its pinned output", async () => {
+  const { reader } = forgeReturning(githubPayload());
+  const runner = createOperationRunner({ git: new BunGitCommandRunner(), pull_requests: reader });
+  const inputs = { query };
+  expect(await runner.run({ operation: "pull_request.inspect", inputs })).toMatchObject({
+    kind: "succeeded", body: { status: "open", pr_sequence: 440, observed_link: query.pr_url },
+  });
+  expect(await runner.run({ operation: "pull_request.observe", inputs })).toMatchObject({
+    kind: "succeeded", body: { state: "open", number: 440, url: query.pr_url },
+  });
+});
+
 test("the operation runner honors recorded integration options before consulting any reader", async () => {
   const { reader, calls } = forgeReturning(githubPayload());
   const runner = createOperationRunner({ git: new BunGitCommandRunner(), pull_requests: reader });

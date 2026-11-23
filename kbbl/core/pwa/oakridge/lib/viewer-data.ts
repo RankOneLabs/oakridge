@@ -16,19 +16,31 @@ export interface CanonicalSpec {
   non_goals: string[];
 }
 
+interface FindingResolution {
+  kind: "spec_update" | "operator_decision" | "implementation_note";
+  text: string;
+  decision_prompt?: string | null;
+  question?: string | null;
+  alternatives?: { option: string; consequence: string }[] | null;
+  chosen?: string | null;
+}
+
+interface FindingCitation {
+  kind: "file" | "search" | "test" | "output";
+  ref?: string;
+  citation_location?: string;
+  detail: string;
+}
+
 export interface CurrentFinding {
   id: string;
   severity: FindingSeverity;
   observation: string;
-  evidence: { kind: "file" | "search" | "test" | "output"; ref: string; detail: string }[];
+  supporting_citations?: FindingCitation[];
+  evidence?: FindingCitation[];
   expected_change_locations: { path: string; symbol?: string | null }[];
-  resolution?: {
-    kind: "spec_update" | "operator_decision" | "implementation_note";
-    text: string;
-    question?: string | null;
-    alternatives?: { option: string; consequence: string }[] | null;
-    chosen?: string | null;
-  } | null;
+  finding_resolution?: FindingResolution | null;
+  resolution?: FindingResolution | null;
 }
 
 export interface CurrentAnalysis {
@@ -39,7 +51,8 @@ export interface CurrentCohort {
   id: string;
   repository_key: RepositoryKey;
   title: string;
-  scope: string;
+  scope?: string;
+  change_scope?: string;
   allocations: { requirement_id: string; contribution: string }[];
   depends_on: string[];
   rationale: string;
@@ -83,7 +96,7 @@ export function parseCurrentAnalysis(body: unknown): ViewerResult<CurrentAnalysi
   const canDisplay = Array.isArray(requirements) && requirements.every((item) => {
     const entry = record(item);
     return typeof entry?.id === "string" && Array.isArray(entry.source_refs)
-      && rows(entry.findings, ["id", "severity", "observation", "evidence", "expected_change_locations"]);
+      && rows(entry.findings, ["id", "severity", "observation", "expected_change_locations"]);
   });
   return presentation(body, canDisplay);
 }

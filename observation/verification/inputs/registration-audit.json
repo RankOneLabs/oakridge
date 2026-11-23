@@ -11,7 +11,7 @@
         "expected_head": null
       },
       "forge": {
-        "owner": "RankOneLabs",
+        "namespace": "RankOneLabs",
         "path": "oakridge",
         "build_base": "epic/grade-pray",
         "final_base": "epic/grade-pray"

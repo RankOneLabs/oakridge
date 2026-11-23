@@ -1,4 +1,5 @@
 import { decodePullRequestObserveInput, type PullRequestObserveInput } from "../operations/pull-request-observe";
+import { OPERATION_KEYS } from "../operations/registry";
 import { readAssessmentFacts } from "./assessment-facts";
 import { artifactSchemaVersions } from "../adapters/observation-schema-version";
 import { CoreClient, compileDefinition } from "../core-client/client";
@@ -250,7 +251,9 @@ export async function readMergeStatusSource(db: Kysely<DB>, location: UnitLocati
         .where("artifact", "=", "pr").orderBy("seq", "desc").executeTakeFirst(),
       trx.selectFrom("authority.effect_intent").select("payload").where("run_id", "=", run_id).where("unit_id", "=", unit_id)
         .where((eb) => eb(eb.ref("payload", "->>").key("worker").key("kind"), "=", "code"))
-        .where((eb) => eb(eb.ref("payload", "->>").key("worker").key("operation"), "=", "pull_request.observe"))
+        .where((eb) => eb(eb.ref("payload", "->>").key("worker").key("operation"), "in", [
+          OPERATION_KEYS.pull_request_observe, OPERATION_KEYS.pull_request_inspect,
+        ]))
         .orderBy("created_at", "desc").orderBy("id", "desc").executeTakeFirst(),
     ]);
     if (!intent) return { intent: null, latest_revision_id: pr?.id ?? null };

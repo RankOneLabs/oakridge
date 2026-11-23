@@ -6,7 +6,7 @@
         "id": "C1",
         "repository_key": "oakridge",
         "title": "C1",
-        "scope": "Scope",
+        "change_scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R1",
@@ -33,7 +33,7 @@
         "id": "C1",
         "repository_key": "oakridge",
         "title": "C1",
-        "scope": "Scope",
+        "change_scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R1",
@@ -47,7 +47,7 @@
         "id": "C2",
         "repository_key": "oakridge",
         "title": "C2",
-        "scope": "Scope",
+        "change_scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R2",
@@ -71,7 +71,7 @@
         "id": "C1",
         "repository_key": "oakridge",
         "title": "C1",
-        "scope": "Scope",
+        "change_scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R1",
@@ -85,7 +85,7 @@
         "id": "C2",
         "repository_key": "oakridge",
         "title": "C2",
-        "scope": "Scope",
+        "change_scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R2",
@@ -112,7 +112,7 @@
         "id": "C1",
         "repository_key": "oakridge",
         "title": "C1",
-        "scope": "Scope",
+        "change_scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R1",
@@ -130,7 +130,7 @@
         "id": "C2",
         "repository_key": "oakridge",
         "title": "C2",
-        "scope": "Scope",
+        "change_scope": "Scope",
         "allocations": [
           {
             "requirement_id": "R2",

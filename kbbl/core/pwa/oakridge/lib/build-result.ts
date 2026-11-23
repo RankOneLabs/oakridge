@@ -40,24 +40,26 @@ export interface FieldError { field: string; detail: string }
 
 /** Reported evidence has its own capture contract, which allows absent prose. */
 export function parseTestEvidence(value: unknown, field: string): Result<TestEvidence, FieldError> {
-  if (!isRecord(value) || typeof value.passed !== "number" || typeof value.failed !== "number")
+  const failed = isRecord(value) ? (value.failing_tests ?? value.failed) : undefined;
+  if (!isRecord(value) || typeof value.passed !== "number" || typeof failed !== "number")
     return { ok: false, error: { field, detail: "expected test counts" } };
   return { ok: true, value: {
-    passed: value.passed, failed: value.failed,
-    output: textOrNull(value.output), summary: textOrNull(value.summary), cargo_test_output: textOrNull(value.cargo_test_output),
+    passed: value.passed, failed,
+    output: textOrNull(value.output), summary: textOrNull(value.test_notes ?? value.summary), cargo_test_output: textOrNull(value.cargo_test_output),
   } };
 }
 
 /** Select the portion of a schema-checked build publication a specialized view can show. */
 export function asBuildSummary(value: unknown): BuildResult | null {
-  if (!isRecord(value) || typeof value.summary !== "string"
+  const summary = isRecord(value) ? (value.change_overview ?? value.summary) : undefined;
+  if (!isRecord(value) || typeof summary !== "string"
     || !Array.isArray(value.changed_files) || !value.changed_files.every((file) => typeof file === "string")
     || !Array.isArray(value.known_issues) || !value.known_issues.every((issue) =>
       isRecord(issue) && typeof issue.description === "string" && SEVERITIES.some((severity) => severity === issue.severity))) return null;
   const tests = parseTestEvidence(value.tests, "tests");
   if (!tests.ok) return null;
   const metadata = isRecord(value.delegated_session_metadata) ? value.delegated_session_metadata : null;
-  return { summary: value.summary, changed_files: value.changed_files, known_issues: value.known_issues, tests: tests.value,
+  return { summary, changed_files: value.changed_files, known_issues: value.known_issues, tests: tests.value,
     head_sha: textOrNull(value.head_sha), repository_key: textOrNull(value.repository_key),
     delegated_session_metadata: metadata && { cohort_id: textOrNull(metadata.cohort_id), branch: textOrNull(metadata.branch) } };
 }

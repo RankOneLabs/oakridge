@@ -136,6 +136,6 @@ export const registrations: readonly Registration[] = [
     study.expand.observed_state, study.expand.pr, study.expand.pr_state,
     study.freeze.observed_state, study.freeze.pr, study.freeze.pr_state,
     study.integration.manual_merge_target, study.integration.observed_state, study.integration.pr, study.integration.pr_state,
-    study.prepare.workspace,
+    study.repository_setup.workspace,
   ].map((key) => register(key, [])),
 ];

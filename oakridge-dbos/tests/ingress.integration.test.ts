@@ -352,7 +352,7 @@ test("a PR-dependent launch commits when its gated-review URL answers an HTTP er
       body: JSON.stringify({ request_id: crypto.randomUUID(), definition_id, input: {
         title: "Reachable integration", spec: "test", final_merge_policy: "require_merge", primary_repository_key: "app",
         repositories: [{ key: "app", preparation: { repository_path: "/tmp", expected_head: null },
-          forge: { owner: "oakridge-test", path: "app", build_base: "develop", final_base: "main" } }] } }) });
+          forge: { namespace: "oakridge-test", path: "app", build_base: "develop", final_base: "main" } }] } }) });
     expect(response.status).toBe(201);
     const { run_id } = await response.json();
     expect((await authority.db.selectFrom("authority.run").select("id").where("id", "=", run_id).executeTakeFirst())?.id).toBe(run_id);
@@ -371,7 +371,7 @@ test("launch retries replay before defaults, skill pins and health, and reject c
   const body = { request_id, definition_id, input: {
     title: "Replay launch", spec: "test", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: "/tmp", expected_head: null },
-      forge: { owner: "oakridge-test", path: "app", build_base: "develop", final_base: "main" } }] } };
+      forge: { namespace: "oakridge-test", path: "app", build_base: "develop", final_base: "main" } }] } };
   const sendTo = (app: IntegrationApp, content: unknown) => app.request("/api/runs", { method: "POST",
     headers: { "content-type": "application/json" }, body: JSON.stringify(content) });
   const original = await sendTo(integrationApp("gated-review"), body);

@@ -1,9 +1,7 @@
 {
-  "source": "/api/definitions/510c4dcadf5f18460cc2be030286f1a78b21541cd17a448686f49a9facc07c1c",
-  "captured_at": "2026-11-16T00:07:39.116Z",
-  "run_id": null,
+  "source": "/api/definitions/679c0feac7800c6695734f602f0a6230be24f16e6a2290f1593a82ef97c5b39c",
   "definition": {
-    "definition_id": "510c4dcadf5f18460cc2be030286f1a78b21541cd17a448686f49a9facc07c1c",
+    "definition_id": "679c0feac7800c6695734f602f0a6230be24f16e6a2290f1593a82ef97c5b39c",
     "bundle": {
       "key": "fan_out",
       "root": "$root",

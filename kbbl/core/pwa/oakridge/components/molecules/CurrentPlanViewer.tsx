@@ -26,7 +26,7 @@ function CohortCard({ row: { cohort, cohort_index: cohortIndex, wave_number }, i
     </div>
     <p className="font-medium">{cohort.title}</p>
     <div className={artifactLabelClass}>Scope</div>
-    <p className="text-sm text-[var(--text-secondary)]">{cohort.scope}</p>
+    <p className="text-sm text-[var(--text-secondary)]">{cohort.change_scope ?? cohort.scope}</p>
     <div className={artifactLabelClass}>Allocations</div>
     <ul className="space-y-2">{selectAllocations(cohort, props.context?.spec ?? null).map((allocation, index) => <li key={allocation.requirement_id} className="space-y-1">
       <div className="flex flex-wrap items-center gap-2">

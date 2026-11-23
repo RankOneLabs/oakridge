@@ -3,7 +3,7 @@
 Apply the feedback to the previous plan and republish `plan`. If `approved_plan` renders as anything other than none, republish the supplied plan unchanged, byte for byte in content. Raise a blocker if the feedback asks for a design change to that plan.
 
 Every `plan_body` field is required.
-- `question`
+- `research_question`
 - `hypotheses` with `{id, statement}` entries
 - `cases` with `{id, group, is_control}` entries
 - `groups` with `{id, case_ids}` entries that partition the case IDs

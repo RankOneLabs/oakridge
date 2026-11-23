@@ -25,7 +25,7 @@ test("development detail preserves authored uses alongside compiled declarations
     expect(prompt.body).toBe(stored);
     expect([detail.prompts["development/build.md"].includes, detail.prompts["shared/raise-blocker.md"].includes]).toEqual([["shared/raise-blocker.md"], []]);
     expect(detail.workflow.stages.cohort?.workers.pr_watch).toEqual({ template: "pr_watch" });
-    expect(detail.effective_workflow.stages.cohort?.workers.pr_watch).toMatchObject({ kind: "code", operation: "pull_request.observe" });
+    expect(detail.effective_workflow.stages.cohort?.workers.pr_watch).toMatchObject({ kind: "code", operation: "pull_request.inspect" });
     const authored = detail.workflow.stages.planning?.reviews?.plan_review;
     expect(authored && "decisions" in authored ? authored.decisions : null).toMatchObject({ set: "accept_or_request" });
     expect(detail.effective_workflow.stages.planning?.reviews?.plan_review?.decisions).toHaveProperty("accept");

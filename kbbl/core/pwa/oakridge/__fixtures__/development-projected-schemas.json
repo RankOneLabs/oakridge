@@ -679,7 +679,7 @@
           "schema": "enum(spec_update, operator_decision, implementation_note)"
         },
         {
-          "key": "question",
+          "key": "decision_prompt",
           "schema": "optional(text)"
         },
         {

@@ -24,18 +24,32 @@ export const selectRequirementsByStatus = (analysis: CurrentAnalysis): readonly 
   .map((requirement, index) => ({ requirement, index, status: requirementStatus(requirement) }))
   .sort((left, right) => REQUIREMENT_STATUS_ORDER.indexOf(left.status) - REQUIREMENT_STATUS_ORDER.indexOf(right.status) || left.index - right.index);
 export interface CodeHotspot { readonly path: string; readonly references: readonly FindingReference[] }
+export function selectFindingCitations(finding: CurrentFinding) {
+  return (finding.supporting_citations ?? finding.evidence ?? []).flatMap((citation) => {
+    const location = citation.citation_location ?? citation.ref;
+    return location ? [{ kind: citation.kind, location, detail: citation.detail }] : [];
+  });
+}
 export function selectCodeHotspots(analysis: CurrentAnalysis): CodeHotspot[] {
   const groups = new Map<string, FindingReference[]>();
   for (const reference of selectAnalysisFindings(analysis)) {
-    const paths = new Set([...reference.finding.expected_change_locations.map((location) => location.path), ...reference.finding.evidence.filter((evidence) => evidence.kind === "file").map((evidence) => evidence.ref)]);
+    const paths = new Set([...reference.finding.expected_change_locations.map((location) => location.path),
+      ...selectFindingCitations(reference.finding).filter((citation) => citation.kind === "file").map((citation) => citation.location)]);
     for (const path of paths) groups.set(path, [...(groups.get(path) ?? []), reference]);
   }
   return [...groups].map(([path, references]) => ({ path, references }));
 }
+export const selectFindingResolution = (finding: CurrentFinding) => finding.finding_resolution ?? finding.resolution;
+export const selectDecisionPrompt = (resolution: ReturnType<typeof selectFindingResolution>) =>
+  resolution?.decision_prompt ?? resolution?.question ?? null;
+
 export const selectOperatorDecisions = (analysis: CurrentAnalysis) => selectAnalysisFindings(analysis)
-  .filter(({ finding }) => finding.resolution?.kind === "operator_decision")
-  .map((reference) => ({ ...reference, question: reference.finding.resolution?.question ?? null,
-    alternatives: reference.finding.resolution?.alternatives ?? [], chosen: reference.finding.resolution?.chosen ?? "undecided" }));
+  .flatMap((reference) => {
+    const resolution = selectFindingResolution(reference.finding);
+    return resolution?.kind === "operator_decision"
+      ? [{ ...reference, prompt: selectDecisionPrompt(resolution), alternatives: resolution.alternatives ?? [], chosen: resolution.chosen ?? "undecided" }]
+      : [];
+  });
 export function selectRequirementFindings(requirement: CanonicalRequirement, analysis: CurrentAnalysis | null) {
   const references = analysis ? selectAnalysisFindings(analysis) : [];
   return requirement.analysis_finding_ids.map((id) => ({ id, reference: references.find(({ finding }) => finding.id === id) ?? null }));

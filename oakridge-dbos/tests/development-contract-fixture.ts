@@ -4,8 +4,8 @@ import type { AnalysisBody, SpecBody, PlanCohort, BriefBody, AssessmentBody } fr
 export const APPROVED_ANALYSIS: AnalysisBody = {
   requirements: [{ id: "req-a", text: "Build the thing.", source_refs: ["Goal"], findings: [{
     id: "finding-a", severity: "info", observation: "Approved analysis for spec update.",
-    evidence: [{ kind: "file", ref: "README.md", detail: "The existing implementation supports this change." }],
-    expected_change_locations: [], resolution: { kind: "implementation_note", text: "Use the existing implementation pattern." },
+    supporting_citations: [{ kind: "file", citation_location: "README.md", detail: "The existing implementation supports this change." }],
+    expected_change_locations: [], finding_resolution: { kind: "implementation_note", text: "Use the existing implementation pattern." },
   }] }],
 };
 export const REVISED_ANALYSIS: AnalysisBody = {
@@ -20,7 +20,7 @@ export const APPROVED_SPEC: SpecBody = {
   non_goals: [],
 };
 export const COHORTS: PlanCohort[] = [{ id: "a", depends_on: [] }, { id: "b", depends_on: ["a"] }].map(cohort => ({
-  ...cohort, repository_key: "app", title: `Cohort ${cohort.id}`, scope: "part",
+  ...cohort, repository_key: "app", title: `Cohort ${cohort.id}`, change_scope: "part",
   allocations: [{ requirement_id: "req-a", contribution: `Contribution ${cohort.id} to the thing.` }],
   rationale: "Each contribution is independently reviewable.",
 }));
@@ -34,11 +34,11 @@ export function developmentBrief(id: string): BriefBody {
 }
 export const COHORT_ASSESSMENT: AssessmentBody = {
   head_sha: "abc123", verdict: "pass",
-  item_assessments: [{ subject: { kind: "build_item", id: "item-a" }, status: "met", observation: "it works", evidence: [{ kind: "test", ref: "development-e2e" }] }],
-  additional_findings: [], proposals: [], verifications: [], test_evidence: { passed: 1, failed: 0 },
+  item_assessments: [{ subject: { kind: "build_item", id: "item-a" }, status: "met", observation: "it works", supporting_citations: [{ kind: "test", citation_location: "development-e2e" }] }],
+  additional_findings: [], proposals: [], verifications: [], test_evidence: { passed: 1, failing_tests: 0 },
 };
 export const INTEGRATION_ASSESSMENT: AssessmentBody = {
   head_sha: "abc123", verdict: "pass",
-  item_assessments: [{ subject: { kind: "requirement", id: "req-a" }, status: "met", observation: "Both cohort changes pass together.", evidence: [{ kind: "test", ref: "integration suite", detail: "Both cohort changes pass together on the integration branch." }] }],
-  additional_findings: [], proposals: [], verifications: [], test_evidence: { passed: 2, failed: 0 },
+  item_assessments: [{ subject: { kind: "requirement", id: "req-a" }, status: "met", observation: "Both cohort changes pass together.", supporting_citations: [{ kind: "test", citation_location: "integration suite", detail: "Both cohort changes pass together on the integration branch." }] }],
+  additional_findings: [], proposals: [], verifications: [], test_evidence: { passed: 2, failing_tests: 0 },
 };

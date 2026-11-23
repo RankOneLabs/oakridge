@@ -52,5 +52,31 @@
     },
     "output_schema": "$value",
     "error_codes": []
+  },
+  {
+    "key": "pull_request.inspect",
+    "input_schema": {
+      "query": {
+        "owner": "ident",
+        "name": "ident",
+        "head_owner": "ident",
+        "head_branch": "text",
+        "base_branch": "text",
+        "pr_url": "text"
+      }
+    },
+    "output_schema": {
+      "status": "enum(open, merged, closed_unmerged)",
+      "pr_sequence": "integer",
+      "observed_link": "text",
+      "head_sha": "optional(text)",
+      "merged_at": "optional(text)"
+    },
+    "error_codes": [
+      "discovery_unsupported",
+      "auth",
+      "provider_rejected",
+      "pull_request_mismatch"
+    ]
   }
 ]

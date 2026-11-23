@@ -122,6 +122,15 @@ test("unparseable refs stay text, test and output stay agent-reported, and empty
   expect(await oakridgeEvidence.collect(finding([]), key(EVIDENCE_SUPPORT_ID), source)).toMatchObject({ state: "ready" });
 });
 
+test("keeps the published pointer for the current citation fields", async () => {
+  const cited = { ...finding([]), selected_value: { supporting_citations: [{ kind: "test", citation_location: "alpha.test.ts" }] } };
+  expect(await oakridgeEvidence.collect(cited, key(EVIDENCE_SUPPORT_ID), sources({ commit_in: null })))
+    .toMatchObject({ state: "ready", references: [{ ref: "subject" }, {
+      source: "reported", item_path: "/item_assessments/0/supporting_citations/0",
+      content: { kind: "test", citation: "alpha.test.ts" },
+    }, { ref: "task_context:0" }] });
+});
+
 const reportedTests = { passed: 41, failed: 1, output: "1 failed", summary: "core suite",
   cargo_test_output: "test decision_record::reads ... FAILED\ntest result: FAILED. 41 passed; 1 failed" };
 

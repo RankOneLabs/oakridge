@@ -522,19 +522,19 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
         "head_sha": "abc123",
         "verdict": "pass",
         "item_assessments": [{"subject": {"kind": "build_item", "id": "item-a"},
-            "status": "met", "observation": "Verified", "evidence": [{"kind": "test", "ref": "assessment-schema"}]}],
+            "status": "met", "observation": "Verified", "supporting_citations": [{"kind": "test", "citation_location": "assessment-schema"}]}],
         "additional_findings": [],
         "proposals": [],
         "verifications": [],
-        "test_evidence": {"passed": 1, "failed": 0}
+        "test_evidence": {"passed": 1, "failing_tests": 0}
     });
 
     assert!(check_type(&program.input, &body));
     let mut explicit_nulls = body.clone();
     explicit_nulls["test_evidence"] = serde_json::json!({
-        "passed": 1, "failed": 0, "output": null, "summary": null, "cargo_test_output": null
+        "passed": 1, "failing_tests": 0, "output": null, "test_notes": null, "cargo_test_output": null
     });
-    explicit_nulls["item_assessments"][0]["evidence"][0]["detail"] = Value::Null;
+    explicit_nulls["item_assessments"][0]["supporting_citations"][0]["detail"] = Value::Null;
     assert!(check_type(&program.input, &explicit_nulls));
     for field in [
         "head_sha",

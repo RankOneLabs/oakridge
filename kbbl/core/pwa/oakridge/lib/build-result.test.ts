@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  parseTestEvidence,
   selectFileScopeComparison,
   selectOrderedIssues,
   selectTestEvidenceText,
@@ -22,6 +23,15 @@ describe("selectFileScopeComparison", () => {
 });
 
 describe("issue and evidence selectors", () => {
+  test("reads failure counts from both current and retained publications", () => {
+    expect(parseTestEvidence({ passed: 3, failing_tests: 2 }, "tests")).toEqual(
+      parseTestEvidence({ passed: 3, failed: 2 }, "tests"),
+    );
+    expect(parseTestEvidence({ passed: 3, failing_tests: 2 }, "tests")).toMatchObject({
+      ok: true, value: { passed: 3, failed: 2 },
+    });
+  });
+
   test("orders issues blocking first", () => {
     const ordered = selectOrderedIssues([
       { severity: "info", description: "a" },

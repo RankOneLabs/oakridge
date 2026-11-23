@@ -37,7 +37,7 @@ fn repository(key: &str) -> Value {
     json!({
         "key": key,
         "preparation": {"repository_path": format!("/repos/{key}"), "expected_head": null},
-        "forge": {"owner": "acme", "path": key, "build_base": "epic", "final_base": "main"}
+        "forge": {"namespace": "acme", "path": key, "build_base": "epic", "final_base": "main"}
     })
 }
 
@@ -280,7 +280,7 @@ const PLAN_REVIEW: ReviewOf<'static> = ReviewOf {
 
 fn plan() -> Value {
     json!({
-        "question": "Do the omissions affect the outcome?",
+        "research_question": "Do the omissions affect the outcome?",
         "hypotheses": [{"id": "h1", "statement": "Isolated omissions reduce scores."}],
         "cases": [
             {"id": "g1_a", "group": "g1", "is_control": true},
@@ -353,8 +353,8 @@ fn paid_report(digest: &str, run_key: &str) -> Value {
     json!({
         "run_key": run_key, "generator_digest": digest,
         "qualifications": qualifications(SLICE_CASES), "paid_results": results,
-        "criteria_marks": [{"id": "sc1", "status": "met", "evidence": "Both cases scored"}],
-        "trigger_marks": [{"id": "it1", "status": "not_fired", "evidence": "Control replayed"}],
+        "criteria_marks": [{"id": "sc1", "status": "met", "mark_reason": "Both cases scored"}],
+        "trigger_marks": [{"id": "it1", "status": "not_fired", "mark_reason": "Control replayed"}],
         "proposed_changes": []
     })
 }
@@ -362,14 +362,14 @@ fn paid_report(digest: &str, run_key: &str) -> Value {
 fn met_item(kind: &str, id: &str) -> Value {
     json!({
         "subject": {"kind": kind, "id": id}, "status": "met",
-        "observation": "Evidence verified", "evidence": [{"kind": "test", "ref": id}]
+        "observation": "Evidence verified", "supporting_citations": [{"kind": "test", "citation_location": id}]
     })
 }
 
 fn assessment(head_sha: &str, items: Vec<Value>) -> Value {
     json!({
         "head_sha": head_sha, "item_assessments": items, "additional_findings": [],
-        "proposals": [], "verifications": [], "test_evidence": {"passed": 1, "failed": 0}, "verdict": "pass"
+        "proposals": [], "verifications": [], "test_evidence": {"passed": 1, "failing_tests": 0}, "verdict": "pass"
     })
 }
 
@@ -386,7 +386,7 @@ fn expansion(group: &str, digest: &str, case_ids: &[&str]) -> Value {
     json!({
         "build": {
             "cohort_id": group, "title": group, "head_sha": format!("{group}_head"),
-            "summary": "Fixtures and qualifications", "changed_files": []
+            "change_overview": "Fixtures and qualifications", "changed_files": []
         },
         "generator_digest": digest, "case_ids": case_ids,
         "qualifications": qualifications(case_ids)
@@ -401,7 +401,7 @@ fn expansion_assessment(head_sha: &str, case_ids: &[&str]) -> Value {
 }
 
 fn pr(branch: &str) -> Value {
-    json!({"change_request_link": format!("https://forge/oakridge/{branch}"), "branch": branch, "summary": "Study fixtures"})
+    json!({"change_request_link": format!("https://forge/oakridge/{branch}"), "branch": branch, "change_overview": "Study fixtures"})
 }
 
 fn slice_output(artifact: &str) -> WorkerOutput<'_> {
@@ -417,7 +417,7 @@ impl Run {
         let mut run = Self::launch(Value::Null);
         run.write(
             WorkerOutput {
-                unit: "run/prepare/oakridge",
+                unit: "run/repository_setup/oakridge",
                 worker: "git",
                 artifact: "workspace",
             },
@@ -490,7 +490,7 @@ impl Run {
     }
 
     fn observe_pr(&mut self, branch: &str, state: &str) {
-        let body = json!({"state":state,"number":1,"url":pr(branch)["change_request_link"]});
+        let body = json!({"status":state,"pr_sequence":1,"observed_link":pr(branch)["change_request_link"]});
         self.write(
             WorkerOutput {
                 unit: DESIGN,
@@ -899,7 +899,7 @@ fn approved_plan_reaches_design() {
     let mut run = Run::launch(plan.clone());
     run.publish(Publication {
         output: WorkerOutput {
-            unit: "run/prepare/oakridge",
+            unit: "run/repository_setup/oakridge",
             worker: "git",
             artifact: "workspace",
         },

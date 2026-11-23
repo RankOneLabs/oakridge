@@ -165,6 +165,6 @@ export const registrations: readonly Registration[] = [
   ...[
     development.cohort.build_result, development.cohort.observed_state, development.cohort.pr, development.cohort.pr_state,
     development.integration.manual_merge_target, development.integration.observed_state, development.integration.pr, development.integration.pr_state,
-    development.prepare.workspace,
+    development.repository_setup.workspace,
   ].map((key) => register(key, [])),
 ];

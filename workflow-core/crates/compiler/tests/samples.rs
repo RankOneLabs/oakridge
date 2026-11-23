@@ -173,7 +173,7 @@ fn the_development_workflow_compiles_against_its_prompts_and_the_registry() {
             "cohort",
             "integration",
             "planning",
-            "prepare"
+            "repository_setup"
         ]
     );
 }

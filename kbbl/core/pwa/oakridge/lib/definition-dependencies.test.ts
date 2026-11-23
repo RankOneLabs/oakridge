@@ -13,8 +13,8 @@ test("development references retain bindings and outcome paths", () => {
   const result = selectDefinitionDependencies(source("development"));
   expect(result.edges.filter((edge) => edge.kind === "explicit")).toEqual([]);
   expect(result.edges.map((edge) => `${edge.from}->${edge.to}`).sort()).toEqual([
-    "prepare->analysis", "prepare->planning", "analysis->planning", "planning->briefs", "analysis->briefs", "prepare->briefs",
-    "briefs->implementation", "prepare->implementation", "implementation->integration", "briefs->integration", "prepare->integration",
+    "repository_setup->analysis", "repository_setup->planning", "analysis->planning", "planning->briefs", "analysis->briefs", "repository_setup->briefs",
+    "briefs->implementation", "repository_setup->implementation", "implementation->integration", "briefs->integration", "repository_setup->integration",
     "planning->implementation", "analysis->integration",
   ].sort());
   expect(result.references).toHaveLength(15);

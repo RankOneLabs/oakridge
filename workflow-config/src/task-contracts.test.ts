@@ -23,7 +23,7 @@ const analysisCases: {name: string; change: (body: AnalysisBody) => void; messag
   {name: "empty source references", change: b => { b.requirements[0].source_refs = []; }, message: "Every requirement must cite at least one source reference."},
   {name: "missing findings", change: b => { b.requirements[0].findings = []; }, message: "Every requirement needs at least one finding."},
   {name: "globally repeated finding", change: b => { b.requirements[1].findings[0].id = "F1"; }, message: "Finding ids must be unique across the analysis."},
-  {name: "single operator alternative", change: b => { b.requirements[0].findings[0].resolution = {kind: "operator_decision", text: "Choice", question: "Which?", alternatives: [{option: "A", consequence: "A"}]}; }, message: "An operator_decision resolution needs a question and at least two alternatives."},
+  {name: "single operator alternative", change: b => { b.requirements[0].findings[0].finding_resolution = {kind: "operator_decision", text: "Choice", decision_prompt: "Which?", alternatives: [{option: "A", consequence: "A"}]}; }, message: "An operator_decision resolution needs a question and at least two alternatives."},
 ];
 for (const c of analysisCases) test(`analysis refuses ${c.name} with its message`, async () => {
   const body = analysis(); c.change(body);
@@ -32,13 +32,13 @@ for (const c of analysisCases) test(`analysis refuses ${c.name} with its message
 for (const state of ["blocking", "unchosen", "blank", "unknown", "resolved"] as const) test(`analysis accept availability: ${state}`, async () => {
   const body = analysis(), finding = body.requirements[0].findings[0];
   if (state === "blocking") finding.severity = "blocking";
-  else finding.resolution = {kind: "operator_decision", text: "Choose", question: "Which?", alternatives: [{option: "A", consequence: "A"}, {option: "B", consequence: "B"}], ...(state === "unchosen" ? {} : {chosen: state === "resolved" ? "A" : state === "blank" ? "" : "C"})};
+  else finding.finding_resolution = {kind: "operator_decision", text: "Choose", decision_prompt: "Which?", alternatives: [{option: "A", consequence: "A"}, {option: "B", consequence: "B"}], ...(state === "unchosen" ? {} : {chosen: state === "resolved" ? "A" : state === "blank" ? "" : "C"})};
   const run = await analysisRun(body);
   const accept = run.result.reviews.find(r => r.review === "analysis_review")?.decisions.find(d => d.decision === "accept");
   expect([accept ? accept.is_available ?? true : false, accept?.disabled_reason ?? null]).toEqual(state === "resolved" ? [true, null] : [false, guardReason]);
 });
 test("analysis findings with absent optional resolution validate and are acceptable", async () => {
-  const body = analysis(); delete body.requirements[0].findings[0].resolution;
+  const body = analysis(); delete body.requirements[0].findings[0].finding_resolution;
   const run = await analysisRun(body);
   expect(run.result.snapshot.decisions.filter(d => d.kind === "validation")).toEqual([]);
   const accept = run.result.reviews.find(r => r.review === "analysis_review")?.decisions.find(d => d.decision === "accept");
@@ -119,18 +119,18 @@ const assessmentCases: {name: string; change: (b: AssessmentBody) => void; messa
   {name: "duplicate item", change: b => {b.item_assessments.push(b.item_assessments[0]);}, message: "Assessment item ids must be unique."},
   {name: "wrong kind", change: b => {b.item_assessments[0].subject.kind = "requirement";}, message: "Cohort assessment items must be build items."},
   {name: "wrong head", change: b => {b.head_sha = "wrong";}, message: "Assessment head_sha must match"},
-  {name: "unknown related item", change: b => {b.additional_findings.push({id: "F1", severity: "info", observation: "Note", related_build_item_ids: ["unknown"], evidence: []});}, message: "Additional finding links must name brief build items."},
-  {name: "unexplained test failure", change: b => {b.test_evidence.failed = 1;}, message: "Failed tests require an unmet item"},
+  {name: "unknown related item", change: b => {b.additional_findings.push({id: "F1", severity: "info", observation: "Note", related_build_item_ids: ["unknown"], supporting_citations: []});}, message: "Additional finding links must name brief build items."},
+  {name: "unexplained test failure", change: b => {b.test_evidence.failing_tests = 1;}, message: "Failed tests require an unmet item"},
 ];
 for (const c of assessmentCases) test(`assessment refuses ${c.name}`, async () => {const body = assessment();c.change(body);expect(validationFeedback(await assessmentRun(body))).toContain(c.message);});
 for (const integration of [false, true]) for (const severity of ["blocking", "warning", "info"] as const) for (const verdict of ["pass", "pass_with_notes", "fail"] as const) test(`${integration ? "integration" : "cohort"} verdict ${verdict} with ${severity} finding`, async () => {
-  const body = assessment(integration ? "requirement" : "build_item"); body.additional_findings = [{id: "F1", severity, observation: "Evidence", related_build_item_ids: [], evidence: []}];body.verdict = verdict;
+  const body = assessment(integration ? "requirement" : "build_item"); body.additional_findings = [{id: "F1", severity, observation: "Evidence", related_build_item_ids: [], supporting_citations: []}];body.verdict = verdict;
   const run = await assessmentRun(body, integration);
   const expected = severity === "blocking" ? "fail" : severity === "warning" ? "pass_with_notes" : "pass";
   expect(validationFeedback(run).includes("Assessment verdict must match")).toBe(verdict !== expected);
 });
 for (const status of ["partial", "not_met"] as const) test(`${status} items require fail and explain failed tests`, async () => {
-  const body = assessment();body.item_assessments[0].status = status;body.verdict = "fail";body.test_evidence.failed = 1;
+  const body = assessment();body.item_assessments[0].status = status;body.verdict = "fail";body.test_evidence.failing_tests = 1;
   expect((await assessmentRun(body)).result.snapshot.decisions.filter(d => d.kind === "validation")).toEqual([]);
 });
 for (const defect of ["wrong kind", "missing", "unknown"] as const) test(`integration refuses ${defect} requirement`, async () => {
@@ -156,7 +156,7 @@ interface CohortScenario { name: string; cohorts: PlanCohort[]; ready: string[];
 const scenarios = JSON.parse(readFileSync(resolve(root, "workflow-config/samples/development-cohorts.json"), "utf8")) as CohortScenario[];
 async function planRun(cohorts: PlanCohort[]) {
   const run = await TestRun.launch(development, {title: "Contract", spec: "Original", repositories: [repository], primary_repository_key: "oakridge", final_merge_policy: "require_merge"});
-  await run.publish("git", "workspace", workspace, "run/prepare/oakridge");await run.end("git", "run/prepare/oakridge");
+  await run.publish("git", "workspace", workspace, "run/repository_setup/oakridge");await run.end("git", "run/repository_setup/oakridge");
   await run.publish("author", "analysis", analysis(), "run/analysis");await run.end("author", "run/analysis");await run.decide("analysis_review", "accept", "analysis", {}, "run/analysis");
   await run.publish("spec_editor", "spec", spec(), "run/analysis");await run.end("spec_editor", "run/analysis");await run.decide("spec_review", "accept", "spec", {}, "run/analysis");
   await run.publish("planner", "plan", {cohorts}, "run/planning");await run.end("planner", "run/planning");await run.decide("plan_review", "accept", "plan", {}, "run/planning");
@@ -253,7 +253,7 @@ test("assessment decisions declare operations while assessment changes stay plai
 
 test("duplicate additional finding ids are refused", async () => {
   const body = assessment();
-  const finding = {id: "F1", severity: "info" as const, observation: "Note", related_build_item_ids: [], evidence: [] as []};
+  const finding = {id: "F1", severity: "info" as const, observation: "Note", related_build_item_ids: [], supporting_citations: [] as []};
   body.additional_findings = [finding, finding];
   expect(validationFeedback(await assessmentRun(body))).toContain("Additional finding ids must be unique.");
 });

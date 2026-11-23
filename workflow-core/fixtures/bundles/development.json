@@ -25,10 +25,10 @@
     "pr_watch": {
       "kind": "code",
       "label": "PR watcher",
-      "operation": "pull_request.observe",
+      "operation": "pull_request.inspect",
       "when": "pr_opened",
       "inputs": {
-        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.path, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
+        "query": "{owner: input.repository.forge.namespace, name: input.repository.forge.path, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
       },
       "every": "2m",
       "produces": [
@@ -74,7 +74,7 @@
       "forge": "forge"
     },
     "forge": {
-      "owner": "ident",
+      "namespace": "ident",
       "path": "ident",
       "build_base": "text",
       "final_base": "text"
@@ -89,10 +89,10 @@
       "key": "ident",
       "workspace": "workspace"
     },
-    "pr_status": {
-      "state": "enum(open, merged, closed_unmerged)",
-      "number": "integer",
-      "url": "text",
+    "pull_request_inspection": {
+      "status": "enum(open, merged, closed_unmerged)",
+      "pr_sequence": "integer",
+      "observed_link": "text",
       "head_sha": "optional(text)",
       "merged_at": "optional(text)"
     },
@@ -103,16 +103,16 @@
     },
     "test_evidence": {
       "passed": "integer",
-      "failed": "integer",
+      "failing_tests": "integer",
       "output": "optional(text)",
-      "summary": "optional(text)",
+      "test_notes": "optional(text)",
       "cargo_test_output": "optional(text)"
     },
     "item_assessment": {
       "subject": "assessment_subject",
       "status": "enum(met, partial, not_met)",
       "observation": "text",
-      "evidence": "list(evidence_ref)"
+      "supporting_citations": "list(evidence_ref)"
     },
     "assessment_body": {
       "head_sha": "text",
@@ -125,29 +125,29 @@
     },
     "evidence_ref": {
       "kind": "enum(file, test, output)",
-      "ref": "text",
+      "citation_location": "text",
       "detail": "optional(text)"
     },
     "pr_body": {
       "change_request_link": "text",
       "branch": "text",
-      "summary": "text",
+      "change_overview": "text",
       "review_status": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
     },
     "completed_cohort": "outcome_of(cohort)",
     "finding_evidence": {
       "kind": "enum(file, search, test, output)",
-      "ref": "text",
+      "citation_location": "text",
       "detail": "text"
     },
     "change_location": {
       "path": "text",
       "symbol": "optional(text)"
     },
-    "resolution": {
+    "finding_resolution": {
       "kind": "enum(spec_update, operator_decision, implementation_note)",
       "text": "text",
-      "question": "optional(text)",
+      "decision_prompt": "optional(text)",
       "alternatives": "optional(list({option: text, consequence: text}))",
       "chosen": "optional(text)"
     },
@@ -155,9 +155,9 @@
       "id": "ident",
       "severity": "severity",
       "observation": "text",
-      "evidence": "list(finding_evidence)",
+      "supporting_citations": "list(finding_evidence)",
       "expected_change_locations": "list(change_location)",
-      "resolution": "optional(resolution)"
+      "finding_resolution": "optional(finding_resolution)"
     },
     "analysis_requirement": {
       "id": "ident",
@@ -188,7 +188,7 @@
       "id": "ident",
       "repository_key": "ident",
       "title": "text",
-      "scope": "text",
+      "change_scope": "text",
       "allocations": "list(allocation)",
       "depends_on": "list(ident)",
       "rationale": "text"
@@ -223,7 +223,7 @@
     "build_body": {
       "repository_key": "optional(ident)",
       "head_sha": "text",
-      "summary": "text",
+      "change_overview": "text",
       "changed_files": "list(text)",
       "tests": "test_evidence",
       "delegated_session_metadata": "optional(build_metadata)",
@@ -231,7 +231,7 @@
     },
     "build_metadata": {
       "cohort_id": "optional(ident)",
-      "session_id": "optional(ident)",
+      "delegated_session": "optional(ident)",
       "branch": "optional(ident)"
     },
     "assessment_subject": {
@@ -243,7 +243,7 @@
       "severity": "severity",
       "observation": "text",
       "related_build_item_ids": "list(ident)",
-      "evidence": "list(evidence_ref)"
+      "supporting_citations": "list(evidence_ref)"
     }
   },
   "run": {
@@ -252,10 +252,10 @@
       "builders": 4
     },
     "units": {
-      "prepare": {
+      "repository_setup": {
         "for_each": "input.repositories",
         "key": "each.key",
-        "stage": "prepare",
+        "stage": "repository_setup",
         "input": {
           "repository": "each"
         }
@@ -264,7 +264,7 @@
         "stage": "analysis",
         "input": {
           "spec": "input.spec",
-          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
+          "workspace": "require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace"
         }
       },
       "planning": {
@@ -272,7 +272,7 @@
         "input": {
           "spec": "analysis.outcome.spec",
           "repositories": "input.repositories",
-          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
+          "workspace": "require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace"
         }
       },
       "briefs": {
@@ -283,7 +283,7 @@
         "pool": "writers",
         "input": {
           "assignment": "{cohort: each, requirements: filter(analysis.outcome.spec.requirements, contains(map(each.allocations, item.requirement_id), item.id))}",
-          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
+          "workspace": "require(lookup(map(repository_setup, repository_setup.outcome), key, input.primary_repository_key)).workspace"
         }
       },
       "implementation": {
@@ -295,7 +295,7 @@
         "input": {
           "brief": "each",
           "repository": "require(lookup(input.repositories, key, each.repository_key))",
-          "workspace": "require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace",
+          "workspace": "require(lookup(map(repository_setup, repository_setup.outcome), key, each.repository_key)).workspace",
           "cohort": "require(lookup(planning.outcome.plan.cohorts, id, each.cohort_id))"
         }
       },
@@ -305,7 +305,7 @@
         "stage": "integration",
         "input": {
           "repository": "each",
-          "workspace": "require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace",
+          "workspace": "require(lookup(map(repository_setup, repository_setup.outcome), key, each.key)).workspace",
           "cohorts": "filter(map(implementation, implementation.outcome), item.repository_key == each.key)",
           "briefs": "filter(map(briefs, briefs.outcome.brief), item.repository_key == each.key)",
           "final_merge_policy": "input.final_merge_policy",
@@ -319,7 +319,7 @@
     }
   },
   "stages": {
-    "prepare": {
+    "repository_setup": {
       "input": {
         "repository": "repository"
       },
@@ -379,7 +379,7 @@
               "message": "Finding ids must be unique across the analysis."
             },
             {
-              "check": "every(flatten(map(analysis.requirements, item.findings)), not present(item.resolution) or require(item.resolution).kind != \"operator_decision\" or (present(require(item.resolution).question) and present(require(item.resolution).alternatives) and len(require(require(item.resolution).alternatives)) >= 2))",
+              "check": "every(flatten(map(analysis.requirements, item.findings)), not present(item.finding_resolution) or require(item.finding_resolution).kind != \"operator_decision\" or (present(require(item.finding_resolution).decision_prompt) and present(require(item.finding_resolution).alternatives) and len(require(require(item.finding_resolution).alternatives)) >= 2))",
               "message": "An operator_decision resolution needs a question and at least two alternatives."
             }
           ]
@@ -460,7 +460,7 @@
               "effect": "approve",
               "label": "Accept",
               "when": {
-                "check": "every(flatten(map(analysis.requirements, item.findings)), item.severity != \"blocking\" and (not present(item.resolution) or require(item.resolution).kind != \"operator_decision\" or (default(require(item.resolution).chosen, \"\") != \"\" and contains(map(require(require(item.resolution).alternatives), item.option), default(require(item.resolution).chosen, \"\")))))",
+                "check": "every(flatten(map(analysis.requirements, item.findings)), item.severity != \"blocking\" and (not present(item.finding_resolution) or require(item.finding_resolution).kind != \"operator_decision\" or (default(require(item.finding_resolution).chosen, \"\") != \"\" and contains(map(require(require(item.finding_resolution).alternatives), item.option), default(require(item.finding_resolution).chosen, \"\")))))",
                 "reason": "Resolve every blocking finding and choose an option for every operator decision before accepting the analysis."
               }
             },
@@ -708,10 +708,10 @@
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
         "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
-        "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
-        "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link",
+        "closed_pr": "pr_state_current and latest(pr_state).status == \"closed_unmerged\"",
+        "merged_pr": "observed_state_current and latest(observed_state).status == \"merged\""
       },
       "artifacts": {
         "build_result": {
@@ -770,18 +770,18 @@
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
             {
-              "check": "assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "check": "assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
         },
         "pr_state": {
           "kind": "status_record",
-          "schema": "pr_status"
+          "schema": "pull_request_inspection"
         },
         "observed_state": {
           "kind": "status_record",
-          "schema": "pr_status"
+          "schema": "pull_request_inspection"
         }
       },
       "workers": {
@@ -906,16 +906,16 @@
         "pr_published": "published(pr)",
         "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
         "watch_base": "input.repository.forge.final_base",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
-        "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
-        "final_state": "pr_state_current and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))"
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).observed_link == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).observed_link == latest(pr).change_request_link",
+        "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).status == \"closed_unmerged\"",
+        "final_state": "pr_state_current and (latest(pr_state).status == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).status == \"closed_unmerged\"))"
       },
-      "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
+      "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).status == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).status == \"closed_unmerged\"))))",
       "outcome": {
         "repository_key": "input.repository.key",
         "change_request_link": "latest(pr).change_request_link",
-        "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
+        "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).status == \"merged\")"
       },
       "input": {
         "repository": "repository",
@@ -934,7 +934,7 @@
         },
         "pr_state": {
           "kind": "status_record",
-          "schema": "pr_status"
+          "schema": "pull_request_inspection"
         },
         "manual_merge_target": {
           "kind": "external_reference",
@@ -944,7 +944,7 @@
         },
         "observed_state": {
           "kind": "status_record",
-          "schema": "pr_status"
+          "schema": "pull_request_inspection"
         },
         "assessment": {
           "kind": "assessment",
@@ -987,7 +987,7 @@
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
             {
-              "check": "assessment.test_evidence.failed == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "check": "assessment.test_evidence.failing_tests == 0 or (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)",
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]

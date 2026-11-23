@@ -13,7 +13,7 @@ schemas:
       expected_head: optional(text)
     forge: forge
   forge:
-    owner: ident
+    namespace: ident
     path: ident
     build_base: text
     final_base: text
@@ -25,10 +25,10 @@ schemas:
   prepared:
     key: ident
     workspace: workspace
-  pr_status:
-    state: enum(open, merged, closed_unmerged)
-    number: integer
-    url: text
+  pull_request_inspection:
+    status: enum(open, merged, closed_unmerged)
+    pr_sequence: integer
+    observed_link: text
     head_sha: optional(text)
     merged_at: optional(text)
   severity: enum(blocking, warning, info)
@@ -37,15 +37,15 @@ schemas:
     severity: severity
   test_evidence:
     passed: integer
-    failed: integer
+    failing_tests: integer
     output: optional(text)
-    summary: optional(text)
+    test_notes: optional(text)
     cargo_test_output: optional(text)
   item_assessment:
     subject: assessment_subject
     status: enum(met, partial, not_met)
     observation: text
-    evidence: list(evidence_ref)
+    supporting_citations: list(evidence_ref)
   assessment_body:
     head_sha: text
     item_assessments: list(item_assessment)
@@ -56,12 +56,12 @@ schemas:
     verdict: enum(pass, pass_with_notes, fail)
   evidence_ref:
     kind: enum(file, test, output)
-    ref: text
+    citation_location: text
     detail: optional(text)
   pr_body:
     change_request_link: text
     branch: text
-    summary: text
+    change_overview: text
     review_status: optional(enum(draft, ready, changes_requested, approved, merged, closed))
 decisions:
   accept_or_request:
@@ -77,10 +77,10 @@ workers:
   pr_watch:
     kind: code
     label: PR watcher
-    operation: pull_request.observe
+    operation: pull_request.inspect
     when: pr_opened
     inputs:
-      query: "{owner: input.repository.forge.owner, name: input.repository.forge.path,
+      query: "{owner: input.repository.forge.namespace, name: input.repository.forge.path,
         head_owner: input.workspace.push_remote_owner, head_branch:
         latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
     every: 2m
@@ -103,7 +103,7 @@ reviews:
         fields:
           feedback: What must change in the replacement pull request?
 stages:
-  prepare:
+  repository_setup:
     input:
       repository: repository
     artifacts:
@@ -139,7 +139,7 @@ stages:
         schema: pr_body
       pr_state:
         kind: status_record
-        schema: pr_status
+        schema: pull_request_inspection
       manual_merge_target:
         kind: external_reference
         view: pull_request
@@ -147,7 +147,7 @@ stages:
         schema: pr_body
       observed_state:
         kind: status_record
-        schema: pr_status
+        schema: pull_request_inspection
     workers:
       pr_watch:
         template: pr_watch
@@ -195,22 +195,22 @@ stages:
       pr_published: published(pr)
       pr_opened: pr_published and latest(pr).change_request_link != ""
       watch_base: input.repository.forge.final_base
-      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).observed_link
         == latest(pr).change_request_link
       observed_state_current: published(pr) and published(observed_state) and
-        latest(observed_state).url == latest(pr).change_request_link
+        latest(observed_state).observed_link == latest(pr).change_request_link
       closed_pr: input.final_merge_policy == "require_merge" and pr_state_current and
-        latest(pr_state).state == "closed_unmerged"
-      final_state: pr_state_current and (latest(pr_state).state == "merged" or
+        latest(pr_state).status == "closed_unmerged"
+      final_state: pr_state_current and (latest(pr_state).status == "merged" or
         (input.final_merge_policy == "allow_close_without_merge" and
-        latest(pr_state).state == "closed_unmerged"))
+        latest(pr_state).status == "closed_unmerged"))
     done_when: approved(assessment) and pr_published and
       (approved(manual_merge_target) or (observed_state_current and
-      (latest(observed_state).state == "merged" or (input.final_merge_policy ==
-      "allow_close_without_merge" and latest(observed_state).state ==
+      (latest(observed_state).status == "merged" or (input.final_merge_policy ==
+      "allow_close_without_merge" and latest(observed_state).status ==
       "closed_unmerged"))))
     outcome:
       repository_key: input.repository.key
       change_request_link: latest(pr).change_request_link
       is_merged: approved(manual_merge_target) or (observed_state_current and
-        latest(observed_state).state == "merged")
+        latest(observed_state).status == "merged")
