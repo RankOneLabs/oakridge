@@ -61,7 +61,7 @@ test("merge status uses the watch intent on design, expansion, freeze and integr
     await run.end("freezer", freezer);
     await check(freezer, 4);
     await run.code("pr_watch", freezer);
-    expect((await run.decide("freeze_review", "request_changes", "freeze", { payload: { feedback: "Confirm manifests" } }, freezer)).status).toBe(201);
+    expect((await run.decide("freeze_review", "ask_for_revision", "freeze", { payload: { feedback: "Confirm manifests" } }, freezer)).status).toBe(201);
     await run.publish("freezer", "freeze", freeze, { location: freezer });
     await run.publish("freezer", "pr", pr("freeze", 4), { location: freezer });
     await run.end("freezer", freezer);

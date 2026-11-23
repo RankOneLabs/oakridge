@@ -106,7 +106,7 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
       if (!response.ok) throw new Error(`${artifact} refused: ${await response.text()}`);
     };
     switch (workerOf(turn)) {
-      case "author":
+      case "requirements_analyst":
         await publish("analysis", turn.predecessor("analysis") ? REVISED_ANALYSIS : APPROVED_ANALYSIS);
         break;
       case "spec_editor":
@@ -326,12 +326,12 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     readonly repository_keys: readonly string[]; readonly created_at: string; readonly updated_at: string }[] }).items.find((item) => item.run_id === run_id);
   const brief_sessions = [...stub.sessions.values()].filter((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``)
     && session.spec.initial_prompt.includes("worker `writer`"));
-  const early_session_workspaces = ["author", "spec_editor", "planner", "writer"].map((worker) => {
+  const early_session_workspaces = ["requirements_analyst", "spec_editor", "planner", "writer"].map((worker) => {
     const sessions = stub.sessionsFor((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``)
       && session.spec.initial_prompt.includes(`worker \`${worker}\``));
     return sessions.map((session) => [session.spec.workdir, session.spec.worktree?.base_ref]);
   });
-  const analysis_and_plan_prompts_omit_checkout = ["author", "planner"].every((worker) =>
+  const analysis_and_plan_prompts_omit_checkout = ["requirements_analyst", "planner"].every((worker) =>
     stub.sessionsFor((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``)
       && session.spec.initial_prompt.includes(`worker \`${worker}\``))
       .every((session) => session.inputs.every((input) => !input.text.includes(repository))));
@@ -361,7 +361,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     merged_cohorts_without_confirmation: ["a", "b"],
     run_summary: ["Two cohorts", ["app"], true],
     brief_sessions: [[2, "ended"]],
-    early_session_workspaces: ["author", "spec_editor", "planner", "writer"].map(() => [[repository, "origin/develop"]]),
+    early_session_workspaces: ["requirements_analyst", "spec_editor", "planner", "writer"].map(() => [[repository, "origin/develop"]]),
     analysis_and_plan_prompts_omit_checkout: true,
     prepared_head_vs_checkout: [remote_base_head, true],
   });
@@ -389,7 +389,7 @@ test("analysis and canonical spec need approval after revision", async () => {
   const first = await eventually("first analysis review", reviewTarget);
   expect([await revisionCount("analysis"), await revisionCount("spec"), await revisionCount("tasks")]).toEqual([1, 0, 0]);
   const change = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/analysis_review/decide`,
-    { request_id: crypto.randomUUID(), decision: "request_changes", target: first, payload: { feedback: "Clarify the finding." } });
+    { request_id: crypto.randomUUID(), decision: "ask_for_revision", target: first, payload: { feedback: "Clarify the finding." } });
   expect(change.status).toBe(201);
   const revised = await eventually("revised analysis review", async () => {
     const target = await reviewTarget();
@@ -407,7 +407,7 @@ test("analysis and canonical spec need approval after revision", async () => {
   const beforeSpecApproval = await db.selectFrom("authority.unit").select("status").where("id", "=", `${run_id}/planning`).executeTakeFirst();
   expect(beforeSpecApproval?.status.kind).toBe("not_started");
   const specChange = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/spec_review/decide`,
-    { request_id: crypto.randomUUID(), decision: "request_changes", target: specTarget, payload: { feedback: "Clarify the approved edit." } });
+    { request_id: crypto.randomUUID(), decision: "ask_for_revision", target: specTarget, payload: { feedback: "Clarify the approved edit." } });
   expect(specChange.status).toBe(201);
   const revisedSpecTarget = await eventually("revised spec review after changes", async () => {
     const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
@@ -732,7 +732,7 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   });
   expect(authorization.status).toBe(201);
   const requested = await api("POST", `${base}/reviews/integration_review/decide`, {
-    request_id: crypto.randomUUID(), decision: "request_changes", target: old_review.target,
+    request_id: crypto.randomUUID(), decision: "ask_for_revision", target: old_review.target,
     ...await approvalFields("integration_review", old_review.target), dispositions: [{ kind: "dispatch", item: item.id, instruction, recipients }],
   });
   if (requested.status !== 201) throw new Error(await requested.text());

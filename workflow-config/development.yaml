@@ -190,7 +190,7 @@ stages:
           - check: published(analysis) and every(spec.requirements, len(item.acceptance_conditions) > 0)
             message: Every specification requirement needs at least one acceptance condition.
     workers:
-      author:
+      requirements_analyst:
         kind: agent
         label: Author
         prompts:
@@ -229,7 +229,7 @@ stages:
             when:
               check: 'every(flatten(map(analysis.requirements, item.findings)), item.severity != "blocking" and (not present(item.finding_resolution) or require(item.finding_resolution).kind != "operator_decision" or (default(require(item.finding_resolution).chosen, "") != "" and contains(map(require(require(item.finding_resolution).alternatives), item.option), default(require(item.finding_resolution).chosen, "")))))'
               reason: Resolve every blocking finding and choose an option for every operator decision before accepting the analysis.
-          request_changes:
+          ask_for_revision:
             effect: request_changes
             label: Request changes
             fields:
@@ -246,7 +246,7 @@ stages:
           accept:
             effect: approve
             label: Accept
-          request_changes:
+          ask_for_revision:
             effect: request_changes
             label: Request changes
             fields:
@@ -309,7 +309,7 @@ stages:
         decisions:
           set: accept_or_request
           overrides:
-            request_changes:
+            ask_for_revision:
               fields:
                 feedback: What must the plan change?
     done_when: approved(plan)
@@ -370,7 +370,7 @@ stages:
         decisions:
           set: accept_or_request
           overrides:
-            request_changes:
+            ask_for_revision:
               fields:
                 feedback: What must the brief change?
     done_when: approved(brief)
@@ -588,7 +588,7 @@ stages:
             effect: approve
             operation: approve_assessment
             label: Accept
-          request_changes:
+          ask_for_revision:
             effect: request_changes
             operation: dispatch_feedback
             label: Send to integrator

@@ -8,8 +8,8 @@ import type { DefinitionId } from "./definition-identity";
 const guardReason = "Resolve every blocking finding and choose an option for every operator decision before accepting the analysis.";
 async function analysisRun(body = analysis()) {
   const run = await TestRun.launch(stageWorkflow("analysis"), { spec: "Original specification", workspace });
-  await run.publish("author", "analysis", body);
-  await run.end("author");
+  await run.publish("requirements_analyst", "analysis", body);
+  await run.end("requirements_analyst");
   return run;
 }
 async function specRun(body: SpecBody) {
@@ -55,9 +55,9 @@ for (const c of specCases) test(`spec refuses ${c.name}`, async () => {const bod
 test("spec review reopens analysis and reruns the editor in revise mode", async () => {
   const run = await specRun(spec());await run.end("spec_editor");
   await run.decide("spec_review", "request_analysis_changes", "spec", {feedback: "Clarify R1"});
-  expect(run.wanted("author").action.mode.kind).toBe("revise");
+  expect(run.wanted("requirements_analyst").action.mode.kind).toBe("revise");
   const revised = analysis(); revised.requirements[0].text = "Clarified R1";
-  await run.publish("author", "analysis", revised);await run.end("author");
+  await run.publish("requirements_analyst", "analysis", revised);await run.end("requirements_analyst");
   expect(() => run.wanted("spec_editor")).toThrow();
   await run.decide("analysis_review", "accept", "analysis");
   const editor = run.wanted("spec_editor");
@@ -156,8 +156,8 @@ interface CohortScenario { name: string; cohorts: PlanCohort[]; ready: string[];
 const scenarios = JSON.parse(readFileSync(resolve(root, "workflow-config/samples/development-cohorts.json"), "utf8")) as CohortScenario[];
 async function planRun(cohorts: PlanCohort[]) {
   const run = await TestRun.launch(development, {title: "Contract", spec: "Original", repositories: [repository], primary_repository_key: "oakridge", final_merge_policy: "require_merge"});
-  await run.publish("git", "workspace", workspace, "run/repository_setup/oakridge");await run.end("git", "run/repository_setup/oakridge");
-  await run.publish("author", "analysis", analysis(), "run/analysis");await run.end("author", "run/analysis");await run.decide("analysis_review", "accept", "analysis", {}, "run/analysis");
+  await run.publish("prepare_repository", "workspace", workspace, "run/repository_setup/oakridge");await run.end("prepare_repository", "run/repository_setup/oakridge");
+  await run.publish("requirements_analyst", "analysis", analysis(), "run/analysis");await run.end("requirements_analyst", "run/analysis");await run.decide("analysis_review", "accept", "analysis", {}, "run/analysis");
   await run.publish("spec_editor", "spec", spec(), "run/analysis");await run.end("spec_editor", "run/analysis");await run.decide("spec_review", "accept", "spec", {}, "run/analysis");
   await run.publish("planner", "plan", {cohorts}, "run/planning");await run.end("planner", "run/planning");await run.decide("plan_review", "accept", "plan", {}, "run/planning");
   return run;
@@ -265,7 +265,7 @@ test("a spec sent back for analysis changes cannot be accepted until the editor 
   const refused = await run.apply({ kind: "operator_decided", unit: "run/unit", review: "spec_review", decision: "accept", target: stale, payload: {} }).then(() => null, (error: unknown) => String(error));
   expect([refused === null ? "applied" : "refused", run.result.snapshot.units.find(u => u.id === "run/unit")?.status.kind]).toEqual(["refused", "active"]);
   const revised = analysis(); revised.requirements[0].text = "Clarified R1";
-  await run.publish("author", "analysis", revised);await run.end("author");await run.decide("analysis_review", "accept", "analysis");
+  await run.publish("requirements_analyst", "analysis", revised);await run.end("requirements_analyst");await run.decide("analysis_review", "accept", "analysis");
   await run.publish("spec_editor", "spec", spec());await run.end("spec_editor");
   const fresh = run.latest("spec").id;
   expect([fresh !== stale, run.result.reviews.find(r => r.review === "spec_review")?.target, run.result.snapshot.units.find(u => u.id === "run/unit")?.status.kind]).toEqual([true, fresh, "active"]);

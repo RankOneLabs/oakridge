@@ -125,7 +125,7 @@ test("spend_request_review requests changes and approves the revised request", a
     const initial = await prepareSlice(run);
     await run.end("spend_requester");
 
-    await committed(await run.decide("spend_request_review", "request_changes", "spend_request", { payload: { feedback: "Clarify cap" } }));
+    await committed(await run.decide("spend_request_review", "ask_for_revision", "spend_request", { payload: { feedback: "Clarify cap" } }));
     expect(await authority.db.selectFrom("authority.keyed_execution").select("id").execute()).toEqual([]);
     const revised = await run.publish("spend_requester", "spend_request", spend, { subject: initial.subject! });
     await run.end("spend_requester");

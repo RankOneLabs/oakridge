@@ -418,7 +418,7 @@ impl Run {
         run.write(
             WorkerOutput {
                 unit: "run/repository_setup/oakridge",
-                worker: "git",
+                worker: "prepare_repository",
                 artifact: "workspace",
             },
             workspace("oakridge"),
@@ -616,7 +616,7 @@ fn paid_runner_is_never_wanted_while_spend_is_unapproved() {
     run.decided(
         "spend_request_review",
         "spend_request",
-        "request_changes",
+        "ask_for_revision",
         json!({"feedback":"Document the cap."}),
     );
     assert!(run.wants(DESIGN, "spend_requester"));
@@ -900,7 +900,7 @@ fn approved_plan_reaches_design() {
     run.publish(Publication {
         output: WorkerOutput {
             unit: "run/repository_setup/oakridge",
-            worker: "git",
+            worker: "prepare_repository",
             artifact: "workspace",
         },
         body: workspace("oakridge"),

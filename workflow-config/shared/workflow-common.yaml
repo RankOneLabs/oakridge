@@ -68,7 +68,7 @@ decisions:
     accept:
       effect: approve
       label: Accept
-    request_changes:
+    ask_for_revision:
       effect: request_changes
       label: Request changes
       fields:
@@ -111,7 +111,7 @@ stages:
         kind: record
         schema: workspace
     workers:
-      git:
+      prepare_repository:
         kind: code
         label: Git
         operation: repository.prepare

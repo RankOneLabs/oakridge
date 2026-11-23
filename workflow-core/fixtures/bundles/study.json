@@ -5,7 +5,7 @@
         "effect": "approve",
         "label": "Accept"
       },
-      "request_changes": {
+      "ask_for_revision": {
         "effect": "request_changes",
         "label": "Request changes",
         "fields": {
@@ -390,7 +390,7 @@
         }
       },
       "workers": {
-        "git": {
+        "prepare_repository": {
           "kind": "code",
           "label": "Git",
           "operation": "repository.prepare",
@@ -831,7 +831,7 @@
           "decisions": {
             "set": "accept_or_request",
             "overrides": {
-              "request_changes": {
+              "ask_for_revision": {
                 "fields": {
                   "feedback": "What must the plan change?"
                 }
@@ -854,7 +854,7 @@
               "effect": "approve",
               "label": "Approve spend"
             },
-            "request_changes": {
+            "ask_for_revision": {
               "effect": "request_changes",
               "label": "Request changes",
               "fields": {
@@ -1319,7 +1319,7 @@
           "decisions": {
             "set": "accept_or_request",
             "overrides": {
-              "request_changes": {
+              "ask_for_revision": {
                 "fields": {
                   "feedback": "What must the freeze change?"
                 }
@@ -1558,7 +1558,7 @@
               "operation": "approve_assessment",
               "label": "Accept"
             },
-            "request_changes": {
+            "ask_for_revision": {
               "effect": "request_changes",
               "operation": "dispatch_feedback",
               "label": "Send to integrator",

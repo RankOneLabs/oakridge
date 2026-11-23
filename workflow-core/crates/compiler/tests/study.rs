@@ -95,7 +95,10 @@ fn study_stages_run_in_order() {
 #[test]
 fn keyed_execution_requires_an_agent_with_a_subject() {
     let (definition, _) = study_definition();
-    for (stage, worker) in [("repository_setup", "git"), ("design", "designer")] {
+    for (stage, worker) in [
+        ("repository_setup", "prepare_repository"),
+        ("design", "designer"),
+    ] {
         let mut source = definition["source"].clone();
         source["stages"][stage]["workers"][worker]["keyed_execution"] = serde_json::json!(true);
         let decoded = decode_workflow(&serde_json::to_vec(&source).unwrap()).unwrap();
