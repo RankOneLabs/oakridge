@@ -3,7 +3,7 @@ import sample from "../__fixtures__/v2-adapter-sample.json";
 import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import planningRevise from "../__fixtures__/v2-planning-revise.json";
-import { retryUnit, sampleCohort as cohort, sampleRun as run, sampleUnits as units, withUnitFields } from "../__fixtures__/read-models";
+import { projectedReview, retryUnit, sampleCohort as cohort, sampleRun as run, sampleUnits as units, withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
 import type { OperatorRunEvent } from "../operator-contracts/projections/run-event";
 import type { OperatorAttemptView, OperatorOpenReview, OperatorUnitView } from "../operator-contracts/projections/unit-view";
@@ -39,7 +39,7 @@ describe("v2 development adapters", () => {
       listed: stages.value.find((stage) => stage.name === "prepare")?.artifacts.map((artifact) => artifact.type_id),
       capabilities: detail.value.capabilities,
       body: detail.value.revisions.at(-1)?.body,
-    }).toEqual({ listed: ["workspace"], capabilities: { reviewable: false, commentable: false, atom_editable: false, review_items: false },
+    }).toEqual({ listed: ["prepare.workspace"], capabilities: { reviewable: false, commentable: true, atom_editable: false, review_items: true },
       body: prepare.artifacts.find((artifact) => artifact.artifact_key === "workspace")?.latest_revision?.body });
   });
   it("offers a retry on a stalled scalar stage's single unit", () => {
@@ -47,7 +47,7 @@ describe("v2 development adapters", () => {
     const stages = unitToStages([analysis]);
     expect(stages.ok && stages.value[0]?.units?.map((unit) => [unit.unit_id, unit.is_retryable])).toEqual([["0", true]]);
   });
-  it("names the two analysis-stage sessions by the document they produce", () => {
+  it("uses the declared labels of the two analysis-stage workers", () => {
     const analysis = units.find((unit) => unit.stage === "analysis");
     const source = cohort.attempts.find((attempt) => attempt.kbbl_session_id);
     if (!analysis || !source) throw new Error("captured fixture lacks an agent attempt");
@@ -56,7 +56,7 @@ describe("v2 development adapters", () => {
         attempt: { ...source, worker, unit_id: analysis.unit_id } });
       return result.ok ? [result.value.stage_key, result.value.display_label] : null;
     });
-    expect(labels).toEqual([["analysis", "Spec analysis"], ["analysis", "Spec update"]]);
+    expect(labels).toEqual([["analysis", "Author"], ["analysis", "Spec editor"]]);
   });
   it("keeps internal PR observations out of the frozen artifact list", () => {
     const pr = cohort.artifacts.find((artifact) => artifact.artifact_key === "pr");
@@ -73,13 +73,13 @@ describe("v2 development adapters", () => {
       attemptToWorkOrder({ runId: run.run_id, stage: "cohort", unit: cohort, attempt }));
     if (sessions.some((result) => !result.ok)) throw new Error("fixture cohort session mapping failed");
     const rows = selectRunSessionRows(sessions.flatMap((result) => result.ok ? [result.value] : []));
-    expect(rows.map((row) => [row.attempt.stage_key, row.attempt.unit_id, row.attempt_number, row.attempt_count])).toEqual([
-      ["builder", cohort.collection_key, 1, 1], ["assessment", cohort.collection_key, 1, 1],
+    expect(rows.map((row) => [row.attempt.display_label, row.attempt.unit_id, row.attempt_number, row.attempt_count])).toEqual([
+      ["Builder", cohort.collection_key, 1, 1], ["Assessor", cohort.collection_key, 1, 1],
     ]);
   });
-  it("keeps the generic change action for pinned plain assessment reviews", () => {
+  it("uses each declared key for pinned plain assessment reviews", () => {
     const gates = reviewToGates(cohort);
-    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve", "request_revision"]);
+    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["accept", "request_build_changes"]);
   });
   it("gives successive assessment targets distinct review identities while retaining the declared decision key", () => {
     const offered = cohort.decisions.find((decision) => decision.submit.kind === "review" && decision.submit.decision === "request_build_changes");
@@ -115,7 +115,7 @@ describe("v2 development adapters", () => {
     if (!gates.ok || attempts.some((attempt) => !attempt.ok)) throw new Error("fixture cohort mapping failed");
     const rows = selectRunSidebarSessions({ sessions: { kind: "loaded", attempts: attempts.flatMap((attempt) => attempt.ok ? [attempt.value] : []) },
       gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set(), archivedSessionIds: new Set() }).rows;
-    expect(rows.filter((row) => row.requires_operator_action).map((row) => row.stage_key)).toEqual(["assessment"]);
+    expect(rows.filter((row) => row.requires_operator_action).map((row) => row.session_id)).toEqual([cohort.attempts.find((attempt) => attempt.worker === "assessor")?.kbbl_session_id]);
   });
   it("marks the builder session for a cohort merge confirmation", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) =>
@@ -149,8 +149,9 @@ describe("v2 development adapters", () => {
     const accept = cohort.decisions.find((decision) => decision.key === "accept");
     if (!accept || accept.submit.kind !== "review") throw new Error("captured fixture lacks an accept review");
     const target = `${cohort.unit_id}:input:1`;
-    const inputReview = withUnitFields(cohort, { artifacts: [], decisions: [{ ...accept,
-      submit: { ...accept.submit, review: "assessment_review", target_revision_id: target } }] });
+    const decisions = [{ ...accept, submit: { ...accept.submit, target_revision_id: target } }];
+    const inputReview = withUnitFields(cohort, { artifacts: [], decisions,
+      reviews: [projectedReview({ review: "assessment_review", of_artifact: "assessment", reviewed_revision_id: target }, decisions)] });
     const gates = reviewToGates(inputReview);
     expect(gates.ok && gates.value[0]?.artifact_revision_id).toBe(target);
   });
@@ -160,7 +161,7 @@ describe("v2 development adapters", () => {
   });
   it("maps revisions and dispatches the analysis, spec, and implementation viewers", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
-    expect(artifact.ok && artifact.value.component_id).toBe("dev-build-result-viewer");
+    expect(artifact.ok && artifact.value.component_id).toBe("build_result");
   });
   it("retains the cohort label so assessment revisions can find their brief", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
@@ -175,13 +176,13 @@ describe("v2 development adapters", () => {
     const attempt = attemptToWorkOrder({ runId: run.run_id, stage: "cohort", unit: cohort, attempt: builder });
     expect(attempt.ok && [attempt.value.reason, attempt.value.work_order_state, attempt.value.completed_at]).toEqual(["initial", "completed", null]);
   });
-  it("labels the shared brief writer without naming one cohort", () => {
+  it("labels the shared brief writer while retaining the unit it served", () => {
     const brief = units.find((unit) => unit.stage === "brief" && unit.attempts.some((attempt) => attempt.worker === "writer"));
     if (!brief) throw new Error("captured fixture lacks a brief writer attempt");
     const writer = brief.attempts.find((attempt) => attempt.worker === "writer");
     if (!writer) throw new Error("captured fixture lacks a brief writer attempt");
     const mapped = attemptToWorkOrder({ runId: run.run_id, stage: "brief", unit: brief, attempt: writer });
-    expect(mapped.ok && mapped.value.unit_id).toBe("shared writer");
+    expect(mapped.ok && [mapped.value.display_label, mapped.value.unit_id]).toEqual(["Brief writer", brief.collection_key]);
   });
   it("represents a planning revision in its reused kbbl session once", () => {
     const selected = latestAttemptPerSession(planningRevise.attempts as OperatorAttemptView[]);

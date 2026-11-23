@@ -195,4 +195,4 @@ export function parsePlan(body: unknown): Parsed<Plan> {
   });
 }
 
-export { parseCurrentPlan, type CurrentPlan, type CurrentCohort } from "./current-contract";
+export { parseCurrentPlan, type CurrentPlan, type CurrentCohort } from "./viewer-data";

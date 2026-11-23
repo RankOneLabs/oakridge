@@ -4,7 +4,7 @@ import specBody from "../__fixtures__/current-spec.json";
 import planBody from "../__fixtures__/current-plan.json";
 import briefBody from "../__fixtures__/current-brief.json";
 import unitBody from "../__fixtures__/resolved-assignment-unit.json";
-import { parseCanonicalSpec, parseCurrentAnalysis, parseCurrentPlan, parseCurrentBrief } from "./current-contract";
+import { parseCanonicalSpec, parseCurrentAnalysis, parseCurrentPlan, parseCurrentBrief } from "./viewer-data";
 import { requirementStatus, selectRequirementsByStatus, selectAnalysisCounts, selectCodeHotspots, selectOperatorDecisions, selectRequirementFindings } from "./current-analysis";
 import { selectParallelWaves } from "./plan-graph";
 import { selectAllocations, selectCurrentBuildItems } from "./current-brief";

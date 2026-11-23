@@ -3,7 +3,7 @@ import { readRunRequirementComposites } from "../client-requirements";
 import { definitionWithTaskSource, gradingIdentityField } from "./grading-config";
 import { selectReceivedContext, selectReceivedContextView } from "./received-context";
 import { selectParallelCohortRows } from "./plan-graph";
-import { parseCurrentPlan } from "./current-contract";
+import { parseCurrentPlan } from "./viewer-data";
 import unit from "../__fixtures__/resolved-assignment-unit.json";
 import planBody from "../__fixtures__/current-plan.json";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";

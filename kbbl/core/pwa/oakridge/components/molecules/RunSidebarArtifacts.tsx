@@ -62,7 +62,7 @@ export function RunSidebarArtifacts({ rows, allRows, totalCount, filter, onFilte
               type="button"
               className="or-run-sidebar__row-twin"
               onClick={() => onOpen(row.artifact_id, "secondary")}
-              aria-label={`Open ${row.type_id} v${row.version} in the second pane`}
+              aria-label={`Open ${artifactKeyLabel(row.type_id)} v${row.version} in the second pane`}
               data-testid="or-sidebar-artifact-twin"
             >
               ⧉

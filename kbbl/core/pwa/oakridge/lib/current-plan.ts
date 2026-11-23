@@ -1,4 +1,4 @@
-import type { CurrentPlan } from "./current-contract";
+import type { CurrentPlan } from "./viewer-data";
 import type { SubnavSection } from "./artifact-subnav";
 
 export type PlanSection = "graph" | "cohorts";

@@ -1,5 +1,5 @@
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
-import { cohortSchema, parseCurrent } from "./current-contract";
+import { readCohort } from "./viewer-data";
 import { selectReceivedContext } from "./received-context";
 
 
@@ -10,8 +10,8 @@ export function selectUnitRequirementIds(unit: OperatorUnitView): readonly strin
   if (assignment) return assignment.assignment.cohort.allocations.map((entry) => entry.requirement_id);
   const input = unit.input;
   if (input && typeof input === "object" && !Array.isArray(input) && "cohort" in input) {
-    const cohort = parseCurrent(cohortSchema, input.cohort, "parse_gate_cohort");
-    if (cohort.ok) return cohort.value.allocations.map((entry) => entry.requirement_id);
+    const cohort = readCohort(input.cohort);
+    if (cohort) return cohort.allocations.map((entry) => entry.requirement_id);
   }
   return undefined;
 }

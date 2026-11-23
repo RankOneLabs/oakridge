@@ -1,3 +1,5 @@
+import projectedSchemas from "../../core/pwa/oakridge/__fixtures__/development-projected-schemas.json";
+import { projectedReview } from "../../core/pwa/oakridge/__fixtures__/read-models";
 import { currentArtifactFixture } from "./current-artifact-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -35,6 +37,8 @@ afterAll(async () => { await browser?.close(); });
 
 const runId = capturedRun.run.run_id;
 const definition = definitionFixture.definition;
+const currentArtifactDefinition = { ...definition, bundle: { ...definition.bundle, schemas: projectedSchemas } };
+const artifactRun = { ...capturedRun.run, run_id: "run", definition_id: definition.definition_id };
 const v2Read = (path: string): Response | null => {
   if (path === "/oakridge/api/api/projects") return json({ items: [] });
   if (path === "/oakridge/api/api/definitions") return json({ items: [definition], next_cursor: null });
@@ -46,7 +50,7 @@ const v2Read = (path: string): Response | null => {
 };
 
 // Keep the browser's HTTP fixture on the same v2 contract as the client.
-test("browser starts a v2 workflow run from the frozen v1 launch form", async () => {
+test("browser starts a workflow run from the projected root input form", async () => {
   const launches: unknown[] = [];
   const requestedPaths: string[] = [];
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -75,18 +79,21 @@ test("browser starts a v2 workflow run from the frozen v1 launch form", async ()
     await page.goto(`${server.url.href}?launch`);
     await page.getByTestId("or-new-run-form").waitFor();
     await page.getByRole("option", { name: "development" }).waitFor({ state: "attached" });
-    await page.getByLabel("Epic title").fill("Ship the v1 UI");
+    await page.getByLabel("title", { exact: true }).fill("Ship the v1 UI");
+    await page.getByLabel("Use repository picker").check();
+    await page.getByLabel("primary repository key").fill("repo");
+    await page.getByLabel("final merge policy").selectOption("require_merge");
     await page.getByLabel("Repository 1 GitHub owner").fill("RankOneLabs");
     await page.getByLabel("Repository 1 GitHub name").fill("oakridge");
     await page.getByLabel("Repository 1 path").fill("/repo");
-    await page.getByLabel("Brief notes", { exact: true }).fill("Restore the operator UI");
+    await page.getByLabel("spec", { exact: true }).fill("Restore the operator UI");
     await page.getByRole("button", { name: "Per session" }).click();
     await page.getByLabel("cohort · builder model").selectOption("sonnet");
     await page.getByLabel("cohort · assessor model").selectOption("opus");
     await page.getByRole("button", { name: "Start Run" }).click();
     await page.waitForURL(`**#run/${runId}`);
     expect(launches).toHaveLength(1);
-    expect(launches[0]).toMatchObject({ definition_id: capturedRun.run.definition_id,
+    expect(launches[0]).toMatchObject({ definition_id: definition.definition_id,
       input: { title: "Ship the v1 UI", spec: "Restore the operator UI" },
       config: { sessions: { analysis: { author: {} }, planning: { planner: {} }, brief: { writer: {} },
         cohort: { builder: { model: "sonnet" }, assessor: { model: "opus" } }, integration: { integrator: { model: "opus" } } } } });
@@ -187,6 +194,8 @@ test.each([
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
+    if (path === "/oakridge/api/api/runs/run") return json(artifactRun);
+    if (path.startsWith("/oakridge/api/api/definitions/")) return json(currentArtifactDefinition);
     if (path === "/oakridge/api/api/runs/run/units") return Response.json([fixture.unit]);
     if (path === `/oakridge/api/api/runs/run/units/${encodeURIComponent(fixture.unit.unit_id)}/artifacts/${kind}`) return Response.json(fixture.detail);
     if (path.startsWith("/oakridge/")) return Response.json([]);
@@ -194,6 +203,7 @@ test.each([
   } });
   const page = await browser.newPage();
   try {
+    page.setDefaultTimeout(10_000);
     const errors: Error[] = [];
     page.on("pageerror", (error) => errors.push(error));
     await page.goto(`${server.url.href}?artifact=${kind}&unit=${encodeURIComponent(fixture.unit.unit_id)}`);
@@ -210,7 +220,7 @@ test("a rejected assessment shows one visible notice in each presentation", asyn
   const revision = detail.revisions[0];
   const submit = { kind: "review", review: "assessment_review", target_revision_id: revision.id } as const;
   const feedback = "Recheck the verdict.";
-  const reviewing: OperatorUnitView = { ...unit, recorded_decisions: [{
+  const assessmentReview: OperatorUnitView = { ...unit, recorded_decisions: [{
     id: "validation", decision_id: "validation", actor: null, reviewed_revision_id: revision.id, approved_assessment_revision_id: null, effect_target_revision_id: revision.id, review: "engine:validator", decision: "request_changes", effect: "request_changes",
     target_revision_id: revision.id, payload: { feedback }, created_at: revision.created_at,
   }], decisions: [
@@ -220,6 +230,7 @@ test("a rejected assessment shows one visible notice in each presentation", asyn
       fields: [{ key: "feedback", label: "Feedback" }], payload_schema: "{feedback: text}",
       submit: { ...submit, decision: "request_assessment_changes", effect: "request_changes" } },
   ] };
+  const reviewing = { ...assessmentReview, reviews: [projectedReview({ review: "assessment_review", of_artifact: "assessment", reviewed_revision_id: revision.id }, assessmentReview.decisions)] };
   const page = await browser.newPage();
   try {
     page.setDefaultTimeout(10_000);
@@ -227,6 +238,12 @@ test("a rejected assessment shows one visible notice in each presentation", asyn
       const path = new URL(route.request().url()).pathname;
       if (path === "/") return route.fulfill({ contentType: "text/html", body: pageHtml });
       if (path === "/entry.js") return route.fulfill({ contentType: "application/javascript", body: script });
+      if (path === "/oakridge/api/api/runs/run") return route.fulfill({ json: artifactRun });
+      if (path.startsWith("/oakridge/api/api/definitions/")) return route.fulfill({ json: currentArtifactDefinition });
+      if (path.endsWith("/assessments/assessment/status")) return route.fulfill({ json: {
+        unit: reviewing.unit_id, assessment_artifact: "assessment", assessment_revision: revision.id,
+        approval: { kind: "pending" }, unresolved_proposals: [], items: [], item_sources: [],
+      } });
       return route.fulfill({ json: path.endsWith("/units") ? [reviewing] : path.endsWith("/artifacts/assessment") ? detail : [] });
     });
     await page.goto("http://oakridge.test/?artifact=assessment&unit=run%2Fcohort");

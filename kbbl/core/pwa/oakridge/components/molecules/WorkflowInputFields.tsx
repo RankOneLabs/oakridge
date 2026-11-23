@@ -1,3 +1,4 @@
+import { TextArea } from "../../../components/atoms/TextArea";
 import { Select } from "../../../components/atoms/Select";
 import { TextInput } from "../../../components/atoms/TextInput";
 import type { LaunchField, LaunchInputDraft } from "../../lib/workflow-launch-input";
@@ -21,8 +22,8 @@ export function WorkflowInputFields({ fields, draft, onChange, disabled }: Workf
       <option value="">{optional ? "Unset" : "Select…"}</option>
       {variants.map((variant) => <option key={variant} value={variant}>{variant}</option>)}
     </Select> : shape.kind === "list" || shape.kind === "record"
-      ? <textarea {...props} rows={5} className="or-input" />
-      : shape.kind === "integer" ? <input {...props} className="or-input" type="number" /> : <TextInput {...props} />;
+      ? <TextArea {...props} rows={5} />
+      : shape.kind === "integer" ? <TextInput {...props} type="number" /> : <TextInput {...props} />;
     return <FormField key={key} label={label}>{control}</FormField>;
   });
 }

@@ -135,7 +135,7 @@ describe("run and unit status", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
       && decision.submit.decision === "confirm_merged"));
     if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
-    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", failure_code: PROVIDER_ERROR_CODES.invalid_instruction, detail: "Missing URL" },
+    expect(deriveStatus({ ...statusInputOf({ ...mergeUnit, reviews: [] }), attention: { kind: "stalled", failure_code: PROVIDER_ERROR_CODES.invalid_instruction, detail: "Missing URL" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code: "invalid_instruction", detail: "missing URL" } }
         : attempt) }).run).toBe("failed");

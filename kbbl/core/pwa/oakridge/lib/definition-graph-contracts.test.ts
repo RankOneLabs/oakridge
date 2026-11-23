@@ -1,4 +1,5 @@
 import { selectPromptRows } from "./prompt-inspector";
+import { BLOCKER_ARTIFACT, BLOCKER_REVIEW } from "../operator-contracts/constants";
 import { expect, test } from "vitest";
 import snapshot from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDefinitionDetail } from "../operator-contracts/projections/definition-view";
@@ -201,6 +202,7 @@ test("review loop graph and inspector derive cycles, conditions and prompt refer
     expect(node.annotations.done_when).toBe(stage.done_when);
     const model = selectStageInspectorModels(definition).get(name);
     for (const [key, review] of Object.entries(stage.reviews ?? {})) {
+      if (key === BLOCKER_REVIEW) continue;
       const decisions = Object.entries(review.decisions)
         .filter(([, decision]) => decision.effect === "request_changes")
         .map(([key]) => key);
@@ -272,7 +274,7 @@ test("review loop graph and inspector derive cycles, conditions and prompt refer
           model?.sections.workers.find((entry) => entry.key === key)?.evaluates,
         ).toBe(worker.evaluates ?? null);
         for (const [input, expression] of Object.entries(worker.inputs))
-          for (const artifact of Object.keys(stage.artifacts))
+          for (const artifact of Object.keys(stage.artifacts).filter((name) => name !== BLOCKER_ARTIFACT))
             if (expression === `latest(${artifact})`)
               expect(graph.edges).toContainEqual(
                 expect.objectContaining({

@@ -2,7 +2,7 @@ import type { ObservationEvidenceReference } from "../grading-contracts/grading/
 import type { ObservationJsonValue } from "../grading-contracts/domain/primitives";
 import { parseAssessmentFinding, type AssessmentFinding, type BuildItemFinding } from "./assessment";
 import { readBuildBrief, isBuildItem, type BuildItem, type BuildBrief } from "./build-brief";
-import { parseBuildResult, parseTestEvidence, type BuildResult, type TestEvidence } from "./build-result";
+import { asBuildSummary, parseTestEvidence, type BuildResult, type TestEvidence } from "./build-result";
 import { parseCohort, parsePlan, parsePlanCriterion, type Plan, type PlanCohort, type PlanCriterion } from "./plan";
 import { isSpecFinding, isSpecRequirement, type SpecFinding, type SpecRequirement } from "./spec-analysis";
 
@@ -62,8 +62,8 @@ export function decodeEvidenceContent(reference: ObservationEvidenceReference): 
       break;
     case "build_result": {
       if (source !== "revision") break;
-      const parsed = parseBuildResult(value);
-      if (parsed.ok) return { kind: "build_result", value: parsed.value };
+      const summary = asBuildSummary(value);
+      if (summary) return { kind: "build_result", value: summary };
       break;
     }
     case "requirement":

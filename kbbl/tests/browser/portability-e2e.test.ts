@@ -94,7 +94,7 @@ test("a renamed workflow runs from the browser through capture and grading, then
         });
         await page.goto(`${kbbl}/#oakridge/run/${run}`, { waitUntil: "domcontentloaded" });
         await page.getByTestId("or-sidebar-artifact").filter({ hasText: "appraisal" }).click();
-        await page.getByTestId("or-assessment-view").waitFor().catch(async (error: unknown) => {
+        await page.getByTestId("or-assessment-viewer").waitFor().catch(async (error: unknown) => {
           throw new Error(`The pinned assessment viewer did not render: ${await page.locator("body").innerText()}`, { cause: error });
         });
         await page.getByRole("button", { name: "Return the reader's notes", exact: true }).waitFor();

@@ -1,3 +1,4 @@
+import { Checkbox } from "../../../components/atoms/Checkbox";
 import { Select } from "../../../components/atoms/Select";
 import { useInstallStatus } from "../../hooks/useInstallStatus";
 import { selectLaunchBlock } from "../../state/install-status";
@@ -124,9 +125,13 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     if (useRepositoryPreset && repositoryField) {
       const preset = validateRepositoryInputs(repositories);
       if (!preset.ok) { setError(preset.error.detail); return; }
+      const item = repositoryField.shape.kind === "list" ? inputSchema.schemas.get(repositoryField.shape.item) : undefined;
+      const forgeKey = item?.kind === "record" ? item.fields.find((field) => field.key === "forge")?.schema : undefined;
+      const forge = forgeKey ? inputSchema.schemas.get(forgeKey) : undefined;
+      const repositoryNameKey = forge?.kind === "record" && forge.fields.some((field) => field.key === "path") ? "path" : "name";
       launchDraft = { ...draft, repositories: JSON.stringify(preset.repositories.map((repository) => ({
         key: repository.key, preparation: { repository_path: repository.path, expected_head: null },
-        forge: { owner: repository.forge_owner, name: repository.forge_name,
+        forge: { owner: repository.forge_owner, [repositoryNameKey]: repository.forge_name,
           build_base: repository.integration_branch, final_base: repository.integration_branch },
       }))) };
     }
@@ -197,7 +202,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           </Select>
         </FormField>
 
-        {repositoryField && <label><input type="checkbox" checked={useRepositoryPreset}
+        {repositoryField && <label><Checkbox type="checkbox" checked={useRepositoryPreset}
           onChange={(event) => setUseRepositoryPreset(event.target.checked)} /> Use repository picker</label>}
         {useRepositoryPreset && repositoryField && <RepositoryLaunchFields
           repositories={repositories}

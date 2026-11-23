@@ -1,5 +1,5 @@
 import type { MouseEvent } from "react";
-import type { CanonicalRequirement } from "../../lib/current-contract";
+import type { CanonicalRequirement } from "../../lib/viewer-data";
 import type { ViewerProps } from "../../artifactRegistry";
 import { Button } from "../../../components/atoms/Button";
 export function CurrentParseFailure({ body, detail }: { body: unknown; detail: string }) {

@@ -1,5 +1,5 @@
 import type { ViewerProps } from "../../artifactRegistry";
-import { parseCurrentBrief, type CurrentBrief } from "../../lib/current-contract";
+import { parseCurrentBrief, type CurrentBrief } from "../../lib/viewer-data";
 import { selectBriefSections, selectCurrentBuildItems, type BriefSection } from "../../lib/current-brief";
 import { selectFindingSelections } from "../../lib/grading";
 import { selectBriefItemPaths } from "../../lib/current-item-paths";

@@ -8,28 +8,15 @@ import sample from "../__fixtures__/v2-adapter-sample.json";
 import mergeFixture from "../__fixtures__/v2-cohort-merge.json";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { ParkedGate } from "../artifact-types";
-import type { RepositoryKey, RunState } from "../run-types";
-import { currentAdjudicationUnit } from "../__fixtures__/read-models";
-import { compositeId, reviewToGates } from "../adapters/core";
+import type { RunState } from "../run-types";
+import { currentAdjudicationUnit, projectedReview } from "../__fixtures__/read-models";
+import { reviewToGates } from "../adapters/core";
 
-function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {
-  return {
-    id,
-    gate_type: "artifact_approval",
-    gate_step: "artifact_approval",
-    run_id: "run-1",
-    stage_name: "build",
-    unit_id: "web",
-    repository_key: "web" as RepositoryKey,
-    artifact_revision_id: revision,
-    worktree: null,
-    resume_actions: ["approve", "request_revision"],
-    offered_decisions: ["approve", "request_revision"],
-    pr_url: null,
-    run_state: "active",
-    actionable: true,
-    ...overrides,
-  };
+function gate(unitId: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {
+  const unit = unitFor(unitId, revision);
+  const gates = reviewToGates(unit);
+  if (!gates.ok || !gates.value[0]) throw new Error("review gate absent");
+  return { ...gates.value[0], ...overrides };
 }
 
 function wrapper(client: QueryClient, value: ParkedGate, onComplete = vi.fn(), artifactRevisionId?: string) {
@@ -45,11 +32,12 @@ afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const capturedCohort = (sample.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "assessment_review"));
 if (!capturedCohort) throw new Error("captured fixture lacks an assessment review");
-const unitFor = (unitId: string, revision: string) => ({ ...capturedCohort, run_id: "run-1", unit_id: unitId,
-  decisions: capturedCohort.decisions.flatMap((decision) => {
-    if (decision.submit.kind !== "review" || decision.submit.review !== "assessment_review") return [];
-    return [{ ...decision, submit: { ...decision.submit, target_revision_id: revision } }];
-  }) });
+const unitFor = (unitId: string, revision: string): OperatorUnitView => {
+  const decisions = capturedCohort.decisions.map((decision) => decision.submit.kind === "review"
+    ? { ...decision, submit: { ...decision.submit, target_revision_id: revision } } : decision);
+  return { ...capturedCohort, run_id: "run-1", unit_id: unitId, decisions,
+    reviews: [projectedReview({ review: "assessment_review", of_artifact: "assessment", reviewed_revision_id: revision }, decisions)] };
+};
 function mockV2(units: readonly ReturnType<typeof unitFor>[], post: (init?: RequestInit) => Promise<Response>) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -91,12 +79,12 @@ describe("GateDecisionActions", () => {
     if (!gates.ok || !gates.value[0]) throw new Error("review gate absent");
     const fetch = vi.spyOn(globalThis, "fetch");
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    render(wrapper(client, { ...gates.value[0], resume_actions: ["approve", "request_revision"] }));
+    render(wrapper(client, { ...gates.value[0], resume_actions: ["accept", "request_build_changes"] }));
 
-    const button = screen.getByTestId("or-decision-approve") as HTMLButtonElement;
+    const button = screen.getByTestId("or-decision-accept") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent).toBe("Resolve blocking findings");
-    expect((screen.getByTestId("or-decision-request_revision") as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByTestId("or-decision-request_build_changes") as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(button);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -107,10 +95,10 @@ describe("GateDecisionActions", () => {
         ...decision, is_available: false, disabled_reason: "New blocking findings" })) }], async () =>
       json({ kind: "committed", run_id: "run-1", event_id: "unexpected" }));
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    render(wrapper(client, gate(compositeId({ kind: "gate", runId: "run-1", unitId: "unit-a", name: "assessment_review" }), "revision-a")));
+    render(wrapper(client, gate("unit-a", "revision-a")));
 
-    fireEvent.click(screen.getByTestId("or-decision-approve"));
-    fireEvent.click(screen.getByTestId("or-decision-approve"));
+    fireEvent.click(screen.getByTestId("or-decision-accept"));
+    fireEvent.click(screen.getByTestId("or-decision-accept"));
     expect((await screen.findByRole("alert")).textContent).toContain("New blocking findings");
     expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   });
@@ -159,31 +147,31 @@ describe("GateDecisionActions", () => {
       return json({ kind: "committed", run_id: "run-1", event_id: "decided" });
     });
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    render(wrapper(client, gate("gate-a", "revision-root"), vi.fn(), "revision-edited"));
+    render(wrapper(client, gate("unit-a", "revision-edited"), vi.fn(), "revision-edited"));
 
-    fireEvent.click(screen.getByTestId("or-decision-approve"));
-    fireEvent.click(screen.getByTestId("or-decision-approve"));
+    fireEvent.click(screen.getByTestId("or-decision-accept"));
+    fireEvent.click(screen.getByTestId("or-decision-accept"));
     await waitFor(() => expect(requestBody?.target).toBe("revision-edited"));
   });
 
   it("turns Approve into Confirm on the first click and records nothing yet", async () => {
     const fetchMock = mockV2([unitFor("unit-a", "revision-a")], async () => json({ kind: "committed", run_id: "run-1", event_id: "decided" }));
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    render(wrapper(client, gate("gate-a", "revision-a"), vi.fn()));
+    render(wrapper(client, gate("unit-a", "revision-a"), vi.fn()));
 
-    fireEvent.click(screen.getByTestId("or-decision-approve"));
-    expect([screen.getByTestId("or-decision-approve").textContent,
+    fireEvent.click(screen.getByTestId("or-decision-accept"));
+    expect([screen.getByTestId("or-decision-accept").textContent,
       fetchMock.mock.calls.some(([, init]) => init?.method === "POST")]).toEqual(["Confirm approval", false]);
   });
 
   it("returns the button to Approve when focus leaves it before the second click", async () => {
     mockV2([unitFor("unit-a", "revision-a")], async () => json({ kind: "committed", run_id: "run-1", event_id: "decided" }));
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    render(wrapper(client, gate("gate-a", "revision-a"), vi.fn()));
+    render(wrapper(client, gate("unit-a", "revision-a"), vi.fn()));
 
-    fireEvent.click(screen.getByTestId("or-decision-approve"));
-    fireEvent.blur(screen.getByTestId("or-decision-approve"));
-    expect(screen.getByTestId("or-decision-approve").textContent).toBe("Approve artifact");
+    fireEvent.click(screen.getByTestId("or-decision-accept"));
+    fireEvent.blur(screen.getByTestId("or-decision-accept"));
+    expect(screen.getByTestId("or-decision-accept").textContent).toBe("Accept");
   });
 
   it("resets decision state on a gate switch and ignores the previous gate response", async () => {
@@ -192,15 +180,15 @@ describe("GateDecisionActions", () => {
       () => new Promise<Response>((resolve) => { resolveRequest = resolve; }));
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const onComplete = vi.fn();
-    const view = render(wrapper(client, gate("gate-a", "revision-a"), onComplete));
+    const view = render(wrapper(client, gate("unit-a", "revision-a"), onComplete));
 
-    fireEvent.click(screen.getByTestId("or-decision-approve"));
-    fireEvent.click(screen.getByTestId("or-decision-approve"));
+    fireEvent.click(screen.getByTestId("or-decision-accept"));
+    fireEvent.click(screen.getByTestId("or-decision-accept"));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1));
     const staleResponseResolver = resolveRequest;
     if (!staleResponseResolver) throw new Error("Expected an in-flight request for gate-a");
-    view.rerender(wrapper(client, gate("gate-b", "revision-b"), onComplete));
-    await waitFor(() => expect(screen.getByTestId("or-decision-approve")).toBeTruthy());
+    view.rerender(wrapper(client, gate("unit-b", "revision-b"), onComplete));
+    await waitFor(() => expect(screen.getByTestId("or-decision-accept")).toBeTruthy());
 
     await act(async () => {
       staleResponseResolver(json({ kind: "committed", run_id: "run-1", event_id: "decided" }));
@@ -208,7 +196,7 @@ describe("GateDecisionActions", () => {
 
     expect(onComplete).not.toHaveBeenCalled();
     expect(screen.queryByTestId("or-decision-success")).toBeNull();
-    expect(screen.getByTestId("or-decision-approve")).toBeTruthy();
+    expect(screen.getByTestId("or-decision-accept")).toBeTruthy();
   });
 
   it("uses a new idempotency key when feedback changes", async () => {
@@ -218,9 +206,9 @@ describe("GateDecisionActions", () => {
       return json({ detail: "try again" }, 500);
     });
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    render(wrapper(client, gate(compositeId({ kind: "gate", runId: "run-1", unitId: "unit-a", name: "assessment_review" }), "revision-a")));
+    render(wrapper(client, gate("unit-a", "revision-a")));
 
-    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    fireEvent.click(screen.getByTestId("or-decision-request_build_changes"));
     fireEvent.change(screen.getByLabelText("What needs to change?"), { target: { value: "First explanation" } });
     fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
     await screen.findByRole("alert");
@@ -240,26 +228,26 @@ describe("GateDecisionActions", () => {
     }));
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const runState: RunState = "cancelled";
-    render(wrapper(client, gate("gate-a", "revision-a", { run_state: runState, actionable: false })));
+    render(wrapper(client, gate("unit-a", "revision-a", { run_state: runState, actionable: false })));
 
     const stranded = screen.getByTestId("or-gate-stranded");
     expect(stranded.textContent).toBe("Run cancelled — gate stranded");
-    expect((screen.getByTestId("or-decision-approve") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId("or-decision-request_revision") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("or-decision-accept") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("or-decision-request_build_changes") as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    fireEvent.click(screen.getByTestId("or-decision-request_build_changes"));
     expect(screen.queryByTestId("or-decision-feedback")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("closes an already-open feedback panel when the gate becomes non-actionable", async () => {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    const view = render(wrapper(client, gate("gate-a", "revision-a")));
+    const view = render(wrapper(client, gate("unit-a", "revision-a")));
 
-    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    fireEvent.click(screen.getByTestId("or-decision-request_build_changes"));
     expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();
 
-    view.rerender(wrapper(client, gate("gate-a", "revision-a", { actionable: false })));
+    view.rerender(wrapper(client, gate("unit-a", "revision-a", { actionable: false })));
 
     expect(screen.queryByRole("button", { name: "Send feedback" })).toBeNull();
   });

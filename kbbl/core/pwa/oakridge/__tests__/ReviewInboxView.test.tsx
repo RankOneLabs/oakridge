@@ -9,9 +9,10 @@ import type { CohortLifecycle } from "../artifact-types";
 import sample from "../__fixtures__/v2-adapter-sample.json";
 import definitionFixture from "../__fixtures__/v2-definition-detail.json";
 import type { OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
-import { compositeId } from "../adapters/core";
+import { reviewToGates } from "../adapters/core";
+import { invalidateCachedRunUnits } from "../client";
 import { classifyRunInbox } from "../adapters/inbox";
-import { withUnitFields } from "../__fixtures__/read-models";
+import { projectedReview, withUnitFields } from "../__fixtures__/read-models";
 
 const WEB_REPOSITORY_KEY = parseRepositoryKey("web")!;
 const API_REPOSITORY_KEY = parseRepositoryKey("api")!;
@@ -35,14 +36,21 @@ function renderInbox(data: ReviewInbox, onSelectRun = vi.fn(), onSelectArtifact 
   return { onSelectRun, onSelectArtifact, onSelectRunUnit };
 }
 
+const runId = "run-1";
+const v2Unit = { ...capturedCohort, run_id: runId, decisions: [...capturedCohort.decisions, assessmentChange] };
+const requireGate = (unit: OperatorUnitView) => {
+  const result = reviewToGates(unit);
+  if (!result.ok || !result.value[0]) throw new Error("fixture lacks a review gate");
+  return result.value[0];
+};
+const inboxGate = requireGate(v2Unit);
+
 const inbox: ReviewInbox = {
   cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", cohort_key: "api", brief_title: "Build API", repository_key: API_REPOSITORY_KEY, title: "Build API", lifecycle: "building", completion: { build_complete: false, assessment_complete: false }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
     { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", cohort_key: "web", brief_title: "Build UI", repository_key: WEB_REPOSITORY_KEY, title: "Build UI", lifecycle: "artifact_review", completion: { build_complete: true, assessment_complete: false }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
-  items: [{ id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", cohort_key: "web", brief_title: "Build UI", repository_key: WEB_REPOSITORY_KEY, lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: approveTarget, gate_id: compositeId({ kind: "gate", runId: "run-1", unitId: capturedCohort.unit_id, name: "assessment_review" }), resume_actions: ["approve", "request_assessment_changes"], blocked_by: [] }],
+  items: [{ id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", cohort_key: "web", brief_title: "Build UI", repository_key: WEB_REPOSITORY_KEY, lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: inboxGate.artifact_revision_id, gate_id: inboxGate.id, gate: inboxGate, resume_actions: inboxGate.resume_actions, blocked_by: [] }],
 };
 
-const runId = "run-1";
-const v2Unit = { ...capturedCohort, run_id: runId, decisions: [...capturedCohort.decisions, assessmentChange] };
 const v2Run = { ...sample.run, run_id: runId };
 function v2InboxFetch(items: readonly typeof sample.inbox.items[number][], afterDecision?: () => void) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -57,7 +65,7 @@ function v2InboxFetch(items: readonly typeof sample.inbox.items[number][], after
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 
 describe("ReviewInboxView", () => {
   it("links a blocked worker's item to the blocker in its unit's pane", () => {
@@ -82,8 +90,8 @@ describe("ReviewInboxView", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectRunUnit={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     expect(await screen.findByTestId("or-review-inbox")).toBeTruthy();
-    expect(screen.getByTestId("or-decision-request_revision")).toBeTruthy();
-    expect(screen.getByTestId("or-decision-approve")).toBeTruthy();
+    expect(await screen.findByTestId("or-decision-request_build_changes")).toBeTruthy();
+    expect(screen.getByTestId("or-decision-accept")).toBeTruthy();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/units?"))).toHaveLength(1);
   });
 
@@ -100,7 +108,7 @@ describe("ReviewInboxView", () => {
     };
     const unit = withUnitFields(v2Unit, {
       stage: "synthesis", collection_key: null, unit_key: "synthesis",
-      decisions: [approve, requestChanges], input: { repository_key: "oakridge" },
+      decisions: [approve, requestChanges], reviews: [projectedReview({ review: "report_review", of_artifact: "assessment", reviewed_revision_id: approveTarget }, [approve, requestChanges])], input: { repository_key: "oakridge" },
     });
     const studyInbox = classifyRunInbox({ run_id: runId, items: [
       { kind: "decision", run_id: runId, unit_id: unit.unit_id, key: approve.key,
@@ -110,7 +118,7 @@ describe("ReviewInboxView", () => {
 
     renderInbox(studyInbox.value);
     expect(await screen.findByTestId("or-decision-approve")).toBeTruthy();
-    expect(screen.getByTestId("or-decision-request_revision")).toBeTruthy();
+    expect(screen.getByTestId("or-decision-request_changes")).toBeTruthy();
     expect(screen.getByTestId("or-inbox-context").textContent).toContain("Study run");
   });
 
@@ -120,7 +128,7 @@ describe("ReviewInboxView", () => {
       key: "accept", label: "Accept", fields: [], payload_schema: "{}", operation: "approve_assessment", assessment: "assessment",
       submit: { kind: "review", review: "expansion_review", decision: "accept", effect: "approve", target_revision_id: approveTarget },
     };
-    const unit = withUnitFields(v2Unit, { stage: "expand", collection_key: "g2", unit_key: "g2", decisions: [accept], input: { repository_key: "oakridge" } });
+    const unit = withUnitFields(v2Unit, { stage: "expand", collection_key: "g2", unit_key: "g2", decisions: [accept], reviews: [projectedReview({ review: "expansion_review", of_artifact: "assessment", reviewed_revision_id: approveTarget }, [accept])], input: { repository_key: "oakridge" } });
     const studyInbox = classifyRunInbox({ run_id: runId, items: [
       { kind: "decision", run_id: runId, unit_id: unit.unit_id, key: accept.key, label: accept.label, submit: accept.submit, prompt: null },
     ] }, [unit], { workflow_name: "study", run_title: "Study run" });
@@ -182,7 +190,7 @@ describe("ReviewInboxView", () => {
   it("navigates directly to the reviewed artifact and its run", async () => {
     const handlers = renderInbox(inbox);
     fireEvent.click(await screen.findByTestId("or-inbox-artifact-link"));
-    expect(handlers.onSelectArtifact).toHaveBeenCalledWith(approveTarget);
+    expect(handlers.onSelectArtifact).toHaveBeenCalledWith(inboxGate.artifact_revision_id);
     fireEvent.click(screen.getAllByTestId("or-inbox-run-link")[0]);
     expect(handlers.onSelectRun).toHaveBeenCalledWith("run-1");
   });
@@ -193,12 +201,12 @@ describe("ReviewInboxView", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     client.setQueryData(["oakridge", "review-inbox"], inbox);
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectRunUnit={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
-    fireEvent.click(await screen.findByTestId("or-decision-approve"));
-    fireEvent.click(screen.getByTestId("or-decision-approve"));
+    fireEvent.click(await screen.findByTestId("or-decision-accept"));
+    fireEvent.click(screen.getByTestId("or-decision-accept"));
     await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => init?.method === "POST" && String(input).includes(`/units/${encodeURIComponent(v2Unit.unit_id)}/reviews/assessment_review/decide`))).toBe(true));
     const request = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
     expect(JSON.parse(String(request.body))).toMatchObject({ decision: "accept", target: approveTarget, payload: {} });
-    await waitFor(() => expect(screen.queryByTestId("or-decision-approve")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("or-decision-accept")).toBeNull());
     expect(resumed).toBe(true);
   });
 
@@ -251,10 +259,14 @@ describe("ReviewInboxView", () => {
         kind: "merge_review",
         lifecycle: "merge_review",
         resume_actions: ["confirm_merged"],
+        gate: { ...inboxGate, gate_type: "merge", resume_actions: ["confirm_merged"], decision_definitions: [{
+          key: "confirm_merged", label: "Confirm merged", operation: "plain", assessment: null, fields: [], payload_schema: "{}",
+          submit: { kind: "review", review: "merge_confirmation", decision: "confirm_merged", effect: "approve", target_revision_id: approveTarget ?? "" },
+        }] },
       }],
     });
 
-    expect(await screen.findByRole("button", { name: "Confirm merge" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Confirm merged" })).toBeTruthy();
   });
 
   it("surfaces pull request mismatches as actionable with reconciliation detail", async () => {
@@ -275,21 +287,29 @@ describe("ReviewInboxView", () => {
   });
 
   it("keeps a decided item in place so newly arrived work never slides under the pointer", async () => {
-    const briefGate = (id: string, title: string) => ({ ...inbox.items[0], id: `${runId}:${id}:approve`, unit_id: id, cohort_key: id, brief_title: null, repository_key: null, title,
-      gate_id: compositeId({ kind: "gate", runId, unitId: id, name: "assessment_review" }), artifact_revision_id: `revision-${id}` });
-    const briefA = briefGate("brief-a", "Brief A");
-    const briefB = briefGate("brief-b", "Brief B");
-    const assessment = briefGate("assessment", "Assessment");
+    function briefReview(id: string, title: string) {
+      const revision = `revision-${id}`;
+      const approve: OperatorDecisionDefinition = { key: "accept", label: "Accept", operation: "plain", assessment: null,
+        fields: [], payload_schema: "{}", submit: { kind: "review", review: "assessment_review", decision: "accept",
+          effect: "approve", target_revision_id: revision } };
+      const unit = withUnitFields(v2Unit, { unit_id: id, collection_key: id, label: title, decisions: [approve],
+        reviews: [projectedReview({ review: "assessment_review", of_artifact: "assessment", reviewed_revision_id: revision }, [approve])] });
+      const gate = requireGate(unit);
+      return { unit, item: { ...inbox.items[0], id: `${runId}:${id}:accept`, unit_id: id, cohort_key: id,
+        brief_title: null, repository_key: null, title, gate_id: gate.id, gate, artifact_revision_id: gate.artifact_revision_id } };
+    }
+    const { item: briefA, unit: unitA } = briefReview("brief-a", "Brief A");
+    const { item: briefB, unit: unitB } = briefReview("brief-b", "Brief B");
+    const { item: assessment, unit: unitAssessment } = briefReview("assessment", "Assessment");
     let decided = false;
-    const units = [briefA, briefB, assessment].map((item) => ({ ...v2Unit, unit_id: item.unit_id, collection_key: item.unit_id, label: item.title,
-      decisions: v2Unit.decisions.map((decision) => ({ ...decision, submit: { ...decision.submit, target_revision_id: item.artifact_revision_id } })) }));
+    const units = [unitA, unitB, unitAssessment];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const path = String(input);
       if (init?.method === "POST") { decided = true; return json({ kind: "committed", run_id: runId, event_id: "event-decided" }); }
       if (path.includes("/units?")) return json(units);
       if (path.includes("/run-inboxes")) return json({ items: [{ run_id: runId, items: (decided ? [briefB, assessment] : [briefA, briefB]).map((item) => ({
-        kind: "decision", run_id: runId, unit_id: item.unit_id, key: "approve", label: "Approve", prompt: null,
-        submit: { kind: "review", review: "assessment_review", decision: "approve", effect: "approve", target_revision_id: item.artifact_revision_id },
+        kind: "decision", run_id: runId, unit_id: item.unit_id, key: "accept", label: "Accept", prompt: null,
+        submit: units.find((unit) => unit.unit_id === item.unit_id)?.decisions[0].submit,
       })) }] });
       if (path.includes("/api/definitions/")) return json(definitionFixture.definition);
       if (path.includes("/api/runs?")) return json({ items: [v2Run], next_cursor: null });
@@ -299,13 +319,13 @@ describe("ReviewInboxView", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     client.setQueryData(["oakridge", "review-inbox"], { cohorts: [], items: [briefA, briefB] });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectRunUnit={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
-    const [approve] = await screen.findAllByTestId("or-decision-approve");
+    const [approve] = await screen.findAllByTestId("or-decision-accept");
     fireEvent.click(approve);
     fireEvent.click(approve);
     await screen.findByTestId("or-review-inbox-settled-item");
     const rows = screen.getAllByTestId(/^or-review-inbox-(settled-)?item$/)
       .map((row) => `${row.dataset.testid === "or-review-inbox-settled-item" ? "settled" : "live"}:${row.querySelector("h3")?.textContent}`);
-    expect(rows).toEqual(["settled:brief-a", "live:brief-b · Cohort a · app", "live:assessment · Cohort a · app"]);
+    expect(rows).toEqual(["settled:brief-a", "live:brief-b · Brief B · app", "live:assessment · Assessment · app"]);
   });
 
   it("shows automatic merged completion from durable reconciliation", async () => {

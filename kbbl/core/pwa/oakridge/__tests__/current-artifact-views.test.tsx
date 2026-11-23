@@ -10,7 +10,7 @@ import { CurrentSpecViewer } from "../components/molecules/CurrentSpecViewer";
 import { CurrentPlanViewer } from "../components/molecules/CurrentPlanViewer";
 import { CurrentBuildBriefViewer } from "../components/molecules/CurrentBuildBriefViewer";
 import { ReceivedContextPanel } from "../components/molecules/ReceivedContextPanel";
-import { parseCurrentAnalysis, parseCanonicalSpec } from "../lib/current-contract";
+import { parseCurrentAnalysis, parseCanonicalSpec } from "../lib/viewer-data";
 import { selectReceivedContext } from "../lib/received-context";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { ArtifactSource } from "../artifact-types";

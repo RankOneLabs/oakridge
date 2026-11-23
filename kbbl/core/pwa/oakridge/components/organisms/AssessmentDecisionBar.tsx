@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { Checkbox } from "../../../components/atoms/Checkbox";
+import { Select } from "../../../components/atoms/Select";
+import { TextArea } from "../../../components/atoms/TextArea";
 import { Button } from "../../../components/atoms/Button";
 import { randomUuid } from "../../../lib/random-uuid";
 import { authorizeAssessmentFeedback, createAssessmentFeedback, decideAssessment, type AssessmentAddress } from "../../client-assessment";
@@ -68,14 +71,14 @@ export function AssessmentDecisionBar({ address, status, gate, assessed, workers
       return <fieldset key={item.item} disabled={mutation.isPending || !isPending}>
         <legend>{(source?.proposal_key && proposals.get(source.proposal_key)) || source?.instruction || item.item}</legend>
         {(unresolved || canAuthorize) && <>
-          {unresolved && <select aria-label="Disposition" value={choice.kind}
+          {unresolved && <Select aria-label="Disposition" value={choice.kind}
             onChange={(event) => updateChoice(item.item, { kind: event.target.value === "dispatch" ? "dispatch" : "reject" })}>
             <option value="reject">Reject</option><option value="dispatch">Dispatch</option>
-          </select>}
-          <textarea aria-label={unresolved && choice.kind === "reject" ? "Rejection reason" : "Instruction"}
+          </Select>}
+          <TextArea aria-label={unresolved && choice.kind === "reject" ? "Rejection reason" : "Instruction"}
             value={choice.instruction} onChange={(event) => updateChoice(item.item, { instruction: event.target.value })} />
           {(choice.kind === "dispatch" || canAuthorize) && recipients.map((worker) => <label key={worker.key}>
-            <input type="checkbox" checked={choice.recipients.includes(worker.key)} onChange={(event) => updateChoice(item.item, {
+            <Checkbox type="checkbox" checked={choice.recipients.includes(worker.key)} onChange={(event) => updateChoice(item.item, {
               recipients: event.target.checked ? [...choice.recipients, worker.key] : choice.recipients.filter((key) => key !== worker.key),
             })} /> {worker.label}
           </label>)}
@@ -85,13 +88,13 @@ export function AssessmentDecisionBar({ address, status, gate, assessed, workers
         </>}
         {item.assignments.map((assignment) => <div key={assignment.assignment}>
           {workers.find((worker) => worker.key === assignment.recipient)?.label ?? assignment.recipient} · {assignment.progress.replaceAll("_", " ")}
-          {assignment.progress === "returned_for_update" && <textarea aria-label="Follow-up rejection reason" value={followups[assignment.assignment] ?? ""}
+          {assignment.progress === "returned_for_update" && <TextArea aria-label="Follow-up rejection reason" value={followups[assignment.assignment] ?? ""}
             onChange={(event) => setFollowups({ ...followups, [assignment.assignment]: event.target.value })} />}
         </div>)}
       </fieldset>;
     })}
     {isPending && <div>
-      <textarea aria-label="Operator feedback" value={newInstruction} onChange={(event) => setNewInstruction(event.target.value)} />
+      <TextArea aria-label="Operator feedback" value={newInstruction} onChange={(event) => setNewInstruction(event.target.value)} />
       <Button disabled={!newInstruction.trim() || mutation.isPending} onClick={() => mutation.mutate(async () => {
         await createAssessmentFeedback(address, { request_id: randomUuid(), instruction: newInstruction.trim(), citation: null });
         setNewInstruction("");

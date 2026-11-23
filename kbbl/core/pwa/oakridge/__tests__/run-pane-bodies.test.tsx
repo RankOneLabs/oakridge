@@ -172,7 +172,7 @@ describe("two session panes", () => {
     renderWorkspace();
     const sessionRows = await screen.findAllByTestId("or-sidebar-session");
     fireEvent.click(sessionRows[0]!);
-    fireEvent.click(await screen.findByLabelText("Open dev.build_result v1 in the second pane"));
+    fireEvent.click(await screen.findByLabelText("Open build result v1 in the second pane"));
 
     await waitFor(() => expect(screen.getByTestId("or-artifact-detail")).toBeTruthy());
     expect(screen.getByTestId("or-run-pane-session")).toBeTruthy();

@@ -23,7 +23,7 @@ describe("sentReviewFeedback", () => {
   it("lists requested changes on the latest revision, with the feedback and who it went to", () => {
     expect(sentReviewFeedback(withDecisions(decided("d1")))).toEqual([{
       id: "d1", target_revision_id: assessment.id,
-      run_id: cohort.run_id, stage_name: "assessment", unit_id: cohort.collection_key, review: "assessment_review",
+      run_id: cohort.run_id, stage_name: "cohort", unit_id: cohort.collection_key, review: "assessment_review",
       decision: "request_assessment_changes", feedback: "Check the migration path.", sent_at: "2026-10-28T12:00:00Z" }]);
   });
 

@@ -3,7 +3,7 @@ import type { ViewerProps } from "../../artifactRegistry";
 import { parseCurrentPlan } from "../../lib/plan";
 import { selectParallelCohortRows, selectPlanGraphLayout, type ParallelCohortRow } from "../../lib/plan-graph";
 import { selectPlanSections, type PlanSection } from "../../lib/current-plan";
-import type { CurrentCohort } from "../../lib/current-contract";
+import type { CurrentCohort } from "../../lib/viewer-data";
 import { selectAllocations } from "../../lib/current-brief";
 import { selectFindingSelections } from "../../lib/grading";
 import { selectPlanItemPaths } from "../../lib/current-item-paths";

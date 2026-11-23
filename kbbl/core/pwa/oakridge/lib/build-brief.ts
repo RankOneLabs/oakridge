@@ -1,4 +1,4 @@
-import { type CurrentBrief } from "./current-contract";
+import { type CurrentBrief } from "./viewer-data";
 import type { CohortId, RepositoryKey } from "../run-types";
 import { parsePlanCriterionList, type PlanCriterion, type PlanTraceId } from "./plan";
 

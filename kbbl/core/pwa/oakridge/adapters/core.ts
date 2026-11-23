@@ -157,7 +157,7 @@ export function attemptToWorkOrder(input: { readonly runId: string; readonly sta
   const display_label = unit.workers?.find((worker) => worker.key === attempt.worker)?.label ?? attempt.worker;
   return ok({ work_order_id: attempt.id, session_id: attempt.kbbl_session_id,
     stage_instance_id: compositeId({ kind: "stage", runId, unitId: unit.unit_id, name: stage }), stage_key: stage,
-    display_label, unit_id: unitLabel, reason, work_order_state, created_at: attempt.created_at,
+    display_label, worker_key: attempt.worker, unit_id: unitLabel, reason, work_order_state, created_at: attempt.created_at,
     completed_at: null, executor_health_kind: attempt.failure?.code ?? null, cleanup_state: "not_needed" });
 }
 

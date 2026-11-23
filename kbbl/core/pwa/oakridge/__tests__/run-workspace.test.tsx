@@ -125,7 +125,7 @@ describe("opening a pane from the sidebar", () => {
     const filter = await screen.findByTestId("or-sidebar-artifact-filter");
     expect(screen.getAllByTestId("or-sidebar-artifact")).toHaveLength(2);
 
-    fireEvent.change(filter, { target: { value: "build_results" } });
+    fireEvent.change(filter, { target: { value: "record" } });
     expect(screen.getAllByTestId("or-sidebar-artifact").map((row) => row.getAttribute("data-artifact-id"))).toEqual(["art-build"]);
 
     fireEvent.change(filter, { target: { value: "all" } });

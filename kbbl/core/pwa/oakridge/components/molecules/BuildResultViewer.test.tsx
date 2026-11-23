@@ -15,7 +15,7 @@ const result: BuildResult = {
   summary: "Built the API.",
   changed_files: ["src/api.py", "ci.yml"],
   tests: { passed: 78, failed: 0, output: "78 passed", summary: null, cargo_test_output: null },
-  delegated_session_metadata: { cohort_id: "cm-api", session_id: null, branch: null },
+  delegated_session_metadata: { cohort_id: "cm-api", branch: null },
   known_issues: [{ severity: "blocking", description: "Fixture table incomplete." }],
 };
 

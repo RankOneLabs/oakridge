@@ -1,7 +1,7 @@
 import type { MouseEvent } from "react";
 import { artifactRevisionIdOf } from "../../lib/grading-ids";
 import type { ViewerProps } from "../../artifactRegistry";
-import { parseCanonicalSpec, type CanonicalRequirement, type CanonicalSpec } from "../../lib/current-contract";
+import { parseCanonicalSpec, type CanonicalRequirement, type CanonicalSpec } from "../../lib/viewer-data";
 import { selectRequirementFindings, type FindingReference } from "../../lib/current-analysis";
 import { selectSpecSections, type SpecSection } from "../../lib/current-spec";
 import { selectStatusTone } from "../../lib/status-tone";

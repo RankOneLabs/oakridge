@@ -22,7 +22,7 @@ export function newSessionModelKey(runtimeId: string): string {
  * uses, so the picker and the launch agree on what a stored id means. Claude
  * Code's advertised ids gain and lose the `[1m]` suffix with the account's
  * entitlement, and the picker has replaced an explicit id with a family alias
- * at least once, so a browser holding `claude-fable-5-1[1m]` still means
+ * at least once, so a browser holding `fable[1m]` still means
  * Fable. Without this it matches nothing and falls all the way back to the
  * runtime default — silently launching Opus for an operator who chose Fable.
  */

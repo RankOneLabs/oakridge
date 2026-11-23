@@ -3833,6 +3833,8 @@
               "when": null
             },
             "merge_confirmation": {
+              "wait": "external",
+              "confirms": "merge",
               "of": "pr",
               "by": "operator",
               "prompt": "development/merge-confirmation.md",
@@ -4067,6 +4069,8 @@
               "when": null
             },
             "merge_confirmation": {
+              "wait": "external",
+              "confirms": "merge",
               "of": "manual_merge_target",
               "by": "operator",
               "prompt": "development/merge-confirmation.md",

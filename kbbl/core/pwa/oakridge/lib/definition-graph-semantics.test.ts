@@ -1,3 +1,4 @@
+import { BLOCKER_ARTIFACT, BLOCKER_REVIEW } from "../operator-contracts/constants";
 import { expect, test } from "vitest";
 import development from "../__fixtures__/v2-definition-detail.json";
 import reviewLoop from "../__fixtures__/definition-review-loop.json";
@@ -17,7 +18,7 @@ for (const fixture of [development, reviewLoop]) {
     const expected = definition.bundle.stages.flatMap((name) => {
       const stage = definition.effective_workflow.stages[name];
       if (!stage) throw Error("missing stage");
-      return Object.entries(stage.reviews ?? {}).flatMap(
+      return Object.entries(stage.reviews ?? {}).filter(([key]) => key !== BLOCKER_REVIEW).flatMap(
         ([reviewKey, review]) => {
           const decisions = Object.entries(review.decisions).filter(
             ([, decision]) => decision.effect === "request_changes",
@@ -80,8 +81,8 @@ test("worker and review consumes edges follow chained stage bindings", () => {
   const stage = source.effective_workflow.stages[name];
   if (!stage) throw Error("missing stage");
   const worker = Object.keys(stage.workers)[0];
-  const review = Object.keys(stage.reviews ?? {})[0];
-  const artifact = Object.keys(stage.artifacts)[0];
+  const review = Object.keys(stage.reviews ?? {}).find((key) => key !== BLOCKER_REVIEW);
+  const artifact = Object.keys(stage.artifacts).find((key) => key !== BLOCKER_ARTIFACT);
   if (
     !worker ||
     !review ||

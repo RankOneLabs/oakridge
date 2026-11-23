@@ -2,7 +2,7 @@ import type { MouseEvent } from "react";
 import type { ViewerProps } from "../../artifactRegistry";
 import { parseCurrentAnalysis } from "../../lib/spec-analysis";
 import { selectAnalysisCounts, selectAnalysisSections, selectCodeHotspots, selectOperatorDecisions, selectRequirementsByStatus, type AnalysisSection, type FindingReference } from "../../lib/current-analysis";
-import type { CurrentAnalysis, CurrentFinding } from "../../lib/current-contract";
+import type { CurrentAnalysis, CurrentFinding } from "../../lib/viewer-data";
 import { selectCurrentRequirementTone, selectStatusTone } from "../../lib/status-tone";
 import { selectFindingSelections } from "../../lib/grading";
 import { selectAnalysisItemPaths } from "../../lib/current-item-paths";

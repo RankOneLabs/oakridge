@@ -3,7 +3,8 @@ export const CURRENT_ASSESSMENT = {
   head_sha: "current-head", verdict: "pass_with_notes", test_evidence: { passed: 4, failed: 0 },
   item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "met", observation: "The requested behavior works.", evidence: [{ kind: "test", ref: "build.test.ts" }] }],
   additional_findings: [{ id: "F1", severity: "warning", observation: "An unrelated regression needs investigation.", related_build_item_ids: ["B1"], evidence: [{ kind: "file", ref: "regression.ts", detail: "Existing behavior regressed." }] }],
-
+  proposals: [],
+  verifications: [],
 };
 export const MET_WITH_REGRESSION = { ...CURRENT_ASSESSMENT, verdict: "fail", additional_findings: CURRENT_ASSESSMENT.additional_findings.map(finding => ({ ...finding, severity: "blocking" })) };
 export const PARTIAL_ASSESSMENT = { ...CURRENT_ASSESSMENT, verdict: "fail", item_assessments: CURRENT_ASSESSMENT.item_assessments.map(item => ({ ...item, status: "partial" })) };

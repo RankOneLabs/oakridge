@@ -1,4 +1,4 @@
-import type { CanonicalSpec, CurrentAnalysis, CurrentBrief, CurrentPlan } from "./current-contract";
+import type { CanonicalSpec, CurrentAnalysis, CurrentBrief, CurrentPlan } from "./viewer-data";
 import { selectAnalysisFindings } from "./current-analysis";
 
 /** Gradeable item paths of each current artifact: what its viewer grades item by item, and what "Show automatic grades" reveals. */

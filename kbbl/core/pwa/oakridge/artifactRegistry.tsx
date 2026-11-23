@@ -4,7 +4,7 @@ import { CurrentSpecAnalysisViewer } from "./components/molecules/CurrentSpecAna
 import { CurrentSpecViewer } from "./components/molecules/CurrentSpecViewer";
 import { CurrentPlanViewer } from "./components/molecules/CurrentPlanViewer";
 import { CurrentBuildBriefViewer } from "./components/molecules/CurrentBuildBriefViewer";
-import { parseCurrentAnalysis, parseCanonicalSpec, parseCurrentPlan, parseCurrentBrief } from "./lib/current-contract";
+import { parseCurrentAnalysis, parseCanonicalSpec, parseCurrentPlan, parseCurrentBrief } from "./lib/viewer-data";
 import { selectAnalysisItemPaths, selectSpecItemPaths, selectPlanItemPaths, selectBriefItemPaths } from "./lib/current-item-paths";
 import { SchemaContractView } from "./components/molecules/SchemaContractView";
 import type { ComponentType, ReactNode } from "react";

@@ -3,6 +3,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
+import projectedSchemas from "../__fixtures__/development-projected-schemas.json";
+import type { OperatorSchema } from "../operator-contracts/projections/schema-view";
 import currentBrief from "../__fixtures__/current-brief.json";
 import { ArtifactReview } from "../components/organisms/ArtifactReview";
 import type { ArtifactDetail, ArtifactRevision, ParkedGate } from "../artifact-types";
@@ -44,7 +46,9 @@ const PARKED_GATE_FIXTURE: ParkedGate = {
   unit_id: "0",
   artifact_revision_id: "rev-abc",
   worktree: { branch: "cohort/v2_readiness/3-foo", path: "/home/steve/codes/rol/oakridge", base_ref: "epic/v2_readiness" },
-  resume_actions: ["approve", "reject"],
+  decision_definitions: [{ key: "approve", label: "Approve discrepancy report", operation: "plain", assessment: null, fields: [], payload_schema: "{}",
+    submit: { kind: "review", review: "check", decision: "approve", effect: "approve", target_revision_id: "rev-1" } }],
+  resume_actions: ["approve"],
   offered_decisions: ["approve", "reject"],
   run_state: "active",
   actionable: true,
@@ -145,7 +149,7 @@ describe("ArtifactReview", () => {
   });
 
   it.each([false, true])("shows a decision box only for a declared plain action (plain action offered: %s)", async hasPlain => {
-    const assessment: ArtifactDetail = { ...ARTIFACT_FIXTURE, type_id: "cohort.assessment", component_id: "dev-current-assessment-viewer",
+    const assessment: ArtifactDetail = { ...ARTIFACT_FIXTURE, type_id: "cohort.assessment", component_id: "assessment", schema: "assessment_body", projected_schemas: projectedSchemas as OperatorSchema[],
       revisions: [{ ...REVISION_FIXTURE, status: "draft", body: CURRENT_ASSESSMENT }] };
     const gate: ParkedGate = { ...PARKED_GATE_FIXTURE, run_id: "run-1", gate_step: "assessment_review", artifact_revision_id: "rev-1", assessment_revision_id: "rev-1", requires_adjudication: true,
       resume_actions: hasPlain ? ["request_assessment_changes"] : [], offered_decisions: hasPlain ? ["accept", "request_assessment_changes"] : ["accept"], decision_definitions: [{ key: "accept", label: "Accept", payload_schema: "{}", operation: "approve_assessment" as const, assessment: "assessment", fields: [],
@@ -157,7 +161,7 @@ describe("ArtifactReview", () => {
     expect(await screen.findByTestId("or-assessment-viewer")).toBeTruthy();
     expect(Boolean(screen.queryByTestId("or-artifact-gate-actions"))).toBe(hasPlain);
     if (hasPlain) {
-      expect(screen.getByTestId("or-artifact-gate-actions").textContent).toContain("Describe what needs to change in this assessment.");
+      expect(screen.getByTestId("or-artifact-gate-actions").textContent).toContain("Describe what the producer needs to change.");
       expect(screen.getByTestId("or-artifact-gate-actions").textContent).not.toContain("Approve this artifact");
     }
   });
@@ -184,9 +188,9 @@ describe("navigation inside the review", () => {
 
 describe("artifact presentation", () => {
   it("defaults to rendered and uses the same pinned revision in the structured tree and raw formats", async () => {
-    const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "dev-pr-summary-viewer",
-      revisions: [{ ...REVISION_FIXTURE, body: { summary: "Earlier content" } },
-        { ...REVISION_FIXTURE, id: "rev-2", body: { summary: "Latest content" } }] };
+    const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "pull_request", link_field: "change_request_link", schema: "pr_body", projected_schemas: projectedSchemas as OperatorSchema[],
+      revisions: [{ ...REVISION_FIXTURE, body: { summary: "Earlier content", branch: "feature", change_request_link: "https://github.com/acme/app/pull/1" } },
+        { ...REVISION_FIXTURE, id: "rev-2", body: { summary: "Latest content", branch: "feature", change_request_link: "https://github.com/acme/app/pull/1" } }] };
     wrap(<ArtifactReview artifactId="art-1" revisionId="rev-1" />, artifact);
     expect(screen.getByRole("tab", { name: "rendered" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "structured" }));
@@ -208,7 +212,7 @@ import { useGradingVisibility } from "../state/gradingVisibility";
 it("keeps grade controls and blind state across presentation switches", async () => {
   useGradingVisibility.setState({ revealed_item_keys: new Set() });
   const revisionId = compositeId({ kind: "artifact", runId: "run-1", unitId: "u", name: "brief:raw-revision" });
-  const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "dev-current-brief-viewer", capabilities: { atom_editable: true, commentable: false, reviewable: false, review_items: false },
+  const artifact: ArtifactDetail = { ...ARTIFACT_FIXTURE, component_id: "build_brief", schema: "brief_body", projected_schemas: projectedSchemas as OperatorSchema[], capabilities: { atom_editable: true, commentable: false, reviewable: false, review_items: false },
     revisions: [{ ...REVISION_FIXTURE, id: revisionId, body: currentBrief }] };
   const status = itemStatus([supportQuestion()]);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

@@ -264,6 +264,7 @@ export interface RunSessionAttempt {
   session_id: string;
   stage_instance_id: string;
   stage_key: string;
+  worker_key?: string;
   /** Human-readable worker role; the stage key still identifies the gate. */
   display_label?: string;
   unit_id: string;

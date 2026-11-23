@@ -33,7 +33,7 @@
             "Visible R1"
           ],
           "source_refs": [
-            "\u00a71"
+            "§1"
           ],
           "analysis_finding_ids": [
             "F1"
@@ -46,7 +46,7 @@
             "Visible R3"
           ],
           "source_refs": [
-            "\u00a73"
+            "§3"
           ],
           "analysis_finding_ids": [
             "F5"
@@ -97,11 +97,13 @@
         "decision": "clarify",
         "effect": "approve",
         "target_revision_id": "blocker:2"
-      }
+      },
+      "operation": "plain",
+      "assessment": null
     },
     {
       "key": "override",
-      "label": "Override \u2014 proceed anyway",
+      "label": "Override — proceed anyway",
       "payload_schema": "answer",
       "fields": [
         {
@@ -115,7 +117,9 @@
         "decision": "override",
         "effect": "approve",
         "target_revision_id": "blocker:2"
-      }
+      },
+      "operation": "plain",
+      "assessment": null
     },
     {
       "key": "discuss",
@@ -133,7 +137,9 @@
         "decision": "discuss",
         "effect": "approve",
         "target_revision_id": "blocker:2"
-      }
+      },
+      "operation": "plain",
+      "assessment": null
     }
   ],
   "recorded_decisions": [],
@@ -254,5 +260,49 @@
         }
       }
     ]
-  }
+  },
+  "workers": [
+    {
+      "key": "writer",
+      "label": "Brief writer",
+      "kind": "agent"
+    }
+  ],
+  "reviews": [
+    {
+      "review": "blocker_review",
+      "of_artifact": "blocker",
+      "reviewed_revision_id": "blocker:2",
+      "wait": "operator",
+      "confirms": null,
+      "failure_code": null,
+      "producer_workers": [],
+      "decisions": [
+        {
+          "key": "clarify",
+          "label": "Clarify",
+          "effect": "approve",
+          "operation": "plain",
+          "on_artifact": "blocker",
+          "target_revision_id": "blocker:2"
+        },
+        {
+          "key": "override",
+          "label": "Override — proceed anyway",
+          "effect": "approve",
+          "operation": "plain",
+          "on_artifact": "blocker",
+          "target_revision_id": "blocker:2"
+        },
+        {
+          "key": "discuss",
+          "label": "Discuss",
+          "effect": "approve",
+          "operation": "plain",
+          "on_artifact": "blocker",
+          "target_revision_id": "blocker:2"
+        }
+      ]
+    }
+  ]
 }

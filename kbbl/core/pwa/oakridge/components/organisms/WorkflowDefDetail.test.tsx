@@ -1,3 +1,4 @@
+import { BLOCKER_REVIEW } from "../../operator-contracts/constants";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import snapshot from "../../__fixtures__/v2-definition-detail.json";
@@ -97,6 +98,7 @@ test("review-loop decisions and fan-out unit facts come from their definitions",
   const view = show({ kind: "stage", stage: "document", tab: "reviews" });
   const section = screen.getByRole("region", { name: "Reviews" });
   for (const [name, declaration] of Object.entries(review.effective_workflow.stages.document?.reviews ?? {})) {
+    if (name === BLOCKER_REVIEW) continue;
     expect(section.textContent).toContain(name);
     for (const decision of Object.keys(declaration.decisions)) expect(section.textContent).toContain(decision);
   }

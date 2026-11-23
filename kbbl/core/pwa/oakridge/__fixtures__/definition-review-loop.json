@@ -1,13 +1,98 @@
 {
-  "source": "/api/definitions/6b190a9d3de85f1dbec7007b971b2a2f17ec03e818812070775c4d1e19cfba96",
+  "source": "/api/definitions/9996fbb99e7a41563e56a6613453c8b7adf96d32c90813aa62dec8a6d1aa2f2d",
   "captured_at": "2026-11-16T00:07:39.739Z",
   "run_id": null,
   "definition": {
-    "definition_id": "6b190a9d3de85f1dbec7007b971b2a2f17ec03e818812070775c4d1e19cfba96",
+    "definition_id": "9996fbb99e7a41563e56a6613453c8b7adf96d32c90813aa62dec8a6d1aa2f2d",
     "bundle": {
       "key": "review_loop",
       "root": "$root",
       "schemas": [
+        {
+          "key": "assignment_verification",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "outcome",
+                "schema": "enum(verified, needs_further_work)"
+              },
+              {
+                "key": "round_id",
+                "schema": "text"
+              }
+            ]
+          }
+        },
+        {
+          "key": "enum(verified, needs_further_work)",
+          "shape": {
+            "kind": "enum",
+            "variants": [
+              "verified",
+              "needs_further_work"
+            ]
+          }
+        },
+        {
+          "key": "text",
+          "shape": {
+            "kind": "string",
+            "min_length": 0,
+            "max_length": 9007199254740991
+          }
+        },
+        {
+          "key": "citation",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "pointer",
+                "schema": "text"
+              },
+              {
+                "key": "revision_id",
+                "schema": "text"
+              }
+            ]
+          }
+        },
+        {
+          "key": "feedback_proposal",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "citation",
+                "schema": "optional(citation)"
+              },
+              {
+                "key": "instruction",
+                "schema": "text"
+              },
+              {
+                "key": "key",
+                "schema": "ident"
+              }
+            ]
+          }
+        },
+        {
+          "key": "optional(citation)",
+          "shape": {
+            "kind": "optional",
+            "item": "citation"
+          }
+        },
+        {
+          "key": "ident",
+          "shape": {
+            "kind": "string",
+            "min_length": 1,
+            "max_length": 100
+          }
+        },
         {
           "key": "{topic: text}",
           "shape": {
@@ -21,18 +106,41 @@
           }
         },
         {
-          "key": "text",
-          "shape": {
-            "kind": "string",
-            "min_length": 0,
-            "max_length": 9007199254740991
-          }
-        },
-        {
           "key": "{}",
           "shape": {
             "kind": "record",
             "fields": []
+          }
+        },
+        {
+          "key": "{suggested_choices: optional(list(text)), text: text}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "suggested_choices",
+                "schema": "optional(list(text))"
+              },
+              {
+                "key": "text",
+                "schema": "text"
+              }
+            ]
+          }
+        },
+        {
+          "key": "optional(list(text))",
+          "shape": {
+            "kind": "optional",
+            "item": "list(text)"
+          }
+        },
+        {
+          "key": "list(text)",
+          "shape": {
+            "kind": "list",
+            "item": "text",
+            "max_items": 9007199254740991
           }
         },
         {
@@ -48,14 +156,6 @@
           }
         },
         {
-          "key": "list(text)",
-          "shape": {
-            "kind": "list",
-            "item": "text",
-            "max_items": 9007199254740991
-          }
-        },
-        {
           "key": "{body: text, title: text}",
           "shape": {
             "kind": "record",
@@ -66,6 +166,18 @@
               },
               {
                 "key": "title",
+                "schema": "text"
+              }
+            ]
+          }
+        },
+        {
+          "key": "{answer: text}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "answer",
                 "schema": "text"
               }
             ]
@@ -102,6 +214,10 @@
           "input_schema": "{topic: text}",
           "artifacts": [
             {
+              "key": "blocker",
+              "schema": "{suggested_choices: optional(list(text)), text: text}"
+            },
+            {
               "key": "critique",
               "schema": "{notes: list(text)}"
             },
@@ -112,6 +228,28 @@
           ]
         }
       ]
+    },
+    "prompts": {
+      "review-loop/critique.md": {
+        "body": "Read the draft identified by {{subject}} and publish a critique with concrete notes.\n",
+        "digest": "554baef9e76ce1c156a3d6bb7e8b1a70554d332f39315fa7a5458cbf7ad3e127",
+        "includes": []
+      },
+      "review-loop/editor.md": {
+        "body": "Review {{draft}} against the topic {{topic}} and critique {{critique}}. Approve or request changes.\n",
+        "digest": "cfe4167373c167ae64eea915a34c2f41409eded642b56841ae43e6e5069b14b4",
+        "includes": []
+      },
+      "review-loop/revise.md": {
+        "body": "Revise the draft about {{topic}} using the requested feedback: {{feedback}}. Publish the revised draft.\n",
+        "digest": "59ec6b8e1eb530c7501b8be71cbb90d7321cde3fb9aee8088bb34063c5e1eae8",
+        "includes": []
+      },
+      "review-loop/write.md": {
+        "body": "Write a first draft about {{topic}}. Publish a draft with a title and nonempty body.\n",
+        "digest": "2fe4b85d4a9cf1a4d4e1f9d094e57a8f851471fcdff475b406878add9cd26b1c",
+        "includes": []
+      }
     },
     "workflow": {
       "input": {
@@ -229,7 +367,52 @@
           }
         }
       },
-      "schemas": {},
+      "schemas": {
+        "assignment_verification": {
+          "kind": "record",
+          "fields": {
+            "outcome": {
+              "kind": "enum",
+              "variants": [
+                "verified",
+                "needs_further_work"
+              ]
+            },
+            "round_id": {
+              "kind": "text"
+            }
+          }
+        },
+        "citation": {
+          "kind": "record",
+          "fields": {
+            "pointer": {
+              "kind": "text"
+            },
+            "revision_id": {
+              "kind": "text"
+            }
+          }
+        },
+        "feedback_proposal": {
+          "kind": "record",
+          "fields": {
+            "citation": {
+              "kind": "optional",
+              "value": {
+                "kind": "named",
+                "schema": "citation"
+              }
+            },
+            "instruction": {
+              "kind": "text"
+            },
+            "key": {
+              "kind": "ident"
+            }
+          }
+        }
+      },
       "run": {
         "pools": {},
         "units": {
@@ -263,6 +446,27 @@
             "topic_value": "input.topic"
           },
           "artifacts": {
+            "blocker": {
+              "kind": "record",
+              "schema": {
+                "kind": "record",
+                "fields": {
+                  "suggested_choices": {
+                    "kind": "optional",
+                    "value": {
+                      "kind": "list",
+                      "item": {
+                        "kind": "text"
+                      }
+                    }
+                  },
+                  "text": {
+                    "kind": "text"
+                  }
+                }
+              },
+              "validate": []
+            },
             "critique": {
               "kind": "assessment",
               "schema": {
@@ -310,7 +514,8 @@
               },
               "inputs": {},
               "produces": [
-                "critique"
+                "critique",
+                "blocker"
               ],
               "evaluates": "draft",
               "runtime": null,
@@ -331,7 +536,8 @@
                 "topic": "topic_value"
               },
               "produces": [
-                "draft"
+                "draft",
+                "blocker"
               ],
               "evaluates": null,
               "runtime": null,
@@ -341,6 +547,66 @@
             }
           },
           "reviews": {
+            "blocker_review": {
+              "of": "blocker",
+              "by": "operator",
+              "prompt": null,
+              "inputs": {},
+              "decisions": {
+                "clarify": {
+                  "effect": "request_changes",
+                  "on": "blocker",
+                  "label": "Clarify",
+                  "payload": {
+                    "kind": "record",
+                    "fields": {
+                      "answer": {
+                        "kind": "text"
+                      }
+                    }
+                  },
+                  "fields": {
+                    "answer": "Answer"
+                  },
+                  "feedback": null
+                },
+                "discuss": {
+                  "effect": "request_changes",
+                  "on": "blocker",
+                  "label": "Discuss",
+                  "payload": {
+                    "kind": "record",
+                    "fields": {
+                      "answer": {
+                        "kind": "text"
+                      }
+                    }
+                  },
+                  "fields": {
+                    "answer": "Answer"
+                  },
+                  "feedback": null
+                },
+                "override": {
+                  "effect": "request_changes",
+                  "on": "blocker",
+                  "label": "Override",
+                  "payload": {
+                    "kind": "record",
+                    "fields": {
+                      "answer": {
+                        "kind": "text"
+                      }
+                    }
+                  },
+                  "fields": {
+                    "answer": "Answer"
+                  },
+                  "feedback": null
+                }
+              },
+              "when": null
+            },
             "editor": {
               "of": "draft",
               "by": "operator",
@@ -380,6 +646,12 @@
         }
       }
     },
+    "worker_names": {
+      "document": [
+        "writer",
+        "critic"
+      ]
+    },
     "graph": {
       "nodes": [
         {
@@ -389,6 +661,14 @@
         }
       ],
       "edges": []
+    },
+    "assessment_embeddings": {
+      "document": {
+        "critique": {
+          "proposals": [],
+          "verifications": []
+        }
+      }
     }
   }
 }

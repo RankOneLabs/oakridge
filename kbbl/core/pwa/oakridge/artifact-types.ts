@@ -233,6 +233,7 @@ export type ReviewInboxItemKind =
 export type ReviewInboxItemState = "actionable" | "blocked";
 
 export interface ReviewInboxItem {
+  readonly gate?: ParkedGate;
   id: string;
   kind: ReviewInboxItemKind;
   state: ReviewInboxItemState;
