@@ -21,7 +21,7 @@
       "operation": "pull_request.observe",
       "when": "pr_opened",
       "inputs": {
-        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
+        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
       },
       "every": "2m",
       "produces": [
@@ -132,7 +132,7 @@
       "detail": "optional(text)"
     },
     "pr_body": {
-      "change_request_link": "text",
+      "pr_url": "text",
       "branch": "text",
       "summary": "text",
       "review_status": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
@@ -165,7 +165,7 @@
     },
     "plan_model": {
       "id": "ident",
-      "model_route": "text",
+      "route": "text",
       "per_attempt_cap_cents": "integer",
       "expected_cost_per_attempt": "expected_cost"
     },
@@ -179,7 +179,7 @@
       "criteria": "list(plan_item)"
     },
     "slice_paid_plan": {
-      "paid_model_ids": "list(ident)",
+      "models": "list(ident)",
       "repeats": "integer",
       "cap_cents": "integer"
     },
@@ -190,7 +190,7 @@
       "groups": "list(plan_group)",
       "outcomes": "list(plan_outcome)",
       "decision_rule": "list(decision_row)",
-      "planned_models": "list(plan_model)",
+      "models": "list(plan_model)",
       "pilot_selection": "plan_slice",
       "slice_paid": "slice_paid_plan",
       "full_study_repeats": "integer",
@@ -205,7 +205,7 @@
     },
     "completed_cohort": {
       "repository_key": "ident",
-      "change_request_link": "text",
+      "pr_url": "text",
       "branch": "text",
       "build_result": "build_summary"
     },
@@ -218,7 +218,7 @@
     },
     "digest_recipe": {
       "files": "list(text)",
-      "digest_command": "text"
+      "command": "text"
     },
     "slice_build_body": {
       "build": "build_summary",
@@ -424,9 +424,9 @@
         "spend_matches_build": "published(slice_build) and published(spend_request) and latest(spend_request).generator_digest == latest(slice_build).generator_digest and every(latest(spend_request).case_ids, contains(latest(slice_build).case_ids, item)) and every(latest(slice_build).case_ids, contains(latest(spend_request).case_ids, item))",
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
-        "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
+        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
         "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
@@ -493,7 +493,7 @@
               "message": "Every case must be listed by the group it names."
             },
             {
-              "check": "every(plan.slice_paid.paid_model_ids, contains(map(plan.planned_models, item.id), item))",
+              "check": "every(plan.slice_paid.models, contains(map(plan.models, item.id), item))",
               "message": "Paid slice models must be plan models."
             },
             {
@@ -505,7 +505,7 @@
               "message": "The slice needs at least one case."
             },
             {
-              "check": "len(plan.slice_paid.paid_model_ids) > 0",
+              "check": "len(plan.slice_paid.models) > 0",
               "message": "The paid slice needs at least one model."
             },
             {
@@ -527,7 +527,7 @@
               "message": "Every slice case must pass qualification: reference passes, omissions isolated and controls replayed."
             },
             {
-              "check": "len(slice_build.digest_recipe.files) > 0 and slice_build.digest_recipe.digest_command != \"\"",
+              "check": "len(slice_build.digest_recipe.files) > 0 and slice_build.digest_recipe.command != \"\"",
               "message": "The digest recipe needs files and a hashing command."
             },
             {
@@ -575,7 +575,7 @@
           "schema": "slice_report_body",
           "validate": [
             {
-              "check": "published(plan) and every(slice_report.paid_results, contains(latest(plan).slice_paid.paid_model_ids, item.model_id))",
+              "check": "published(plan) and every(slice_report.paid_results, contains(latest(plan).slice_paid.models, item.model_id))",
               "message": "Paid results may name only the plan's paid slice models."
             },
             {
@@ -689,7 +689,7 @@
         "pr": {
           "kind": "external_reference",
           "view": "pull_request",
-          "link_field": "change_request_link",
+          "link_field": "pr_url",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -955,7 +955,7 @@
         "generator_digest": "latest(slice_build).generator_digest",
         "digest_recipe": "latest(slice_build).digest_recipe",
         "slice_report": "latest(slice_report)",
-        "cohort": "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(slice_build).build}"
+        "cohort": "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(slice_build).build}"
       }
     },
     "expand": {
@@ -971,9 +971,9 @@
       "let": {
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
-        "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
+        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
         "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
@@ -1053,7 +1053,7 @@
         "pr": {
           "kind": "external_reference",
           "view": "pull_request",
-          "link_field": "change_request_link",
+          "link_field": "pr_url",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -1183,7 +1183,7 @@
       "done_when": "approved(assessment) and published(expansion) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
         "repository_key": "input.repository.key",
-        "change_request_link": "latest(pr).change_request_link",
+        "pr_url": "latest(pr).pr_url",
         "branch": "latest(pr).branch",
         "build_result": "latest(expansion).build"
       }
@@ -1201,9 +1201,9 @@
       "let": {
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
-        "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
+        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
         "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
@@ -1253,7 +1253,7 @@
         "pr": {
           "kind": "external_reference",
           "view": "pull_request",
-          "link_field": "change_request_link",
+          "link_field": "pr_url",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -1355,23 +1355,23 @@
       "done_when": "approved(freeze) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
         "freeze": "latest(freeze)",
-        "cohort": "{repository_key: input.repository.key, change_request_link: latest(pr).change_request_link, branch: latest(pr).branch, build_result: latest(freeze).build}"
+        "cohort": "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(freeze).build}"
       }
     },
     "integration": {
       "let": {
         "pr_published": "published(pr)",
-        "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
+        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
         "watch_base": "input.repository.forge.final_base",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
         "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "final_state": "pr_state_current and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))"
       },
       "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
       "outcome": {
         "repository_key": "input.repository.key",
-        "change_request_link": "latest(pr).change_request_link",
+        "pr_url": "latest(pr).pr_url",
         "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
       },
       "input": {
@@ -1388,7 +1388,7 @@
         "pr": {
           "kind": "external_reference",
           "view": "pull_request",
-          "link_field": "change_request_link",
+          "link_field": "pr_url",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -1398,7 +1398,7 @@
         "manual_merge_target": {
           "kind": "external_reference",
           "view": "pull_request",
-          "link_field": "change_request_link",
+          "link_field": "pr_url",
           "schema": "pr_body"
         },
         "observed_state": {

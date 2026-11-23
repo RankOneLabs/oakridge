@@ -30,13 +30,13 @@ export const plan = {
     { id: "three", group: "three", is_control: false }],
   groups: [{ id: "slice", case_ids: ["base"] }, { id: "two", case_ids: ["two"] }, { id: "three", case_ids: ["three"] }],
   outcomes: [{ id: "scores", rule: "Record outcomes" }], decision_rule: [{ condition: "Scores observed", next_step: "Expand" }],
-  planned_models: [{ id: "model", model_route: "fake/model", per_attempt_cap_cents: 100, expected_cost_per_attempt: { cents: 10, basis: "assumption" } }],
+  models: [{ id: "model", route: "fake/model", per_attempt_cap_cents: 100, expected_cost_per_attempt: { cents: 10, basis: "assumption" } }],
   pilot_selection: { case_ids: ["base"], risk_reason: "Control", criteria: [{ id: "criterion", text: "Control scored" }] },
-  slice_paid: { paid_model_ids: ["model"], repeats: 1, cap_cents: 100 },
+  slice_paid: { models: ["model"], repeats: 1, cap_cents: 100 },
   iteration_triggers: [{ id: "trigger", text: "Control does not replay" }], full_study_repeats: 2,
 };
-export const digestRecipe = { files: ["generator.py"], digest_command: "sha256sum generator.py" };
-export const pr = (key: string, number: number) => ({ change_request_link: `https://github.com/acme/oakridge/pull/${number}`, branch: key, summary: key });
+export const digestRecipe = { files: ["generator.py"], command: "sha256sum generator.py" };
+export const pr = (key: string, number: number) => ({ pr_url: `https://github.com/acme/oakridge/pull/${number}`, branch: key, summary: key });
 export const build = (key: string) => ({ cohort_id: key, title: key, head_sha: `${key}-head`, summary: key, changed_files: [] });
 export const qualifications = (case_ids: readonly string[]) => case_ids.map((case_id) =>
   ({ case_id, reference_passes: true, omissions_isolated: true, controls_replayed: true, detail: "Qualification passed" }));

@@ -223,7 +223,7 @@ describe("v2 development adapters", () => {
     if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
     const unsafe = withUnitFields(mergeUnit, { artifacts: mergeUnit.artifacts.map((artifact) =>
       artifact.artifact_key === "pr" && artifact.latest_revision
-        ? { ...artifact, kind: "external_reference", link_field: "change_request_link", latest_revision: { ...artifact.latest_revision, body: { change_request_link: "javascript:alert(1)" } } }
+        ? { ...artifact, kind: "external_reference", link_field: "pr_url", latest_revision: { ...artifact.latest_revision, body: { pr_url: "javascript:alert(1)" } } }
         : artifact) });
     expect(selectReviewPullRequestUrl(unsafe, {
       review: "verify_release", of_artifact: "pr", reviewed_revision_id: "proposal-revision", wait: "external",

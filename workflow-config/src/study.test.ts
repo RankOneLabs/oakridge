@@ -85,10 +85,10 @@ const checks = {
   uniqueMembership: "unique(flatten(map(plan.groups, item.case_ids)))",
   knownGroupCases: "every(flatten(map(plan.groups, item.case_ids)), contains(map(plan.cases, item.id), item))",
   declaredMembership: "every(plan.cases, contains(map(plan.groups, item.id), item.group) and contains(require(lookup(plan.groups, id, item.group)).case_ids, item.id))",
-  knownPaidModels: "every(plan.slice_paid.paid_model_ids, contains(map(plan.planned_models, item.id), item))",
+  knownPaidModels: "every(plan.slice_paid.models, contains(map(plan.models, item.id), item))",
   uniqueGroupAndHypothesisIds: "unique(map(plan.groups, item.id)) and unique(map(plan.hypotheses, item.id))",
   nonemptySlice: "len(plan.pilot_selection.case_ids) > 0",
-  nonemptyPaidModels: "len(plan.slice_paid.paid_model_ids) > 0",
+  nonemptyPaidModels: "len(plan.slice_paid.models) > 0",
   positiveRepeats: "plan.slice_paid.repeats > 0",
   distinctCriteriaAndTriggers: "unique(map(plan.pilot_selection.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.pilot_selection.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))",
 };
@@ -179,7 +179,7 @@ const refusals: RefusalCase[] = [
   },
   {
     name: "unknown paid slice model",
-    change: plan => { plan.slice_paid.paid_model_ids.push("ghost"); },
+    change: plan => { plan.slice_paid.models.push("ghost"); },
     expected_check: ["knownPaidModels"],
   },
   {
@@ -189,7 +189,7 @@ const refusals: RefusalCase[] = [
   },
   {
     name: "no paid slice models",
-    change: plan => { plan.slice_paid.paid_model_ids = []; },
+    change: plan => { plan.slice_paid.models = []; },
     expected_check: ["nonemptyPaidModels"],
   },
   {
@@ -284,7 +284,7 @@ async function validationRun(stageName: string, stageInput: object) {
 }
 
 const digest = "test_digest";
-const digest_recipe = { files: ["generate.py"], digest_command: "sha256sum generate.py" };
+const digest_recipe = { files: ["generate.py"], command: "sha256sum generate.py" };
 const build = (cohort_id: string) => ({ cohort_id, title: cohort_id, head_sha: "head", summary: "Worked", changed_files: [] });
 const qualification = (case_id: string) => ({ case_id, reference_passes: true, omissions_isolated: true, controls_replayed: true, detail: "Qualified" });
 const plannedCase = fixture.pilot_selection.case_ids[0];
@@ -292,7 +292,7 @@ const sliceBuild = { build: build("slice"), generator_digest: digest, case_ids: 
   qualifications: fixture.pilot_selection.case_ids.map(qualification), digest_recipe };
 const spendRequest = { cohort_file: "slice.json", attempt_count: 1, cap_cents: fixture.slice_paid.cap_cents,
   generator_digest: digest, case_ids: fixture.pilot_selection.case_ids };
-const paidResult = { case_id: plannedCase, model_id: fixture.slice_paid.paid_model_ids[0], outcome: "scored", detail: "Scored", spend_cents: 1,
+const paidResult = { case_id: plannedCase, model_id: fixture.slice_paid.models[0], outcome: "scored", detail: "Scored", spend_cents: 1,
   launch_command: "run", store_path: "/runs/test" };
 const sliceReport = { generator_digest: digest, run_key: "test", qualifications: sliceBuild.qualifications,
   paid_results: [paidResult], criteria_marks: fixture.pilot_selection.criteria.map(({ id }) => ({ id, status: "met", evidence: "Measured" })),
@@ -310,7 +310,7 @@ const sliceAssessment = { ...baseAssessment([
 ]), run_key: sliceReport.run_key };
 const findings = (kind: string, id: string) =>
   [{ id: "finding", severity: "info", observation: "Linked", evidence: [], related_subjects: [{ kind, id }] }];
-const studyPr = { change_request_link: "https://github.com/acme/study/pull/1", summary: "Built", branch: "slice" };
+const studyPr = { pr_url: "https://github.com/acme/study/pull/1", summary: "Built", branch: "slice" };
 
 test("slice qualification, paid evidence, and task-link checks report specific refusals", async () => {
   const harness = await validationRun("design", { spec: fixture.question, repository, workspace, ...defaultLimits, approved_plan: null });

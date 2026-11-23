@@ -10,7 +10,7 @@ test("merge status uses the watch intent on design, expansion, freeze and integr
     const run = await openStudy(authority);
     async function check(location: string, number: number) {
       const response = await run.request("GET", "/merge-status", undefined, undefined, location);
-      expect(await response.json()).toMatchObject({ kind: "merged", pr_url: pr("irrelevant", number).change_request_link });
+      expect(await response.json()).toMatchObject({ kind: "merged", pr_url: pr("irrelevant", number).pr_url });
     }
     const request = await prepareSlice(run);
     await run.end("spend_requester");

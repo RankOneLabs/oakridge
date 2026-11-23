@@ -58,8 +58,8 @@ test("two producers sharing a session host both reviews there, including a unit 
 
 test.each(["design", "expand", "freeze"])("a %s merge gate reads the declared link field from its reviewed artifact", (stage) => {
   const url = "https://github.com/acme/sample/pull/13";
-  const artifact = { ...manuscript, kind: "external_reference" as const, link_field: "change_request_link",
-    latest_revision: { ...manuscript.latest_revision!, body: { change_request_link: url } } };
+  const artifact = { ...manuscript, kind: "external_reference" as const, link_field: "review_link",
+    latest_revision: { ...manuscript.latest_revision!, body: { review_link: url } } };
   const merge = { ...review, confirms: "merge" as const, wait: "external" as const };
   const unit = withUnitFields(input, { stage, artifacts: [artifact], reviews: [merge] });
   expect(selectReviewPullRequestUrl(unit, merge)).toBe(url);

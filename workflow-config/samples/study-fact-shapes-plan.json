@@ -296,10 +296,10 @@
       "next_step": "Read the results per shape against the control; write a shape result only when at least 2 readable models miss on the same shape."
     }
   ],
-  "planned_models": [
+  "models": [
     {
       "id": "sol",
-      "model_route": "azure/us",
+      "route": "azure/us",
       "per_attempt_cap_cents": 200,
       "expected_cost_per_attempt": {
         "cents": 13,
@@ -308,7 +308,7 @@
     },
     {
       "id": "argon",
-      "model_route": "google-vertex/global",
+      "route": "google-vertex/global",
       "per_attempt_cap_cents": 400,
       "expected_cost_per_attempt": {
         "cents": 90,
@@ -317,7 +317,7 @@
     },
     {
       "id": "luna",
-      "model_route": "azure",
+      "route": "azure",
       "per_attempt_cap_cents": 100,
       "expected_cost_per_attempt": {
         "cents": 30,
@@ -355,7 +355,7 @@
     ]
   },
   "slice_paid": {
-    "paid_model_ids": [
+    "models": [
       "sol",
       "argon",
       "luna"

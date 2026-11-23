@@ -4,7 +4,7 @@ Render the approved plan into `experiments/<area>/studies/<study>/study-plan.md`
 
 1. Generate fixtures for the approved slice case IDs.
 2. Qualify each fixture using the host instructions. Verify that the reference passes, each omission fails only its own tests, and controls replay in fresh sandboxes. Record `{case_id, reference_passes, omissions_isolated, controls_replayed, detail}`.
-3. Hash the generator source, shared visible tests, and hidden-test templates. Record the exact ordered files and hash command in `digest_recipe` as `{files, digest_command}`.
+3. Hash the generator source, shared visible tests, and hidden-test templates. Record the exact ordered files and hash command in `digest_recipe` as `{files, command}`.
 4. Commit the fixtures, generator and qualification work. Publish `slice_build` with the checked commit's head, digest, digest recipe, case IDs, and qualifications.
 5. Push and open or update the draft PR against the build base using the pr-operations skill. Publish `pr`.
 

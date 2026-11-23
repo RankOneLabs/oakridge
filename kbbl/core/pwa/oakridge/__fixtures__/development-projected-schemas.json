@@ -405,7 +405,7 @@
           "schema": "text"
         },
         {
-          "key": "change_request_link",
+          "key": "pr_url",
           "schema": "text"
         },
         {
@@ -454,7 +454,7 @@
           "schema": "{changed_files: list(text), delegated_session_metadata: optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}), head_sha: text, known_issues: list({description: text, severity: enum(blocking, warning, info)}), repository_key: optional(ident), summary: text, tests: {cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}}"
         },
         {
-          "key": "change_request_link",
+          "key": "pr_url",
           "schema": "text"
         },
         {

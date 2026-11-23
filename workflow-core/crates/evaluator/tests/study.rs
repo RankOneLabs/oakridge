@@ -296,15 +296,15 @@ fn plan() -> Value {
         ],
         "outcomes": [{"id": "o1", "rule": "Compare scores with the control."}],
         "decision_rule": [{"condition": "Slice criteria met", "next_step": "Expand"}],
-        "planned_models": [{
-            "id": MODEL, "model_route": "test/model", "per_attempt_cap_cents": 100,
+        "models": [{
+            "id": MODEL, "route": "test/model", "per_attempt_cap_cents": 100,
             "expected_cost_per_attempt": {"cents": 50, "basis": "assumption"}
         }],
         "pilot_selection": {
             "case_ids": SLICE_CASES, "risk_reason": "Qualify the control and one omission.",
             "criteria": [{"id": "sc1", "text": "Both slice cases produce scores."}]
         },
-        "slice_paid": {"paid_model_ids": [MODEL], "repeats": 1, "cap_cents": 200},
+        "slice_paid": {"models": [MODEL], "repeats": 1, "cap_cents": 200},
         "iteration_triggers": [{"id": "it1", "text": "Check that controls replay."}],
         "full_study_repeats": 2
     })
@@ -336,7 +336,7 @@ fn spend_request(digest: &str, case_ids: &[&str]) -> Value {
 }
 
 fn digest_recipe() -> Value {
-    json!({"files": ["generator.py"], "digest_command": "sha256sum generator.py"})
+    json!({"files": ["generator.py"], "command": "sha256sum generator.py"})
 }
 
 fn paid_report(digest: &str, run_key: &str) -> Value {
@@ -401,7 +401,7 @@ fn expansion_assessment(head_sha: &str, case_ids: &[&str]) -> Value {
 }
 
 fn pr(branch: &str) -> Value {
-    json!({"change_request_link": format!("https://forge/oakridge/{branch}"), "branch": branch, "summary": "Study fixtures"})
+    json!({"pr_url": format!("https://forge/oakridge/{branch}"), "branch": branch, "summary": "Study fixtures"})
 }
 
 fn slice_output(artifact: &str) -> WorkerOutput<'_> {
@@ -490,7 +490,7 @@ impl Run {
     }
 
     fn observe_pr(&mut self, branch: &str, state: &str) {
-        let body = json!({"state":state,"number":1,"url":pr(branch)["change_request_link"]});
+        let body = json!({"state":state,"number":1,"url":pr(branch)["pr_url"]});
         self.write(
             WorkerOutput {
                 unit: DESIGN,
