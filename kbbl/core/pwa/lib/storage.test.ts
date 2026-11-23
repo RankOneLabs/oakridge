@@ -98,7 +98,7 @@ describe("new session model storage", () => {
   // turning every other family into Opus.
   test("coerces a stored context-hinted Claude model to the same family's picker entry", () => {
     const normalized = writeStoredNewSessionModel(
-      "claude-fable-5-1[1m]",
+      "fable[1m]",
       claudeRuntime,
     );
 
@@ -111,7 +111,7 @@ describe("new session model storage", () => {
     // hinted and only the read path can rescue it.
     localStorage.setItem(
       newSessionModelKey("claude-code"),
-      "claude-fable-5-1[1m]",
+      "fable[1m]",
     );
 
     expect(readStoredNewSessionModel(claudeRuntime)).toBe("fable");

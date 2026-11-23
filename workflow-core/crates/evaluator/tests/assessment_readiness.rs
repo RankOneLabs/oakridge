@@ -211,3 +211,26 @@ fn pool_capacity_counts_active_members_awaiting_final_approval() {
     assert_eq!(two.status("run/a"), &UnitStatus::Active);
     assert_eq!(two.status("run/b"), &UnitStatus::Active);
 }
+
+#[test]
+fn launch_evaluates_label_from_declared_input_fields() {
+    let mut run = Run::launch(
+        json!({
+            "workflow": "labelled", "input": {"caption":"text","targets":"list(ident)"},
+            "label": {"title":"input.caption","repositories":"input.targets"},
+            "run": {"units": {}, "outcome": {}}, "stages": {}
+        }),
+        json!({"caption":"Portable title","targets":["r1","r2"]}),
+    );
+    assert_eq!(
+        run.result.run_label,
+        Some(RunLabel {
+            title: "Portable title".into(),
+            repositories: vec!["r1".into(), "r2".into()],
+        })
+    );
+    run.apply(Event::Launched {
+        input: json!({"caption":"Other","targets":[]}),
+    });
+    assert_eq!(run.result.run_label, None);
+}

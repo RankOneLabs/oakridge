@@ -21,6 +21,7 @@ function repositoryApplicability(inputs: CompositeInputs, task: CompositeLogical
   const buildItems = new Map<ItemOccurrenceId, string>();
   const repositories = new Map<string, RepositoryJudgment[]>();
   const occurrences = new Map(inputs.occurrences.map((entry) => [entry.occurrence_id, entry]));
+  const publishedAt = new Map(inputs.revisions.map((revision) => [revision.revision_id, revision.recorded_at.getTime()]));
   for (const relation of inputs.relations) {
     if (relation.type !== "addresses" || relation.target_logical_item_id !== task.logical_item_id) continue;
     const qualifier = relation.qualifier;
@@ -41,7 +42,12 @@ function repositoryApplicability(inputs: CompositeInputs, task: CompositeLogical
       repositories.get(key)?.push({ assessment_revision_id: assessment.revision_id, status });
   }
   return [...repositories].sort(([left], [right]) => left.localeCompare(right))
-    .map(([repository_key, judgments]) => ({ repository_key, judgments: judgments.sort((left, right) => left.assessment_revision_id.localeCompare(right.assessment_revision_id)) }));
+    .map(([repository_key, judgments]) => ({
+      repository_key,
+      judgments: judgments.sort((left, right) =>
+        (publishedAt.get(left.assessment_revision_id) ?? 0) - (publishedAt.get(right.assessment_revision_id) ?? 0)
+        || left.assessment_revision_id.localeCompare(right.assessment_revision_id)),
+    }));
 }
 
 const composite: CompositePath = { logical_scope: TASK_SCOPE, repositoryApplicability };

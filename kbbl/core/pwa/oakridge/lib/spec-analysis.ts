@@ -35,5 +35,5 @@ export function isSpecRequirement(value: unknown): value is SpecRequirement {
     && REQUIREMENT_STATUSES.some((status) => status === value.status);
 }
 
-export { parseCurrentAnalysis, type CurrentAnalysis, type CurrentFinding } from "./current-contract";
+export { parseCurrentAnalysis, type CurrentAnalysis, type CurrentFinding } from "./viewer-data";
 export { requirementStatus, selectAnalysisCounts, selectCodeHotspots, selectOperatorDecisions } from "./current-analysis";

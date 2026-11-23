@@ -1,7 +1,7 @@
 import type { InputHTMLAttributes, Ref } from "react";
 
 interface TextInputProps extends InputHTMLAttributes<HTMLInputElement> {
-  type?: "text" | "password" | "file";
+  type?: "text" | "password" | "file" | "number";
   ref?: Ref<HTMLInputElement>;
   variant?: "default" | "editing";
 }

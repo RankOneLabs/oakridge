@@ -15,7 +15,7 @@ export function selectReviewedRevision(read: Pick<RunRead, "revisions">, decisio
   return read.revisions.filter((r) => r.unit_id === decision.unit_id && r.artifact === artifact && +r.created_at <= +decision.created_at)
     .sort((a,b) => +b.created_at - +a.created_at || b.seq-a.seq)[0] ?? null;
 }
-export interface ReviewTime extends UsageReview { unit_id: string; kind: "human" | "external" }
+export interface ReviewTime extends UsageReview { unit_id: string }
 export function reviewTimes(read: RunRead): ReviewTime[] {
   return read.decisions.flatMap((decision): ReviewTime[] => {
     const unit = read.units.find((u) => u.id === decision.unit_id);
@@ -26,7 +26,7 @@ export function reviewTimes(read: RunRead): ReviewTime[] {
     // Without the reviewed revision, the effect target is the only start left, and only approximate.
     const revision = reviewed ?? read.revisions.find((r) => r.id === decision.target_revision_id);
     if (!revision) return [];
-    const external = decision.review === "merge_confirmation" || decision.review === "pr_closed";
+    const external = review.wait === "external";
     const periodic = Object.values(stage?.workers ?? {}).some((w) => w.kind === "code" && !!w.every && w.produces.includes(revision.artifact));
     return [{ unit_id: decision.unit_id, review: decision.review, decision: decision.decision,
       wait_ms: +decision.created_at - +revision.created_at, approximate: !reviewed || !!review.when || (external && periodic), kind: external ? "external" : "human" }];

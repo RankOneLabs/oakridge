@@ -1,4 +1,4 @@
-import { BLOCKER_REVIEW } from "../../operator-contracts/blocker";
+import { BLOCKER_REVIEW } from "../../operator-contracts/constants";
 import { useRef, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { TextArea } from "../../../components/atoms/TextArea";

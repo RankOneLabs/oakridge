@@ -35,10 +35,10 @@ export function selectHandoffUnit(units: readonly OperatorUnitView[], id: string
 export function selectHandoffContext({ unit, revisions, attemptId, revisionId }: HandoffContextRequest) {
   const assessmentRevision = revisions.find((revision) => revision.id === selectHandoffRevisionId(revisionId));
   const attempt = unit?.attempts.find((candidate) => candidate.id === (attemptId ?? assessmentRevision?.attempt_id)) ?? null;
-  const assessor = attempt?.worker === "assessor" ? attempt : null;
+  const assessor = attempt?.intent?.engine_inputs.subject || assessmentRevision?.subject_id ? attempt : null;
   const resultId = assessmentRevision?.subject_id ?? assessor?.intent?.engine_inputs.subject?.id ?? null;
   const buildRevision = revisions.find((revision) => revision.id === selectHandoffRevisionId(resultId ?? undefined));
-  const builder = attempt?.worker === "builder" ? attempt : unit?.attempts.find((candidate) => candidate.id === buildRevision?.attempt_id) ?? null;
+  const builder = attempt && !assessor ? attempt : unit?.attempts.find((candidate) => candidate.id === buildRevision?.attempt_id) ?? null;
   return { builder, assessor, resultId };
 }
 export function selectHandoffBriefUnit(attempt: OperatorAttemptView | null): string | null {

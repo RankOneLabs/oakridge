@@ -94,6 +94,8 @@ pub struct CompiledWorkflow {
     >,
     pub digest: BundleDigest,
     pub stages: Vec<SymbolKey>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub unit_dependencies: std::collections::BTreeMap<String, Vec<SymbolKey>>,
     /// The parsed source returned with its tagged types for read projections.
     pub workflow: Box<Workflow>,
 }

@@ -138,6 +138,7 @@ export type ObservationItemStatusKey =
 
 export interface ObservationApplicableRepository {
   readonly repository_key: string;
+  /** Oldest to newest by assessment publication time. */
   readonly judgments: readonly ObservationRepositoryJudgment[];
 }
 

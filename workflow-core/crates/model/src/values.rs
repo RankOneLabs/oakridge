@@ -374,6 +374,8 @@ pub struct StepSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StepResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_label: Option<RunLabel>,
     #[serde(default)]
     pub publication_bindings: Option<Vec<InputBinding>>,
     pub snapshot: StepSnapshot,
@@ -383,6 +385,13 @@ pub struct StepResult {
     pub reviews: Vec<ResolvedReview>,
     /// Units unable to start, emitted from the stepped snapshot for read projections.
     pub blocked: Vec<UnitBlock>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunLabel {
+    pub title: String,
+    pub repositories: Vec<String>,
 }
 
 /// An operator review a decision is legal on now (part 1 §5.2: the latest

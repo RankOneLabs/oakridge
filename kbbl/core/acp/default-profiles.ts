@@ -1,3 +1,4 @@
+import profileDefaults from "./profile-defaults.json";
 import { codexUsageParser } from "#kbbl/core/acp/usage-parsers/codex";
 import { claudeUsageParser } from "#kbbl/core/acp/usage-parsers/claude";
 // Built-in production agent profiles (§20, cohort 2). These are the two
@@ -82,6 +83,11 @@ export function builtinAgentProfiles(
     // Verified against claude-agent-acp 0.76.0 with the existing login.
     skillDiscovery: { kind: "additionalDirectories" },
     id: "claude-code",
+    ...profileDefaults.acp.agents["claude-code"],
+    auth_probe: {
+      ...profileDefaults.acp.agents["claude-code"].auth_probe,
+      command: [claudeCli ?? profileDefaults.acp.agents["claude-code"].auth_probe.command[0], ...profileDefaults.acp.agents["claude-code"].auth_probe.command.slice(1)],
+    },
     usageParser: claudeUsageParser,
     label: "Claude Code (ACP)",
     command: installedBin(kbblRoot, "claude-agent-acp"),
@@ -99,6 +105,11 @@ export function builtinAgentProfiles(
     // Verified against codex-acp 1.13.0 with the existing login.
     skillDiscovery: { kind: "additionalDirectories" },
     id: "codex",
+    ...profileDefaults.acp.agents["codex"],
+    auth_probe: {
+      ...profileDefaults.acp.agents["codex"].auth_probe,
+      command: [codexCli ?? profileDefaults.acp.agents["codex"].auth_probe.command[0], ...profileDefaults.acp.agents["codex"].auth_probe.command.slice(1)],
+    },
     usageParser: codexUsageParser,
     label: "Codex (ACP)",
     command: installedBin(kbblRoot, "codex-acp"),

@@ -48,6 +48,7 @@ export interface CommittedDefinition {
   readonly prompt_sources?: PromptReferences;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
+  readonly worker_names?: Readonly<Record<string, readonly string[]>>;
 }
 
 export interface ResolvedDefinition {
@@ -61,10 +62,11 @@ export interface ResolvedDefinition {
   readonly operations: OperationRegistry;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
+  readonly worker_names?: Readonly<Record<string, readonly string[]>>;
 }
 
 export type DefinitionInputs = Pick<CommittedDefinition, "source" | "operation_registry_id" | "prompts" | "prompt_sources">;
-export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names">;
+export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names" | "worker_names">;
 
 /** Order must come from YAML mapping nodes, before toJS() reorders integer-like keys. */
 export function commitDefinition(inputs: DefinitionInputs, order: DefinitionOrder): CommittedDefinition {
@@ -149,10 +151,14 @@ function isPromptReferences(value: unknown): value is PromptReferences {
   return isObject(value) && Object.entries(value).every(([path, id]) => isPromptPath(path) && isIdentity(id));
 }
 function isCommittedDefinition(value: unknown): value is CommittedDefinition {
-  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "prompt_sources", "schema_names", "stage_names"])) return false;
+  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "prompt_sources", "schema_names", "stage_names", "worker_names"])) return false;
   const source = decodeWorkflowSource(value.source);
   if (source === null || !isIdentity(value.operation_registry_id) || !isPromptReferences(value.prompts)) return false;
   if (value.prompt_sources !== undefined && !isPromptReferences(value.prompt_sources)) return false;
+  const workerOrder = value.worker_names;
+  if (workerOrder !== undefined && (!isObject(workerOrder)
+    || !matchesNames(Object.keys(workerOrder), Object.keys(source.stages))
+    || Object.entries(source.stages).some(([name, stage]) => !matchesNames(workerOrder[name], Object.keys(stage.workers ?? {}))))) return false;
   const paths = referencedPromptPaths(source);
   const sources = value.prompt_sources ?? value.prompts;
   return matchesNames(Object.keys(value.prompts), paths) && paths.every((path) => Object.hasOwn(sources, path))
@@ -265,6 +271,7 @@ export function resolveDefinition(definition_id: DefinitionId, store_root = proc
     operations: operations.value,
     schema_names: committed.schema_names,
     stage_names: committed.stage_names,
+    worker_names: committed.worker_names,
   } };
 }
 
@@ -299,18 +306,18 @@ export function listCommittedPrompts(): readonly CommittedPromptSummary[] {
 }
 
 /** Current PR skill pins, derived from authored bundle directories. */
-export interface SkillIndex { readonly "gated-review": string; readonly "github-cli": string }
+export interface SkillIndex { readonly [integration: string]: string }
 export interface SkillBundle { readonly files: { readonly [path: string]: Uint8Array } }
 export function readSkillIndex(store_root = process.env.OAKRIDGE_DEFINITION_ROOT ?? DEFINITION_STORE_ROOT): Result<SkillIndex, DefinitionStoreFailure> {
   const context: ReadContext = { operation: "read_skill_index", identifier: "skills.json" };
   try {
     const text = readFileSync(resolve(store_root, "skills.json"), "utf8");
     const value: unknown = JSON.parse(text);
-    if (!isObject(value) || !hasOnlyKeys(value, ["gated-review", "github-cli"]) || !isIdentity(value["gated-review"]) || !isIdentity(value["github-cli"]))
-      return failure("malformed_object", context, "expected gated-review and github-cli skill digests");
+    if (!isObject(value) || Object.values(value).some((digest) => typeof digest !== "string" || digest.length === 0))
+      return failure("malformed_object", context, "expected a non-empty digest for each integration");
     const canonical = canonicalJson(value);
     if (!canonical.ok || canonical.value !== text) return failure("malformed_object", context, "skill index is not canonical JSON");
-    return { ok: true, value: { "gated-review": value["gated-review"], "github-cli": value["github-cli"] } };
+    return { ok: true, value: value as SkillIndex };
   } catch (cause) { return failure("store_io", context, String(cause)); }
 }
 export function readSkillBundle(digest: string, store_root = process.env.OAKRIDGE_DEFINITION_ROOT ?? DEFINITION_STORE_ROOT): Result<SkillBundle, DefinitionStoreFailure> {

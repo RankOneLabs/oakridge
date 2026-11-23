@@ -1,5 +1,4 @@
 import { selectOperatorActions, type ActionHistoryEntry } from "./operator-actions";
-import { selectRequirementRollup, type RequirementRollup } from "./requirement-rollup";
 import { parseRunConfig } from "../domain/run-config";
 import type { PrIntegration } from "../domain/pr-integration";
 import type { Event, UnitStatus, Writer } from "../core-client/core-types";
@@ -35,7 +34,6 @@ export interface RunSummary {
 }
 export interface RunView extends RunSummary {
   readonly operator_actions?: readonly ActionHistoryEntry[];
-  readonly requirement_rollup?: readonly RequirementRollup[];
   readonly open_blockers?: readonly { readonly unit_id: UnitId; readonly revision_id: string }[];
   readonly units: readonly RunUnitSummary[]
 }
@@ -44,17 +42,6 @@ export interface RunPage { readonly items: readonly RunView[]; readonly next_cur
 const attentionOf = (attention: readonly UnitAttention[], unit_id: string): UnitAttention =>
   attention.find((item) => item.unit_id === unit_id) ?? { unit_id, run_stalls: [], awaiting: [], stalled: [], blocked: null };
 
-interface RunLaunchLabel { readonly title: string | null; readonly repository_keys: readonly string[] }
-function selectRunLaunchLabel(input: unknown): RunLaunchLabel {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) return { title: null, repository_keys: [] };
-  const source = input as { readonly title?: unknown; readonly repositories?: unknown };
-  return { title: typeof source.title === "string" ? source.title : null,
-    repository_keys: Array.isArray(source.repositories) ? source.repositories.flatMap((repository: unknown) =>
-      typeof repository === "object" && repository !== null && !Array.isArray(repository)
-        && typeof (repository as { readonly key?: unknown }).key === "string"
-        ? [(repository as { readonly key: string }).key] : []) : [] };
-}
-
 function selectRunUpdatedAt(read: RunSummaryRead): Date {
   return read.latest_events.reduce((latest, event) => event.created_at > latest ? event.created_at : latest, read.run.created_at);
 }
@@ -62,14 +49,13 @@ function selectRunUpdatedAt(read: RunSummaryRead): Date {
 export function selectRunView(read: RunSummaryRead): RunView {
   const attention = selectRunAttention(read);
   const tree = selectUnitTree(read.units, read.definition.workflow);
-  const label = selectRunLaunchLabel(read.run.input);
+  const label = read.run.label;
   const config = parseRunConfig(read.run.config ?? {});
-  return { ...("decisions" in read ? { requirement_rollup: selectRequirementRollup(read as RunRead) } : {}),
-    ...("decisions" in read ? { operator_actions: selectOperatorActions(read as RunRead) } : {}),
+  return { ...("decisions" in read ? { operator_actions: selectOperatorActions(read as RunRead) } : {}),
     pr_integration: config?.pr_integration ?? null, config_error: config ? null : "recorded run config is malformed", pr_skill_digest: config?.pr_skill_digest ?? null, run_id: read.run.id, definition_id: read.run.definition_id,
     created_at: read.run.created_at, updated_at: selectRunUpdatedAt(read), archived_at: read.run.archived_at,
     open_blockers: read.units.flatMap((unit) => unit.blocked_reason?.kind === "blocker" ? [{ unit_id: unit.id, revision_id: unit.blocked_reason.revision }] : []),
-    ...label, status: selectRootStatus(read.run, read.units),
+    title: label?.title ?? null, repository_keys: label?.repositories ?? [], status: selectRootStatus(read.run, read.units),
     units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
       stage: unit.stage, status: unit.status, is_terminal: isTerminalStatus(unit.status),
       asks: selectAvailableDecisions(read, unit, attentionOf(attention, unit.id)).filter(isAsk).map((decision) => decision.key) })) };

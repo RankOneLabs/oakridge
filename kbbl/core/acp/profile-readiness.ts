@@ -25,10 +25,9 @@ export async function readProfileReadiness(profile: AgentProfile, probe: AuthPro
   if (!Bun.which(profile.command, { PATH: env.PATH })) return result({ kind: "failed", detail: "ACP adapter executable is missing", fix: "Run bun install --frozen-lockfile or correct the profile command" });
   if (!profile.requireLoadSession) return result({ kind: "failed", detail: "Profile does not support resumable delegated sessions", fix: "Enable requireLoadSession for this ACP profile" });
   if (!profile.skillDiscovery) return result({ kind: "failed", detail: "Profile has no session skill discovery support", fix: "Configure skillDiscovery for this ACP profile" });
-  const command = profile.id === "claude-code" ? [env.CLAUDE_CODE_EXECUTABLE ?? "claude", "auth", "status"]
-    : profile.id === "codex" ? [env.CODEX_PATH ?? "codex", "login", "status"] : null;
-  if (!command) return result({ kind: "unavailable_optional", detail: "Authentication introspection is unavailable for this custom profile", fix: "Verify authentication with this profile's CLI before launching" });
-  if (!await probe(command, env)) return result({ kind: "failed", detail: "Agent CLI authentication is unavailable or expired", fix: profile.id === "codex" ? "Run codex login" : "Run claude auth login" });
+  const auth = profile.auth_probe;
+  if (!auth) return result({ kind: "unavailable_optional", detail: "Authentication introspection is unavailable for this profile", fix: "Verify authentication with this profile's CLI before launching" });
+  if (!await probe(auth.command, env)) return result({ kind: "failed", detail: "Agent CLI authentication is unavailable or expired", fix: auth.fix });
   return result({ kind: "ok", detail: "ACP adapter and skill discovery configured; CLI authentication is ready" });
 }
 

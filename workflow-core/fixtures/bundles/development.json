@@ -24,10 +24,11 @@
   "workers": {
     "pr_watch": {
       "kind": "code",
+      "label": "PR watcher",
       "operation": "pull_request.observe",
       "when": "pr_opened",
       "inputs": {
-        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
+        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.path, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
       },
       "every": "2m",
       "produces": [
@@ -39,6 +40,7 @@
     "pr_closed": {
       "of": "build_result",
       "by": "operator",
+      "wait": "external",
       "when": "closed_pr",
       "prompt": "development/pr-closed.md",
       "inputs": {
@@ -57,6 +59,10 @@
     }
   },
   "workflow": "development",
+  "label": {
+    "title": "input.title",
+    "repositories": "map(input.repositories, item.key)"
+  },
   "schemas": {
     "final_merge_policy": "enum(require_merge, allow_close_without_merge)",
     "repository": {
@@ -69,7 +75,7 @@
     },
     "forge": {
       "owner": "ident",
-      "name": "ident",
+      "path": "ident",
       "build_base": "text",
       "final_base": "text"
     },
@@ -123,7 +129,7 @@
       "detail": "optional(text)"
     },
     "pr_body": {
-      "pr_url": "text",
+      "change_request_link": "text",
       "branch": "text",
       "summary": "text",
       "review_status": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
@@ -326,6 +332,7 @@
       "workers": {
         "git": {
           "kind": "code",
+          "label": "Git",
           "operation": "repository.prepare",
           "inputs": {
             "repository_path": "input.repository.preparation.repository_path",
@@ -352,6 +359,7 @@
       "artifacts": {
         "analysis": {
           "kind": "document",
+          "view": "requirements_analysis",
           "schema": "analysis_body",
           "validate": [
             {
@@ -378,6 +386,7 @@
         },
         "spec": {
           "kind": "document",
+          "view": "specification",
           "schema": "spec_body",
           "validate": [
             {
@@ -406,6 +415,7 @@
       "workers": {
         "author": {
           "kind": "agent",
+          "label": "Author",
           "prompts": {
             "initial": "development/analysis.md",
             "revise": "development/analysis-revise.md"
@@ -420,6 +430,7 @@
         },
         "spec_editor": {
           "kind": "agent",
+          "label": "Spec editor",
           "when": "approved(analysis)",
           "prompts": {
             "initial": "development/analysis-to-spec.md",
@@ -508,6 +519,7 @@
       "artifacts": {
         "plan": {
           "kind": "document",
+          "view": "cohort_plan",
           "schema": "plan_body",
           "validate": [
             {
@@ -544,6 +556,7 @@
       "workers": {
         "planner": {
           "kind": "agent",
+          "label": "Planner",
           "prompts": {
             "initial": "development/plan.md",
             "revise": "development/plan-revise.md"
@@ -593,6 +606,7 @@
       "artifacts": {
         "brief": {
           "kind": "document",
+          "view": "build_brief",
           "schema": "brief_body",
           "validate": [
             {
@@ -641,6 +655,7 @@
       "workers": {
         "writer": {
           "kind": "agent",
+          "label": "Writer",
           "session": "shared",
           "prompts": {
             "initial": "development/brief.md",
@@ -692,23 +707,27 @@
         "brief_value": "input.brief",
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
-        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
         "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
       "artifacts": {
         "build_result": {
           "kind": "document",
+          "view": "build_result",
           "schema": "build_body"
         },
         "pr": {
           "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "change_request_link",
           "schema": "pr_body"
         },
         "assessment": {
           "kind": "assessment",
+          "view": "assessment",
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
@@ -768,6 +787,7 @@
       "workers": {
         "builder": {
           "kind": "agent",
+          "label": "Builder",
           "prompts": {
             "initial": "development/build.md",
             "revise": "development/build-revise.md"
@@ -785,6 +805,7 @@
         },
         "assessor": {
           "kind": "agent",
+          "label": "Assessor",
           "prompts": {
             "review": "development/assess.md",
             "revise": "development/assess-revise.md"
@@ -804,6 +825,7 @@
         },
         "prepare_observed_state": {
           "kind": "code",
+          "label": "Prepare observed state",
           "operation": "value.publish",
           "when": "pr_state_current",
           "inputs": {
@@ -850,6 +872,8 @@
         "merge_confirmation": {
           "of": "pr",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "pr_published and approved(assessment) and not merged_pr and not approved(pr)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
@@ -872,7 +896,7 @@
         "cohort_id": "brief_value.cohort_id",
         "repository_key": "input.brief.repository_key",
         "title": "input.cohort.title",
-        "pr_url": "latest(pr).pr_url",
+        "change_request_link": "latest(pr).change_request_link",
         "branch": "latest(pr).branch",
         "build_result": "latest(build_result)"
       }
@@ -880,17 +904,17 @@
     "integration": {
       "let": {
         "pr_published": "published(pr)",
-        "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
+        "pr_opened": "pr_published and latest(pr).change_request_link != \"\"",
         "watch_base": "input.repository.forge.final_base",
-        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
-        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).change_request_link",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).change_request_link",
         "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "final_state": "pr_state_current and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))"
       },
       "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
       "outcome": {
         "repository_key": "input.repository.key",
-        "pr_url": "latest(pr).pr_url",
+        "change_request_link": "latest(pr).change_request_link",
         "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
       },
       "input": {
@@ -904,6 +928,8 @@
       "artifacts": {
         "pr": {
           "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "change_request_link",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -912,6 +938,8 @@
         },
         "manual_merge_target": {
           "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "change_request_link",
           "schema": "pr_body"
         },
         "observed_state": {
@@ -920,6 +948,7 @@
         },
         "assessment": {
           "kind": "assessment",
+          "view": "assessment",
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
@@ -970,6 +999,7 @@
         },
         "prepare_manual_merge": {
           "kind": "code",
+          "label": "Prepare manual merge",
           "operation": "value.publish",
           "when": "pr_published",
           "inputs": {
@@ -982,6 +1012,7 @@
         },
         "prepare_observed_state": {
           "kind": "code",
+          "label": "Prepare observed state",
           "operation": "value.publish",
           "when": "pr_state_current",
           "inputs": {
@@ -994,6 +1025,7 @@
         },
         "integrator": {
           "kind": "agent",
+          "label": "Integrator",
           "prompts": {
             "initial": "development/integrate.md",
             "revise": "development/integrate-revise.md"
@@ -1015,6 +1047,8 @@
         "merge_confirmation": {
           "of": "manual_merge_target",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {

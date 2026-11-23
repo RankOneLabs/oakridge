@@ -73,6 +73,8 @@ pub(super) fn workflow(declared: &Workflow, resolved: &Workflow) -> Workflow {
                 BLOCKER_ARTIFACT.into(),
                 Artifact {
                     kind: ArtifactKind::Record,
+                    view: None,
+                    link_field: None,
                     schema: blocker_schema(),
                     edit_policy: EditPolicy::Always,
                     validate: vec![],

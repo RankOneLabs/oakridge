@@ -17,7 +17,7 @@ if (!cohort || !assessment) throw new Error("captured fixture lacks a cohort wit
 afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 
 it("keeps feedback the operator sent on the run after the page is left and reopened", async () => {
-  const decided = withUnitFields(cohort, { decisions: [], recorded_decisions: [{ id: "d1", review: "assessment_review", decision: "request_assessment_changes",
+  const decided = withUnitFields(cohort, { decisions: [], recorded_decisions: [{ id: "d1", decision_id: "d1", actor: null, reviewed_revision_id: "assessment:1", approved_assessment_revision_id: null, effect_target_revision_id: "assessment:1", review: "assessment_review", decision: "request_assessment_changes",
     effect: "request_changes", target_revision_id: assessment.id, payload: { feedback: "Check the migration path." }, created_at: "2026-10-28T12:00:00Z" }] });
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(units.map((unit) => unit.unit_id === cohort.unit_id ? decided : unit)),
     { status: 200, headers: { "Content-Type": "application/json" } }));

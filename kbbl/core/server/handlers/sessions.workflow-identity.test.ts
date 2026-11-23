@@ -153,6 +153,11 @@ describe("PUT /sessions/resumable/:key workflow member", () => {
 });
 
 describe("parseWorkflowIdentity", () => {
+  test("uses the install default for a workflow without an explicit PR integration", () => {
+    expect(parseWorkflowIdentity({ run_id: "run", unit_id: "unit", worker: "worker" }, "github-cli"))
+      .toEqual({ value: { run_id: "run", unit_id: "unit", worker: "worker", pr_integration: "github-cli", pr_skill_digest: null } });
+  });
+
   test("absent workflow parses to a null value", () => {
     expect(parseWorkflowIdentity(undefined)).toEqual({ value: null });
   });

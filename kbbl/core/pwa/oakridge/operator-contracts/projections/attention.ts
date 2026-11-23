@@ -15,4 +15,4 @@ export interface OperatorRunStall {
   readonly at: string;
 }
 
-export type OperatorAttention = { readonly kind: "waiting"; readonly reason: string } | { readonly kind: "stalled"; readonly detail: string };
+export type OperatorAttention = { readonly kind: "waiting"; readonly reason: string } | { readonly kind: "stalled"; readonly detail: string; readonly failure_code: string | null };

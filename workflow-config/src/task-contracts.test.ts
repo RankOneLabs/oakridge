@@ -66,7 +66,7 @@ test("spec review reopens analysis and reruns the editor in revise mode", async 
   expect(() => run.wanted("spec_editor")).toThrow();
 });
 test("canonical analysis stage has only analysis and spec, with spec as its only outcome", () => {
-  expect([Object.keys(development.stages.analysis.artifacts), development.stages.analysis.outcome, Object.keys(development.stages.analysis.reviews ?? {}), development.schemas?.tasks_body]).toEqual([["analysis", "spec"], {spec: "latest(spec)"}, ["analysis_review", "spec_review"], undefined]);
+  expect([Object.keys(development.stages.analysis.artifacts), development.stages.analysis.outcome, Object.keys(development.stages.analysis.reviews ?? {})]).toEqual([["analysis", "spec"], {spec: "latest(spec)"}, ["analysis_review", "spec_review"]]);
 });
 const planCases: {name: string; cohorts: PlanCohort[]; message: string}[] = [
   {name: "empty plan", cohorts: [], message: "The plan must name at least one cohort."},

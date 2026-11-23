@@ -2,7 +2,8 @@ import { ariaText, documentText, json, world, wrap } from "./item-panel-harness"
 import { describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 
-import { ANALYSIS, IMPLEMENTATION, INTEGRATION, item, paged, supportQuestion, taskComposite } from "../__fixtures__/grading";
+import { ANALYSIS, IMPLEMENTATION, INTEGRATION, id, item, paged, supportQuestion, taskComposite } from "../__fixtures__/grading";
+import { retryUnit } from "../__fixtures__/read-models";
 import { RunGradingSection } from "../components/organisms/RunGradingSection";
 import { TaskPanel } from "../components/organisms/TaskPanel";
 import type { ObservationCompositeRead } from "../grading-contracts/grading/item-reads";
@@ -119,4 +120,28 @@ describe("the grading section and task drilldown", () => {
     fireEvent.click(screen.getByTestId("or-composites-reveal"));
     expect((await screen.findByTestId("or-task-answer-count")).textContent).toBe("items: 7");
   });
+});
+
+
+it("shows each recorded decision role beside its exact linked revision", async () => {
+  const decisions = [{
+    id: "decision", decision_id: "decision", review: "folio_desk", decision: "authorize_publication", effect: "approve" as const, actor: null,
+    reviewed_revision_id: "draft:1", approved_assessment_revision_id: "appraisal:1", effect_target_revision_id: "appendix:1",
+    target_revision_id: "appendix:1", payload: {}, created_at: "2026-11-01T10:00:00Z",
+  }];
+  const entries = ["draft:1", "appraisal:1", "appendix:1", "draft:10"].map((revision) => ({
+    kind: "occurrence", item_kind: "folio", artifact_kind: "document", revision_id: id(revision), item_path: "/entries/0",
+    occurrence_id: id(`occurrence-${revision}`), unit_id: null, is_current: true,
+  }));
+  const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const path = new URL(String(input), "http://kbbl.test").pathname;
+    if (path.endsWith("/runs/run-1/units")) return json([{ ...retryUnit("folio"), recorded_decisions: decisions }]);
+    if (path.endsWith("/lineage")) return json(paged(entries));
+    return base(input, init);
+  });
+  wrap(<TaskPanel runId="run-1" taskId="T1" onOpenItem={vi.fn()} />);
+  await waitFor(() => expect(screen.getAllByTestId("or-task-decision-role")).toHaveLength(3));
+  const roles = screen.getAllByTestId("or-task-definition").map((entry) => within(entry).queryByTestId("or-task-decision-role")?.textContent);
+  expect(roles).toEqual(["reviewed · authorize publication", "assessment approved · authorize publication", "effect target · authorize publication", undefined]);
 });

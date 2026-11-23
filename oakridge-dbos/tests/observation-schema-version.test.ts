@@ -14,7 +14,7 @@ function definition(input: ContractSchema): PinnedDefinitionRead {
     schemas: input.schemas, stages: { analysis: { artifacts: {
       spec: { schema: { kind: "named", schema: "spec_body" } },
       analysis: { schema: input.artifact }, blocker: { schema: { kind: "record", fields: { text: { kind: "text" } } } },
-      ...(input.has_tasks ? { tasks: { schema: { kind: "named", schema: "tasks_body" } } } : {}),
+      ...(input.has_tasks ? { tasks: { schema: { kind: "named", schema: "unrelated_artifact_body" } } } : {}),
     } } },
   } } } as unknown as PinnedDefinitionRead;
 }

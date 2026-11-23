@@ -1,7 +1,7 @@
 // Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
-import type { AttemptStatus, BlockedReason, Cause, Citation, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ExecutionEvidence, ExecutionReconciliation, ForgeRepository, InputBindings, InputProvenanceEntries, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
+import type { AttemptStatus, BlockedReason, Cause, Citation, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ExecutionEvidence, ExecutionReconciliation, ForgeRepository, InputBindings, InputProvenanceEntries, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RunLabel, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
 import type { ColumnType } from "kysely";
 
 export type AuthorityDecisionEffect = "approve" | "dispatch" | "request_changes";
@@ -347,6 +347,10 @@ export interface AuthorityRun {
    * @type {RuntimeValue}
    */
   input: NullableJsonColumn<RuntimeValue>;
+  /**
+   * @type {RunLabel}
+   */
+  label: NullableJsonColumn<RunLabel>;
   project_id: string | null;
   root_unit_id: string | null;
 }

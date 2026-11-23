@@ -3,7 +3,7 @@ import type { ViewerProps } from "../../artifactRegistry";
 import { parseCurrentPlan } from "../../lib/plan";
 import { selectParallelCohortRows, selectPlanGraphLayout, type ParallelCohortRow } from "../../lib/plan-graph";
 import { selectPlanSections, type PlanSection } from "../../lib/current-plan";
-import type { CurrentCohort } from "../../lib/current-contract";
+import type { CurrentCohort } from "../../lib/viewer-data";
 import { selectAllocations } from "../../lib/current-brief";
 import { selectFindingSelections } from "../../lib/grading";
 import { selectPlanItemPaths } from "../../lib/current-item-paths";
@@ -46,8 +46,7 @@ function CohortCard({ row: { cohort, cohort_index: cohortIndex, wave_number }, i
 
 export function CurrentPlanViewer(props: ViewerProps) {
   const [selectedCohortId, setSelectedCohortId] = useState<CurrentCohort["id"] | null>(null);
-  const parsed = props.currentRead?.ok === false ? props.currentRead
-    : props.currentRead?.value?.kind === "plan" ? { ok: true as const, value: props.currentRead.value.body } : parseCurrentPlan(props.body);
+  const parsed = parseCurrentPlan(props.body);
   const cohorts = parsed.ok ? parsed.value.cohorts : null;
   const layout = useMemo(() => cohorts ? selectPlanGraphLayout(cohorts) : null, [cohorts]);
   if (!parsed.ok) return <CurrentParseFailure body={props.body} detail={parsed.error.detail} />;

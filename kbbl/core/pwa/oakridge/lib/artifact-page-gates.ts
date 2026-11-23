@@ -18,11 +18,11 @@ export function selectArtifactPageGates({ gates, revision_ids }: ArtifactPageGat
 }
 
 export function selectArtifactDecisionCopy(gate: ParkedGate, assessmentGate: ParkedGate | null) {
-  if (gate.gate_type === "merge_confirmation") return {
-    title: "Confirm the merge", description: "Verify the pull request is merged, then continue the cohort.",
+  if (gate.gate_type === "merge") return {
+    title: "Confirm the merge", description: "Verify the pull request is merged, then continue the run.",
   };
   if (gate === assessmentGate) return {
-    title: "Request changes", description: "Describe what needs to change in this assessment.",
+    title: "Request changes", description: `Describe what ${gate.producer_labels?.join(", ") || "the producer"} needs to change.`,
   };
   return { title: "Make your decision", description: "Approve this artifact or request specific changes." };
 }

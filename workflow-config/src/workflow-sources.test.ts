@@ -22,7 +22,7 @@ test("discovery uses the file location for audience and excludes shared files", 
   }
 });
 
-test("the repository has four discovered workflows", () => {
+test("the repository has five discovered workflows", () => {
   expect(discoverWorkflowSources(resolve(import.meta.dir, "../..")).map(({ name }) => name))
-    .toEqual(["development", "fan-out", "review-loop", "study"]);
+    .toEqual(["development", "fan-out", "portability", "review-loop", "study"]);
 });

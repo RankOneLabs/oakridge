@@ -1,30 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { expect, test } from "vitest";
 import type { ArtifactId } from "../../lib/ids";
 import type { RunArtifactRef } from "./run-overview";
-import { selectFilteredRunArtifacts, type RunArtifactFilter } from "./artifact-filter";
+import { artifactKeyLabel, selectArtifactFilters, selectFilteredRunArtifacts } from "./artifact-filter";
 
-const types = [
-  "workspace", "dev.spec_analysis", "dev.spec", "dev.plan", "dev.tasks", "dev.build_brief",
-  "dev.pr_summary", "dev.build_result", "dev.assessment", "custom.report",
+const rows: RunArtifactRef[] = [
+  { artifact_id: "one" as ArtifactId, type_id: "drafting.first_version", artifact_kind: "document", version: 1, stage_name: "drafting", label: null, created_at: null },
+  { artifact_id: "two" as ArtifactId, type_id: "vetting.appraisal", artifact_kind: "assessment", version: 1, stage_name: "vetting", label: null, created_at: null },
 ];
-const rows: readonly RunArtifactRef[] = types.map((type_id) => ({
-  artifact_id: type_id as ArtifactId, type_id, version: 1,
-  stage_name: "stage", label: null, created_at: null,
-}));
 
-describe("run artifact filter", () => {
-  it.each([
-    ["prep", types.slice(0, 5)],
-    ["briefs", ["dev.build_brief"]],
-    ["pr_summaries", ["dev.pr_summary"]],
-    ["build_results", ["dev.build_result"]],
-    ["assessments", ["dev.assessment"]],
-  ] as const)("selects %s artifacts", (filter, expected) => {
-    expect(selectFilteredRunArtifacts(rows, filter).map((row) => row.type_id)).toEqual(expected);
-  });
+test("filters use the artifact kinds present in the run", () => {
+  expect(selectArtifactFilters(rows).map((filter) => filter.key)).toEqual(["all", "document", "assessment"]);
+  expect(selectFilteredRunArtifacts(rows, "assessment")).toEqual([rows[1]]);
+});
 
-  it("keeps unknown artifact types visible in All", () => {
-    const filter: RunArtifactFilter = "all";
-    expect(selectFilteredRunArtifacts(rows, filter)).toEqual(rows);
-  });
+test("an artifact label uses the declaration key with spaces", () => {
+  expect(artifactKeyLabel(rows[0].type_id)).toBe("first version");
 });

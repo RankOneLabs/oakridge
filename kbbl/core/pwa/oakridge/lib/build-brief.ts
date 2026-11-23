@@ -1,5 +1,4 @@
-import { parseCurrentBrief, type CurrentBrief } from "./current-contract";
-import { selectVersionedComponent, type CurrentVersionRegistration } from "./artifact-version";
+import { type CurrentBrief } from "./viewer-data";
 import type { CohortId, RepositoryKey } from "../run-types";
 import { parsePlanCriterionList, type PlanCriterion, type PlanTraceId } from "./plan";
 
@@ -100,19 +99,11 @@ export function parseBuildBrief(body: unknown): BuildBrief | null {
   return criteria.ok ? { ...body, shape: "legacy", acceptance_criteria: criteria.value } : null;
 }
 export type CurrentBuildBrief = CurrentBrief & { shape: "current" };
-/** The schema version a brief was published under, and the registrations that resolve it. */
-export interface BriefVersion { readonly version: string; readonly registrations?: readonly CurrentVersionRegistration[] }
-export function readBuildBrief(body: unknown, brief_version: BriefVersion): BuildBrief | CurrentBuildBrief | null;
-export function readBuildBrief(body: unknown): BuildBrief | null;
-export function readBuildBrief(body: unknown, brief_version?: BriefVersion): BuildBrief | CurrentBuildBrief | null {
-  if (selectVersionedComponent({ schema: "brief_body", version: brief_version?.version, registrations: brief_version?.registrations }) !== "dev-current-brief-viewer") return parseBuildBrief(body);
-  const parsed = parseCurrentBrief(body);
-  return parsed.ok ? { ...parsed.value, shape: "current" } : null;
-}
+export const readBuildBrief = parseBuildBrief;
 
 /** Resolve only decisions recorded in this brief; missing ids stay literal. */
 export function selectBuildItemDecisions(brief: BuildBrief, item: BuildItem) {
   return item.decision_ids.map((id) => ({ id, decision: brief.decisions_made.find((decision) => decision.id === id)?.decision ?? null }));
 }
 
-export { parseCurrentBrief, type CurrentBrief };
+export { type CurrentBrief };

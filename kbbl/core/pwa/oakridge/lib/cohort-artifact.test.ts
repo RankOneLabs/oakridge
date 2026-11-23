@@ -20,25 +20,25 @@ const brief = {
 describe("selectCohortArtifactId", () => {
   const run = {
     stages: [
-      { artifacts: [{ id: "brief-old", type_id: "dev.build_brief", version: 1, label: "cm-api" }] },
+      { artifacts: [{ id: "brief-old", type_id: "brief.brief", view: "build_brief", version: 1, label: "cm-api" }] },
       { artifacts: [
-        { id: "brief-new", type_id: "dev.build_brief", version: 2, label: "cm-api" },
-        { id: "other", type_id: "dev.build_brief", version: 3, label: "cm-cli" },
-        { id: "result", type_id: "dev.build_result", version: 4, label: "cm-api" },
+        { id: "brief-new", type_id: "brief.brief", view: "build_brief", version: 2, label: "cm-api" },
+        { id: "other", type_id: "brief.brief", view: "build_brief", version: 3, label: "cm-cli" },
+        { id: "result", type_id: "cohort.build_result", view: "build_result", version: 4, label: "cm-api" },
       ] },
     ],
   } as unknown as RunDetail;
 
   test("picks the latest artifact of the type for the cohort", () => {
-    expect(selectCohortArtifactId(run, "dev.build_brief", "cm-api")).toBe("brief-new");
+    expect(selectCohortArtifactId(run, "build_brief", "cm-api")).toBe("brief-new");
   });
 
   test("tells types apart under the same cohort label", () => {
-    expect(selectCohortArtifactId(run, "dev.build_result", "cm-api")).toBe("result");
+    expect(selectCohortArtifactId(run, "build_result", "cm-api")).toBe("result");
   });
 
   test("finds nothing for a cohort without one", () => {
-    expect(selectCohortArtifactId(run, "dev.build_brief", "cm-ui")).toBeNull();
+    expect(selectCohortArtifactId(run, "build_brief", "cm-ui")).toBeNull();
   });
 });
 

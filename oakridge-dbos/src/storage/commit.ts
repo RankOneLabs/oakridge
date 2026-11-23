@@ -701,6 +701,7 @@ export function selectDeltaViolation(before: StepSnapshot, after: StepSnapshot):
 
 interface DeltaPlan {
   readonly run: StepSnapshot["run"];
+  readonly run_label: NonNullable<StepResult["run_label"]> | null;
   readonly created_units: StepSnapshot["units"];
   readonly changed_units: StepSnapshot["units"];
   readonly created_attempts: readonly BoundAttempt[];
@@ -738,7 +739,7 @@ function selectDeltaPlan(before: StepSnapshot, step: StepResult): DeltaPlan {
   });
   const old_revisions = new Set(before.revisions.map((revision) => revision.id));
   const old_decisions = new Set(before.decisions.map((decision) => decision.id));
-  return { run: after.run, created_units, changed_units, created_attempts, changed_attempts, publication_bindings: step.publication_bindings ?? null,
+  return { run: after.run, run_label: step.run_label ?? null, created_units, changed_units, created_attempts, changed_attempts, publication_bindings: step.publication_bindings ?? null,
     created_revisions: after.revisions.filter((revision) => !old_revisions.has(revision.id)),
     created_decisions: after.decisions.filter((decision) => !old_decisions.has(decision.id)) };
 }
@@ -747,7 +748,8 @@ function selectDeltaPlan(before: StepSnapshot, step: StepResult): DeltaPlan {
 async function writeDelta(trx: DatabaseTransaction, run_id: string, plan: DeltaPlan): Promise<void> {
   const root = plan.created_units.find((unit) => unit.id === plan.run.root);
   await trx.updateTable("authority.run").set({ root_unit_id: plan.run.root,
-    ...(root ? { input: root.input === null ? null : jsonText(root.input) } : {}) }).where("id", "=", run_id).execute();
+    ...(root ? { input: root.input === null ? null : jsonText(root.input),
+      label: plan.run_label === null ? null : jsonText(plan.run_label) } : {}) }).where("id", "=", run_id).execute();
   for (const unit of plan.created_units) await trx.insertInto("authority.unit").values({ id: unit.id, run_id, parent_id: unit.parent ?? null,
     declaration: unit.declaration, stage: unit.kind.kind === "stage" ? unit.kind.stage : null,
     collection_key: unit.collection_key ?? null, pool: unit.pool ?? null,
@@ -884,6 +886,8 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
     if (unit?.kind.kind !== "stage") return violation(run_id, `wanted worker ${worker.unit}/${worker.worker} is not on a stage`);
     const instruction = selectEffectInstruction({ run_id, workflow: source, parsed_workflow: existing.parsed_workflow,
       prompts: Object.fromEntries(Object.entries(prompts).map(([path, text]) => [path, createHash("sha256").update(text).digest("hex")])), stage: unit.kind.stage, config,
+      ...(unit.parent && unit.collection_key != null && step.snapshot.units.some((parent) => parent.id === unit.parent && parent.kind.kind === "group")
+        ? { collection: { parent: unit.parent, key: unit.collection_key } } : {}),
       action, seq: attempt_seq, resolved });
     if (!instruction.ok) return violation(run_id, instruction.error.detail);
     intents.push({ unit_id: worker.unit, action_id: action_id as ActionId, seq: attempt_seq, instruction: withReviewHistory(instruction.value, resolved), authorizing_revision: resolved.keyed_execution?.authorizing_revision });

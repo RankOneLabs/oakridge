@@ -1,4 +1,4 @@
-import type { CurrentAnalysis, CurrentFinding, CanonicalRequirement } from "./current-contract";
+import type { CurrentAnalysis, CurrentFinding, CanonicalRequirement } from "./viewer-data";
 import type { SubnavSection } from "./artifact-subnav";
 export type CurrentRequirementStatus = "blocked" | "warning" | "implementable" | "not_analyzed";
 /** Most urgent first: the order requirements are listed and counted in. */

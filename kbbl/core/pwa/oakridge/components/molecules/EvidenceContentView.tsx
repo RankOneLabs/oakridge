@@ -38,11 +38,6 @@ export function EvidenceContentView({ content, ...review }: EvidenceContentViewP
       </dd></div>
     </dl>;
     case "build_item": return <dl><Field label="Id" value={content.value.id} /><Field label="Description" value={content.value.description} /><Field label="Task ids" value={content.value.task_ids} /><Field label="Decision ids" value={content.value.decision_ids} /><Field label="Verification expectations" value={content.value.verification} /></dl>;
-    case "task": return <dl className="m-0 space-y-1">
-      <Field label="Id" value={content.value.id} />
-      <Field label="Description" value={content.value.description} />
-      <Field label="Requirement ids" value={content.value.requirement_ids} />
-    </dl>;
     case "acceptance_entry": return <dl className="m-0 space-y-1">
       <Field label="Id" value={content.value.id} />
       <Field label="Text" value={content.value.text} />

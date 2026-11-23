@@ -1,3 +1,5 @@
+import { readHistory, readRun } from "../src/storage/read-store";
+import { selectRunUnitView } from "../src/projections/run-view";
 import { KbblClient } from "../src/adapters/kbbl";
 import { createAgentProvider } from "../src/effects/agent-provider";
 import { startStubKbbl } from "./stub-kbbl";
@@ -312,7 +314,17 @@ test("rejecting a proposal and approving preserves a fail verdict and replays at
   expect((await run.decide(command, request_id)).status).toBe(200);
   expect(await run.rows("authority.feedback_rejection")).toEqual(rejections);
   expect(await run.rows("authority.assessment_approval")).toEqual(approvals);
-  expect(await run.revision("assessment")).toMatchObject({ body: { verdict: "fail" } });
+  const assessment = await run.revision("assessment");
+  expect(assessment).toMatchObject({ body: { verdict: "fail" } });
+  const history = await readHistory(authority.db, { run_id: run.run_id, unit_id: run.unit, limit: 100, after: null });
+  expect(history?.items.flatMap((entry) => entry.feedback_dispositions ?? [])).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "proposal_rejected", item_id: item, reason: "Out of scope.", actor: expect.any(String) }),
+    expect.objectContaining({ kind: "approved", actor: expect.any(String) }),
+  ]));
+  const read = await readRun(authority.db, run.run_id);
+  expect(read && selectRunUnitView(read, run.unit)?.recorded_decisions).toEqual(expect.arrayContaining([
+    expect.objectContaining({ reviewed_revision_id: assessment?.id, approved_assessment_revision_id: assessment?.id, effect_target_revision_id: assessment?.id }),
+  ]));
   expect(await run.counts()).toEqual(before);
 });
 

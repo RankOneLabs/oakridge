@@ -35,18 +35,8 @@ const BODY_SCHEMAS = { spec: "spec_body", analysis: "analysis_body", plan: "plan
   assessment: "assessment_body", pr: "pr_body" } as const;
 interface DevelopmentRunOutcome {
   readonly cohorts: readonly { readonly cohort_id: string }[];
-  readonly integrations: readonly { readonly repository_key: string; readonly pr_url: string; readonly is_merged: boolean }[];
+  readonly integrations: readonly { readonly repository_key: string; readonly change_request_link: string; readonly is_merged: boolean }[];
 }
-const VIEWER_COMPONENTS = {
-  "dev-current-analysis-viewer": "CurrentSpecAnalysisViewer",
-  "dev-current-spec-viewer": "CurrentSpecViewer",
-  "dev-current-plan-viewer": "CurrentPlanViewer",
-  "dev-current-brief-viewer": "CurrentBuildBriefViewer",
-  "dev-build-result-viewer": "BuildResultReview",
-  "dev-current-assessment-viewer": "CurrentAssessmentReview",
-  "dev-pr-summary-viewer": "PrSummaryViewer",
-} as const;
-
 /**
  * development.yaml as pinned (read through the JSON generate.ts derives from
  * it, which CI holds equal to it), with its periodic PR watches made fast
@@ -137,14 +127,14 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
         const pr_url = forge.open(`cohort-${member}`, "develop");
         await publish("build_result", { repository_key: "app", head_sha: "abc123", summary: `Built ${member}.`, changed_files: [`${member}.ts`],
           tests: { passed: 1, failed: 0, output: null, summary: null, cargo_test_output: null }, delegated_session_metadata: null, known_issues: [] });
-        await publish("pr", { pr_url, branch: `cohort-${member}`, summary: `Cohort ${member}.`, review_status: "ready" });
+        await publish("pr", { change_request_link: pr_url, branch: `cohort-${member}`, summary: `Cohort ${member}.`, review_status: "ready" });
         break;
       }
       case "assessor":
         await publish("assessment", COHORT_ASSESSMENT, turn.subject());
         break;
       case "integrator": {
-        await publish("pr", { pr_url: forge.open("integration", "main"), branch: "integration", summary: "Both cohorts.", review_status: "ready" });
+        await publish("pr", { change_request_link: forge.open("integration", "main"), branch: "integration", summary: "Both cohorts.", review_status: "ready" });
         const unit = decodeURIComponent(/units\/([^/]+)\/artifacts/.exec(turn.preamble)![1]);
         const prRevision = await db.selectFrom("authority.artifact_revision").select("id").where("unit_id", "=", unit)
           .where("artifact", "=", "pr").orderBy("seq", "desc").executeTakeFirstOrThrow();
@@ -283,7 +273,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Two cohorts", spec: "Build the thing in two parts.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
-      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+      forge: { owner: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
 
@@ -363,7 +353,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   }).toEqual({
     cohorts: ["a", "b"],
     brief_flow: ["a", "b"].map(() => ({ has_one_original: true, has_no_cohort_copy: true, is_passed_to_cohort: true })),
-    integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }],
+    integrations: [{ repository_key: "app", change_request_link: pullUrl(3), is_merged: true }],
     b_built_after_a_merged: true,
     schemas: { ...BODY_SCHEMAS, integration_assessment: "assessment_body" },
     integration_assessment: INTEGRATION_ASSESSMENT,
@@ -383,7 +373,7 @@ test("analysis and canonical spec need approval after revision", async () => {
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Analysis handoff", spec: "Original specification.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
-      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+      forge: { owner: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const unit_id = `${run_id}/analysis`;
@@ -456,7 +446,7 @@ test(`manual confirmation completes the development run for ${pr_integration}`, 
   try { launched = await api("POST", "/api/runs", { request_id, definition_id, pr_integration, input: {
     title: "Confirm PRs", spec: "Confirm both PR stages.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
-      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+      forge: { owner: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   } finally {
     if (previous_path === undefined) delete process.env.PATH; else process.env.PATH = previous_path;
     rmSync(auth_bin, { recursive: true, force: true });
@@ -521,7 +511,7 @@ test(`manual confirmation completes the development run for ${pr_integration}`, 
     integration_target: confirmations.find((decision) => decision.unit_id === integration.id)?.target_revision_id.includes(":manual_merge_target:"),
     integrations: outcome.integrations })
     .toEqual({ confirmations: 3, cohort_done: true, integration_done: "done", confirmation_offered: false, integration_target: true,
-      integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }] });
+      integrations: [{ repository_key: "app", change_request_link: pullUrl(3), is_merged: true }] });
   if (pr_integration === "github-cli") expect(reader_calls).toBe(0);
 }, 150_000);
 
@@ -533,7 +523,7 @@ test("a replacement cohort PR ignores the previous PR's closed observation", asy
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Replace cohort PR", spec: "Require the current cohort PR.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
-      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+      forge: { owner: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
@@ -566,8 +556,8 @@ test("a replacement cohort PR ignores the previous PR's closed observation", asy
       .where("run_id", "=", run_id).where("unit_id", "=", cohort.id)
       .where("artifact", "in", ["pr", "pr_state", "observed_state"]).orderBy("seq", "desc").execute();
     const latest = (artifact: string): unknown => revisions.find((revision) => revision.artifact === artifact)?.body;
-    const pr = latest("pr") as { readonly pr_url?: string } | undefined;
-    if (pr?.pr_url !== pullUrl(11)) return null;
+    const pr = latest("pr") as { readonly change_request_link?: string } | undefined;
+    if (pr?.change_request_link !== pullUrl(11)) return null;
     const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", cohort.id).executeTakeFirstOrThrow();
     return { old_state: latest("pr_state"), old_observed: latest("observed_state"),
       has_closed_review: "pr_closed" in unit.review_prompts };
@@ -587,7 +577,7 @@ test("merge confirmation waits for the accepted assessment and closes again for 
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Gate merge on assessment", spec: "Confirm merges only after the assessment.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
-      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+      forge: { owner: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
@@ -634,7 +624,7 @@ test("a closed unmerged integration PR asks for replacement, not merge confirmat
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Replace closed PR", spec: "Require a merged integration PR.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
-      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+      forge: { owner: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
@@ -679,8 +669,8 @@ test("a closed unmerged integration PR asks for replacement, not merge confirmat
       .where("artifact", "in", ["pr", "pr_state", "observed_state"])
       .orderBy("seq", "desc").execute();
     const latest = (artifact: string): unknown => revisions.find((revision) => revision.artifact === artifact)?.body;
-    const pr = latest("pr") as { readonly pr_url?: string } | undefined;
-    if (pr?.pr_url !== pullUrl(13)) return null;
+    const pr = latest("pr") as { readonly change_request_link?: string } | undefined;
+    if (pr?.change_request_link !== pullUrl(13)) return null;
     const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", integration.id)
       .executeTakeFirstOrThrow();
     return { old_state: latest("pr_state"), old_observed: latest("observed_state"),
@@ -710,7 +700,7 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Replace merged integration PR", spec: "Do not reuse an old merge.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
-      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+      forge: { owner: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
@@ -749,7 +739,7 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   const replacement = await eventually("replacement integration PR to publish", async () => {
     const pr = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)
       .where("unit_id", "=", integration.id).where("artifact", "=", "pr").orderBy("seq", "desc").executeTakeFirst();
-    return (pr?.body as { readonly pr_url?: string } | undefined)?.pr_url === pullUrl(13) ? true : null;
+    return (pr?.body as { readonly change_request_link?: string } | undefined)?.change_request_link === pullUrl(13) ? true : null;
   }, 120_000);
   expect(replacement).toBe(true);
   integrationReplacements.delete(run_id);
@@ -779,7 +769,7 @@ test("allow_close_without_merge completes on an observed close without claiming 
   const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Allow closed PR", spec: "Complete after an unmerged close.", final_merge_policy: "allow_close_without_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
-      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+      forge: { owner: "oakridge-e2e", path: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
@@ -794,22 +784,19 @@ test("allow_close_without_merge completes on an observed close without claiming 
     return root.status.kind === "done" ? root.status : null;
   }, 120_000);
   expect((completed as { readonly outcome: DevelopmentRunOutcome }).outcome.integrations)
-    .toEqual([{ repository_key: "app", pr_url: pullUrl(3), is_merged: false }]);
+    .toEqual([{ repository_key: "app", change_request_link: pullUrl(3), is_merged: false }]);
 }, 150_000);
 
-test("development artifact schemas and PWA viewer component IDs align", () => {
-  // All development bodies now use named schemas, including the canonical spec.
-  // Read the registry as text rather than importing across the PWA boundary.
-  const registry = readFileSync(resolve(root, "kbbl/core/pwa/oakridge/artifactRegistry.tsx"), "utf8");
+test("development artifacts declare their registered views independently of schema keys", () => {
   const workflow = developmentWorkflow();
-  const declared = [workflow.stages.analysis?.artifacts.spec?.schema,
-    ...Object.values(BODY_SCHEMAS).filter((name) => name !== BODY_SCHEMAS.spec && workflow.schemas?.[name] !== undefined)];
-  const registered = Object.entries(VIEWER_COMPONENTS).filter(([componentId, viewer]) =>
-    registry.includes(`"${componentId}": { Viewer: ${viewer} }`));
-  expect({ declared, registered }).toEqual({
-    declared: Object.values(BODY_SCHEMAS),
-    registered: Object.entries(VIEWER_COMPONENTS),
-  });
+  const artifacts = Object.values(workflow.stages).flatMap((stage) => Object.entries(stage.artifacts));
+  const registered = artifacts.flatMap(([key, artifact]) => artifact.view ? [[key, artifact.view]] : []);
+  expect(registered).toEqual(expect.arrayContaining([
+    ["spec", "specification"], ["analysis", "requirements_analysis"], ["plan", "cohort_plan"],
+    ["brief", "build_brief"], ["build_result", "build_result"], ["assessment", "assessment"], ["pr", "pull_request"],
+  ]));
+  expect(artifacts.filter(([key, artifact]) => artifact.view && Object.hasOwn(BODY_SCHEMAS, key))
+    .every(([key, artifact]) => artifact.schema === BODY_SCHEMAS[key as keyof typeof BODY_SCHEMAS])).toBe(true);
 });
 
 /** Replays this file's development runs into a fresh observation database, resuming after `start`. */

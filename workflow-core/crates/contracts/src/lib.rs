@@ -216,6 +216,15 @@ pub fn generate() -> String {
         "export const BLOCKER_REVIEW_PROMPT = {:?};\n",
         workflow_model::BLOCKER_REVIEW_PROMPT
     ));
+    for (name, definition) in [
+        ("DECISION_OPERATIONS", "DecisionOperation"),
+        ("DECISION_EFFECTS", "DeclaredDecisionEffect"),
+    ] {
+        let variants = schemas["request"]["$defs"][definition]
+            .get("enum")
+            .expect("decision enum");
+        output.push_str(&format!("export const {name} = {variants} as const;\n"));
+    }
     let reserved_schemas: BTreeMap<_, _> = workflow_model::reserved_artifact_schemas()
         .into_iter()
         .map(|(key, schema)| (key, schema.to_string()))

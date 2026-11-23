@@ -27,7 +27,7 @@ export interface OperatorUsageTokens { input: number | null; output: number | nu
 
 export interface OperatorUsageAttempt extends OperatorUsageAmount { action_id: string; seq: number; worker: string; rework: boolean; turns: OperatorAttributedTurn[]; background: OperatorUsageBackground }
 
-export interface OperatorUsageReview { review: string; decision: string; wait_ms: number; approximate: boolean }
+export interface OperatorUsageReview { review: string; decision: string; kind: "human" | "external"; wait_ms: number; approximate: boolean }
 
 export interface OperatorUsageTurn { turn_key: string; source: "initial" | "operator" | "collaboration"; status: "accepted" | "prompting" | "succeeded" | "cancelled" | "failed" | "unknown"; created_at: string; started_at: string | null; completed_at: string | null; usage: OperatorWireTurnUsage | null }
 

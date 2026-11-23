@@ -4,6 +4,17 @@
 import type { OperatorEvent, OperatorResolvedDecision, OperatorWriter } from "../core-client/core-types";
 import type { OperatorAttemptView } from "./unit-view";
 import type { OperatorAuthorityEffectStatus } from "../storage/db-types";
+import type { OperatorRecordedFeedbackDisposition } from "../storage/read-store";
+
+export interface OperatorEventHistory {
+  readonly id: string;
+  /** The ingress id the event was committed under; null for an event with none. */
+  readonly ingress_id: string | null;
+  readonly event: OperatorEvent;
+  readonly writer: OperatorWriter;
+  readonly feedback_dispositions: readonly OperatorRecordedFeedbackDisposition[];
+  readonly created_at: string;
+}
 
 export interface OperatorUnitHistory { readonly unit_id: string; readonly events: readonly OperatorEventHistory[]; readonly next_cursor: string | null }
 
@@ -22,15 +33,6 @@ export interface OperatorBlockerHistory {
   readonly revisions: readonly OperatorBlockerRevision[];
   readonly decisions: readonly OperatorBlockerAnswer[];
   readonly history: readonly OperatorBlockerHistoryEntry[];
-}
-
-export interface OperatorEventHistory {
-  readonly id: string;
-  /** The ingress id the event was committed under; null for an event with none. */
-  readonly ingress_id: string | null;
-  readonly event: OperatorEvent;
-  readonly writer: OperatorWriter;
-  readonly created_at: string;
 }
 
 export interface OperatorEffectDiagnostic {

@@ -6,7 +6,7 @@ import { useRun } from "./useRun";
 export interface CohortArtifactQuery<T> {
   source: ArtifactSource | undefined;
   cohort_label: string | null;
-  type_id: string;
+  view: string;
   read: (body: unknown) => T | null;
 }
 
@@ -15,10 +15,10 @@ export interface CohortArtifactQuery<T> {
  * a build result's brief, as it stood at the viewed revision. The run query is
  * the one the workspace already polls.
  */
-export function useCohortArtifact<T>({ source, cohort_label, type_id, read }: CohortArtifactQuery<T>): CohortArtifactLookup<T> {
+export function useCohortArtifact<T>({ source, cohort_label, view, read }: CohortArtifactQuery<T>): CohortArtifactLookup<T> {
   const runId = source?.run_id ?? "";
   const runQuery = useRun(runId, runId !== "" && cohort_label !== null);
-  const artifactId = runQuery.data && cohort_label ? selectCohortArtifactId(runQuery.data, type_id, cohort_label) : null;
+  const artifactId = runQuery.data && cohort_label ? selectCohortArtifactId(runQuery.data, view, cohort_label) : null;
   const artifactQuery = useArtifact(artifactId ?? "", artifactId !== null);
   if (!source) return { kind: "missing", cohort_label };
   // isLoading, not isPending: a disabled query stays pending forever.

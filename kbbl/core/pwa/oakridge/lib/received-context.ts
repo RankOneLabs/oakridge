@@ -1,5 +1,5 @@
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
-import { assignmentSchema, parseCurrent, type ResolvedAssignment } from "./current-contract";
+import { readAssignment, type ResolvedAssignment } from "./viewer-data";
 export interface ReceivedContext {
   readonly assignment: ResolvedAssignment;
   readonly sources: readonly { readonly input: string; readonly revision_id: string; readonly unit: string }[];
@@ -9,9 +9,9 @@ export interface ReceivedContext {
 export function selectReceivedContext(unit: Pick<OperatorUnitView, "input" | "input_provenance">): ReceivedContext | null {
   const input = unit.input;
   if (!input || typeof input !== "object" || Array.isArray(input) || !("assignment" in input)) return null;
-  const parsed = parseCurrent(assignmentSchema, input.assignment, "parse_received_context");
-  if (!parsed.ok) return null;
-  return { assignment: { ...parsed.value, requirements: parsed.value.requirements.filter((requirement) => parsed.value.cohort.allocations.some((allocation) => allocation.requirement_id === requirement.id)) }, sources: unit.input_provenance?.status === "recorded" ? unit.input_provenance.entries : [],
+  const parsed = readAssignment(input.assignment);
+  if (!parsed) return null;
+  return { assignment: { ...parsed, requirements: parsed.requirements.filter((requirement) => parsed.cohort.allocations.some((allocation) => allocation.requirement_id === requirement.id)) }, sources: unit.input_provenance?.status === "recorded" ? unit.input_provenance.entries : [],
     provenance_status: unit.input_provenance?.status === "recorded" ? "recorded" : "unresolved" };
 }
 

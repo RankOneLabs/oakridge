@@ -14,7 +14,7 @@ const assessment = cohort.artifacts.find((artifact) => artifact.artifact_key ===
 if (!assessment) throw new Error("captured fixture lacks an assessment revision");
 
 const decided = (id: string, fields: Partial<OperatorRevisionDecision> = {}): OperatorRevisionDecision => ({
-  id, review: "assessment_review", decision: "request_assessment_changes", effect: "request_changes",
+  id, decision_id: id, actor: null, reviewed_revision_id: assessment.id, approved_assessment_revision_id: null, effect_target_revision_id: assessment.id, review: "assessment_review", decision: "request_assessment_changes", effect: "request_changes",
   target_revision_id: assessment.id, payload: { feedback: "Check the migration path." }, created_at: "2026-10-28T12:00:00Z", ...fields });
 
 const withDecisions = (...recorded_decisions: OperatorRevisionDecision[]) => withUnitFields(cohort, { recorded_decisions });
@@ -23,7 +23,7 @@ describe("sentReviewFeedback", () => {
   it("lists requested changes on the latest revision, with the feedback and who it went to", () => {
     expect(sentReviewFeedback(withDecisions(decided("d1")))).toEqual([{
       id: "d1", target_revision_id: assessment.id,
-      run_id: cohort.run_id, stage_name: "assessment", unit_id: cohort.collection_key, review: "assessment_review",
+      run_id: cohort.run_id, stage_name: "cohort", unit_id: cohort.collection_key, review: "assessment_review",
       decision: "request_assessment_changes", feedback: "Check the migration path.", sent_at: "2026-10-28T12:00:00Z" }]);
   });
 

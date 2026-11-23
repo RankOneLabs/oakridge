@@ -29,7 +29,7 @@ function wrap(ui: ReactElement) {
     if (failedRead !== "sessions") client.setQueryData(["oakridge", "run", run.id, "sessions"], SESSIONS);
     if (failedRead !== "gates") client.setQueryData(["oakridge", "run", run.id, "gates"], GATES);
   }
-  client.setQueryData(["oakridge", "artifact", "art-plan"], { id: "art-plan", run_id: "run-1", type_id: "dev.plan", revisions: [] });
+  client.setQueryData(["oakridge", "artifact", "art-plan"], { id: "art-plan", run_id: "run-1", type_id: "planning.plan", revisions: [] });
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
@@ -125,7 +125,7 @@ describe("opening a pane from the sidebar", () => {
     const filter = await screen.findByTestId("or-sidebar-artifact-filter");
     expect(screen.getAllByTestId("or-sidebar-artifact")).toHaveLength(2);
 
-    fireEvent.change(filter, { target: { value: "build_results" } });
+    fireEvent.change(filter, { target: { value: "record" } });
     expect(screen.getAllByTestId("or-sidebar-artifact").map((row) => row.getAttribute("data-artifact-id"))).toEqual(["art-build"]);
 
     fireEvent.change(filter, { target: { value: "all" } });
@@ -209,7 +209,7 @@ describe("twin view", () => {
 describe("legacy deep links converge on the workspace URL", () => {
   it("resolves an artifact to its run and replaces the hash", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      json({ id: "art-plan", run_id: "run-1", type_id: "dev.plan", revisions: [] }),
+      json({ id: "art-plan", run_id: "run-1", type_id: "planning.plan", revisions: [] }),
     );
 
     wrap(<ArtifactWorkspaceRedirectView artifactId={"art-plan" as ArtifactId} onBack={() => {}} />);

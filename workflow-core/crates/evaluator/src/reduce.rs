@@ -8,11 +8,47 @@ pub(super) struct State<'a, 'limits> {
     pub(super) context: &'a EvaluationContext<'limits>,
 }
 
-pub(super) fn reduce(state: &State<'_, '_>, incoming: &Incoming) -> Result<Vec<Delta>, StepError> {
+pub(super) struct Reduction {
+    pub(super) deltas: Vec<Delta>,
+    pub(super) run_label: Option<RunLabel>,
+}
+
+pub(super) fn reduce(state: &State<'_, '_>, incoming: &Incoming) -> Result<Reduction, StepError> {
     let mut context = state.context.clone();
     let mut deltas = reduce_event(state.program, state.snapshot, incoming, &mut context)?;
+    let run_label = match (&state.program.label, deltas.first()) {
+        (Some(label), Some(Delta::PushUnit(unit)))
+            if matches!(incoming.event, Event::Launched { .. }) =>
+        {
+            Some(evaluate_label(label, unit, state.snapshot, &mut context)?)
+        }
+        _ => None,
+    };
     deltas.push(Delta::EvaluationBudget(context.remaining));
-    Ok(deltas)
+    Ok(Reduction { deltas, run_label })
+}
+
+fn evaluate_label(
+    label: &CheckedWorkflowLabel,
+    root: &UnitState,
+    snapshot: &StepSnapshot,
+    context: &mut EvaluationContext<'_>,
+) -> Result<RunLabel, StepError> {
+    let title = eval_expression(&label.title.expression, root, snapshot, None, None, context)?;
+    let repositories = eval_expression(
+        &label.repositories.expression,
+        root,
+        snapshot,
+        None,
+        None,
+        context,
+    )?;
+    Ok(RunLabel {
+        title: serde_json::from_value(title.unwrap_or(Value::Null))
+            .map_err(|_| invalid("workflow label title is not text"))?,
+        repositories: serde_json::from_value(repositories.unwrap_or(Value::Null))
+            .map_err(|_| invalid("workflow label repositories are not identifiers"))?,
+    })
 }
 
 fn reduce_event(

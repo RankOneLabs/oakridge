@@ -2,10 +2,9 @@ import type { ObservationEvidenceReference } from "../grading-contracts/grading/
 import type { ObservationJsonValue } from "../grading-contracts/domain/primitives";
 import { parseAssessmentFinding, type AssessmentFinding, type BuildItemFinding } from "./assessment";
 import { readBuildBrief, isBuildItem, type BuildItem, type BuildBrief } from "./build-brief";
-import { parseBuildResult, parseTestEvidence, type BuildResult, type TestEvidence } from "./build-result";
+import { asBuildSummary, parseTestEvidence, type BuildResult, type TestEvidence } from "./build-result";
 import { parseCohort, parsePlan, parsePlanCriterion, type Plan, type PlanCohort, type PlanCriterion } from "./plan";
 import { isSpecFinding, isSpecRequirement, type SpecFinding, type SpecRequirement } from "./spec-analysis";
-import { parseTask, type Task } from "./tasks";
 
 /** Mirrors reported() in observation/src/producers/oakridge/evidence.ts. */
 export interface ReportedCitation {
@@ -18,7 +17,6 @@ export type EvidenceContent =
   | { kind: "finding"; value: SpecFinding }
   | { kind: "assessment_finding"; value: AssessmentFinding | BuildItemFinding }
   | { kind: "build_item"; value: BuildItem }
-  | { kind: "task"; value: Task }
   | { kind: "acceptance_entry"; value: PlanCriterion }
   | { kind: "requirement"; value: SpecRequirement }
   | { kind: "plan"; value: Plan }
@@ -44,8 +42,6 @@ export function decodeSubjectContent(value: ObservationJsonValue, item_path: str
   if (assessment.ok) return { kind: "assessment_finding", value: assessment.value };
   if (isSpecFinding(value)) return { kind: "finding", value };
   if (isBuildItem(value)) return { kind: "build_item", value };
-  const task = parseTask(value, "subject");
-  if (task.ok) return { kind: "task", value: task.value };
   const criterion = parsePlanCriterion(value, "subject");
   if (criterion.ok) return { kind: "acceptance_entry", value: criterion.value };
   return { kind: "unknown", value };
@@ -66,14 +62,8 @@ export function decodeEvidenceContent(reference: ObservationEvidenceReference): 
       break;
     case "build_result": {
       if (source !== "revision") break;
-      const parsed = parseBuildResult(value);
-      if (parsed.ok) return { kind: "build_result", value: parsed.value };
-      break;
-    }
-    case "spec_task": {
-      if (source !== "revision") break;
-      const parsed = parseTask(value, "spec_task");
-      if (parsed.ok) return { kind: "task", value: parsed.value };
+      const summary = asBuildSummary(value);
+      if (summary) return { kind: "build_result", value: summary };
       break;
     }
     case "requirement":

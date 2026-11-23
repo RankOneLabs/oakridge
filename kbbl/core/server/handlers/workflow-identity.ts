@@ -1,4 +1,4 @@
-import { parsePrIntegration } from "../../../../oakridge-dbos/src/domain/pr-integration";
+import { parsePrIntegration, type PrIntegration } from "../../../../oakridge-dbos/src/domain/pr-integration";
 import type { AcpSessionWorkflowIdentity } from "../../acp/types";
 
 type WorkflowIdentityParseResult = { value: AcpSessionWorkflowIdentity | null } | { error: string };
@@ -10,6 +10,7 @@ type WorkflowIdentityParseResult = { value: AcpSessionWorkflowIdentity | null } 
  */
 export function parseWorkflowIdentity(
   raw: unknown,
+  defaultIntegration: PrIntegration = "none",
 ): WorkflowIdentityParseResult {
   if (raw === undefined) return { value: null };
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -21,7 +22,7 @@ export function parseWorkflowIdentity(
     if (typeof field !== "string" || field.trim() === "") return { error: `workflow.${name} must be a non-empty string` };
     if (field.trim().length > 200) return { error: `workflow.${name} must be at most 200 characters` };
   }
-  const integration = parsePrIntegration(value.pr_integration ?? "gated-review");
+  const integration = parsePrIntegration(value.pr_integration ?? defaultIntegration);
   if (integration === null) return { error: "workflow.pr_integration is invalid" };
   const digest = value.pr_skill_digest ?? null;
   if (digest !== null && (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest))) return { error: "workflow.pr_skill_digest is invalid" };

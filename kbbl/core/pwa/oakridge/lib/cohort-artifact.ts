@@ -9,10 +9,10 @@ export type CohortArtifactLookup<T> =
   | { kind: "found"; value: T; source?: ArtifactSource };
 
 /** The latest artifact of a type the run published for a cohort, or null when it has none. */
-export function selectCohortArtifactId(run: RunDetail, typeId: string, cohortLabel: string): string | null {
+export function selectCohortArtifactId(run: RunDetail, view: string, cohortLabel: string): string | null {
   const matches = run.stages
     .flatMap((stage) => stage.artifacts)
-    .filter((artifact) => artifact.type_id === typeId && artifact.label === cohortLabel);
+    .filter((artifact) => artifact.view === view && artifact.label === cohortLabel);
   const latest = matches.reduce<(typeof matches)[number] | null>((best, artifact) => (best && best.version >= artifact.version ? best : artifact), null);
   return latest?.id ?? null;
 }

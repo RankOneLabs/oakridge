@@ -20,6 +20,7 @@ pub(super) struct CheckedParts {
     original: Workflow,
     stages: Vec<CheckedStage>,
     root: CheckedGroup,
+    label: Option<CheckedWorkflowLabel>,
 }
 fn parse_text(text: &str, path: String, errors: &mut Vec<CompileError>) {
     if let Err(error) = parse_expression(text, &path) {
@@ -427,6 +428,50 @@ pub(super) fn resolve(parsed: ParsedWorkflow) -> Result<ResolvedWorkflow, Vec<Co
         Err(errors)
     }
 }
+fn check_label(source: &Workflow) -> Result<Option<CheckedWorkflowLabel>, CompileError> {
+    let Some(label) = &source.label else {
+        return Ok(None);
+    };
+    let artifacts = BTreeMap::new();
+    let outcomes = BTreeMap::new();
+    let lets = BTreeMap::new();
+    let scope = Scope {
+        input: &source.input,
+        artifacts: &artifacts,
+        outcomes: &outcomes,
+        each: None,
+        item: None,
+        aliases: &source.schemas,
+        lets: &lets,
+        body: None,
+        guaranteed: BTreeSet::new(),
+        collections: BTreeSet::new(),
+        diagnostic_path: String::new(),
+        diagnostic_span: SourceSpan::default(),
+    };
+    let field = |text: &str, path: &str, expected: Type| {
+        let expression = checked(text, &scope, path)?;
+        if expression.value_type != expected {
+            return Err(CompileError::new(
+                CheckKind::ExpressionType,
+                path,
+                source_span(text),
+                format!("expected {expected:?}"),
+            ));
+        }
+        Ok(expression)
+    };
+    Ok(Some(CheckedWorkflowLabel {
+        title: field(&label.title, "label.title", Type::Text)?,
+        repositories: field(
+            &label.repositories,
+            "label.repositories",
+            Type::List {
+                item: Box::new(Type::Ident),
+            },
+        )?,
+    }))
+}
 pub(super) fn check(
     resolved: ResolvedWorkflow,
     operations: &[CodeOperation],
@@ -456,6 +501,13 @@ pub(super) fn check(
             Err(stage_errors) => errors.extend(stage_errors),
         }
     }
+    let label = match check_label(&source) {
+        Ok(label) => label,
+        Err(error) => {
+            errors.push(error);
+            None
+        }
+    };
     group::check_structure(&source.run, "run", &source, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
@@ -468,6 +520,7 @@ pub(super) fn check(
         original: resolved.original,
         stages,
         root,
+        label,
     })
 }
 pub(super) fn lower(
@@ -512,6 +565,7 @@ pub(super) fn lower(
         input: parts.source.input,
         stages: parts.stages,
         root: parts.root,
+        label: parts.label,
     };
     Ok((program, projected))
 }

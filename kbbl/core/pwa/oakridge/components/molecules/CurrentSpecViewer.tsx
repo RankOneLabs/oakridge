@@ -1,7 +1,7 @@
 import type { MouseEvent } from "react";
 import { artifactRevisionIdOf } from "../../lib/grading-ids";
 import type { ViewerProps } from "../../artifactRegistry";
-import { parseCanonicalSpec, type CanonicalRequirement, type CanonicalSpec } from "../../lib/current-contract";
+import { parseCanonicalSpec, type CanonicalRequirement, type CanonicalSpec } from "../../lib/viewer-data";
 import { selectRequirementFindings, type FindingReference } from "../../lib/current-analysis";
 import { selectSpecSections, type SpecSection } from "../../lib/current-spec";
 import { selectStatusTone } from "../../lib/status-tone";
@@ -11,7 +11,7 @@ import { Chip } from "../../../components/atoms/Chip";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ArtifactItemGrade } from "./ArtifactItemGrade";
 import { ArtifactSectionTabs } from "./ArtifactSectionTabs";
-import { navigateArtifactAnchor, CurrentParseFailure, OriginalInput, SourceReferences } from "./CurrentArtifactParts";
+import { navigateArtifactAnchor, CurrentParseFailure, OriginalInput, selectOriginalSpec, SourceReferences } from "./CurrentArtifactParts";
 
 function AnalysisFindingLink({ id, reference, props }: { id: string; reference: FindingReference; props: ViewerProps }) {
   const openFinding = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -60,8 +60,7 @@ function NonGoalsPanel({ spec }: { spec: CanonicalSpec }) {
 }
 
 export function CurrentSpecViewer(props: ViewerProps) {
-  const parsed = props.currentRead?.ok === false ? props.currentRead
-    : props.currentRead?.value?.kind === "spec" ? { ok: true as const, value: props.currentRead.value.body } : parseCanonicalSpec(props.body);
+  const parsed = parseCanonicalSpec(props.body);
   if (!parsed.ok) return <CurrentParseFailure body={props.body} detail={parsed.error.detail} />;
   const spec = parsed.value;
   return <article className="space-y-4" data-testid="or-current-spec-viewer">
@@ -74,7 +73,7 @@ export function CurrentSpecViewer(props: ViewerProps) {
       requirements: <div className="space-y-3">{spec.requirements.map((requirement, index) =>
         <RequirementCard key={requirement.id} requirement={requirement} index={index} props={props} onOpenOriginalInput={() => section.openAnchor("original_input", "original-input")} />)}</div>,
       non_goals: <NonGoalsPanel spec={spec} />,
-      original_input: <OriginalInput text={props.source?.original_spec} />,
+      original_input: <OriginalInput text={selectOriginalSpec(props.source?.producing_attempt_inputs)} />,
     })}</ArtifactSectionTabs>
   </article>;
 }

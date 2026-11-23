@@ -114,6 +114,10 @@ for (const { name, path, audience } of discoverWorkflowSources(root)) {
   const order: DefinitionOrder = {
     schema_names: schemas?.items.map(({ key }) => String(key)) ?? [],
     stage_names: stages.items.map(({ key }) => String(key)),
+    worker_names: Object.fromEntries(stages.items.map(({ key, value }) => {
+      const workers = YAML.isMap(value) ? value.get("workers") : undefined;
+      return [String(key), YAML.isMap(workers) ? workers.items.map((worker) => String(worker.key)) : []];
+    })),
   };
   const authored = document.toJS();
   const source = decodeWorkflowSource(authored);

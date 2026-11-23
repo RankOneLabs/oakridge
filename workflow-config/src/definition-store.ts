@@ -45,10 +45,14 @@ function isPromptReferences(value: unknown): value is PromptReferences {
   return isObject(value) && Object.entries(value).every(([path, id]) => isPromptPath(path) && isIdentity(id));
 }
 export function isCommittedDefinition(value: unknown): value is CommittedDefinition {
-  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "prompt_sources", "schema_names", "stage_names"])) return false;
+  if (!isObject(value) || !hasOnlyKeys(value, ["source", "operation_registry_id", "prompts", "prompt_sources", "schema_names", "stage_names", "worker_names"])) return false;
   const source = decodeWorkflowSource(value.source);
   if (source === null || !isIdentity(value.operation_registry_id) || !isPromptReferences(value.prompts)) return false;
   if (value.prompt_sources !== undefined && !isPromptReferences(value.prompt_sources)) return false;
+  const workerOrder = value.worker_names;
+  if (workerOrder !== undefined && (!isObject(workerOrder)
+    || !matchesNames(Object.keys(workerOrder), Object.keys(source.stages))
+    || Object.entries(source.stages).some(([name, stage]) => !matchesNames(workerOrder[name], Object.keys(stage.workers ?? {}))))) return false;
   const paths = referencedPromptPaths(source);
   const sources = value.prompt_sources ?? value.prompts;
   return matchesNames(Object.keys(value.prompts), paths) && paths.every((path) => Object.hasOwn(sources, path))
@@ -150,6 +154,7 @@ export function resolveDefinition(definition_id: DefinitionId, store_root = DEFI
     operations: operations.value,
     schema_names: committed.schema_names,
     stage_names: committed.stage_names,
+    worker_names: committed.worker_names,
   } };
 }
 

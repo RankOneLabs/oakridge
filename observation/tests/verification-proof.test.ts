@@ -393,7 +393,7 @@ test("a relations run that gave the proof none of its steps cannot read as a pas
 
 describe("the source run", () => {
   const input: SourceRunInput = { title: "t", spec: "s", primary_repository_key: "r", final_merge_policy: "require_merge", repositories: [{ key: "r",
-    preparation: { repository_path: "/r", expected_head: null }, forge: { owner: "o", name: "n", build_base: "b", final_base: "f" } }] };
+    preparation: { repository_path: "/r", expected_head: null }, forge: { owner: "o", path: "n", build_base: "b", final_base: "f" } }] };
   const awaiting = (review: string) => ({ kind: "awaiting_review", review, unit_id: "run-1/unit", target: "revision-1" });
 
   /** Answers each inspect with the next view, and records every request after that. */

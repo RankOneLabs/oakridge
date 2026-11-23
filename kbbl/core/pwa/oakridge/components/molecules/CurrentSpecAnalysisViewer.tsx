@@ -2,7 +2,7 @@ import type { MouseEvent } from "react";
 import type { ViewerProps } from "../../artifactRegistry";
 import { parseCurrentAnalysis } from "../../lib/spec-analysis";
 import { selectAnalysisCounts, selectAnalysisSections, selectCodeHotspots, selectOperatorDecisions, selectRequirementsByStatus, type AnalysisSection, type FindingReference } from "../../lib/current-analysis";
-import type { CurrentAnalysis, CurrentFinding } from "../../lib/current-contract";
+import type { CurrentAnalysis, CurrentFinding } from "../../lib/viewer-data";
 import { selectCurrentRequirementTone, selectStatusTone } from "../../lib/status-tone";
 import { selectFindingSelections } from "../../lib/grading";
 import { selectAnalysisItemPaths } from "../../lib/current-item-paths";
@@ -10,7 +10,7 @@ import { Chip } from "../../../components/atoms/Chip";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ArtifactItemGrade } from "./ArtifactItemGrade";
 import { ArtifactSectionTabs } from "./ArtifactSectionTabs";
-import { CurrentParseFailure, OriginalInput, SourceReferences } from "./CurrentArtifactParts";
+import { CurrentParseFailure, OriginalInput, selectOriginalSpec, SourceReferences } from "./CurrentArtifactParts";
 
 type GradeSlots = Pick<ViewerProps, "source" | "onOpenItem" | "itemGrading">;
 type OpenFinding = (event: MouseEvent<HTMLAnchorElement>, reference: FindingReference) => void;
@@ -94,8 +94,7 @@ function DecisionsPanel({ analysis, onOpenFinding }: { analysis: CurrentAnalysis
 }
 
 export function CurrentSpecAnalysisViewer(props: ViewerProps) {
-  const parsed = props.currentRead?.ok === false ? props.currentRead
-    : props.currentRead?.value?.kind === "analysis" ? { ok: true as const, value: props.currentRead.value.body } : parseCurrentAnalysis(props.body);
+  const parsed = parseCurrentAnalysis(props.body);
   if (!parsed.ok) return <CurrentParseFailure body={props.body} detail={parsed.error.detail} />;
   const analysis = parsed.value;
   return <article className="space-y-4" data-testid="or-current-analysis-viewer">
@@ -109,7 +108,7 @@ export function CurrentSpecAnalysisViewer(props: ViewerProps) {
         requirements: <RequirementsPanel analysis={analysis} grading={props} onOpenOriginalInput={() => section.openAnchor("original_input", "original-input")} />,
         hotspots: <HotspotsPanel analysis={analysis} onOpenFinding={onOpenFinding} />,
         decisions: <DecisionsPanel analysis={analysis} onOpenFinding={onOpenFinding} />,
-        original_input: <OriginalInput text={props.source?.original_spec} />,
+        original_input: <OriginalInput text={selectOriginalSpec(props.source?.producing_attempt_inputs)} />,
       };
     }}</ArtifactSectionTabs>
   </article>;

@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
+import { builtinAgentProfiles } from "../acp/default-profiles";
 import type { AcpSessionService } from "../acp/session-service";
 import { acpError, err } from "../acp/types";
 import { openTestDb } from "../db/test-db";
@@ -24,7 +25,14 @@ function makeStubAcp(
     listSessionArchives: () => new Map(),
     transcriptLimits: { initial_item_window: 20, item_page_limit: 20, item_page_limit_max: 100 },
     readItemPage: (sid: string) => err(acpError("session_not_found", "service.readItemPage", `no session ${sid}`)),
-    listProfiles: () => profiles,
+    listProfiles: () => {
+      const defaults = builtinAgentProfiles("/tmp/kbbl");
+      return profiles.map((profile) => ({
+        models: defaults.get(profile.id)?.models,
+        default_model: defaults.get(profile.id)?.default_model,
+        ...profile,
+      }));
+    },
     get defaultAgent() {
       return defaultAgent;
     },

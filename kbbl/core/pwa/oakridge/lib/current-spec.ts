@@ -1,4 +1,4 @@
-import type { CanonicalSpec } from "./current-contract";
+import type { CanonicalSpec } from "./viewer-data";
 import type { SubnavSection } from "./artifact-subnav";
 
 export type SpecSection = "requirements" | "non_goals" | "original_input";

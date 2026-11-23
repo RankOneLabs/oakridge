@@ -32,7 +32,7 @@ pub fn step_with_limits(
         context.check_value(&decision.payload())?;
     }
     let mut state = snapshot.clone();
-    let deltas = reduce(
+    let reduction = reduce(
         &State {
             snapshot: &state,
             program,
@@ -41,10 +41,11 @@ pub fn step_with_limits(
         incoming,
     )
     .map_err(|error| attribute_event(error, snapshot, incoming))?;
-    let inserted_revision = deltas
+    let inserted_revision = reduction
+        .deltas
         .iter()
         .any(|delta| matches!(delta, Delta::PushRevision(_)));
-    apply_all(&mut state, &mut context, deltas);
+    apply_all(&mut state, &mut context, reduction.deltas);
     let publication_bindings = match (&incoming.event, &incoming.writer) {
         (
             Event::RevisionPublished {
@@ -98,6 +99,7 @@ pub fn step_with_limits(
         }
         other => other.map(|mut result| {
             result.publication_bindings = publication_bindings;
+            result.run_label = reduction.run_label;
             result
         }),
     }
@@ -139,6 +141,7 @@ pub(super) fn advance_reduced(
     apply_all(&mut state, context, pending);
     let blocked = blocked_units(program, &state, context)?;
     Ok(StepResult {
+        run_label: None,
         publication_bindings: None,
         snapshot: state,
         wanted,

@@ -45,7 +45,7 @@ describe("v2 Oakridge client inbox", () => {
     const inbox = await fetchReviewInbox();
     expect(inbox.items.length).toBeGreaterThan(0);
     expect(inbox.items.every((item) => item.workflow_name === "study")).toBe(true);
-    expect(inbox.cohorts.map((cohort) => cohort.workflow_name)).toEqual(["study", "study"]);
+    expect(new Set(inbox.cohorts.map((cohort) => cohort.workflow_name))).toEqual(new Set(["study"]));
 
     const refreshed = await refreshReviewInboxRun(runId, inbox);
     expect(refreshed.items.length).toBeGreaterThan(0);

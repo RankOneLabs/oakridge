@@ -393,7 +393,9 @@
             "decision": "accept",
             "effect": "approve",
             "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr:1"
-          }
+          },
+          "operation": "plain",
+          "assessment": null
         },
         {
           "key": "request_changes",
@@ -411,7 +413,9 @@
             "decision": "request_changes",
             "effect": "request_changes",
             "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr:1"
-          }
+          },
+          "operation": "plain",
+          "assessment": null
         },
         {
           "key": "confirm_merged",
@@ -424,7 +428,9 @@
             "decision": "confirm_merged",
             "effect": "approve",
             "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr_state:1"
-          }
+          },
+          "operation": "plain",
+          "assessment": null
         }
       ],
       "recorded_decisions": [],
@@ -489,7 +495,11 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:14.365Z",
             "number": 1
-          }
+          },
+          "kind": "external_reference",
+          "view": "pull_request",
+          "has_assessment_operations": false,
+          "link_field": "pr_url"
         },
         {
           "run_id": "run-cf40de5f78dccdcd",
@@ -516,7 +526,85 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:14.511Z",
             "number": 1
-          }
+          },
+          "kind": "status_record",
+          "view": null,
+          "has_assessment_operations": false,
+          "link_field": "url"
+        }
+      ],
+      "workers": [
+        {
+          "key": "integrator",
+          "label": "Integrator",
+          "kind": "agent"
+        },
+        {
+          "key": "pr_watch",
+          "label": "PR watcher",
+          "kind": "code"
+        },
+        {
+          "key": "prepare_manual_merge",
+          "label": "Prepare manual merge",
+          "kind": "code"
+        },
+        {
+          "key": "prepare_observed_state",
+          "label": "Prepare observed state",
+          "kind": "code"
+        }
+      ],
+      "reviews": [
+        {
+          "review": "integration_review",
+          "of_artifact": "pr",
+          "reviewed_revision_id": "run-cf40de5f78dccdcd/integration/app:pr:1",
+          "wait": "operator",
+          "confirms": null,
+          "failure_code": null,
+          "producer_workers": [
+            "integrator"
+          ],
+          "decisions": [
+            {
+              "key": "accept",
+              "label": "Accept",
+              "effect": "approve",
+              "operation": "plain",
+              "on_artifact": null,
+              "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr:1"
+            },
+            {
+              "key": "request_changes",
+              "label": "Request changes",
+              "effect": "request_changes",
+              "operation": "plain",
+              "on_artifact": null,
+              "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr:1"
+            }
+          ]
+        },
+        {
+          "review": "merge_confirmation",
+          "of_artifact": "pr_state",
+          "reviewed_revision_id": "run-cf40de5f78dccdcd/integration/app:pr_state:1",
+          "wait": "external",
+          "confirms": "merge",
+          "failure_code": null,
+          "producer_workers": [
+            "integrator"
+          ],
+          "decisions": [
+            {
+              "key": "confirm_merged",
+              "label": "Confirm merged",
+              "effect": "approve",
+              "operation": "plain",
+              "on_artifact": null,
+              "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr_state:1"
+            }
+          ]
         }
       ]
     }

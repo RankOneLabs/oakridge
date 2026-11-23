@@ -1,11 +1,12 @@
+import { indexProjectedSchemas, matchesProjectedSchema } from "./lib/projected-schema";
+import type { OperatorSchema } from "./operator-contracts/projections/schema-view";
 import { CurrentSpecAnalysisViewer } from "./components/molecules/CurrentSpecAnalysisViewer";
 import { CurrentSpecViewer } from "./components/molecules/CurrentSpecViewer";
 import { CurrentPlanViewer } from "./components/molecules/CurrentPlanViewer";
 import { CurrentBuildBriefViewer } from "./components/molecules/CurrentBuildBriefViewer";
-import { parseCurrentAnalysis, parseCanonicalSpec, parseCurrentPlan, parseCurrentBrief } from "./lib/current-contract";
-import { selectAnalysisItemPaths, selectSpecItemPaths, selectPlanItemPaths, selectBriefItemPaths, selectAssessmentItemPaths } from "./lib/current-item-paths";
+import { parseCurrentAnalysis, parseCanonicalSpec, parseCurrentPlan, parseCurrentBrief } from "./lib/viewer-data";
+import { selectAnalysisItemPaths, selectSpecItemPaths, selectPlanItemPaths, selectBriefItemPaths } from "./lib/current-item-paths";
 import { SchemaContractView } from "./components/molecules/SchemaContractView";
-import { parseCurrentAssessment } from "./lib/assessment";
 import type { ComponentType, ReactNode } from "react";
 import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./artifact-types";
 import type { EditOutcome } from "./lib/edit-outcome";
@@ -15,10 +16,17 @@ import { CurrentAssessmentReview } from "./components/organisms/CurrentAssessmen
 import { PrSummaryViewer } from "./components/molecules/PrSummaryViewer";
 
 export interface ViewerProps {
-  currentRead?: import("./lib/versioned-body").CurrentArtifactRead;
+  assessment?: {
+    readonly unitId: string;
+    readonly artifact: string;
+    readonly subject: string | null;
+    readonly paths: readonly (readonly import("./operator-contracts/core-client/core-types").OperatorPathSegment[])[];
+    readonly workers: readonly import("./operator-contracts/projections/unit-view").OperatorProjectedWorker[];
+  };
   context?: import("./lib/current-context").CurrentArtifactContext;
   renderEditableText?: (props: { anchor: string; value: string; edit: NonNullable<ViewerProps["edit"]>; isMultiline: boolean }) => ReactNode;
   body: unknown;
+  linkField?: string | null;
   descriptor?: ArtifactReviewDescriptor | null;
   source?: ArtifactSource;
   edit?: {
@@ -45,24 +53,32 @@ export interface ItemGradingSlots {
   renderShowAll: (selections: readonly ObservationItemAddress[]) => ReactNode;
 }
 
-interface RegistryEntry {
-  Viewer: ComponentType<ViewerProps>;
+export const VIEWERS = {
+  requirements_analysis: CurrentSpecAnalysisViewer,
+  specification: CurrentSpecViewer,
+  cohort_plan: CurrentPlanViewer,
+  build_brief: CurrentBuildBriefViewer,
+  build_result: BuildResultReview,
+  assessment: CurrentAssessmentReview,
+  pull_request: PrSummaryViewer,
+} satisfies Record<string, ComponentType<ViewerProps>>;
+
+export type ViewerKey = keyof typeof VIEWERS;
+
+export function resolveViewer(key: string | null | undefined): ComponentType<ViewerProps> | null {
+  return key && Object.hasOwn(VIEWERS, key) ? VIEWERS[key as ViewerKey] : null;
 }
 
-const REGISTRY: Record<string, RegistryEntry> = {
-  "dev-current-analysis-viewer": { Viewer: CurrentSpecAnalysisViewer },
-  "dev-current-spec-viewer": { Viewer: CurrentSpecViewer },
-  "dev-current-plan-viewer": { Viewer: CurrentPlanViewer },
-  "dev-current-brief-viewer": { Viewer: CurrentBuildBriefViewer },
+interface ViewerSelection {
+  readonly view: string | null;
+  readonly schema?: string;
+  readonly schemas?: readonly OperatorSchema[];
+  readonly body: unknown;
+}
 
-  "dev-build-result-viewer": { Viewer: BuildResultReview },
-  "dev-current-assessment-viewer": { Viewer: CurrentAssessmentReview },
-  "dev-pr-summary-viewer": { Viewer: PrSummaryViewer },
-};
-
-export function resolveViewer(componentId: string | null | undefined): ComponentType<ViewerProps> | null {
-  if (!componentId) return null;
-  return REGISTRY[componentId]?.Viewer ?? null;
+export function selectArtifactViewer({ view, schema, schemas, body }: ViewerSelection): ComponentType<ViewerProps> | null {
+  const Viewer = resolveViewer(view);
+  return Viewer && schema && schemas && matchesProjectedSchema(indexProjectedSchemas(schemas), schema, body) ? Viewer : null;
 }
 
 /** The same contract-defined gradeable collections used by the registered viewers. */
@@ -71,10 +87,6 @@ export function selectViewerItemPaths(Viewer: ComponentType<ViewerProps>, body: 
   if (Viewer === CurrentSpecViewer) { const parsed = parseCanonicalSpec(body); return parsed.ok ? selectSpecItemPaths(parsed.value) : []; }
   if (Viewer === CurrentPlanViewer) { const parsed = parseCurrentPlan(body); return parsed.ok ? selectPlanItemPaths(parsed.value) : []; }
   if (Viewer === CurrentBuildBriefViewer) { const parsed = parseCurrentBrief(body); return parsed.ok ? selectBriefItemPaths(parsed.value) : []; }
-  if (Viewer === CurrentAssessmentReview) {
-    const parsed = parseCurrentAssessment(body);
-    return parsed.ok ? selectAssessmentItemPaths(parsed.value) : [];
-  }
   return [];
 }
 
@@ -86,14 +98,4 @@ export interface ContractRendererProps {
 export const CONTRACT_RENDERERS: Partial<Record<import("./operator-contracts/core-client/core-types").OperatorArtifactKind, ComponentType<ContractRendererProps>>> = {};
 export function resolveContractRenderer(kind: import("./operator-contracts/core-client/core-types").OperatorArtifactKind): ComponentType<ContractRendererProps> {
   return CONTRACT_RENDERERS[kind] ?? SchemaContractView;
-}
-
-/** A body its viewer cannot parse, such as another workflow's schema under the same name, falls back to the contract view. */
-export function isReadableViewer(Viewer: ComponentType<ViewerProps>, body: unknown): boolean {
-  if (Viewer === CurrentSpecAnalysisViewer) return parseCurrentAnalysis(body).ok;
-  if (Viewer === CurrentSpecViewer) return parseCanonicalSpec(body).ok;
-  if (Viewer === CurrentPlanViewer) return parseCurrentPlan(body).ok;
-  if (Viewer === CurrentBuildBriefViewer) return parseCurrentBrief(body).ok;
-  if (Viewer === CurrentAssessmentReview) return parseCurrentAssessment(body).ok;
-  return true;
 }

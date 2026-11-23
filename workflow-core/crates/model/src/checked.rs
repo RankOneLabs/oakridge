@@ -8,10 +8,19 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct CheckedWorkflow {
     pub digest: BundleDigest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<CheckedWorkflowLabel>,
     #[serde(deserialize_with = "deserialize_checked_type")]
     pub input: CheckedType,
     pub stages: Vec<CheckedStage>,
     pub root: CheckedGroup,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedWorkflowLabel {
+    pub title: CheckedStageExpression,
+    pub repositories: CheckedStageExpression,
 }
 
 /// Checked positions use the same closed type vocabulary as source positions.

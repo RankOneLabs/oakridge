@@ -18,36 +18,36 @@ import { actionOf, executor, launch, openAuthority, submitter, unitOf, type Auth
  */
 // Keep the runtime field assertion exhaustive at typecheck time as RunView evolves.
 const RUN_VIEW_FIELDS = {
-  operator_actions: true, requirement_rollup: true, open_blockers: true, archived_at: true, config_error: true, created_at: true, definition_id: true,
+  operator_actions: true, open_blockers: true, archived_at: true, config_error: true, created_at: true, definition_id: true,
   pr_integration: true, pr_skill_digest: true, repository_keys: true, run_id: true,
   status: true, title: true, units: true, updated_at: true,
 } satisfies Record<keyof RunView, true>;
 const DEFINITION_DETAIL_FIELDS = {
-  bundle: true, definition_id: true, effective_workflow: true, graph: true, prompts: true, workflow: true,
+  assessment_embeddings: true, bundle: true, definition_id: true, effective_workflow: true, graph: true, prompts: true, worker_names: true, workflow: true,
 } satisfies Record<keyof DefinitionDetail, true>;
 const CONTRACT_FIELDS = {
   RunView: Object.keys(RUN_VIEW_FIELDS).sort(),
   RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
   UnitView: ["artifacts", "attempts", "attention", "blocker", "collection_key", "decisions", "depends_on", "input", "input_provenance", "is_terminal", "label", "outcome",
-    "recorded_decisions", "run_id", "stage", "status", "unit_id", "unit_key"],
+    "recorded_decisions", "reviews", "run_id", "stage", "status", "unit_id", "unit_key", "workers"],
   AttemptView: ["cause", "created_at", "failure", "id", "intent", "is_current", "kbbl_session_id", "mode", "number", "status", "unit_id", "worker"],
   AttemptIntentView: ["engine_inputs", "input_provenance", "inputs", "prompt"],
   EngineInputs: ["feedback", "previous", "review_history", "subject"],
   PinnedPrompt: ["digest", "path"],
-  ArtifactView: ["artifact_key", "has_assessment_operations", "is_editable", "is_reviewable", "latest_revision", "revision_count", "run_id", "schema", "unit_id"],
+  ArtifactView: ["artifact_key", "has_assessment_operations", "is_editable", "is_reviewable", "kind", "latest_revision", "link_field", "revision_count", "run_id", "schema", "unit_id", "view"],
   ArtifactRevisionView: ["artifact_key", "artifact_schema_version", "attempt_id", "body", "created_at", "id", "number", "predecessor_id", "run_id", "subject_id", "unit_id"],
   DecisionDefinition: ["assessment", "disabled_reason", "fields", "is_available", "key", "label", "operation", "payload_schema", "submit"],
   DecisionField: ["key", "label"],
-  RevisionDecision: ["created_at", "decision", "effect", "id", "payload", "review", "target_revision_id"],
+  RevisionDecision: ["actor", "approved_assessment_revision_id", "created_at", "decision", "decision_id", "effect", "effect_target_revision_id", "id", "payload", "review", "reviewed_revision_id", "target_revision_id"],
   InboxPage: ["items", "next_cursor"],
   InboxDecisionItem: ["key", "kind", "label", "prompt", "run_id", "submit", "unit_id"],
   InboxWaitingItem: ["kind", "label", "reason", "run_id", "unit_id"],
-  InboxStalledItem: ["detail", "kind", "run_id", "unit_id"],
+  InboxStalledItem: ["detail", "failure_code", "kind", "run_id", "unit_id"],
   UnitHistory: ["events", "next_cursor", "unit_id"],
-  EventHistory: ["created_at", "event", "id", "ingress_id", "writer"],
+  EventHistory: ["created_at", "event", "feedback_dispositions", "id", "ingress_id", "writer"],
   UnitDiagnostics: ["attempts", "effects", "rejected", "unit_id"],
   EffectDiagnostic: ["action_id", "id", "last_error", "next_try_at", "seq", "status", "tries", "updated_at"],
-  ArtifactDetail: ["artifact_key", "decisions", "has_assessment_operations", "is_editable", "is_reviewable", "original_spec", "revisions", "run_id", "schema", "status", "unit_id"],
+  ArtifactDetail: ["artifact_key", "decisions", "has_assessment_operations", "is_editable", "is_reviewable", "producing_attempt_inputs", "revisions", "run_id", "schema", "status", "unit_id", "view"],
   DefinitionSummary: ["bundle", "definition_id"],
   PinnedDefinition: ["bundle", "definition_id", "effective_workflow"],
   DefinitionDetail: Object.keys(DEFINITION_DETAIL_FIELDS).sort(),
@@ -272,6 +272,14 @@ describe("each read model carries exactly its contract's fields", () => {
 });
 
 describe("derived fields", () => {
+  test("run labels come from evaluated launch expressions over differently named input fields", async () => {
+    const { readLaunchableCatalog } = await import("../src/runtime/definition-store");
+    const catalog = readLaunchableCatalog();
+    if (!catalog.ok) throw new Error(catalog.error.detail);
+    const run = await launched(catalog.value.portability.definition_id, { headline: "Folio trial", destinations: ["archive"] });
+    expect(await get<RunView>(`/api/runs/${run}`)).toMatchObject({ title: "Folio trial", repository_keys: ["archive"] });
+  });
+
   test("generic runs expose nullable title, empty repository keys and the latest event time", async () => {
     const run_id = await launched(review_loop, { topic: "Oakridge" });
     const first = await get<RunView>(`/api/runs/${segment(run_id)}`);
@@ -332,7 +340,7 @@ describe("derived fields", () => {
     const view = await get<UnitView>(unitPath(run_id, unit));
     expect({ decisions: view.decisions.map((decision) => [decision.key, decision.label, decision.submit]), attention: view.attention })
       .toEqual({ decisions: [["retry:writer", "Retry Writer", { kind: "retry", worker: "writer" }]],
-        attention: { kind: "stalled", detail: "writer failed: it broke" } });
+        attention: { kind: "stalled", detail: "writer failed: it broke", failure_code: null } });
   });
 
   test("a unit's attention: awaiting a review, blocked on another unit, or nothing", async () => {

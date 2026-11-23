@@ -37,20 +37,10 @@ export interface EpicProfileConfig {
   repositories: EpicRepositoryConfig[];
 }
 
-/** Mirrors study's slice limits in workflow-config/study.yaml `input`: the most pilot-slice cases and the paid slice's cap. */
-export interface StudySliceLimits {
-  slice_case_limit: number;
-  slice_cap_cents: number;
-}
-/** What the chosen workflow takes beyond the fields every launch shares. A study launched here never supplies `approved_plan`. */
-export type WorkflowLaunchInput =
-  | { kind: "development" }
-  | { kind: "study"; slice: StudySliceLimits };
-
 export interface CreateRunRequest {
-  workflow_def_id: string;
-  project_id: string | null;
-  context: CreateRunContext;
-  epic_profile: EpicProfileConfig;
-  workflow_input: WorkflowLaunchInput;
+  readonly workflow_def_id: string;
+  readonly project_id: string | null;
+  readonly workflow_input: Readonly<Record<string, unknown>>;
+  readonly session_settings: CreateRunContext["session_settings"];
+  readonly grading_enabled: boolean;
 }

@@ -12,7 +12,7 @@ vi.mock("../client", () => ({
   refreshReviewInboxRun: vi.fn(() => new Promise<ReviewInbox>((resolve) => { pending.resolutions.push(resolve); })),
 }));
 vi.mock("../adapters/inbox", () => ({
-  replaceDevelopmentInboxRun: (_latest: ReviewInbox, _runId: string, updated: ReviewInbox) => updated,
+  replaceInboxRun: (_latest: ReviewInbox, _runId: string, updated: ReviewInbox) => updated,
 }));
 
 class EventSourceStub {
@@ -46,7 +46,7 @@ test("normal run events refresh the inbox and an older response cannot overwrite
   const older: ReviewInbox = { cohorts: [], items: [] };
   const newer: ReviewInbox = { cohorts: [{ id: "new-review", run_id: "run-1", workflow_name: "development",
     stage_instance_id: "stage", stage_name: "cohort", unit_id: "unit", cohort_key: "unit", brief_title: null,
-    repository_key: "oakridge" as CohortLifecycleSummary["repository_key"], lifecycle: "merge_confirmation",
+    repository_key: "oakridge" as CohortLifecycleSummary["repository_key"], lifecycle: "merge_review",
     completion: { build_complete: true, assessment_complete: true },
     updated_at: "2026-10-16T00:00:00Z" }], items: [] };
   await act(async () => { pending.resolutions[1]?.(newer); await Promise.resolve(); });

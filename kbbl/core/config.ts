@@ -79,6 +79,9 @@ const AcpEnvPolicySchema = z
 
 const AcpAgentSchema = z
   .object({
+    auth_probe: z.object({ command: z.array(z.string().min(1)).min(1), fix: z.string().min(1) }).strict().optional(),
+    models: z.array(z.object({ value: z.string().min(1), label: z.string().min(1) }).strict()).optional(),
+    default_model: z.string().min(1).optional(),
     skill_discovery: z.object({ kind: z.literal("additionalDirectories") }).strict().nullable().optional(),
     enabled: z.boolean().default(true),
     label: z.string().min(1).nullable().optional(),

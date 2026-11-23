@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { canonicalJson } from "canonical-json";
-import { DEFINITION_STORE_ROOT, launchableDefinitionIds, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, type DefinitionId } from "../src/runtime/definition-store";
+import { DEFINITION_STORE_ROOT, launchableDefinitionIds, readLaunchableCatalog, readSkillIndex, resolveDefinition, resolveLaunchableDefinition, type DefinitionId } from "../src/runtime/definition-store";
 
 function fixture(check: (root: string, id: DefinitionId) => void): void {
   const root = mkdtempSync("/tmp/authority-definitions-");
@@ -85,6 +85,7 @@ test("audience filtering keeps fixtures resolvable", () => {
   expect(launchableDefinitionIds(catalog.value, null).sort()).toEqual([
     ...userIds,
     catalog.value["fan-out"].definition_id,
+    catalog.value.portability.definition_id,
     catalog.value["review-loop"].definition_id,
   ].sort());
   expect(resolveLaunchableDefinition(catalog.value["fan-out"].definition_id, DEFINITION_STORE_ROOT).ok).toBe(true);
@@ -133,4 +134,13 @@ test("resolves a definition committed before prompts could include one another, 
   const result = resolveDefinition("46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222" as DefinitionId, root);
   if (!result.ok) throw new Error(JSON.stringify(result.error));
   expect([result.value.prompt_source_ids, result.value.prompt_sources]).toEqual([result.value.prompt_ids, result.value.prompts]);
+}));
+
+test("a skill index accepts a third integration key", () => fixture((root) => {
+  const path = resolve(root, "skills.json");
+  const expected = { ...JSON.parse(readFileSync(path, "utf8")), custom: "c".repeat(64) };
+  const canonical = canonicalJson(expected);
+  if (!canonical.ok) throw new Error("Fixture is not canonical");
+  writeFileSync(path, canonical.value);
+  expect(readSkillIndex(root)).toEqual({ ok: true, value: expected });
 }));

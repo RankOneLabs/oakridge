@@ -1,5 +1,6 @@
+import { useOperatorUnits } from "../../hooks/useOperatorUnits";
 import { TaskAssociationGrades } from "./TaskAssociationGrades";
-import { selectTaskLineageGroups } from "../../lib/task-lineage";
+import { selectTaskLineageGroups, selectRepositoryJudgments, selectRevisionDecisionRoles } from "../../lib/task-lineage";
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
@@ -51,6 +52,11 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
   const [lineagePage, setLineagePage] = useState(FIRST);
   const [drill, setDrill] = useState<{ readonly key: ObservationCompositeDrilldownKey; readonly label: string } | null>(null);
   const composite = useTask({ run_id: runId, task_id: taskId, nested: {} });
+  const units = useOperatorUnits(runId);
+  const decisions = units.data?.flatMap((unit) => unit.recorded_decisions) ?? [];
+  const judgments = selectRepositoryJudgments(composite.data?.repositories ?? [], decisions);
+  const decisionRoles = (revisionId: string) => selectRevisionDecisionRoles(revisionId, decisions).map(({ role, decision }) =>
+    <span key={`${decision.decision_id}-${role}`} data-testid="or-task-decision-role">{role} · {decision.decision.replaceAll("_", " ")}</span>);
   const lineage = useTaskLineage(runId, taskId, lineagePage);
   const isUncaptured = composite.error instanceof GradingReadError && composite.error.status === 404;
   return (
@@ -64,20 +70,23 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
       </header>
       {isUncaptured && <FeedbackMessage testId="or-task-unresolved">This run has captured no task with this id. Items naming it stay listed below, unresolved.</FeedbackMessage>}
       {composite.isError && !isUncaptured && <FeedbackMessage tone="danger" testId="or-task-unavailable">{composite.error instanceof Error ? composite.error.message : "observation did not answer"}</FeedbackMessage>}
+      {judgments.length > 0 && <ul>{judgments.map(({ repository_key, status }) => <li key={repository_key}>{repository_key} · {status}</li>)}</ul>}
       {composite.data && <TaskStageComposites runId={runId} taskId={taskId} stages={composite.data.stages} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })} />}
       {isRevealed && drill && <CompositeDrilldown runId={runId} drilldownKey={drill.key} label={drill.label} onClose={() => setDrill(null)} onOpenItem={onOpenItem} />}
       <section className="flex flex-col gap-1" data-testid="or-task-lineage">
-        <div className={artifactLabelClass}>Spec task and cohort contributions</div>
+        <div className={artifactLabelClass}>Linked revisions</div>
         <ul className="m-0 list-none divide-y divide-[var(--border-decorative)] p-0">
           {selectTaskLineageGroups(lineage.data?.items ?? []).map((group) => <li key={group.kind}><h4>{group.label}</h4><ul>{group.entries.flatMap((entry, index) => {
-            if (entry.kind === "edge") return [<li key={index}><code>{entry.revision_id} {entry.item_path}</code> · {entry.relation.type} · {entry.relation.evidence_ref}</li>];
+            if (entry.kind === "edge") return [<li key={index}><code>{entry.revision_id} {entry.item_path}</code> · {entry.relation.type} · {entry.relation.evidence_ref} {decisionRoles(entry.revision_id)}</li>];
             if (entry.kind === "occurrence") return [<li key={`${index}-${entry.occurrence_id}`} className="flex flex-wrap items-center justify-between gap-2 py-1.5 text-xs text-[var(--text-muted)]" data-testid="or-task-definition">
               <span>{entry.item_kind} · {entry.artifact_kind} · {entry.revision_id} · {entry.item_path}{entry.is_current ? "" : " (older revision)"}</span>
+              {decisionRoles(entry.revision_id)}
               <ItemGradeAction runId={runId} selection={{ source_revision_id: entry.revision_id, item_path: entry.item_path }} onOpenItem={onOpenItem} />
             {isRevealed && <TaskAssociationGrades occurrenceId={entry.occurrence_id} taskId={composite.data?.logical_item_id ?? null} />}
             </li>];
             return [<li key={`${index}-${entry.item.occurrence_id}`} className="flex flex-wrap items-start gap-2 py-1.5" data-testid="or-task-linked-item" data-link-state={entry.kind}>
               <p className="m-0 min-w-0 flex-1 text-sm text-[var(--text-secondary)]">{entry.item.item_kind} · {selectItemText(entry.item.selected_value)}<br /><code>{entry.item.revision_id} {entry.item.item_path}</code><br />{entry.kind === "contribution" ? entry.provenance.hops.map((hop) => <span key={hop.relation_id}>{hop.type} · {hop.evidence_ref}<br /></span>) : <span>Unresolved: {entry.unresolved_target_ref} · {entry.evidence_ref}</span>}</p>
+              {decisionRoles(entry.item.revision_id)}
               {entry.kind === "unresolved" && <Chip tone="warning">Unresolved</Chip>}
               {!entry.item.is_current && <Chip tone="muted">Older revision</Chip>}
               <span>per_item</span><GradeItemButton selection={{ source_revision_id: entry.item.revision_id, item_path: entry.item.item_path }} onOpenItem={onOpenItem} /><span>per_task</span><ContributionGradeButton occurrenceId={entry.item.occurrence_id} selection={{ source_revision_id: entry.item.revision_id, item_path: entry.item.item_path, task_id: composite.data?.logical_item_id ?? null }} onOpenItem={onOpenItem} />

@@ -18,6 +18,7 @@ if (typeof input === "string") throw new Error("Expected record stage input");
 
 const workflow = {
   ...study,
+  label: undefined,
   input,
   run: {
     units: { unit: { stage: STAGE, input: Object.fromEntries(Object.keys(input).map(key => [key, `input.${key}`])) } },
@@ -72,24 +73,24 @@ async function launchPlan(plan: Plan, limits = defaultLimits) {
 const checks = {
   nonemptyOutcomes: "len(plan.outcomes) > 0",
   nonemptyDecisionRule: "len(plan.decision_rule) > 0",
-  nonemptyCriteria: "len(plan.slice.criteria) > 0",
+  nonemptyCriteria: "len(plan.pilot_selection.criteria) > 0",
   nonemptyTriggers: "len(plan.iteration_triggers) > 0",
   positiveFullRepeats: "plan.full_study_repeats > 0",
   nonemptyPlan: "len(plan.cases) > 0 and len(plan.hypotheses) > 0",
-  knownSliceCases: "every(plan.slice.case_ids, contains(map(plan.cases, item.id), item))",
-  sliceCaseLimit: "len(plan.slice.case_ids) <= input.slice_case_limit",
-  sliceControl: "len(filter(plan.cases, item.is_control == true)) == 0 or len(filter(plan.cases, item.is_control == true and contains(plan.slice.case_ids, item.id))) > 0",
+  knownSliceCases: "every(plan.pilot_selection.case_ids, contains(map(plan.cases, item.id), item))",
+  sliceCaseLimit: "len(plan.pilot_selection.case_ids) <= input.slice_case_limit",
+  sliceControl: "len(filter(plan.cases, item.is_control == true)) == 0 or len(filter(plan.cases, item.is_control == true and contains(plan.pilot_selection.case_ids, item.id))) > 0",
   paidCap: "plan.slice_paid.cap_cents > 0 and plan.slice_paid.cap_cents <= input.slice_cap_cents",
   uniqueCaseIds: "unique(map(plan.cases, item.id))",
   uniqueMembership: "unique(flatten(map(plan.groups, item.case_ids)))",
   knownGroupCases: "every(flatten(map(plan.groups, item.case_ids)), contains(map(plan.cases, item.id), item))",
   declaredMembership: "every(plan.cases, contains(map(plan.groups, item.id), item.group) and contains(require(lookup(plan.groups, id, item.group)).case_ids, item.id))",
-  knownPaidModels: "every(plan.slice_paid.models, contains(map(plan.models, item.id), item))",
+  knownPaidModels: "every(plan.slice_paid.paid_model_ids, contains(map(plan.planned_models, item.id), item))",
   uniqueGroupAndHypothesisIds: "unique(map(plan.groups, item.id)) and unique(map(plan.hypotheses, item.id))",
-  nonemptySlice: "len(plan.slice.case_ids) > 0",
-  nonemptyPaidModels: "len(plan.slice_paid.models) > 0",
+  nonemptySlice: "len(plan.pilot_selection.case_ids) > 0",
+  nonemptyPaidModels: "len(plan.slice_paid.paid_model_ids) > 0",
   positiveRepeats: "plan.slice_paid.repeats > 0",
-  distinctCriteriaAndTriggers: "unique(map(plan.slice.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.slice.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))",
+  distinctCriteriaAndTriggers: "unique(map(plan.pilot_selection.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.pilot_selection.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))",
 };
 type PlanCheck = keyof typeof checks;
 
@@ -118,7 +119,7 @@ const stageRename = "fact-shapes-stage-rename";
 const refusals: RefusalCase[] = [
   { name: "no outcomes", change: plan => { plan.outcomes = []; }, expected_check: ["nonemptyOutcomes"] },
   { name: "no decision rules", change: plan => { plan.decision_rule = []; }, expected_check: ["nonemptyDecisionRule"] },
-  { name: "no slice criteria", change: plan => { plan.slice.criteria = []; }, expected_check: ["nonemptyCriteria"] },
+  { name: "no slice criteria", change: plan => { plan.pilot_selection.criteria = []; }, expected_check: ["nonemptyCriteria"] },
   { name: "no triggers", change: plan => { plan.iteration_triggers = []; }, expected_check: ["nonemptyTriggers"] },
   { name: "zero full-study repeats", change: plan => { plan.full_study_repeats = 0; }, expected_check: ["positiveFullRepeats"] },
   {
@@ -128,12 +129,12 @@ const refusals: RefusalCase[] = [
   },
   {
     name: "no cases",
-    change: plan => { plan.cases = []; plan.groups = []; plan.slice.case_ids = []; },
+    change: plan => { plan.cases = []; plan.groups = []; plan.pilot_selection.case_ids = []; },
     expected_check: ["nonemptyPlan", "nonemptySlice"],
   },
   {
     name: "unknown slice case",
-    change: plan => { plan.slice.case_ids[1] = `${stageAdd}.ghost`; },
+    change: plan => { plan.pilot_selection.case_ids[1] = `${stageAdd}.ghost`; },
     expected_check: ["knownSliceCases"],
   },
   {
@@ -143,7 +144,7 @@ const refusals: RefusalCase[] = [
   },
   {
     name: "slice with no control",
-    change: plan => { plan.slice.case_ids = plan.slice.case_ids.filter(id => id !== `${stageAdd}.type_enforced`); },
+    change: plan => { plan.pilot_selection.case_ids = plan.pilot_selection.case_ids.filter(id => id !== `${stageAdd}.type_enforced`); },
     expected_check: ["sliceControl"],
   },
   {
@@ -178,7 +179,7 @@ const refusals: RefusalCase[] = [
   },
   {
     name: "unknown paid slice model",
-    change: plan => { plan.slice_paid.models.push("ghost"); },
+    change: plan => { plan.slice_paid.paid_model_ids.push("ghost"); },
     expected_check: ["knownPaidModels"],
   },
   {
@@ -188,7 +189,7 @@ const refusals: RefusalCase[] = [
   },
   {
     name: "no paid slice models",
-    change: plan => { plan.slice_paid.models = []; },
+    change: plan => { plan.slice_paid.paid_model_ids = []; },
     expected_check: ["nonemptyPaidModels"],
   },
   {
@@ -198,7 +199,7 @@ const refusals: RefusalCase[] = [
   },
   {
     name: "a criterion and iteration trigger sharing an id",
-    change: plan => { plan.iteration_triggers[0].id = plan.slice.criteria[0].id; },
+    change: plan => { plan.iteration_triggers[0].id = plan.pilot_selection.criteria[0].id; },
     expected_check: ["distinctCriteriaAndTriggers"],
   },
 ];
@@ -241,7 +242,7 @@ interface ValidationPublication {
 async function validationRun(stageName: string, stageInput: object) {
   const stage = study.stages[stageName];
   if (typeof stage.input === "string") throw new Error("Expected a record input");
-  const source = { ...study, input: stage.input, run: {
+  const source = { ...study, label: undefined, input: stage.input, run: {
     units: { unit: { stage: stageName, input: Object.fromEntries(Object.keys(stage.input).map((key) => [key, `input.${key}`])) } }, outcome: {},
   } };
   const compiled = await compileWorkflow(core, { workflow: source, prompts });
@@ -283,18 +284,18 @@ async function validationRun(stageName: string, stageInput: object) {
 }
 
 const digest = "test_digest";
-const digest_recipe = { files: ["generate.py"], command: "sha256sum generate.py" };
+const digest_recipe = { files: ["generate.py"], digest_command: "sha256sum generate.py" };
 const build = (cohort_id: string) => ({ cohort_id, title: cohort_id, head_sha: "head", summary: "Worked", changed_files: [] });
 const qualification = (case_id: string) => ({ case_id, reference_passes: true, omissions_isolated: true, controls_replayed: true, detail: "Qualified" });
-const plannedCase = fixture.slice.case_ids[0];
-const sliceBuild = { build: build("slice"), generator_digest: digest, case_ids: fixture.slice.case_ids,
-  qualifications: fixture.slice.case_ids.map(qualification), digest_recipe };
+const plannedCase = fixture.pilot_selection.case_ids[0];
+const sliceBuild = { build: build("slice"), generator_digest: digest, case_ids: fixture.pilot_selection.case_ids,
+  qualifications: fixture.pilot_selection.case_ids.map(qualification), digest_recipe };
 const spendRequest = { cohort_file: "slice.json", attempt_count: 1, cap_cents: fixture.slice_paid.cap_cents,
-  generator_digest: digest, case_ids: fixture.slice.case_ids };
-const paidResult = { case_id: plannedCase, model_id: fixture.slice_paid.models[0], outcome: "scored", detail: "Scored", spend_cents: 1,
+  generator_digest: digest, case_ids: fixture.pilot_selection.case_ids };
+const paidResult = { case_id: plannedCase, model_id: fixture.slice_paid.paid_model_ids[0], outcome: "scored", detail: "Scored", spend_cents: 1,
   launch_command: "run", store_path: "/runs/test" };
 const sliceReport = { generator_digest: digest, run_key: "test", qualifications: sliceBuild.qualifications,
-  paid_results: [paidResult], criteria_marks: fixture.slice.criteria.map(({ id }) => ({ id, status: "met", evidence: "Measured" })),
+  paid_results: [paidResult], criteria_marks: fixture.pilot_selection.criteria.map(({ id }) => ({ id, status: "met", evidence: "Measured" })),
   trigger_marks: fixture.iteration_triggers.map(({ id }) => ({ id, status: "not_fired", evidence: "Measured" })), proposed_changes: [] };
 const assessItem = (kind: string, id: string, status = "met") =>
   ({ subject: { kind, id }, status, observation: "Verified", evidence: [{ kind: "test", ref: id }] });
@@ -303,13 +304,13 @@ const baseAssessment = (item_assessments: readonly ReturnType<typeof assessItem>
   test_evidence: { passed: 1, failed: 0 }, verdict: "pass",
 });
 const sliceAssessment = { ...baseAssessment([
-  ...fixture.slice.criteria.map(({ id }) => assessItem("criterion", id)),
+  ...fixture.pilot_selection.criteria.map(({ id }) => assessItem("criterion", id)),
   ...fixture.iteration_triggers.map(({ id }) => assessItem("trigger", id, "not_met")),
   assessItem("case", plannedCase),
 ]), run_key: sliceReport.run_key };
 const findings = (kind: string, id: string) =>
   [{ id: "finding", severity: "info", observation: "Linked", evidence: [], related_subjects: [{ kind, id }] }];
-const studyPr = { pr_url: "https://github.com/acme/study/pull/1", summary: "Built", branch: "slice" };
+const studyPr = { change_request_link: "https://github.com/acme/study/pull/1", summary: "Built", branch: "slice" };
 
 test("slice qualification, paid evidence, and task-link checks report specific refusals", async () => {
   const harness = await validationRun("design", { spec: fixture.question, repository, workspace, ...defaultLimits, approved_plan: null });
@@ -344,7 +345,7 @@ test("slice qualification, paid evidence, and task-link checks report specific r
   expect((await harness.publish(reported, { ...assessmentPublication, body: sliceAssessment })).messages).toEqual([]);
   const allowed = [
     ["case", plannedCase, "Case subjects and related subjects must resolve within the reviewed scope."],
-    ["criterion", fixture.slice.criteria[0].id, "Criterion subjects and related subjects must resolve within the reviewed scope."],
+    ["criterion", fixture.pilot_selection.criteria[0].id, "Criterion subjects and related subjects must resolve within the reviewed scope."],
     ["trigger", fixture.iteration_triggers[0].id, "Trigger subjects and related subjects must resolve within the reviewed scope."],
     ["cohort_file", "unknown", "Slice assessments cannot link cohort_file subjects."],
   ] as const;

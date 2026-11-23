@@ -18,7 +18,7 @@ const unit = { id: "run/cohort", parent_id: "run", declaration: "cohort", stage:
 const read = { run: { status: { kind: "active" } }, definition: { parsed_workflow: { stages: { cohort: stage } } },
   revisions: [{ id: "run/cohort:build_result:9", unit_id: unit.id, artifact: "build_result" }] } as unknown as RunSummaryRead;
 const awaiting = (decisions: UnitAttention["awaiting"][number]["decisions"]): UnitAttention => ({ unit_id: unit.id, run_stalls: [], stalled: [],
-  blocked: null, awaiting: [{ unit_id: unit.id, review: "assessment_review", target: "run/cohort:assessment:1", decisions, prompt: "" }] });
+  blocked: null, awaiting: [{ unit_id: unit.id, review: "assessment_review", target: "run/cohort:assessment:1", decisions, prompt: "", failure_code: null }] });
 const targetsOf = (attention: UnitAttention) => selectAvailableDecisions(read, unit, attention)
   .map((decision) => decision.submit.kind === "review" ? [decision.submit.decision, decision.submit.target_revision_id] : [decision.key]);
 

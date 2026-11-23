@@ -140,23 +140,24 @@ const selectCurrentAttemptIndex = (attempts: readonly RunSessionAttempt[]): numb
  * unit.
  */
 export const selectRunSessionRows = (attempts: readonly RunSessionAttempt[]): readonly RunSessionRow[] => {
-  const byUnit = new Map<RunUnitKey, RunSessionAttempt[]>();
+  const byWorker = new Map<string, RunSessionAttempt[]>();
+  const workerOf = (attempt: RunSessionAttempt) => JSON.stringify([runUnitKeyOf(attempt), attempt.worker_key]);
   for (const attempt of attempts) {
-    const key = runUnitKeyOf(attempt);
-    const existing = byUnit.get(key);
+    const key = workerOf(attempt);
+    const existing = byWorker.get(key);
     if (existing) existing.push(attempt);
-    else byUnit.set(key, [attempt]);
+    else byWorker.set(key, [attempt]);
   }
 
   const currentWorkOrderIds = new Set<string>();
-  for (const unitAttempts of byUnit.values()) {
+  for (const unitAttempts of byWorker.values()) {
     const current = unitAttempts[selectCurrentAttemptIndex(unitAttempts)];
     if (current) currentWorkOrderIds.add(current.work_order_id);
   }
 
   return attempts.map((attempt) => {
     const key = runUnitKeyOf(attempt);
-    const unitAttempts = byUnit.get(key) ?? [];
+    const unitAttempts = byWorker.get(workerOf(attempt)) ?? [];
     return {
       attempt,
       unit_key: key,

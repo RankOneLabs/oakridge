@@ -119,6 +119,13 @@ jobs:
       - run: bunx tsc --noEmit -p kbbl/tsconfig.json
       - run: bunx tsc --noEmit -p observation/tsconfig.json
       - run: bunx tsc --noEmit -p scripts/tsconfig.json
+      - run: bun test scripts/legacy-symbols.test.ts
+      - name: Keep generated agent documents out of the cutover diff
+        if: github.event_name == 'pull_request' && github.base_ref == 'epic/model-refactor'
+        env:
+          BUILD_BASE: ${{ github.base_ref }}
+        run: |
+          git diff --exit-code "origin/${BUILD_BASE}...HEAD" -- .catagents AGENTS.md CLAUDE.md kbbl/CLAUDE.md
 
   kbbl-tests:
     name: kbbl backend tests (bun)
@@ -233,3 +240,43 @@ jobs:
           TEST_SHARD: ${{ matrix.shard }}
           TEST_SHARD_COUNT: "2"
         run: bun run --filter oakridge-dbos test:integration
+
+  portability-e2e:
+    name: portability and fresh stack (Playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.16@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
+        env:
+          POSTGRES_USER: oakridge
+          POSTGRES_PASSWORD: oakridge
+          POSTGRES_DB: oakridge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      OAKRIDGE_TEST_DATABASE_URL: postgres://oakridge:oakridge@127.0.0.1:5432/oakridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.1
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workflow-core
+      - run: cargo build --locked --target wasm32-unknown-unknown -p workflow-evaluator
+        working-directory: workflow-core
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+        working-directory: kbbl
+      - run: bun run --filter kbbl build:pwa
+      - run: bun test kbbl/tests/browser/fresh-start.integration.test.ts
+      - run: bun test kbbl/tests/browser/portability-e2e.test.ts

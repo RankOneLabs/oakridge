@@ -1,22 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { RepositoryKey } from "../run-types";
 import type { CreateRunRequest } from "../launch-types";
 import { selectRequestIdentity } from "./request-identity";
 
 const launchRequest = (notes: string): CreateRunRequest => ({
   workflow_def_id: "definition-1", project_id: null,
-  context: {
-    brief_notes: notes, repositories: [{ key: "repo" as RepositoryKey, path: "/repo", integration_branch: "main" }], worktree_path: "/repo",
-    base_branch: "epic/x", oakridge_url: "http://oakridge",
-    session_settings: { cohort: { builder: { harness: "claude-code", model: "sonnet", effort: null } } },
-    grading_enabled: false,
-  },
-  epic_profile: {
-    title: "Build it", slug: "build-it", final_merge_policy: "guarded",
-    repositories: [{ repository_key: "repo" as RepositoryKey, repository_path: "/repo", integration_branch: "main", forge_repository: { provider: "github", owner: "acme", name: "repo" } }],
-  },
-  workflow_input: { kind: "development" },
+  workflow_input: { message: notes },
+  session_settings: {},
+  grading_enabled: false,
 });
 
 describe("request identity", () => {

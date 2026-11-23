@@ -111,11 +111,13 @@ export interface RunRead extends RunSummaryRead {
   readonly dependencies: readonly UnitDependencyRecord[];
   readonly revisions: readonly ArtifactRevisionRecord[];
   readonly decisions: readonly ReviewDecisionRead[];
+  readonly feedback_dispositions?: readonly RecordedFeedbackDisposition[];
+  readonly assessment_approvals?: readonly Pick<Row<"authority.assessment_approval">, "decision_id" | "assessment_revision_id">[];
   readonly intents: readonly Pick<EffectIntentRecord, "action_id" | "seq" | "payload">[];
 }
 
 const RUN_SUMMARY_COLUMNS = ["run.config", "run.id", "run.definition_id", "run.project_id", "run.root_unit_id",
-  "run.created_at", "run.archived_at", "run.input"] as const;
+  "run.created_at", "run.archived_at", "run.input", "run.label"] as const;
 const UNIT_SUMMARY_COLUMNS = ["id", "run_id", "parent_id", "declaration", "stage", "collection_key", "pool", "status", "blocked_reason", "review_prompts"] as const;
 const REVISION_REF_COLUMNS = ["id", "run_id", "unit_id", "artifact", "seq", "created_at"] as const;
 const of = <Row extends { readonly run_id: string }>(rows: readonly Row[], run_id: string): Row[] => rows.filter((row) => row.run_id === run_id);
@@ -166,11 +168,51 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
   });
 }
 
+export interface RecordedFeedbackDisposition {
+  readonly decision_id: string;
+  readonly kind: "proposal_rejected" | "follow_up_rejected" | "dispatched" | "approved";
+  readonly item_id: string | null;
+  readonly assignment_id: string | null;
+  readonly round_id: string | null;
+  readonly reason: string | null;
+  readonly actor: string | null;
+  readonly created_at: Date;
+}
+
+async function readFeedbackDispositions(trx: DatabaseTransaction, run_id: string): Promise<readonly RecordedFeedbackDisposition[]> {
+  const [rejections, dispatches, approvals] = await Promise.all([
+    trx.selectFrom("authority.feedback_rejection").select(["decision_id", "feedback_item_id", "assignment_id", "reason", "created_at"])
+      .where("run_id", "=", run_id).execute(),
+    trx.selectFrom("authority.assignment_round as round")
+      .innerJoin("authority.dispatch_authorization as authorization", "authorization.id", "round.authorization_id")
+      .select(["round.id", "round.decision_id", "round.assignment_id", "round.created_at",
+        "authorization.feedback_item_id", "authorization.authorized_by"]).where("round.run_id", "=", run_id).execute(),
+    trx.selectFrom("authority.assessment_approval").select(["decision_id", "approved_by", "created_at"])
+      .where("run_id", "=", run_id).execute(),
+  ]);
+  const facts: RecordedFeedbackDisposition[] = [
+    ...rejections.map((row): RecordedFeedbackDisposition => ({
+      decision_id: row.decision_id, kind: row.assignment_id ? "follow_up_rejected" : "proposal_rejected",
+      item_id: row.feedback_item_id, assignment_id: row.assignment_id, round_id: null,
+      reason: row.reason, actor: null, created_at: row.created_at,
+    })),
+    ...dispatches.map((row): RecordedFeedbackDisposition => ({
+      decision_id: row.decision_id, kind: "dispatched", item_id: row.feedback_item_id,
+      assignment_id: row.assignment_id, round_id: row.id, reason: null, actor: row.authorized_by, created_at: row.created_at,
+    })),
+    ...approvals.map((row): RecordedFeedbackDisposition => ({
+      decision_id: row.decision_id, kind: "approved", item_id: null, assignment_id: null, round_id: null,
+      reason: null, actor: row.approved_by, created_at: row.created_at,
+    })),
+  ];
+  return facts.sort((left, right) => +left.created_at - +right.created_at);
+}
+
 /** One run with everything recorded against it: its summary read, and the rows the summary leaves out. */
 async function runRead(trx: DatabaseTransaction, run_id: string): Promise<RunRead | null> {
   const [summary] = await runSummaryReads(trx, [run_id]);
   if (!summary) return null;
-  const [run, units, dependencies, revisions, decisions, intents, decision_events, reconciliations] = await Promise.all([
+  const [run, units, dependencies, revisions, decisions, intents, decision_events, reconciliations, assessment_approvals, feedback_dispositions] = await Promise.all([
     trx.selectFrom("authority.run").selectAll().where("id", "=", run_id).executeTakeFirstOrThrow(),
     trx.selectFrom("authority.unit").selectAll().where("run_id", "=", run_id).orderBy("id").execute(),
     trx.selectFrom("authority.unit_dependency").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("depends_on_id").execute(),
@@ -179,8 +221,10 @@ async function runRead(trx: DatabaseTransaction, run_id: string): Promise<RunRea
     trx.selectFrom("authority.effect_intent").select(["action_id", "seq", "payload"]).where("run_id", "=", run_id).execute(),
     trx.selectFrom("authority.event").select(["payload", "writer"]).where("run_id", "=", run_id).execute(),
     trx.selectFrom("authority.keyed_execution").select(["id", "unit_id", "worker"]).where("run_id", "=", run_id).where("state", "=", "reconcile").execute(),
+    trx.selectFrom("authority.assessment_approval").select(["decision_id", "assessment_revision_id"]).where("run_id", "=", run_id).execute(),
+    readFeedbackDispositions(trx, run_id),
   ]);
-  return { ...summary, reconciliations, intents: intents.map((intent) => ({ ...intent, action_id: intent.action_id as ActionId })), run: runRecord(run), units: units.map(unitRecord), dependencies: dependencies.map(dependencyRecord),
+  return { ...summary, reconciliations, assessment_approvals, feedback_dispositions, intents: intents.map((intent) => ({ ...intent, action_id: intent.action_id as ActionId })), run: runRecord(run), units: units.map(unitRecord), dependencies: dependencies.map(dependencyRecord),
     revisions: revisions.map(revisionRecord), decisions: decisions.map((row) => ({ ...decisionRecord(row), actor: decision_events.find(({ payload }) =>
       payload.kind === "operator_decided" && payload.unit === row.unit_id && payload.review === row.review
         && payload.decision === row.decision && payload.target === row.target_revision_id)?.writer ?? null })) };
@@ -406,6 +450,7 @@ export interface HistoryQuery { readonly run_id: string; readonly unit_id: strin
 export interface HistoryCursor { readonly created_at: string; readonly id: string }
 export interface HistoryEntry {
   readonly event: EventRecord;
+  readonly feedback_dispositions?: readonly RecordedFeedbackDisposition[];
   readonly wanted: readonly { readonly unit_id: string; readonly actions: WantedWorkers }[];
 }
 export interface HistoryPage { readonly items: readonly HistoryEntry[]; readonly next: HistoryCursor | null }
@@ -427,8 +472,23 @@ export async function readHistory(db: Kysely<DB>, query: HistoryQuery): Promise<
     const event_ids = events.map((event) => event.id);
     const wanted = event_ids.length === 0 ? [] : await trx.selectFrom("authority.wanted_log").select(["event_id", "unit_id", "actions"])
       .where("run_id", "=", query.run_id).where("event_id", "=", anyOf(event_ids)).orderBy("unit_id").execute();
+    const hasDecisions = events.some((event) => event.payload.kind === "operator_decided");
+    const [decisions, dispositions] = hasDecisions ? await Promise.all([
+      trx.selectFrom("authority.review_decision").select(["id", "unit_id", "review", "decision", "target_revision_id"])
+        .where("run_id", "=", query.run_id).execute(),
+      readFeedbackDispositions(trx, query.run_id),
+    ]) : [[], []];
+    const dispositionsFor = (event: EventRecord) => {
+      const { payload } = event;
+      if (payload.kind !== "operator_decided") return [];
+      const decision = decisions.find((row) => row.unit_id === payload.unit && row.review === payload.review
+        && row.decision === payload.decision && row.target_revision_id === payload.target);
+      const actor = event.writer.kind === "operator" ? event.writer.subject : null;
+      return dispositions.filter((fact) => fact.decision_id === decision?.id)
+        .map((fact) => ({ ...fact, actor: fact.actor ?? actor }));
+    };
     const last = rows[query.limit - 1];
-    return { items: events.map((event) => ({ event,
+    return { items: events.map((event) => ({ event, feedback_dispositions: dispositionsFor(event),
       wanted: wanted.filter((row) => row.event_id === event.id)
         .filter((row) => query.unit_id === null || row.unit_id === query.unit_id).map((row) => ({ unit_id: row.unit_id, actions: row.actions })) })),
       next: rows.length > query.limit && last ? { created_at: last.cursor_created_at, id: last.id } : null };

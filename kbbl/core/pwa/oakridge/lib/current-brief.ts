@@ -1,4 +1,4 @@
-import type { CurrentBrief, CurrentCohort, CanonicalSpec } from "./current-contract";
+import type { CurrentBrief, CurrentCohort, CanonicalSpec } from "./viewer-data";
 import type { SubnavSection } from "./artifact-subnav";
 export const selectCurrentBuildItems = (brief: CurrentBrief) => brief.build_items.map((item) => ({ ...item,
   decisions: brief.technical_decisions.filter((decision) => decision.build_item_ids.includes(item.id)),
