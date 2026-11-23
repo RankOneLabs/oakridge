@@ -347,6 +347,9 @@ export interface AuthorityRun {
    * @type {RuntimeValue}
    */
   input: NullableJsonColumn<RuntimeValue>;
+  /**
+   * @type {RunLabel}
+   */
   label: NullableJsonColumn<RunLabel>;
   project_id: string | null;
   root_unit_id: string | null;
