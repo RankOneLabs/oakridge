@@ -78,6 +78,7 @@ interface ViewerSelection {
 
 export function selectArtifactViewer({ view, schema, schemas, body }: ViewerSelection): ComponentType<ViewerProps> | null {
   const Viewer = resolveViewer(view);
+  if (Viewer === CurrentBuildBriefViewer && !parseCurrentBrief(body).ok) return null;
   return Viewer && schema && schemas && matchesProjectedSchema(indexProjectedSchemas(schemas), schema, body) ? Viewer : null;
 }
 

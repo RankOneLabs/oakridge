@@ -395,7 +395,7 @@ stages:
           spec: input.spec
           repository: input.repository
           build_base: input.repository.forge.build_base
-          repository_name: input.repository.forge.path
+          repository_name: input.repository.forge.name
         workspace: repository(input.workspace)
         produces: [slice_build, pr]
       spend_requester:
@@ -427,7 +427,7 @@ stages:
           spend_request: latest(spend_request)
           slice_build: latest(slice_build)
           repository: input.repository
-          repository_name: input.repository.forge.path
+          repository_name: input.repository.forge.name
         workspace: repository(input.workspace)
         produces: [slice_report]
       slice_assessor:
@@ -647,7 +647,7 @@ stages:
           plan: input.plan
           repository: input.repository
           build_base: input.repository.forge.build_base
-          repository_name: input.repository.forge.path
+          repository_name: input.repository.forge.name
         workspace: repository(input.workspace)
         produces: [expansion, pr]
       assessor:
@@ -790,7 +790,7 @@ stages:
           expansions: input.expansions
           repository: input.repository
           build_base: input.repository.forge.build_base
-          repository_name: input.repository.forge.path
+          repository_name: input.repository.forge.name
         workspace: repository(input.workspace)
         produces: [freeze, pr]
       pr_watch:

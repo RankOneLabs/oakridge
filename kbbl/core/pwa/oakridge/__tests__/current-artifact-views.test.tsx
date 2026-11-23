@@ -17,7 +17,7 @@ import type { ArtifactSource } from "../artifact-types";
 import type { ItemGradingSlots } from "../artifactRegistry";
 import type { ObservationItemAddress } from "../grading-contracts/grading/item-reads";
 import { compositeId } from "../adapters/core";
-const source: ArtifactSource = { run_id: "run", revision_id: "spec:1", label: null, as_of: "2026-11-17", producing_attempt_inputs: { original_spec: "Original requirements as submitted" } };
+const source: ArtifactSource = { run_id: "run", revision_id: "spec:1", label: null, as_of: "2026-11-17", producing_attempt_inputs: { submitted_text: "Original requirements as submitted" } };
 const parsedAnalysis = parseCurrentAnalysis(analysis), parsedSpec = parseCanonicalSpec(spec);
 if (!parsedAnalysis.ok || !parsedSpec.ok) throw new Error("fixture");
 const context = { analysis: parsedAnalysis.value, spec: parsedSpec.value, requirements: parsedSpec.value.requirements };

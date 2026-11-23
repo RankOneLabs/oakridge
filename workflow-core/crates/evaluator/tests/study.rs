@@ -37,7 +37,7 @@ fn repository(key: &str) -> Value {
     json!({
         "key": key,
         "preparation": {"repository_path": format!("/repos/{key}"), "expected_head": null},
-        "forge": {"owner": "acme", "path": key, "build_base": "epic", "final_base": "main"}
+        "forge": {"owner": "acme", "name": key, "build_base": "epic", "final_base": "main"}
     })
 }
 

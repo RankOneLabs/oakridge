@@ -90,11 +90,11 @@
           "schema": "text"
         },
         {
-          "key": "owner",
+          "key": "name",
           "schema": "ident"
         },
         {
-          "key": "path",
+          "key": "owner",
           "schema": "ident"
         }
       ]

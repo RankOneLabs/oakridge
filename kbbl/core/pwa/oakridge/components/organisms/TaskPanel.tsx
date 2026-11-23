@@ -70,7 +70,9 @@ export function TaskPanel({ runId, taskId, onOpenItem }: Props) {
       </header>
       {isUncaptured && <FeedbackMessage testId="or-task-unresolved">This run has captured no task with this id. Items naming it stay listed below, unresolved.</FeedbackMessage>}
       {composite.isError && !isUncaptured && <FeedbackMessage tone="danger" testId="or-task-unavailable">{composite.error instanceof Error ? composite.error.message : "observation did not answer"}</FeedbackMessage>}
-      {judgments.length > 0 && <ul>{judgments.map(({ repository_key, status }) => <li key={repository_key}>{repository_key} · {status}</li>)}</ul>}
+      {units.isError && <FeedbackMessage tone="danger">Approval history is unavailable.</FeedbackMessage>}
+      {units.isPending && <FeedbackMessage>Loading approval history…</FeedbackMessage>}
+      {units.isSuccess && judgments.length > 0 && <ul>{judgments.map(({ repository_key, status }) => <li key={repository_key}>{repository_key} · {status}</li>)}</ul>}
       {composite.data && <TaskStageComposites runId={runId} taskId={taskId} stages={composite.data.stages} isRevealed={isRevealed} onDrill={(key, label) => setDrill({ key, label })} />}
       {isRevealed && drill && <CompositeDrilldown runId={runId} drilldownKey={drill.key} label={drill.label} onClose={() => setDrill(null)} onOpenItem={onOpenItem} />}
       <section className="flex flex-col gap-1" data-testid="or-task-lineage">

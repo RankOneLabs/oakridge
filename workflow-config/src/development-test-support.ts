@@ -92,7 +92,7 @@ export class TestRun {
 }
 
 export const workspace = { repository_path: "/tmp/oakridge-contract", push_remote_owner: "owner", head: "head", base_branch: "base" };
-export const repository = { key: "oakridge", preparation: { repository_path: workspace.repository_path, expected_head: null }, forge: { owner: "owner", path: "oakridge", build_base: "base", final_base: "main" } };
+export const repository = { key: "oakridge", preparation: { repository_path: workspace.repository_path, expected_head: null }, forge: { owner: "owner", name: "oakridge", build_base: "base", final_base: "main" } };
 export interface Resolution { kind: "implementation_note" | "operator_decision" | "spec_update"; text: string; question?: string; alternatives?: {option: string; consequence: string}[]; chosen?: string }
 export interface Finding { id: string; severity: "blocking" | "warning" | "info"; observation: string; evidence: {kind: "file"; ref: string; detail: string}[]; expected_change_locations: {path: string}[]; resolution?: Resolution }
 export interface AnalysisRequirement { id: string; text: string; source_refs: string[]; findings: Finding[] }

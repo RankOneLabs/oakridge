@@ -11,10 +11,6 @@ export const OAKRIDGE_REGISTRATIONS: readonly Registration[] = [
   register(ARTIFACT_KEYS.$core["*"].blocker, [
     definition("blocker.body", "blocker", "/", (body) => ok([pathItem("blocker", "/", "", body)])),
   ]),
-  ...[
-    ARTIFACT_KEYS["fan-out"].item.result, ARTIFACT_KEYS["fan-out"].prepare.workspace,
-    ARTIFACT_KEYS["review-loop"].document.critique, ARTIFACT_KEYS["review-loop"].document.draft,
-  ].map((key) => register(key, [])),
 ];
 
 export interface RegistrationLookup {

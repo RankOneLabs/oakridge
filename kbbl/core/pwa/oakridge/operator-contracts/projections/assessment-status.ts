@@ -9,6 +9,7 @@ export interface OperatorAssessmentRead extends OperatorAssessmentStatus {
 
 export interface OperatorAssessmentItemSource {
   readonly item: string;
+  readonly origin: "proposal" | "operator";
   readonly proposal_key: string | null;
   readonly instruction: string;
 }

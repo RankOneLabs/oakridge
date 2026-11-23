@@ -21,7 +21,7 @@
       "operation": "pull_request.observe",
       "when": "pr_opened",
       "inputs": {
-        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.path, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
+        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
       },
       "every": "2m",
       "produces": [
@@ -78,7 +78,7 @@
     },
     "forge": {
       "owner": "ident",
-      "path": "ident",
+      "name": "ident",
       "build_base": "text",
       "final_base": "text"
     },
@@ -734,7 +734,7 @@
             "spec": "input.spec",
             "repository": "input.repository",
             "build_base": "input.repository.forge.build_base",
-            "repository_name": "input.repository.forge.path"
+            "repository_name": "input.repository.forge.name"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -777,7 +777,7 @@
             "spend_request": "latest(spend_request)",
             "slice_build": "latest(slice_build)",
             "repository": "input.repository",
-            "repository_name": "input.repository.forge.path"
+            "repository_name": "input.repository.forge.name"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -1081,7 +1081,7 @@
             "plan": "input.plan",
             "repository": "input.repository",
             "build_base": "input.repository.forge.build_base",
-            "repository_name": "input.repository.forge.path"
+            "repository_name": "input.repository.forge.name"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -1281,7 +1281,7 @@
             "expansions": "input.expansions",
             "repository": "input.repository",
             "build_base": "input.repository.forge.build_base",
-            "repository_name": "input.repository.forge.path"
+            "repository_name": "input.repository.forge.name"
           },
           "workspace": "repository(input.workspace)",
           "produces": [

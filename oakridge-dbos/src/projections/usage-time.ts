@@ -6,14 +6,11 @@ export function turnDuration(turn: UsageTurn): { agent_ms: number | null; queue_
   return { agent_ms: turn.started_at && turn.completed_at ? Date.parse(turn.completed_at)-Date.parse(turn.started_at) : null,
     queue_ms: turn.started_at ? Date.parse(turn.started_at)-Date.parse(turn.created_at) : null };
 }
-/**
- * The revision a decision reviewed: the unit's latest revision of the review's `of`
- * artifact at or before the decision. A redirected decision (`on:`) targets another
- * artifact, so its target revision does not say when the review became ready.
- */
-export function selectReviewedRevision(read: Pick<RunRead, "revisions">, decision: ReviewDecisionRecord, artifact: string) {
-  return read.revisions.filter((r) => r.unit_id === decision.unit_id && r.artifact === artifact && +r.created_at <= +decision.created_at)
-    .sort((a,b) => +b.created_at - +a.created_at || b.seq-a.seq)[0] ?? null;
+/** Core stamps each revision with the number of decisions already committed across the run. */
+export function selectReviewedRevision(read: Pick<RunRead, "revisions" | "decisions">, decision: ReviewDecisionRecord, artifact: string) {
+  const cursor = read.decisions.findIndex((entry) => entry.id === decision.id);
+  return read.revisions.filter((revision) => revision.unit_id === decision.unit_id && revision.artifact === artifact
+    && revision.decision_cursor <= cursor).sort((left, right) => right.seq - left.seq)[0] ?? null;
 }
 export interface ReviewTime extends UsageReview { unit_id: string }
 export function reviewTimes(read: RunRead): ReviewTime[] {

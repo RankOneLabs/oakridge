@@ -14,7 +14,7 @@ schemas:
     forge: forge
   forge:
     owner: ident
-    path: ident
+    name: ident
     build_base: text
     final_base: text
   workspace:
@@ -80,7 +80,7 @@ workers:
     operation: pull_request.observe
     when: pr_opened
     inputs:
-      query: "{owner: input.repository.forge.owner, name: input.repository.forge.path,
+      query: "{owner: input.repository.forge.owner, name: input.repository.forge.name,
         head_owner: input.workspace.push_remote_owner, head_branch:
         latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
     every: 2m

@@ -59,8 +59,7 @@ export interface CurrentBrief {
 export interface ResolvedAssignment { cohort: CurrentCohort; requirements: CanonicalRequirement[] }
 
 /** The registry checks the pinned schema first. These checks describe which
- * subsets a specialized presentation can display, including older pins that
- * reused a view key with a different set of fields. */
+ * values a specialized presentation can display. */
 type ViewerResult<Body> = Result<Body, { readonly detail: string }>;
 function presentation<Body>(body: unknown, canDisplay: boolean): ViewerResult<Body> {
   return canDisplay ? { ok: true, value: body as Body } :
@@ -107,9 +106,17 @@ export function parseCurrentPlan(body: unknown): ViewerResult<CurrentPlan> {
 
 export function parseCurrentBrief(body: unknown): ViewerResult<CurrentBrief> {
   const value = record(body);
-  return presentation(body, typeof value?.cohort_id === "string" && Array.isArray(value.depends_on) && Array.isArray(value.files_in_scope)
-    && rows(value.build_items, ["id", "requirement_ids", "instructions", "verification"])
-    && rows(value.technical_decisions, ["id", "build_item_ids", "decision", "rationale"]));
+  const strings = (list: unknown): boolean => Array.isArray(list) && list.every((item) => typeof item === "string");
+  return presentation(body, typeof value?.cohort_id === "string" && typeof value.repository_key === "string"
+    && strings(value.depends_on) && strings(value.files_in_scope)
+    && Array.isArray(value.build_items) && value.build_items.every((item) => {
+      const row = record(item);
+      return typeof row?.id === "string" && typeof row.instructions === "string" && strings(row.requirement_ids) && strings(row.verification);
+    })
+    && Array.isArray(value.technical_decisions) && value.technical_decisions.every((item) => {
+      const row = record(item);
+      return typeof row?.id === "string" && typeof row.decision === "string" && typeof row.rationale === "string" && strings(row.build_item_ids);
+    }));
 }
 
 export function readAssignment(body: unknown): ResolvedAssignment | null {

@@ -166,6 +166,22 @@ describe("ArtifactReview", () => {
     }
   });
 
+  it("offers assessment approval alongside an unregistered contract view", async () => {
+    const id = "v2|artifact|run-1|unit|appraisal";
+    const revision = id + "%3Aread-1";
+    const artifact = { ...ARTIFACT_FIXTURE, id, component_id: "unregistered", revisions: [
+      { ...REVISION_FIXTURE, id: revision, subject_revision_id: "draft-1" }] };
+    const gate: ParkedGate = { ...PARKED_GATE_FIXTURE, gate_step: "desk", artifact_revision_id: revision,
+      assessment_revision_id: revision, requires_adjudication: true, resume_actions: [], decision_definitions: [
+        { key: "endorse", label: "Approve reading", operation: "approve_assessment", assessment: "appraisal", fields: [], payload_schema: "{}",
+          submit: { kind: "review", review: "desk", decision: "endorse", effect: "approve", target_revision_id: "read-1" } }] };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => String(url).endsWith("/status") ? json({
+      assessment_revision: "read-1", approval: { kind: "pending" }, items: [], item_sources: [], unresolved_proposals: [],
+    }) : json(artifact));
+    wrap(<ArtifactReview artifactId={id} />, artifact, [gate]);
+    expect(await screen.findByRole("button", { name: "Approve reading" })).toBeTruthy();
+  });
+
   it("shows error state when artifact fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
     wrap(<ArtifactReview artifactId="bad-id" />, null);

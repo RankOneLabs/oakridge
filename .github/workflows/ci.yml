@@ -119,7 +119,8 @@ jobs:
       - run: bunx tsc --noEmit -p kbbl/tsconfig.json
       - run: bunx tsc --noEmit -p observation/tsconfig.json
       - run: bunx tsc --noEmit -p scripts/tsconfig.json
-      - run: bun test scripts/legacy-symbols.test.ts
+      - run: bun test scripts/check-workflow-names.test.ts scripts/legacy-symbols.test.ts
+      - run: bun scripts/check-workflow-names.ts
       - name: Keep generated agent documents out of the cutover diff
         if: github.event_name == 'pull_request' && github.base_ref == 'epic/model-refactor'
         env:

@@ -1,3 +1,4 @@
+import { AssessmentControls } from "./CurrentAssessmentReview";
 import { artifactKeyFromComposite, parseCompositeId } from "../../adapters/core";
 import { selectArtifactDecisionCopy, selectArtifactPageGates } from "../../lib/artifact-page-gates";
 import { ReceivedContextPanel } from "../molecules/ReceivedContextPanel";
@@ -199,11 +200,6 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
               linkField={artifact.link_field}
               renderEditableText={(props) => <EditableBriefText {...props} />}
               body={revision.body}
-              assessment={artifactAddress.ok ? {
-                unitId: artifactAddress.value.unitId, artifact: artifactKeyFromComposite(artifactAddress.value.name),
-                subject: revision.subject_revision_id ?? null, paths: artifact.proposal_paths ?? [],
-                workers: artifact.projected_workers ?? [],
-              } : undefined}
               context={revision.context ?? artifact.context}
               descriptor={artifact.review}
               source={{ run_id: artifact.run_id, revision_id: revision.id, label: artifact.label ?? null, producing_stage: artifact.producing_stage,
@@ -228,6 +224,16 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
           ) : (
             <ArtifactJsonRevisionPanel revision={revision} descriptor={artifact.review} />
           )}
+          {adjudicationGate && revIdx === revisions.length - 1 && <AssessmentControls
+              gate={adjudicationGate}
+              body={revision.body}
+              source={{ run_id: artifact.run_id, revision_id: revision.id, label: artifact.label ?? null, producing_stage: artifact.producing_stage, as_of: revision.created_at }}
+              assessment={artifactAddress.ok ? {
+                unitId: artifactAddress.value.unitId, artifact: artifactKeyFromComposite(artifactAddress.value.name),
+                subject: revision.subject_revision_id ?? null, paths: artifact.proposal_paths ?? [],
+                workers: artifact.projected_workers ?? [],
+              } : undefined}
+          />}
         </section>
       ) : <FeedbackMessage>{revisionId ? `Recorded revision ${revisionId} is unavailable.` : "No revisions."}</FeedbackMessage>;
 

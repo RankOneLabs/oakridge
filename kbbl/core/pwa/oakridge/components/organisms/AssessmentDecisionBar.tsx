@@ -50,10 +50,10 @@ export function AssessmentDecisionBar({ address, status, gate, assessed, workers
   const updateChoice = (item: string, update: Partial<Choice>) =>
     setChoices((prior) => ({ ...prior, [item]: { ...(prior[item] ?? EMPTY), ...update } }));
   const dispositions: OperatorFeedbackDisposition[] = [
-    ...status.unresolved_proposals.flatMap((item): OperatorFeedbackDisposition[] => {
+    ...status.items.flatMap(({ item }): OperatorFeedbackDisposition[] => {
       const choice = choices[item];
       if (!choice?.instruction.trim()) return [];
-      if (choice.kind === "reject") return [{ kind: "reject", item, reason: choice.instruction.trim() }];
+      if (choice.kind === "reject" && status.unresolved_proposals.includes(item)) return [{ kind: "reject", item, reason: choice.instruction.trim() }];
       return choice.recipients.length ? [{ kind: "dispatch", item, instruction: choice.instruction.trim(), recipients: choice.recipients }] : [];
     }),
     ...Object.entries(followups).flatMap(([assignment, reason]): OperatorFeedbackDisposition[] =>
@@ -67,7 +67,11 @@ export function AssessmentDecisionBar({ address, status, gate, assessed, workers
       const source = status.item_sources.find((candidate) => candidate.item === item.item);
       const choice = choices[item.item] ?? EMPTY;
       const unresolved = status.unresolved_proposals.includes(item.item);
-      const canAuthorize = source?.proposal_key === null && assessed !== null && item.assignments.length === 0;
+      const operation = source?.origin === "operator" ? "direct_correction" : "dispatch_feedback";
+      const target = gate?.decision_definitions?.find((entry) => entry.operation === operation && entry.is_available !== false)?.submit;
+      const canAuthorize = target?.kind === "review" && (unresolved || (source?.origin === "operator" && item.assignments.length === 0) ||
+        item.assignments.some((assignment) => assignment.progress === "returned_for_update"));
+      const dispatching = !unresolved || choice.kind === "dispatch";
       return <fieldset key={item.item} disabled={mutation.isPending || !isPending}>
         <legend>{(source?.proposal_key && proposals.get(source.proposal_key)) || source?.instruction || item.item}</legend>
         {(unresolved || canAuthorize) && <>
@@ -77,13 +81,13 @@ export function AssessmentDecisionBar({ address, status, gate, assessed, workers
           </Select>}
           <TextArea aria-label={unresolved && choice.kind === "reject" ? "Rejection reason" : "Instruction"}
             value={choice.instruction} onChange={(event) => updateChoice(item.item, { instruction: event.target.value })} />
-          {(choice.kind === "dispatch" || canAuthorize) && recipients.map((worker) => <label key={worker.key}>
+          {(canAuthorize && dispatching) && recipients.map((worker) => <label key={worker.key}>
             <Checkbox type="checkbox" checked={choice.recipients.includes(worker.key)} onChange={(event) => updateChoice(item.item, {
               recipients: event.target.checked ? [...choice.recipients, worker.key] : choice.recipients.filter((key) => key !== worker.key),
             })} /> {worker.label}
           </label>)}
-          {canAuthorize && <Button disabled={!choice.instruction.trim() || !choice.recipients.length} onClick={() => mutation.mutate(() =>
-            authorizeAssessmentFeedback(address, { request_id: randomUuid(), item: item.item, target_revision: assessed,
+          {canAuthorize && dispatching && <Button disabled={!choice.instruction.trim() || !choice.recipients.length} onClick={() => mutation.mutate(() =>
+            authorizeAssessmentFeedback(address, { request_id: randomUuid(), item: item.item, target_revision: target.target_revision_id,
               instruction: choice.instruction.trim(), recipients: choice.recipients }))}>Authorize dispatch</Button>}
         </>}
         {item.assignments.map((assignment) => <div key={assignment.assignment}>
@@ -102,11 +106,14 @@ export function AssessmentDecisionBar({ address, status, gate, assessed, workers
     </div>}
     {isPending && review && assessed && gate?.decision_definitions?.flatMap((definition) => {
       const submit = definition.submit;
-      if (submit.kind !== "review" || (definition.operation !== "approve_assessment" && definition.operation !== "dispatch_feedback")) return [];
+      if (submit.kind !== "review" || (definition.operation !== "approve_assessment" && definition.operation !== "dispatch_feedback" && definition.operation !== "direct_correction")) return [];
       return [<Button key={submit.decision} variant={submit.effect === "approve" ? "primary" : "secondary"}
         disabled={mutation.isPending || definition.is_available === false}
         onClick={() => mutation.mutate(() => decideAssessment(address, review, {
-          request_id: randomUuid(), decision: submit.decision, target: submit.target_revision_id, assessed_revision: assessed, dispositions,
+          request_id: randomUuid(), decision: submit.decision, target: status.assessment_revision, assessed_revision: assessed,
+          dispositions: dispositions.filter((entry) => entry.kind === "dispatch"
+            ? definition.operation === (status.item_sources.find((source) => source.item === entry.item)?.origin === "operator" ? "direct_correction" : "dispatch_feedback")
+            : entry.kind === "reject" || definition.operation === "approve_assessment"),
         }))}>{definition.label}</Button>];
     })}
     {mutation.error && <p role="alert">{mutation.error.message}</p>}

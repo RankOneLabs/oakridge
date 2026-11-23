@@ -17,6 +17,7 @@ export function selectRoundProgress(facts: AssessmentFacts, round: AssignmentRou
 
 export interface AssessmentItemSource {
   readonly item: string;
+  readonly origin: "proposal" | "operator";
   readonly proposal_key: string | null;
   readonly instruction: string;
 }
@@ -28,7 +29,7 @@ export interface AssessmentRead extends AssessmentStatus {
 export function selectAssessmentStatus(facts: AssessmentFacts): AssessmentRead {
   return {
     unit: facts.unit, assessment_artifact: facts.artifact, assessment_revision: facts.revision,
-    item_sources: facts.items.map((item) => ({ item: item.id, instruction: item.instruction,
+    item_sources: facts.items.map((item) => ({ item: item.id, origin: item.origin.kind, instruction: item.instruction,
       proposal_key: item.origin.kind === "proposal" && item.origin.revision === facts.revision ? item.origin.key : null })),
     approval: facts.approval?.assessment_revision === facts.revision
       ? { kind: "approved", approval: facts.approval.id } : { kind: "pending" },

@@ -12,7 +12,7 @@
       },
       "forge": {
         "owner": "RankOneLabs",
-        "path": "oakridge",
+        "name": "oakridge",
         "build_base": "epic/grade-pray",
         "final_base": "epic/grade-pray"
       }

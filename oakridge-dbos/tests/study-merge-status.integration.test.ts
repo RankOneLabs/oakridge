@@ -1,3 +1,5 @@
+import { readMergeStatusSource } from "../src/storage/read-store";
+import { openAssessmentRun } from "./assessment-fixture";
 import { expect, test } from "bun:test";
 import { openAuthority } from "./authority-fixture";
 import { assessment, expansion, freeze, item, openStudy, paid, plan, pr, prepareSlice, sliceAssessment } from "./study-fixture";
@@ -55,5 +57,33 @@ test("merge status uses the watch intent on design, expansion, freeze and integr
     ]), { location: integration, subject: integrated.id });
     await run.end("integrator", integration);
     await check(integration, 5);
+  } finally { await authority.close(); }
+});
+
+test("the watch follows its renamed artifact and refuses status after republication", async () => {
+  const authority = await openAuthority();
+  try {
+    const run = await openAssessmentRun(authority, {
+      workflow: "watch", input: {}, run: { units: { work: { stage: "write" } }, outcome: {} },
+      stages: { write: { input: {}, outcome: {}, done_when: "false",
+        artifacts: { change: { kind: "external_reference", link_field: "href", schema: { href: "text", org: "ident", project: "ident" } },
+          result: { kind: "status_record", schema: { state: "enum(open, merged, closed_unmerged)", number: "integer",
+            url: "text", head_sha: "optional(text)", merged_at: "optional(text)" } } },
+        workers: { author: { kind: "agent", inputs: { topic: '"watch"' }, produces: ["change"],
+          prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" } },
+          watcher: { kind: "code", operation: "pull_request.observe", when: "published(change)", produces: ["result"],
+            inputs: { query: '{owner: latest(change).org, name: latest(change).project, head_owner: latest(change).org, head_branch: "branch", base_branch: "main", pr_url: latest(change).href}' } } },
+      } },
+    });
+    const location = { run_id: run.run_id, unit_id: run.run_id + "/work" };
+    const publish = (number: number) => run.publish({ worker: "author", artifact: "change",
+      body: { href: "https://github.com/o/r/pull/" + number, org: "o", project: "r" } });
+    await publish(1);
+    const first = (await run.revision("change"))!.id;
+    expect(await readMergeStatusSource(authority.db, location)).toMatchObject({ latest_revision_id: first, intent: { observed_revision_id: first } });
+    await publish(2);
+    const second = (await run.revision("change"))!.id;
+    expect(second).not.toBe(first);
+    expect(await readMergeStatusSource(authority.db, location)).toMatchObject({ latest_revision_id: second, intent: { observed_revision_id: first } });
   } finally { await authority.close(); }
 });

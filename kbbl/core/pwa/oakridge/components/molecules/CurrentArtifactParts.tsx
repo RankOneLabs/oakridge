@@ -15,8 +15,9 @@ export function SourceReferences({ refs, onOpenOriginalInput }: { refs: readonly
   return <ul>{refs.map((ref, index) => <li key={index}><a className="underline" href={/^https?:\/\//i.test(ref) ? ref : "#original-input"} onClick={/^https?:\/\//i.test(ref) ? undefined : openOriginalInput}>{ref}</a></li>)}</ul>;
 }
 export function selectOriginalSpec(inputs: unknown): string | null {
-  return inputs !== null && typeof inputs === "object" && "original_spec" in inputs && typeof inputs.original_spec === "string"
-    ? inputs.original_spec : null;
+  if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) return null;
+  const texts = Object.values(inputs).filter((value): value is string => typeof value === "string");
+  return texts.length === 1 ? texts[0] : null;
 }
 
 export function OriginalInput({ text }: { text: string | null | undefined }) {
