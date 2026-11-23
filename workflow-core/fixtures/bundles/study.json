@@ -1,5 +1,61 @@
 {
+  "decisions": {
+    "accept_or_request": {
+      "accept": {
+        "effect": "approve",
+        "label": "Accept"
+      },
+      "request_changes": {
+        "effect": "request_changes",
+        "label": "Request changes",
+        "fields": {
+          "feedback": "What must the proposed specification change?"
+        }
+      }
+    }
+  },
+  "workers": {
+    "pr_watch": {
+      "kind": "code",
+      "label": "PR watcher",
+      "operation": "pull_request.observe",
+      "when": "pr_opened",
+      "inputs": {
+        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
+      },
+      "every": "2m",
+      "produces": [
+        "pr_state"
+      ]
+    }
+  },
+  "reviews": {
+    "pr_closed": {
+      "of": "build_result",
+      "by": "operator",
+      "wait": "external",
+      "when": "closed_pr",
+      "prompt": "development/pr-closed.md",
+      "inputs": {
+        "pr": "latest(pr)",
+        "pr_state": "latest(pr_state)"
+      },
+      "decisions": {
+        "replace_pr": {
+          "effect": "request_changes",
+          "label": "Replace the closed PR",
+          "fields": {
+            "feedback": "What must change in the replacement pull request?"
+          }
+        }
+      }
+    }
+  },
   "workflow": "study",
+  "label": {
+    "title": "input.title",
+    "repositories": "map(input.repositories, item.key)"
+  },
   "input": {
     "title": "text",
     "spec": "text",
@@ -48,11 +104,6 @@
       "description": "text",
       "severity": "severity"
     },
-    "evidence_ref": {
-      "kind": "enum(file, test, output)",
-      "ref": "text",
-      "detail": "optional(text)"
-    },
     "test_evidence": {
       "passed": "integer",
       "failed": "integer",
@@ -60,37 +111,25 @@
       "summary": "optional(text)",
       "cargo_test_output": "optional(text)"
     },
-    "next_action": {
-      "id": "uuid(generated)",
-      "audience": "enum(rework, operator)",
-      "source": "action_source",
-      "text": "text"
+    "item_assessment": {
+      "subject": "assessment_subject",
+      "status": "enum(met, partial, not_met)",
+      "observation": "text",
+      "evidence": "list(evidence_ref)"
     },
-    "action_source": {
-      "kind": "enum(item_assessment, additional_finding)",
-      "id": "ident"
+    "assessment_body": {
+      "head_sha": "text",
+      "item_assessments": "list(item_assessment)",
+      "additional_findings": "list(additional_finding)",
+      "proposals": "list(feedback_proposal)",
+      "verifications": "list(assignment_verification)",
+      "test_evidence": "test_evidence",
+      "verdict": "enum(pass, pass_with_notes, fail)"
     },
-    "action_disposition": {
-      "action_id": "text",
-      "disposition": "enum(accepted, modified, rejected)",
-      "original_text": "text",
-      "final_text": "optional(text)",
-      "audience": "enum(rework, operator)",
-      "source": "action_source",
-      "reason": "optional(text)"
-    },
-    "added_action": {
-      "action_id": "text",
-      "origin": "enum(operator)",
-      "final_text": "text",
-      "audience": "enum(rework, operator)",
-      "source": "action_source",
-      "reason": "optional(text)"
-    },
-    "adjudication": {
-      "entries": "list(action_disposition)",
-      "added_actions": "list(added_action)",
-      "rework_feedback": "text"
+    "evidence_ref": {
+      "kind": "enum(file, test, output)",
+      "ref": "text",
+      "detail": "optional(text)"
     },
     "pr_body": {
       "pr_url": "text",
@@ -152,8 +191,9 @@
       "outcomes": "list(plan_outcome)",
       "decision_rule": "list(decision_row)",
       "models": "list(plan_model)",
-      "slice": "plan_slice",
+      "pilot_selection": "plan_slice",
       "slice_paid": "slice_paid_plan",
+      "full_study_repeats": "integer",
       "iteration_triggers": "list(plan_item)"
     },
     "build_summary": {
@@ -176,11 +216,16 @@
       "controls_replayed": "boolean",
       "detail": "text"
     },
+    "digest_recipe": {
+      "files": "list(text)",
+      "command": "text"
+    },
     "slice_build_body": {
       "build": "build_summary",
       "generator_digest": "text",
       "case_ids": "list(ident)",
-      "qualifications": "list(case_qualification)"
+      "qualifications": "list(case_qualification)",
+      "digest_recipe": "digest_recipe"
     },
     "spend_request_body": {
       "cohort_file": "text",
@@ -198,9 +243,14 @@
       "launch_command": "text",
       "store_path": "text"
     },
-    "mark": {
+    "criterion_mark": {
       "id": "ident",
       "status": "enum(met, not_met)",
+      "evidence": "text"
+    },
+    "trigger_mark": {
+      "id": "ident",
+      "status": "enum(fired, not_fired)",
       "evidence": "text"
     },
     "slice_report_body": {
@@ -208,40 +258,27 @@
       "generator_digest": "text",
       "qualifications": "list(case_qualification)",
       "paid_results": "list(paid_result)",
-      "criteria_marks": "list(mark)",
-      "trigger_marks": "list(mark)",
+      "criteria_marks": "list(criterion_mark)",
+      "trigger_marks": "list(trigger_mark)",
       "proposed_changes": "list(text)"
     },
     "assessment_subject": {
       "kind": "enum(case, criterion, trigger, cohort_file)",
       "id": "ident"
     },
-    "item_assessment": {
-      "subject": "assessment_subject",
-      "status": "enum(met, partial, not_met)",
-      "observation": "text",
-      "evidence": "list(evidence_ref)"
-    },
     "additional_finding": {
       "id": "ident",
       "severity": "severity",
       "observation": "text",
-      "related_build_item_ids": "list(ident)",
+      "related_subjects": "list(assessment_subject)",
       "evidence": "list(evidence_ref)"
-    },
-    "assessment_body": {
-      "head_sha": "text",
-      "item_assessments": "list(item_assessment)",
-      "additional_findings": "list(additional_finding)",
-      "next_actions": "list(next_action)",
-      "test_evidence": "test_evidence",
-      "verdict": "enum(pass, pass_with_notes, fail)"
     },
     "slice_assessment_body": {
       "head_sha": "text",
       "item_assessments": "list(item_assessment)",
       "additional_findings": "list(additional_finding)",
-      "next_actions": "list(next_action)",
+      "proposals": "list(feedback_proposal)",
+      "verifications": "list(assignment_verification)",
       "test_evidence": "test_evidence",
       "verdict": "enum(pass, pass_with_notes, fail)",
       "run_key": "text"
@@ -254,6 +291,8 @@
     },
     "freeze_cohort": {
       "id": "ident",
+      "case_ids": "list(ident)",
+      "groups": "list(ident)",
       "file": "text",
       "digest": "text",
       "attempt_count": "integer",
@@ -268,59 +307,9 @@
       "cohorts": "list(freeze_cohort)"
     }
   },
-  "decisions": {
-    "accept_or_request": {
-      "accept": {
-        "effect": "approve",
-        "label": "Accept"
-      },
-      "request_changes": {
-        "effect": "request_changes",
-        "label": "Request changes",
-        "fields": {
-          "feedback": "What must the proposed specification change?"
-        }
-      }
-    }
-  },
-  "workers": {
-    "pr_watch": {
-      "kind": "code",
-      "operation": "pull_request.observe",
-      "when": "pr_opened",
-      "inputs": {
-        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
-      },
-      "every": "2m",
-      "produces": [
-        "pr_state"
-      ]
-    }
-  },
-  "reviews": {
-    "pr_closed": {
-      "of": "build_result",
-      "by": "operator",
-      "when": "closed_pr",
-      "prompt": "development/pr-closed.md",
-      "inputs": {
-        "pr": "latest(pr)",
-        "pr_state": "latest(pr_state)"
-      },
-      "decisions": {
-        "replace_pr": {
-          "effect": "request_changes",
-          "label": "Replace the closed PR",
-          "fields": {
-            "feedback": "What must change in the replacement pull request?"
-          }
-        }
-      }
-    }
-  },
   "run": {
     "pools": {
-      "expanders": 4
+      "expanders": 2
     },
     "units": {
       "prepare": {
@@ -343,14 +332,15 @@
         }
       },
       "expansion": {
-        "for_each": "filter(design.outcome.plan.groups, len(filter(item.case_ids, not contains(design.outcome.plan.slice.case_ids, item))) > 0)",
+        "for_each": "filter(design.outcome.plan.groups, len(filter(item.case_ids, not contains(design.outcome.plan.pilot_selection.case_ids, item))) > 0)",
         "key": "each.id",
         "stage": "expand",
         "pool": "expanders",
         "input": {
           "group_id": "each.id",
-          "case_ids": "filter(each.case_ids, not contains(design.outcome.plan.slice.case_ids, item))",
+          "case_ids": "filter(each.case_ids, not contains(design.outcome.plan.pilot_selection.case_ids, item))",
           "generator_digest": "design.outcome.generator_digest",
+          "digest_recipe": "design.outcome.digest_recipe",
           "plan": "design.outcome.plan",
           "repository": "require(lookup(input.repositories, key, input.primary_repository_key))",
           "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
@@ -361,6 +351,7 @@
         "input": {
           "plan": "design.outcome.plan",
           "generator_digest": "design.outcome.generator_digest",
+          "digest_recipe": "design.outcome.digest_recipe",
           "slice_report": "design.outcome.slice_report",
           "expansions": "map(expansion, expansion.outcome)",
           "repository": "require(lookup(input.repositories, key, input.primary_repository_key))",
@@ -401,6 +392,7 @@
       "workers": {
         "git": {
           "kind": "code",
+          "label": "Git",
           "operation": "repository.prepare",
           "inputs": {
             "repository_path": "input.repository.preparation.repository_path",
@@ -429,9 +421,7 @@
         "approved_plan": "optional(plan_body)"
       },
       "let": {
-        "report_published": "published(slice_report)",
-        "report_is_placeholder": "published(slice_report) and len(latest(slice_report).paid_results) == 0",
-        "report_is_paid": "published(slice_report) and len(latest(slice_report).paid_results) > 0",
+        "spend_matches_build": "published(slice_build) and published(spend_request) and latest(spend_request).generator_digest == latest(slice_build).generator_digest and every(latest(spend_request).case_ids, contains(latest(slice_build).case_ids, item)) and every(latest(slice_build).case_ids, contains(latest(spend_request).case_ids, item))",
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
         "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
@@ -443,22 +433,43 @@
       "artifacts": {
         "plan": {
           "kind": "document",
+          "view": "cohort_plan",
           "schema": "plan_body",
           "validate": [
+            {
+              "check": "len(plan.outcomes) > 0",
+              "message": "The plan needs at least one outcome."
+            },
+            {
+              "check": "len(plan.decision_rule) > 0",
+              "message": "The plan needs at least one decision rule."
+            },
+            {
+              "check": "len(plan.pilot_selection.criteria) > 0",
+              "message": "The slice needs at least one criterion."
+            },
+            {
+              "check": "len(plan.iteration_triggers) > 0",
+              "message": "The plan needs at least one iteration trigger."
+            },
+            {
+              "check": "plan.full_study_repeats > 0",
+              "message": "The full study needs at least one repeat."
+            },
             {
               "check": "len(plan.cases) > 0 and len(plan.hypotheses) > 0",
               "message": "The plan needs at least one case and one hypothesis."
             },
             {
-              "check": "every(plan.slice.case_ids, contains(map(plan.cases, item.id), item))",
+              "check": "every(plan.pilot_selection.case_ids, contains(map(plan.cases, item.id), item))",
               "message": "Every slice id must be a case id."
             },
             {
-              "check": "len(plan.slice.case_ids) <= input.slice_case_limit",
+              "check": "len(plan.pilot_selection.case_ids) <= input.slice_case_limit",
               "message": "The slice may hold at most the workflow's slice case limit."
             },
             {
-              "check": "len(filter(plan.cases, item.is_control == true)) == 0 or len(filter(plan.cases, item.is_control == true and contains(plan.slice.case_ids, item.id))) > 0",
+              "check": "len(filter(plan.cases, item.is_control == true)) == 0 or len(filter(plan.cases, item.is_control == true and contains(plan.pilot_selection.case_ids, item.id))) > 0",
               "message": "When any case is a control, the slice must include a control case."
             },
             {
@@ -490,7 +501,7 @@
               "message": "Group and hypothesis ids must be unique."
             },
             {
-              "check": "len(plan.slice.case_ids) > 0",
+              "check": "len(plan.pilot_selection.case_ids) > 0",
               "message": "The slice needs at least one case."
             },
             {
@@ -502,7 +513,7 @@
               "message": "The paid slice needs at least one repeat."
             },
             {
-              "check": "unique(map(plan.slice.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.slice.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))",
+              "check": "unique(map(plan.pilot_selection.criteria, item.id)) and unique(map(plan.iteration_triggers, item.id)) and every(plan.pilot_selection.criteria, not contains(map(plan.iteration_triggers, item.id), item.id))",
               "message": "Slice criteria and iteration triggers must have distinct ids."
             }
           ]
@@ -512,11 +523,19 @@
           "schema": "slice_build_body",
           "validate": [
             {
-              "check": "published(plan) and every(slice_build.case_ids, contains(latest(plan).slice.case_ids, item)) and every(latest(plan).slice.case_ids, contains(slice_build.case_ids, item))",
+              "check": "every(slice_build.qualifications, item.reference_passes and item.omissions_isolated and item.controls_replayed)",
+              "message": "Every slice case must pass qualification: reference passes, omissions isolated and controls replayed."
+            },
+            {
+              "check": "len(slice_build.digest_recipe.files) > 0 and slice_build.digest_recipe.command != \"\"",
+              "message": "The digest recipe needs files and a hashing command."
+            },
+            {
+              "check": "published(plan) and every(slice_build.case_ids, contains(latest(plan).pilot_selection.case_ids, item)) and every(latest(plan).pilot_selection.case_ids, contains(slice_build.case_ids, item))",
               "message": "The slice build must cover exactly the plan's slice cases."
             },
             {
-              "check": "every(slice_build.case_ids, contains(map(slice_build.qualifications, item.case_id), item))",
+              "check": "every(slice_build.qualifications, contains(slice_build.case_ids, item.case_id)) and every(slice_build.case_ids, contains(map(slice_build.qualifications, item.case_id), item))",
               "message": "Every slice case needs a qualification result."
             },
             {
@@ -532,6 +551,10 @@
         "spend_request": {
           "kind": "document",
           "schema": "spend_request_body",
+          "equivalent_subject_fields": [
+            "generator_digest",
+            "case_ids"
+          ],
           "validate": [
             {
               "check": "published(slice_build) and spend_request.generator_digest == latest(slice_build).generator_digest",
@@ -552,15 +575,31 @@
           "schema": "slice_report_body",
           "validate": [
             {
-              "check": "len(slice_report.paid_results) > 0",
-              "message": "No paid results yet: this offline report waits for the spend request's approval."
+              "check": "published(plan) and every(slice_report.paid_results, contains(latest(plan).slice_paid.models, item.model_id))",
+              "message": "Paid results may name only the plan's paid slice models."
             },
             {
-              "check": "len(slice_report.paid_results) == 0 or approved(spend_request)",
+              "check": "published(spend_request) and len(slice_report.paid_results) <= latest(spend_request).attempt_count",
+              "message": "A report may hold at most the approved attempt count of results."
+            },
+            {
+              "check": "published(plan) and every(slice_report.criteria_marks, contains(map(latest(plan).pilot_selection.criteria, item.id), item.id))",
+              "message": "Criterion marks may name only plan slice criteria."
+            },
+            {
+              "check": "published(plan) and every(slice_report.trigger_marks, contains(map(latest(plan).iteration_triggers, item.id), item.id))",
+              "message": "Trigger marks may name only plan iteration triggers."
+            },
+            {
+              "check": "len(slice_report.paid_results) > 0",
+              "message": "The paid run produced no results. Revise the report from the same execution; do not request new spend."
+            },
+            {
+              "check": "approved(spend_request)",
               "message": "Paid results need an approved spend request."
             },
             {
-              "check": "published(plan) and every(map(latest(plan).slice.criteria, item.id), contains(map(slice_report.criteria_marks, item.id), item))",
+              "check": "published(plan) and every(map(latest(plan).pilot_selection.criteria, item.id), contains(map(slice_report.criteria_marks, item.id), item))",
               "message": "Every plan slice criterion must be marked."
             },
             {
@@ -568,11 +607,11 @@
               "message": "Every plan iteration trigger must be marked."
             },
             {
-              "check": "published(plan) and every(map(slice_report.qualifications, item.case_id), contains(latest(plan).slice.case_ids, item)) and every(latest(plan).slice.case_ids, contains(map(slice_report.qualifications, item.case_id), item))",
+              "check": "published(plan) and every(map(slice_report.qualifications, item.case_id), contains(latest(plan).pilot_selection.case_ids, item)) and every(latest(plan).pilot_selection.case_ids, contains(map(slice_report.qualifications, item.case_id), item))",
               "message": "The report's case ids must equal the plan's slice ids."
             },
             {
-              "check": "published(plan) and every(slice_report.paid_results, contains(latest(plan).slice.case_ids, item.case_id))",
+              "check": "published(plan) and every(slice_report.paid_results, contains(latest(plan).pilot_selection.case_ids, item.case_id))",
               "message": "Paid results may name only slice cases."
             },
             {
@@ -580,24 +619,49 @@
               "message": "The report's generator digest must equal the latest slice build's."
             },
             {
-              "check": "len(slice_report.paid_results) == 0 or slice_report.run_key != \"\"",
-              "message": "A paid report needs its run key (the paid run's store path)."
+              "check": "slice_report.run_key != \"\"",
+              "message": "The paid report needs its run key."
             }
           ]
         },
         "slice_assessment": {
           "kind": "assessment",
+          "view": "assessment",
           "schema": "slice_assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
           },
           "validate": [
             {
+              "check": "every(slice_assessment.proposals, not present(item.citation) or require(item.citation).revision_id != \"\")",
+              "message": "A cited proposal must name its source revision."
+            },
+            {
+              "check": "published(slice_build) and slice_assessment.head_sha == latest(slice_build).build.head_sha",
+              "message": "The slice assessment's head must equal the latest slice build's."
+            },
+            {
+              "check": "published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == \"case\"), contains(latest(plan).pilot_selection.case_ids, item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == \"case\"), contains(latest(plan).pilot_selection.case_ids, item.id))",
+              "message": "Case subjects and related subjects must resolve within the reviewed scope."
+            },
+            {
+              "check": "published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == \"criterion\"), contains(map(latest(plan).pilot_selection.criteria, item.id), item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == \"criterion\"), contains(map(latest(plan).pilot_selection.criteria, item.id), item.id))",
+              "message": "Criterion subjects and related subjects must resolve within the reviewed scope."
+            },
+            {
+              "check": "published(plan) and every(filter(slice_assessment.item_assessments, item.subject.kind == \"trigger\"), contains(map(latest(plan).iteration_triggers, item.id), item.subject.id)) and every(filter(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind == \"trigger\"), contains(map(latest(plan).iteration_triggers, item.id), item.id))",
+              "message": "Trigger subjects and related subjects must resolve within the reviewed scope."
+            },
+            {
+              "check": "every(slice_assessment.item_assessments, item.subject.kind != \"cohort_file\") and every(flatten(map(slice_assessment.additional_findings, item.related_subjects)), item.kind != \"cohort_file\")",
+              "message": "Slice assessments cannot link cohort_file subjects."
+            },
+            {
               "check": "published(slice_report) and slice_assessment.run_key == latest(slice_report).run_key",
               "message": "The assessment must name the latest slice report's run key."
             },
             {
-              "check": "published(plan) and every(map(latest(plan).slice.criteria, item.id), contains(map(filter(slice_assessment.item_assessments, item.subject.kind == \"criterion\"), item.subject.id), item))",
+              "check": "published(plan) and every(map(latest(plan).pilot_selection.criteria, item.id), contains(map(filter(slice_assessment.item_assessments, item.subject.kind == \"criterion\"), item.subject.id), item))",
               "message": "Every slice criterion must be assessed."
             },
             {
@@ -605,7 +669,7 @@
               "message": "Every iteration trigger must be assessed."
             },
             {
-              "check": "unique(map(slice_assessment.item_assessments, item.subject.id))",
+              "check": "unique(map(filter(slice_assessment.item_assessments, item.subject.kind == \"case\"), item.subject.id)) and unique(map(filter(slice_assessment.item_assessments, item.subject.kind == \"criterion\"), item.subject.id)) and unique(map(filter(slice_assessment.item_assessments, item.subject.kind == \"trigger\"), item.subject.id))",
               "message": "Assessment item ids must be unique."
             },
             {
@@ -613,21 +677,19 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "every(slice_assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(slice_assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(slice_assessment.additional_findings, item.id), item.source.id)))",
-              "message": "Every next action source must resolve to an assessed item or additional finding."
-            },
-            {
-              "check": "(slice_assessment.verdict == \"fail\" and (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (slice_assessment.verdict == \"pass_with_notes\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)) or (slice_assessment.verdict == \"pass\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0))",
+              "check": "(slice_assessment.verdict == \"fail\" and (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (slice_assessment.verdict == \"pass_with_notes\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)) or (slice_assessment.verdict == \"pass\" and not (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
             {
-              "check": "slice_assessment.test_evidence.failed == 0 or (len(filter(slice_assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)",
+              "check": "slice_assessment.test_evidence.failed == 0 or (len(filter(slice_assessment.item_assessments, item.status != \"met\" and item.subject.kind != \"trigger\")) > 0 or len(filter(slice_assessment.additional_findings, item.severity == \"blocking\")) > 0) or (len(filter(slice_assessment.additional_findings, item.severity == \"warning\")) > 0)",
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
         },
         "pr": {
           "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "pr_url",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -642,6 +704,7 @@
       "workers": {
         "designer": {
           "kind": "agent",
+          "label": "Designer",
           "prompts": {
             "initial": "study/design.md",
             "revise": "study/design-revise.md"
@@ -660,34 +723,74 @@
         },
         "slice_builder": {
           "kind": "agent",
+          "label": "Slice builder",
           "prompts": {
             "initial": "study/slice-build.md",
             "revise": "study/slice-build-revise.md"
           },
-          "when": "approved(plan) and not (report_is_placeholder and not approved(spend_request) and not changes_requested(spend_request))",
+          "when": "approved(plan)",
           "inputs": {
             "plan": "latest(plan)",
             "spec": "input.spec",
             "repository": "input.repository",
             "build_base": "input.repository.forge.build_base",
-            "spend_approved": "approved(spend_request)",
-            "report_is_placeholder": "report_is_placeholder"
+            "repository_name": "input.repository.forge.name"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
             "slice_build",
-            "spend_request",
-            "slice_report",
             "pr"
+          ]
+        },
+        "spend_requester": {
+          "kind": "agent",
+          "label": "Spend requester",
+          "prompts": {
+            "initial": "study/spend-request.md",
+            "review": "study/spend-request.md",
+            "revise": "study/spend-request-revise.md"
+          },
+          "evaluates": "slice_build",
+          "when": "published(slice_build) and (not spend_matches_build or changes_requested(spend_request))",
+          "inputs": {
+            "plan": "latest(plan)",
+            "slice_build": "latest(slice_build)",
+            "repository": "input.repository"
+          },
+          "workspace": "repository(input.workspace)",
+          "produces": [
+            "spend_request"
+          ]
+        },
+        "slice_runner": {
+          "kind": "agent",
+          "label": "Paid runner",
+          "prompts": {
+            "review": "study/slice-run.md",
+            "revise": "study/slice-run-revise.md"
+          },
+          "evaluates": "spend_request",
+          "when": "approved(spend_request) and spend_matches_build",
+          "keyed_execution": true,
+          "inputs": {
+            "plan": "latest(plan)",
+            "spend_request": "latest(spend_request)",
+            "slice_build": "latest(slice_build)",
+            "repository": "input.repository",
+            "repository_name": "input.repository.forge.name"
+          },
+          "workspace": "repository(input.workspace)",
+          "produces": [
+            "slice_report"
           ]
         },
         "slice_assessor": {
           "kind": "agent",
+          "label": "Slice assessor",
           "prompts": {
             "review": "study/slice-assess.md",
             "revise": "study/slice-assess-revise.md"
           },
-          "when": "report_is_paid and not changes_requested(slice_report)",
           "inputs": {
             "plan": "latest(plan)",
             "slice_report": "latest(slice_report)",
@@ -704,6 +807,7 @@
         },
         "prepare_observed_state": {
           "kind": "code",
+          "label": "Prepare observed state",
           "operation": "value.publish",
           "when": "pr_state_current",
           "inputs": {
@@ -739,7 +843,7 @@
           "of": "spend_request",
           "by": "operator",
           "prompt": "study/spend-request-review.md",
-          "when": "report_is_placeholder",
+          "when": "published(spend_request) and spend_matches_build and not approved(spend_request)",
           "inputs": {
             "plan": "latest(plan)",
             "slice_build": "latest(slice_build)",
@@ -759,12 +863,42 @@
             }
           }
         },
-        "slice_report_review": {
-          "of": "slice_report",
-          "assessment": "slice_assessment",
+        "slice_assessment_review": {
+          "of": "slice_assessment",
           "by": "operator",
           "prompt": "study/slice-report-review.md",
-          "when": "report_is_paid and published(slice_assessment) and latest(slice_assessment).run_key == latest(slice_report).run_key",
+          "when": "published(slice_report) and published(slice_assessment) and latest(slice_assessment).run_key == latest(slice_report).run_key",
+          "inputs": {
+            "plan": "latest(plan)",
+            "slice_build": "latest(slice_build)",
+            "slice_report": "latest(slice_report)",
+            "slice_assessment": "latest(slice_assessment)"
+          },
+          "decisions": {
+            "approve_assessment": {
+              "effect": "approve",
+              "operation": "approve_assessment",
+              "label": "Approve assessment"
+            },
+            "send_feedback_to_builder": {
+              "effect": "request_changes",
+              "operation": "dispatch_feedback",
+              "on": "slice_build",
+              "label": "Send selected feedback to builder"
+            },
+            "correct_assessment": {
+              "effect": "request_changes",
+              "operation": "direct_correction",
+              "on": "slice_assessment",
+              "label": "Correct the assessment"
+            }
+          }
+        },
+        "slice_report_review": {
+          "of": "slice_report",
+          "by": "operator",
+          "prompt": "study/slice-report-review.md",
+          "when": "published(slice_report) and approved(slice_assessment)",
           "inputs": {
             "plan": "latest(plan)",
             "slice_build": "latest(slice_build)",
@@ -774,30 +908,16 @@
           "decisions": {
             "expand": {
               "effect": "approve",
-              "adjudication": "accept",
               "label": "Expand",
-              "payload": "adjudication"
-            },
-            "send_feedback_to_builder": {
-              "effect": "request_changes",
-              "adjudication": "feedback",
-              "on": "slice_build",
-              "label": "Send actions to builder",
-              "payload": "adjudication",
-              "feedback_field": "rework_feedback"
-            },
-            "send_to_builder": {
-              "effect": "request_changes",
-              "label": "Send to builder",
-              "on": "slice_build",
-              "fields": {
-                "feedback": "What must the slice builder fix?"
+              "when": {
+                "check": "every(slice_report.trigger_marks, item.status == \"not_fired\")",
+                "reason": "An iteration trigger fired; expansion is withheld."
               }
             },
             "change_design": {
               "effect": "request_changes",
-              "label": "Change design",
               "on": "plan",
+              "label": "Change design",
               "fields": {
                 "feedback": "What must the plan change?"
               }
@@ -807,6 +927,8 @@
         "merge_confirmation": {
           "of": "pr",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "pr_published and approved(slice_report) and not merged_pr and not approved(pr)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
@@ -827,10 +949,11 @@
           }
         }
       },
-      "done_when": "approved(plan) and approved(slice_report) and published(slice_build) and pr_published and (merged_pr or approved(pr))",
+      "done_when": "approved(plan) and spend_matches_build and approved(spend_request) and approved(slice_report) and approved(slice_assessment) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
         "plan": "latest(plan)",
         "generator_digest": "latest(slice_build).generator_digest",
+        "digest_recipe": "latest(slice_build).digest_recipe",
         "slice_report": "latest(slice_report)",
         "cohort": "{repository_key: input.repository.key, pr_url: latest(pr).pr_url, branch: latest(pr).branch, build_result: latest(slice_build).build}"
       }
@@ -840,6 +963,7 @@
         "group_id": "ident",
         "case_ids": "list(ident)",
         "generator_digest": "text",
+        "digest_recipe": "digest_recipe",
         "plan": "plan_body",
         "repository": "repository",
         "workspace": "workspace"
@@ -858,6 +982,10 @@
           "kind": "document",
           "schema": "expansion_body",
           "validate": [
+            {
+              "check": "every(expansion.qualifications, contains(input.case_ids, item.case_id))",
+              "message": "Expansion qualifications must name allocated case ids."
+            },
             {
               "check": "expansion.generator_digest == input.generator_digest",
               "message": "The expansion's generator digest must equal the approved slice's."
@@ -878,11 +1006,20 @@
         },
         "assessment": {
           "kind": "assessment",
+          "view": "assessment",
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
           },
           "validate": [
+            {
+              "check": "every(assessment.proposals, not present(item.citation) or require(item.citation).revision_id != \"\")",
+              "message": "A cited proposal must name its source revision."
+            },
+            {
+              "check": "every(assessment.item_assessments, contains(input.case_ids, item.subject.id)) and every(flatten(map(assessment.additional_findings, item.related_subjects)), item.kind == \"case\" and contains(input.case_ids, item.id))",
+              "message": "Expansion case subjects and related subjects must resolve to allocated cases."
+            },
             {
               "check": "every(assessment.item_assessments, item.subject.kind == \"case\")",
               "message": "Expansion assessment items must be cases."
@@ -904,10 +1041,6 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "every(assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(assessment.additional_findings, item.id), item.source.id)))",
-              "message": "Every next action source must resolve to an assessed item or additional finding."
-            },
-            {
               "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
@@ -919,6 +1052,8 @@
         },
         "pr": {
           "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "pr_url",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -933,6 +1068,7 @@
       "workers": {
         "expander": {
           "kind": "agent",
+          "label": "Expander",
           "prompts": {
             "initial": "study/expand.md",
             "revise": "study/expand-revise.md"
@@ -941,9 +1077,11 @@
             "group_id": "input.group_id",
             "case_ids": "input.case_ids",
             "generator_digest": "input.generator_digest",
+            "digest_recipe": "input.digest_recipe",
             "plan": "input.plan",
             "repository": "input.repository",
-            "build_base": "input.repository.forge.build_base"
+            "build_base": "input.repository.forge.build_base",
+            "repository_name": "input.repository.forge.name"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -953,6 +1091,7 @@
         },
         "assessor": {
           "kind": "agent",
+          "label": "Assessor",
           "prompts": {
             "review": "study/expand-assess.md",
             "revise": "study/expand-assess-revise.md"
@@ -973,6 +1112,7 @@
         },
         "prepare_observed_state": {
           "kind": "code",
+          "label": "Prepare observed state",
           "operation": "value.publish",
           "when": "pr_state_current",
           "inputs": {
@@ -998,30 +1138,28 @@
           "decisions": {
             "accept": {
               "effect": "approve",
-              "adjudication": "accept",
-              "label": "Accept",
-              "payload": "adjudication"
+              "operation": "approve_assessment",
+              "label": "Accept"
             },
             "request_assessment_changes": {
               "effect": "request_changes",
-              "label": "Request assessment changes",
-              "fields": {
-                "feedback": "What must the assessment change?"
-              }
+              "operation": "direct_correction",
+              "on": "assessment",
+              "label": "Request assessment changes"
             },
             "send_to_expander": {
               "effect": "request_changes",
-              "adjudication": "feedback",
+              "operation": "dispatch_feedback",
               "on": "expansion",
-              "label": "Send to expander",
-              "payload": "adjudication",
-              "feedback_field": "rework_feedback"
+              "label": "Send to expander"
             }
           }
         },
         "merge_confirmation": {
           "of": "pr",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "pr_published and approved(assessment) and not merged_pr and not approved(pr)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
@@ -1054,6 +1192,7 @@
       "input": {
         "plan": "plan_body",
         "generator_digest": "text",
+        "digest_recipe": "digest_recipe",
         "slice_report": "slice_report_body",
         "expansions": "list(completed_cohort)",
         "repository": "repository",
@@ -1073,6 +1212,18 @@
           "kind": "document",
           "schema": "freeze_body",
           "validate": [
+            {
+              "check": "every(flatten(map(freeze.cohorts, item.case_ids)), contains(map(input.plan.cases, item.id), item)) and every(map(input.plan.cases, item.id), contains(flatten(map(freeze.cohorts, item.case_ids)), item)) and every(flatten(map(freeze.cohorts, item.case_ids)), contains(map(input.plan.cases, item.id), item))",
+              "message": "The frozen cohorts' cases must be exactly the plan's cases."
+            },
+            {
+              "check": "every(map(input.plan.groups, item.id), contains(flatten(map(freeze.cohorts, item.groups)), item))",
+              "message": "Every plan group must be named by a frozen cohort."
+            },
+            {
+              "check": "every(flatten(map(freeze.cohorts, item.groups)), contains(map(input.plan.groups, item.id), item))",
+              "message": "Frozen cohorts may name only plan groups."
+            },
             {
               "check": "freeze.generator_digest == input.generator_digest",
               "message": "The freeze must use the approved generator digest."
@@ -1101,6 +1252,8 @@
         },
         "pr": {
           "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "pr_url",
           "schema": "pr_body"
         },
         "pr_state": {
@@ -1115,6 +1268,7 @@
       "workers": {
         "freezer": {
           "kind": "agent",
+          "label": "Freezer",
           "prompts": {
             "initial": "study/freeze.md",
             "revise": "study/freeze-revise.md"
@@ -1122,10 +1276,12 @@
           "inputs": {
             "plan": "input.plan",
             "generator_digest": "input.generator_digest",
+            "digest_recipe": "input.digest_recipe",
             "slice_report": "input.slice_report",
             "expansions": "input.expansions",
             "repository": "input.repository",
-            "build_base": "input.repository.forge.build_base"
+            "build_base": "input.repository.forge.build_base",
+            "repository_name": "input.repository.forge.name"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -1138,6 +1294,7 @@
         },
         "prepare_observed_state": {
           "kind": "code",
+          "label": "Prepare observed state",
           "operation": "value.publish",
           "when": "pr_state_current",
           "inputs": {
@@ -1173,6 +1330,8 @@
         "merge_confirmation": {
           "of": "pr",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "pr_published and approved(freeze) and not merged_pr and not approved(pr)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
@@ -1200,16 +1359,6 @@
       }
     },
     "integration": {
-      "input": {
-        "repository": "repository",
-        "workspace": "workspace",
-        "slice_cohort": "completed_cohort",
-        "expansion_cohorts": "list(completed_cohort)",
-        "freeze_cohort": "completed_cohort",
-        "cases": "list(plan_case)",
-        "freeze": "freeze_body",
-        "final_merge_policy": "final_merge_policy"
-      },
       "let": {
         "pr_published": "published(pr)",
         "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
@@ -1219,14 +1368,67 @@
         "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "final_state": "pr_state_current and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))"
       },
+      "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
+      "outcome": {
+        "repository_key": "input.repository.key",
+        "pr_url": "latest(pr).pr_url",
+        "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
+      },
+      "input": {
+        "repository": "repository",
+        "workspace": "workspace",
+        "final_merge_policy": "final_merge_policy",
+        "slice_cohort": "completed_cohort",
+        "expansion_cohorts": "list(completed_cohort)",
+        "freeze_cohort": "completed_cohort",
+        "cases": "list(plan_case)",
+        "freeze": "freeze_body"
+      },
       "artifacts": {
+        "pr": {
+          "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "pr_url",
+          "schema": "pr_body"
+        },
+        "pr_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        },
+        "manual_merge_target": {
+          "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "pr_url",
+          "schema": "pr_body"
+        },
+        "observed_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        },
         "assessment": {
           "kind": "assessment",
+          "view": "assessment",
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
           },
           "validate": [
+            {
+              "check": "every(assessment.proposals, not present(item.citation) or require(item.citation).revision_id != \"\")",
+              "message": "A cited proposal must name its source revision."
+            },
+            {
+              "check": "every(filter(assessment.item_assessments, item.subject.kind == \"case\"), contains(map(input.cases, item.id), item.subject.id)) and every(filter(flatten(map(assessment.additional_findings, item.related_subjects)), item.kind == \"case\"), contains(map(input.cases, item.id), item.id))",
+              "message": "Case subjects and related subjects must resolve within the reviewed scope."
+            },
+            {
+              "check": "every(filter(assessment.item_assessments, item.subject.kind == \"cohort_file\"), contains(map(input.freeze.cohorts, item.id), item.subject.id)) and every(filter(flatten(map(assessment.additional_findings, item.related_subjects)), item.kind == \"cohort_file\"), contains(map(input.freeze.cohorts, item.id), item.id))",
+              "message": "Cohort_file subjects and related subjects must resolve within the reviewed scope."
+            },
+            {
+              "check": "every(flatten(map(assessment.additional_findings, item.related_subjects)), item.kind == \"case\" or item.kind == \"cohort_file\")",
+              "message": "Integration related subjects must be cases or cohort files."
+            },
             {
               "check": "every(assessment.item_assessments, item.subject.kind == \"case\" or item.subject.kind == \"cohort_file\")",
               "message": "Integration assessment items must be cases or cohort files."
@@ -1248,10 +1450,6 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "every(assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(assessment.additional_findings, item.id), item.source.id)))",
-              "message": "Every next action source must resolve to an assessed item or additional finding."
-            },
-            {
               "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
@@ -1260,27 +1458,41 @@
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
-        },
-        "pr": {
-          "kind": "external_reference",
-          "schema": "pr_body"
-        },
-        "pr_state": {
-          "kind": "status_record",
-          "schema": "pr_status"
-        },
-        "manual_merge_target": {
-          "kind": "external_reference",
-          "schema": "pr_body"
-        },
-        "observed_state": {
-          "kind": "status_record",
-          "schema": "pr_status"
         }
       },
       "workers": {
+        "pr_watch": {
+          "template": "pr_watch"
+        },
+        "prepare_manual_merge": {
+          "kind": "code",
+          "label": "Prepare manual merge",
+          "operation": "value.publish",
+          "when": "pr_published",
+          "inputs": {
+            "value": "latest(pr)"
+          },
+          "every": "2m",
+          "produces": [
+            "manual_merge_target"
+          ]
+        },
+        "prepare_observed_state": {
+          "kind": "code",
+          "label": "Prepare observed state",
+          "operation": "value.publish",
+          "when": "pr_state_current",
+          "inputs": {
+            "value": "latest(pr_state)"
+          },
+          "every": "2m",
+          "produces": [
+            "observed_state"
+          ]
+        },
         "integrator": {
           "kind": "agent",
+          "label": "Integrator",
           "prompts": {
             "initial": "study/integrate.md",
             "revise": "study/integrate-revise.md"
@@ -1298,71 +1510,14 @@
             "pr",
             "assessment"
           ]
-        },
-        "pr_watch": {
-          "template": "pr_watch"
-        },
-        "prepare_manual_merge": {
-          "kind": "code",
-          "operation": "value.publish",
-          "when": "pr_published",
-          "inputs": {
-            "value": "latest(pr)"
-          },
-          "every": "2m",
-          "produces": [
-            "manual_merge_target"
-          ]
-        },
-        "prepare_observed_state": {
-          "kind": "code",
-          "operation": "value.publish",
-          "when": "pr_state_current",
-          "inputs": {
-            "value": "latest(pr_state)"
-          },
-          "every": "2m",
-          "produces": [
-            "observed_state"
-          ]
         }
       },
       "reviews": {
-        "integration_review": {
-          "of": "assessment",
-          "by": "operator",
-          "prompt": "study/integration-review.md",
-          "inputs": {
-            "repository": "input.repository",
-            "slice_cohort": "input.slice_cohort",
-            "expansion_cohorts": "input.expansion_cohorts",
-            "freeze_cohort": "input.freeze_cohort",
-            "cases": "input.cases",
-            "freeze": "input.freeze",
-            "assessment": "latest(assessment)",
-            "pr": "latest(pr)",
-            "pr_state": "latest(pr_state)"
-          },
-          "decisions": {
-            "accept": {
-              "effect": "approve",
-              "adjudication": "accept",
-              "label": "Accept",
-              "payload": "adjudication"
-            },
-            "request_changes": {
-              "effect": "request_changes",
-              "adjudication": "feedback",
-              "label": "Send to integrator",
-              "payload": "adjudication",
-              "feedback_field": "rework_feedback",
-              "on": "assessment"
-            }
-          }
-        },
         "merge_confirmation": {
           "of": "manual_merge_target",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
@@ -1381,13 +1536,36 @@
           "overrides": {
             "of": "pr"
           }
+        },
+        "integration_review": {
+          "of": "assessment",
+          "by": "operator",
+          "prompt": "study/integration-review.md",
+          "inputs": {
+            "repository": "input.repository",
+            "slice_cohort": "input.slice_cohort",
+            "expansion_cohorts": "input.expansion_cohorts",
+            "freeze_cohort": "input.freeze_cohort",
+            "cases": "input.cases",
+            "freeze": "input.freeze",
+            "assessment": "latest(assessment)",
+            "pr": "latest(pr)",
+            "pr_state": "latest(pr_state)"
+          },
+          "decisions": {
+            "accept": {
+              "effect": "approve",
+              "operation": "approve_assessment",
+              "label": "Accept"
+            },
+            "request_changes": {
+              "effect": "request_changes",
+              "operation": "dispatch_feedback",
+              "label": "Send to integrator",
+              "on": "assessment"
+            }
+          }
         }
-      },
-      "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
-      "outcome": {
-        "repository_key": "input.repository.key",
-        "pr_url": "latest(pr).pr_url",
-        "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
       }
     }
   }

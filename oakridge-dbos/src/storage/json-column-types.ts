@@ -1,3 +1,5 @@
+import type { ClaimAnswer } from "../domain/keyed-execution";
+export type { ExecutionEvidence, ExecutionReconciliation } from "../domain/keyed-execution";
 /**
  * TypeScript types of the authority's jsonb columns. The baseline names one of
  * these per column with `COMMENT ON COLUMN ... IS '@type {Name}'`, and
@@ -5,7 +7,6 @@
  */
 import type { ColumnType } from "kysely";
 import type { Event, ResolvedDecision, WantedWorker } from "../core-client/core-types";
-import type { AnalysisLinksDeclared } from "../domain/analysis-link-declaration";
 
 /**
  * A jsonb value serialized for a write. pg would send an array as a Postgres
@@ -16,14 +17,13 @@ export type JsonText<Value> = string & { readonly __json: Value };
 export type JsonColumn<Value> = ColumnType<Value, JsonText<Value>, JsonText<Value>>;
 export type NullableJsonColumn<Value> = ColumnType<Value | null, JsonText<Value> | null, JsonText<Value> | null>;
 
-export type { AttemptStatus, BlockedReason, Cause, CompiledWorkflow, Mode, UnitStatus, Writer } from "../core-client/core-types";
+export type { AttemptStatus, BlockedReason, Cause, Citation, CompiledWorkflow, Mode, RunLabel, UnitStatus, Writer } from "../core-client/core-types";
 export type { EffectInstruction } from "../domain/effect-instruction";
 export type { RunConfig } from "../domain/run-config";
 export type { OperatorEventPayload } from "../projections/operator-event";
 /** Run input, unit input, revision bodies and decision payloads are schema-checked by the Rust core. */
 export type RuntimeValue = unknown;
-/** A journaled event: what the core stepped, or a producer declaration journaled beside them that it never sees. */
-export type CoreEvent = Event | AnalysisLinksDeclared;
+export type CoreEvent = Event;
 export type WantedWorkers = readonly WantedWorker[];
 /**
  * An operator review awaiting a decision: the revision it reviews, each decision legal now with the revision
@@ -34,8 +34,15 @@ export interface ReviewPrompt { readonly target: string; readonly decisions: rea
 /** Review key -> its awaiting prompt, on the unit. */
 export type ReviewPrompts = { readonly [review: string]: ReviewPrompt };
 /** What an ingress id resolved to. A rejection is stored so a replay returns it again. */
+export interface AssessmentDecisionReceipt {
+  readonly decision_id: string;
+  readonly approval_id: string | null;
+  readonly rejection_ids: readonly string[];
+  readonly round_ids: readonly string[];
+}
+
 export type CommitReceipt =
-  | { readonly kind: "committed"; readonly event_id: string }
+  | { readonly kind: "committed"; readonly event_id: string; readonly assessment_decision?: AssessmentDecisionReceipt; readonly execution_answer?: ClaimAnswer }
   /** `stall` is set when step refused the event because advancing the run past it failed (D-V4). */
   | { readonly kind: "rejected"; readonly reason: string; readonly stall?: StallRecord };
 /**
@@ -61,3 +68,5 @@ export interface ReviewItemBody { readonly title: string; readonly detail: strin
 export interface ForgeRepository { readonly provider: "github"; readonly owner: string; readonly name: string }
 
 export type InputProvenanceEntries = readonly import("../core-client/core-types").InputProvenance[];
+
+export type InputBindings = readonly import("../core-client/core-types").InputBinding[];

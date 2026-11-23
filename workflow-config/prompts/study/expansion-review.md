@@ -2,7 +2,7 @@
 
 Verify that the assessment covers each allocated case and that its head matches the expansion build. {{> shared/adjudication.md}}
 
-Use request_assessment_changes with feedback and no adjudication payload for inaccurate assessment prose or evidence. Use send_to_expander (“Send to expander”) with the adjudication payload to send its rework actions to the worker that reworks this artifact (the expander). Accept approves the assessment with the adjudication payload.
+Use direct correction for inaccurate assessment prose or evidence. Send to expander dispatches to the expander. Accept records final approval.
 
 ## Allocated cases
 
@@ -19,3 +19,6 @@ Use request_assessment_changes with feedback and no adjudication payload for ina
 ## Assessment
 
 {{assessment}}
+
+
+A finding that needs a generator or shared-test change ends this run. Raise a blocker and have the operator relaunch the study with `approved_plan` set.

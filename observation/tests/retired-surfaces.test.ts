@@ -4,8 +4,8 @@ import { resolve } from "node:path";
 import { sql } from "kysely";
 import { createApp } from "../src/http/app";
 import { credentialsFromEnv } from "../src/http/ingest-auth";
-import { decodeSourceEventDelivery } from "../src/ingest/cursor";
-import { oakridgeProfile, createFeed, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
+import { decodeRevisionDelivery } from "../src/ingest/capture";
+import { fixtureDelivery, oakridgeProfile, createFeed, fixtureBody, integration, scratchDatabase, tenant } from "./grading-fixture";
 import { withTenant, type Database } from "../src/storage/database";
 import { readSourceCursor } from "../src/storage/capture-store";
 
@@ -59,19 +59,17 @@ for (const decision of ["accept", "request_changes"]) integration(`operator ${de
   const cursor = await feed.decide("operator_decided");
   expect((await readSourceCursor(db, tenant)).cursor).toEqual(cursor);
   const outcome = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_event_outcome").select(["event_kind", "outcome_kind"])
-    .where("event_id", "=", cursor.id).executeTakeFirstOrThrow());
-  expect(outcome).toEqual({ event_kind: "operator_decided", outcome_kind: "ignored" });
+    .where("event_id", "=", cursor.event_id).executeTakeFirstOrThrow());
+  expect(outcome).toEqual({ event_kind: "operator_decided", outcome_kind: "other" });
   expect(await gradingRecords(db)).toEqual(none);
   expect(provider_calls).toBe(0);
 }));
 
 test("the retired review-to-grade and collaboration wire variants are refused", () => {
-  const position = { previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: "event-1" } };
-  const fields = { format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null, run_id: "run-1", event_id: "event-1" };
-  expect(decodeSourceEventDelivery({ ...position, outcome: { ...fields, kind: "human_grade", event_kind: "operator_decided", evaluator: { kind: "human" },
-    target: "rev-1", decision_id: null } })).toBeNull();
-  expect(decodeSourceEventDelivery({ ...position, outcome: { ...fields, kind: "collaboration_thread", event_kind: "collaboration_thread" } })).toBeNull();
-  expect(decodeSourceEventDelivery({ ...position, outcome: { ...fields, kind: "ignored", event_kind: "operator_decided" } })).not.toBeNull();
+  const delivery = fixtureDelivery(tenant, { event_id: "event-1", run_id: "run-1", event: { kind: "other", event_kind: "operator_decided" } });
+  for (const kind of ["human_grade", "collaboration_thread"])
+    expect(decodeRevisionDelivery({ ...delivery, event: { kind } }).ok).toBe(false);
+  expect(decodeRevisionDelivery(delivery).ok).toBe(true);
 });
 
 test("no retired module, entrypoint or credential remains to dispatch outside HTTP", () => {

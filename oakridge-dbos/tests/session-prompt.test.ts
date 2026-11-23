@@ -12,7 +12,7 @@ if (parsed_writer.kind !== "agent") throw new Error("writer is an agent");
 const fresh = { ...parsed, stages: { ...parsed.stages, document: { ...stage,
   workers: { ...stage.workers, writer: { ...parsed_writer, session: "fresh" as const } } } } };
 const unit = "run-1/document";
-const r1: RevisionState = { id: `${unit}:draft:1`, unit, seq: 1, artifact: "draft", body: { title: "T", body: "long" }, by: "a1" };
+const r1: RevisionState = { id: `${unit}:draft:1`, unit, seq: 1, artifact: "draft", body: { title: "T", body: "long" }, by: { action: "a1", seq: 1 } };
 const revise: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: `${unit}:d1` } };
 function writerInstruction(input: { readonly action: RunWorkerAction; readonly fresh?: boolean }): EffectInstruction {
   const is_revise = input.action.mode.kind === "revise";

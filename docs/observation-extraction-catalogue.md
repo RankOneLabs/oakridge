@@ -1,47 +1,72 @@
-# Oakridge extraction catalogue
+# Observation extraction catalogue
 
-The catalogue lives in `observation/src/producers/oakridge/catalogue.ts`, at one version. Each definition is registered with the captured artifact's `artifact_schema_version`, extractor id and extractor version `1`. A definition reads only that revision's body. Malformed matching bodies record `extraction_failed`; an empty selection records `no_matching_items`. Brief and finding extractors skip nonmatching body shapes.
+Observation selects an extractor registration by the pinned definition ID, stage
+key, artifact key, and resolved schema version. The shared core blocker matches
+by artifact key and schema version across definitions and stages. An unregistered
+declaration produces one non-retriable `unregistered_declaration` issue and no
+items. Registered operational artifacts have no extractors.
 
-| Artifact | Selected item | Address | Logical identity |
+Revision identity is the producer, namespace, and the unchanged DBOS revision ID.
+Bound links resolve within the frozen input bindings recorded on the delivered
+revision. A proposal citation resolves at its exact revision ID and JSON pointer.
+Logical task identity includes the run, task kind, and authored local ID within
+the producer and namespace.
+
+## Development
+
+| Artifact | Selector | Item kind | Identity or links |
 | --- | --- | --- | --- |
-| analysis | finding | `/findings/N` | absent |
-| analysis | requirement status | `/requirements/N/status` | absent |
-| analysis | proposed spec update, risk | revision plus path | absent |
-| tasks | task | `/tasks/N` | run-scoped task id |
-| plan | cohort decision | cohort id plus local id | run and cohort-scoped id |
-| plan | acceptance entry | `/cohorts/N/acceptance_criteria/M` | the entry's run-scoped task id |
-| plan | risk | revision plus path | absent |
-| brief | decision, rejected approach | cohort id plus local id | run and cohort-scoped id |
-| brief | build item | `/build_items/N` | run and cohort-scoped build-item id |
-| brief | legacy acceptance entry | `/acceptance_criteria/N` | the entry's run-scoped task id |
-| assessment | finding | `/findings/N` | absent |
+| `analysis` | `/requirements/*` | requirement | Requirement task |
+| `analysis` | `/requirements/*/findings/*` | finding | Addresses its enclosing requirement |
+| `spec` | `/requirements/*` | requirement | Requirement task. Derives from bound analysis findings |
+| `plan` | `/cohorts/*/allocations/*` | allocation | Requirement task. Addresses the authored requirement |
+| `brief` | `/build_items/*` | build_item | Addresses each named requirement with the brief's repository key |
+| `brief` | `/technical_decisions/*` | technical_decision | Addresses the named build items in the brief |
+| `assessment` | `/item_assessments/*` | item_assessment | Assesses a bound build item or a requirement task |
+| `assessment` | `/additional_findings/*` | additional_finding | Addresses named build items in bound briefs |
+| `assessment` | `/proposals/*` | feedback_proposal | Derives from its exact citation when present |
+| `assessment` | `/verifications/*` | assignment_verification | Captures the authored verification |
+| `blocker` | `/` | blocker | Captures the core blocker body |
 
-The `spec` artifact is intentionally outside this catalogue. The producer declares `spec: { schema: text }`, so its body is a bare JSON string with no addressable interior. A future text-span selector needs offset or heading rules and must state that a span is pinned to one revision and does not survive rewording.
+Both cohort and integration assessments register their own artifact declaration.
+Repository applicability comes from the qualified build-item links. Each
+applicable repository lists judgments that assess those build items, or an empty
+list when a judgment has yet to arrive.
 
-Only explicit producer fields produce edges. An assessment finding's `task_ids` each produce an `assesses` edge to that task's logical item; a plan or brief entry is itself an occurrence of its task and needs no edge. Shared plan and brief decision ids link when the prior item exists; a brief-only id stays unlinked. Empty id lists mean no link. An explicit id pointing to a missing item remains an unresolved edge, and a task reference resolves in place if the task is captured later. The derivation creates no inferred or `split_from` edge.
+## Study
 
-For links without recorded revision constraints, when several prior revisions expose the same local id, an occurrence reference stays unresolved because capture does not retain the approval link that would identify the reviewed revision. A same-artifact reference resolves only within its own revision. This keeps replay and republication from silently retargeting an edge to whichever revision happens to sort last.
+| Artifact | Selector | Item kind | Identity or links |
+| --- | --- | --- | --- |
+| `plan` | `/cases/*` | case | Case task |
+| `plan` | `/pilot_selection/criteria/*` | criterion | Criterion task |
+| `plan` | `/iteration_triggers/*` | trigger | Trigger task |
+| `plan` | `/hypotheses/*` | hypothesis | Item addressed by path |
+| `plan` | `/outcomes/*` | outcome | Item addressed by path |
+| `slice_build` | `/qualifications/*` | qualification | Assesses the named case |
+| `expansion` | `/qualifications/*` | qualification | Assesses the named case |
+| `slice_report` | `/criteria_marks/*` | criterion_mark | Assesses the named criterion |
+| `slice_report` | `/trigger_marks/*` | trigger_mark | Assesses the named trigger |
+| `slice_report` | `/paid_results/*` | paid_result | Assesses the named case |
+| `slice_assessment` | `/item_assessments/*` | item_assessment | Assesses the task of the authored subject kind and ID |
+| `slice_assessment` | `/additional_findings/*` | additional_finding | Addresses each authored related subject |
+| `slice_assessment` | `/proposals/*` | feedback_proposal | Derives from its exact citation when present |
+| `slice_assessment` | `/verifications/*` | assignment_verification | Captures the authored verification |
+| `assessment` | `/item_assessments/*` | item_assessment | Assesses the task of the authored subject kind and ID |
+| `assessment` | `/additional_findings/*` | additional_finding | Addresses each authored related subject |
+| `assessment` | `/proposals/*` | feedback_proposal | Derives from its exact citation when present |
+| `assessment` | `/verifications/*` | assignment_verification | Captures the authored verification |
+| `freeze` | `/cohorts/*` | cohort_file | Cohort-file task. Addresses each named case |
 
-Capture retains nullable `predecessor_id` and `subject_id`. A lineage read compares a revision's digest only with its recorded predecessor in the same run and artifact kind, reporting `is_republication: true` for equal bodies and `false` for edits. Missing predecessors remain unknown. A cohort assessment's `subject_id` creates a producer-explicit `assesses` edge between revision-scoped logical anchors for that assessment and its captured build result; an absent or cross-run target remains unresolved.
+The study registers assessments separately for expansion and integration.
+Workspace, spend request, pull request, pull request state, observed state, and
+manual merge target declarations have empty extractor lists.
 
-Capture format `observation.artifact-revision/v4` carries `source.brief_revision_ids` beside
-`subject_id`: producer-prefixed recorded input revisions, or null for unresolved provenance.
-Version 3 remains accepted and reads as null provenance.
+## Portability fixture
 
-`brief.build_items` selects `/build_items/*` at `/build_items/N`, with kind `build_item`,
-scope `cohort/<cohort_id>/build_item`, and producer-local identity from `id`. Its fields are
-`/id`, `/description`, `/task_ids`, `/decision_ids`, `/verification`. Build items are never
-run-wide tasks. Each task id declares an `addresses` logical-item relation; each decision
-id declares a `derived_from` occurrence relation to the brief decision.
+| Artifact | Selector | Item kind | Identity or links |
+| --- | --- | --- | --- |
+| `roadmap` | `/folios/*` | folio | Item addressed by path |
+| `appraisal` | `/remarks/*` | remark | Item addressed by path |
 
-Brief extractors select by body shape (`acceptance_criteria` or `build_items`). Finding
-extractors likewise distinguish legacy `task_ids` from `subjects`. Nonmatching shapes
-produce empty selections, never extraction failures. Both legacy selectors remain registered.
-The `/findings/*` fields include `/subjects`, `/task_ids`, and `/evidence`.
-
-Build-item subjects declare `assesses` occurrence relations resolved only within the recorded
-brief revisions, matching the subject cohort or the single recorded brief. Missing provenance,
-missing captures and missing ids remain unresolved; later brief revisions never substitute.
-Task subjects declare direct logical task `assesses` relations. `addresses` establishes task
-association and `assesses` establishes and propagates it, so findings reach tasks through
-build items, with each occurrence counted once.
+The browser test publishes a manuscript with no registration and checks that
+Observation records an unregistered declaration issue.

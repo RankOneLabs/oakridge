@@ -9,7 +9,8 @@ import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source
 import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId, type PromptVersionId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type DefinitionOrder, type OperationRegistry } from "./definition-objects";
 import { DEFINITION_STORE_ROOT, readSkillIndex, readSkillBundle, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, isCommittedDefinition, type DefinitionStoreFailure } from "./definition-store";
-import { WORKFLOW_SOURCES } from "./workflow-sources";
+import { expandIncludes } from "./workflow-include";
+import { discoverWorkflowSources } from "./workflow-sources";
 import { writeStoreFile, type PromptVersionObject, type PromptPointer } from "../../oakridge-dbos/src/runtime/definition-store";
 
 function unwrap<Value, Failure>(result: Result<Value, Failure>): Value {
@@ -41,7 +42,9 @@ function authoredSource(yaml = authored): AuthoredWorkflow {
   return source;
 }
 function authoredOrder(yaml = authored): DefinitionOrder {
-  const document = YAML.parseDocument(yaml, { uniqueKeys: true });
+  return documentOrder(YAML.parseDocument(yaml, { uniqueKeys: true }));
+}
+function documentOrder(document: YAML.Document): DefinitionOrder {
   const schemas = document.get("schemas");
   const stages = document.get("stages");
   if ((schemas != null && !YAML.isMap(schemas)) || !YAML.isMap(stages)) throw new Error("invalid test mappings");
@@ -270,20 +273,23 @@ reviews:
 });
 
 const repository_root = resolve(import.meta.dir, "../..");
-for (const [name, { path }] of Object.entries(WORKFLOW_SOURCES)) {
+const sources = discoverWorkflowSources(repository_root);
+const reviewLoopPath = sources.find(({ name }) => name === "review-loop")!.path;
+for (const { name, path } of sources) {
   test(`${name} resolves all transitive references through the committed launchable catalog`, () => {
     const definition = unwrap(resolveLaunchableDefinition(name));
-    const document = YAML.parseDocument(readFileSync(resolve(repository_root, path), "utf8"), { uniqueKeys: true });
+    const document = unwrap(expandIncludes(YAML.parseDocument(readFileSync(resolve(repository_root, path), "utf8")),
+      (include) => YAML.parseDocument(readFileSync(resolve(repository_root, "workflow-config", include), "utf8"))));
     const source = decodeWorkflowSource(document.toJS());
     if (source === null) throw new Error("invalid authored source");
     expect({ source: definition.source, schema_names: definition.schema_names, stage_names: definition.stage_names }).toEqual({
-      source, ...authoredOrder(readFileSync(resolve(repository_root, path), "utf8")),
+      source, ...documentOrder(document),
     });
   });
 }
 
 test("the catalog contains exactly the authored names and no r5-cohort definition", () => {
-  expect(Object.keys(unwrap(readLaunchableCatalog())).sort()).toEqual(Object.keys(WORKFLOW_SOURCES).sort());
+  expect(Object.keys(unwrap(readLaunchableCatalog())).sort()).toEqual(sources.map(({ name }) => name));
 });
 
 test("every current authored prompt has a byte-identical stored copy alongside historical prompts", () => {
@@ -310,7 +316,7 @@ function generatorFixture(): string {
   temporary_stores.push(root);
   for (const path of [
     "workflow-config/src", "workflow-config/skills", "workflow-config/prompts",
-    ...Object.values(WORKFLOW_SOURCES).map(({ path }) => path),
+    "workflow-config/shared", ...sources.map(({ path }) => path),
     "workflow-core/fixtures/bundles", "oakridge-dbos/src/operations/registry.ts", "oakridge-dbos/src/effects/provider-catalog.ts",
     "oakridge-dbos/src/core-client/source-types.ts", "oakridge-dbos/src/runtime/definition-store.ts", "oakridge-dbos/src/runtime/prompt-includes.ts",
   ]) {
@@ -337,6 +343,16 @@ test("the committed definition store matches every authored source (generator --
   const check = runGenerator(repository_root, true);
   expect({ code: check.exitCode, errors: check.stderr.toString() }).toEqual({ code: 0, errors: "" });
 });
+test("a new top-level YAML generates a user definition without a source list edit", () => {
+  const root = generatorFixture();
+  const source = readFileSync(resolve(root, reviewLoopPath), "utf8").replace("workflow: review_loop", "workflow: probe");
+  writeFileSync(resolve(root, "workflow-config/probe.yaml"), source);
+  expect(runGenerator(root).exitCode).toBe(0);
+  const catalog = JSON.parse(readFileSync(resolve(root, "workflow-config/definitions/launchable.json"), "utf8"));
+  expect(catalog.probe).toMatchObject({ audience: "user" });
+  expect(JSON.parse(readFileSync(resolve(root, "workflow-core/fixtures/bundles/probe.json"), "utf8")).workflow).toBe("probe");
+});
+
 interface StoreSnapshot { readonly [path: string]: Buffer }
 function storeSnapshot(root: string): StoreSnapshot {
   const store = resolve(root, "workflow-config/definitions");
@@ -366,7 +382,7 @@ test("two generator runs produce identical store filenames and bytes and preserv
 for (const mapping of ["schemas", "stages"] as const) {
   test(`numeric-looking ${mapping} names preserve authored order and change identity when reordered`, () => {
     const root = generatorFixture();
-    const path = resolve(root, WORKFLOW_SOURCES["review-loop"].path);
+    const path = resolve(root, reviewLoopPath);
     const numeric_names = authored.replace(/\bfirst\b/g, '"2"').replace(/\bsecond\b/g, '"1"')
       .replaceAll("write.md", "review-loop/write.md");
     writeFileSync(path, numeric_names);
@@ -440,7 +456,7 @@ test("--check names a missing store file", () => {
 
 interface AuthoringChange { readonly name: string; readonly path: string; readonly change: (source: string) => string }
 const historical_changes: readonly AuthoringChange[] = [
-  { name: "workflow", path: WORKFLOW_SOURCES["review-loop"].path,
+  { name: "workflow", path: reviewLoopPath,
     change: (source) => source.replace("workflow: review_loop", "workflow: review_loop_updated") },
   { name: "operation registry", path: "oakridge-dbos/src/operations/registry.ts",
     change: (source) => source.replace('key: "repository.prepare"', 'key: "repository.prepare.updated"') },
@@ -500,7 +516,7 @@ function plantDiscardedDefinition(store: string, change = incompatible_definitio
 
 test("generation keeps a launchable definition with an input named like the removed field", () => {
   const root = generatorFixture();
-  const source = resolve(root, WORKFLOW_SOURCES["review-loop"].path);
+  const source = resolve(root, reviewLoopPath);
   writeFileSync(source, readFileSync(source, "utf8").replace("input: { topic: text }\nrun:", "input: { topic: text, gated_review: text }\nrun:"));
   expect(runGenerator(root).exitCode).toBe(0);
   const resolved = unwrap(resolveLaunchableDefinition("review-loop", resolve(root, "workflow-config/definitions")));
@@ -543,7 +559,7 @@ for (const is_check of [false, true]) {
     const path = resolve(store, "workflows", `${definition_id}.json`);
     const snapshot = storeSnapshot(root);
     // Make the unreadable object historical, so it would not be regenerated.
-    const source = resolve(root, WORKFLOW_SOURCES["review-loop"].path);
+    const source = resolve(root, reviewLoopPath);
     writeFileSync(source, readFileSync(source, "utf8").replace("workflow: review_loop", "workflow: review_loop_updated"));
     chmodSync(path, 0o000);
     try {
@@ -567,7 +583,7 @@ test("generation after a later authored change stays clean and cannot revive a d
   expect(runGenerator(root).exitCode).toBe(0);
   const store = resolve(root, "workflow-config/definitions");
   const path = plantDiscardedDefinition(store);
-  const source = resolve(root, WORKFLOW_SOURCES["review-loop"].path);
+  const source = resolve(root, reviewLoopPath);
   writeFileSync(source, readFileSync(source, "utf8").replace("workflow: review_loop", "workflow: review_loop_updated"));
   expect(runGenerator(root).exitCode).toBe(0);
   expect(runGenerator(root).exitCode).toBe(0);
@@ -587,17 +603,18 @@ test("generation refuses an authored source that declares the removed grant", ()
 });
 
 for (const name of ["assess", "assess-revise"]) {
-  test(`${name} prompts link audience-specific actions and leave generated ids to the server`, () => {
+  test(`${name} prompts describe proposal citations and round verification`, () => {
     const definition = unwrap(resolveLaunchableDefinition("development"));
     const prompt = definition.prompts[`development/${name}.md`];
-    expect(prompt).toContain("source: {kind: item_assessment|additional_finding, id}");
-    expect(prompt).toContain("audience: rework|operator");
-    expect(prompt).toContain("Omit their id on publication; the server generates it.");
+    expect(prompt).toContain("{key, instruction, citation?}");
+    expect(prompt).toContain("{revision_id, pointer}");
+    expect(prompt).toContain("needs_further_work");
   });
 }
 
-test("development pins the build-item contract after the prior task-contract definition", () => {
-  expect(unwrap(readLaunchableCatalog()).development).not.toBe("478dfc8194eb060c438c916adbe9b80b9b5010ad2d339b629448ddbde376fc34");
+test("development pins the assessment operations contract", () => {
+  const current = unwrap(resolveLaunchableDefinition("development"));
+  expect(current.source.schemas?.assessment_body).toMatchObject({ proposals: "list(feedback_proposal)" });
 });
 
 test("skill bundle index pins verified bundles with the shared operation contract", () => {
@@ -632,31 +649,13 @@ test("skill source byte drift fails generator check and retains old pins on gene
   expect(existsSync(resolve(root, "workflow-config/definitions/skills", old["github-cli"], "SKILL.md"))).toBe(true);
 });
 
-test("development prompts use the integration-neutral skill while historical pins retain their instructions", () => {
-  const store = DEFINITION_STORE_ROOT;
-  const catalog = unwrap(readLaunchableCatalog(store));
-  expect(catalog.development).not.toBe("46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222");
-  const current = unwrap(resolveLaunchableDefinition("development"));
-  const previous = JSON.parse(readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8")) as CommittedDefinition;
-  for (const name of ["build", "build-revise", "assess", "assess-revise", "integrate", "integrate-revise"]) {
-    const prompt = readFileSync(resolve(import.meta.dir, "../prompts/development", `${name}.md`), "utf8");
-    const pinned = current.prompt_sources[`development/${name}.md`];
-    expect(pinned).toBe(prompt);
-    const historicalPrompt = readFileSync(resolve(store, "prompts", `${previous.prompts[`development/${name}.md`]}.md`), "utf8");
-    expect(historicalPrompt).toContain("gated-review");
-    expect(prompt).toContain("pr-operations");
-    expect(prompt).not.toMatch(/gated-review|mcp__|pr_status|review gate/i);
-  }
-  const historical = readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8");
-  expect(historical).toContain("development");
-});
-
 test("authored audiences travel with the committed definitions", () => {
   const catalog = unwrap(readLaunchableCatalog());
   expect(Object.fromEntries(Object.entries(catalog).map(([name, entry]) => [name, entry.audience]))).toEqual({
     development: "user",
     study: "user",
     "fan-out": "test_fixture",
+    portability: "test_fixture",
     "review-loop": "test_fixture",
   });
   expect(Object.values(catalog).every((entry) => resolveDefinition(entry.definition_id).ok)).toBe(true);
@@ -728,11 +727,30 @@ test("published prompt survives regeneration and check without altering the auth
   expect(readFileSync(resolve(store, "launchable.json"))).toEqual(launchable);
 });
 
-test("development and study schemas use rework and operator audiences", () => {
+test("development and study use core proposal and verification schemas", () => {
   for (const name of ["development", "study"] as const) {
     const definition = unwrap(resolveLaunchableDefinition(name));
-    for (const schema of ["next_action", "action_disposition", "added_action"]) {
-      expect(definition.source.schemas?.[schema]).toMatchObject({ audience: "enum(rework, operator)" });
-    }
+    expect(definition.source.schemas?.assessment_body).toMatchObject({
+      proposals: "list(feedback_proposal)", verifications: "list(assignment_verification)",
+    });
   }
+});
+
+test("development prompts use the integration-neutral skill while historical pins retain their instructions", () => {
+  const store = DEFINITION_STORE_ROOT;
+  const catalog = unwrap(readLaunchableCatalog(store));
+  expect(catalog.development.definition_id).not.toBe("46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222");
+  const current = unwrap(resolveLaunchableDefinition("development"));
+  const previous = JSON.parse(readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8")) as CommittedDefinition;
+  for (const name of ["build", "build-revise", "assess", "assess-revise", "integrate", "integrate-revise"]) {
+    const prompt = readFileSync(resolve(import.meta.dir, "../prompts/development", `${name}.md`), "utf8");
+    const pinned = current.prompt_sources[`development/${name}.md`];
+    expect(pinned).toBe(prompt);
+    const historicalPrompt = readFileSync(resolve(store, "prompts", `${previous.prompts[`development/${name}.md`]}.md`), "utf8");
+    expect(historicalPrompt).toContain("gated-review");
+    expect(prompt).toContain("pr-operations");
+    expect(prompt).not.toMatch(/gated-review|mcp__|pr_status|review gate/i);
+  }
+  const historical = readFileSync(resolve(store, "workflows/46b154dead41c7854616f8edb06b1bf0c36c71e1c8b6a259bb11f2833a2a0222.json"), "utf8");
+  expect(historical).toContain("development");
 });

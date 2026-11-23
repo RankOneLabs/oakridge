@@ -443,14 +443,14 @@ describe("recent slot releases", () => {
           stage({
             name: "plan",
             status: "complete",
-            artifacts: [{ id: "art-plan", type_id: "dev.plan", version: 1, created_at: "2026-09-01T08:00:00Z" }],
+            artifacts: [{ id: "art-plan", type_id: "planning.plan", version: 1, created_at: "2026-09-01T08:00:00Z" }],
           }),
           stage({
             name: "build",
             status: "running",
             artifacts: [
-              { id: "art-build-a", type_id: "dev.build_result", version: 1, created_at: "2026-09-01T09:30:00Z" },
-              { id: "art-build-b", type_id: "dev.build_result", version: 2, created_at: "2026-09-01T09:00:00Z" },
+              { id: "art-build-a", type_id: "cohort.build_result", version: 1, created_at: "2026-09-01T09:30:00Z" },
+              { id: "art-build-b", type_id: "cohort.build_result", version: 2, created_at: "2026-09-01T09:00:00Z" },
             ],
           }),
         ],
@@ -472,8 +472,8 @@ describe("recent slot releases", () => {
             name: "build",
             status: "running",
             artifacts: [
-              { id: "art-earlier", type_id: "dev.build_result", version: 1, created_at: "2026-11-01T01:30:00-04:00" },
-              { id: "art-later", type_id: "dev.build_result", version: 2, created_at: "2026-11-01T01:15:00-05:00" },
+              { id: "art-earlier", type_id: "cohort.build_result", version: 1, created_at: "2026-11-01T01:30:00-04:00" },
+              { id: "art-later", type_id: "cohort.build_result", version: 2, created_at: "2026-11-01T01:15:00-05:00" },
             ],
           }),
         ],
@@ -494,8 +494,8 @@ describe("recent slot releases", () => {
             name: "build",
             status: "running",
             artifacts: [
-              { id: "art-undated", type_id: "dev.build_result", version: 1 },
-              { id: "art-dated", type_id: "dev.build_result", version: 2, created_at: "2026-09-01T09:00:00Z" },
+              { id: "art-undated", type_id: "cohort.build_result", version: 1 },
+              { id: "art-dated", type_id: "cohort.build_result", version: 2, created_at: "2026-09-01T09:00:00Z" },
             ],
           }),
         ],
@@ -511,7 +511,7 @@ describe("recent slot releases", () => {
   it("caps the list so that recent keeps meaning recent", () => {
     const artifacts = Array.from({ length: RECENT_SLOT_RELEASE_LIMIT + 4 }, (_unused, index) => ({
       id: `art-${index}`,
-      type_id: "dev.build_result",
+      type_id: "cohort.build_result",
       version: index + 1,
       created_at: `2026-09-0${(index % 9) + 1}T09:00:00Z`,
     }));

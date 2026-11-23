@@ -50,14 +50,14 @@ export interface AgentProviderConfig {
 const KBBL_NAME_LIMIT = 80;
 const shortDigest = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
-/** Development cohort worktrees expose their cohort identity in the Git branch. */
 export function selectWorkspaceBranch(instruction: EffectInstruction): string {
   if (instruction.worker.kind !== "agent") throw new Error("a code worker has no session branch");
-  const prefix = `${instruction.run_id}/implementation/`;
-  const cohort = instruction.action.unit.startsWith(prefix) ? instruction.action.unit.slice(prefix.length) : null;
-  if (cohort && /^[A-Za-z0-9_-]+$/.test(cohort))
-    return `cohort/${cohort}/${shortDigest(instruction.worker.session_key).slice(0, 6)}`;
-  return `oakridge/${shortDigest(instruction.worker.session_key)}`;
+  const digest = shortDigest(instruction.worker.session_key);
+  const [run, collection, member, ...rest] = instruction.action.unit.split("/");
+  if (run === instruction.run_id && collection && member && rest.length === 0 &&
+      instruction.collection?.parent === `${run}/${collection}` && instruction.collection.key === member)
+    return `${collection}/${member}/${digest.slice(0, 6)}`;
+  return `oakridge/${digest}`;
 }
 
 /**
@@ -81,6 +81,8 @@ export function selectSessionStart(instruction: EffectInstruction, config: Sessi
   const session_unit = worker.shared_session_unit ?? instruction.action.unit;
   const session_path = session_unit.startsWith(`${instruction.run_id}/`) ? session_unit.slice(instruction.run_id.length + 1) : session_unit;
   const name = `${instruction.action.worker} · ${session_path}`;
+  // Siblings sharing a session must send the same start spec and worktree.
+  const branch = worker.session === "shared" ? `oakridge/${shortDigest(worker.session_key)}` : selectWorkspaceBranch(instruction);
   return {
     initial_prompt: renderSessionPreamble({ run_id: instruction.run_id, unit: session_unit, worker: instruction.action.worker,
       creates: worker.creates, schemas: worker.schemas, publish_base_url: config.publish_base_url, secret,
@@ -89,7 +91,7 @@ export function selectSessionStart(instruction: EffectInstruction, config: Sessi
     name: name.length > KBBL_NAME_LIMIT ? `${name.slice(0, KBBL_NAME_LIMIT - 1)}…` : name,
     ...(worker.settings ? { runtime: worker.settings.harness, model: worker.settings.model,
       ...(worker.settings.effort === null ? {} : { effort: worker.settings.effort }) } : {}),
-    ...(workspace ? { worktree: { branch_name: selectWorkspaceBranch(instruction), worktree_subdir: "oakridge", base_ref: `origin/${workspace.base_branch}` } } : {}),
+    ...(workspace ? { worktree: { branch_name: branch, worktree_subdir: "oakridge", base_ref: `origin/${workspace.base_branch}` } } : {}),
     workflow: { run_id: instruction.run_id, unit_id: session_unit, worker: instruction.action.worker, ...integration },
   };
 }

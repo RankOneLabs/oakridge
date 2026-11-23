@@ -3,7 +3,7 @@ import type { Result } from "../domain/primitives";
 import { selectStages } from "../grading/composite";
 import type { RollupContext } from "../grading/task-stages";
 import type { ArtifactRevisionId, EvaluatorDefinitionId, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, LogicalItemId, QuestionId, RelationId, ReviewerId, RunId, UnitId } from "../domain/identity";
-import { contributionItem, graderOf, orderedItems, pageOf, selectComposite, selectCompositePage, selectContributions, selectDrilldown, selectLineage, selectRevisionStandings, selectUnlinkedItems, selectUnresolvedReferences, type AnswerDetail, type CompositeAnswer, type CompositeDrilldownKey,
+import { contributionItem, graderOf, orderedItems, pageOf, selectComposite, selectCompositePage, selectContributions, selectDrilldown, selectLineage, selectLogicalItem, selectRevisionStandings, selectUnlinkedItems, selectUnresolvedReferences, type AnswerDetail, type CompositeAnswer, type CompositeDrilldownKey,
   type CompositeEvaluator, type CompositeInputs, type CompositeLogicalItem, type CompositeRelation, type CompositeRevision, type ContributionItem, type DrilldownPages, type DrilldownRow, type LogicalItemComposite,
   type LogicalItemLineage, type PageRequest, type Paged, type UnresolvedReference } from "../grading/composite";
 import type { SubjectQuestion } from "../grading/evidence";
@@ -59,18 +59,18 @@ async function readAnswerRows(trx: DatabaseTransaction, tenant: TenantScope, wit
 interface RevisionRow { readonly stage: string; readonly revision_id: string; readonly unit_id: string; readonly artifact_kind: string; readonly predecessor_id: string | null; readonly recorded_at: Date; readonly captured_at: Date }
 const revisionFromRow = (row: RevisionRow): CompositeRevision => ({ ...row, revision_id: row.revision_id as ArtifactRevisionId, unit_id: row.unit_id as UnitId,
   predecessor_id: row.predecessor_id as ArtifactRevisionId | null });
-interface LogicalItemRow { readonly logical_item_id: string; readonly scope: string; readonly producer_local_id: string }
+interface LogicalItemRow { readonly logical_item_id: string; readonly scope: string; readonly task_kind: string | null; readonly producer_local_id: string }
 const logicalItemFromRow = (row: LogicalItemRow): CompositeLogicalItem => ({ ...row, logical_item_id: row.logical_item_id as LogicalItemId });
 interface RelationRow { readonly relation_id: string; readonly target_occurrence_id: string | null; readonly target_logical_item_id: string | null; readonly unresolved_target_ref: string | null;
-  readonly type: string; readonly asserted_by: string; readonly evidence_ref: string }
+  readonly type: string; readonly asserted_by: string; readonly evidence_ref: string; readonly qualifier: import("../domain/primitives").JsonValue }
 const relationFromRow = (source_occurrence_id: ItemOccurrenceId, row: RelationRow): CompositeRelation => ({ ...row, relation_id: row.relation_id as RelationId, source_occurrence_id,
   target_occurrence_id: row.target_occurrence_id as ItemOccurrenceId | null, target_logical_item_id: row.target_logical_item_id as LogicalItemId | null, type: row.type as CompositeRelation["type"] });
 
 /** Every row of one run a composite reads, from one snapshot, so a count and its drilldown never mix commits. */
 async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope, path: CompositePath, run_id: string, context?: RollupContext): Promise<CompositeInputs> {
   const { producer, namespace } = tenant;
-  const logical_items = await trx.selectFrom("observation.logical_item").select(["logical_item_id", "scope", "producer_local_id"]).where("producer", "=", producer)
-    .where("namespace", "=", namespace).where("run_id", "=", run_id).where("scope", "=", path.logical_scope).orderBy("producer_local_id").execute();
+  const logical_items = await trx.selectFrom("observation.logical_item").select(["logical_item_id", "scope", "task_kind", "producer_local_id"]).where("producer", "=", producer)
+    .where("namespace", "=", namespace).where("run_id", "=", run_id).where("scope", "=", path.logical_scope).orderBy("producer_local_id").orderBy("task_kind").execute();
   const revisions = await trx.selectFrom("observation.source_revision").select(["revision_id", "unit_id", "artifact_kind", "stage", "predecessor_id", "recorded_at", "captured_at"])
     .where("producer", "=", producer).where("namespace", "=", namespace).where("run_id", "=", run_id).execute();
   const occurrences = await trx.selectFrom("observation.item_occurrence")
@@ -78,7 +78,7 @@ async function readCompositeInputs(trx: DatabaseTransaction, tenant: TenantScope
     .where("producer", "=", producer).where("namespace", "=", namespace).where("run_id", "=", run_id).execute();
   const ids = occurrences.map((occurrence) => occurrence.occurrence_id);
   const relations = ids.length === 0 ? [] : await trx.selectFrom("observation.item_relation")
-    .select(["relation_id", "source_occurrence_id", "target_occurrence_id", "target_logical_item_id", "unresolved_target_ref", "type", "asserted_by", "evidence_ref"])
+    .select(["relation_id", "source_occurrence_id", "target_occurrence_id", "target_logical_item_id", "unresolved_target_ref", "type", "asserted_by", "evidence_ref", "qualifier"])
     .where("producer", "=", producer).where("namespace", "=", namespace).where("source_occurrence_id", "in", ids).orderBy("relation_id").execute();
   const evidence = ids.length === 0 ? [] : await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", producer).where("namespace", "=", namespace)
     .where("subject_occurrence_id", "in", ids).orderBy("question_id").orderBy("question_version").execute();
@@ -109,7 +109,7 @@ const readRun = <Value>(db: Database, tenant: TenantScope, path: CompositePath, 
 /** One tracked logical item's composite, by its producer id within a run; null when the run has none. */
 export function readLogicalItemComposite(db: Database, tenant: TenantScope, path: CompositePath, run_id: string, producer_local_id: string, context?: RollupContext): Promise<LogicalItemComposite | null> {
   return readRun(db, tenant, path, run_id, (inputs) => {
-    const item = inputs.logical_items.find((candidate) => candidate.producer_local_id === producer_local_id);
+    const item = selectLogicalItem(inputs, path, producer_local_id);
     return item ? selectComposite(inputs, path, item) : null;
   }, context);
 }
@@ -160,10 +160,10 @@ async function readItemContext(trx: DatabaseTransaction, tenant: TenantScope, pa
     .where("producer", "=", producer).where("namespace", "=", namespace).where("run_id", "=", occurrence.run_id).where("unit_id", "=", revision.unit_id)
     .where("artifact_kind", "=", revision.artifact_kind).execute();
   const standing = selectRevisionStandings(stream.map(revisionFromRow), path).get(revision.revision_id as ArtifactRevisionId);
-  const relations = await trx.selectFrom("observation.item_relation").select(["relation_id", "source_occurrence_id", "target_occurrence_id", "target_logical_item_id", "unresolved_target_ref", "type", "asserted_by", "evidence_ref"])
+  const relations = await trx.selectFrom("observation.item_relation").select(["relation_id", "source_occurrence_id", "target_occurrence_id", "target_logical_item_id", "unresolved_target_ref", "type", "asserted_by", "evidence_ref", "qualifier"])
     .where("producer", "=", producer).where("namespace", "=", namespace).where("source_occurrence_id", "=", occurrence_id).orderBy("relation_id").execute();
   const targets = relations.flatMap((relation) => relation.target_logical_item_id ? [relation.target_logical_item_id] : []);
-  const logical = targets.length === 0 ? [] : await trx.selectFrom("observation.logical_item").select(["logical_item_id", "scope", "producer_local_id"]).where("producer", "=", producer)
+  const logical = targets.length === 0 ? [] : await trx.selectFrom("observation.logical_item").select(["logical_item_id", "scope", "task_kind", "producer_local_id"]).where("producer", "=", producer)
     .where("namespace", "=", namespace).where("logical_item_id", "in", targets).execute();
   const links = logicalLinks(relations.map((row) => relationFromRow(occurrence_id as ItemOccurrenceId, row)), logical.map(logicalItemFromRow));
   return { standing_stage: standing?.stage ?? null, links, item: { occurrence_id: occurrence_id as ItemOccurrenceId, revision_id: occurrence.revision_id as ArtifactRevisionId, item_path: occurrence.json_pointer,

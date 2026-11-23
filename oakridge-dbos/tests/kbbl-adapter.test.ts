@@ -188,16 +188,19 @@ test("a repository workspace runs in a worktree branched from origin's base bran
     .toEqual({ plain: ["/srv/agents", null], repo: ["/srv/repo", "origin/epic/tiers", true] });
 });
 
-test("development cohort worktrees use the cohort key and a stable six-character session hash", () => {
-  const action = { ...writer, unit: "run-1/implementation/dark_theme_palette" };
-  const cohort = instructionFor({ action, resolved: { workspace: { repository_path: "/srv/repo", head: "abc123", base_branch: "epic/tiers" } } });
-  const revision = instructionFor({ action: { ...action, mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: "d1" } } });
-  const branch = selectWorkspaceBranch(cohort);
-  const start = selectSessionStart(cohort, { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
-  expect({ branch, start_branch: start.worktree?.branch_name, same_on_revision: selectWorkspaceBranch(revision) === branch,
-    unrelated_stage: selectWorkspaceBranch(instructionFor()).startsWith("oakridge/") })
-    .toEqual({ branch: expect.stringMatching(/^cohort\/dark_theme_palette\/[0-9a-f]{6}$/), start_branch: branch, same_on_revision: true,
-      unrelated_stage: true });
+test.each(["implementation", "expansion", "writing"])("collection %s uses the member key and a stable session hash", (collection) => {
+  const membership = { parent: `run-1/${collection}`, key: "palette" };
+  const action = { ...writer, unit: `${membership.parent}/${membership.key}` };
+  const initial = { ...instructionFor({ action, resolved: { workspace: {
+    repository_path: "/srv/repo", head: "abc123", base_branch: "epic/tiers" } } }), collection: membership };
+  const revision = { ...instructionFor({ action: { ...action, mode: { kind: "revise" },
+    cause: { kind: "changes_requested", decision: "d1" } } }), collection: membership };
+  const branch = selectWorkspaceBranch(initial);
+  const start = selectSessionStart(initial, { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
+  expect(branch).toMatch(new RegExp(`^${collection}/palette/[0-9a-f]{6}$`));
+  expect(start.worktree?.branch_name).toBe(branch);
+  expect(selectWorkspaceBranch(revision)).toBe(branch);
+  expect(selectWorkspaceBranch(instructionFor({ action }))).toMatch(/^oakridge\//);
 });
 
 test("a session starts with the runtime, model and effort chosen for its worker", () => {

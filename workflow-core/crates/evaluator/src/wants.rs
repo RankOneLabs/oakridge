@@ -51,6 +51,7 @@ pub(super) fn reads_artifact(expression: &Expression, artifact: &SymbolKey) -> b
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Readiness {
     Blocked,
@@ -96,6 +97,82 @@ pub(super) fn holds(
             == Some(Value::Bool(true)),
     )
 }
+struct OpenRound<'a> {
+    request: &'a RoundRequest,
+    assessment: &'a SymbolKey,
+    update: Option<usize>,
+}
+
+fn assignment_rounds<'a>(
+    stage: &'a CheckedStage,
+    state: &'a StepSnapshot,
+    unit: &UnitId,
+) -> Vec<OpenRound<'a>> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut current = Vec::new();
+    for decision in state.decisions.iter().rev() {
+        let DecisionState::Review {
+            unit: owner,
+            review,
+            effect: DecisionEffect::Dispatch { rounds },
+            ..
+        } = decision
+        else {
+            continue;
+        };
+        if owner != unit {
+            continue;
+        }
+        let Some(assessment) = stage.reviews.iter().find_map(|checked| match checked {
+            CheckedReview::Operator {
+                key, assessment, ..
+            } if key == review => assessment.as_ref(),
+            _ => None,
+        }) else {
+            continue;
+        };
+        for request in rounds.iter().rev() {
+            if !seen.insert(&request.assignment) {
+                continue;
+            }
+            let self_assessing = stage.workers.iter().any(|worker| {
+                worker.key().0 == request.worker.0 && worker.creates().contains(assessment)
+            });
+            let update = state.revisions.iter().position(|revision| revision.unit == *unit
+                && revision.artifact.0 != BLOCKER_ARTIFACT
+                && (!self_assessing || revision.artifact == *assessment)
+                && !has_failed_validation(state, &revision.id)
+                && state.attempts.iter().any(|attempt| revision.by.as_ref().is_some_and(|by| by.matches(attempt))
+                    && matches!(&attempt.cause, Cause::AssignmentRound { round, .. } if round == &request.round)));
+            current.push(OpenRound {
+                request,
+                assessment,
+                update,
+            });
+        }
+    }
+    current.reverse();
+    current
+}
+
+fn keyed_worker_approved(
+    program: &CheckedWorkflow,
+    state: &StepSnapshot,
+    unit: &UnitState,
+    worker: &CheckedWorker,
+) -> bool {
+    match worker {
+        CheckedWorker::Agent {
+            keyed_execution: true,
+            reviews,
+            ..
+        } => reviews.as_ref().is_some_and(|subject| {
+            super::expression::decided(Some(program), state, unit, subject, false)
+        }),
+        _ => true,
+    }
+}
+
 pub fn stage_actions(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
@@ -113,7 +190,7 @@ pub fn stage_actions(
                 state
                     .attempts
                     .iter()
-                    .find(|attempt| &attempt.action_id == action)
+                    .find(|attempt| action.matches(attempt))
             })
             .ok_or_else(|| invalid("blocker publisher absent"))?;
         let decision = state.decisions.iter().rev().find(|decision| {
@@ -124,6 +201,14 @@ pub fn stage_actions(
                 && decision.target() == blocker
         });
         if let Some(decision) = decision {
+            if checked
+                .workers
+                .iter()
+                .find(|worker| worker.key() == &publisher.worker)
+                .is_some_and(|worker| !keyed_worker_approved(program, state, unit, worker))
+            {
+                return Ok(wanted);
+            }
             let cause = match can_run(state, &unit.id, &publisher.worker) {
                 Readiness::Blocked => return Ok(wanted),
                 Readiness::RetryAuthorized { event } => Cause::Retry {
@@ -143,8 +228,64 @@ pub fn stage_actions(
         }
         return Ok(wanted);
     }
+    let rounds = assignment_rounds(checked, state, &unit.id);
+    let creator_has_work = |artifact: &SymbolKey| {
+        is_creator_working(checked, state, &unit.id, artifact)
+            || rounds.iter().any(|round| {
+                round.update.is_none()
+                    && checked.workers.iter().any(|worker| {
+                        worker.key().0 == round.request.worker.0
+                            && worker.creates().contains(artifact)
+                    })
+            })
+    };
     for checked_worker in &checked.workers {
         let worker_key = checked_worker.key();
+        if !keyed_worker_approved(program, state, unit, checked_worker) {
+            continue;
+        }
+        if matches!(checked_worker, CheckedWorker::Agent { .. }) {
+            let pending = rounds
+                .iter()
+                .find(|round| round.request.worker.0 == worker_key.0 && round.update.is_none());
+            if let Some(round) = pending {
+                let previous = attempt(state, &unit.id, worker_key);
+                let on_round = previous.is_some_and(|attempt| {
+                    matches!(&attempt.cause, Cause::AssignmentRound { round: id, .. } if id == &round.request.round)
+                });
+                if let Some(previous) = previous.filter(|attempt| {
+                    matches!(
+                        attempt.status,
+                        AttemptStatus::Pending | AttemptStatus::Running
+                    )
+                }) {
+                    if on_round {
+                        wanted.push(Action::RunWorker {
+                            unit: unit.id.clone(),
+                            worker: worker_key.clone(),
+                            mode: Mode::Revise,
+                            cause: previous.cause.clone(),
+                        });
+                    }
+                    continue;
+                }
+                let retry = match can_run(state, &unit.id, worker_key) {
+                    Readiness::RetryAuthorized { event } if on_round => Some(event),
+                    _ if on_round => continue,
+                    _ => None,
+                };
+                wanted.push(Action::RunWorker {
+                    unit: unit.id.clone(),
+                    worker: worker_key.clone(),
+                    mode: Mode::Revise,
+                    cause: Cause::AssignmentRound {
+                        round: round.request.round.clone(),
+                        retry,
+                    },
+                });
+                continue;
+            }
+        }
         let readiness = can_run(state, &unit.id, worker_key);
         if readiness == Readiness::Blocked {
             continue;
@@ -154,6 +295,10 @@ pub fn stage_actions(
         }
         let candidate = match checked_worker {
             CheckedWorker::Agent {
+                reviews: Some(subject),
+                ..
+            } if creator_has_work(subject) => None,
+            CheckedWorker::Agent {
                 creates,
                 reviews: Some(subject),
                 ..
@@ -161,9 +306,6 @@ pub fn stage_actions(
                 // The subject's creator may still replace it (a revise
                 // publishes the new build before its PR): review only what
                 // a finished attempt left.
-                if is_creator_working(checked, state, &unit.id, subject) {
-                    continue;
-                }
                 let Some(subject) = latest(state, &unit.id, subject) else {
                     continue;
                 };
@@ -234,9 +376,11 @@ pub fn stage_actions(
             // Part 1 §5.2 rule 4: wanted only once its inputs resolve.
             CheckedWorker::Code { every: Some(_), .. } => {
                 eval_fields(checked_worker.inputs(), unit, state, None, context)?.map(|inputs| {
+                    let digest =
+                        periodic_inputs_digest(checked, checked_worker, state, unit, &inputs);
                     (
                         Mode::Initial,
-                        periodic_cause(state, &unit.id, worker_key, inputs_digest(&inputs)),
+                        periodic_cause(state, &unit.id, worker_key, digest),
                     )
                 })
             }
@@ -256,6 +400,42 @@ pub fn stage_actions(
                 }
             }
         };
+        let candidate = candidate.or_else(|| {
+            if !matches!(checked_worker, CheckedWorker::Agent { .. }) {
+                return None;
+            }
+            if let CheckedWorker::Agent {
+                reviews: Some(subject),
+                ..
+            } = checked_worker
+            {
+                if creator_has_work(subject) {
+                    return None;
+                }
+            }
+            rounds.iter().find_map(|round| {
+                let update = round.update?;
+                let revision = &state.revisions[update];
+                if creator_has_work(&revision.artifact) {
+                    return None;
+                }
+                if !checked_worker.creates().contains(round.assessment)
+                    || state.revisions[update..].iter().any(|revision| {
+                        revision.unit == unit.id
+                            && revision.artifact == *round.assessment
+                            && !has_failed_validation(state, &revision.id)
+                    })
+                {
+                    return None;
+                }
+                Some((
+                    Mode::Review,
+                    Cause::Reassessment {
+                        round: round.request.round.clone(),
+                    },
+                ))
+            })
+        });
         if let Some((mode, cause)) = candidate {
             let cause = match readiness {
                 Readiness::RetryAuthorized { event } => Cause::Retry {
@@ -377,6 +557,7 @@ pub(super) fn resolve_reviews(
             inputs,
             when,
             decisions,
+            ..
         } = review
         else {
             continue;
@@ -428,7 +609,7 @@ pub(super) fn is_decided_by(
 ) -> bool {
     state.decisions.iter().any(|decision| {
         matches!(decision, DecisionState::Review { unit: decided_unit, review: decided_review, target: decided_target, .. }
-            if decided_unit == unit && decided_review == review && decided_target == target)
+            if decided_unit == unit && decided_review == review && decided_target == target && !matches!(decision.effect(), Some(DecisionEffect::Dispatch { .. })))
     })
 }
 /// Whether a revision's declared artifact validation failed on publication.
@@ -533,6 +714,45 @@ pub(super) fn resolve_agent_prompt(
 }
 
 /// Evaluate what a wanted `RunWorker` runs with against the stepped state.
+pub(super) fn revision_binding(input: &str, revision: &RevisionState) -> InputBinding {
+    InputBinding {
+        input: SymbolKey::from(input),
+        unit: revision.unit.clone(),
+        revision_id: revision.id.clone(),
+    }
+}
+
+pub(super) fn resolve_worker_inputs(
+    worker: &CheckedWorker,
+    unit: &UnitState,
+    state: &StepSnapshot,
+    context: &mut EvaluationContext<'_>,
+) -> Result<(serde_json::Map<String, Value>, Vec<InputBinding>), StepError> {
+    let mut inputs = serde_json::Map::new();
+    let mut bindings: Vec<_> = unit
+        .input_provenance
+        .iter()
+        .flatten()
+        .map(|entry| InputBinding {
+            input: entry.input.clone(),
+            unit: entry.unit.clone(),
+            revision_id: entry.revision_id.clone(),
+        })
+        .collect();
+    for field in worker.inputs() {
+        context.input_reads = Some(Vec::new());
+        let value = eval_expression(&field.value.expression, unit, state, None, None, context);
+        let reads = context.input_reads.take().unwrap_or_default();
+        inputs.insert(field.key.clone(), value?.unwrap_or(Value::Null));
+        bindings.extend(reads.into_iter().map(|(unit, revision_id)| InputBinding {
+            input: SymbolKey::from(field.key.as_str()),
+            unit,
+            revision_id,
+        }));
+    }
+    Ok((inputs, bindings))
+}
+
 pub(super) fn resolve_run_worker(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
@@ -545,11 +765,7 @@ pub(super) fn resolve_run_worker(
         .iter()
         .find(|candidate| candidate.key() == action.worker)
         .ok_or_else(|| invalid(format!("checked worker {} absent", action.worker)))?;
-    let mut inputs = serde_json::Map::new();
-    for field in checked.inputs() {
-        let value = eval_expression(&field.value.expression, unit, state, None, None, context)?;
-        inputs.insert(field.key.clone(), value.unwrap_or(Value::Null));
-    }
+    let (inputs, mut input_bindings) = resolve_worker_inputs(checked, unit, state, context)?;
     let workspace_expression = match checked {
         CheckedWorker::Agent { workspace, .. } => workspace.as_deref(),
         CheckedWorker::Code { .. } => None,
@@ -571,6 +787,7 @@ pub(super) fn resolve_run_worker(
         _ => None,
     };
     let (previous, feedback) = match action.mode {
+        Mode::Revise if matches!(action.cause, Cause::AssignmentRound { .. }) => (None, Vec::new()),
         Mode::Revise => match if parked_blocker(state, &unit.id).is_none()
             && matches!(action.cause, Cause::Retry { .. })
             && matches!(
@@ -650,7 +867,16 @@ pub(super) fn resolve_run_worker(
         .collect();
     let prompt = match checked {
         CheckedWorker::Agent { prompts, .. } => {
-            resolve_agent_prompt(prompts, action.mode, &feedback)
+            resolve_agent_prompt(prompts, action.mode, &feedback).or_else(|| {
+                if matches!(
+                    action.cause,
+                    Cause::AssignmentRound { .. } | Cause::Reassessment { .. }
+                ) {
+                    prompts.initial.clone().or_else(|| prompts.review.clone())
+                } else {
+                    None
+                }
+            })
         }
         CheckedWorker::Code { .. } => None,
     };
@@ -661,10 +887,36 @@ pub(super) fn resolve_run_worker(
     } else {
         vec![]
     };
+    let keyed_execution = match checked {
+        CheckedWorker::Agent {
+            keyed_execution: true,
+            reviews: Some(of),
+            ..
+        } => latest(state, &unit.id, of).map(|revision| KeyedExecutionWant {
+            authorizing_revision: revision.id.clone(),
+        }),
+        _ => None,
+    };
+    let mut input_provenance = unit.input_provenance.clone();
+    if matches!(checked, CheckedWorker::Code { .. }) {
+        input_provenance
+            .get_or_insert_with(Vec::new)
+            .extend(artifact_input_provenance(stage, checked, state, unit));
+    }
+    for (name, revision) in [
+        ("$subject", subject.as_ref()),
+        ("$previous", previous.as_ref()),
+    ] {
+        if let Some(revision) = revision {
+            input_bindings.push(revision_binding(name, revision));
+        }
+    }
     Ok(ResolvedRunWorker {
+        input_bindings,
         prompt,
+        keyed_execution,
         review_history,
-        input_provenance: unit.input_provenance.clone(),
+        input_provenance,
         action_id: action_id(&unit.id, action.worker, action.mode, action.cause),
         inputs: Value::Object(inputs),
         previous,

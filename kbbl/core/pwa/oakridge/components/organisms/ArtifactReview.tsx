@@ -1,3 +1,5 @@
+import { AssessmentControls } from "./CurrentAssessmentReview";
+import { artifactKeyFromComposite, parseCompositeId } from "../../adapters/core";
 import { selectArtifactDecisionCopy, selectArtifactPageGates } from "../../lib/artifact-page-gates";
 import { ReceivedContextPanel } from "../molecules/ReceivedContextPanel";
 import { EditableBriefText } from "./EditableBriefText";
@@ -18,7 +20,7 @@ import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { useArtifactBody } from "../../hooks/useArtifactBody";
 import { selectFindingSelections } from "../../lib/grading";
 import { settleEdit } from "../../lib/edit-outcome";
-import { resolveViewer, isReadableViewer, recordsAdjudication, selectViewerItemPaths } from "../../artifactRegistry";
+import { selectArtifactViewer, selectViewerItemPaths } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ObservationItemAddress } from "../../grading-contracts/grading/item-reads";
 import { formatRelative } from "../../../lib/time";
@@ -106,15 +108,9 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
 
   const artifact = query.data;
 
-  // Resolve viewer: component_id → type_id → JSON fallback
-  const CandidateViewer =
-    resolveViewer(revision?.component_id) ??
-    resolveViewer(artifact.review?.viewer) ??
-    resolveViewer(artifact.component_id) ??
-    resolveViewer(artifact.type_id) ??
-    null;
-
-  const Viewer = CandidateViewer && revision && isReadableViewer(CandidateViewer, revision.body) ? CandidateViewer : null;
+  const Viewer = revision ? selectArtifactViewer({
+    view: artifact.component_id, schema: artifact.schema, schemas: artifact.projected_schemas, body: revision.body,
+  }) : null;
 
   // Adapt oakridge CollabThread to the v1 Thread shape that ThreadSidebar/ThreadView accept
   const collabThreads = threadsQuery.data ?? [];
@@ -185,6 +181,7 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
     renderItemAction: (selection: ObservationItemAddress) => <ItemGradeAction runId={artifact.run_id} selection={selection} onOpenItem={onOpenItem} />,
     renderShowAll: (selections: readonly ObservationItemAddress[]) => <ShowAutomaticGrades selections={selections} />,
   } : undefined;
+  const artifactAddress = parseCompositeId(artifact.id, "artifact");
   const receivedContext = revision?.received_context ?? artifact.received_context;
   const artifactContent = revision ? (
         <section className="or-artifact-detail__revision">
@@ -200,14 +197,14 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
           {receivedContext && <ReceivedContextPanel context={receivedContext} />}
           {Viewer ? (
             <Viewer
+              linkField={artifact.link_field}
               renderEditableText={(props) => <EditableBriefText {...props} />}
               body={revision.body}
-              currentRead={revision.current_read}
               context={revision.context ?? artifact.context}
               descriptor={artifact.review}
               source={{ run_id: artifact.run_id, revision_id: revision.id, label: artifact.label ?? null, producing_stage: artifact.producing_stage,
                 as_of: revision.created_at,
-                original_spec: artifact.original_spec ?? null }}
+                producing_attempt_inputs: revision.producing_attempt_inputs === undefined ? artifact.producing_attempt_inputs : revision.producing_attempt_inputs }}
               edit={caps?.atom_editable ? {
                 enabled: revIdx === revisions.length - 1,
                 isPending: atomEdit.isPending || bodyEdit.isPending,
@@ -227,6 +224,16 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
           ) : (
             <ArtifactJsonRevisionPanel revision={revision} descriptor={artifact.review} />
           )}
+          {adjudicationGate && revIdx === revisions.length - 1 && <AssessmentControls
+              gate={adjudicationGate}
+              body={revision.body}
+              source={{ run_id: artifact.run_id, revision_id: revision.id, label: artifact.label ?? null, producing_stage: artifact.producing_stage, as_of: revision.created_at }}
+              assessment={artifactAddress.ok ? {
+                unitId: artifactAddress.value.unitId, artifact: artifactKeyFromComposite(artifactAddress.value.name),
+                subject: revision.subject_revision_id ?? null, paths: artifact.proposal_paths ?? [],
+                workers: artifact.projected_workers ?? [],
+              } : undefined}
+          />}
         </section>
       ) : <FeedbackMessage>{revisionId ? `Recorded revision ${revisionId} is unavailable.` : "No revisions."}</FeedbackMessage>;
 
@@ -265,13 +272,12 @@ export function ArtifactReview({ artifactId, revisionId, onOpenItem, onOpenTask 
       ) : undefined;
 
   const isLatestRevision = revision !== undefined && revIdx === revisions.length - 1;
-  // An adjudicated review is decided in the viewer's own decision bar; a box here could only repeat that, with no controls.
-  const isDecidedInViewer = artifactGate?.requires_adjudication === true && artifactGate.resume_actions.length === 0 && Viewer !== null && recordsAdjudication(Viewer);
   const decisionCopy = artifactGate && selectArtifactDecisionCopy(artifactGate, adjudicationGate);
-  const gateActions = artifactGate && decisionCopy && isLatestRevision && !isDecidedInViewer ? (
+  const gateActions = artifactGate && decisionCopy && isLatestRevision
+    && !(artifactGate.requires_adjudication && artifactGate.resume_actions.length === 0) ? (
     <section data-assessment-corrections={artifactGate === adjudicationGate || undefined} className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
       <div><strong>{decisionCopy.title}</strong><p>{decisionCopy.description}</p></div>
-      <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} actionLabels={artifact.review?.action_labels} />
+      <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} />
     </section>
   ) : undefined;
 

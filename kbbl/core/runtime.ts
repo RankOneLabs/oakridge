@@ -1,3 +1,5 @@
+import profileDefaults from "./acp/profile-defaults.json";
+
 // Runtime identity + launch/config surface (§12, §20.2).
 //
 // The provider-adapter contract (AgentRuntime, RuntimeRegistry,
@@ -102,29 +104,8 @@ export interface RuntimeOption {
  * unset (null) model/effort instead, so it is deliberately not listed here.
  */
 export const RUNTIME_MODELS: Readonly<Record<RuntimeId, readonly RuntimeOption[]>> = {
-  // @agentclientprotocol/claude-agent-acp 0.76.0, config option `model`.
-  "claude-code": [
-    { value: "opus", label: "opus 5.5" },
-    { value: "fable", label: "fable 5.2" },
-    { value: "sonnet", label: "sonnet 5.5" },
-    { value: "haiku", label: "haiku 5.5" },
-  ],
-  // @agentclientprotocol/codex-acp 1.13.0 driving the installed codex CLI,
-  // config option `model`. `gpt-5.5` is gone: codex-acp fetches this list
-  // from its app server rather than a local catalog, and the server retired
-  // the model, so the entry was a launch button that could only fail.
-  codex: [
-    { value: "gpt-6.2-sol", label: "gpt-6.2 sol" },
-    { value: "gpt-6.2-astra", label: "gpt-6.2 astra" },
-    { value: "gpt-6.1-sol", label: "gpt-6.1 sol" },
-    { value: "gpt-6-astra", label: "gpt-6 astra" },
-    { value: "gpt-6.1-terra", label: "gpt-6.1 terra" },
-    { value: "gpt-6-sol", label: "gpt-6 sol" },
-    { value: "gpt-6-luna", label: "gpt-6 luna" },
-    { value: "gpt-5.6-sol", label: "gpt-5.6 sol" },
-    { value: "gpt-5.6-terra", label: "gpt-5.6 terra" },
-    { value: "gpt-5.6-luna", label: "gpt-5.6 luna" },
-  ],
+  "claude-code": profileDefaults.acp.agents["claude-code"].models,
+  codex: profileDefaults.acp.agents.codex.models,
 };
 
 export const RUNTIME_EFFORTS: Readonly<Record<RuntimeId, readonly RuntimeOption[]>> = {
@@ -159,8 +140,8 @@ export type RuntimeModelSelection = {
 };
 
 const DEFAULT_MODEL_BY_RUNTIME: Record<RuntimeId, string> = {
-  "claude-code": "opus",
-  codex: "gpt-5.6-sol",
+  "claude-code": profileDefaults.acp.agents["claude-code"].default_model,
+  codex: profileDefaults.acp.agents.codex.default_model,
 };
 
 export function defaultModelForRuntime(runtimeId: RuntimeId): string {
@@ -175,27 +156,6 @@ export function defaultWorkerModelForRuntime(runtimeId: RuntimeId): string {
   return defaultModelForRuntime(runtimeId);
 }
 
-/**
- * Explicit ids the picker used to carry, mapped to the family alias that now
- * names the same model.
- *
- * **This is a browser-compatibility shim with an expiry, not a vocabulary.**
- * Neither database holds a retired id — `acp_sessions.requested_model` and
- * `authority.run.config` were both checked and carry only family aliases and
- * currently advertised codex ids, and no pinned workflow definition declares
- * a model at all. The one store that cannot be migrated is `localStorage`,
- * where a browser that picked Fable before the picker moved to the `fable`
- * alias still holds `claude-fable-5-1`. When no such browser can plausibly
- * remain, delete this map and `matchAdvertisedModel` with it.
- *
- * Only same-model renames belong here. `claude-opus-5` is **not** an alias of
- * `opus` — the CLI advertises both, and they are different generations, so
- * mapping one to the other would silently change an operator's model.
- */
-const RETIRED_MODEL_IDS: Readonly<Record<string, string>> = {
-  "claude-fable-5-1": "fable",
-};
-
 /** An id as an agent advertises it, with its display name where there is one. */
 export interface AdvertisedOption {
   readonly value: string;
@@ -209,8 +169,7 @@ export type IdMatchKind =
       readonly kind: "context_hint_ignored";
       readonly requestedHint: string | null;
       readonly matchedHint: string | null;
-    }
-  | { readonly kind: "retired_id_mapped"; readonly retiredId: string };
+    };
 
 export interface AdvertisedMatch {
   readonly valueId: string;
@@ -264,27 +223,12 @@ export function matchAdvertisedId(
   };
 }
 
-/**
- * As `matchAdvertisedId`, plus one last resort for models: an id the vendor
- * has retired in favour of the alias that replaced it.
- *
- * Deliberately last. The map is consulted only once a requested id matches
- * nothing advertised, so it can never shadow a live id — including the
- * generation-pinned ones the agent still offers beside its aliases. Effort and
- * mode ids have no retirement history and do not come through here.
- */
+/** Match the configured model against the agent's advertised vocabulary. */
 export function matchAdvertisedModel(
   requested: string,
   candidates: readonly AdvertisedOption[],
 ): AdvertisedMatch | null {
-  const direct = matchAdvertisedId(requested, candidates);
-  if (direct) return direct;
-  const retiredId = requested.trim();
-  const replacement = RETIRED_MODEL_IDS[withoutContextHint(retiredId.toLowerCase())];
-  if (replacement === undefined) return null;
-  const mapped = matchAdvertisedId(replacement, candidates);
-  if (!mapped) return null;
-  return { valueId: mapped.valueId, match: { kind: "retired_id_mapped", retiredId } };
+  return matchAdvertisedId(requested, candidates);
 }
 
 /**

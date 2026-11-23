@@ -45,6 +45,7 @@ import { ItemPanel } from "./ItemPanel";
 import { RunGradingSection } from "./RunGradingSection";
 import { RunUsagePanel } from "./RunUsagePanel";
 import { TaskPanel } from "./TaskPanel";
+import { OperatorActionsHistory } from "../molecules/OperatorActionsHistory";
 import { RunOverviewPane } from "../molecules/RunOverviewPane";
 import { RunSessionPane } from "./RunSessionPane";
 import { RunWorkspaceSidebar } from "../molecules/RunWorkspaceSidebar";
@@ -154,7 +155,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   });
   const sidebarArtifacts = selectRunArtifacts(run);
   const activity: RunActivityRead = activityQuery.data !== undefined
-    ? { kind: "loaded", items: selectRunActivity(activityQuery.data, runId) }
+    ? { kind: "loaded", items: selectRunActivity(activityQuery.data.events, runId), dispositions: activityQuery.data.dispositions }
     : activityQuery.isError && !activityQuery.isPending
       ? { kind: "unavailable" }
       : { kind: "pending" };
@@ -275,6 +276,10 @@ function PaneBody({ stage, pane, runId, overview, units, activity, onRunDeleted,
       return <ArtifactReview key={`${pane.artifact_id}:${pane.revision_id ?? "latest"}`} artifactId={pane.artifact_id} revisionId={pane.revision_id} onOpenItem={openItem} onOpenTask={openTask} />;
     case "grading":
       return <RunGradingSection runId={runId} onOpenItem={openItem} onOpenTask={openTask} />;
+    case "operator_actions":
+      if (activity.kind === "pending") return <p role="status">Loading operator actions…</p>;
+      if (activity.kind === "unavailable") return <p role="alert">Operator actions are unavailable.</p>;
+      return <OperatorActionsHistory facts={activity.dispositions ?? []} />;
     case "usage":
       return <RunUsagePanel runId={runId} />;
     case "item":

@@ -61,6 +61,8 @@ export interface ObservationLogicalItemComposite {
   readonly run_id: ObservationRunId;
   readonly logical_item_id: ObservationLogicalItemId;
   readonly scope: string;
+  readonly task_kind: string | null;
+  readonly repositories: readonly ObservationApplicableRepository[];
   readonly producer_local_id: string;
   readonly coverage: "linked" | "gap";
   readonly stages: readonly ObservationStageComposite[];
@@ -88,6 +90,7 @@ export interface ObservationCompositeRelation {
   readonly type: ObservationRelationType;
   readonly asserted_by: string;
   readonly evidence_ref: string;
+  readonly qualifier?: ObservationJsonValue;
 }
 
 export type ObservationSubjectScope = { readonly kind: "per_task"; readonly task_id: ObservationLogicalItemId } | { readonly kind: "per_item" };
@@ -132,6 +135,12 @@ export type ObservationItemStatusKey =
   | { readonly state: "pending" }
   | { readonly state: "budget_deferred" }
   | { readonly state: "failed"; readonly terminal_cause: ObservationExecutionTerminalCause | null };
+
+export interface ObservationApplicableRepository {
+  readonly repository_key: string;
+  /** Oldest to newest by assessment publication time. */
+  readonly judgments: readonly ObservationRepositoryJudgment[];
+}
 
 export type ObservationStagePublication =
   | { readonly state: "pending" }
@@ -178,4 +187,9 @@ export interface ObservationCompositeAnswer {
   readonly rationale: string | null;
   readonly comments: string | null;
   readonly recorded_at: string;
+}
+
+export interface ObservationRepositoryJudgment {
+  readonly assessment_revision_id: ObservationArtifactRevisionId;
+  readonly status: "met" | "partial" | "not_met";
 }

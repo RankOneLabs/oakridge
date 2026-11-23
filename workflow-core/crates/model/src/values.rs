@@ -73,7 +73,7 @@ pub enum Event {
         subject: Option<RevisionId>,
         /// The attempt that published it; None only for an operator's edit
         /// (`Writer::Operator`), which no attempt produced.
-        by: Option<ActionKey>,
+        by: Option<PublishingAttempt>,
     },
     OperatorDecided {
         unit: UnitId,
@@ -110,6 +110,14 @@ pub enum Mode {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Cause {
+    AssignmentRound {
+        round: AssignmentRoundId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry: Option<EventId>,
+    },
+    Reassessment {
+        round: AssignmentRoundId,
+    },
     Missing,
     ChangesRequested {
         decision: DecisionId,
@@ -187,12 +195,13 @@ pub struct RevisionState {
     pub predecessor: Option<RevisionId>,
     pub subject: Option<RevisionId>,
     /// None for an operator's edit.
-    pub by: Option<ActionKey>,
+    pub by: Option<PublishingAttempt>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DecisionEffect {
+    Dispatch { rounds: Vec<RoundRequest> },
     Approve,
     RequestChanges { feedback: String },
 }
@@ -257,6 +266,29 @@ impl DecisionState {
             }
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PublishingAttempt {
+    pub action: ActionKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
+    pub seq: u32,
+}
+
+impl PublishingAttempt {
+    pub fn matches(&self, attempt: &AttemptState) -> bool {
+        self.action == attempt.action_id && self.seq == attempt.seq
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InputBinding {
+    pub input: SymbolKey,
+    pub unit: UnitId,
+    pub revision_id: RevisionId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -342,6 +374,10 @@ pub struct StepSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StepResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_label: Option<RunLabel>,
+    #[serde(default)]
+    pub publication_bindings: Option<Vec<InputBinding>>,
     pub snapshot: StepSnapshot,
     pub wanted: Vec<crate::protocol::WantedWorker>,
     /// Each operator review awaiting a decision, with its `inputs` evaluated
@@ -349,6 +385,13 @@ pub struct StepResult {
     pub reviews: Vec<ResolvedReview>,
     /// Units unable to start, emitted from the stepped snapshot for read projections.
     pub blocked: Vec<UnitBlock>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunLabel {
+    pub title: String,
+    pub repositories: Vec<String>,
 }
 
 /// An operator review a decision is legal on now (part 1 §5.2: the latest
@@ -403,11 +446,15 @@ pub struct FeedbackEntry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedRunWorker {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyed_execution: Option<KeyedExecutionWant>,
     pub prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub review_history: Vec<FeedbackEntry>,
     #[serde(default)]
     pub input_provenance: Option<Vec<InputProvenance>>,
+    #[serde(default)]
+    pub input_bindings: Vec<InputBinding>,
     pub action_id: ActionKey,
     #[serde(with = "crate::wire_numbers::json")]
     #[schemars(with = "Value")]
@@ -418,6 +465,12 @@ pub struct ResolvedRunWorker {
     #[serde(with = "crate::wire_numbers::optional_json")]
     #[schemars(with = "Option<Value>")]
     pub workspace: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct KeyedExecutionWant {
+    pub authorizing_revision: RevisionId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -483,6 +536,7 @@ mod engine_serde_tests {
         assert!(resolved.review_history.is_empty());
         assert!(resolved.prompt.is_none());
         wire["prompt"] = serde_json::Value::Null;
+        wire["input_bindings"] = serde_json::json!([]);
         assert_eq!(serde_json::to_value(resolved).unwrap(), wire);
     }
 

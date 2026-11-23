@@ -3,11 +3,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 /// Bumped whenever the request or response shape changes. v6 adds the parsed
 /// workflow to the compile response for tagged-type read projections.
-/// v8 carries decision adjudication roles and review assessment in the source
-/// and projected workflow.
 /// v9 adds the resolved agent prompt path to a wanted worker and agent
 /// prompts to the checked worker.
-pub const PROTOCOL_VERSION: u32 = 9;
+/// v10 introduces the assessment contracts and assignment rounds.
+/// v11 records exact publishing attempts and resolved revision bindings.
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// One wanted worker and the identity of the attempt that runs it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -76,7 +76,7 @@ pub enum Operation {
     Step {
         workflow_digest: BundleDigest,
         snapshot: Box<StepSnapshot>,
-        incoming: Incoming,
+        incoming: Box<Incoming>,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -88,8 +88,14 @@ pub enum Output {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompiledWorkflow {
+    pub assessments: std::collections::BTreeMap<
+        SymbolKey,
+        std::collections::BTreeMap<SymbolKey, AssessmentEmbeddings>,
+    >,
     pub digest: BundleDigest,
     pub stages: Vec<SymbolKey>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub unit_dependencies: std::collections::BTreeMap<String, Vec<SymbolKey>>,
     /// The parsed source returned with its tagged types for read projections.
     pub workflow: Box<Workflow>,
 }

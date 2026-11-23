@@ -92,7 +92,7 @@ export const hasOpenPullRequestMergeWait = ({
     && item.run_id === runId
     && item.stage_instance_id === stageInstanceId
     && item.unit_id === unitId
-    && item.resume_actions.includes("confirm_merged"));
+    && item.resume_actions.length > 0);
 
 /**
  * The units where the run is waiting on a person. A gate that is no longer
@@ -108,6 +108,12 @@ export const selectUnitsAwaitingAction = (
   }
   return keys;
 };
+
+function sessionHostsGate({ attempt, is_current }: RunSessionRow, gates: readonly ParkedGate[]): boolean {
+  const unit = unitActionKeyOf(attempt.stage_key, attempt.unit_id);
+  return gates.some((gate) => gate.actionable && unitActionKeyOf(gate.stage_name, gate.unit_id) === unit
+    && (gate.session_id === undefined ? is_current : gate.session_id === attempt.session_id));
+}
 
 /** "attempt 2 of 3" for a retried unit, "attempt 1" for one that ran once. */
 export const formatAttemptLabel = (row: RunSessionRow): string =>
@@ -140,6 +146,7 @@ export interface RunOverviewGate {
 export interface RunArtifactRef {
   readonly artifact_id: ArtifactId;
   readonly type_id: string;
+  readonly artifact_kind?: import("../operator-contracts/core-client/core-types").OperatorArtifactKind;
   readonly version: number;
   readonly stage_name: string;
   /** The fan-out unit this artifact belongs to, when the stage fanned out. */
@@ -155,7 +162,7 @@ export const selectRunArtifacts = (run: RunDetail): readonly RunArtifactRef[] =>
     for (const artifact of stage.artifacts) {
       artifacts.push({
         artifact_id: artifact.id as ArtifactId,
-        type_id: artifact.type_id,
+        type_id: artifact.type_id, artifact_kind: artifact.artifact_kind,
         version: artifact.version,
         stage_name: stage.name,
         label: artifact.label ?? null,
@@ -252,8 +259,7 @@ export const selectRunSidebarSessions = ({
   purgedSessionIds,
   archivedSessionIds,
 }: RunSidebarSessionsInput): RunSidebarSessionsView => {
-  const awaitingAction =
-    gates.kind === "loaded" ? selectUnitsAwaitingAction(gates.gates) : null;
+  const awaitingAction = gates.kind === "loaded" ? gates.gates : null;
   return {
     is_action_state_known: awaitingAction !== null,
     is_session_list_known: sessions.kind === "loaded",
@@ -270,9 +276,7 @@ export const selectRunSidebarSessions = ({
         is_current: row.is_current,
         is_archived: archivedSessionIds.has(row.attempt.session_id),
         requires_operator_action:
-          row.is_current &&
-          awaitingAction !== null &&
-          awaitingAction.has(unitActionKeyOf(row.attempt.stage_key, row.attempt.unit_id)),
+          awaitingAction !== null && sessionHostsGate(row, awaitingAction),
       })),
   };
 };
@@ -394,7 +398,6 @@ const selectOverviewGates = (
 ): RunOverviewGates => {
   // `pending` and `unavailable` carry no payload, so the read *is* the answer.
   if (read.kind !== "loaded") return read;
-  const awaitingAction = selectUnitsAwaitingAction(read.gates);
   return {
     kind: "known",
     active: read.gates
@@ -406,12 +409,7 @@ const selectOverviewGates = (
         unit_id: gate.unit_id,
         resume_actions: gate.resume_actions,
       })),
-    sessions_awaiting_action: rows
-      .filter(
-        (row) =>
-          row.is_current &&
-          awaitingAction.has(unitActionKeyOf(row.attempt.stage_key, row.attempt.unit_id)),
-      )
+    sessions_awaiting_action: rows.filter((row) => sessionHostsGate(row, read.gates))
       .map(toSessionRef),
   };
 };

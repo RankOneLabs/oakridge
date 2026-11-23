@@ -469,3 +469,47 @@ fn a_worker_declaring_the_removed_review_grant_is_a_located_compile_fault() {
     assert_eq!(errors[0].check, workflow_compiler::CheckKind::Schema);
     assert!(errors[0].detail.contains("gated_review"), "{errors:?}");
 }
+
+#[test]
+fn engine_names_are_reserved_in_all_stage_namespaces() {
+    use serde_json::json;
+    for name in [
+        BLOCKER_ARTIFACT,
+        BLOCKER_REVIEW,
+        VALIDATION_REVIEW,
+        ROOT_DECLARATION,
+    ] {
+        for namespace in ["stages", "artifacts", "reviews", "workers"] {
+            let mut raw = json!({
+                "workflow":"reserved", "input":{}, "run":{"units":{"a":{"stage":"work"}},"outcome":{}},
+                "stages":{"work":{"input":{}, "outcome":{}, "done_when":"approved(result)",
+                    "artifacts":{"result":{"kind":"record","schema":"text"}},
+                    "workers":{"build":{"kind":"agent","inputs":{},"prompts":{"initial":"p","revise":"p"},"produces":["result"]}},
+                    "reviews":{"review":{"by":"operator","of":"result","prompt":"p","decisions":{"ok":{"label":"OK","effect":"approve"}}}}
+                }}
+            });
+            if namespace == "stages" {
+                raw["stages"][name] = raw["stages"]["work"].clone();
+            } else {
+                let members = raw["stages"]["work"][namespace].as_object_mut().unwrap();
+                members.insert(name.to_owned(), members.values().next().unwrap().clone());
+            }
+            // The decoder can reject names that are outside the authored key grammar.
+            let result =
+                workflow_compiler::decode_workflow_value_detailed(raw).and_then(|workflow| {
+                    workflow_compiler::compile_workflow_detailed(
+                        &workflow,
+                        &[],
+                        &BTreeMap::from([("p".into(), String::new())]),
+                    )
+                });
+            let errors = result.unwrap_err();
+            assert!(
+                errors
+                    .iter()
+                    .any(|e| e.detail.contains(name) || e.path.0.contains(name)),
+                "{name} in {namespace}: {errors:?}"
+            );
+        }
+    }
+}

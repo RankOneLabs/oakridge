@@ -304,11 +304,20 @@ pub struct FieldExpression {
 #[serde(deny_unknown_fields)]
 pub struct Workflow {
     pub workflow: SymbolKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<WorkflowLabel>,
     pub input: TypeExpression,
     #[serde(default)]
     pub schemas: BTreeMap<String, TypeExpression>,
     pub run: Group,
     pub stages: BTreeMap<String, Stage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowLabel {
+    pub title: String,
+    pub repositories: String,
 }
 
 /// The authoring surface before reusable declarations are expanded into a
@@ -317,6 +326,8 @@ pub struct Workflow {
 #[serde(deny_unknown_fields)]
 pub struct AuthoredWorkflow {
     pub workflow: SymbolKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<WorkflowLabel>,
     pub input: TypeExpression,
     #[serde(default)]
     pub schemas: BTreeMap<String, TypeExpression>,
@@ -365,6 +376,10 @@ pub struct AuthoredReviewDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assessment: Option<SymbolKey>,
     pub by: ReviewBy,
+    #[serde(default, skip_serializing_if = "ReviewWait::is_operator")]
+    pub wait: ReviewWait,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirms: Option<ReviewConfirms>,
     pub prompt: Option<String>,
     #[serde(default)]
     pub inputs: BTreeMap<String, String>,
@@ -382,6 +397,7 @@ pub enum AuthoredDecisions {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerOverrides {
+    pub label: Option<String>,
     pub inputs: Option<BTreeMap<String, String>>,
     pub when: Option<String>,
     pub every: Option<String>,
@@ -407,10 +423,8 @@ pub struct WorkerUse {
 pub struct DecisionOverrides {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<DecisionGuard>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feedback_field: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub adjudication: Option<AdjudicationRole>,
+    #[serde(default, skip_serializing_if = "DecisionOperation::is_plain")]
+    pub operation: DecisionOperation,
     pub label: Option<String>,
     pub on: Option<SymbolKey>,
     pub fields: Option<BTreeMap<String, String>>,
@@ -431,6 +445,8 @@ pub struct DecisionSetUse {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewOverrides {
+    pub wait: Option<ReviewWait>,
+    pub confirms: Option<ReviewConfirms>,
     pub of: Option<SymbolKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assessment: Option<SymbolKey>,
@@ -806,11 +822,20 @@ pub struct Stage {
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
     pub kind: ArtifactKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
+    /// Text field in an external reference that holds its link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_field: Option<SymbolKey>,
     pub schema: TypeExpression,
     #[serde(default, skip_serializing_if = "EditPolicy::is_always")]
     pub edit_policy: EditPolicy,
     #[serde(default)]
     pub validate: Vec<ValidationCheck>,
+    /// Named fields of the reviewed subject that keep decisions applicable
+    /// across equivalent revisions. Array fields compare as sets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub equivalent_subject_fields: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -848,10 +873,14 @@ pub struct ValidationCheck {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Worker {
     Agent {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
         prompts: Prompts,
         inputs: BTreeMap<String, String>,
         produces: Vec<SymbolKey>,
         evaluates: Option<SymbolKey>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keyed_execution: bool,
         runtime: Option<WorkerRuntime>,
         workspace: Option<String>,
         session: Option<SessionMode>,
@@ -860,6 +889,10 @@ pub enum Worker {
         when: Option<String>,
     },
     Code {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keyed_execution: bool,
         operation: SymbolKey,
         inputs: BTreeMap<String, String>,
         produces: Vec<SymbolKey>,
@@ -925,6 +958,10 @@ pub struct Review {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assessment: Option<SymbolKey>,
     pub by: ReviewBy,
+    #[serde(default, skip_serializing_if = "ReviewWait::is_operator")]
+    pub wait: ReviewWait,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirms: Option<ReviewConfirms>,
     pub prompt: Option<String>,
     #[serde(default)]
     pub inputs: BTreeMap<String, String>,
@@ -942,15 +979,33 @@ pub enum ReviewBy {
     Engine,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewWait {
+    #[default]
+    Operator,
+    External,
+}
+
+impl ReviewWait {
+    pub fn is_operator(&self) -> bool {
+        *self == Self::Operator
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewConfirms {
+    Merge,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewDecision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<DecisionGuard>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feedback_field: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub adjudication: Option<AdjudicationRole>,
+    #[serde(default, skip_serializing_if = "DecisionOperation::is_plain")]
+    pub operation: DecisionOperation,
     pub effect: DeclaredDecisionEffect,
     pub on: Option<SymbolKey>,
     pub label: String,
@@ -968,12 +1023,22 @@ pub enum DeclaredDecisionEffect {
     RequestChanges,
 }
 
-/// A decision's adjudication role. An absent role means a plain decision.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
-pub enum AdjudicationRole {
-    Accept,
-    Feedback,
+pub enum DecisionOperation {
+    ApproveAssessment,
+    DispatchFeedback,
+    DirectCorrection,
+    #[default]
+    Plain,
+}
+
+impl DecisionOperation {
+    pub fn is_plain(&self) -> bool {
+        *self == Self::Plain
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -1027,6 +1092,8 @@ pub fn blocker_review() -> Review {
         of: SymbolKey::from(BLOCKER_ARTIFACT),
         assessment: None,
         by: ReviewBy::Operator,
+        wait: ReviewWait::Operator,
+        confirms: None,
         prompt: None,
         inputs: BTreeMap::new(),
         when: None,
@@ -1041,13 +1108,12 @@ pub fn blocker_review() -> Review {
                 key.into(),
                 ReviewDecision {
                     effect: DeclaredDecisionEffect::RequestChanges,
-                    adjudication: None,
+                    operation: DecisionOperation::Plain,
                     on: Some(SymbolKey::from(BLOCKER_ARTIFACT)),
                     label: label.into(),
                     payload: Some(blocker_answer_schema()),
                     fields: BTreeMap::from([("answer".into(), "Answer".into())]),
                     feedback: None,
-                    feedback_field: Some("answer".into()),
                     when: None,
                 },
             )

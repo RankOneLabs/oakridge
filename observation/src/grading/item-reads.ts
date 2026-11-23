@@ -24,7 +24,7 @@ export type LogicalLinkRead =
   | { readonly state: "resolved"; readonly producer_local_id: string; readonly logical_item_id: LogicalItemId; readonly relation_id: RelationId; readonly evidence_ref: string }
   | { readonly state: "unresolved"; readonly producer_local_id: string; readonly unresolved_target_ref: string; readonly relation_id: RelationId; readonly evidence_ref: string };
 
-const SCOPED_REFERENCE = /^logical_item:[^:]*:(?<id>.+)$/;
+const SCOPED_REFERENCE = /^logical_item:(?:task:[^:]+:|[^:]+:)(?<id>.+)$/;
 export function logicalLinks(relations: readonly CompositeRelation[], logical_items: readonly CompositeLogicalItem[]): readonly LogicalLinkRead[] {
   const byId = new Map(logical_items.map((item) => [item.logical_item_id, item]));
   return relations.flatMap((relation): readonly LogicalLinkRead[] => {

@@ -201,6 +201,13 @@ pub fn generate() -> String {
             }
         }
     }
+    let assessment_schema = serde_json::to_value(schema_for!(workflow_model::AssessmentContracts))
+        .expect("assessment schema is JSON");
+    if let Some(items) = assessment_schema["$defs"].as_object() {
+        for (name, schema) in items {
+            definitions.entry(name).or_insert(schema);
+        }
+    }
     let mut output = format!("// Generated from workflow-model::protocol. Run scripts/generate-core-contracts.sh.\nexport const CORE_PROTOCOL_SCHEMA = {} as const;\n", schemas);
     output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_DEPTH = {MAX_DEPTH_CEILING};\nexport const ROOT_DECLARATION = {ROOT_DECLARATION:?};\nexport const VALIDATION_REVIEW = {VALIDATION_REVIEW:?};\n"));
     output.push_str(&format!("export const BLOCKER_ARTIFACT = {:?};\nexport const BLOCKER_REVIEW = {:?};\nexport const BLOCKER_SCHEMA: TypeExpression = {:?};\n",
@@ -209,6 +216,15 @@ pub fn generate() -> String {
         "export const BLOCKER_REVIEW_PROMPT = {:?};\n",
         workflow_model::BLOCKER_REVIEW_PROMPT
     ));
+    for (name, definition) in [
+        ("DECISION_OPERATIONS", "DecisionOperation"),
+        ("DECISION_EFFECTS", "DeclaredDecisionEffect"),
+    ] {
+        let variants = schemas["request"]["$defs"][definition]
+            .get("enum")
+            .expect("decision enum");
+        output.push_str(&format!("export const {name} = {variants} as const;\n"));
+    }
     let reserved_schemas: BTreeMap<_, _> = workflow_model::reserved_artifact_schemas()
         .into_iter()
         .map(|(key, schema)| (key, schema.to_string()))
@@ -216,6 +232,14 @@ pub fn generate() -> String {
     output.push_str(&format!(
         "export const RESERVED_ARTIFACT_SCHEMAS: {{ readonly [key: string]: TypeExpression | undefined }} = {};\n",
         serde_json::to_string(&reserved_schemas).expect("reserved schemas serialize")
+    ));
+    let assessment_schemas: BTreeMap<_, _> = workflow_model::core_schemas()
+        .into_iter()
+        .map(|(key, schema)| (key, schema.to_string()))
+        .collect();
+    output.push_str(&format!(
+        "export const CORE_ASSESSMENT_SCHEMAS: {{ readonly [key: string]: TypeExpression | undefined }} = {};\n",
+        serde_json::to_string(&assessment_schemas).expect("assessment schemas serialize")
     ));
     for (name, schema) in [
         ("BlockerBody", workflow_model::blocker_schema()),

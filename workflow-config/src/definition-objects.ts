@@ -23,6 +23,7 @@ export interface CommittedDefinition {
   readonly prompt_sources?: PromptReferences;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
+  readonly worker_names?: Readonly<Record<string, readonly string[]>>;
 }
 
 export interface ResolvedDefinition {
@@ -34,10 +35,11 @@ export interface ResolvedDefinition {
   readonly operations: OperationRegistry;
   readonly schema_names: readonly string[];
   readonly stage_names: readonly string[];
+  readonly worker_names?: Readonly<Record<string, readonly string[]>>;
 }
 
 export type DefinitionInputs = Pick<CommittedDefinition, "source" | "operation_registry_id" | "prompts" | "prompt_sources">;
-export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names">;
+export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names" | "worker_names">;
 
 /** Order must come from YAML mapping nodes, before toJS() reorders integer-like keys. */
 export function commitDefinition(inputs: DefinitionInputs, order: DefinitionOrder): CommittedDefinition {

@@ -6,10 +6,10 @@
  */
 export type { RunPage, RunView, RunSummary, RunUnitSummary, RunInspectView, InspectAttention } from "../projections/run-view";
 export type { DefinitionPage, DefinitionSummary, DefinitionDetail, PinnedDefinition } from "../projections/definition-view";
-export type { UnitView } from "../projections/unit-view";
+export type { UnitView, OpenReview, OpenReviewDecision, ProjectedWorker, RevisionDecision } from "../projections/unit-view";
 export type { InboxItem, InboxPage, RunInboxBatch, RunInboxBatchEntry } from "../projections/inbox";
 export type { ArtifactDetail, ArtifactRevisionStatus } from "../projections/artifact-view";
-export type { UnitHistory, UnitDiagnostics } from "../projections/history-view";
+export type { EventHistory, UnitHistory, UnitDiagnostics } from "../projections/history-view";
 export type { CollaborationThreadView } from "../projections/collaboration-view";
 export type { ProjectDraft, ProjectList, ProjectView } from "./projects";
 export type { RunEvent } from "../projections/run-event";
@@ -24,4 +24,8 @@ export type { PromptVersionView, PromptVersionListing, PromptValidationOutcome, 
 
 export type { RunUsage } from "../domain/usage";
 
-export type { AssessmentBody } from "../domain/assessment";
+export type { AssessmentRead } from "../projections/assessment-status";
+export type { AssessmentStatus, FeedbackProposal } from "../core-client/core-types";
+export type { DecideAssessmentRequest, AuthorizeFeedbackRequest, CreateFeedbackRequest, AuthorizationResponse, CreateFeedbackResponse } from "./ingress";
+
+export type { ReconcileExecutionRequest } from "../domain/keyed-execution";

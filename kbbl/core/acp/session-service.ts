@@ -111,11 +111,13 @@ export class AcpSessionService {
     return this.deps.store.subscribeSessionsChanged(listener);
   }
 
-  listProfiles(): Array<{ id: string; label: string; enabled: boolean }> {
+  listProfiles(): Array<Pick<import("./agent-profile").AgentProfile, "id" | "label" | "enabled" | "models" | "default_model">> {
     return [...this.deps.profiles.values()].map((profile) => ({
       id: profile.id,
       label: profile.label,
       enabled: profile.enabled,
+      models: profile.models,
+      default_model: profile.default_model,
     }));
   }
 

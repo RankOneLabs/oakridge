@@ -1,50 +1,30 @@
-import { BLOCKER_REVIEW } from "../operator-contracts/blocker";
+import { BLOCKER_REVIEW } from "../operator-contracts/constants";
 import { selectUnitRequirementIds } from "../lib/unit-requirements";
 import { selectReviewValidationRejection } from "../lib/validation-rejection";
-import type { OperatorBodyValue, OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
+import type { OperatorBodyValue, OperatorDecisionDefinition, OperatorOpenReview, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { ParkedGate, SentReviewFeedback } from "../artifact-types";
-import { artifactRevisionId, compositeId, developmentPullRequestUrl, ok, type AdapterResult } from "./core";
+import { artifactRevisionId, compositeId, selectReviewPullRequestUrl, ok, type AdapterResult } from "./core";
 
 export interface GateDecision { readonly action: string; readonly decision: OperatorDecisionDefinition }
-/** Approve-effect keys the frozen gate UI labels and styles as primary; any other key would render as its raw text. */
-const V1_APPROVE_ACTIONS: ReadonlySet<string> = new Set(["approve", "confirm_merged", "pass"]);
-/** Whether a decision records an operator adjudication, which only the assessment view can compose. */
 export const isAdjudicationDecision = (decision: OperatorDecisionDefinition): boolean =>
-  decision.submit.kind === "review" && decision.adjudication != null;
-export const isDisplayedReviewDecision = (decision: OperatorDecisionDefinition): boolean =>
-  !isAdjudicationDecision(decision);
-/** True when the decision's review offers more than one request-changes decision, so the shared request_revision action would be ambiguous. */
-const hasSiblingChangeRequests = (review: string, offered: readonly OperatorDecisionDefinition[]): boolean =>
-  offered.filter((candidate) => candidate.submit.kind === "review"
-    && candidate.submit.review === review && candidate.submit.effect === "request_changes").length > 1;
-/** The UI action for a decision. `offered` is the unit's or gate's decision list, so a review with several request-changes decisions keeps each one's key. */
-export const decisionAction = (decision: OperatorDecisionDefinition, offered: readonly OperatorDecisionDefinition[]): string => {
-  if (decision.submit.kind === "retry") return "rerun";
-  if (decision.submit.kind === "cancel") return "fail";
-  if (decision.submit.review === BLOCKER_REVIEW
-      || decision.submit.effect === "request_changes" && hasSiblingChangeRequests(decision.submit.review, offered))
-    return decision.submit.decision;
-  if (decision.submit.effect === "request_changes") return "request_revision";
-  return V1_APPROVE_ACTIONS.has(decision.submit.decision) ? decision.submit.decision : "approve";
-};
+  decision.submit.kind === "review" && decision.operation !== undefined && decision.operation !== "plain";
+export const isDisplayedReviewDecision = (decision: OperatorDecisionDefinition): boolean => !isAdjudicationDecision(decision);
+export const decisionAction = (decision: OperatorDecisionDefinition, _offered?: readonly OperatorDecisionDefinition[]): string =>
+  decision.submit.kind === "review" ? decision.submit.decision : decision.key;
 export const reviewDecisions = (unit: OperatorUnitView): GateDecision[] => unit.decisions
-  .filter((decision) => decision.submit.kind === "review"
-    && isDisplayedReviewDecision(decision))
-  .map((decision) => ({ action: decisionAction(decision, unit.decisions), decision }));
+  .filter((decision) => decision.submit.kind === "review" && isDisplayedReviewDecision(decision))
+  .map((decision) => ({ action: decisionAction(decision), decision }));
 export const selectGateDecision = (gate: ParkedGate, action: string | null): OperatorDecisionDefinition | null =>
-  gate.decision_definitions?.find((decision) => isDisplayedReviewDecision(decision) && decisionAction(decision, gate.decision_definitions ?? []) === action) ?? null;
-/** The frozen sidebar matches gates to sessions by stage and unit label. The
- * development cohort runs builder and assessor in separate sessions on one
- * v2 unit, so its reviews must use the session that owns the operator handoff. */
-const developmentReviewSession = (unit: OperatorUnitView, review: string): { readonly stage: string; readonly unit: string } => {
-  if (unit.stage === "cohort" && review === "assessment_review")
-    return { stage: "assessment", unit: unit.collection_key ?? unit.unit_key };
-  if (unit.stage === "cohort" && (review === "merge_confirmation" || review === "pr_closed"))
-    return { stage: "builder", unit: unit.collection_key ?? unit.unit_key };
-  if (unit.stage === "brief" && review === "brief_review")
-    return { stage: "brief", unit: "shared writer" };
-  return { stage: unit.stage ?? unit.label, unit: unit.collection_key ?? unit.unit_key };
-};
+  gate.decision_definitions?.find((decision) => isDisplayedReviewDecision(decision) && decisionAction(decision) === action) ?? null;
+export const selectMergeReview = (unit: OperatorUnitView): OperatorOpenReview | null =>
+  unit.reviews?.find((review) => review.confirms === "merge") ?? null;
+export const selectMergeDecision = (unit: OperatorUnitView): OperatorOpenReview["decisions"][number] | null =>
+  selectMergeReview(unit)?.decisions.find((decision) => decision.effect === "approve") ?? null;
+
+export function selectReviewSession(unit: OperatorUnitView, review: OperatorOpenReview): string | null {
+  return [...unit.attempts].reverse().find((attempt) => review.producer_workers.includes(attempt.worker))?.kbbl_session_id ?? null;
+}
+
 export function selectAssessmentRevisionId(unit: OperatorUnitView, decisions: readonly OperatorDecisionDefinition[]): string | null {
   const key = decisions.find(isAdjudicationDecision)?.assessment;
   const artifact = unit.artifacts.find((candidate) => candidate.artifact_key === key);
@@ -52,36 +32,29 @@ export function selectAssessmentRevisionId(unit: OperatorUnitView, decisions: re
 }
 
 export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[]> {
-  const byReview = new Map<string, OperatorDecisionDefinition[]>();
-  for (const decision of unit.decisions) {
-    if (decision.submit.kind !== "review") continue;
-    byReview.set(decision.submit.review, [...(byReview.get(decision.submit.review) ?? []), decision]);
-  }
-  return ok([...byReview].map(([review, decisions]) => {
-    const session = developmentReviewSession(unit, review);
-    const target = decisions[0].submit;
-    const artifact = target.kind === "review" ? unit.artifacts.find((candidate) => candidate.latest_revision?.id === target.target_revision_id) : null;
+  return ok((unit.reviews ?? []).map((review) => {
+    const decisions = unit.decisions.filter((decision) => decision.submit.kind === "review" && decision.submit.review === review.review);
+    const artifact = unit.artifacts.find((candidate) => candidate.artifact_key === review.of_artifact);
     const id = compositeId({ kind: "gate", runId: unit.run_id, unitId: unit.unit_id,
-      name: `${review}:${target.kind === "review" ? target.target_revision_id : "unknown"}` });
-    return { id, requires_adjudication: decisions.some(isAdjudicationDecision), validation_rejection: selectReviewValidationRejection(unit.recorded_decisions, decisions), blocker: review === BLOCKER_REVIEW && unit.blocker?.is_open ? unit.blocker : null,
-      requirement_ids: selectUnitRequirementIds(unit), gate_type: review.includes("merge") ? "merge_confirmation" : artifact ? "artifact_approval" : "gate_decision",
-      gate_step: review, run_id: unit.run_id, stage_name: session.stage, unit_id: session.unit,
-      artifact_revision_id: target.kind === "review"
-        ? artifact ? artifactRevisionId(artifact, target.target_revision_id) : target.target_revision_id
-        : null,
+      name: JSON.stringify([review.review, review.reviewed_revision_id]) });
+    return { id, requires_adjudication: decisions.some(isAdjudicationDecision), validation_rejection: selectReviewValidationRejection(unit.recorded_decisions, decisions),
+      blocker: review.review === BLOCKER_REVIEW && unit.blocker?.is_open ? unit.blocker : null,
+      requirement_ids: selectUnitRequirementIds(unit), gate_type: review.confirms === "merge" ? "merge" : artifact ? "artifact_approval" : "gate_decision",
+      gate_step: review.review, reviewed_revision_id: review.reviewed_revision_id, session_id: selectReviewSession(unit, review),
+      producer_labels: review.producer_workers.map((key) => unit.workers?.find((worker) => worker.key === key)?.label ?? key),
+      run_id: unit.run_id, stage_name: unit.stage ?? unit.label, unit_id: unit.collection_key ?? unit.unit_key,
+      artifact_revision_id: artifact ? artifactRevisionId(artifact, review.reviewed_revision_id) : review.reviewed_revision_id,
       assessment_revision_id: selectAssessmentRevisionId(unit, decisions),
-      worktree: null, offered_decisions: decisions.map((decision) => decision.submit.kind === "review" ? decision.submit.decision : ""),
-      decision_definitions: decisions,
-      resume_actions: [...new Set(decisions.filter((decision) => decision.submit.kind === "review"
-        && isDisplayedReviewDecision(decision)).map((decision) => decisionAction(decision, decisions)))],
-      pr_url: review === "merge_confirmation" ? developmentPullRequestUrl(unit) : null,
+      worktree: null, offered_decisions: review.decisions.map((decision) => decision.key),
+      decision_definitions: decisions, resume_actions: decisions.filter(isDisplayedReviewDecision).map((decision) => decisionAction(decision)),
+      pr_url: selectReviewPullRequestUrl(unit, review),
       run_state: unit.status.kind === "done" ? "succeeded" : unit.status.kind === "cancelled" ? "cancelled" : "active", actionable: true };
   }));
 }
 
 const feedbackOf = (payload: OperatorBodyValue): string | null => {
   if (typeof payload !== "object" || payload === null) return null;
-  const feedback = "rework_feedback" in payload ? payload.rework_feedback : "feedback" in payload ? payload.feedback : null;
+  const feedback = "feedback" in payload ? payload.feedback : null;
   return typeof feedback === "string" && feedback.trim() ? feedback : null;
 };
 /** Changes requested on a revision that is still its artifact's latest: sent, and not yet answered by a new revision. */
@@ -92,9 +65,8 @@ export function sentReviewFeedback(unit: OperatorUnitView): SentReviewFeedback[]
   return [...latestByTarget.values()]
     .filter((decision) => decision.effect === "request_changes" && latestRevisionIds.has(decision.target_revision_id))
     .map((decision) => {
-      const session = developmentReviewSession(unit, decision.review);
       return { id: decision.id, target_revision_id: decision.target_revision_id,
-        run_id: unit.run_id, stage_name: session.stage, unit_id: session.unit, review: decision.review,
+        run_id: unit.run_id, stage_name: unit.stage ?? unit.label, unit_id: unit.collection_key ?? unit.unit_key, review: decision.review,
         decision: decision.decision, feedback: feedbackOf(decision.payload), sent_at: decision.created_at };
     });
 }

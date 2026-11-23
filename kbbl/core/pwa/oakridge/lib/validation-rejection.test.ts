@@ -3,9 +3,9 @@ import type { OperatorDecisionDefinition, OperatorRevisionDecision } from "../op
 import { selectReviewValidationRejection } from "./validation-rejection";
 
 const MESSAGE = "Assessment verdict must match item statuses and additional finding severities.";
-const rejection = (target: string) => ({ id: "v1", review: "engine:validator", decision: "request_changes", effect: "request_changes", target_revision_id: target,
+const rejection = (target: string) => ({ id: "v1", decision_id: "v1", actor: null, reviewed_revision_id: target, approved_assessment_revision_id: null, effect_target_revision_id: target, review: "engine:validator", decision: "request_changes", effect: "request_changes", target_revision_id: target,
   payload: { feedback: MESSAGE }, created_at: "2026-11-20T00:00:00Z" }) as OperatorRevisionDecision;
-const offered = (target: string): OperatorDecisionDefinition => ({ key: "request_assessment_changes", label: "Request assessment changes", payload_schema: "{feedback: text}", adjudication: null, assessment: "assessment", fields: [],
+const offered = (target: string): OperatorDecisionDefinition => ({ key: "request_assessment_changes", label: "Request assessment changes", payload_schema: "{feedback: text}", operation: "plain", assessment: "assessment", fields: [],
   submit: { kind: "review", review: "assessment_review", decision: "request_assessment_changes", effect: "request_changes", target_revision_id: target } });
 
 describe("review validation rejection", () => {

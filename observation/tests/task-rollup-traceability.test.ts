@@ -1,13 +1,9 @@
+import { createApp } from "../src/http/app";
+import { withTenant } from "../src/storage/database";
 import { pinProvenance } from "./grading-fixture";
-import { stampCapture } from "../src/grading/configuration";
-import { pinIdentity } from "./grading-fixture";
 // Captured fixtures exercise the same extractor, definition targets and storage read used by HTTP.
-import { planRegistration } from "../src/grading/configuration";
-import { registerDefinitions } from "../src/storage/grading-store";
-import { readLogicalItemComposite } from "../src/storage/grading-record-store";
-import { fixtureDefinitions, createFeed, fixtureBody, integration, oakridgeGradingRegistry, oakridgeProfile, scratchDatabase, tenant } from "./grading-fixture";
+import { createFeed, integration, oakridgeProfile, scratchDatabase, tenant } from "./grading-fixture";
 
-import { objectAt } from "../src/projection/extractor";
 import { expect, test } from "bun:test";
 import { selectComposite, selectDrilldown, selectLineage, selectUnlinkedItems, selectUnresolvedReferences, uniformDrilldownPages } from "../src/grading/composite";
 import { all, answer, edge, evidence, grader, inputs, occurrence, otherTask, question, revision, task } from "./rollup-fixture";
@@ -68,33 +64,33 @@ test("unlinked means pinned and unassociated, while unresolved references includ
   expect(selectUnresolvedReferences(snapshot, path, all).items.map((entry) => entry.item.occurrence_id)).toEqual([ungraded.occurrence_id]);
 });
 
-integration("captured Oakridge task, plan, brief and linked findings appear together without decisions, requirements or other tasks", async () => scratchDatabase(async (db) => {
-  const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
-  if (!registration.ok) throw new Error(registration.error.detail);
-  const registered = await registerDefinitions(db, tenant, registration.value);
-  if (!registered.ok) throw new Error(registered.error.detail);
-  const feed = createFeed(db, tenant, stampCapture(registration.value.capture, pinIdentity));
-  for (const artifact_kind of ["analysis", "tasks", "plan", "brief", "assessment"]) {
-    await feed.revision({ revision_id: `${artifact_kind}-1`, artifact_kind, stage: artifact_kind, body: await fixtureBody(artifact_kind) });
-  }
-  await feed.send({ format: "observation.source-event/v1", definition_id: "fixture", artifact_schema_version: null,
-    kind: "relation_declaration", event_kind: "analysis_links_declared", event_id: "link-analysis", run_id: "run-1",
-    declaration: { run_id: "run-1", tasks_revision_id: "tasks-1", entries: [{ source_revision_id: "analysis-1", item_path: "/findings/0", task_ids: ["T7"] }] } });
-  const rollup = await readLogicalItemComposite(db, tenant, oakridgeProfile.composite, "run-1", "T7", {
-    stages: ["analysis", "tasks", "plan", "brief", "assessment"].map((stage) => ({ stage, artifact_kinds: [stage] })), pins: stampCapture(registration.value.capture, pinIdentity).pins, is_run_complete: false
+integration("requirement rollup reports both repositories and only the bound assessment's judgment", async () => scratchDatabase(async (db) => {
+  const feed = createFeed(db);
+  await feed.revision({ revision_id: "spec:1", artifact_kind: "spec", body: { requirements: [
+    { id: "R1", text: "Shared requirement", acceptance_conditions: ["Covered"], source_refs: [], analysis_finding_ids: [] },
+  ] } });
+  for (const repository_key of ["alpha", "beta"]) await feed.revision({
+    revision_id: `${repository_key}:brief:1`, unit_id: repository_key, artifact_kind: "brief",
+    body: { cohort_id: repository_key, repository_key, build_items: [{ id: "B1", requirement_ids: ["R1"], instructions: "Build", verification: ["Verify"] }], technical_decisions: [] },
   });
-  if (!rollup) throw new Error("captured task missing");
-  const results = rollup.stages.flatMap((stage) => stage.results);
-  expect([...new Set(results.map((result) => result.item.artifact_kind))]).toEqual(["analysis", "tasks", "plan", "brief", "assessment"]);
-  expect(results.every((result) => ["finding", "task", "acceptance_entry", "assessment_finding"].includes(result.item.item_kind))).toBe(true);
-  expect(results.every((result) => result.scope.kind === "per_item" || result.scope.task_id === rollup.logical_item_id)).toBe(true);
-  expect(new Set(results.map((result) => result.evidence_set_id)).size).toBe(results.length);
-  expect(results.every((result) => result.status.state === "not_ready")).toBe(true);
-  expect(results.find((result) => result.item.artifact_kind === "analysis")?.provenance).toMatchObject({ kind: "relation", hops: [{ type: "assesses" }] });
-  expect(results.filter((result) => result.item.item_kind === "task").map((result) => {
-    const fields = objectAt(result.item.selected_value, result.item.item_path);
-    return fields.ok ? fields.value.id : null;
-  })).toEqual(["T7"]);
+  await feed.revision({ revision_id: "alpha:assessment:1", artifact_kind: "assessment",
+    input_bindings: [{ input: "assignment", unit: "alpha", revision_id: "alpha:brief:1" }],
+    body: { item_assessments: [{ subject: { kind: "build_item", id: "B1" }, status: "partial", observation: "Some checks pass", evidence: [] }],
+      additional_findings: [], proposals: [], verifications: [] } });
+  const app = createApp({ db, profile: oakridgeProfile, credentials: { ingest: [], read: [{ ...tenant, token: "read" }] },
+    stage_source: { read: async () => ({ ok: true, value: [] as const }) } });
+  const result = await app.request("/v1/runs/run-1/logical-items/R1", { headers: { authorization: "Bearer read" } });
+  expect(result.status).toBe(200);
+  expect(await result.json()).toMatchObject({ producer_local_id: "R1", task_kind: "requirement", repositories: [
+    { repository_key: "alpha", judgments: [{ assessment_revision_id: "alpha:assessment:1", status: "partial" }] },
+    { repository_key: "beta", judgments: [] },
+  ] });
+  const qualified = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_relation")
+    .select(["asserted_by", "qualifier"]).where("qualifier", "is not", null).execute());
+  expect(qualified).toEqual(expect.arrayContaining([
+    { asserted_by: "producer_explicit", qualifier: { repository_key: "alpha" } },
+    { asserted_by: "producer_explicit", qualifier: { repository_key: "beta" } },
+  ]));
 }));
 
 test("roll-up and drilldown keep corrections within their evidence set and subject", () => {

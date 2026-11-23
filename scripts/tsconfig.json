@@ -4,5 +4,5 @@
     "types": ["bun"],
     "typeRoots": ["../node_modules/@types", "../observation/node_modules/@types"]
   },
-  "include": ["tests/**/*.ts"]
+  "include": ["tests/**/*.ts", "legacy-symbols.test.ts"]
 }

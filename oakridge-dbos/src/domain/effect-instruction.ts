@@ -1,4 +1,5 @@
-import { RESERVED_ARTIFACT_SCHEMAS } from "../core-client/core-types";
+import { CORE_ASSESSMENT_SCHEMAS } from "../core-client/core-types";
+import { BLOCKER_ARTIFACT, RESERVED_ARTIFACT_SCHEMAS } from "../core-client/core-types";
 import { selectInputProvenance, type InputProvenanceView } from "./unit-status";
 import { createHash } from "node:crypto";
 import type { Action, FeedbackEntry, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression } from "../core-client/core-types";
@@ -35,13 +36,22 @@ export interface EngineInputs {
   readonly previous: RevisionState | null;
   readonly feedback: readonly FeedbackEntry[];
   readonly subject: RevisionState | null;
+  readonly round_delivery?: string;
+  readonly self_assessment?: readonly SelfAssessmentSubject[];
 }
 /**
  * Everything the executor needs to run one attempt, written by commit as
  * `effect_intent.payload` (rescue spec §2.5). It carries no secret: a
  * publication secret is minted when a session starts.
  */
+export interface CollectionMembership {
+  readonly parent: string;
+  readonly key: string;
+}
+
 export interface EffectInstruction {
+  readonly collection?: CollectionMembership;
+  readonly execution_key?: string;
   readonly input_provenance?: InputProvenanceView;
   readonly version: 1;
   readonly run_id: RunId;
@@ -81,6 +91,7 @@ export function selectSessionKey(action: RunWorkerAction, action_id: string, ses
 export const selectSharedSessionUnit = (unit: string): string => unit.slice(0, unit.lastIndexOf("/"));
 
 export interface InstructionSource {
+  readonly collection?: CollectionMembership;
   readonly run_id: RunId;
   readonly workflow: import("../core-client/source-types").WorkflowDefinitionDescriptor;
   readonly parsed_workflow: ParsedWorkflow;
@@ -126,6 +137,28 @@ export function selectReferencedSchemas(types: readonly TypeExpression[], schema
   return Object.fromEntries(Object.entries(referenced).sort(([left], [right]) => left.localeCompare(right)));
 }
 
+export interface SelfAssessmentSubject {
+  readonly assessment: string;
+  readonly subject_artifact: string;
+}
+
+/** Find the work an agent publishes alongside assessments it can be sent back to revise. */
+export function selectSelfAssessmentSubjects(stage: ParsedWorkflow["stages"][string] | undefined, worker: string): SelfAssessmentSubject[] {
+  const producer = stage?.workers[worker];
+  if (producer?.kind !== "agent" || producer.evaluates != null) return [];
+  const work = producer.produces.filter(artifact => artifact !== BLOCKER_ARTIFACT && stage?.artifacts?.[artifact]?.kind !== "assessment");
+  const subjects = new Map<string, string>();
+  for (const review of Object.values(stage?.reviews ?? {})) {
+    const assessment = review.assessment ?? review.of;
+    if (stage?.artifacts?.[assessment]?.kind !== "assessment" || !producer.produces.includes(assessment)) continue;
+    if (!Object.values(review.decisions).some(decision => decision.operation === "dispatch_feedback" && decision.on === assessment)) continue;
+    // An explicit review of one output identifies it even when the agent produces several.
+    const subject = work.includes(review.of) ? review.of : work.length === 1 ? work[0] : undefined;
+    if (subject !== undefined) subjects.set(assessment, subject);
+  }
+  return Array.from(subjects, ([assessment, subject_artifact]) => ({ assessment, subject_artifact }));
+}
+
 /** Build the instruction for a newly wanted RunWorker from its pinned definition and resolved inputs. */
 export function selectEffectInstruction(source: InstructionSource): Result<EffectInstruction, InstructionError> {
   const { action, resolved } = source;
@@ -136,7 +169,9 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     const digest = source.prompts[path];
     return digest === undefined ? failure(resolved.action_id, `prompt ${path} is not pinned`) : { ok: true, value: { path, digest } };
   };
+  const schemas = { ...CORE_ASSESSMENT_SCHEMAS, ...source.workflow.schemas } as { readonly [name: string]: TypeExpression };
   let worker: WorkerInstruction;
+  const self_assessment = selectSelfAssessmentSubjects(source.parsed_workflow.stages[source.stage], action.worker);
   if (declared.kind === "agent") {
     const path = resolved.prompt;
     if (path == null) return failure(resolved.action_id, `agent ${action.worker} has no ${action.mode.kind} prompt`);
@@ -153,14 +188,14 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
       const schema = stage.artifacts[key]?.schema
         ?? (Object.hasOwn(RESERVED_ARTIFACT_SCHEMAS, key) ? RESERVED_ARTIFACT_SCHEMAS[key] : undefined);
       if (schema === undefined) return failure(resolved.action_id, `artifact ${key} is not declared on stage ${source.stage}`);
-      creates.push({ key, schema: selectResolvedSchema(schema, source.workflow.schemas ?? {}) });
+      creates.push({ key, schema: selectResolvedSchema(schema, schemas) });
     }
     worker = { kind: "agent", session, session_key: selectSessionKey(action, resolved.action_id, session),
       ...(session === "shared" ? { shared_session_unit: selectSharedSessionUnit(action.unit) } : {}),
       prompt: prompt.value, handoff: handoff?.value ?? null,
       settings: selectWorkerSessionSettings(source.config,
         { stage: source.stage, worker: action.worker }, declared.runtime ?? null), creates,
-      schemas: selectReferencedSchemas(creates.map((artifact) => artifact.schema), source.workflow.schemas ?? {}) };
+      schemas: selectReferencedSchemas(creates.map((artifact) => artifact.schema), schemas) };
   } else {
     const artifact = declared.produces[0];
     if (declared.produces.length !== 1 || artifact === undefined)
@@ -170,9 +205,10 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     worker = { kind: "code", operation: declared.operation, every, artifact };
   }
   return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id as ActionId, seq: source.seq }, worker,
+    ...(source.collection ? { collection: source.collection } : {}),
     inputs: resolved.inputs,
     input_provenance: selectInputProvenance(resolved.input_provenance),
-    engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? [], subject: resolved.subject ?? null },
+    engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? [], subject: resolved.subject ?? null, ...(self_assessment.length > 0 ? { self_assessment } : {}) },
     workspace: resolved.workspace ?? null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS } };
 }
@@ -196,6 +232,8 @@ function isCause(value: unknown): boolean {
     case "missing": return true;
     case "periodic": return isString(value.inputs) && isNullableString(value.replaces ?? null);
     case "changes_requested": return isString(value.decision);
+    case "assignment_round": return isString(value.round) && isNullableString(value.retry ?? null);
+    case "reassessment": return isString(value.round);
     case "review_of": return isString(value.revision);
     case "retry": return isString(value.event);
     default: return false;
@@ -207,7 +245,8 @@ function isRunWorkerAction(value: unknown): value is RunWorkerAction {
 }
 function isRevision(value: unknown): value is RevisionState {
   return isFields(value) && isString(value.id) && isString(value.unit) && isString(value.artifact) && "body" in value
-    && isNullableString(value.by ?? null) && isNullableString(value.predecessor ?? null) && isNullableString(value.subject ?? null);
+    && (value.by == null || (isFields(value.by) && isString(value.by.action) && isCount(value.by.seq)))
+    && isNullableString(value.predecessor ?? null) && isNullableString(value.subject ?? null);
 }
 const isNullableRevision = (value: unknown): value is RevisionState | null => value === null || isRevision(value);
 const isPinnedPrompt = (value: unknown): value is PinnedPrompt => isFields(value) && isString(value.path) && isString(value.digest);
@@ -234,7 +273,9 @@ function isFeedbackEntry(value: unknown): value is FeedbackEntry {
 }
 function isEngineInputs(value: unknown): value is EngineInputs {
   return isFields(value) && isNullableRevision(value.previous) && Array.isArray(value.feedback)
-    && value.feedback.every(isFeedbackEntry) && isNullableRevision(value.subject);
+    && value.feedback.every(isFeedbackEntry) && isNullableRevision(value.subject)
+    && (value.self_assessment === undefined || Array.isArray(value.self_assessment) &&
+      value.self_assessment.every(binding => isFields(binding) && isString(binding.assessment) && isString(binding.subject_artifact)));
 }
 
 /** The executor's only way in: an `effect_intent.payload` that is not a version-1 instruction is refused. */
@@ -242,6 +283,9 @@ export function decodeEffectInstruction(value: unknown): Result<EffectInstructio
   const refuse = (detail: string): Result<never, InstructionError> =>
     ({ ok: false, error: { operation: "decode_effect_instruction", entity_id: isFields(value) && isFields(value.attempt) && isString(value.attempt.action_id) ? value.attempt.action_id : "unknown", detail } });
   if (!isFields(value) || value.version !== 1) return refuse("unsupported instruction version");
+  const collection = value.collection;
+  if (collection !== undefined && (!isFields(collection) || !isString(collection.parent) || !isString(collection.key)))
+    return refuse("collection membership is malformed");
   if (!isString(value.run_id)) return refuse("run id is missing");
   if (!isRunWorkerAction(value.action)) return refuse("action is not a run_worker action");
   const attempt = value.attempt;

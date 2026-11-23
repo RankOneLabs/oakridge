@@ -15,7 +15,7 @@ integration("items, lineage and grades read target records, paginated and tenant
   await feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body: await fixtureBody("analysis") });
   const listed = await (await app.request("/v1/runs/run-1/items?limit=2", { headers: read })).json() as
     { readonly items: readonly { readonly occurrence_id: string }[]; readonly total: number; readonly limit: number };
-  expect({ count: listed.items.length, total: listed.total, limit: listed.limit }).toEqual({ count: 2, total: 4, limit: 2 });
+  expect({ count: listed.items.length, total: listed.total, limit: listed.limit }).toEqual({ count: 2, total: 2, limit: 2 });
   const id = encodeURIComponent(listed.items[0]!.occurrence_id);
   expect((await app.request(`/v1/items/${id}`, { headers: read })).status).toBe(200);
   expect((await app.request(`/v1/items/${id}/lineage`, { headers: read })).status).toBe(200);
@@ -29,18 +29,18 @@ integration("items, lineage and grades read target records, paginated and tenant
 
 integration("a task's lineage follows its relations, and an unresolved link stays listed as unresolved", async () => scratchDatabase(async (db) => {
   const feed = createFeed(db);
-  await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
-  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", body: await fixtureBody("assessment") });
+  await feed.revision({ revision_id: "tasks-1", artifact_kind: "spec", body: { requirements: ["T7", "T8"].map((id) => ({ id, text: id, analysis_finding_ids: [] })) } });
+  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", stage: "integration", body: { item_assessments: ["T7", "T8", "T404"].map((id) => ({ subject: { kind: "requirement", id }, status: "met", observation: "Verified", evidence: [] })), additional_findings: [], proposals: [], verifications: [] } });
   const app = createApp({ db, credentials, profile: oakridgeProfile });
   const page = await (await app.request("/v1/runs/run-1/items", { headers: read })).json() as
     { readonly items: readonly { readonly occurrence_id: string; readonly revision_id: string; readonly json_pointer: string }[] };
-  const unknownReference = page.items.find((item) => item.revision_id === "assessment-1" && item.json_pointer === "/findings/3")!;
+  const unknownReference = page.items.find((item) => item.revision_id === "assessment-1" && item.json_pointer === "/item_assessments/2")!;
   const lineage = await readLineage(db, tenant, unknownReference.occurrence_id, { limit: 50, offset: 0 });
-  expect(lineage?.unresolved.map((relation) => relation.unresolved_target_ref)).toEqual(["logical_item:task:T404"]);
-  const task = page.items.find((item) => item.revision_id === "tasks-1" && item.json_pointer === "/tasks/0")!;
+  expect(lineage?.unresolved.map((relation) => relation.unresolved_target_ref)).toEqual(["logical_item:task:requirement:T404"]);
+  const task = page.items.find((item) => item.revision_id === "tasks-1" && item.json_pointer === "/requirements/0")!;
   const shared = await readLineage(db, tenant, task.occurrence_id, { limit: 50, offset: 0 });
   expect(shared?.edges.filter((relation) => relation.type === "assesses").map((relation) => relation.evidence_ref).sort())
-    .toEqual(["/findings/0/task_ids/0", "/findings/0/task_ids/1", "/findings/1/task_ids/0"]);
+    .toEqual(["/item_assessments/0/subject/id"]);
 }));
 
 integration("a republished revision reports its predecessor", async () => scratchDatabase(async (db) => {
@@ -53,21 +53,17 @@ integration("a republished revision reports its predecessor", async () => scratc
     { readonly items: readonly { readonly occurrence_id: string; readonly revision_id: string }[] };
   const later = page.items.find((item) => item.revision_id === "analysis-2")!;
   expect((await readLineage(db, tenant, later.occurrence_id, { limit: 50, offset: 0 }))?.republication)
-    .toEqual({ predecessor_revision_id: `oakridge:${tenant.namespace}:analysis-1`, is_republication: true });
+    .toEqual({ predecessor_revision_id: "analysis-1", is_republication: true });
 }));
 
 integration("task lineage returns each associated contribution once with its association provenance", async () => scratchDatabase(async (db) => {
   const feed = createFeed(db);
-  await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
-  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", body: { findings: [
-    { task_ids: ["T7", "T7"], criterion: "shared", status: "met", evidence: [] },
-    { task_ids: ["T8"], criterion: "other task", status: "met", evidence: [] },
-    { task_ids: [], criterion: "successor", status: "met", evidence: [] }
-  ] } });
+  await feed.revision({ revision_id: "tasks-1", artifact_kind: "spec", body: { requirements: ["T7", "T8"].map((id) => ({ id, text: id, analysis_finding_ids: [] })) } });
+  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", stage: "integration", body: { item_assessments: ["T7", "T8", "T9"].map((id) => ({ subject: { kind: "requirement", id }, status: "met", observation: "Verified", evidence: [] })), additional_findings: [], proposals: [], verifications: [] } });
   const captured = await listRunItems(db, tenant, "run-1", { limit: 200, offset: 0 });
-  const first = captured.items.find((item) => item.revision_id === "assessment-1" && item.json_pointer === "/findings/0");
-  const successor = captured.items.find((item) => item.revision_id === "assessment-1" && item.json_pointer === "/findings/2");
-  const task = captured.items.find((item) => item.revision_id === "tasks-1" && item.json_pointer === "/tasks/0");
+  const first = captured.items.find((item) => item.revision_id === "assessment-1" && item.json_pointer === "/item_assessments/0");
+  const successor = captured.items.find((item) => item.revision_id === "assessment-1" && item.json_pointer === "/item_assessments/2");
+  const task = captured.items.find((item) => item.revision_id === "tasks-1" && item.json_pointer === "/requirements/0");
   if (!first || !successor || !task?.logical_item_id) throw new Error("captured fixture incomplete");
   await withTenant(db, tenant, (trx) => trx.insertInto("observation.item_relation").values({ ...tenant, relation_id: "fixture-successor",
     source_occurrence_id: successor.occurrence_id, source_logical_item_id: null, target_occurrence_id: first.occurrence_id,
@@ -79,7 +75,7 @@ integration("task lineage returns each associated contribution once with its ass
   const response = await app.request("/v1/runs/run-1/logical-items/T7/lineage", { headers: read });
   const lineage = await response.json() as import("../src/grading/composite").LogicalItemLineage;
   const contributions = lineage.items.filter((entry) => entry.kind === "contribution");
-  expect(contributions.map((entry) => entry.item.item_path)).toEqual(["/findings/0", "/findings/2"]);
+  expect(contributions.map((entry) => entry.item.item_path)).toEqual(["/item_assessments/0", "/item_assessments/2"]);
   expect(contributions[1]?.provenance.hops.map((hop) => hop.type)).toEqual(["assesses", "supersedes"]);
   expect(contributions[0]?.provenance).toMatchObject({ kind: "relation", hops: [{ type: "assesses", asserted_by: "producer_explicit" }] });
 }));

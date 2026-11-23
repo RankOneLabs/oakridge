@@ -7,7 +7,7 @@ CREATE TYPE authority.effect_status AS ENUM
 -- its watch was replaced, or the executor, when an attempt failed while an
 -- execution may still be live.
 CREATE TYPE authority.stop_origin AS ENUM ('commit', 'executor');
-CREATE TYPE authority.decision_effect AS ENUM ('approve', 'request_changes');
+CREATE TYPE authority.decision_effect AS ENUM ('approve', 'request_changes', 'dispatch');
 
 CREATE TABLE authority.schema_baseline (
   id boolean PRIMARY KEY DEFAULT true CHECK (id),
@@ -30,6 +30,7 @@ CREATE TABLE authority.run (
   project_id text REFERENCES authority.project(id),
   root_unit_id text,
   input jsonb,
+  label jsonb,
   -- The operator's launch-time session settings, by stage and worker (RunConfig).
   config jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -82,6 +83,7 @@ CREATE TABLE authority.attempt (
   cause jsonb NOT NULL,
   status jsonb NOT NULL,
   kbbl_session_id text,
+  input_bindings jsonb NOT NULL,
   publication_secret_hash text CHECK (publication_secret_hash IS NULL OR publication_secret_hash ~ '^[0-9a-f]{64}$'),
   -- When commit opened the attempt, stamped after it took the run row lock
   -- (clock_timestamp, not the transaction's start), so it orders after every
@@ -93,6 +95,8 @@ CREATE TABLE authority.attempt (
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id)
 );
 
+CREATE TYPE authority.revision_origin AS ENUM ('worker', 'operator_edit');
+
 CREATE TABLE authority.artifact_revision (
   id text PRIMARY KEY,
   run_id text NOT NULL,
@@ -102,7 +106,13 @@ CREATE TABLE authority.artifact_revision (
   decision_cursor integer NOT NULL DEFAULT 0,
   body jsonb NOT NULL,
   -- The attempt that published it; null for an operator's edit (part 1 §12, D2).
-  by_id text,
+  origin_kind authority.revision_origin NOT NULL,
+  by_action_id text,
+  by_seq integer,
+  input_bindings jsonb NOT NULL,
+  CHECK ((origin_kind = 'worker') = (by_action_id IS NOT NULL AND by_seq IS NOT NULL)),
+  CHECK ((by_action_id IS NULL) = (by_seq IS NULL)),
+  FOREIGN KEY (by_action_id, by_seq) REFERENCES authority.attempt(action_id, seq),
   predecessor_id text,
   subject text,
   -- Stamped at insert, under the run row lock, so revisions and attempts of a
@@ -132,6 +142,135 @@ CREATE TABLE authority.review_decision (
   FOREIGN KEY (run_id, target_revision_id) REFERENCES authority.artifact_revision(run_id, id)
 );
 
+CREATE TYPE authority.feedback_origin AS ENUM ('proposal', 'operator');
+CREATE TYPE authority.feedback_association AS ENUM ('proposed', 'carried');
+CREATE TYPE authority.dispatch_operation AS ENUM ('dispatch_feedback', 'direct_correction');
+CREATE TYPE authority.verification_outcome AS ENUM ('verified', 'needs_further_work');
+
+CREATE TABLE authority.feedback_item (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  unit_id text NOT NULL,
+  assessment_artifact text NOT NULL,
+  origin authority.feedback_origin NOT NULL,
+  proposal_revision_id text,
+  proposal_key text,
+  operator_request_id text,
+  instruction text NOT NULL CHECK (instruction <> ''),
+  citation jsonb,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
+  FOREIGN KEY (run_id, proposal_revision_id) REFERENCES authority.artifact_revision(run_id, id),
+  UNIQUE (run_id, proposal_revision_id, proposal_key),
+  CHECK (
+    (origin = 'proposal' AND proposal_revision_id IS NOT NULL AND proposal_key IS NOT NULL AND operator_request_id IS NULL)
+    OR (origin = 'operator' AND proposal_revision_id IS NULL AND proposal_key IS NULL AND operator_request_id IS NOT NULL)
+  )
+);
+
+CREATE TABLE authority.assessment_feedback (
+  run_id text NOT NULL REFERENCES authority.run(id),
+  assessment_revision_id text NOT NULL,
+  feedback_item_id text NOT NULL REFERENCES authority.feedback_item(id),
+  association authority.feedback_association NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (run_id, assessment_revision_id, feedback_item_id),
+  FOREIGN KEY (run_id, assessment_revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+CREATE TABLE authority.dispatch_authorization (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  feedback_item_id text NOT NULL REFERENCES authority.feedback_item(id),
+  operation authority.dispatch_operation NOT NULL,
+  target_unit_id text NOT NULL,
+  target_artifact text NOT NULL,
+  target_revision_id text NOT NULL,
+  instruction text NOT NULL,
+  recipients text[] NOT NULL CHECK (cardinality(recipients) > 0),
+  policy text NOT NULL,
+  authorized_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY (run_id, target_unit_id) REFERENCES authority.unit(run_id, id),
+  FOREIGN KEY (run_id, target_revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+CREATE TABLE authority.feedback_assignment (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  feedback_item_id text NOT NULL REFERENCES authority.feedback_item(id),
+  target_unit_id text NOT NULL,
+  target_artifact text NOT NULL,
+  recipient text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (run_id, feedback_item_id, target_unit_id, target_artifact, recipient),
+  FOREIGN KEY (run_id, target_unit_id) REFERENCES authority.unit(run_id, id)
+);
+
+CREATE TABLE authority.feedback_rejection (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  feedback_item_id text NOT NULL REFERENCES authority.feedback_item(id),
+  assessment_revision_id text NOT NULL,
+  assignment_id text REFERENCES authority.feedback_assignment(id),
+  reason text NOT NULL CHECK (reason <> ''),
+  decision_id text NOT NULL REFERENCES authority.review_decision(id),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE NULLS NOT DISTINCT (run_id, assessment_revision_id, feedback_item_id, assignment_id),
+  FOREIGN KEY (run_id, assessment_revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+CREATE TABLE authority.assignment_round (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  assignment_id text NOT NULL REFERENCES authority.feedback_assignment(id),
+  ordinal integer NOT NULL CHECK (ordinal >= 1),
+  authorization_id text NOT NULL REFERENCES authority.dispatch_authorization(id),
+  instruction text NOT NULL,
+  decision_id text NOT NULL REFERENCES authority.review_decision(id),
+  action_id text,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (assignment_id, ordinal),
+  UNIQUE (assignment_id, authorization_id)
+);
+
+CREATE TABLE authority.assignment_update (
+  round_id text PRIMARY KEY REFERENCES authority.assignment_round(id),
+  run_id text NOT NULL REFERENCES authority.run(id),
+  revision_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY (run_id, revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+CREATE TABLE authority.assignment_verification (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  round_id text NOT NULL REFERENCES authority.assignment_round(id),
+  assessment_revision_id text NOT NULL,
+  update_revision_id text NOT NULL,
+  outcome authority.verification_outcome NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (round_id, assessment_revision_id),
+  FOREIGN KEY (run_id, assessment_revision_id) REFERENCES authority.artifact_revision(run_id, id),
+  FOREIGN KEY (run_id, update_revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+CREATE TABLE authority.assessment_approval (
+  id text PRIMARY KEY,
+  run_id text NOT NULL REFERENCES authority.run(id),
+  unit_id text NOT NULL,
+  assessment_revision_id text NOT NULL UNIQUE,
+  assessed_revision_id text NOT NULL,
+  decision_id text NOT NULL UNIQUE REFERENCES authority.review_decision(id),
+  approved_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
+  FOREIGN KEY (run_id, assessment_revision_id) REFERENCES authority.artifact_revision(run_id, id),
+  FOREIGN KEY (run_id, assessed_revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
+COMMENT ON COLUMN authority.feedback_item.citation IS '@type {Citation}';
+
 CREATE TABLE authority.event (
   id text PRIMARY KEY,
   run_id text NOT NULL REFERENCES authority.run(id),
@@ -158,6 +297,27 @@ CREATE TABLE authority.wanted_log (
   FOREIGN KEY (run_id, event_id) REFERENCES authority.event(run_id, id)
 );
 
+CREATE TYPE authority.keyed_execution_state AS ENUM ('unclaimed', 'claimed', 'evidence_attached', 'reconcile');
+
+CREATE TABLE authority.keyed_execution (
+  id text PRIMARY KEY,
+  run_id text NOT NULL,
+  unit_id text NOT NULL,
+  worker text NOT NULL,
+  authorizing_revision_id text NOT NULL,
+  state authority.keyed_execution_state NOT NULL DEFAULT 'unclaimed',
+  claim_count integer NOT NULL DEFAULT 0 CHECK (claim_count >= 0),
+  claimed_by_action_id text,
+  evidence jsonb,
+  reconciliation jsonb,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (run_id, authorizing_revision_id),
+  FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
+  FOREIGN KEY (run_id, authorizing_revision_id) REFERENCES authority.artifact_revision(run_id, id),
+  CHECK ((state = 'evidence_attached') = (evidence IS NOT NULL))
+);
+
 CREATE TABLE authority.effect_intent (
   id text PRIMARY KEY,
   run_id text NOT NULL,
@@ -173,6 +333,7 @@ CREATE TABLE authority.effect_intent (
   last_error text,
   stop_error text,
   -- Set with the stop request, and kept once it settles; null while none was requested.
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   stop_origin authority.stop_origin CHECK (status <> 'stop_requested' OR stop_origin IS NOT NULL),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (action_id, seq),
@@ -229,6 +390,18 @@ CREATE TABLE authority.review_item (
   FOREIGN KEY (run_id, thread_id) REFERENCES authority.collaboration_thread(run_id, id)
 );
 
+-- Exact revisions inserted by each committed event, in insertion order.
+CREATE TABLE authority.revision_delivery (
+  run_id text NOT NULL,
+  event_id text NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal >= 0),
+  revision_id text NOT NULL,
+  PRIMARY KEY (run_id, event_id, ordinal),
+  UNIQUE (run_id, revision_id),
+  FOREIGN KEY (run_id, event_id) REFERENCES authority.event(run_id, id),
+  FOREIGN KEY (run_id, revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+
 -- The operator stream's outbox. Written by commit and the registry store in the
 -- transaction that causes it; never read by step. A deleted run leaves its
 -- rows in the stream with no run (D12).
@@ -266,11 +439,14 @@ CREATE INDEX review_item_thread_idx ON authority.review_item(run_id, thread_id);
 
 COMMENT ON COLUMN authority.project.forge_repository IS '@type {ForgeRepository}';
 COMMENT ON COLUMN authority.run.input IS '@type {RuntimeValue}';
+COMMENT ON COLUMN authority.run.label IS '@type {RunLabel}';
 COMMENT ON COLUMN authority.run.config IS '@type {RunConfig}';
 COMMENT ON COLUMN authority.unit.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.unit.status IS '@type {UnitStatus}';
 COMMENT ON COLUMN authority.unit.blocked_reason IS '@type {BlockedReason}';
 COMMENT ON COLUMN authority.unit.review_prompts IS '@type {ReviewPrompts}';
+COMMENT ON COLUMN authority.attempt.input_bindings IS '@type {InputBindings}';
+COMMENT ON COLUMN authority.artifact_revision.input_bindings IS '@type {InputBindings}';
 COMMENT ON COLUMN authority.attempt.mode IS '@type {Mode}';
 COMMENT ON COLUMN authority.attempt.cause IS '@type {Cause}';
 COMMENT ON COLUMN authority.attempt.status IS '@type {AttemptStatus}';
@@ -279,6 +455,8 @@ COMMENT ON COLUMN authority.review_decision.payload IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.event.payload IS '@type {CoreEvent}';
 COMMENT ON COLUMN authority.event.writer IS '@type {Writer}';
 COMMENT ON COLUMN authority.wanted_log.actions IS '@type {WantedWorkers}';
+COMMENT ON COLUMN authority.keyed_execution.evidence IS '@type {ExecutionEvidence}';
+COMMENT ON COLUMN authority.keyed_execution.reconciliation IS '@type {ExecutionReconciliation}';
 COMMENT ON COLUMN authority.effect_intent.payload IS '@type {EffectInstruction}';
 COMMENT ON COLUMN authority.ingress_receipt.result IS '@type {CommitReceipt}';
 COMMENT ON COLUMN authority.collaboration_thread.context IS '@type {CollaborationThreadContext}';

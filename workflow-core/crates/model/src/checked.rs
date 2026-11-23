@@ -8,10 +8,19 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct CheckedWorkflow {
     pub digest: BundleDigest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<CheckedWorkflowLabel>,
     #[serde(deserialize_with = "deserialize_checked_type")]
     pub input: CheckedType,
     pub stages: Vec<CheckedStage>,
     pub root: CheckedGroup,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedWorkflowLabel {
+    pub title: CheckedStageExpression,
+    pub repositories: CheckedStageExpression,
 }
 
 /// Checked positions use the same closed type vocabulary as source positions.
@@ -74,6 +83,8 @@ pub struct CheckedArtifact {
     pub schema: CheckedType,
     pub edit_policy: EditPolicy,
     pub validations: Vec<CheckedArtifactValidation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub equivalent_subject_fields: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -86,6 +97,8 @@ pub struct CheckedArtifactValidation {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedDecision {
+    #[serde(default, skip_serializing_if = "DecisionOperation::is_plain")]
+    pub operation: DecisionOperation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<CheckedDecisionGuard>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -111,6 +124,8 @@ pub struct CheckedEngineDecision {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CheckedReview {
     Operator {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assessment: Option<SymbolKey>,
         key: SymbolKey,
         of: SymbolKey,
         inputs: Vec<CheckedNamedExpression>,
@@ -152,6 +167,8 @@ pub enum CheckedWorker {
         inputs: Vec<CheckedNamedExpression>,
         creates: Vec<SymbolKey>,
         reviews: Option<SymbolKey>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keyed_execution: bool,
         workspace: Option<Box<CheckedStageExpression>>,
         when: Option<CheckedStageExpression>,
     },
@@ -160,6 +177,8 @@ pub enum CheckedWorker {
         inputs: Vec<CheckedNamedExpression>,
         creates: Vec<SymbolKey>,
         every: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        track_input_revisions: bool,
         when: Option<CheckedStageExpression>,
     },
 }

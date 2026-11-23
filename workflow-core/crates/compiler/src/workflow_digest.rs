@@ -9,6 +9,8 @@ use serde::Serialize;
 #[derive(Serialize)]
 pub(super) struct WorkflowFingerprint<'a> {
     workflow: &'a SymbolKey,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: &'a Option<WorkflowLabel>,
     input: &'a TypeExpression,
     schemas: &'a BTreeMap<String, TypeExpression>,
     run: &'a Group,
@@ -31,6 +33,8 @@ struct ArtifactFingerprint<'a> {
     #[serde(skip_serializing_if = "EditPolicy::is_always")]
     edit_policy: &'a EditPolicy,
     validate: &'a Vec<ValidationCheck>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    equivalent_subject_fields: &'a Vec<String>,
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -44,6 +48,8 @@ enum WorkerFingerprint<'a> {
         workspace: &'a Option<String>,
         session: &'a Option<SessionMode>,
         when: &'a Option<String>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        keyed_execution: bool,
     },
     Code {
         operation: &'a SymbolKey,
@@ -61,15 +67,18 @@ impl<'a> From<&'a Worker> for WorkerFingerprint<'a> {
                 inputs,
                 produces,
                 evaluates,
+                keyed_execution,
                 runtime,
                 workspace,
                 session,
                 when,
+                label: _,
             } => Self::Agent {
                 prompts,
                 inputs,
                 creates: produces,
                 reviews: evaluates,
+                keyed_execution: *keyed_execution,
                 runtime,
                 workspace,
                 session,
@@ -81,6 +90,7 @@ impl<'a> From<&'a Worker> for WorkerFingerprint<'a> {
                 produces,
                 every,
                 when,
+                ..
             } => Self::Code {
                 operation,
                 inputs,
@@ -95,14 +105,18 @@ impl<'a> From<&'a Artifact> for ArtifactFingerprint<'a> {
     fn from(artifact: &'a Artifact) -> Self {
         let Artifact {
             kind: _, // Presentation metadata is deliberately absent from the fingerprint.
+            view: _,
+            link_field: _,
             schema,
             edit_policy,
             validate,
+            equivalent_subject_fields,
         } = artifact;
         Self {
             schema,
             edit_policy,
             validate,
+            equivalent_subject_fields,
         }
     }
 }
@@ -144,6 +158,7 @@ impl<'a> From<&'a Workflow> for WorkflowFingerprint<'a> {
     fn from(source: &'a Workflow) -> Self {
         let Workflow {
             workflow,
+            label,
             input,
             schemas,
             run,
@@ -151,6 +166,7 @@ impl<'a> From<&'a Workflow> for WorkflowFingerprint<'a> {
         } = source;
         Self {
             workflow,
+            label,
             input,
             schemas,
             run,

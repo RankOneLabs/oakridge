@@ -119,7 +119,7 @@ async function runCommittedSpend(trx: DatabaseTransaction, tenant: TenantScope, 
 /** Every claim against one run's allowance takes this lock first, so two workers cannot both spend
  * the same remainder. */
 async function lockRunAllowance(trx: DatabaseTransaction, tenant: TenantScope, run_id: string): Promise<void> {
-  await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${tenant.producer}:${tenant.namespace}:${run_id}:grading-allowance`}, 0))`.execute(trx);
+  await sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([tenant.producer, tenant.namespace, run_id, "grading-allowance"])}, 0))`.execute(trx);
 }
 /** A reservation that ended without a request frees allowance, so the run's deferred work may fit again. */
 async function requeueDeferred(trx: DatabaseTransaction, tenant: TenantScope, run_id: string): Promise<void> {

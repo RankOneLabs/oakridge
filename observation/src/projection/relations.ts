@@ -1,10 +1,10 @@
 import { canonicalDigest } from "canonical-json";
-import type { LinkReference, LogicalItemLink, OccurrenceLink, RelationType } from "./extractor";
+import type { AddressLink, LinkReference, LogicalItemLink, OccurrenceLink, RelationQualifier, RelationType } from "./extractor";
 
 /** Identity semantics belong to the generic vocabulary, independently of any producer. */
 export const RELATION_SEMANTICS: Record<RelationType, { readonly establishes_task_association: boolean; readonly propagates_task_association: boolean }> = {
-  derived_from: { establishes_task_association: false, propagates_task_association: false },
-  addresses: { establishes_task_association: true, propagates_task_association: false },
+  derived_from: { establishes_task_association: false, propagates_task_association: true },
+  addresses: { establishes_task_association: true, propagates_task_association: true },
   assesses: { establishes_task_association: true, propagates_task_association: true },
   supersedes: { establishes_task_association: true, propagates_task_association: true },
   split_from: { establishes_task_association: true, propagates_task_association: true },
@@ -17,49 +17,44 @@ export type RelationTarget = RelationEndpoint | { readonly kind: "unresolved"; r
 export interface RevisionAnchorIdentity { readonly producer: string; readonly namespace: string;
   readonly run_id: string; readonly artifact_kind: string; readonly revision_id: string }
 export interface LogicalItemIdentity { readonly producer: string; readonly namespace: string;
-  readonly run_id: string; readonly scope: string; readonly producer_local_id: string }
+  readonly run_id: string; readonly scope: string; readonly task_kind: string | null; readonly producer_local_id: string }
 export interface RelationProposal {
   readonly source: RelationEndpoint;
   readonly target: RelationTarget;
   readonly type: RelationType;
   readonly asserted_by: Assertion;
   readonly evidence_ref: string;
+  readonly qualifier?: RelationQualifier;
   readonly algorithm: string | null;
   readonly algorithm_version: string | null;
 }
 
-/** An explicit link to an item already captured in one run, addressed by its exact revision and path. */
-export interface RelationDeclaration {
-  readonly run_id: string;
-  readonly source_revision_id: string;
-  readonly item_path: string;
-  readonly link: LogicalItemLink;
-}
-
 /** Run-scoped: the same local id in another run is a different logical item. */
 export function logicalItemId(identity: LogicalItemIdentity): string {
-  return `${identity.producer}:${identity.namespace}:${identity.run_id}:${identity.scope}:${identity.producer_local_id}`;
+  return [identity.producer, identity.namespace, identity.run_id, identity.scope, ...(identity.task_kind === null ? [] : [identity.task_kind]), identity.producer_local_id].join(":");
 }
 
-export function logicalReference(scope: string, producer_local_id: string): string {
-  return `logical_item:${scope}:${producer_local_id}`;
+export function logicalReference(scope: string, producer_local_id: string, task_kind: string | null): string {
+  return ["logical_item", scope, ...(task_kind === null ? [] : [task_kind]), producer_local_id].join(":");
 }
 
 export function targetReference(link: LinkReference): string {
-  return link.target === "logical_item" ? logicalReference(link.target_scope, link.target_local_id)
-    : `${link.target_artifact_kind}:${link.target_item_kind}:${link.target_scope ?? "*"}:${link.target_local_id}`;
+  if (link.target === "logical_item") return logicalReference(link.target_scope, link.target_local_id, link.target_task_kind);
+  if (link.target === "address") return JSON.stringify([link.revision_id, link.pointer]);
+  return `${link.target_artifact_kind}:${link.target_item_kind}:${link.target_scope ?? "*"}:${link.target_local_id}`;
 }
 
 export function revisionAnchorId(identity: RevisionAnchorIdentity): string {
-  return `${identity.producer}:${identity.namespace}:${identity.run_id}:artifact_revision/${identity.artifact_kind}:${identity.revision_id}`;
+  return [identity.producer, identity.namespace, identity.run_id, `artifact_revision/${identity.artifact_kind}`, identity.revision_id].join(":");
 }
 
 function producerProposal(source_occurrence_id: string, link: LinkReference, target: RelationTarget): RelationProposal {
   return { source: { kind: "occurrence", id: source_occurrence_id }, target, type: link.type,
-    asserted_by: "producer_explicit", evidence_ref: link.evidence_ref, algorithm: null, algorithm_version: null };
+    asserted_by: "producer_explicit", evidence_ref: link.evidence_ref,
+    ...(link.target === "logical_item" && link.qualifier ? { qualifier: link.qualifier } : {}), algorithm: null, algorithm_version: null };
 }
 
-export function occurrenceRelation(source_occurrence_id: string, link: OccurrenceLink,
+export function occurrenceRelation(source_occurrence_id: string, link: OccurrenceLink | AddressLink,
   target_occurrence_id: string | null): RelationProposal {
   return producerProposal(source_occurrence_id, link, target_occurrence_id === null
     ? { kind: "unresolved", ref: targetReference(link) } : { kind: "occurrence", id: target_occurrence_id });

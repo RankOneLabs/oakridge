@@ -75,6 +75,6 @@ describe("fetchRunEvents", () => {
 
     await fetchRunEvents("run/one");
 
-    expect(request).toHaveBeenCalledWith("/oakridge/api/run_events?limit=500&run_id=run%2Fone");
+    expect(request).toHaveBeenCalledWith("/oakridge/api/runs/run%2Fone/units");
   });
 });

@@ -5,8 +5,8 @@ use workflow_model::protocol::{
     TransportErrorKind, PROTOCOL_VERSION,
 };
 use workflow_model::{
-    BundleDigest, CheckedWorkflow, DomainError, DomainErrorKind, ResourceLimits, StepEntity,
-    StepError,
+    BundleDigest, CheckedGroup, CheckedUnitDependencies, CheckedWorkflow, DomainError,
+    DomainErrorKind, ResourceLimits, StepEntity, StepError, SymbolKey,
 };
 
 const MAX_CACHED_PROGRAMS: usize = 32;
@@ -155,12 +155,14 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
         )
         .map(|(program, projected_workflow)| {
             let output = CompiledWorkflow {
+                assessments: workflow_compiler::assessment_embeddings(&projected_workflow),
                 digest: program.digest.clone(),
                 stages: program
                     .stages
                     .iter()
                     .map(|stage| stage.key.clone())
                     .collect(),
+                unit_dependencies: select_unit_dependencies(&program.root),
                 workflow: Box::new(projected_workflow),
             };
             state.insert(program);
@@ -244,6 +246,38 @@ pub unsafe extern "C" fn core_process(pointer: *const u8, len: usize) -> *const 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_response_len() -> usize {
     STATE.with_borrow(|state| state.response.len())
+}
+
+fn select_unit_dependencies(
+    group: &CheckedGroup,
+) -> std::collections::BTreeMap<String, Vec<SymbolKey>> {
+    use std::collections::BTreeMap;
+    fn visit(
+        group: &CheckedGroup,
+        prefix: &str,
+        dependencies: &mut BTreeMap<String, Vec<SymbolKey>>,
+    ) {
+        for unit in &group.units {
+            let path = format!("{prefix}{}", unit.key);
+            let keys = match &unit.after {
+                CheckedUnitDependencies::Fixed { keys }
+                | CheckedUnitDependencies::Each { keys } => keys.as_slice(),
+                CheckedUnitDependencies::None => &[],
+            };
+            dependencies.insert(
+                path.clone(),
+                keys.iter()
+                    .map(|key| SymbolKey(format!("{prefix}{key}")))
+                    .collect(),
+            );
+            if let Some(nested) = &unit.group {
+                visit(nested, &format!("{path}/"), dependencies);
+            }
+        }
+    }
+    let mut dependencies = BTreeMap::new();
+    visit(group, "", &mut dependencies);
+    dependencies
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ pub(super) struct CheckedParts {
     original: Workflow,
     stages: Vec<CheckedStage>,
     root: CheckedGroup,
+    label: Option<CheckedWorkflowLabel>,
 }
 fn parse_text(text: &str, path: String, errors: &mut Vec<CompileError>) {
     if let Err(error) = parse_expression(text, &path) {
@@ -337,7 +338,28 @@ fn resolve_at(
 pub(super) fn resolve(parsed: ParsedWorkflow) -> Result<ResolvedWorkflow, Vec<CompileError>> {
     let mut source = parsed.source;
     let original = source.clone();
-    let aliases = source.schemas.clone();
+    let builtins = core_schemas();
+    let mut errors = reserved_key_errors(KeyNamespace::Stage, source.stages.keys());
+    errors.extend(assessment::check(&source));
+    errors.extend(
+        source
+            .schemas
+            .keys()
+            .filter(|key| builtins.contains_key(key.as_str()))
+            .map(|key| {
+                CompileError::new(
+                    CheckKind::Name,
+                    format!("schemas.{key}"),
+                    source_span(key),
+                    format!("schema {key} shadows a core type"),
+                )
+            }),
+    );
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let mut aliases = source.schemas.clone();
+    aliases.extend(builtins.into_iter().map(|(key, ty)| (key.to_owned(), ty)));
     check_schema_sizes(&aliases)?;
     let outcomes = outcomes::infer_outcomes(&source, &aliases)?;
     let mut errors = Vec::new();
@@ -406,6 +428,50 @@ pub(super) fn resolve(parsed: ParsedWorkflow) -> Result<ResolvedWorkflow, Vec<Co
         Err(errors)
     }
 }
+fn check_label(source: &Workflow) -> Result<Option<CheckedWorkflowLabel>, CompileError> {
+    let Some(label) = &source.label else {
+        return Ok(None);
+    };
+    let artifacts = BTreeMap::new();
+    let outcomes = BTreeMap::new();
+    let lets = BTreeMap::new();
+    let scope = Scope {
+        input: &source.input,
+        artifacts: &artifacts,
+        outcomes: &outcomes,
+        each: None,
+        item: None,
+        aliases: &source.schemas,
+        lets: &lets,
+        body: None,
+        guaranteed: BTreeSet::new(),
+        collections: BTreeSet::new(),
+        diagnostic_path: String::new(),
+        diagnostic_span: SourceSpan::default(),
+    };
+    let field = |text: &str, path: &str, expected: Type| {
+        let expression = checked(text, &scope, path)?;
+        if expression.value_type != expected {
+            return Err(CompileError::new(
+                CheckKind::ExpressionType,
+                path,
+                source_span(text),
+                format!("expected {expected:?}"),
+            ));
+        }
+        Ok(expression)
+    };
+    Ok(Some(CheckedWorkflowLabel {
+        title: field(&label.title, "label.title", Type::Text)?,
+        repositories: field(
+            &label.repositories,
+            "label.repositories",
+            Type::List {
+                item: Box::new(Type::Ident),
+            },
+        )?,
+    }))
+}
 pub(super) fn check(
     resolved: ResolvedWorkflow,
     operations: &[CodeOperation],
@@ -435,6 +501,13 @@ pub(super) fn check(
             Err(stage_errors) => errors.extend(stage_errors),
         }
     }
+    let label = match check_label(&source) {
+        Ok(label) => label,
+        Err(error) => {
+            errors.push(error);
+            None
+        }
+    };
     group::check_structure(&source.run, "run", &source, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
@@ -447,6 +520,7 @@ pub(super) fn check(
         original: resolved.original,
         stages,
         root,
+        label,
     })
 }
 pub(super) fn lower(
@@ -491,6 +565,7 @@ pub(super) fn lower(
         input: parts.source.input,
         stages: parts.stages,
         root: parts.root,
+        label: parts.label,
     };
     Ok((program, projected))
 }

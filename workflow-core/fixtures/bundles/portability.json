@@ -1,0 +1,135 @@
+{
+  "workflow": "portability",
+  "input": {
+    "headline": "text",
+    "destinations": "list(ident)"
+  },
+  "label": {
+    "title": "input.headline",
+    "repositories": "input.destinations"
+  },
+  "schemas": {
+    "itinerary": {
+      "folios": "list(ident)"
+    },
+    "draft_copy": {
+      "prose": "text"
+    },
+    "appraisal_copy": {
+      "remarks": "list(feedback_proposal)",
+      "closure_checks": "list(assignment_verification)"
+    }
+  },
+  "run": {
+    "units": {
+      "outline": {
+        "stage": "outlining"
+      },
+      "editions": {
+        "stage": "drafting",
+        "for_each": "outline.outcome.folio_keys",
+        "key": "each",
+        "input": {
+          "edition_key": "each"
+        }
+      }
+    },
+    "outcome": {}
+  },
+  "stages": {
+    "outlining": {
+      "input": {},
+      "artifacts": {
+        "roadmap": {
+          "kind": "record",
+          "schema": "itinerary"
+        }
+      },
+      "workers": {
+        "cartographer": {
+          "kind": "agent",
+          "label": "Cartographer",
+          "inputs": {},
+          "prompts": {
+            "initial": "portability/outline.md",
+            "revise": "portability/outline.md"
+          },
+          "produces": [
+            "roadmap"
+          ]
+        }
+      },
+      "done_when": "published(roadmap)",
+      "outcome": {
+        "folio_keys": "latest(roadmap).folios"
+      }
+    },
+    "drafting": {
+      "input": {
+        "edition_key": "ident"
+      },
+      "artifacts": {
+        "manuscript": {
+          "kind": "document",
+          "schema": "draft_copy"
+        },
+        "appraisal": {
+          "kind": "assessment",
+          "schema": "appraisal_copy",
+          "view": "assessment"
+        }
+      },
+      "workers": {
+        "scribe": {
+          "kind": "agent",
+          "label": "Scribe",
+          "inputs": {
+            "edition_key": "input.edition_key"
+          },
+          "prompts": {
+            "initial": "portability/draft.md",
+            "revise": "portability/draft.md"
+          },
+          "produces": [
+            "manuscript"
+          ]
+        },
+        "reader": {
+          "kind": "agent",
+          "label": "Reader",
+          "evaluates": "manuscript",
+          "inputs": {},
+          "prompts": {
+            "review": "portability/read.md",
+            "revise": "portability/read.md"
+          },
+          "produces": [
+            "appraisal"
+          ]
+        }
+      },
+      "reviews": {
+        "appraisal_desk": {
+          "of": "appraisal",
+          "by": "operator",
+          "prompt": "portability/read.md",
+          "decisions": {
+            "endorse": {
+              "effect": "approve",
+              "operation": "approve_assessment",
+              "label": "Endorse the manuscript"
+            },
+            "return_notes": {
+              "effect": "request_changes",
+              "operation": "dispatch_feedback",
+              "on": "manuscript",
+              "label": "Return the reader's notes"
+            }
+          }
+        }
+      },
+      "done_when": "approved(appraisal)",
+      "outcome": {}
+    }
+  }
+}

@@ -22,7 +22,7 @@ const workflow = (stage: "brief" | "build"): Workflow => ({ workflow: `blocker_$
     workers: { writer: { kind: "agent", prompts: { initial: "initial.md", revise: "revise.md" }, inputs: {}, produces: ["result"] } },
     reviews: { result_review: { of: "result", by: "operator", prompt: "review.md", decisions: {
       accept: { label: "Accept", effect: "approve", when: { check: "len(result.findings) == 0", reason: "Resolve findings" } },
-      request_changes: { label: "Fix", effect: "request_changes", on: "result", payload: { entries: "list(text)", rework_feedback: "text" }, feedback_field: "rework_feedback" },
+      request_changes: { label: "Fix", effect: "request_changes", on: "result", payload: { entries: "list(text)", feedback: "text" } },
     } } }, done_when: "approved(result)", outcome: {} } },
 });
 
@@ -49,7 +49,7 @@ class Run {
     return run;
   }
   async apply(event: Event) {
-    const incoming: Incoming = { event, writer: event.kind === "revision_published" ? { kind: "executor", attempt: event.by ?? "none" } : OPERATOR, ingress_id: crypto.randomUUID() };
+    const incoming: Incoming = { event, writer: event.kind === "revision_published" ? { kind: "executor", attempt: event.by?.action ?? "none" } : OPERATOR, ingress_id: crypto.randomUUID() };
     const stepped = await core.request("step", { workflow_digest: this.compiled.digest, snapshot: this.state, incoming });
     if (!stepped.ok || stepped.value.kind !== "stepped") throw new Error(JSON.stringify(stepped));
     const result = stepped.value.value;
@@ -69,7 +69,7 @@ class Run {
   latest(artifact: string) { return this.state.revisions.filter((revision) => revision.unit === "run/a" && revision.artifact === artifact).at(-1); }
   attempt() { const attempt = this.state.attempts.filter((attempt) => attempt.unit === "run/a").at(-1); if (!attempt) throw new Error("attempt absent"); return attempt; }
   async publish(artifact: string, body: unknown) {
-    return this.apply({ kind: "revision_published", unit: "run/a", artifact, body, predecessor: this.latest(artifact)?.id ?? null, subject: null, by: this.attempt().action_id });
+    return this.apply({ kind: "revision_published", unit: "run/a", artifact, body, predecessor: this.latest(artifact)?.id ?? null, subject: null, by: { action: this.attempt().action_id, seq: 1 } });
   }
   async answer(decision: "clarify" | "discuss" | "override") {
     const target = this.latest("blocker")?.id;
@@ -120,14 +120,14 @@ test("selected-field decision forms collect only the declared payload", async ()
   const run = await Run.create("build");
   const decision = run.compiled.workflow.stages.build?.reviews?.result_review?.decisions.request_changes;
   if (!decision) throw new Error("request_changes absent");
-  expect(schemaKey(selectDecisionPayloadType(decision))).toBe("{entries: list(text), rework_feedback: text}");
+  expect(schemaKey(selectDecisionPayloadType(decision))).toBe("{entries: list(text), feedback: text}");
 });
 
 test("every implicit blocker decision form collects only the operator answer", async () => {
   const run = await Run.create("brief");
   const review = run.compiled.workflow.stages.brief?.reviews?.blocker_review;
   if (!review) throw new Error("blocker_review absent");
-  expect(Object.entries(review.decisions).map(([key, decision]) => [key, schemaKey(selectDecisionPayloadType(decision))]))
+  expect(Object.entries(review.decisions).map(([key, decision]) => [key, schemaKey(selectDecisionPayloadType(decision, BLOCKER_REVIEW))]))
     .toEqual([["clarify", "{answer: text}"], ["discuss", "{answer: text}"], ["override", "{answer: text}"]]);
 });
 
@@ -184,7 +184,7 @@ test("review_history and latest field-only feedback render independently in the 
   const run = await Run.create("build");
   const instruction = run.intents[0]?.payload;
   if (!instruction) throw new Error("initial instruction absent");
-  const history = [{ id: "d1", review: "assessment_review", decision: "changes", target: "r1", payload: { entries: ["full disposition"], rework_feedback: "Fix X" } }];
+  const history = [{ id: "d1", review: "assessment_review", decision: "changes", target: "r1", payload: { entries: ["full disposition"], feedback: "Fix X" } }];
   const resolved = { action_id: "action", inputs: {}, feedback: [{ ...history[0]!, payload: { feedback: "Fix X" } }], review_history: history };
   const enriched = withReviewHistory({ ...instruction, engine_inputs: { ...instruction.engine_inputs, feedback: resolved.feedback } }, resolved);
   const rendered = renderModePrompt(enriched, "{{feedback}}\nHISTORY\n{{review_history}}");

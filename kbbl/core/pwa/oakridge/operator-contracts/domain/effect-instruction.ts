@@ -9,4 +9,11 @@ export interface OperatorEngineInputs {
   readonly previous: OperatorRevisionState | null;
   readonly feedback: readonly OperatorFeedbackEntry[];
   readonly subject: OperatorRevisionState | null;
+  readonly round_delivery?: string;
+  readonly self_assessment?: readonly OperatorSelfAssessmentSubject[];
+}
+
+export interface OperatorSelfAssessmentSubject {
+  readonly assessment: string;
+  readonly subject_artifact: string;
 }

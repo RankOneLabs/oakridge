@@ -1,124 +1,65 @@
 import type { Result } from "../../lib/result";
 import type { FindingSeverity } from "../artifact-types";
-import type { RepositoryKey } from "../run-types";
 
-/**
- * Mirrors `test_evidence` in workflow-config/development.yaml.
- * Builders routinely omit the text fields, so absence reads as null.
- */
 export interface TestEvidence {
   passed: number;
   failed: number;
-  output: string | null;
-  summary: string | null;
-  cargo_test_output: string | null;
+  output?: string | null;
+  summary?: string | null;
+  cargo_test_output?: string | null;
 }
 
-/** Mirrors `build_metadata` in workflow-config/development.yaml; builders publish only the fields they know. */
-export interface DelegatedBuildMetadata {
-  cohort_id: string | null;
-  session_id: string | null;
-  branch: string | null;
-}
-
-/** Mirrors `issue` in workflow-config/development.yaml. */
 export interface BuildIssue {
   description: string;
   severity: FindingSeverity;
 }
 
-/** Mirrors `build_body` in workflow-config/development.yaml, including legacy revisions. */
+/** Fields rendered by the build summary. The artifact body is checked by the
+ * viewer registry against the run's projected schema. */
 export interface BuildResult {
-  head_sha: string | null;
-  repository_key: RepositoryKey | null;
+  head_sha?: string | null;
+  repository_key?: string | null;
   summary: string;
   changed_files: string[];
   tests: TestEvidence;
-  delegated_session_metadata: DelegatedBuildMetadata | null;
+  delegated_session_metadata?: { cohort_id?: string | null; branch?: string | null } | null;
   known_issues: BuildIssue[];
 }
 
-export interface BuildResultParseError {
-  operation: "parse_build_result";
-  field: string;
-  detail: string;
-}
-
-type Parsed<T> = Result<T, BuildResultParseError>;
-
-const ok = <T>(value: T): Parsed<T> => ({ ok: true, value });
-const fail = (field: string, detail: string): Parsed<never> => ({ ok: false, error: { operation: "parse_build_result", field, detail } });
 const SEVERITIES: readonly FindingSeverity[] = ["blocking", "warning", "info"];
 
-function isRecord(value: unknown): value is { [key: string]: unknown } {
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function nullableString(value: unknown): string | null {
+function textOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-/** Where in a body a shared shape broke; each artifact parser wraps it in its own error. */
-export interface FieldError {
-  field: string;
-  detail: string;
-}
+export interface FieldError { field: string; detail: string }
 
-/** Shared by build results (`tests`) and assessments (`test_evidence`). */
+/** Reported evidence has its own capture contract, which allows absent prose. */
 export function parseTestEvidence(value: unknown, field: string): Result<TestEvidence, FieldError> {
-  if (!isRecord(value)) return { ok: false, error: { field, detail: "expected an object" } };
-  if (typeof value.passed !== "number") return { ok: false, error: { field: `${field}.passed`, detail: "expected a number" } };
-  if (typeof value.failed !== "number") return { ok: false, error: { field: `${field}.failed`, detail: "expected a number" } };
-  return {
-    ok: true,
-    value: {
-      passed: value.passed,
-      failed: value.failed,
-      output: nullableString(value.output),
-      summary: nullableString(value.summary),
-      cargo_test_output: nullableString(value.cargo_test_output),
-    },
-  };
+  if (!isRecord(value) || typeof value.passed !== "number" || typeof value.failed !== "number")
+    return { ok: false, error: { field, detail: "expected test counts" } };
+  return { ok: true, value: {
+    passed: value.passed, failed: value.failed,
+    output: textOrNull(value.output), summary: textOrNull(value.summary), cargo_test_output: textOrNull(value.cargo_test_output),
+  } };
 }
 
-function parseIssues(value: unknown): Parsed<BuildIssue[]> {
-  if (!Array.isArray(value)) return fail("known_issues", "expected an array");
-  const issues: BuildIssue[] = [];
-  for (const [index, entry] of value.entries()) {
-    const severity = isRecord(entry) ? SEVERITIES.find((candidate) => candidate === entry.severity) : undefined;
-    if (!isRecord(entry) || typeof entry.description !== "string" || !severity) {
-      return fail(`known_issues[${index}]`, "expected a description and a blocking, warning or info severity");
-    }
-    issues.push({ description: entry.description, severity });
-  }
-  return ok(issues);
-}
-
-export function parseBuildResult(body: unknown): Parsed<BuildResult> {
-  if (!isRecord(body)) return fail("body", "expected an object");
-  if (body.head_sha !== undefined && body.head_sha !== null && typeof body.head_sha !== "string") {
-    return fail("head_sha", "expected a string or null");
-  }
-  if (typeof body.summary !== "string") return fail("summary", "expected a string");
-  if (!Array.isArray(body.changed_files) || !body.changed_files.every((file) => typeof file === "string")) {
-    return fail("changed_files", "expected an array of strings");
-  }
-  const tests = parseTestEvidence(body.tests, "tests");
-  if (!tests.ok) return fail(tests.error.field, tests.error.detail);
-  const issues = parseIssues(body.known_issues);
-  if (!issues.ok) return issues;
-  const metadata = body.delegated_session_metadata;
-  return ok({
-    head_sha: nullableString(body.head_sha),
-    repository_key: nullableString(body.repository_key) as RepositoryKey | null,
-    summary: body.summary,
-    changed_files: body.changed_files,
-    tests: tests.value,
-    delegated_session_metadata: isRecord(metadata)
-      ? { cohort_id: nullableString(metadata.cohort_id), session_id: nullableString(metadata.session_id), branch: nullableString(metadata.branch) }
-      : null,
-    known_issues: issues.value,
-  });
+/** Select the portion of a schema-checked build publication a specialized view can show. */
+export function asBuildSummary(value: unknown): BuildResult | null {
+  if (!isRecord(value) || typeof value.summary !== "string"
+    || !Array.isArray(value.changed_files) || !value.changed_files.every((file) => typeof file === "string")
+    || !Array.isArray(value.known_issues) || !value.known_issues.every((issue) =>
+      isRecord(issue) && typeof issue.description === "string" && SEVERITIES.some((severity) => severity === issue.severity))) return null;
+  const tests = parseTestEvidence(value.tests, "tests");
+  if (!tests.ok) return null;
+  const metadata = isRecord(value.delegated_session_metadata) ? value.delegated_session_metadata : null;
+  return { summary: value.summary, changed_files: value.changed_files, known_issues: value.known_issues, tests: tests.value,
+    head_sha: textOrNull(value.head_sha), repository_key: textOrNull(value.repository_key),
+    delegated_session_metadata: metadata && { cohort_id: textOrNull(metadata.cohort_id), branch: textOrNull(metadata.branch) } };
 }
 
 /** How the files a build changed line up with the files its brief put in scope. */
@@ -153,5 +94,5 @@ export function selectHasBlockingIssue(issues: BuildIssue[]): boolean {
 
 /** The prose the builder recorded about its test run, in the order a reviewer reads it. */
 export function selectTestEvidenceText(tests: TestEvidence): string[] {
-  return [tests.summary, tests.output, tests.cargo_test_output].filter((text): text is string => text !== null && text.trim() !== "");
+  return [tests.summary, tests.output, tests.cargo_test_output].filter((text): text is string => typeof text === "string" && text.trim() !== "");
 }

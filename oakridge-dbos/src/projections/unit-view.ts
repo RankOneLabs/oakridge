@@ -1,12 +1,13 @@
-import { isAdjudicatedArtifact, selectAdjudicatedReview, selectRecordedAdjudication, selectReviewedAssessmentId, type Adjudication } from "../domain/adjudication";
-import { BLOCKER_ARTIFACT, BLOCKER_REVIEW, type BlockerAnswerBody, type BlockerBody, type Writer } from "../core-client/core-types";
+import { hasAssessmentOperations } from "./artifact-view";
+import { BLOCKER_ARTIFACT, BLOCKER_REVIEW, type BlockerAnswerBody, type BlockerBody } from "../core-client/core-types";
 import type { ReviewDecisionRead } from "../storage/read-store";
 import type { ArtifactSchemaVersions } from "../storage/read-store";
 import { selectInputProvenance, type InputProvenanceView } from "../domain/unit-status";
 import type { BlockerAuthor, BlockerHistory, BlockerRevision, BlockerAnswer, BlockerHistoryEntry } from "./history-view";
 import type { ReviewHistoryEngineInputs } from "../effects/session-prompt";
 import type { PinnedPrompt } from "../domain/effect-instruction";
-import type { AdjudicationRole, AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
+import { selectReviewedRevision } from "./usage-time";
+import type { ArtifactKind, ReviewWait, ReviewConfirms, Writer, DecisionOperation, AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
 import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { RevisionRef, RunRead, RunSummaryRead, UnitSummaryRecord } from "../storage/read-store";
@@ -69,12 +70,15 @@ export interface ArtifactView {
   readonly run_id: RunId;
   readonly unit_id: UnitId;
   readonly artifact_key: string;
-  /** The schema name the PWA's viewer registry dispatches on. */
+  readonly view: string | null;
+  readonly link_field?: string | null;
+  readonly kind: ArtifactKind;
+  /** The name of the projected schema. */
   readonly schema: string;
   /** An operator review of this artifact is declared. */
   readonly is_reviewable: boolean;
-  /** A review of this artifact declares an adjudication decision, so the operator adjudicates its next actions. */
-  readonly is_adjudicated: boolean;
+  /** A review of this artifact declares assessment operations. */
+  readonly has_assessment_operations: boolean;
   /** An agent creates it, so the operator may publish an edited revision. */
   readonly is_editable: boolean;
   readonly revision_count: number;
@@ -95,7 +99,7 @@ export interface DecisionDefinition {
   readonly key: string;
   readonly label: string;
   readonly payload_schema: string;
-  readonly adjudication: AdjudicationRole | null;
+  readonly operation: DecisionOperation;
   readonly assessment: string | null;
   /** Labels for the payload's text fields. */
   readonly fields: readonly DecisionField[];
@@ -105,28 +109,59 @@ export interface DecisionDefinition {
 /** A decision recorded on one of a unit's artifact revisions. */
 export interface RevisionDecision {
   readonly id: string;
+  readonly decision_id: string;
+  readonly actor: Writer | null;
+  readonly reviewed_revision_id: string | null;
+  readonly approved_assessment_revision_id: string | null;
+  readonly effect_target_revision_id: string;
   readonly review: string;
   readonly decision: string;
   readonly effect: DeclaredDecisionEffect;
   readonly target_revision_id: string;
   readonly payload: BodyValue;
-  readonly assessment_revision_id?: string | null;
-  readonly adjudication?: Adjudication | null;
-  readonly actor?: Writer | null;
   readonly created_at: Date;
 }
-/** A recorded decision, with the adjudication and assessment its unit's declared review gives it. */
-export function selectRevisionDecision(read: Pick<RunRead, "definition" | "units" | "revisions">, decision: ReviewDecisionRead): RevisionDecision {
-  const review = selectAdjudicatedReview({ workflow: read.definition.parsed_workflow,
-    stage: read.units.find((unit) => unit.id === decision.unit_id)?.stage, review: decision.review });
-  const assessment_revision_id = selectReviewedAssessmentId({ decision, review, revisions: read.revisions });
-  const adjudication = selectRecordedAdjudication(review, decision.decision, decision.payload);
-  return { id: decision.id, review: decision.review, decision: decision.decision, effect: decision.effect,
-    target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue, created_at: decision.created_at,
-    ...(adjudication ? { adjudication, assessment_revision_id: assessment_revision_id ?? decision.target_revision_id, actor: decision.actor ?? null } : {}) };
+export function selectRevisionDecision(read: RunRead, decision: ReviewDecisionRead): RevisionDecision {
+  const stage = read.units.find((unit) => unit.id === decision.unit_id)?.stage;
+  const review = stage ? read.definition.parsed_workflow.stages[stage]?.reviews?.[decision.review] : undefined;
+  const reviewed = review ? selectReviewedRevision(read, decision, review.of) : null;
+  const approval = read.assessment_approvals?.find((candidate) => candidate.decision_id === decision.id);
+  return { id: decision.id, decision_id: decision.id, review: decision.review, decision: decision.decision,
+    actor: decision.actor ?? null, reviewed_revision_id: reviewed?.id ?? null,
+    approved_assessment_revision_id: approval?.assessment_revision_id ?? null, effect_target_revision_id: decision.target_revision_id,
+    effect: decision.effect === "dispatch" ? "request_changes" : decision.effect,
+    target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue,
+    created_at: decision.created_at };
+}
+
+export interface OpenReviewDecision {
+  readonly key: string;
+  readonly label: string;
+  readonly effect: DeclaredDecisionEffect;
+  readonly operation: DecisionOperation;
+  readonly on_artifact: string;
+  readonly target_revision_id: string;
+}
+
+export interface OpenReview {
+  readonly review: string;
+  readonly of_artifact: string;
+  readonly reviewed_revision_id: string;
+  readonly wait: ReviewWait;
+  readonly confirms: ReviewConfirms | null;
+  readonly producer_workers: readonly string[];
+  readonly decisions: readonly OpenReviewDecision[];
+  readonly failure_code: string | null;
+}
+
+export interface ProjectedWorker {
+  readonly key: string;
+  readonly label: string;
+  readonly kind: "agent" | "code";
 }
 
 export interface UnitView {
+  readonly awaiting_execution_reconciliation?: readonly { readonly id: string; readonly worker: string }[];
   readonly blocker?: BlockerHistory | null;
   readonly input_provenance: InputProvenanceView;
   readonly unit_id: UnitId;
@@ -142,6 +177,8 @@ export interface UnitView {
   readonly is_terminal: boolean;
   readonly attention: Attention | null;
   readonly decisions: readonly DecisionDefinition[];
+  readonly reviews: readonly OpenReview[];
+  readonly workers: readonly ProjectedWorker[];
   /** Decisions already made on the unit's revisions, oldest first. */
   readonly recorded_decisions: readonly RevisionDecision[];
   readonly attempts: readonly AttemptView[];
@@ -177,16 +214,14 @@ export function selectAttemptIntent(attempt: AttemptRecord, intents: RunRead["in
 export const selectAttemptId = (attempt: Pick<AttemptRecord, "action_id" | "seq">): string => `${attempt.action_id}:${attempt.seq}`;
 
 /**
- * The attempt that published a revision. A revision records only its action, so this is the latest attempt of that
- * action opened by then: commit stamps both under the run lock, and a retry opens after every revision written before it.
+ * The exact attempt stored when the revision was published.
  */
-export function selectPublishingAttempt<Attempt extends Pick<AttemptRecord, "action_id" | "seq" | "created_at">>(
-  revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">, attempts: readonly Attempt[]): Attempt | null {
-  return attempts.filter((attempt) => attempt.action_id === revision.by_id && attempt.created_at.getTime() <= revision.created_at.getTime())
-    .reduce<Attempt | null>((latest, attempt) => latest === null || attempt.seq > latest.seq ? attempt : latest, null);
+export function selectPublishingAttempt<Attempt extends Pick<AttemptRecord, "action_id" | "seq">>(
+  revision: Pick<ArtifactRevisionRecord, "by_action_id" | "by_seq">, attempts: readonly Attempt[]): Attempt | null {
+  return attempts.find((attempt) => attempt.action_id === revision.by_action_id && attempt.seq === revision.by_seq) ?? null;
 }
-export function selectPublishingAttemptId(revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">,
-  attempts: readonly Pick<AttemptRecord, "action_id" | "seq" | "created_at">[]): string | null {
+export function selectPublishingAttemptId(revision: Pick<ArtifactRevisionRecord, "by_action_id" | "by_seq">,
+  attempts: readonly Pick<AttemptRecord, "action_id" | "seq">[]): string | null {
   const publisher = selectPublishingAttempt(revision, attempts);
   return publisher === null ? null : selectAttemptId(publisher);
 }
@@ -217,15 +252,15 @@ export const isReviewable = (stage: ParsedStage, artifact: string): boolean =>
   Object.values(stage.reviews ?? {}).some((review) => review.of === artifact && review.by === "operator");
 /** The core refuses an operator's edit of an artifact a code worker creates. */
 export const isEditable = (stage: ParsedStage, artifact: string): boolean =>
-  artifact !== "blocker" && Object.values(stage.workers).some((worker) => worker.kind === "agent" && worker.produces.includes(artifact));
+  artifact !== BLOCKER_ARTIFACT && Object.values(stage.workers).some((worker) => worker.kind === "agent" && worker.produces.includes(artifact));
 
 function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly ArtifactView[] {
   const stage = unit.stage === null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
   if (!stage) return [];
   return Object.keys(stage.artifacts).sort().map((artifact) => {
     const revisions = selectRevisionViews({ revisions: revisionsOf(read.revisions, unit.id, artifact), attempts: read.attempts, versions: read.definition.artifact_schema_versions ?? {}, stage: unit.stage ?? "" });
-    return { run_id: unit.run_id, unit_id: unit.id, artifact_key: artifact, schema: selectArtifactSchema(stage, artifact),
-      is_reviewable: isReviewable(stage, artifact), is_adjudicated: isAdjudicatedArtifact(stage, artifact), is_editable: isEditable(stage, artifact),
+    return { run_id: unit.run_id, unit_id: unit.id, artifact_key: artifact, link_field: stage.artifacts[artifact].link_field ?? null, kind: stage.artifacts[artifact].kind, view: stage.artifacts[artifact].view ?? null, schema: selectArtifactSchema(stage, artifact),
+      is_reviewable: isReviewable(stage, artifact), has_assessment_operations: hasAssessmentOperations(stage, artifact), is_editable: isEditable(stage, artifact),
       revision_count: revisions.length, latest_revision: revisions.at(-1) ?? null };
   });
 }
@@ -236,27 +271,43 @@ function decisionKey(stage: ParsedStage, review: string, decision: string): stri
   return reuses > 1 ? `${review}:${decision}` : decision;
 }
 
+function selectOpenReviews(stage: ParsedStage, attention: UnitAttention): readonly OpenReview[] {
+  return attention.awaiting.flatMap((awaiting) => {
+    const review = stage.reviews?.[awaiting.review];
+    if (!review) return [];
+    const decisions = awaiting.decisions.flatMap((resolved): OpenReviewDecision[] => {
+      const decision = review.decisions[resolved.decision];
+      return decision ? [{ key: resolved.decision, label: decision.label, effect: decision.effect,
+        operation: decision.operation ?? "plain", on_artifact: decision.on ?? review.of, target_revision_id: resolved.target }] : [];
+    });
+    return [{ review: awaiting.review, of_artifact: review.of, reviewed_revision_id: awaiting.target,
+      wait: review.wait ?? "operator", confirms: review.confirms ?? null, failure_code: awaiting.failure_code,
+      producer_workers: Object.entries(stage.workers).filter(([, worker]) => worker.produces.includes(review.of)).map(([key]) => key),
+      decisions }];
+  });
+}
+
 function reviewDecisions(stage: ParsedStage, attention: UnitAttention): readonly DecisionDefinition[] {
   return attention.awaiting.flatMap((awaiting) => {
     const review: ParsedReview | undefined = stage.reviews?.[awaiting.review];
     if (!review) return [];
-    const assessment = Object.values(review.decisions).some(decision => decision.adjudication != null) ? review.assessment ?? null : null;
+    const assessment = Object.values(review.decisions).some(decision => decision.operation != null && decision.operation !== "plain") ? review.assessment ?? (stage.artifacts?.[review.of]?.kind === "assessment" ? review.of : null) : null;
     return Object.entries(review.decisions).sort(([left], [right]) => left.localeCompare(right)).flatMap(([key, decision]) => {
       // The core names each decision's target; a decision it does not list is not legal now.
       const resolved = awaiting.decisions.find((resolved) => resolved.decision === key);
       const target = resolved?.target;
       if (target === undefined) return [];
-      return [{ is_available: resolved?.is_available ?? true, disabled_reason: resolved?.disabled_reason ?? null, key: decisionKey(stage, awaiting.review, key), label: decision.label, payload_schema: schemaKey(selectDecisionPayloadType(decision)),
-        adjudication: decision.adjudication ?? null, assessment,
+      return [{ is_available: resolved?.is_available ?? true, disabled_reason: resolved?.disabled_reason ?? null, key: decisionKey(stage, awaiting.review, key), label: decision.label, payload_schema: schemaKey(selectDecisionPayloadType(decision, awaiting.review)),
+        operation: decision.operation ?? "plain", assessment,
         fields: Object.entries(decision.fields ?? {}).map(([field, label]) => ({ key: field, label })),
         submit: { kind: "review", review: awaiting.review, decision: key, effect: decision.effect, target_revision_id: target } }];
     });
   });
 }
 const retryDecisions = (attention: UnitAttention): readonly DecisionDefinition[] => attention.stalled.map((stalled) => ({
-  is_available: true, disabled_reason: null, key: `retry:${stalled.worker}`, label: `Retry ${titleCase(stalled.worker)}`, payload_schema: schemaKey(EMPTY_PAYLOAD), adjudication: null, assessment: null, fields: [],
+  is_available: true, disabled_reason: null, key: `retry:${stalled.worker}`, label: `Retry ${titleCase(stalled.worker)}`, payload_schema: schemaKey(EMPTY_PAYLOAD), operation: "plain", assessment: null, fields: [],
   submit: { kind: "retry", worker: stalled.worker } }));
-const CANCEL: DecisionDefinition = { is_available: true, disabled_reason: null, key: "cancel", label: "Cancel run", payload_schema: schemaKey(EMPTY_PAYLOAD), adjudication: null, assessment: null, fields: [], submit: { kind: "cancel" } };
+const CANCEL: DecisionDefinition = { is_available: true, disabled_reason: null, key: "cancel", label: "Cancel run", payload_schema: schemaKey(EMPTY_PAYLOAD), operation: "plain", assessment: null, fields: [], submit: { kind: "cancel" } };
 
 /** What the operator may decide on a unit now: its awaiting reviews' decisions, a retry per stalled worker, and cancel on a live run's root. */
 export function selectAvailableDecisions(read: RunSummaryRead, unit: UnitSummaryRecord, attention: UnitAttention): readonly DecisionDefinition[] {
@@ -277,15 +328,20 @@ export function selectUnitInputFields(unit: UnitView, fields: readonly string[])
 
 export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitAttention): UnitView {
   const tree = selectUnitTree(read.units, read.definition.workflow);
+  const stage = unit.stage === null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
+  const reconciliations = read.reconciliations?.filter(({ unit_id }) => unit_id === unit.id) ?? [];
   return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
     blocker: selectBlockerHistory(read, unit),
+    ...(reconciliations.length > 0 ? { awaiting_execution_reconciliation: reconciliations.map(({ id, worker }) => ({ id, worker })) } : {}),
     input_provenance: selectInputProvenance(unit.input_provenance),
     stage: unit.stage, collection_key: selectCollectionKey(unit), input: unit.input as BodyValue,
     depends_on: read.dependencies.filter((edge) => edge.unit_id === unit.id).map((edge) => edge.depends_on_id),
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),
     attention: selectAttention(attention, read),
     decisions: selectAvailableDecisions(read, unit, attention),
-    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map(decision => selectRevisionDecision(read, decision)),
+    reviews: stage ? selectOpenReviews(stage, attention) : [],
+    workers: Object.entries(stage?.workers ?? {}).map(([key, worker]) => ({ key, label: worker.label ?? key, kind: worker.kind })),
+    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map((decision) => selectRevisionDecision(read, decision)),
     attempts: selectAttemptViews(read.attempts.filter((attempt) => attempt.unit_id === unit.id), read.intents),
     artifacts: selectArtifactViews(read, unit) };
 }
@@ -300,8 +356,8 @@ function isBlockerAnswerBody(body: unknown): body is BlockerAnswerBody {
 }
 
 /** The worker attempt that published a revision (see `selectPublishingAttempt`); null for an operator edit. */
-export function selectRevisionAuthor(attempts: readonly AttemptRecord[], revision: Pick<ArtifactRevisionRecord, "by_id" | "created_at">): BlockerAuthor | null {
-  if (revision.by_id === null) return null;
+export function selectRevisionAuthor(attempts: readonly AttemptRecord[], revision: Pick<ArtifactRevisionRecord, "by_action_id" | "by_seq">): BlockerAuthor | null {
+  if (revision.by_action_id === null) return null;
   const attempt = selectPublishingAttempt(revision, attempts);
   if (attempt === null) return null;
   return { worker: attempt.worker, action_id: attempt.action_id, attempt_seq: attempt.seq, session_id: attempt.kbbl_session_id };

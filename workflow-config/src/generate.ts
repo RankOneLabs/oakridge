@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:f
 import { dirname, relative, resolve, sep } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import YAML from "yaml";
-import { WORKFLOW_SOURCES } from "./workflow-sources";
+import { expandIncludes } from "./workflow-include";
+import { discoverWorkflowSources } from "./workflow-sources";
 import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry";
 import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
@@ -95,12 +96,14 @@ const skillEntries = readdirSync(skillRoot, { withFileTypes: true }).filter((ent
 });
 generated.push({ path: resolve(storeRoot, "skills.json"), bytes: canonicalBytes(Object.fromEntries(skillEntries)) });
 const launchableEntries: [string, LaunchableEntry][] = [];
-for (const [name, { path, audience }] of Object.entries(WORKFLOW_SOURCES)) {
+for (const { name, path, audience } of discoverWorkflowSources(root)) {
   const sourcePath = resolve(root, path);
-  const document = YAML.parseDocument(readFileSync(sourcePath, "utf8"), { uniqueKeys: true });
-  if (document.errors.length > 0) {
-    throw new Error(`${sourcePath}: ${document.errors.map((error) => error.message).join("; ")}`);
+  const sourceDocument = YAML.parseDocument(readFileSync(sourcePath, "utf8"), { uniqueKeys: true });
+  if (sourceDocument.errors.length > 0) {
+    throw new Error(`${sourcePath}: ${sourceDocument.errors.map((error) => error.message).join("; ")}`);
   }
+  const document = required(expandIncludes(sourceDocument, (path) =>
+    YAML.parseDocument(readFileSync(resolve(root, "workflow-config", path), "utf8"), { uniqueKeys: true })));
   // YAML nodes preserve authored order, including integer-like names that
   // JavaScript object enumeration would reorder after toJS().
   const schemas = document.get("schemas");
@@ -111,6 +114,10 @@ for (const [name, { path, audience }] of Object.entries(WORKFLOW_SOURCES)) {
   const order: DefinitionOrder = {
     schema_names: schemas?.items.map(({ key }) => String(key)) ?? [],
     stage_names: stages.items.map(({ key }) => String(key)),
+    worker_names: Object.fromEntries(stages.items.map(({ key, value }) => {
+      const workers = YAML.isMap(value) ? value.get("workers") : undefined;
+      return [String(key), YAML.isMap(workers) ? workers.items.map((worker) => String(worker.key)) : []];
+    })),
   };
   const authored = document.toJS();
   const source = decodeWorkflowSource(authored);

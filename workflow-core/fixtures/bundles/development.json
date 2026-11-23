@@ -1,11 +1,67 @@
 {
-  "workflow": "development",
   "input": {
     "title": "text",
     "spec": "text",
     "repositories": "list(repository)",
     "primary_repository_key": "ident",
     "final_merge_policy": "final_merge_policy"
+  },
+  "decisions": {
+    "accept_or_request": {
+      "accept": {
+        "effect": "approve",
+        "label": "Accept"
+      },
+      "request_changes": {
+        "effect": "request_changes",
+        "label": "Request changes",
+        "fields": {
+          "feedback": "What must the proposed specification change?"
+        }
+      }
+    }
+  },
+  "workers": {
+    "pr_watch": {
+      "kind": "code",
+      "label": "PR watcher",
+      "operation": "pull_request.observe",
+      "when": "pr_opened",
+      "inputs": {
+        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
+      },
+      "every": "2m",
+      "produces": [
+        "pr_state"
+      ]
+    }
+  },
+  "reviews": {
+    "pr_closed": {
+      "of": "build_result",
+      "by": "operator",
+      "wait": "external",
+      "when": "closed_pr",
+      "prompt": "development/pr-closed.md",
+      "inputs": {
+        "pr": "latest(pr)",
+        "pr_state": "latest(pr_state)"
+      },
+      "decisions": {
+        "replace_pr": {
+          "effect": "request_changes",
+          "label": "Replace the closed PR",
+          "fields": {
+            "feedback": "What must change in the replacement pull request?"
+          }
+        }
+      }
+    }
+  },
+  "workflow": "development",
+  "label": {
+    "title": "input.title",
+    "repositories": "map(input.repositories, item.key)"
   },
   "schemas": {
     "final_merge_policy": "enum(require_merge, allow_close_without_merge)",
@@ -40,12 +96,45 @@
       "head_sha": "optional(text)",
       "merged_at": "optional(text)"
     },
-    "completed_cohort": "outcome_of(cohort)",
     "severity": "enum(blocking, warning, info)",
     "issue": {
       "description": "text",
       "severity": "severity"
     },
+    "test_evidence": {
+      "passed": "integer",
+      "failed": "integer",
+      "output": "optional(text)",
+      "summary": "optional(text)",
+      "cargo_test_output": "optional(text)"
+    },
+    "item_assessment": {
+      "subject": "assessment_subject",
+      "status": "enum(met, partial, not_met)",
+      "observation": "text",
+      "evidence": "list(evidence_ref)"
+    },
+    "assessment_body": {
+      "head_sha": "text",
+      "item_assessments": "list(item_assessment)",
+      "additional_findings": "list(additional_finding)",
+      "proposals": "list(feedback_proposal)",
+      "verifications": "list(assignment_verification)",
+      "test_evidence": "test_evidence",
+      "verdict": "enum(pass, pass_with_notes, fail)"
+    },
+    "evidence_ref": {
+      "kind": "enum(file, test, output)",
+      "ref": "text",
+      "detail": "optional(text)"
+    },
+    "pr_body": {
+      "pr_url": "text",
+      "branch": "text",
+      "summary": "text",
+      "review_status": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
+    },
+    "completed_cohort": "outcome_of(cohort)",
     "finding_evidence": {
       "kind": "enum(file, search, test, output)",
       "ref": "text",
@@ -140,13 +229,6 @@
       "delegated_session_metadata": "optional(build_metadata)",
       "known_issues": "list(issue)"
     },
-    "test_evidence": {
-      "passed": "integer",
-      "failed": "integer",
-      "output": "optional(text)",
-      "summary": "optional(text)",
-      "cargo_test_output": "optional(text)"
-    },
     "build_metadata": {
       "cohort_id": "optional(ident)",
       "session_id": "optional(ident)",
@@ -156,119 +238,12 @@
       "kind": "enum(build_item, requirement)",
       "id": "ident"
     },
-    "item_assessment": {
-      "subject": "assessment_subject",
-      "status": "enum(met, partial, not_met)",
-      "observation": "text",
-      "evidence": "list(evidence_ref)"
-    },
     "additional_finding": {
       "id": "ident",
       "severity": "severity",
       "observation": "text",
       "related_build_item_ids": "list(ident)",
       "evidence": "list(evidence_ref)"
-    },
-    "action_source": {
-      "kind": "enum(item_assessment, additional_finding)",
-      "id": "ident"
-    },
-    "next_action": {
-      "id": "uuid(generated)",
-      "audience": "enum(rework, operator)",
-      "source": "action_source",
-      "text": "text"
-    },
-    "assessment_body": {
-      "head_sha": "text",
-      "item_assessments": "list(item_assessment)",
-      "additional_findings": "list(additional_finding)",
-      "next_actions": "list(next_action)",
-      "test_evidence": "test_evidence",
-      "verdict": "enum(pass, pass_with_notes, fail)"
-    },
-    "evidence_ref": {
-      "kind": "enum(file, test, output)",
-      "ref": "text",
-      "detail": "optional(text)"
-    },
-    "action_disposition": {
-      "action_id": "text",
-      "disposition": "enum(accepted, modified, rejected)",
-      "original_text": "text",
-      "final_text": "optional(text)",
-      "audience": "enum(rework, operator)",
-      "source": "action_source",
-      "reason": "optional(text)"
-    },
-    "added_action": {
-      "action_id": "text",
-      "origin": "enum(operator)",
-      "final_text": "text",
-      "audience": "enum(rework, operator)",
-      "source": "action_source",
-      "reason": "optional(text)"
-    },
-    "adjudication": {
-      "entries": "list(action_disposition)",
-      "added_actions": "list(added_action)",
-      "rework_feedback": "text"
-    },
-    "pr_body": {
-      "pr_url": "text",
-      "branch": "text",
-      "summary": "text",
-      "review_status": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
-    }
-  },
-  "decisions": {
-    "accept_or_request": {
-      "accept": {
-        "effect": "approve",
-        "label": "Accept"
-      },
-      "request_changes": {
-        "effect": "request_changes",
-        "label": "Request changes",
-        "fields": {
-          "feedback": "What must the proposed specification change?"
-        }
-      }
-    }
-  },
-  "workers": {
-    "pr_watch": {
-      "kind": "code",
-      "operation": "pull_request.observe",
-      "when": "pr_opened",
-      "inputs": {
-        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
-      },
-      "every": "2m",
-      "produces": [
-        "pr_state"
-      ]
-    }
-  },
-  "reviews": {
-    "pr_closed": {
-      "of": "build_result",
-      "by": "operator",
-      "when": "closed_pr",
-      "prompt": "development/pr-closed.md",
-      "inputs": {
-        "pr": "latest(pr)",
-        "pr_state": "latest(pr_state)"
-      },
-      "decisions": {
-        "replace_pr": {
-          "effect": "request_changes",
-          "label": "Replace the closed PR",
-          "fields": {
-            "feedback": "What must change in the replacement pull request?"
-          }
-        }
-      }
     }
   },
   "run": {
@@ -357,6 +332,7 @@
       "workers": {
         "git": {
           "kind": "code",
+          "label": "Git",
           "operation": "repository.prepare",
           "inputs": {
             "repository_path": "input.repository.preparation.repository_path",
@@ -383,6 +359,7 @@
       "artifacts": {
         "analysis": {
           "kind": "document",
+          "view": "requirements_analysis",
           "schema": "analysis_body",
           "validate": [
             {
@@ -409,6 +386,7 @@
         },
         "spec": {
           "kind": "document",
+          "view": "specification",
           "schema": "spec_body",
           "validate": [
             {
@@ -437,6 +415,7 @@
       "workers": {
         "author": {
           "kind": "agent",
+          "label": "Author",
           "prompts": {
             "initial": "development/analysis.md",
             "revise": "development/analysis-revise.md"
@@ -451,6 +430,7 @@
         },
         "spec_editor": {
           "kind": "agent",
+          "label": "Spec editor",
           "when": "approved(analysis)",
           "prompts": {
             "initial": "development/analysis-to-spec.md",
@@ -539,6 +519,7 @@
       "artifacts": {
         "plan": {
           "kind": "document",
+          "view": "cohort_plan",
           "schema": "plan_body",
           "validate": [
             {
@@ -575,6 +556,7 @@
       "workers": {
         "planner": {
           "kind": "agent",
+          "label": "Planner",
           "prompts": {
             "initial": "development/plan.md",
             "revise": "development/plan-revise.md"
@@ -624,6 +606,7 @@
       "artifacts": {
         "brief": {
           "kind": "document",
+          "view": "build_brief",
           "schema": "brief_body",
           "validate": [
             {
@@ -672,6 +655,7 @@
       "workers": {
         "writer": {
           "kind": "agent",
+          "label": "Writer",
           "session": "shared",
           "prompts": {
             "initial": "development/brief.md",
@@ -732,19 +716,27 @@
       "artifacts": {
         "build_result": {
           "kind": "document",
+          "view": "build_result",
           "schema": "build_body"
         },
         "pr": {
           "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "pr_url",
           "schema": "pr_body"
         },
         "assessment": {
           "kind": "assessment",
+          "view": "assessment",
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
           },
           "validate": [
+            {
+              "check": "every(assessment.proposals, not present(item.citation) or require(item.citation).revision_id != \"\")",
+              "message": "A cited proposal must name its source revision."
+            },
             {
               "check": "every(assessment.item_assessments, item.subject.kind == \"build_item\")",
               "message": "Cohort assessment items must be build items."
@@ -774,10 +766,6 @@
               "message": "Additional finding ids must be unique."
             },
             {
-              "check": "every(assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(assessment.additional_findings, item.id), item.source.id)))",
-              "message": "Every next action source must resolve to an assessed item or additional finding."
-            },
-            {
               "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
               "message": "Assessment verdict must match item statuses and additional finding severities."
             },
@@ -799,6 +787,7 @@
       "workers": {
         "builder": {
           "kind": "agent",
+          "label": "Builder",
           "prompts": {
             "initial": "development/build.md",
             "revise": "development/build-revise.md"
@@ -816,6 +805,7 @@
         },
         "assessor": {
           "kind": "agent",
+          "label": "Assessor",
           "prompts": {
             "review": "development/assess.md",
             "revise": "development/assess-revise.md"
@@ -835,6 +825,7 @@
         },
         "prepare_observed_state": {
           "kind": "code",
+          "label": "Prepare observed state",
           "operation": "value.publish",
           "when": "pr_state_current",
           "inputs": {
@@ -860,9 +851,8 @@
           "decisions": {
             "accept": {
               "effect": "approve",
-              "adjudication": "accept",
-              "label": "Accept",
-              "payload": "adjudication"
+              "operation": "approve_assessment",
+              "label": "Accept"
             },
             "request_assessment_changes": {
               "effect": "request_changes",
@@ -873,17 +863,17 @@
             },
             "request_build_changes": {
               "effect": "request_changes",
-              "adjudication": "feedback",
+              "operation": "dispatch_feedback",
               "on": "build_result",
-              "label": "Send to builder",
-              "payload": "adjudication",
-              "feedback_field": "rework_feedback"
+              "label": "Send to builder"
             }
           }
         },
         "merge_confirmation": {
           "of": "pr",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "pr_published and approved(assessment) and not merged_pr and not approved(pr)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
@@ -912,14 +902,6 @@
       }
     },
     "integration": {
-      "input": {
-        "repository": "repository",
-        "workspace": "workspace",
-        "cohorts": "list(completed_cohort)",
-        "briefs": "list(brief_body)",
-        "final_merge_policy": "final_merge_policy",
-        "requirements": "list(spec_requirement)"
-      },
       "let": {
         "pr_published": "published(pr)",
         "pr_opened": "pr_published and latest(pr).pr_url != \"\"",
@@ -929,14 +911,53 @@
         "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
         "final_state": "pr_state_current and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))"
       },
+      "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
+      "outcome": {
+        "repository_key": "input.repository.key",
+        "pr_url": "latest(pr).pr_url",
+        "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
+      },
+      "input": {
+        "repository": "repository",
+        "workspace": "workspace",
+        "final_merge_policy": "final_merge_policy",
+        "cohorts": "list(completed_cohort)",
+        "briefs": "list(brief_body)",
+        "requirements": "list(spec_requirement)"
+      },
       "artifacts": {
+        "pr": {
+          "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "pr_url",
+          "schema": "pr_body"
+        },
+        "pr_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        },
+        "manual_merge_target": {
+          "kind": "external_reference",
+          "view": "pull_request",
+          "link_field": "pr_url",
+          "schema": "pr_body"
+        },
+        "observed_state": {
+          "kind": "status_record",
+          "schema": "pr_status"
+        },
         "assessment": {
           "kind": "assessment",
+          "view": "assessment",
           "schema": "assessment_body",
           "edit_policy": {
             "kind": "frozen_when_accepted"
           },
           "validate": [
+            {
+              "check": "every(assessment.proposals, not present(item.citation) or require(item.citation).revision_id != \"\")",
+              "message": "A cited proposal must name its source revision."
+            },
             {
               "check": "every(assessment.item_assessments, item.subject.kind == \"requirement\")",
               "message": "Integration assessment items must be canonical requirements."
@@ -950,16 +971,16 @@
               "message": "Integration assessment items must name applicable canonical requirements."
             },
             {
+              "check": "every(flatten(map(assessment.additional_findings, item.related_build_item_ids)), contains(flatten(map(input.briefs, map(item.build_items, item.id))), item))",
+              "message": "Additional finding links must name build items in the reviewed briefs."
+            },
+            {
               "check": "unique(map(assessment.item_assessments, item.subject.id))",
               "message": "Assessment item ids must be unique."
             },
             {
               "check": "unique(map(assessment.additional_findings, item.id))",
               "message": "Additional finding ids must be unique."
-            },
-            {
-              "check": "every(assessment.next_actions, (item.source.kind == \"item_assessment\" and contains(map(assessment.item_assessments, item.subject.id), item.source.id)) or (item.source.kind == \"additional_finding\" and contains(map(assessment.additional_findings, item.id), item.source.id)))",
-              "message": "Every next action source must resolve to an assessed item or additional finding."
             },
             {
               "check": "(assessment.verdict == \"fail\" and (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0)) or (assessment.verdict == \"pass_with_notes\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0)) or (assessment.verdict == \"pass\" and not (len(filter(assessment.item_assessments, item.status != \"met\")) > 0 or len(filter(assessment.additional_findings, item.severity == \"blocking\")) > 0) and not (len(filter(assessment.additional_findings, item.severity == \"warning\")) > 0))",
@@ -970,27 +991,41 @@
               "message": "Failed tests require an unmet item or a blocking or warning additional finding."
             }
           ]
-        },
-        "pr": {
-          "kind": "external_reference",
-          "schema": "pr_body"
-        },
-        "pr_state": {
-          "kind": "status_record",
-          "schema": "pr_status"
-        },
-        "manual_merge_target": {
-          "kind": "external_reference",
-          "schema": "pr_body"
-        },
-        "observed_state": {
-          "kind": "status_record",
-          "schema": "pr_status"
         }
       },
       "workers": {
+        "pr_watch": {
+          "template": "pr_watch"
+        },
+        "prepare_manual_merge": {
+          "kind": "code",
+          "label": "Prepare manual merge",
+          "operation": "value.publish",
+          "when": "pr_published",
+          "inputs": {
+            "value": "latest(pr)"
+          },
+          "every": "2m",
+          "produces": [
+            "manual_merge_target"
+          ]
+        },
+        "prepare_observed_state": {
+          "kind": "code",
+          "label": "Prepare observed state",
+          "operation": "value.publish",
+          "when": "pr_state_current",
+          "inputs": {
+            "value": "latest(pr_state)"
+          },
+          "every": "2m",
+          "produces": [
+            "observed_state"
+          ]
+        },
         "integrator": {
           "kind": "agent",
+          "label": "Integrator",
           "prompts": {
             "initial": "development/integrate.md",
             "revise": "development/integrate-revise.md"
@@ -1006,69 +1041,14 @@
             "pr",
             "assessment"
           ]
-        },
-        "pr_watch": {
-          "template": "pr_watch"
-        },
-        "prepare_manual_merge": {
-          "kind": "code",
-          "operation": "value.publish",
-          "when": "pr_published",
-          "inputs": {
-            "value": "latest(pr)"
-          },
-          "every": "2m",
-          "produces": [
-            "manual_merge_target"
-          ]
-        },
-        "prepare_observed_state": {
-          "kind": "code",
-          "operation": "value.publish",
-          "when": "pr_state_current",
-          "inputs": {
-            "value": "latest(pr_state)"
-          },
-          "every": "2m",
-          "produces": [
-            "observed_state"
-          ]
         }
       },
       "reviews": {
-        "integration_review": {
-          "of": "assessment",
-          "by": "operator",
-          "prompt": "development/integration-review.md",
-          "inputs": {
-            "repository": "input.repository",
-            "cohorts": "input.cohorts",
-            "briefs": "input.briefs",
-            "assessment": "latest(assessment)",
-            "pr": "latest(pr)",
-            "pr_state": "latest(pr_state)",
-            "requirements": "input.requirements"
-          },
-          "decisions": {
-            "accept": {
-              "effect": "approve",
-              "adjudication": "accept",
-              "label": "Accept",
-              "payload": "adjudication"
-            },
-            "request_changes": {
-              "effect": "request_changes",
-              "adjudication": "feedback",
-              "label": "Send to integrator",
-              "payload": "adjudication",
-              "feedback_field": "rework_feedback",
-              "on": "assessment"
-            }
-          }
-        },
         "merge_confirmation": {
           "of": "manual_merge_target",
           "by": "operator",
+          "wait": "external",
+          "confirms": "merge",
           "when": "published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
@@ -1087,13 +1067,34 @@
           "overrides": {
             "of": "pr"
           }
+        },
+        "integration_review": {
+          "of": "assessment",
+          "by": "operator",
+          "prompt": "development/integration-review.md",
+          "inputs": {
+            "repository": "input.repository",
+            "cohorts": "input.cohorts",
+            "briefs": "input.briefs",
+            "assessment": "latest(assessment)",
+            "pr": "latest(pr)",
+            "pr_state": "latest(pr_state)",
+            "requirements": "input.requirements"
+          },
+          "decisions": {
+            "accept": {
+              "effect": "approve",
+              "operation": "approve_assessment",
+              "label": "Accept"
+            },
+            "request_changes": {
+              "effect": "request_changes",
+              "operation": "dispatch_feedback",
+              "label": "Send to integrator",
+              "on": "assessment"
+            }
+          }
         }
-      },
-      "done_when": "approved(assessment) and pr_published and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
-      "outcome": {
-        "repository_key": "input.repository.key",
-        "pr_url": "latest(pr).pr_url",
-        "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
       }
     }
   }

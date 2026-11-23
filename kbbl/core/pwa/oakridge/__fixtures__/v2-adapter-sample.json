@@ -276,12 +276,16 @@
           "fields": [],
           "submit": {
             "kind": "cancel"
-          }
+          },
+          "operation": "plain",
+          "assessment": null
         }
       ],
       "recorded_decisions": [],
       "attempts": [],
-      "artifacts": []
+      "artifacts": [],
+      "workers": [],
+      "reviews": []
     },
     {
       "unit_id": "run-a45f120736398800/analysis",
@@ -414,9 +418,25 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:06.988Z",
             "number": 1
-          }
+          },
+          "kind": "document",
+          "view": "requirements_analysis",
+          "has_assessment_operations": false
         }
-      ]
+      ],
+      "workers": [
+        {
+          "key": "author",
+          "label": "Author",
+          "kind": "agent"
+        },
+        {
+          "key": "spec_editor",
+          "label": "Spec editor",
+          "kind": "agent"
+        }
+      ],
+      "reviews": []
     },
     {
       "unit_id": "run-a45f120736398800/briefs/a",
@@ -632,9 +652,20 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:07.480Z",
             "number": 1
-          }
+          },
+          "kind": "document",
+          "view": "build_brief",
+          "has_assessment_operations": false
         }
-      ]
+      ],
+      "workers": [
+        {
+          "key": "writer",
+          "label": "Brief writer",
+          "kind": "agent"
+        }
+      ],
+      "reviews": []
     },
     {
       "unit_id": "run-a45f120736398800/briefs/b",
@@ -858,9 +889,20 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:07.508Z",
             "number": 1
-          }
+          },
+          "kind": "document",
+          "view": "build_brief",
+          "has_assessment_operations": false
         }
-      ]
+      ],
+      "workers": [
+        {
+          "key": "writer",
+          "label": "Brief writer",
+          "kind": "agent"
+        }
+      ],
+      "reviews": []
     },
     {
       "unit_id": "run-a45f120736398800/implementation/a",
@@ -934,7 +976,9 @@
             "decision": "accept",
             "effect": "approve",
             "target_revision_id": "run-a45f120736398800/implementation/a:assessment:1"
-          }
+          },
+          "operation": "plain",
+          "assessment": null
         },
         {
           "key": "request_build_changes",
@@ -952,7 +996,9 @@
             "decision": "request_build_changes",
             "effect": "request_changes",
             "target_revision_id": "run-a45f120736398800/implementation/a:build_result:1"
-          }
+          },
+          "operation": "plain",
+          "assessment": null
         }
       ],
       "recorded_decisions": [],
@@ -1075,7 +1121,10 @@
             "subject_id": "run-a45f120736398800/implementation/a:build_result:1",
             "created_at": "2026-10-15T23:43:08.306Z",
             "number": 1
-          }
+          },
+          "kind": "assessment",
+          "view": "assessment",
+          "has_assessment_operations": false
         },
         {
           "run_id": "run-a45f120736398800",
@@ -1113,7 +1162,10 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:07.775Z",
             "number": 1
-          }
+          },
+          "kind": "record",
+          "view": "build_brief",
+          "has_assessment_operations": false
         },
         {
           "run_id": "run-a45f120736398800",
@@ -1149,7 +1201,10 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:07.966Z",
             "number": 1
-          }
+          },
+          "kind": "document",
+          "view": "build_result",
+          "has_assessment_operations": false
         },
         {
           "run_id": "run-a45f120736398800",
@@ -1175,7 +1230,11 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:07.998Z",
             "number": 1
-          }
+          },
+          "kind": "external_reference",
+          "view": "pull_request",
+          "has_assessment_operations": false,
+          "link_field": "pr_url"
         },
         {
           "run_id": "run-a45f120736398800",
@@ -1202,7 +1261,63 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:09.278Z",
             "number": 2
-          }
+          },
+          "kind": "status_record",
+          "view": null,
+          "has_assessment_operations": false
+        }
+      ],
+      "workers": [
+        {
+          "key": "assessor",
+          "label": "Assessor",
+          "kind": "agent"
+        },
+        {
+          "key": "builder",
+          "label": "Builder",
+          "kind": "agent"
+        },
+        {
+          "key": "pr_watch",
+          "label": "PR watcher",
+          "kind": "code"
+        },
+        {
+          "key": "prepare_observed_state",
+          "label": "Prepare observed state",
+          "kind": "code"
+        }
+      ],
+      "reviews": [
+        {
+          "review": "assessment_review",
+          "of_artifact": "assessment",
+          "reviewed_revision_id": "run-a45f120736398800/implementation/a:assessment:1",
+          "wait": "operator",
+          "confirms": null,
+          "failure_code": null,
+          "producer_workers": [
+            "assessor"
+          ],
+          "decisions": [
+            {
+              "key": "accept",
+              "label": "Accept",
+              "effect": "approve",
+              "operation": "plain",
+              "on_artifact": null,
+              "target_revision_id": "run-a45f120736398800/implementation/a:assessment:1"
+            },
+            {
+              "key": "request_build_changes",
+              "label": "Request build changes",
+              "effect": "request_changes",
+              "operation": "plain",
+              "on_artifact": "build_result",
+              "target_revision_id": "run-a45f120736398800/implementation/a:build_result:1"
+            }
+          ]
         }
       ]
     },
@@ -1281,7 +1396,10 @@
           "is_reviewable": true,
           "is_editable": true,
           "revision_count": 0,
-          "latest_revision": null
+          "latest_revision": null,
+          "kind": "assessment",
+          "view": "assessment",
+          "has_assessment_operations": false
         },
         {
           "run_id": "run-a45f120736398800",
@@ -1291,7 +1409,10 @@
           "is_reviewable": true,
           "is_editable": false,
           "revision_count": 0,
-          "latest_revision": null
+          "latest_revision": null,
+          "kind": "record",
+          "view": "build_brief",
+          "has_assessment_operations": false
         },
         {
           "run_id": "run-a45f120736398800",
@@ -1301,7 +1422,10 @@
           "is_reviewable": true,
           "is_editable": true,
           "revision_count": 0,
-          "latest_revision": null
+          "latest_revision": null,
+          "kind": "document",
+          "view": "build_result",
+          "has_assessment_operations": false
         },
         {
           "run_id": "run-a45f120736398800",
@@ -1311,7 +1435,11 @@
           "is_reviewable": true,
           "is_editable": true,
           "revision_count": 0,
-          "latest_revision": null
+          "latest_revision": null,
+          "kind": "external_reference",
+          "view": "pull_request",
+          "has_assessment_operations": false,
+          "link_field": "pr_url"
         },
         {
           "run_id": "run-a45f120736398800",
@@ -1321,9 +1449,35 @@
           "is_reviewable": false,
           "is_editable": false,
           "revision_count": 0,
-          "latest_revision": null
+          "latest_revision": null,
+          "kind": "status_record",
+          "view": null,
+          "has_assessment_operations": false
         }
-      ]
+      ],
+      "workers": [
+        {
+          "key": "assessor",
+          "label": "Assessor",
+          "kind": "agent"
+        },
+        {
+          "key": "builder",
+          "label": "Builder",
+          "kind": "agent"
+        },
+        {
+          "key": "pr_watch",
+          "label": "PR watcher",
+          "kind": "code"
+        },
+        {
+          "key": "prepare_observed_state",
+          "label": "Prepare observed state",
+          "kind": "code"
+        }
+      ],
+      "reviews": []
     },
     {
       "unit_id": "run-a45f120736398800/planning",
@@ -1592,9 +1746,20 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:07.235Z",
             "number": 1
-          }
+          },
+          "kind": "document",
+          "view": "cohort_plan",
+          "has_assessment_operations": false
         }
-      ]
+      ],
+      "workers": [
+        {
+          "key": "planner",
+          "label": "Planner",
+          "kind": "agent"
+        }
+      ],
+      "reviews": []
     },
     {
       "unit_id": "run-a45f120736398800/prepare/app",
@@ -1684,9 +1849,20 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:06.771Z",
             "number": 1
-          }
+          },
+          "kind": "record",
+          "view": null,
+          "has_assessment_operations": false
         }
-      ]
+      ],
+      "workers": [
+        {
+          "key": "git",
+          "label": "Workspace preparation",
+          "kind": "code"
+        }
+      ],
+      "reviews": []
     }
   ],
   "inbox": {
@@ -1775,7 +1951,11 @@
         "number": 1
       }
     ],
-    "decisions": []
+    "decisions": [],
+    "kind": "document",
+    "view": "build_result",
+    "has_assessment_operations": false,
+    "producing_attempt_inputs": null
   },
   "artifacts": [
     {
@@ -1804,7 +1984,11 @@
           "number": 1
         }
       ],
-      "decisions": []
+      "decisions": [],
+      "kind": "record",
+      "view": null,
+      "has_assessment_operations": false,
+      "producing_attempt_inputs": null
     }
   ],
   "event": {

@@ -1,8 +1,8 @@
+import type { ApplicableRepository, CompositeInputs, CompositeLogicalItem } from "../grading/composite";
 import type { QuestionDefinition } from "../grading/question";
 import type { EvidencePlan, SubjectQuestion } from "../grading/evidence";
-import type { JsonValue, Result } from "../domain/primitives";
+import type { JsonValue } from "../domain/primitives";
 import type { ExtractorDefinition } from "../projection/extractor";
-import type { RelationDeclaration } from "../projection/relations";
 import type { CapturedSources, EvidenceCollection, SourceArtifact } from "./artifact-source";
 
 /** The fields of a captured revision a profile may use to relate it to another revision. */
@@ -14,12 +14,15 @@ export interface RevisionLink {
   readonly target_artifact_kind: string;
   readonly subject_revision_id: string;
 }
-export interface DeclarationDecodeError { readonly operation: "decode_relation_declaration"; readonly entity_id: string; readonly detail: string }
+export interface ArtifactDeclaration {
+  readonly definition_id: string;
+  readonly stage: string;
+  readonly artifact_kind: string;
+  readonly artifact_schema_version: string;
+}
 export interface ExtractionProfile {
-  definitions(artifact_kind: string, schema_version: string): readonly ExtractorDefinition[];
+  definitions(revision: ArtifactDeclaration): readonly ExtractorDefinition[] | undefined;
   revisionLink(revision: RevisionHeader): RevisionLink | null;
-  /** The relations a journaled producer declaration states for one run, exactly as supplied. */
-  declaredRelations(declaration: JsonValue, run_id: string): Result<readonly RelationDeclaration[], DeclarationDecodeError>;
 }
 
 /** Storage supplies the exact plan frozen with a subject; direct collectors may use configured plans. */
@@ -29,7 +32,10 @@ export interface EvidenceCollector {
 }
 
 /** The logical scope whose items are task roll-up roots. */
-export interface CompositePath { readonly logical_scope: string }
+export interface CompositePath {
+  readonly logical_scope: string;
+  repositoryApplicability?(inputs: CompositeInputs, task: CompositeLogicalItem): readonly ApplicableRepository[];
+}
 
 /** The only way producer knowledge enters the service. It is injected at composition, and
  * generic storage, grading and projection code consumes these contracts without importing it. */

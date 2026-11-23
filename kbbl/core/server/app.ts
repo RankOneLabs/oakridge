@@ -6,6 +6,7 @@ import { compress } from "hono/compress";
 import type { KbblConfig } from "../config";
 import type { AcpSessionService } from "../acp/session-service";
 import {
+  KBBL_PUBLIC_PATHS,
   makeAuthStatusHandler,
   makeControlAuthMiddleware,
   makeCookieHandler,
@@ -25,10 +26,10 @@ import { mountExecutedPromptRoutes } from "./handlers/executed-prompt";
 import {
   isRuntimeId,
   RUNTIME_EFFORTS,
-  RUNTIME_MODELS,
 } from "../runtime";
 
 export interface CreateAppDeps {
+  readonly defaultPrIntegration?: import("../../../oakridge-dbos/src/domain/pr-integration").PrIntegration;
   readonly readAgentProfiles?: () => Promise<readonly AgentProfileReadiness[]>;
   /** ACP session service — the production session backend. */
   acp: AcpSessionService;
@@ -60,12 +61,7 @@ export interface CreateAppDeps {
   observation?: ObservationServerConfig | null;
 }
 
-/**
- * Constructs the Hono app with all routes registered. The order of
- * registrations matters: runtime routes (e.g., /hook/approval) must come
- * before /:sid/* so Hono's route-matching doesn't catch POST /hook/approval
- * as /:sid/approval.
- */
+/** Constructs the Hono app with auth middleware before every route and the static PWA handler last. */
 export function createApp(deps: CreateAppDeps): Hono {
   const {
     acp,
@@ -87,11 +83,11 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- control auth middleware ----
   //
-  // Applied globally before any route so every non-GET/HEAD request other
-  // than /hook/* adapter routes requires authentication when the server is
-  // configured with a control token, on any bind. Without one (loopback or
-  // insecure mode) this is a no-op pass-through.
-  app.use("/*", makeControlAuthMiddleware(authPolicy, { protectedReadPaths: ["/agent-profiles/readiness"] }));
+  // On any bind with a control token, every request requires a Bearer token
+  // or the kbbl_ctrl cookie except GET/HEAD on the public allow-list
+  // (/auth/status and the static PWA files). Without a token, loopback and
+  // insecure modes pass through.
+  app.use("/*", makeControlAuthMiddleware(authPolicy, { publicPaths: KBBL_PUBLIC_PATHS }));
 
   // ---- cookie establishment endpoint ----
   //
@@ -136,29 +132,20 @@ export function createApp(deps: CreateAppDeps): Hono {
       runtimes: acp
         .listProfiles()
         .filter((profile) => profile.enabled)
-        .map((profile) => {
-          if (!isRuntimeId(profile.id)) {
-            return {
-              id: profile.id,
-              label: profile.label,
-              models: [],
-              efforts: [],
-            };
-          }
-          return {
-            id: profile.id,
-            label: profile.label,
-            models: RUNTIME_MODELS[profile.id],
-            efforts: RUNTIME_EFFORTS[profile.id],
-          };
-        }),
+        .map((profile) => ({
+          id: profile.id,
+          label: profile.label,
+          models: profile.models ?? [],
+          default_model: profile.default_model ?? null,
+          efforts: isRuntimeId(profile.id) ? RUNTIME_EFFORTS[profile.id] : [],
+        })),
     });
   });
 
 
 
   // ---- sessions CRUD ----
-  mountSessionsRoutes(app, { acp, defaultWorkdir, oakridgeBaseUrl: process.env.OAKRIDGE_CORE_BASE_URL, oakridgeControlToken: coreControlToken });
+  mountSessionsRoutes(app, { acp, defaultWorkdir, defaultPrIntegration: deps.defaultPrIntegration, oakridgeBaseUrl: process.env.OAKRIDGE_CORE_BASE_URL, oakridgeControlToken: coreControlToken });
 
   // ---- local directory browser ----
   mountDirectoriesRoutes(app, { defaultWorkdir });

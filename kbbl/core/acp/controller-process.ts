@@ -266,8 +266,6 @@ function describeSubstitution(match: OptionMatchKind): string | null {
       return null;
     case "context_hint_ignored":
       return `context_hint_ignored requested_hint=${match.requestedHint ?? "none"} matched_hint=${match.matchedHint ?? "none"}`;
-    case "retired_id_mapped":
-      return `retired_id_mapped retired_id=${match.retiredId}`;
     case "applied_name_matched":
       return `applied_name_matched applied_name=${JSON.stringify(match.appliedName)}`;
   }

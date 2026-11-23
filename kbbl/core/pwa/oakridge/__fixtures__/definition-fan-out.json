@@ -1,13 +1,98 @@
 {
-  "source": "/api/definitions/5ab51a03b4529792df3d552506620bcc2ad4171ecb3a750f994168a5c8c81a8f",
+  "source": "/api/definitions/510c4dcadf5f18460cc2be030286f1a78b21541cd17a448686f49a9facc07c1c",
   "captured_at": "2026-11-16T00:07:39.116Z",
   "run_id": null,
   "definition": {
-    "definition_id": "5ab51a03b4529792df3d552506620bcc2ad4171ecb3a750f994168a5c8c81a8f",
+    "definition_id": "510c4dcadf5f18460cc2be030286f1a78b21541cd17a448686f49a9facc07c1c",
     "bundle": {
       "key": "fan_out",
       "root": "$root",
       "schemas": [
+        {
+          "key": "assignment_verification",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "outcome",
+                "schema": "enum(verified, needs_further_work)"
+              },
+              {
+                "key": "round_id",
+                "schema": "text"
+              }
+            ]
+          }
+        },
+        {
+          "key": "enum(verified, needs_further_work)",
+          "shape": {
+            "kind": "enum",
+            "variants": [
+              "verified",
+              "needs_further_work"
+            ]
+          }
+        },
+        {
+          "key": "text",
+          "shape": {
+            "kind": "string",
+            "min_length": 0,
+            "max_length": 9007199254740991
+          }
+        },
+        {
+          "key": "citation",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "pointer",
+                "schema": "text"
+              },
+              {
+                "key": "revision_id",
+                "schema": "text"
+              }
+            ]
+          }
+        },
+        {
+          "key": "feedback_proposal",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "citation",
+                "schema": "optional(citation)"
+              },
+              {
+                "key": "instruction",
+                "schema": "text"
+              },
+              {
+                "key": "key",
+                "schema": "ident"
+              }
+            ]
+          }
+        },
+        {
+          "key": "optional(citation)",
+          "shape": {
+            "kind": "optional",
+            "item": "citation"
+          }
+        },
+        {
+          "key": "ident",
+          "shape": {
+            "kind": "string",
+            "min_length": 1,
+            "max_length": 100
+          }
+        },
         {
           "key": "{items: list({after: list(ident), key: ident, text: text}), repository: {base_branch: text, expected_head: optional(text), integration_branch: text, repository_path: repo_path}}",
           "shape": {
@@ -58,22 +143,6 @@
             "kind": "list",
             "item": "ident",
             "max_items": 9007199254740991
-          }
-        },
-        {
-          "key": "ident",
-          "shape": {
-            "kind": "string",
-            "min_length": 1,
-            "max_length": 100
-          }
-        },
-        {
-          "key": "text",
-          "shape": {
-            "kind": "string",
-            "min_length": 0,
-            "max_length": 9007199254740991
           }
         },
         {
@@ -173,6 +242,49 @@
               }
             ]
           }
+        },
+        {
+          "key": "{suggested_choices: optional(list(text)), text: text}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "suggested_choices",
+                "schema": "optional(list(text))"
+              },
+              {
+                "key": "text",
+                "schema": "text"
+              }
+            ]
+          }
+        },
+        {
+          "key": "optional(list(text))",
+          "shape": {
+            "kind": "optional",
+            "item": "list(text)"
+          }
+        },
+        {
+          "key": "list(text)",
+          "shape": {
+            "kind": "list",
+            "item": "text",
+            "max_items": 9007199254740991
+          }
+        },
+        {
+          "key": "{answer: text}",
+          "shape": {
+            "kind": "record",
+            "fields": [
+              {
+                "key": "answer",
+                "schema": "text"
+              }
+            ]
+          }
         }
       ],
       "stages": [
@@ -206,12 +318,23 @@
           "input_schema": "{text: text, workspace: {base_branch: text, head: ident, push_remote_owner: ident, repository_path: repo_path}}",
           "artifacts": [
             {
+              "key": "blocker",
+              "schema": "{suggested_choices: optional(list(text)), text: text}"
+            },
+            {
               "key": "result",
               "schema": "text"
             }
           ]
         }
       ]
+    },
+    "prompts": {
+      "fan-out/item.md": {
+        "body": "Complete this item: {{text}}. Publish the result artifact.\n",
+        "digest": "b01fe0675bae946628a88ba8807b85bbd4a940b4d27485d0ded6ececacbf9ac3",
+        "includes": []
+      }
     },
     "workflow": {
       "input": {
@@ -390,7 +513,52 @@
           }
         }
       },
-      "schemas": {},
+      "schemas": {
+        "assignment_verification": {
+          "kind": "record",
+          "fields": {
+            "outcome": {
+              "kind": "enum",
+              "variants": [
+                "verified",
+                "needs_further_work"
+              ]
+            },
+            "round_id": {
+              "kind": "text"
+            }
+          }
+        },
+        "citation": {
+          "kind": "record",
+          "fields": {
+            "pointer": {
+              "kind": "text"
+            },
+            "revision_id": {
+              "kind": "text"
+            }
+          }
+        },
+        "feedback_proposal": {
+          "kind": "record",
+          "fields": {
+            "citation": {
+              "kind": "optional",
+              "value": {
+                "kind": "named",
+                "schema": "citation"
+              }
+            },
+            "instruction": {
+              "kind": "text"
+            },
+            "key": {
+              "kind": "ident"
+            }
+          }
+        }
+      },
       "run": {
         "pools": {},
         "units": {
@@ -472,6 +640,27 @@
           },
           "let": {},
           "artifacts": {
+            "blocker": {
+              "kind": "record",
+              "schema": {
+                "kind": "record",
+                "fields": {
+                  "suggested_choices": {
+                    "kind": "optional",
+                    "value": {
+                      "kind": "list",
+                      "item": {
+                        "kind": "text"
+                      }
+                    }
+                  },
+                  "text": {
+                    "kind": "text"
+                  }
+                }
+              },
+              "validate": []
+            },
             "result": {
               "kind": "document",
               "schema": {
@@ -493,7 +682,8 @@
                 "text": "input.text"
               },
               "produces": [
-                "result"
+                "result",
+                "blocker"
               ],
               "evaluates": null,
               "runtime": null,
@@ -502,7 +692,68 @@
               "when": null
             }
           },
-          "reviews": {},
+          "reviews": {
+            "blocker_review": {
+              "of": "blocker",
+              "by": "operator",
+              "prompt": null,
+              "inputs": {},
+              "decisions": {
+                "clarify": {
+                  "effect": "request_changes",
+                  "on": "blocker",
+                  "label": "Clarify",
+                  "payload": {
+                    "kind": "record",
+                    "fields": {
+                      "answer": {
+                        "kind": "text"
+                      }
+                    }
+                  },
+                  "fields": {
+                    "answer": "Answer"
+                  },
+                  "feedback": null
+                },
+                "discuss": {
+                  "effect": "request_changes",
+                  "on": "blocker",
+                  "label": "Discuss",
+                  "payload": {
+                    "kind": "record",
+                    "fields": {
+                      "answer": {
+                        "kind": "text"
+                      }
+                    }
+                  },
+                  "fields": {
+                    "answer": "Answer"
+                  },
+                  "feedback": null
+                },
+                "override": {
+                  "effect": "request_changes",
+                  "on": "blocker",
+                  "label": "Override",
+                  "payload": {
+                    "kind": "record",
+                    "fields": {
+                      "answer": {
+                        "kind": "text"
+                      }
+                    }
+                  },
+                  "fields": {
+                    "answer": "Answer"
+                  },
+                  "feedback": null
+                }
+              },
+              "when": null
+            }
+          },
           "done_when": "published(result)",
           "outcome": {
             "result": "latest(result)"
@@ -583,6 +834,14 @@
         }
       }
     },
+    "worker_names": {
+      "item": [
+        "worker"
+      ],
+      "prepare": [
+        "git"
+      ]
+    },
     "graph": {
       "nodes": [
         {
@@ -593,7 +852,9 @@
         {
           "key": "work",
           "stage": "work",
-          "depends_on": []
+          "depends_on": [
+            "prepare"
+          ]
         },
         {
           "key": "work/item",
@@ -601,7 +862,13 @@
           "depends_on": []
         }
       ],
-      "edges": []
-    }
+      "edges": [
+        {
+          "from": "prepare",
+          "to": "work"
+        }
+      ]
+    },
+    "assessment_embeddings": {}
   }
 }

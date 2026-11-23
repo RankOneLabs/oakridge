@@ -46,7 +46,7 @@ export function selectDefinitionPrompts(definition: Pick<ResolvedDefinition, "pr
     return [path, { body, digest, includes: selectIncludes(body) }];
   }));
 }
-export interface DefinitionDetail extends DefinitionSummary { readonly prompts: DefinitionPrompts; readonly workflow: Workflow | AuthoredWorkflow; readonly effective_workflow: ParsedWorkflow; readonly graph: DefinitionGraph }
+export interface DefinitionDetail extends DefinitionSummary { readonly prompts: DefinitionPrompts; readonly workflow: Workflow | AuthoredWorkflow; readonly effective_workflow: ParsedWorkflow; readonly graph: DefinitionGraph; readonly worker_names?: Readonly<Record<string, readonly string[]>>; readonly assessment_embeddings: import("../core-client/core-types").CompiledWorkflow["assessments"] }
 
 /** One unit a workflow declares: its key in its group, the group's path, and its own path, unique in the workflow. */
 interface DeclaredUnit { readonly key: string; readonly prefix: string; readonly path: string; readonly unit: Unit }
@@ -77,7 +77,7 @@ export const selectDefinitionSummary = (definition: DefinitionSource): Definitio
 export const selectPinnedDefinition = (definition: DefinitionSource): PinnedDefinition =>
   ({ ...selectDefinitionSummary(definition), effective_workflow: definition.checked_program.workflow });
 export const selectDefinitionDetail = (definition: DefinitionSource): DefinitionDetail =>
-  ({ ...selectDefinitionSummary(definition), prompts: selectDefinitionPrompts(definition), workflow: definition.source, effective_workflow: definition.checked_program.workflow, graph: selectDefinitionGraph(definition.source) });
+  ({ ...selectDefinitionSummary(definition), prompts: selectDefinitionPrompts(definition), workflow: definition.source, effective_workflow: definition.checked_program.workflow, worker_names: definition.worker_names, graph: selectDefinitionGraph(definition.source, definition.checked_program.unit_dependencies), assessment_embeddings: definition.checked_program.assessments });
 
 function graphNode({ key, prefix, path, unit }: DeclaredUnit): DefinitionGraphNode {
   // A string `after` is an expression evaluated per collection member, not a unit key: it has no static edge.
@@ -85,7 +85,8 @@ function graphNode({ key, prefix, path, unit }: DeclaredUnit): DefinitionGraphNo
   return { key: path, stage: unit.stage ?? key, depends_on: after.map((dependency) => prefix ? `${prefix}/${dependency}` : dependency) };
 }
 /** The unit graph a workflow declares, for the catalog. */
-export function selectDefinitionGraph(workflow: Workflow | AuthoredWorkflow): DefinitionGraph {
-  const nodes = declaredUnits(workflow.run).map(graphNode);
+export function selectDefinitionGraph(workflow: Workflow | AuthoredWorkflow, checked?: Readonly<Record<string, readonly string[]>>): DefinitionGraph {
+  const nodes = declaredUnits(workflow.run).map(graphNode)
+    .map((node) => ({ ...node, depends_on: checked?.[node.key] ?? node.depends_on }));
   return { nodes, edges: nodes.flatMap((node) => node.depends_on.map((from) => ({ from, to: node.key }))) };
 }

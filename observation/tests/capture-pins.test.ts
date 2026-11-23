@@ -31,17 +31,17 @@ const executionCount = (db: Database) => withTenant(db, tenant, async (trx) =>
 integration("capture pins each applicable question and full evaluator set, not ready, with no execution", async () => scratchDatabase(async (db) => {
   await registerAll(db);
   const feed = createFeed(db, tenant, pinsFor("grader-a", "operator"));
-  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", body: await fixtureBody("assessment") });
+  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", body: await fixtureBody("current-assessment") });
   await feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body: await fixtureBody("analysis") });
-  const [assessment] = await occurrences(db, "assessment_finding");
+  const [assessment] = await occurrences(db, "item_assessment");
   const pinned = await readOccurrenceEvidence(db, tenant, assessment!);
   expect(pinned.map((set) => set.question_id)).toEqual([CORRECTNESS_ID, EVIDENCE_SUPPORT_ID]);
   for (const set of pinned) expect(set).toMatchObject({ question_version: questionVersion(set.question_id), pinned_evaluator_definition_ids: ["grader-a", "operator"],
     readiness: { state: "not_ready", reason: COLLECTION_PENDING } });
   const [finding] = await occurrences(db, "finding");
   expect((await readOccurrenceEvidence(db, tenant, finding!)).map((set) => set.question_id)).toEqual([RELEVANCE_ID]);
-  const [risk] = await occurrences(db, "risk");
-  expect(await readOccurrenceEvidence(db, tenant, risk!)).toEqual([]);
+  const [analysisRequirement] = await occurrences(db, "requirement");
+  expect(await readOccurrenceEvidence(db, tenant, analysisRequirement!)).toEqual([]);
   expect(await executionCount(db)).toBe(0);
 }));
 
@@ -77,8 +77,8 @@ integration("a later configuration reaches later captures only; replay never rep
 
 integration("readiness moves per question; ready evidence is frozen and shared", async () => scratchDatabase(async (db) => {
   await registerAll(db);
-  await createFeed(db, tenant, pinsFor("grader-a", "operator")).revision({ revision_id: "assessment-1", artifact_kind: "assessment", body: await fixtureBody("assessment") });
-  const [occurrence] = await occurrences(db, "assessment_finding");
+  await createFeed(db, tenant, pinsFor("grader-a", "operator")).revision({ revision_id: "assessment-1", artifact_kind: "assessment", body: await fixtureBody("current-assessment") });
+  const [occurrence] = await occurrences(db, "item_assessment");
   const [correctness, support] = await readOccurrenceEvidence(db, tenant, occurrence!);
   const waiting = await recordCollection(db, tenant, correctness!.evidence_set_id,
     { state: "not_ready", reason: { code: "build_result_unavailable", detail: "build result b1 is not captured" } });
@@ -146,44 +146,45 @@ async function pinnedByTarget(db: Database): Promise<{ readonly [target: string]
   return Object.fromEntries([...grouped].sort(([left], [right]) => left.localeCompare(right)).map(([target, questions]) => [target, [...questions].sort()]));
 }
 async function captureEveryArtifact(feed: ReturnType<typeof createFeed>): Promise<void> {
-  // Tasks come first so every assessment finding naming a known task resolves at capture.
-  for (const artifact_kind of ["tasks", "analysis", "plan", "brief", "assessment"])
-    await feed.revision({ revision_id: `${artifact_kind}-1`, artifact_kind, body: await fixtureBody(artifact_kind) });
+  for (const [index, artifact_kind] of ["analysis", "spec", "plan", "brief", "build_result", "assessment"].entries()) {
+    const file = artifact_kind === "build_result" ? "build-result" : `current-${artifact_kind}`;
+    await feed.revision({ revision_id: `${artifact_kind}-1`, artifact_kind, body: await fixtureBody(file),
+      recorded_at: `2026-11-01T00:00:0${index}Z`,
+      ...(artifact_kind === "assessment" ? { subject_id: "build_result-1",
+        input_bindings: [{ input: "reviewed", unit: "brief", revision_id: "brief-1" }] } : {}) });
+  }
 }
 
 test("a pin's target is its artifact, selector and item kind together", () => {
-  const plan = { artifact_kind: "plan", item_selector: "/cohorts/*/acceptance_criteria/*", item_kind: "acceptance_entry" };
+  const plan = { artifact_kind: "plan", item_selector: "/cohorts/*/allocations/*", item_kind: "allocation" };
   expect([
     isPinTarget(plan, plan),
-    isPinTarget(plan, { ...plan, artifact_kind: "brief", item_selector: "/acceptance_criteria/*" }),
-    isPinTarget(plan, { ...plan, item_selector: "/acceptance_criteria/*" }),
+    isPinTarget(plan, { ...plan, artifact_kind: "brief", item_selector: "/build_items/*" }),
+    isPinTarget(plan, { ...plan, item_selector: "/build_items/*" }),
     isPinTarget(plan, { ...plan, item_kind: "decision" }),
   ]).toEqual([true, false, false, false]);
 });
 
-integration("plan and brief acceptance entries are pinned only by their declared targets", async () => scratchDatabase(async (db) => {
+integration("plan allocations are pinned only by their declared targets", async () => scratchDatabase(async (db) => {
   const registration = await committedCapture(db);
   await captureEveryArtifact(createFeed(db, tenant, registration.capture));
   const pinned = await pinnedByTarget(db);
-  expect([pinned["plan /cohorts/*/acceptance_criteria/*"], pinned["brief /acceptance_criteria/*"]]).toEqual([[CONTRIBUTION_COVERAGE_ID], [CONTRIBUTION_COVERAGE_ID]]);
+  expect([pinned["plan /cohorts/*/allocations/*"], pinned["brief /build_items/*"]]).toEqual([[CONTRIBUTION_COVERAGE_ID], []]);
 }));
 
 integration("every captured item is pinned exactly the questions whose declared target is its artifact and selector", async () => scratchDatabase(async (db) => {
   const registration = await committedCapture(db);
   await captureEveryArtifact(createFeed(db, tenant, registration.capture));
   expect(await pinnedByTarget(db)).toEqual({
-    "analysis /findings/*": [RELEVANCE_ID],
-    "analysis /proposed_spec_updates/*": [],
-    "analysis /requirements/*/status": [],
-    "analysis /risks/*": [],
-    "assessment /findings/*": [CORRECTNESS_ID, EVIDENCE_SUPPORT_ID],
-    "brief /acceptance_criteria/*": [CONTRIBUTION_COVERAGE_ID],
-    "brief /approaches_rejected/*": [],
-    "brief /decisions_made/*": [],
-    "plan /cohorts/*/acceptance_criteria/*": [CONTRIBUTION_COVERAGE_ID],
-    "plan /cohorts/*/decisions/*": [],
-    "plan /risks/*": [],
-    "tasks /tasks/*": [TASK_COVERAGE_ID],
+    "analysis /requirements/*/findings/*": [RELEVANCE_ID],
+    "analysis /requirements/*": [],
+    "assessment /item_assessments/*": [CORRECTNESS_ID, EVIDENCE_SUPPORT_ID],
+    "assessment /additional_findings/*": [],
+    "assessment /proposals/*": [],
+    "brief /build_items/*": [],
+    "brief /technical_decisions/*": [],
+    "plan /cohorts/*/allocations/*": [CONTRIBUTION_COVERAGE_ID],
+    "spec /requirements/*": [TASK_COVERAGE_ID],
   });
 }));
 
@@ -195,14 +196,16 @@ integration("late task resolution pins only per-task questions targeting the fin
   await registerQuestion(db, tenant, { ...registration.questions.find((question) => question.question_id === CORRECTNESS_ID)!, question_id: elsewhere });
   const decoy: CapturePin = { ...correctness, question_id: elsewhere, artifact_kind: "integration" };
   const feed = createFeed(db, tenant, { pins: [...registration.capture.pins, decoy] });
-  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", body: await fixtureBody("assessment") });
+  await feed.revision({ revision_id: "brief-1", artifact_kind: "brief", body: await fixtureBody("current-brief") });
+  await feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", body: await fixtureBody("current-assessment"),
+    input_bindings: [{ input: "reviewed", unit: "brief", revision_id: "brief-1" }] });
   const both_tasks = (await listRunItems(db, tenant, "run-1", { limit: 200, offset: 0 })).items
-    .find((item) => item.artifact_kind === "assessment" && item.json_pointer === "/findings/0")?.occurrence_id as ItemOccurrenceId | undefined;
+    .find((item) => item.artifact_kind === "assessment" && item.json_pointer === "/item_assessments/0")?.occurrence_id as ItemOccurrenceId | undefined;
   expect(await readOccurrenceEvidence(db, tenant, both_tasks!)).toEqual([]);
-  await feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", body: await fixtureBody("tasks") });
+  await feed.revision({ revision_id: "spec-1", artifact_kind: "spec", body: await fixtureBody("current-spec") });
   const pinned = await readOccurrenceEvidence(db, tenant, both_tasks!);
   expect(pinned.map((set) => [set.question_id, set.task_id?.split(":").at(-1)])).toEqual([
-    [CORRECTNESS_ID, "T7"], [CORRECTNESS_ID, "T8"], [EVIDENCE_SUPPORT_ID, "T7"], [EVIDENCE_SUPPORT_ID, "T8"]]);
+    [CORRECTNESS_ID, "R1"], [CORRECTNESS_ID, "R3"], [EVIDENCE_SUPPORT_ID, "R1"], [EVIDENCE_SUPPORT_ID, "R3"]]);
 }));
 
 integration("a pin refuses an occurrence outside its declared target, and the refusal writes nothing", async () => scratchDatabase(async (db) => {
@@ -216,24 +219,21 @@ integration("a pin refuses an occurrence outside its declared target, and the re
   expect([refused.ok, await readOccurrenceEvidence(db, tenant, finding!)]).toEqual([false, []]);
 }));
 
-// Recorded before implementation from questions.ts and catalogue.ts at 1c7d8017 (#799).
-// Questions were selected by item kind, including both acceptance-entry extractors.
-test("every pre-cleanup question/catalogue target has a capture pin", async () => {
+test("every fixture question target has a capture pin", async () => {
   const { fixtureDefinitions, oakridgeGradingRegistry } = await import("./grading-fixture");
   const { planRegistration } = await import("../src/grading/configuration");
   const registration = planRegistration(await fixtureDefinitions(), oakridgeGradingRegistry);
   if (!registration.ok) throw new Error(registration.error.detail);
   expect(registration.value.capture.pins).toMatchObject([
-    { question_id: "finding.relevance", item_kind: "finding", artifact_kind: "analysis", item_selector: "/findings/*" },
-    { question_id: "assessment_finding.correctness", item_kind: "assessment_finding", artifact_kind: "assessment", item_selector: "/findings/*" },
-    { question_id: "assessment_finding.evidence_support", item_kind: "assessment_finding", artifact_kind: "assessment", item_selector: "/findings/*" },
-    { question_id: "task.requirement_coverage", item_kind: "task", artifact_kind: "tasks", item_selector: "/tasks/*" },
-    { question_id: "acceptance_entry.task_coverage", item_kind: "acceptance_entry", artifact_kind: "plan", item_selector: "/cohorts/*/acceptance_criteria/*" },
-    { question_id: "acceptance_entry.task_coverage", item_kind: "acceptance_entry", artifact_kind: "brief", item_selector: "/acceptance_criteria/*" },
+    { question_id: "finding.relevance", item_kind: "finding", artifact_kind: "analysis", item_selector: "/requirements/*/findings/*" },
+    { question_id: "assessment_finding.correctness", item_kind: "item_assessment", artifact_kind: "assessment", item_selector: "/item_assessments/*" },
+    { question_id: "assessment_finding.evidence_support", item_kind: "item_assessment", artifact_kind: "assessment", item_selector: "/item_assessments/*" },
+    { question_id: "task.requirement_coverage", item_kind: "requirement", artifact_kind: "spec", item_selector: "/requirements/*" },
+    { question_id: "acceptance_entry.task_coverage", item_kind: "allocation", artifact_kind: "plan", item_selector: "/cohorts/*/allocations/*" },
   ]);
 });
 
-integration("the pre-cleanup fixture retains every target, task-less subject, and evidence reference family", async () => scratchDatabase(async (db) => {
+integration("canonical development items freeze every configured evidence reference family", async () => scratchDatabase(async (db) => {
   const { fixtureDefinitions, oakridgeGradingRegistry } = await import("./grading-fixture");
   const { planRegistration } = await import("../src/grading/configuration");
   const { registerDefinitions } = await import("../src/storage/grading-store");
@@ -243,45 +243,29 @@ integration("the pre-cleanup fixture retains every target, task-less subject, an
   await registerDefinitions(db, tenant, registration.value);
   const feed = createFeed(db, tenant, stampCapture(registration.value.capture, { config_version: 1, config_hash: "canonical-json/v1:" + "a".repeat(64) }));
   await feed.launch({ spec: "The whole spec", repositories: [{ key: "oakridge", preparation: { repository_path: "/fixture" } }] });
-  for (const [index, kind] of ["analysis", "tasks", "plan", "brief", "build-result", "assessment"].entries())
-    await feed.revision({ revision_id: kind, artifact_kind: kind === "build-result" ? "build_result" : kind,
-      ...(kind === "assessment" ? { subject_id: "build-result" } : {}), body: await fixtureBody(kind), recorded_at: `2026-11-01T00:00:0${index}Z` });
+  await captureEveryArtifact(feed);
   const source = new CaptureArtifactSource({ db, tenant, run_id: "run-1", collector: registration.value.collector,
     repository: { hasCommit: async () => true, readFile: async () => ({ state: "present", content: "one\ntwo\nthree" }) } });
   const items = (await listRunItems(db, tenant, "run-1", { limit: 200, offset: 0 })).items;
   const families = {
     "finding.relevance": ["subject", "spec"],
-    "assessment_finding.correctness": ["subject", "build_result", "citation", "task_context"],
-    "assessment_finding.evidence_support": ["subject", "citation", "task_context"],
+    "assessment_finding.correctness": ["subject", "build_result", "test_evidence", "task_context"],
+    "assessment_finding.evidence_support": ["subject", "test_evidence", "task_context"],
     "task.requirement_coverage": ["subject", "spec", "spec_task", "requirement"],
-    "acceptance_entry.task_coverage": ["subject", "spec", "spec_task", "requirement", "plan", "contribution_context"],
+    "acceptance_entry.task_coverage": ["subject", "requirement", "spec_task", "plan"],
   };
   for (const item of items) {
     const pins = registration.value.capture.pins.filter((pin) => pin.artifact_kind === item.artifact_kind && pin.item_selector === item.item_selector);
     const sets = await readOccurrenceEvidence(db, tenant, item.occurrence_id as ItemOccurrenceId);
-    const is_unresolved = item.artifact_kind === "assessment" && item.json_pointer === "/findings/3";
-    const expected = is_unresolved ? [] : [...new Set(pins.map((pin) => pin.question_id))].sort();
+    const expected = [...new Set(pins.map((pin) => pin.question_id))].sort();
     expect([...new Set(sets.map((set) => set.question_id))].sort()).toEqual(expected);
-    if (item.artifact_kind === "assessment" && item.json_pointer === "/findings/2")
-      expect(sets.map((set) => set.task_id)).toEqual([null, null]);
     for (const set of sets) {
       const collected = await collectPinnedQuestion(db, tenant, source, set);
       if (!collected.ok || collected.value.readiness.state !== "ready") throw new Error(JSON.stringify(collected));
       const references = collected.value.readiness.references;
       const names = [...new Set(references.map((reference) => reference.ref.split(":")[0]!))];
-      const expectedNames = families[set.question_id as keyof typeof families].filter((family) => {
-        if (family === "task_context") return set.task_id !== null;
-        if (family === "citation") return item.json_pointer === "/findings/0";
-        if (family === "requirement") return (item.selected_value as { id: string }).id !== "T8";
-        return true;
-      });
-      expect(names).toEqual(expectedNames);
+      expect(names).toEqual(families[set.question_id as keyof typeof families]);
       expect(references[0]).toMatchObject({ ref: "subject", revision_id: item.revision_id, item_path: item.json_pointer, content: item.selected_value });
-      if (item.artifact_kind === "brief") {
-        expect(item).toMatchObject({ item_scope: "task", producer_local_id: "T7", json_pointer: "/acceptance_criteria/0" });
-        expect(references.find((reference) => reference.ref === "contribution_context"))
-          .toMatchObject({ revision_id: "brief", item_path: null, content: await fixtureBody("brief") });
-      }
     }
   }
 }));

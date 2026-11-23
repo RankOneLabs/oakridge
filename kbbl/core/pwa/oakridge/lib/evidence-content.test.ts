@@ -27,8 +27,8 @@ describe("frozen evidence decoding", () => {
     const value = { id: "F1", description: "Evidence needs labels", severity: "warning" };
     expect(decodeEvidenceContent(revision("subject", value))).toEqual({ kind: "finding", value });
   });
-  test("subject task", () => expect(decodeEvidenceContent(revision("subject", task))).toEqual({ kind: "task", value: task }));
-  test("spec task", () => expect(decodeEvidenceContent(revision("spec_task", task))).toEqual({ kind: "task", value: task }));
+  test("renders historical task subjects as structured captured evidence", () => expect(decodeEvidenceContent(revision("subject", task))).toEqual({ kind: "unknown", value: task }));
+  test("keeps historical task references readable without a workflow body reader", () => expect(decodeEvidenceContent(revision("spec_task", task))).toEqual({ kind: "unknown", value: task }));
   test("subject acceptance entry", () => expect(decodeEvidenceContent(revision("subject", criterion))).toEqual({ kind: "acceptance_entry", value: criterion }));
   test("numbered requirement", () => {
     const value = { id: "R1", description: "Show labels", status: "implementable" };

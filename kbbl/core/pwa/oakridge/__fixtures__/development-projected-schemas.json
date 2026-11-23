@@ -1,0 +1,1517 @@
+[
+  {
+    "key": "final_merge_policy",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "require_merge",
+        "allow_close_without_merge"
+      ]
+    }
+  },
+  {
+    "key": "repository",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "forge",
+          "schema": "forge"
+        },
+        {
+          "key": "key",
+          "schema": "ident"
+        },
+        {
+          "key": "preparation",
+          "schema": "{expected_head: optional(text), repository_path: repo_path}"
+        }
+      ]
+    }
+  },
+  {
+    "key": "ident",
+    "shape": {
+      "kind": "string",
+      "min_length": 1,
+      "max_length": 100
+    }
+  },
+  {
+    "key": "{expected_head: optional(text), repository_path: repo_path}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "expected_head",
+          "schema": "optional(text)"
+        },
+        {
+          "key": "repository_path",
+          "schema": "repo_path"
+        }
+      ]
+    }
+  },
+  {
+    "key": "optional(text)",
+    "shape": {
+      "kind": "optional",
+      "item": "text"
+    }
+  },
+  {
+    "key": "text",
+    "shape": {
+      "kind": "string",
+      "min_length": 0,
+      "max_length": 9007199254740991
+    }
+  },
+  {
+    "key": "repo_path",
+    "shape": {
+      "kind": "string",
+      "min_length": 0,
+      "max_length": 9007199254740991
+    }
+  },
+  {
+    "key": "forge",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "build_base",
+          "schema": "text"
+        },
+        {
+          "key": "final_base",
+          "schema": "text"
+        },
+        {
+          "key": "name",
+          "schema": "ident"
+        },
+        {
+          "key": "owner",
+          "schema": "ident"
+        }
+      ]
+    }
+  },
+  {
+    "key": "workspace",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "base_branch",
+          "schema": "text"
+        },
+        {
+          "key": "head",
+          "schema": "ident"
+        },
+        {
+          "key": "push_remote_owner",
+          "schema": "ident"
+        },
+        {
+          "key": "repository_path",
+          "schema": "repo_path"
+        }
+      ]
+    }
+  },
+  {
+    "key": "prepared",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "key",
+          "schema": "ident"
+        },
+        {
+          "key": "workspace",
+          "schema": "workspace"
+        }
+      ]
+    }
+  },
+  {
+    "key": "pr_status",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "head_sha",
+          "schema": "optional(text)"
+        },
+        {
+          "key": "merged_at",
+          "schema": "optional(text)"
+        },
+        {
+          "key": "number",
+          "schema": "integer"
+        },
+        {
+          "key": "state",
+          "schema": "enum(open, merged, closed_unmerged)"
+        },
+        {
+          "key": "url",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "integer",
+    "shape": {
+      "kind": "integer",
+      "min": -9007199254740991,
+      "max": 9007199254740991
+    }
+  },
+  {
+    "key": "enum(open, merged, closed_unmerged)",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "open",
+        "merged",
+        "closed_unmerged"
+      ]
+    }
+  },
+  {
+    "key": "severity",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "blocking",
+        "warning",
+        "info"
+      ]
+    }
+  },
+  {
+    "key": "issue",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "description",
+          "schema": "text"
+        },
+        {
+          "key": "severity",
+          "schema": "severity"
+        }
+      ]
+    }
+  },
+  {
+    "key": "test_evidence",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "cargo_test_output",
+          "schema": "optional(text)"
+        },
+        {
+          "key": "failed",
+          "schema": "integer"
+        },
+        {
+          "key": "output",
+          "schema": "optional(text)"
+        },
+        {
+          "key": "passed",
+          "schema": "integer"
+        },
+        {
+          "key": "summary",
+          "schema": "optional(text)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "item_assessment",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "evidence",
+          "schema": "list(evidence_ref)"
+        },
+        {
+          "key": "observation",
+          "schema": "text"
+        },
+        {
+          "key": "status",
+          "schema": "enum(met, partial, not_met)"
+        },
+        {
+          "key": "subject",
+          "schema": "assessment_subject"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(evidence_ref)",
+    "shape": {
+      "kind": "list",
+      "item": "evidence_ref",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "enum(met, partial, not_met)",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "met",
+        "partial",
+        "not_met"
+      ]
+    }
+  },
+  {
+    "key": "assessment_body",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "additional_findings",
+          "schema": "list(additional_finding)"
+        },
+        {
+          "key": "head_sha",
+          "schema": "text"
+        },
+        {
+          "key": "item_assessments",
+          "schema": "list(item_assessment)"
+        },
+        {
+          "key": "proposals",
+          "schema": "list(feedback_proposal)"
+        },
+        {
+          "key": "test_evidence",
+          "schema": "test_evidence"
+        },
+        {
+          "key": "verdict",
+          "schema": "enum(pass, pass_with_notes, fail)"
+        },
+        {
+          "key": "verifications",
+          "schema": "list(assignment_verification)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(additional_finding)",
+    "shape": {
+      "kind": "list",
+      "item": "additional_finding",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "list(item_assessment)",
+    "shape": {
+      "kind": "list",
+      "item": "item_assessment",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "list(feedback_proposal)",
+    "shape": {
+      "kind": "list",
+      "item": "feedback_proposal",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "enum(pass, pass_with_notes, fail)",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "pass",
+        "pass_with_notes",
+        "fail"
+      ]
+    }
+  },
+  {
+    "key": "list(assignment_verification)",
+    "shape": {
+      "kind": "list",
+      "item": "assignment_verification",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "evidence_ref",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "detail",
+          "schema": "optional(text)"
+        },
+        {
+          "key": "kind",
+          "schema": "enum(file, test, output)"
+        },
+        {
+          "key": "ref",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "enum(file, test, output)",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "file",
+        "test",
+        "output"
+      ]
+    }
+  },
+  {
+    "key": "pr_body",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "branch",
+          "schema": "text"
+        },
+        {
+          "key": "pr_url",
+          "schema": "text"
+        },
+        {
+          "key": "review_status",
+          "schema": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
+        },
+        {
+          "key": "summary",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "optional(enum(draft, ready, changes_requested, approved, merged, closed))",
+    "shape": {
+      "kind": "optional",
+      "item": "enum(draft, ready, changes_requested, approved, merged, closed)"
+    }
+  },
+  {
+    "key": "enum(draft, ready, changes_requested, approved, merged, closed)",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "draft",
+        "ready",
+        "changes_requested",
+        "approved",
+        "merged",
+        "closed"
+      ]
+    }
+  },
+  {
+    "key": "completed_cohort",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "branch",
+          "schema": "text"
+        },
+        {
+          "key": "build_result",
+          "schema": "{changed_files: list(text), delegated_session_metadata: optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}), head_sha: text, known_issues: list({description: text, severity: enum(blocking, warning, info)}), repository_key: optional(ident), summary: text, tests: {cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}}"
+        },
+        {
+          "key": "pr_url",
+          "schema": "text"
+        },
+        {
+          "key": "cohort_id",
+          "schema": "ident"
+        },
+        {
+          "key": "repository_key",
+          "schema": "ident"
+        },
+        {
+          "key": "title",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "{changed_files: list(text), delegated_session_metadata: optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}), head_sha: text, known_issues: list({description: text, severity: enum(blocking, warning, info)}), repository_key: optional(ident), summary: text, tests: {cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "changed_files",
+          "schema": "list(text)"
+        },
+        {
+          "key": "delegated_session_metadata",
+          "schema": "optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)})"
+        },
+        {
+          "key": "head_sha",
+          "schema": "text"
+        },
+        {
+          "key": "known_issues",
+          "schema": "list({description: text, severity: enum(blocking, warning, info)})"
+        },
+        {
+          "key": "repository_key",
+          "schema": "optional(ident)"
+        },
+        {
+          "key": "summary",
+          "schema": "text"
+        },
+        {
+          "key": "tests",
+          "schema": "{cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(text)",
+    "shape": {
+      "kind": "list",
+      "item": "text",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)})",
+    "shape": {
+      "kind": "optional",
+      "item": "{branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}"
+    }
+  },
+  {
+    "key": "{branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "branch",
+          "schema": "optional(ident)"
+        },
+        {
+          "key": "cohort_id",
+          "schema": "optional(ident)"
+        },
+        {
+          "key": "session_id",
+          "schema": "optional(ident)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "optional(ident)",
+    "shape": {
+      "kind": "optional",
+      "item": "ident"
+    }
+  },
+  {
+    "key": "list({description: text, severity: enum(blocking, warning, info)})",
+    "shape": {
+      "kind": "list",
+      "item": "{description: text, severity: enum(blocking, warning, info)}",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "{description: text, severity: enum(blocking, warning, info)}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "description",
+          "schema": "text"
+        },
+        {
+          "key": "severity",
+          "schema": "enum(blocking, warning, info)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "enum(blocking, warning, info)",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "blocking",
+        "warning",
+        "info"
+      ]
+    }
+  },
+  {
+    "key": "{cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "cargo_test_output",
+          "schema": "optional(text)"
+        },
+        {
+          "key": "failed",
+          "schema": "integer"
+        },
+        {
+          "key": "output",
+          "schema": "optional(text)"
+        },
+        {
+          "key": "passed",
+          "schema": "integer"
+        },
+        {
+          "key": "summary",
+          "schema": "optional(text)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "finding_evidence",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "detail",
+          "schema": "text"
+        },
+        {
+          "key": "kind",
+          "schema": "enum(file, search, test, output)"
+        },
+        {
+          "key": "ref",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "enum(file, search, test, output)",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "file",
+        "search",
+        "test",
+        "output"
+      ]
+    }
+  },
+  {
+    "key": "change_location",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "path",
+          "schema": "text"
+        },
+        {
+          "key": "symbol",
+          "schema": "optional(text)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "resolution",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "alternatives",
+          "schema": "optional(list({consequence: text, option: text}))"
+        },
+        {
+          "key": "chosen",
+          "schema": "optional(text)"
+        },
+        {
+          "key": "kind",
+          "schema": "enum(spec_update, operator_decision, implementation_note)"
+        },
+        {
+          "key": "question",
+          "schema": "optional(text)"
+        },
+        {
+          "key": "text",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "optional(list({consequence: text, option: text}))",
+    "shape": {
+      "kind": "optional",
+      "item": "list({consequence: text, option: text})"
+    }
+  },
+  {
+    "key": "list({consequence: text, option: text})",
+    "shape": {
+      "kind": "list",
+      "item": "{consequence: text, option: text}",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "{consequence: text, option: text}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "consequence",
+          "schema": "text"
+        },
+        {
+          "key": "option",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "enum(spec_update, operator_decision, implementation_note)",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "spec_update",
+        "operator_decision",
+        "implementation_note"
+      ]
+    }
+  },
+  {
+    "key": "analysis_finding",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "evidence",
+          "schema": "list(finding_evidence)"
+        },
+        {
+          "key": "expected_change_locations",
+          "schema": "list(change_location)"
+        },
+        {
+          "key": "id",
+          "schema": "ident"
+        },
+        {
+          "key": "observation",
+          "schema": "text"
+        },
+        {
+          "key": "resolution",
+          "schema": "optional(resolution)"
+        },
+        {
+          "key": "severity",
+          "schema": "severity"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(finding_evidence)",
+    "shape": {
+      "kind": "list",
+      "item": "finding_evidence",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "list(change_location)",
+    "shape": {
+      "kind": "list",
+      "item": "change_location",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "optional(resolution)",
+    "shape": {
+      "kind": "optional",
+      "item": "resolution"
+    }
+  },
+  {
+    "key": "analysis_requirement",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "findings",
+          "schema": "list(analysis_finding)"
+        },
+        {
+          "key": "id",
+          "schema": "ident"
+        },
+        {
+          "key": "source_refs",
+          "schema": "list(text)"
+        },
+        {
+          "key": "text",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(analysis_finding)",
+    "shape": {
+      "kind": "list",
+      "item": "analysis_finding",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "analysis_body",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "requirements",
+          "schema": "list(analysis_requirement)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(analysis_requirement)",
+    "shape": {
+      "kind": "list",
+      "item": "analysis_requirement",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "spec_requirement",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "acceptance_conditions",
+          "schema": "list(text)"
+        },
+        {
+          "key": "analysis_finding_ids",
+          "schema": "list(ident)"
+        },
+        {
+          "key": "id",
+          "schema": "ident"
+        },
+        {
+          "key": "source_refs",
+          "schema": "list(text)"
+        },
+        {
+          "key": "text",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(ident)",
+    "shape": {
+      "kind": "list",
+      "item": "ident",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "spec_body",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "non_goals",
+          "schema": "list(text)"
+        },
+        {
+          "key": "objective",
+          "schema": "text"
+        },
+        {
+          "key": "requirements",
+          "schema": "list(spec_requirement)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(spec_requirement)",
+    "shape": {
+      "kind": "list",
+      "item": "spec_requirement",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "allocation",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "contribution",
+          "schema": "text"
+        },
+        {
+          "key": "requirement_id",
+          "schema": "ident"
+        }
+      ]
+    }
+  },
+  {
+    "key": "plan_cohort",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "allocations",
+          "schema": "list(allocation)"
+        },
+        {
+          "key": "depends_on",
+          "schema": "list(ident)"
+        },
+        {
+          "key": "id",
+          "schema": "ident"
+        },
+        {
+          "key": "rationale",
+          "schema": "text"
+        },
+        {
+          "key": "repository_key",
+          "schema": "ident"
+        },
+        {
+          "key": "scope",
+          "schema": "text"
+        },
+        {
+          "key": "title",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(allocation)",
+    "shape": {
+      "kind": "list",
+      "item": "allocation",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "plan_body",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "cohorts",
+          "schema": "list(plan_cohort)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(plan_cohort)",
+    "shape": {
+      "kind": "list",
+      "item": "plan_cohort",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "cohort_assignment",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "cohort",
+          "schema": "plan_cohort"
+        },
+        {
+          "key": "requirements",
+          "schema": "list(spec_requirement)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "build_item",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "id",
+          "schema": "ident"
+        },
+        {
+          "key": "instructions",
+          "schema": "text"
+        },
+        {
+          "key": "requirement_ids",
+          "schema": "list(ident)"
+        },
+        {
+          "key": "verification",
+          "schema": "list(text)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "technical_decision",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "build_item_ids",
+          "schema": "list(ident)"
+        },
+        {
+          "key": "decision",
+          "schema": "text"
+        },
+        {
+          "key": "id",
+          "schema": "ident"
+        },
+        {
+          "key": "rationale",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "brief_body",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "build_items",
+          "schema": "list(build_item)"
+        },
+        {
+          "key": "cohort_id",
+          "schema": "ident"
+        },
+        {
+          "key": "depends_on",
+          "schema": "list(ident)"
+        },
+        {
+          "key": "files_in_scope",
+          "schema": "list(text)"
+        },
+        {
+          "key": "repository_key",
+          "schema": "ident"
+        },
+        {
+          "key": "technical_decisions",
+          "schema": "list(technical_decision)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(build_item)",
+    "shape": {
+      "kind": "list",
+      "item": "build_item",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "list(technical_decision)",
+    "shape": {
+      "kind": "list",
+      "item": "technical_decision",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "build_body",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "changed_files",
+          "schema": "list(text)"
+        },
+        {
+          "key": "delegated_session_metadata",
+          "schema": "optional(build_metadata)"
+        },
+        {
+          "key": "head_sha",
+          "schema": "text"
+        },
+        {
+          "key": "known_issues",
+          "schema": "list(issue)"
+        },
+        {
+          "key": "repository_key",
+          "schema": "optional(ident)"
+        },
+        {
+          "key": "summary",
+          "schema": "text"
+        },
+        {
+          "key": "tests",
+          "schema": "test_evidence"
+        }
+      ]
+    }
+  },
+  {
+    "key": "optional(build_metadata)",
+    "shape": {
+      "kind": "optional",
+      "item": "build_metadata"
+    }
+  },
+  {
+    "key": "list(issue)",
+    "shape": {
+      "kind": "list",
+      "item": "issue",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "build_metadata",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "branch",
+          "schema": "optional(ident)"
+        },
+        {
+          "key": "cohort_id",
+          "schema": "optional(ident)"
+        },
+        {
+          "key": "session_id",
+          "schema": "optional(ident)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "assessment_subject",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "id",
+          "schema": "ident"
+        },
+        {
+          "key": "kind",
+          "schema": "enum(build_item, requirement)"
+        }
+      ]
+    }
+  },
+  {
+    "key": "enum(build_item, requirement)",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "build_item",
+        "requirement"
+      ]
+    }
+  },
+  {
+    "key": "additional_finding",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "evidence",
+          "schema": "list(evidence_ref)"
+        },
+        {
+          "key": "id",
+          "schema": "ident"
+        },
+        {
+          "key": "observation",
+          "schema": "text"
+        },
+        {
+          "key": "related_build_item_ids",
+          "schema": "list(ident)"
+        },
+        {
+          "key": "severity",
+          "schema": "severity"
+        }
+      ]
+    }
+  },
+  {
+    "key": "assignment_verification",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "outcome",
+          "schema": "enum(verified, needs_further_work)"
+        },
+        {
+          "key": "round_id",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "enum(verified, needs_further_work)",
+    "shape": {
+      "kind": "enum",
+      "variants": [
+        "verified",
+        "needs_further_work"
+      ]
+    }
+  },
+  {
+    "key": "citation",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "pointer",
+          "schema": "text"
+        },
+        {
+          "key": "revision_id",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "feedback_proposal",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "citation",
+          "schema": "optional(citation)"
+        },
+        {
+          "key": "instruction",
+          "schema": "text"
+        },
+        {
+          "key": "key",
+          "schema": "ident"
+        }
+      ]
+    }
+  },
+  {
+    "key": "optional(citation)",
+    "shape": {
+      "kind": "optional",
+      "item": "citation"
+    }
+  },
+  {
+    "key": "{final_merge_policy: final_merge_policy, primary_repository_key: ident, repositories: list(repository), spec: text, title: text}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "final_merge_policy",
+          "schema": "final_merge_policy"
+        },
+        {
+          "key": "primary_repository_key",
+          "schema": "ident"
+        },
+        {
+          "key": "repositories",
+          "schema": "list(repository)"
+        },
+        {
+          "key": "spec",
+          "schema": "text"
+        },
+        {
+          "key": "title",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(repository)",
+    "shape": {
+      "kind": "list",
+      "item": "repository",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "{}",
+    "shape": {
+      "kind": "record",
+      "fields": []
+    }
+  },
+  {
+    "key": "{repository: repository}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "repository",
+          "schema": "repository"
+        }
+      ]
+    }
+  },
+  {
+    "key": "{spec: text, workspace: workspace}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "spec",
+          "schema": "text"
+        },
+        {
+          "key": "workspace",
+          "schema": "workspace"
+        }
+      ]
+    }
+  },
+  {
+    "key": "{suggested_choices: optional(list(text)), text: text}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "suggested_choices",
+          "schema": "optional(list(text))"
+        },
+        {
+          "key": "text",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "optional(list(text))",
+    "shape": {
+      "kind": "optional",
+      "item": "list(text)"
+    }
+  },
+  {
+    "key": "{feedback: text}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "feedback",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "{answer: text}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "answer",
+          "schema": "text"
+        }
+      ]
+    }
+  },
+  {
+    "key": "{repositories: list(repository), spec: spec_body, workspace: workspace}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "repositories",
+          "schema": "list(repository)"
+        },
+        {
+          "key": "spec",
+          "schema": "spec_body"
+        },
+        {
+          "key": "workspace",
+          "schema": "workspace"
+        }
+      ]
+    }
+  },
+  {
+    "key": "{assignment: cohort_assignment, workspace: workspace}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "assignment",
+          "schema": "cohort_assignment"
+        },
+        {
+          "key": "workspace",
+          "schema": "workspace"
+        }
+      ]
+    }
+  },
+  {
+    "key": "{brief: brief_body, cohort: plan_cohort, repository: repository, workspace: workspace}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "brief",
+          "schema": "brief_body"
+        },
+        {
+          "key": "cohort",
+          "schema": "plan_cohort"
+        },
+        {
+          "key": "repository",
+          "schema": "repository"
+        },
+        {
+          "key": "workspace",
+          "schema": "workspace"
+        }
+      ]
+    }
+  },
+  {
+    "key": "{briefs: list(brief_body), cohorts: list(completed_cohort), final_merge_policy: final_merge_policy, repository: repository, requirements: list(spec_requirement), workspace: workspace}",
+    "shape": {
+      "kind": "record",
+      "fields": [
+        {
+          "key": "briefs",
+          "schema": "list(brief_body)"
+        },
+        {
+          "key": "cohorts",
+          "schema": "list(completed_cohort)"
+        },
+        {
+          "key": "final_merge_policy",
+          "schema": "final_merge_policy"
+        },
+        {
+          "key": "repository",
+          "schema": "repository"
+        },
+        {
+          "key": "requirements",
+          "schema": "list(spec_requirement)"
+        },
+        {
+          "key": "workspace",
+          "schema": "workspace"
+        }
+      ]
+    }
+  },
+  {
+    "key": "list(brief_body)",
+    "shape": {
+      "kind": "list",
+      "item": "brief_body",
+      "max_items": 9007199254740991
+    }
+  },
+  {
+    "key": "list(completed_cohort)",
+    "shape": {
+      "kind": "list",
+      "item": "completed_cohort",
+      "max_items": 9007199254740991
+    }
+  }
+]

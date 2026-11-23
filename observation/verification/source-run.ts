@@ -40,8 +40,6 @@ export interface SourceRunOptions { readonly input: SourceRunInput; readonly dir
   readonly reviews?: readonly ReviewCheckpoint[];
   /** How many units must hold the target artifact before the run is done. One unless set. */
   readonly target_units?: number }
-/** One explicit association, as the tasks approval's caller supplies it. */
-export interface SuppliedLink { readonly source_revision_id: string; readonly item_path: string; readonly task_ids: readonly string[] }
 /** What a proof does around one accepted review. `target` is the revision the review decides. A failed `before` ends the run there. */
 export interface ReviewCheckpoint {
   readonly review: string;
@@ -49,8 +47,6 @@ export interface ReviewCheckpoint {
   after?(run: RunReference, target: string): Promise<ProofCheck>;
   /** Sent back once per unit before that unit's acceptance, so the run really revises the artifact. */
   readonly revision_feedback?: string;
-  /** Explicit links the acceptance carries. */
-  analysis_links?(run: RunReference, target: string): readonly SuppliedLink[];
 }
 
 const POLL_MS = 1_000;
@@ -112,8 +108,7 @@ async function acceptReviews(io: ProofIo, run: RunReference, inspect: InspectVie
       prepared.add(review.review);
     }
     const unknown = await decideUntilKnown(io, decide, { decision: "accept", target: review.target,
-      payload: { feedback: "Accepted for the isolated live verification run." },
-      ...(checkpoint?.analysis_links ? { analysis_links: checkpoint.analysis_links(run, target) } : {}) });
+      payload: { feedback: "Accepted for the isolated live verification run." } });
     if (unknown) return { name: `${review.review} is accepted`, passed: false, detail: unknown };
     if (checkpoint) {
       taken.add(review.review);

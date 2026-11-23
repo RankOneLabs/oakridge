@@ -29,7 +29,7 @@ function wrap(ui: ReactElement) {
     if (failedRead !== "sessions") client.setQueryData(["oakridge", "run", run.id, "sessions"], SESSIONS);
     if (failedRead !== "gates") client.setQueryData(["oakridge", "run", run.id, "gates"], GATES);
   }
-  client.setQueryData(["oakridge", "artifact", "art-plan"], { id: "art-plan", run_id: "run-1", type_id: "dev.plan", revisions: [] });
+  client.setQueryData(["oakridge", "artifact", "art-plan"], { id: "art-plan", run_id: "run-1", type_id: "planning.plan", revisions: [] });
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
@@ -120,12 +120,28 @@ describe("the run route", () => {
 });
 
 describe("opening a pane from the sidebar", () => {
+  it("shows recorded operator actions only in their workspace pane", async () => {
+    const history = "The change was already applied.";
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(["oakridge", "run", RUN.id], RUN);
+    client.setQueryData(["oakridge", "run", RUN.id, "activity"], { events: [], dispositions: [{
+      decision_id: "decision", kind: "proposal_rejected", reason: history, actor: "operator", created_at: "2026-10-01T09:00:00Z",
+    }] });
+    render(<QueryClientProvider client={client}><RunDetailView runId={RUN.id} routePane={null} onBack={() => {}} /></QueryClientProvider>);
+    await screen.findByTestId("or-run-overview");
+    expect(screen.queryByText(history)).toBeNull();
+    fireEvent.click(screen.getByTestId("or-sidebar-pane-operator-actions"));
+    expect(await screen.findByText(history)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("or-sidebar-pane-overview"));
+    expect(screen.queryByText(history)).toBeNull();
+  });
+
   it("filters artifact rows and restores them when All is selected", async () => {
     renderWorkspace();
     const filter = await screen.findByTestId("or-sidebar-artifact-filter");
     expect(screen.getAllByTestId("or-sidebar-artifact")).toHaveLength(2);
 
-    fireEvent.change(filter, { target: { value: "build_results" } });
+    fireEvent.change(filter, { target: { value: "record" } });
     expect(screen.getAllByTestId("or-sidebar-artifact").map((row) => row.getAttribute("data-artifact-id"))).toEqual(["art-build"]);
 
     fireEvent.change(filter, { target: { value: "all" } });
@@ -209,7 +225,7 @@ describe("twin view", () => {
 describe("legacy deep links converge on the workspace URL", () => {
   it("resolves an artifact to its run and replaces the hash", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      json({ id: "art-plan", run_id: "run-1", type_id: "dev.plan", revisions: [] }),
+      json({ id: "art-plan", run_id: "run-1", type_id: "planning.plan", revisions: [] }),
     );
 
     wrap(<ArtifactWorkspaceRedirectView artifactId={"art-plan" as ArtifactId} onBack={() => {}} />);

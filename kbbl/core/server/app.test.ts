@@ -6,7 +6,9 @@ import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
+import { builtinAgentProfiles } from "../acp/default-profiles";
 import type { AcpSessionService } from "../acp/session-service";
+import { acpError, err } from "../acp/types";
 import { openTestDb } from "../db/test-db";
 import { createApp } from "./app";
 import type { AuthPolicy } from "./auth";
@@ -19,7 +21,18 @@ function makeStubAcp(
   defaultAgent = "claude-code",
 ): AcpSessionService {
   return {
-    listProfiles: () => profiles,
+    listSessions: () => [],
+    listSessionArchives: () => new Map(),
+    transcriptLimits: { initial_item_window: 20, item_page_limit: 20, item_page_limit_max: 100 },
+    readItemPage: (sid: string) => err(acpError("session_not_found", "service.readItemPage", `no session ${sid}`)),
+    listProfiles: () => {
+      const defaults = builtinAgentProfiles("/tmp/kbbl");
+      return profiles.map((profile) => ({
+        models: defaults.get(profile.id)?.models,
+        default_model: defaults.get(profile.id)?.default_model,
+        ...profile,
+      }));
+    },
     get defaultAgent() {
       return defaultAgent;
     },
@@ -56,13 +69,16 @@ afterEach(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
+const bundle = "console.log('kbbl');\n".repeat(200);
+
+function writeStaticFixtures() {
+  mkdirSync(join(tmpRoot, "assets"));
+  writeFileSync(join(tmpRoot, "assets", "index-abc123.js"), bundle);
+  writeFileSync(join(tmpRoot, "index.html"), "<!doctype html>");
+}
+
 describe("static PWA", () => {
-  const bundle = "console.log('kbbl');\n".repeat(200);
-  beforeEach(() => {
-    mkdirSync(join(tmpRoot, "assets"));
-    writeFileSync(join(tmpRoot, "assets", "index-abc123.js"), bundle);
-    writeFileSync(join(tmpRoot, "index.html"), "<!doctype html>");
-  });
+  beforeEach(writeStaticFixtures);
 
   test("a hashed asset is cached for good and compressed", async () => {
     const res = await buildApp(KbblConfigSchema.parse({})).request("/assets/index-abc123.js", { headers: { "accept-encoding": "gzip" } });
@@ -74,6 +90,55 @@ describe("static PWA", () => {
   test("the entry page is revalidated, so a new build's asset names reach the client", async () => {
     const res = await buildApp(KbblConfigSchema.parse({})).request("/");
     expect(res.headers.get("cache-control")).toBe("no-cache");
+  });
+});
+
+describe("token-mode access", () => {
+  const token = "control-test-token";
+  const bearerHeaders = { authorization: `Bearer ${token}` };
+  const itemsPath = "/sessions/00000000-0000-4000-8000-000000000001/items?epoch=test&before_seq=0";
+  let app: Hono;
+
+  beforeEach(() => {
+    writeStaticFixtures();
+    app = buildApp(KbblConfigSchema.parse({}), tmpRoot, undefined, { mode: "token", token });
+  });
+
+  test("GET /sessions/sid-1/items without credentials returns 401", async () => {
+    expect((await app.request("/sessions/sid-1/items")).status).toBe(401);
+  });
+
+  for (const path of ["/sessions", "/config", "/directories", "/health", "/oakridge/config"]) {
+    test.each(["GET", "HEAD"])("%s " + path + " without credentials returns 401", async (method) => {
+      const url = path === "/directories" ? `${path}?path=${encodeURIComponent(tmpRoot)}` : path;
+      expect((await app.request(url, { method })).status).toBe(401);
+    });
+  }
+
+  test("GET /auth/status reports that anonymous users must sign in", async () => {
+    const res = await app.request("/auth/status");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ is_required: true, is_authenticated: false });
+  });
+
+  test.each(["/", "/assets/index-abc123.js"])("GET %s serves the PWA without credentials", async (path) => {
+    expect((await app.request(path)).status).toBe(200);
+  });
+
+  test.each(["/sessions", "/config", "/directories"])("GET %s accepts a valid Bearer token", async (path) => {
+    const url = path === "/directories" ? `${path}?path=${encodeURIComponent(tmpRoot)}` : path;
+    expect((await app.request(url, { headers: bearerHeaders })).status).toBe(200);
+  });
+
+  test("GET /sessions/:sid/items reaches the handler with a valid Bearer token", async () => {
+    expect((await app.request(itemsPath, { headers: bearerHeaders })).status).toBe(404);
+  });
+
+  test("GET /config accepts a valid cookie with a same-origin Referer", async () => {
+    const res = await app.request("/config", {
+      headers: { cookie: `kbbl_ctrl=${token}`, referer: "http://localhost/" },
+    });
+    expect(res.status).toBe(200);
   });
 });
 

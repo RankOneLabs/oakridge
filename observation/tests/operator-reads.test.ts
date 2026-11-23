@@ -21,10 +21,11 @@ const MACHINE = "machine";
 const human = (() => { const definition = humanEvaluator(); if (!definition.ok) throw new Error(definition.error.detail); return definition.value; })();
 const pins: CaptureConfiguration = { pins: OAKRIDGE_QUESTIONS.map((question) => ({ scope: "per_item" as const, ...question, ...targetOf(question.question_id), ...pinProvenance(question),
   evaluator_definition_ids: [evaluatorId(MACHINE), human.evaluator_definition_id as EvaluatorDefinitionId] })) };
-const analysis = (findings: readonly JsonValue[]): JsonValue => ({ summary: "s", source_spec_refs: [], findings, requirements: [], risks: [], proposed_spec_updates: [] });
-const assessment = (findings: readonly JsonValue[]): JsonValue => ({ head_sha: "abc", verdict: "pass", findings, recommended_next_actions: [] });
-const finding = (task_ids: readonly string[], description: string): JsonValue => ({ task_ids, status: "met", evidence: [], description });
-const tasks = (ids: readonly string[]): JsonValue => ({ tasks: ids.map((id) => ({ id, description: `task ${id}`, requirement_ids: [] })) });
+const analysis = (findings: readonly JsonValue[]): JsonValue => ({ requirements: [{ id: "R1", findings }] });
+const assessment = (findings: readonly JsonValue[]): JsonValue => ({ head_sha: "abc", verdict: "pass", item_assessments: findings });
+const finding = (task_ids: readonly string[], description: string): JsonValue => ({ subject: { kind: "requirement", id: task_ids[0] ?? "unassigned" }, status: "met", evidence: [], observation: description });
+const spec = (ids: readonly string[]): JsonValue => ({ requirements: ids.map((id) => ({ id, text: id, analysis_finding_ids: [] })) });
+const unlinkedFinding = { id: "unlinked", severity: "info", observation: "Unlinked", related_build_item_ids: [], evidence: [] };
 
 interface Harness { readonly db: Database; readonly feed: Feed; readonly app: ReturnType<typeof createApp> }
 async function setup(db: Database, grading_enabled = false): Promise<Harness> {
@@ -36,8 +37,8 @@ async function setup(db: Database, grading_enabled = false): Promise<Harness> {
   const feed = createFeed(db, tenant, pins);
   await feed.launch({ spec: "the spec" }, "run-1", runConfig(grading_enabled));
   return { db, feed, app: createApp({ db, credentials, profile: oakridgeProfile, capture_configuration: pins, stage_source: { read: async () => ({ ok: true, value: [
-    { unit_id: "t", stage: "tasks", depends_on: [], status: { kind: "done" }, artifacts: [{ artifact_key: "tasks" }] },
-    { unit_id: "i", stage: "implementation", depends_on: ["t"], status: { kind: "active" }, artifacts: [{ artifact_key: "assessment" }] },
+    { unit_id: "t", stage: "analysis", depends_on: [], status: { kind: "done" }, artifacts: [{ artifact_key: "spec" }] },
+    { unit_id: "i", stage: "cohort", depends_on: ["t"], status: { kind: "active" }, artifacts: [{ artifact_key: "assessment" }] },
     { unit_id: "f", stage: "integration", depends_on: ["i"], status: { kind: "not_started" }, artifacts: [{ artifact_key: "assessment" }] }
   ] }) } }) };
 }
@@ -53,8 +54,8 @@ const ready = async (h: Harness, occurrence_id: ItemOccurrenceId, question_id?: 
   for (const set of await readOccurrenceEvidence(h.db, tenant, occurrence_id)) {
     if (question_id && set.question_id !== question_id) continue;
     const recorded = await recordCollection(h.db, tenant, set.evidence_set_id, { state: "ready", references: [
-      { source: "reported", reported_by: "agent", ref: "a", revision_id: "r" as ArtifactRevisionId, item_path: "/findings/0", content: "first" },
-      { source: "reported", reported_by: "agent", ref: "b", revision_id: "r" as ArtifactRevisionId, item_path: "/findings/0", content: "second" }] });
+      { source: "reported", reported_by: "agent", ref: "a", revision_id: "r" as ArtifactRevisionId, item_path: "/item_assessments/0", content: "first" },
+      { source: "reported", reported_by: "agent", ref: "b", revision_id: "r" as ArtifactRevisionId, item_path: "/item_assessments/0", content: "second" }] });
     if (!recorded.ok) throw new Error(recorded.error.detail);
   }
 };
@@ -77,49 +78,50 @@ const questionOf = (read: Status, id: string) => read.questions.items.find((ques
 integration("a finding opens by exact revision and path at every stage with no task, cohort or subject", async () => scratchDatabase(async (db) => {
   const h = await setup(db);
   await h.feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", unit_id: "run-1/analysis/one", body: analysis([{ id: "F1", description: "d", severity: "info" }]) });
-  await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one", body: assessment([finding([], "impl")]) });
-  await h.feed.revision({ revision_id: "assessment-2", artifact_kind: "assessment", unit_id: "run-1/integration/final", body: assessment([finding([], "final")]) });
-  for (const [revision, stage, kind] of [["analysis-1", "analysis", "finding"], ["assessment-1", "implementation", "assessment_finding"], ["assessment-2", "integration", "assessment_finding"]] as const) {
-    const read = await get<Item>(h, at(revision, "/findings/0"));
+  await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one", body: { additional_findings: [unlinkedFinding] } });
+  await h.feed.revision({ revision_id: "assessment-2", artifact_kind: "assessment", unit_id: "run-1/integration/final", body: { additional_findings: [unlinkedFinding] } });
+  for (const [revision, stage, kind, path, links] of [["analysis-1", "analysis", "finding", "/requirements/0/findings/0", 1],
+    ["assessment-1", "cohort", "additional_finding", "/additional_findings/0", 0], ["assessment-2", "integration", "additional_finding", "/additional_findings/0", 0]] as const) {
+    const read = await get<Item>(h, at(revision, path));
     expect(read.status).toBe(200);
-    expect(read.body).toMatchObject({ source_revision_id: revision, item_path: "/findings/0", stage, item_kind: kind, is_current: true });
-    expect((await get(h, at(revision, "/findings/9"))).status).toBe(404);
+    expect(read.body).toMatchObject({ source_revision_id: revision, item_path: path, stage, item_kind: kind, is_current: true });
+    expect((await get(h, at(revision, "/item_assessments/9"))).status).toBe(404);
     const state = await status(h, read.body.occurrence_id);
     expect(state.item.occurrence_id).toBe(read.body.occurrence_id);
-    expect(state.links).toMatchObject({ items: [], total: 0 });
+    expect(state.links.total).toBe(links);
   }
-  expect((await get(h, at("assessment-1", "/findings/0", "run-other"))).status).toBe(404);
-  expect((await get(h, `/v1/runs/run-1/items/at?item_path=/findings/0`)).status).toBe(400);
-  expect((await get(h, at("assessment-1", "/findings/0"), "other-read")).status).toBe(404);
-  expect((await h.app.request(at("assessment-1", "/findings/0"))).status).toBe(403);
-  expect((await get(h, at("assessment-1", "/findings/0"), "grade")).status).toBe(403);
+  expect((await get(h, at("assessment-1", "/item_assessments/0", "run-other"))).status).toBe(404);
+  expect((await get(h, `/v1/runs/run-1/items/at?item_path=/item_assessments/0`)).status).toBe(400);
+  expect((await get(h, at("assessment-1", "/item_assessments/0"), "other-read")).status).toBe(404);
+  expect((await h.app.request(at("assessment-1", "/item_assessments/0"))).status).toBe(403);
+  expect((await get(h, at("assessment-1", "/item_assessments/0"), "grade")).status).toBe(403);
 }));
 
 integration("explicit task links are separate from the address: empty is valid and an unknown reference stays visible", async () => scratchDatabase(async (db) => {
   const h = await setup(db);
-  await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", unit_id: "run-1/tasks/one", body: tasks(["T1", "T2"]) });
+  await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "spec", unit_id: "run-1/tasks/one", body: spec(["T1", "T2"]) });
   await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one",
-    body: assessment([finding(["T1", "T2"], "both"), finding([], "none"), finding(["T404"], "unknown")]) });
-  const both = await addressed(h, "assessment-1", "/findings/0");
+    body: { item_assessments: [finding(["T1"], "resolved"), finding(["T404"], "unknown")], additional_findings: [unlinkedFinding] } });
+  const both = await addressed(h, "assessment-1", "/item_assessments/0");
   const state = await status(h, both.occurrence_id);
-  expect(state.links.items.map((link) => [link.state, link.producer_local_id]).sort()).toEqual([["resolved", "T1"], ["resolved", "T2"]]);
-  const none = await addressed(h, "assessment-1", "/findings/1");
+  expect(state.links.items.map((link) => [link.state, link.producer_local_id]).sort()).toEqual([["resolved", "T1"]]);
+  const none = await addressed(h, "assessment-1", "/additional_findings/0");
   expect((await status(h, none.occurrence_id)).links.total).toBe(0);
-  const unknown = await addressed(h, "assessment-1", "/findings/2");
+  const unknown = await addressed(h, "assessment-1", "/item_assessments/1");
   expect((await status(h, unknown.occurrence_id)).links.items).toMatchObject([{ state: "unresolved", producer_local_id: "T404" }]);
   expect((await get(h, "/v1/runs/run-1/logical-items/T404")).status).toBe(404);
-  expect((await get<Paged<{ item: { item_path: string } }>>(h, "/v1/runs/run-1/unresolved-references")).body.items.map((row) => row.item.item_path)).toEqual(["/findings/2"]);
-  expect((await get<Paged<{ item_path: string; source_revision_id: string }>>(h, "/v1/runs/run-1/unlinked-items")).body.items).toMatchObject([{ item_path: "/findings/1", source_revision_id: "assessment-1" }, { item_path: "/findings/2", source_revision_id: "assessment-1" }]);
-  const findings = (await get<Paged<{ item: { item_path: string }; links: Paged<{ producer_local_id: string }> }>>(h, "/v1/runs/run-1/gradeable-items?stage=implementation")).body;
-  expect(findings.total).toBe(3);
-  expect(findings.items.map((row) => [row.item.item_path, row.links.total])).toEqual([["/findings/0", 2], ["/findings/1", 0], ["/findings/2", 1]]);
+  expect((await get<Paged<{ item: { item_path: string } }>>(h, "/v1/runs/run-1/unresolved-references")).body.items.map((row) => row.item.item_path)).toEqual(["/item_assessments/1"]);
+  expect((await get<Paged<{ item_path: string; source_revision_id: string }>>(h, "/v1/runs/run-1/unlinked-items")).body.items).toMatchObject([{ item_path: "/item_assessments/1", source_revision_id: "assessment-1" }]);
+  const findings = (await get<Paged<{ item: { item_path: string }; links: Paged<{ producer_local_id: string }> }>>(h, "/v1/runs/run-1/gradeable-items?stage=cohort")).body;
+  expect(findings.total).toBe(2);
+  expect(findings.items.map((row) => [row.item.item_path, row.links.total])).toEqual([["/item_assessments/0", 1], ["/item_assessments/1", 1]]);
   expect((await get(h, "/v1/runs/run-1/gradeable-items?stage=nope")).status).toBe(400);
 }));
 
 integration("each state of a question reads distinctly: not ready with its reason, off, pending, deferred, failed and real negative answers", async () => scratchDatabase(async (db) => {
   const h = await setup(db, false);
   await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one", body: assessment([finding([], "one")]) });
-  const item = await addressed(h, "assessment-1", "/findings/0");
+  const item = await addressed(h, "assessment-1", "/item_assessments/0");
   await ready(h, item.occurrence_id, EVIDENCE_SUPPORT_ID);
   const off = await status(h, item.occurrence_id);
   expect(off.is_grading_enabled).toBe(false);
@@ -136,7 +138,7 @@ integration("each state of a question reads distinctly: not ready with its reaso
 integration("machine pending, failed and answered states read apart from negative answers", async () => scratchDatabase(async (db) => {
   const h = await setup(db, true);
   await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one", body: assessment([finding([], "one")]) });
-  const item = await addressed(h, "assessment-1", "/findings/0");
+  const item = await addressed(h, "assessment-1", "/item_assessments/0");
   await ready(h, item.occurrence_id);
   expect((await admitRun(db, tenant, "run-1", { retry_limit: 0 })).ok).toBe(true);
   const pending = await status(h, item.occurrence_id);
@@ -156,7 +158,7 @@ integration("machine pending, failed and answered states read apart from negativ
 integration("budget-deferred work reads as deferred, not as a failure or a negative answer", async () => scratchDatabase(async (db) => {
   const h = await setup(db, true);
   await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one", body: assessment([finding([], "one")]) });
-  const item = await addressed(h, "assessment-1", "/findings/0");
+  const item = await addressed(h, "assessment-1", "/item_assessments/0");
   await ready(h, item.occurrence_id, CORRECTNESS_ID);
   await admitRun(db, tenant, "run-1", { retry_limit: 0 });
   await claimNext(db, tenant, { lease_owner: "w", lease_ms: 60_000, run_spend: 0 });
@@ -165,17 +167,17 @@ integration("budget-deferred work reads as deferred, not as a failure or a negat
 
 integration("every list pages to its end, nested lists included, with its own window", async () => scratchDatabase(async (db) => {
   const h = await setup(db);
-  await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "tasks", unit_id: "run-1/tasks/one", body: tasks(["T1", "T2", "T3"]) });
+  await h.feed.revision({ revision_id: "tasks-1", artifact_kind: "spec", unit_id: "run-1/tasks/one", body: spec(["T1", "T2", "T3"]) });
   await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one",
-    body: assessment([finding(["T1", "T2", "T3"], "wide"), finding(["T1"], "narrow")]) });
-  const item = await addressed(h, "assessment-1", "/findings/0");
+    body: assessment([finding(["T1"], "first"), finding(["T1"], "second")]) });
+  const item = await addressed(h, "assessment-1", "/item_assessments/0");
   await ready(h, item.occurrence_id);
   const firstAnswer = await (await submit(h, item.occurrence_id, EVIDENCE_SUPPORT_ID, "s1", "supports")).json() as { observation_id: string };
   await submit(h, item.occurrence_id, EVIDENCE_SUPPORT_ID, "s2", "does_not_support", { corrects_observation_id: firstAnswer.observation_id });
-  const one = await status(h, item.occurrence_id, "?limit=1&links_limit=1&references_limit=1&pinned_evaluators_limit=1&offset=1&links_offset=2&references_offset=1&pinned_evaluators_offset=1");
+  const one = await status(h, item.occurrence_id, "?limit=1&links_limit=1&references_limit=1&pinned_evaluators_limit=1&offset=1&links_offset=0&references_offset=1&pinned_evaluators_offset=1");
   expect(one.questions).toMatchObject({ limit: 1, offset: 1, total: 2 });
   expect(one.questions.items).toHaveLength(1);
-  expect(one.links).toMatchObject({ limit: 1, offset: 2, total: 3 });
+  expect(one.links).toMatchObject({ limit: 1, offset: 0, total: 1 });
   expect(one.links.items).toHaveLength(1);
   const question = one.questions.items[0]!;
   expect(question.evidence.references).toMatchObject({ limit: 1, offset: 1, total: 2, items: [{ ref: "b" }] });
@@ -188,7 +190,7 @@ integration("every list pages to its end, nested lists included, with its own wi
   expect(tasksPage).toMatchObject({ limit: 1, offset: 1, total: 3 });
   expect(tasksPage.items[0]?.stages).toMatchObject({ limit: 1, offset: 1, total: 3 });
   const t1 = (await get<{ stages: Paged<{ stage: string; publication: { unit_ids?: Paged<string> }; answers: Paged<{ count: number; drilldown: object }>; items: object }> }>(h, "/v1/runs/run-1/logical-items/T1?answers_limit=1")).body;
-  const implementation = t1.stages.items.find((stage) => stage.stage === "implementation")!;
+  const implementation = t1.stages.items.find((stage) => stage.stage === "cohort")!;
   expect(implementation.answers).toMatchObject({ limit: 1, total: 0 });
   expect(implementation.publication.unit_ids).toMatchObject({ total: 1 });
 
@@ -197,8 +199,8 @@ integration("every list pages to its end, nested lists included, with its own wi
   const rows = (await drill(implementation.items, "&links_limit=1&references_limit=1&superseded_answers_limit=1")).body;
   expect(rows.total).toBe(2);
   const row = rows.items[0]!;
-  expect(row.item).toMatchObject({ source_revision_id: "assessment-1", item_path: "/findings/0" });
-  expect(row.links).toMatchObject({ limit: 1, total: 3 });
+  expect(row.item).toMatchObject({ source_revision_id: "assessment-1", item_path: "/item_assessments/0" });
+  expect(row.links).toMatchObject({ limit: 1, total: 1 });
   expect(row.links.items).toHaveLength(1);
   expect(row.questions.items[0]?.evidence.references).toMatchObject({ limit: 1, total: 2 });
   expect(row.questions.items[1]?.answers.items[0]?.answer.value).toBe("does_not_support");
@@ -206,7 +208,7 @@ integration("every list pages to its end, nested lists included, with its own wi
   const itemsDrill = (await drill(implementation.items, "&limit=1&offset=1")).body;
   expect(itemsDrill).toMatchObject({ limit: 1, offset: 1, total: 2 });
   expect((await get(h, `/v1/runs/run-1/composite-drilldown?key=nonsense`)).status).toBe(400);
-  const malformed = await drill({ logical_item_id: "l", stage: "implementation", selector: { kind: "disagreement" } });
+  const malformed = await drill({ logical_item_id: "l", stage: "cohort", selector: { kind: "disagreement" } });
   expect([malformed.status, (malformed.body as unknown as { error: { code: string } }).error.code]).toEqual([400, "invalid_drilldown"]);
 
   const lineage = (await get<Paged<{ kind: string }> & { is_captured: boolean }>(h, "/v1/runs/run-1/logical-items/T1/lineage?limit=1")).body;
@@ -225,7 +227,7 @@ integration("every list pages to its end, nested lists included, with its own wi
 integration("tenant and capability bound every read: another tenant sees nothing, a grade or ingest credential reads nothing", async () => scratchDatabase(async (db) => {
   const h = await setup(db);
   await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one", body: assessment([finding(["T1"], "x")]) });
-  const item = await addressed(h, "assessment-1", "/findings/0");
+  const item = await addressed(h, "assessment-1", "/item_assessments/0");
   const id = encodeURIComponent(item.occurrence_id);
   for (const route of [`/v1/items/${id}/status`, `/v1/items/${id}/answers`, `/v1/items/${id}/evidence`, `/v1/runs/run-1/logical-items`, `/v1/runs/run-1/gradeable-items`, `/v1/runs/run-1/unlinked-items`,
     `/v1/runs/run-1/unresolved-references`, `/v1/runs/run-1/logical-items/T1/lineage`, `/v1/runs/run-1/grading-spend`, `/v1/runs/run-1/cost`]) {
@@ -240,8 +242,8 @@ integration("an older revision stays inspectable, marked not current, and is lef
   const h = await setup(db);
   await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one", recorded_at: "2026-11-01T00:00:00Z", body: assessment([finding(["T1"], "old")]) });
   await h.feed.revision({ revision_id: "assessment-2", artifact_kind: "assessment", unit_id: "run-1/implementation/one", predecessor_id: "assessment-1", recorded_at: "2026-11-02T00:00:00Z", body: assessment([finding(["T1"], "new")]) });
-  expect(await addressed(h, "assessment-1", "/findings/0")).toMatchObject({ is_current: false });
-  expect(await addressed(h, "assessment-2", "/findings/0")).toMatchObject({ is_current: true });
+  expect(await addressed(h, "assessment-1", "/item_assessments/0")).toMatchObject({ is_current: false });
+  expect(await addressed(h, "assessment-2", "/item_assessments/0")).toMatchObject({ is_current: true });
   const current = (await get<Paged<{ item: { source_revision_id: string } }>>(h, "/v1/runs/run-1/gradeable-items")).body;
   expect(current.items.map((row) => row.item.source_revision_id)).toEqual(["assessment-2"]);
   const all = (await get<Paged<{ item: { source_revision_id: string } }>>(h, "/v1/runs/run-1/gradeable-items?revisions=all")).body;
@@ -252,7 +254,7 @@ integration("an older revision stays inspectable, marked not current, and is lef
 integration("an evidence set by id is the named paged evidence read: each nested window pages, refuses a bad window and stays in its tenant", async () => scratchDatabase(async (db) => {
   const h = await setup(db);
   await h.feed.revision({ revision_id: "assessment-1", artifact_kind: "assessment", unit_id: "run-1/implementation/one", body: assessment([finding([], "x")]) });
-  const item = await addressed(h, "assessment-1", "/findings/0");
+  const item = await addressed(h, "assessment-1", "/item_assessments/0");
   await ready(h, item.occurrence_id, EVIDENCE_SUPPORT_ID);
   const set = (await readOccurrenceEvidence(h.db, tenant, item.occurrence_id)).find((candidate) => candidate.question_id === EVIDENCE_SUPPORT_ID)!;
   interface EvidenceBody { evidence_set_id: string; question_id: string; readiness: { state: string }; references: Paged<{ ref: string }>; pinned_evaluator_definition_ids: Paged<string> }
@@ -276,9 +278,10 @@ integration("an evidence set by id is the named paged evidence read: each nested
 
 integration("run readiness stages include unpublished and out-of-list stages, and every stage selector rejects unknown keys", async () => scratchDatabase(async (db) => {
   const h = await setup(db);
-  await h.feed.revision({ revision_id: "tasks-extra", artifact_kind: "tasks", stage: "archived_stage", body: tasks(["T1"]) });
+  await h.feed.revision({ revision_id: "spec-1", artifact_kind: "spec", body: spec(["T1"]) });
+  await h.feed.revision({ revision_id: "extra", artifact_kind: "archived", stage: "archived_stage", body: {} });
   const stages = await get<readonly { stage: string }[]>(h, "/v1/runs/run-1/grading-stages");
-  expect(stages.body.map((entry) => entry.stage)).toEqual(["tasks", "implementation", "integration", "archived_stage"]);
+  expect(stages.body.map((entry) => entry.stage)).toEqual(["analysis", "cohort", "integration", "archived_stage"]);
   const rollup = await get<{ stages: Paged<{ stage: string; state: string }> }>(h, "/v1/runs/run-1/logical-items/T1");
   expect(rollup.body.stages.items.find((stage) => stage.stage === "integration")?.state).toBe("pending");
   for (const endpoint of ["logical-items", "logical-items/T1", "gradeable-items"]) {

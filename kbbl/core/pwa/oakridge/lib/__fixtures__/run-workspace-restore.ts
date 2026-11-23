@@ -22,7 +22,7 @@ export const RUN: RunDetail = {
       name: "plan",
       type: "delegated_session",
       status: "complete",
-      artifacts: [{ id: "art-plan", type_id: "dev.plan", version: 1 }],
+      artifacts: [{ id: "art-plan", type_id: "planning.plan", version: 1 }],
       delegated_kbbl_sid: "sid-plan",
       worktree: null,
     },
@@ -31,7 +31,7 @@ export const RUN: RunDetail = {
       name: "build",
       type: "delegated_session",
       status: "running",
-      artifacts: [{ id: "art-build", type_id: "dev.build_result", version: 1 }],
+      artifacts: [{ id: "art-build", type_id: "cohort.build_result", version: 1 }],
       delegated_kbbl_sid: null,
       worktree: null,
       units: [

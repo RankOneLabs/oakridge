@@ -48,6 +48,7 @@ export type RunWorkspacePane =
   | { kind: "overview" }
   | { kind: "list" }
   | { kind: "grading" }
+  | { kind: "operator_actions" }
   | { kind: "usage" }
   /** One finding by its exact revision and path, whichever view opened it. */
   | ({ kind: "item"; selection: ObservationItemAddress } & RecordedPaneContext)
@@ -67,6 +68,7 @@ export interface RunWorkspaceState {
 export const OVERVIEW_PANE: RunWorkspacePane = { kind: "overview" };
 export const LIST_PANE: RunWorkspacePane = { kind: "list" };
 export const GRADING_PANE: RunWorkspacePane = { kind: "grading" };
+export const OPERATOR_ACTIONS_PANE: RunWorkspacePane = { kind: "operator_actions" };
 export const USAGE_PANE: RunWorkspacePane = { kind: "usage" };
 
 /** What a run shows before the operator has arranged anything. */
@@ -125,6 +127,8 @@ export const describePane = (pane: RunWorkspacePane): RunPaneHeading => {
       return { title: "Artifact", subtitle: pane.artifact_id.slice(0, 8) };
     case "grading":
       return { title: "Grading", subtitle: null };
+    case "operator_actions":
+      return { title: "Operator actions", subtitle: null };
     case "usage":
       return { title: "Usage", subtitle: null };
     case "item":
@@ -140,9 +144,9 @@ export const panesOf = (state: RunWorkspaceState): readonly RunWorkspacePane[] =
 
 export const isTwinView = (state: RunWorkspaceState): boolean => state.secondary !== null;
 
-/** Activity is rendered only by the overview, so its read follows that pane's visibility. */
+/** Overview and operator actions share the run history read. */
 export const shouldReadRunActivity = (state: RunWorkspaceState): boolean =>
-  panesOf(state).some((pane) => pane.kind === "overview");
+  panesOf(state).some((pane) => pane.kind === "overview" || pane.kind === "operator_actions");
 
 export interface OpenEntityIds {
   readonly session_ids: ReadonlySet<string>;

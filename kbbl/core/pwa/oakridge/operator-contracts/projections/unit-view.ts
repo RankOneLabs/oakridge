@@ -1,8 +1,7 @@
 // Generated from oakridge-dbos/src/http/operator-api.ts. Run bun kbbl/scripts/generate-operator-contracts.ts.
 // The PWA intentionally imports no backend source at runtime or typecheck time.
 
-import type { OperatorAdjudicationRole, OperatorAttemptStatus, OperatorCause, OperatorDeclaredDecisionEffect, OperatorMode, OperatorUnitStatus, OperatorWriter } from "../core-client/core-types";
-import type { OperatorAdjudication } from "../domain/adjudication";
+import type { OperatorArtifactKind, OperatorAttemptStatus, OperatorCause, OperatorDecisionOperation, OperatorDeclaredDecisionEffect, OperatorMode, OperatorReviewConfirms, OperatorReviewWait, OperatorUnitStatus, OperatorWriter } from "../core-client/core-types";
 import type { OperatorPinnedPrompt } from "../domain/effect-instruction";
 import type { OperatorJsonValue } from "../domain/primitives";
 import type { OperatorInputProvenanceView } from "../domain/unit-status";
@@ -11,6 +10,7 @@ import type { OperatorAttention } from "./attention";
 import type { OperatorBlockerHistory } from "./history-view";
 
 export interface OperatorUnitView {
+  readonly awaiting_execution_reconciliation?: readonly { readonly id: string; readonly worker: string }[];
   readonly blocker?: OperatorBlockerHistory | null;
   readonly input_provenance: OperatorInputProvenanceView;
   readonly unit_id: string;
@@ -26,22 +26,68 @@ export interface OperatorUnitView {
   readonly is_terminal: boolean;
   readonly attention: OperatorAttention | null;
   readonly decisions: readonly OperatorDecisionDefinition[];
+  readonly reviews: readonly OperatorOpenReview[];
+  readonly workers: readonly OperatorProjectedWorker[];
   /** Decisions already made on the unit's revisions, oldest first. */
   readonly recorded_decisions: readonly OperatorRevisionDecision[];
   readonly attempts: readonly OperatorAttemptView[];
   readonly artifacts: readonly OperatorArtifactView[];
 }
 
+export interface OperatorOpenReview {
+  readonly review: string;
+  readonly of_artifact: string;
+  readonly reviewed_revision_id: string;
+  readonly wait: OperatorReviewWait;
+  readonly confirms: OperatorReviewConfirms | null;
+  readonly producer_workers: readonly string[];
+  readonly decisions: readonly OperatorOpenReviewDecision[];
+  readonly failure_code: string | null;
+}
+
+export interface OperatorOpenReviewDecision {
+  readonly key: string;
+  readonly label: string;
+  readonly effect: OperatorDeclaredDecisionEffect;
+  readonly operation: OperatorDecisionOperation;
+  readonly on_artifact: string;
+  readonly target_revision_id: string;
+}
+
+export interface OperatorProjectedWorker {
+  readonly key: string;
+  readonly label: string;
+  readonly kind: "agent" | "code";
+}
+
+export interface OperatorRevisionDecision {
+  readonly id: string;
+  readonly decision_id: string;
+  readonly actor: OperatorWriter | null;
+  readonly reviewed_revision_id: string | null;
+  readonly approved_assessment_revision_id: string | null;
+  readonly effect_target_revision_id: string;
+  readonly review: string;
+  readonly decision: string;
+  readonly effect: OperatorDeclaredDecisionEffect;
+  readonly target_revision_id: string;
+  readonly payload: OperatorBodyValue;
+  readonly created_at: string;
+}
+
 export interface OperatorArtifactView {
   readonly run_id: string;
   readonly unit_id: string;
   readonly artifact_key: string;
-  /** The schema name the PWA's viewer registry dispatches on. */
+  readonly view: string | null;
+  readonly link_field?: string | null;
+  readonly kind: OperatorArtifactKind;
+  /** The name of the projected schema. */
   readonly schema: string;
   /** An operator review of this artifact is declared. */
   readonly is_reviewable: boolean;
-  /** A review of this artifact declares an adjudication decision, so the operator adjudicates its next actions. */
-  readonly is_adjudicated: boolean;
+  /** A review of this artifact declares assessment operations. */
+  readonly has_assessment_operations: boolean;
   /** An agent creates it, so the operator may publish an edited revision. */
   readonly is_editable: boolean;
   readonly revision_count: number;
@@ -73,7 +119,7 @@ export interface OperatorDecisionDefinition {
   readonly key: string;
   readonly label: string;
   readonly payload_schema: string;
-  readonly adjudication: OperatorAdjudicationRole | null;
+  readonly operation: OperatorDecisionOperation;
   readonly assessment: string | null;
   /** Labels for the payload's text fields. */
   readonly fields: readonly OperatorDecisionField[];
@@ -81,19 +127,6 @@ export interface OperatorDecisionDefinition {
 }
 
 export type OperatorBodyValue = OperatorJsonValue;
-
-export interface OperatorRevisionDecision {
-  readonly id: string;
-  readonly review: string;
-  readonly decision: string;
-  readonly effect: OperatorDeclaredDecisionEffect;
-  readonly target_revision_id: string;
-  readonly payload: OperatorBodyValue;
-  readonly assessment_revision_id?: string | null;
-  readonly adjudication?: OperatorAdjudication | null;
-  readonly actor?: OperatorWriter | null;
-  readonly created_at: string;
-}
 
 export type OperatorDecisionSubmit =
   | { readonly kind: "review"; readonly review: string; readonly decision: string; readonly effect: OperatorDeclaredDecisionEffect; readonly target_revision_id: string }

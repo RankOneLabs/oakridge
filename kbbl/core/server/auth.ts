@@ -26,11 +26,12 @@ export function isLoopbackHost(host: string): boolean {
 
 /**
  * Resolves the startup auth policy from host, optional control token, and
- * insecure flag. A configured token is required on every bind, loopback
- * included: on loopback any local process — an agent among them — could
- * otherwise act as the operator through the Oakridge proxy. Throws when the
- * bind host is non-loopback and neither a token nor the explicit insecure
- * escape hatch is configured.
+ * insecure flag. A configured token is enforced on every bind, loopback
+ * included. The token is optional on a loopback bind: without one every route
+ * is open to any local process, an agent among them, which can then act as the
+ * operator through the Oakridge proxy. An empty or whitespace-only token
+ * counts as none. Throws when the bind host is non-loopback and neither a
+ * token nor the explicit insecure escape hatch is configured.
  */
 export function resolveStartupAuthPolicy(opts: {
   host: string;
@@ -162,18 +163,41 @@ function verifyControlCredentials(c: Context, token: string): Response | null {
   return unauthorized(c, "missing_credentials");
 }
 
+export type PublicPath =
+  | { readonly kind: "exact"; readonly path: string }
+  | { readonly kind: "prefix"; readonly prefix: string };
+
+/** Add each new file in core/pwa/public here or it will return 401 to an anonymous browser. */
+export const KBBL_PUBLIC_PATHS: readonly PublicPath[] = [
+  { kind: "exact", path: "/auth/status" },
+  { kind: "exact", path: "/" },
+  { kind: "exact", path: "/index.html" },
+  { kind: "exact", path: "/manifest.webmanifest" },
+  { kind: "exact", path: "/icon.svg" },
+  { kind: "prefix", prefix: "/assets/" },
+];
+
+export interface ControlAuthOptions { readonly publicPaths?: readonly PublicPath[] }
+
+export function isPublicRequest(
+  request: { readonly method: string; readonly path: string },
+  publicPaths: readonly PublicPath[],
+): boolean {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+  return publicPaths.some((entry) => entry.kind === "exact"
+    ? request.path === entry.path
+    : request.path.startsWith(entry.prefix));
+}
+
 /**
- * Returns a Hono middleware that enforces Bearer/cookie auth on all
- * non-GET/HEAD requests and explicitly protected reads, except /hook/* adapter routes (which are
- * loopback-verified by the runtime adapter).
- *
- * In loopback or insecure-non-loopback mode returns a pass-through middleware.
+ * In token mode every request requires a Bearer token or the kbbl_ctrl
+ * cookie unless it is a GET/HEAD on the public allow-list.
+ * Loopback and insecure-non-loopback modes pass through.
  *
  * - Missing credentials → 401 with WWW-Authenticate: Bearer realm="kbbl"
  * - Malformed Authorization header → 401
  * - Well-formed token/cookie that doesn't match → 403
  */
-export interface ControlAuthOptions { readonly protectedReadPaths?: readonly string[] }
 export function makeControlAuthMiddleware(policy: AuthPolicy, options: ControlAuthOptions = {}): MiddlewareHandler {
   if (policy.mode === "loopback" || policy.mode === "insecure-non-loopback") {
     return async (_c: Context, next: Next) => { await next(); };
@@ -182,14 +206,7 @@ export function makeControlAuthMiddleware(policy: AuthPolicy, options: ControlAu
   const { token } = policy;
 
   return async (c: Context, next: Next) => {
-    const method = c.req.method;
-
-    // Ordinary reads stay public; process-starting reads explicitly require credentials.
-    if ((method === "GET" || method === "HEAD") && !options.protectedReadPaths?.includes(c.req.path)) {
-      await next();
-      return;
-    }
-    if (c.req.path.startsWith("/hook/")) {
+    if (isPublicRequest({ method: c.req.method, path: c.req.path }, options.publicPaths ?? [])) {
       await next();
       return;
     }

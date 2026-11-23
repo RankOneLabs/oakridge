@@ -174,8 +174,10 @@ export type StageStatus = "pending" | "running" | "complete" | "failed" | "parke
 export type StageUnitStatus = StageStatus;
 
 export interface StageArtifact {
+  view?: string | null;
   id: string;
   type_id: string;
+  artifact_kind?: import("./operator-contracts/core-client/core-types").OperatorArtifactKind;
   version: number;
   label?: string | null;
   /**
@@ -203,9 +205,9 @@ export interface StageUnit {
 /**
  * `run_unit.parameters` verbatim (`GET /runs/:id`, `postgres-operators.ts`):
  * the fan-out item `derive` minted — `{unit_id, artifact}` — not the
- * `dev.plan` cohort shape this used to wrongly claim. `artifact` is
+ * plan cohort shape this used to wrongly claim. `artifact` is
  * `unknown` because its real type varies by producing stage (a build unit's
- * is a `dev.build_brief` body; an assessor unit's is `dev.build_result`);
+ * is a build brief body; an assessor unit's is build result);
  * narrow it with a type guard, never trust the shape blind.
  */
 export interface StageUnitParams {
@@ -262,6 +264,7 @@ export interface RunSessionAttempt {
   session_id: string;
   stage_instance_id: string;
   stage_key: string;
+  worker_key?: string;
   /** Human-readable worker role; the stage key still identifies the gate. */
   display_label?: string;
   unit_id: string;

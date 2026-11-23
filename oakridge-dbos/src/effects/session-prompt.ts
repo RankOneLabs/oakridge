@@ -55,9 +55,11 @@ export function selectSessionTaskContext(instruction: EffectInstruction, history
   };
 }
 
-const inputValues = (instruction: EffectInstruction): { readonly [key: string]: unknown } =>
-  typeof instruction.inputs === "object" && instruction.inputs !== null && !Array.isArray(instruction.inputs)
+function inputValues(instruction: EffectInstruction): { readonly [key: string]: unknown } {
+  const inputs = typeof instruction.inputs === "object" && instruction.inputs !== null && !Array.isArray(instruction.inputs)
     ? instruction.inputs as { readonly [key: string]: unknown } : {};
+  return instruction.execution_key ? { ...inputs, execution_key: instruction.execution_key } : inputs;
+}
 
 /** Additive instruction input retained by the existing instruction decoder. */
 export interface ReviewHistoryEngineInputs extends EngineInputs {
@@ -132,7 +134,9 @@ export function renderHandoff(instruction: EffectInstruction, context: SessionTa
 export function renderTaskPublication(instruction: EffectInstruction, context: SessionTaskContext): string {
   const latest = new Map(context.latest.map((revision) => [revision.artifact, revision.revision_id]));
   const creates = instruction.worker.kind === "agent" ? instruction.worker.creates : [];
-  const subject = instruction.engine_inputs.subject;
+  const { subject, self_assessment = [] } = instruction.engine_inputs;
+  const subjectPrompt = subject !== null ? `You are reviewing revision \`${subject.id}\`: send it as \`subject\`.`
+    : self_assessment.length > 0 ? "For all other publications, send `subject: null`." : "Send `subject: null`.";
   return [
     "## Publishing this task",
     "If the inputs are contradictory, unimplementable or ambiguous in a way only the operator can settle, publish a `blocker` instead of guessing; a published blocker ends the task.",
@@ -143,19 +147,31 @@ export function renderTaskPublication(instruction: EffectInstruction, context: S
         ? `\n  endpoint: /api/runs/${encodeURIComponent(instruction.run_id)}/units/${encodeURIComponent(instruction.action.unit)}/artifacts/${encodeURIComponent(artifact.key)}` : "";
       return `- \`${artifact.key}\`: ${current === null ? "no revision yet, so send `predecessor: null`" : `current revision \`${current}\`, so send it as \`predecessor\``}${endpoint}`;
     }),
-    subject === null ? "Send `subject: null`." : `You are reviewing revision \`${subject.id}\`: send it as \`subject\`.`,
+    ...self_assessment.map(({ assessment, subject_artifact }) =>
+      `Publish \`${subject_artifact}\` first. For \`${assessment}\`, send the exact latest \`${subject_artifact}\` revision as \`subject\`.`),
+    subjectPrompt,
   ].join("\n");
 }
 
 /** One attempt's input: the handoff (fresh sessions), the mode prompt, and where to publish. */
 export function renderSessionTask(instruction: EffectInstruction, context: SessionTaskContext): string {
   const handoff = renderHandoff(instruction, context);
+  const roundDelivery = instruction.engine_inputs.round_delivery;
   const unit = instruction.worker.kind === "agent" && instruction.worker.session === "shared"
     ? `This task belongs to unit \`${instruction.action.unit}\`. Publish only to the endpoints below.` : null;
   const blocker_answer = instruction.engine_inputs.feedback.some((entry) => entry.review === BLOCKER_REVIEW)
     ? "The operator answered your blocker. Resume with this answer as feedback and publish your normal artifacts. If clarification is still needed, publish a successor blocker using its latest revision as predecessor." : null;
-  return [unit, handoff, blocker_answer, renderModePrompt(instruction, context.prompt_text), renderTaskPublication(instruction, context)]
+  const execution = instruction.execution_key ? renderExecutionTask(instruction, instruction.execution_key) : null;
+  return [unit, handoff, blocker_answer, renderModePrompt(instruction, context.prompt_text), roundDelivery ?? null, renderTaskPublication(instruction, context), execution]
     .filter((part): part is string => part !== null).join("\n\n");
+}
+
+function renderExecutionTask(instruction: EffectInstruction, key: string): string {
+  const endpoint = `/api/runs/${encodeURIComponent(instruction.run_id)}/units/${encodeURIComponent(instruction.action.unit)}/executions/${encodeURIComponent(key)}`;
+  return ["## Keyed execution", `Execution key: \`${key}\``,
+    `Claim: POST \`${endpoint}/claim\` with {request_id}.`,
+    `Evidence: PUT \`${endpoint}/evidence\` with {request_id, evidence}.`,
+    "Use the same origin and publication secret as for artifact publication."].join("\n\n");
 }
 
 /** What a session's preamble is rendered from: all of it fixed for the session, so every attempt's ensure sends the same spec. */

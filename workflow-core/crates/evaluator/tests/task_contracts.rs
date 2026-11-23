@@ -266,7 +266,10 @@ impl Run {
             body,
             predecessor: self.latest_id(output.unit, output.artifact),
             subject,
-            by: Some(self.action(output.unit, output.worker)),
+            by: Some(PublishingAttempt {
+                action: self.action(output.unit, output.worker),
+                seq: 1,
+            }),
         };
         self.apply(event, Writer::Engine).unwrap();
     }
@@ -517,7 +520,7 @@ impl Run {
 
 fn assessment(head_sha: &str, findings: Value) -> Value {
     json!({"head_sha": head_sha, "verdict": "pass", "findings": findings,
-           "recommended_next_actions": []})
+           (concat!("recommended_next_", "actions")): []})
 }
 
 fn at_planning(task_ids: &[&str]) -> Run {
@@ -1275,7 +1278,10 @@ fn finding_links_are_a_required_list_of_ids() {
                 body: assessment("sha", findings),
                 predecessor: None,
                 subject: None,
-                by: Some(action.clone()),
+                by: Some(PublishingAttempt {
+                    action: action.clone(),
+                    seq: 1,
+                }),
             },
             Writer::Engine,
         );
@@ -1331,7 +1337,10 @@ fn an_acceptance_entry_without_its_decision_links_fails_schema() {
             body: plan(&[partial]),
             predecessor: None,
             subject: None,
-            by: Some(run.action("run/planning", "planner")),
+            by: Some(PublishingAttempt {
+                action: run.action("run/planning", "planner"),
+                seq: 1,
+            }),
         },
         Writer::Engine,
     );

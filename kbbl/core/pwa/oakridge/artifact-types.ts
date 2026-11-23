@@ -3,9 +3,10 @@
 import type { RepositoryKey, RunState, WorktreeMetadata } from "./run-types";
 import type { OperatorDecisionDefinition } from "./operator-contracts/projections/unit-view";
 export interface ArtifactRevision {
-  current_read?: import("./lib/versioned-body").CurrentArtifactRead;
   context?: import("./lib/current-context").CurrentArtifactContext;
   received_context?: import("./lib/received-context").ReceivedContext | null;
+  subject_revision_id?: string | null;
+  producing_attempt_inputs?: unknown;
   artifact_schema_version?: string | null;
   component_id?: string | null;
   id: string;
@@ -44,7 +45,6 @@ export interface ArtifactReviewDescriptor {
   viewer: string;
   layout: "document" | "dag" | "report";
   sections: string[];
-  action_labels: Record<string, string>;
 }
 
 export interface ArtifactTypeDescriptor {
@@ -65,12 +65,16 @@ export interface ArtifactSource {
   revision_id: string;
   label: string | null;
   producing_stage?: string;
-  original_spec?: string | null;
+  producing_attempt_inputs?: unknown;
   /** `created_at` of the revision on screen; sibling artifacts are read as they stood then. */
   as_of: string;
 }
 
 export interface ArtifactDetail {
+  link_field?: string | null;
+  proposal_paths?: readonly (readonly import("./operator-contracts/core-client/core-types").OperatorPathSegment[])[];
+  projected_workers?: readonly import("./operator-contracts/projections/unit-view").OperatorProjectedWorker[];
+  projected_schemas?: readonly import("./operator-contracts/projections/schema-view").OperatorSchema[];
   schema?: string;
   artifact_schema_version?: string | null;
   context?: import("./lib/current-context").CurrentArtifactContext;
@@ -82,7 +86,7 @@ export interface ArtifactDetail {
   anchor_schema: string[] | null;
   review?: ArtifactReviewDescriptor | null;
   run_id: string;
-  original_spec?: string | null;
+  producing_attempt_inputs?: unknown;
   producing_stage: string;
   label?: string | null;
   revisions: ArtifactRevision[];
@@ -97,6 +101,9 @@ export interface ParkedGate {
   id: string;
   gate_type: string;
   gate_step: string | null;
+  reviewed_revision_id?: string;
+  session_id?: string | null;
+  producer_labels?: readonly string[];
   run_id: string;
   stage_name: string;
   unit_id: string;
@@ -134,7 +141,6 @@ export interface SentReviewFeedback {
 }
 
 export interface GateResumeRequest {
-  adjudication?: import("./operator-contracts/domain/adjudication").OperatorAdjudication;
   idempotency_key: string;
   artifact_revision_id: string;
   action: string;
@@ -178,7 +184,7 @@ export type CohortLifecycle =
   | "building"
   | "artifact_review"
   | "revision_requested"
-  | "merge_confirmation"
+  | "merge_review"
   | "assessing"
   | "github_review"
   | "pull_request_mismatch"
@@ -215,7 +221,7 @@ export interface CohortLifecycleSummary {
 
 export type ReviewInboxItemKind =
   | "artifact_gate"
-  | "merge_confirmation"
+  | "merge_review"
   | "cohort_blocked"
   | "cohort_failed"
   | "pull_request_mismatch"
@@ -227,6 +233,7 @@ export type ReviewInboxItemKind =
 export type ReviewInboxItemState = "actionable" | "blocked";
 
 export interface ReviewInboxItem {
+  readonly gate?: ParkedGate;
   id: string;
   kind: ReviewInboxItemKind;
   state: ReviewInboxItemState;

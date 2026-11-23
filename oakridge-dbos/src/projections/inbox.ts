@@ -15,7 +15,7 @@ export type InboxItem =
     /** The awaiting review's prompt, rendered with its resolved inputs; null for a retry. */
     readonly prompt: string | null }
   | { readonly kind: "waiting"; readonly run_id: RunId; readonly unit_id: UnitId; readonly reason: string; readonly label: string }
-  | { readonly kind: "stalled"; readonly run_id: RunId; readonly unit_id: UnitId; readonly detail: string };
+  | { readonly kind: "stalled"; readonly run_id: RunId; readonly unit_id: UnitId; readonly detail: string; readonly failure_code: string | null };
 
 export interface InboxPage { readonly items: readonly InboxItem[]; readonly next_cursor: string | null }
 export interface RunInboxBatchEntry { readonly run_id: RunId; readonly items: readonly InboxItem[] }
@@ -32,8 +32,8 @@ export function selectRunInboxItems(read: RunSummaryRead): readonly InboxItem[] 
       .map((decision): InboxItem => ({ ...base, kind: "decision", key: decision.key, label: decision.label, submit: decision.submit,
         prompt: decision.submit.kind === "review" ? attention.awaiting.find((awaiting) =>
           decision.submit.kind === "review" && awaiting.review === decision.submit.review)?.prompt ?? null : null }));
-    const run_stalls = attention.run_stalls.map((stall): InboxItem => ({ ...base, kind: "stalled", detail: selectRunStallDetail(stall) }));
-    const stalled = attention.stalled.map((worker): InboxItem => ({ ...base, kind: "stalled", detail: selectStalledWorkerDetail(worker) }));
+    const run_stalls = attention.run_stalls.map((stall): InboxItem => ({ ...base, kind: "stalled", detail: selectRunStallDetail(stall), failure_code: null }));
+    const stalled = attention.stalled.map((worker): InboxItem => ({ ...base, kind: "stalled", detail: selectStalledWorkerDetail(worker), failure_code: worker.failure_code }));
     const line = attention.stalled.length === 0 && attention.run_stalls.length === 0 ? selectAttention(attention, read) : null;
     const waiting: InboxItem[] = line?.kind === "waiting" ? [{ ...base, kind: "waiting", reason: line.reason, label: selectUnitLabel(unit, tree) }] : [];
     return [...run_stalls, ...decisions, ...stalled, ...waiting];

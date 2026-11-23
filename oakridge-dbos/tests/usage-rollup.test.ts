@@ -79,7 +79,7 @@ test("rework propagates through revision publishing attempts", () => {
  const first = { ...attempt(1), cause: { kind: "missing" as const } };
  const retry = { ...attempt(2), cause: { kind: "changes_requested" as const, decision: "no" } };
  const review = { ...attempt(3), cause: { kind: "review_of" as const, revision: "rev" } };
- expect([...classifyRework([review,retry,first], [{ id: "rev" as never, by_id: first.action_id, created_at: new Date(2500) }])]).toEqual(["action:2","action:3"]);
+ expect([...classifyRework([review,retry,first], [{ id: "rev" as never, by_action_id: first.action_id, by_seq: 2 }])]).toEqual(["action:2","action:3"]);
 });
 test("kbbl usage transport refusals and network errors are values", async () => {
  for (const fetcher of [async () => new Response("bad", { status: 500 }), async (): Promise<Response> => { throw new Error("offline"); }]) {
@@ -114,21 +114,21 @@ test("read boundary fetches each session once per read and degrades failed cover
 });
 
 const reviewRead = (overrides: Record<string, unknown> = {}) => ({ run: { created_at: new Date(0), root_unit_id: "root" }, units: [{ id: "root", status: { kind: "running" } }, { id: "u", stage: "s" }],
-  revisions: [{ id: "rev", unit_id: "u", artifact: "pr", seq: 0, created_at: new Date(1000) }], latest_events: [],
-  decisions: ["human","engine","merge_confirmation","pr_closed"].map((review,i) => ({ unit_id: "u", review, target_revision_id: "rev", decision: "approved", created_at: new Date(3000+i*1000) })),
-  definition: { parsed_workflow: { stages: { s: { reviews: { human: { of: "pr", by: "operator", when: "guard" }, engine: { of: "pr", by: "engine" }, merge_confirmation: { of: "pr", by: "operator" }, pr_closed: { of: "pr", by: "operator" } }, workers: { refresh: { kind: "code", every: "1m", produces: ["pr"] } } } } } },
+  revisions: [{ id: "rev", unit_id: "u", artifact: "pr", decision_cursor: 0, seq: 0, created_at: new Date(1000) }], latest_events: [],
+  decisions: ["human","engine","release_checked","remote_closed"].map((review,i) => ({ id: String(i), unit_id: "u", review, target_revision_id: "rev", decision: "approved", created_at: new Date(3000+i*1000) })),
+  definition: { parsed_workflow: { stages: { s: { reviews: { human: { of: "pr", by: "operator", when: "guard" }, engine: { of: "pr", by: "engine" }, release_checked: { of: "pr", by: "operator", wait: "external" }, remote_closed: { of: "pr", by: "operator", wait: "external" } }, workers: { refresh: { kind: "code", every: "1m", produces: ["pr"] } } } } } },
   ...overrides }) as unknown as RunRead;
 test("review time separates operator, engine and external waits and flags approximations", async () => {
  const { reviewTimes } = await import("../src/projections/usage-time");
- expect(reviewTimes(reviewRead()).map((r) => [r.review,r.kind,r.wait_ms,r.approximate])).toEqual([["human","human",2000,true],["merge_confirmation","external",4000,true],["pr_closed","external",5000,true]]);
+ expect(reviewTimes(reviewRead()).map((r) => [r.review,r.kind,r.wait_ms,r.approximate])).toEqual([["human","human",2000,true],["release_checked","external",4000,true],["remote_closed","external",5000,true]]);
 });
 test("a redirected decision waits from the reviewed artifact's latest revision, not its effect target", async () => {
  const { reviewTimes } = await import("../src/projections/usage-time");
  const read = reviewRead({
-  revisions: [{ id: "build", unit_id: "u", artifact: "build_result", seq: 0, created_at: new Date(1000) },
-   { id: "old", unit_id: "u", artifact: "assessment", seq: 0, created_at: new Date(2000) },
-   { id: "assessed", unit_id: "u", artifact: "assessment", seq: 1, created_at: new Date(6000) },
-   { id: "later", unit_id: "u", artifact: "assessment", seq: 2, created_at: new Date(9000) }],
+  revisions: [{ id: "build", unit_id: "u", artifact: "build_result", decision_cursor: 0, seq: 0, created_at: new Date(1000) },
+   { id: "old", unit_id: "u", artifact: "assessment", decision_cursor: 0, seq: 0, created_at: new Date(2000) },
+   { id: "assessed", unit_id: "u", artifact: "assessment", decision_cursor: 0, seq: 1, created_at: new Date(6000) },
+   { id: "later", unit_id: "u", artifact: "assessment", decision_cursor: 1, seq: 2, created_at: new Date(8000) }],
   decisions: [{ unit_id: "u", review: "assessment_review", target_revision_id: "build", decision: "request_build_changes", created_at: new Date(8000) }],
   definition: { parsed_workflow: { stages: { s: { reviews: { assessment_review: { of: "assessment", by: "operator" } }, workers: {} } } } } });
  expect(reviewTimes(read).map((r) => [r.wait_ms,r.approximate])).toEqual([[2000,false]]);
@@ -156,5 +156,5 @@ test("observation failures yield verification null", async () => {
 
 test("operator revisions and periodic refreshes remain first pass", () => {
  const attempts = [{ ...attempt(1), cause: { kind:"periodic" as const, inputs:"digest" } }, { ...attempt(2), cause: { kind:"review_of" as const, revision:"operator-edit" } }];
- expect([...classifyRework(attempts,[{ id:"operator-edit" as never,by_id:null,created_at:new Date(1500) }])]).toEqual([]);
+ expect([...classifyRework(attempts,[{ id:"operator-edit" as never,by_action_id:null,by_seq:null }])]).toEqual([]);
 });

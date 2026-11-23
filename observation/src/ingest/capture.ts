@@ -1,95 +1,76 @@
 import { canonicalDigest } from "canonical-json";
-import { err, ok, type JsonValue, type Result } from "../domain/primitives";
-import type { CanonicalDigest } from "../domain/identity";
+import { err, ok, type Result } from "../domain/primitives";
+import type { CommittedEventDelivery, DeliveredRevision } from "./dbos-revision-delivery";
+import { isDeliveryCursor } from "./cursor";
 
-export interface CaptureSource {
+export interface CaptureSource extends Omit<DeliveredRevision, "artifact" | "schema_version"> {
   readonly producer: string;
   readonly namespace: string;
-  /** The complete external identity: producer:namespace:local revision id. */
-  readonly revision_id: string;
-  readonly run_id: string;
-  readonly unit_id: string;
-  readonly stage: string;
   readonly artifact_kind: string;
   readonly artifact_schema_version: string;
-  readonly definition_id: string;
-  readonly predecessor_id: string | null;
-  readonly subject_id: string | null;
-  readonly analysis_revision_ids?: readonly string[] | null;
-  readonly brief_revision_ids?: readonly string[] | null;
-  readonly by_id?: string | null;
 }
-export interface CaptureEnvelope {
-  readonly format: "observation.artifact-revision/v3" | "observation.artifact-revision/v4";
-  readonly source: CaptureSource;
-  readonly recorded_at: string;
-  readonly body: JsonValue;
-  readonly body_digest: CanonicalDigest;
-}
-export interface CaptureDelivery { readonly envelope: CaptureEnvelope; readonly local_revision_id: string }
-export interface CaptureError { readonly operation: "decode_capture"; readonly entity_id: string; readonly detail: string }
+export interface CaptureError { readonly operation: "decode_revision_delivery"; readonly entity_id: string; readonly detail: string }
 
-function object(value: unknown): value is { readonly [key: string]: unknown } {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-function nonempty(value: unknown): value is string { return typeof value === "string" && value.length > 0; }
-function failure(entity_id: string, detail: string): Result<never, CaptureError> {
-  return err({ operation: "decode_capture", entity_id, detail });
-}
+const object = (value: unknown): value is { readonly [key: string]: unknown } =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+const text = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+const optionalId = (value: unknown): boolean => value === null || text(value);
+const failure = (entity_id: string, detail: string): Result<never, CaptureError> =>
+  err({ operation: "decode_revision_delivery", entity_id, detail });
 
-function revisionReference(value: unknown, prefix: string, field: string): Result<string | null, CaptureError> {
-  if (value === undefined || value === null) return ok(null);
-  if (!nonempty(value)) return failure(`source.${field}`, `${field} must be a revision id or null`);
-  if (value.startsWith(prefix) && value.length > prefix.length) return ok(value);
-  if (!value.includes(":")) return ok(`${prefix}${value}`);
-  return failure(`source.${field}`, `${field} must belong to the capture tenant`);
+function isRevision(value: unknown, run_id: string): boolean {
+  if (!object(value) || value.run_id !== run_id) return false;
+  if (!["revision_id", "unit_id", "stage", "artifact", "definition_id", "schema_version", "recorded_at"].every((key) => text(value[key]))) return false;
+  if (typeof value.recorded_at !== "string" || !Number.isFinite(Date.parse(value.recorded_at))) return false;
+  if (!optionalId(value.predecessor_id) || !optionalId(value.subject_id)) return false;
+  const origin = value.origin;
+  if (!object(origin) || !(origin.kind === "operator_edit" ||
+    (origin.kind === "worker" && text(origin.action_id) && Number.isSafeInteger(origin.seq) && Number(origin.seq) >= 0))) return false;
+  if (!Array.isArray(value.input_bindings) || !value.input_bindings.every((binding: unknown) =>
+    object(binding) && text(binding.input) && text(binding.unit) && text(binding.revision_id))) return false;
+  const digest = canonicalDigest(value.body);
+  return digest.ok && digest.value === value.body_digest;
 }
 
-/** Decode only fields from the accepted L0 envelope; canonical body hashing is the integrity check. */
-export function decodeCapture(input: unknown): Result<CaptureDelivery, CaptureError> {
-  if (!object(input) || (input.format !== "observation.artifact-revision/v3" && input.format !== "observation.artifact-revision/v4")) return failure("envelope", "invalid capture format");
-  if (!object(input.source)) return failure("source", "source is required");
-  const source = input.source;
-  for (const field of ["producer", "namespace", "revision_id", "run_id", "unit_id", "stage", "artifact_kind", "artifact_schema_version", "definition_id"] as const)
-    if (!nonempty(source[field])) return failure(`source.${field}`, `${field} is required`);
-  const revision_id = source.revision_id;
-  if (!nonempty(revision_id)) return failure("source.revision_id", "revision_id is required");
-  const prefix = `${source.producer}:${source.namespace}:`;
-  if (!revision_id.startsWith(prefix) || revision_id.length === prefix.length)
-    return failure("source.revision_id", "revision identity must match source producer and namespace");
-  const predecessor = revisionReference(source.predecessor_id, prefix, "predecessor_id");
-  if (!predecessor.ok) return predecessor;
-  const subject = revisionReference(source.subject_id, prefix, "subject_id");
-  if (!subject.ok) return subject;
-  let brief_revision_ids: string[] | null = null;
-  if (input.format === "observation.artifact-revision/v4" && source.brief_revision_ids !== null) {
-    if (!Array.isArray(source.brief_revision_ids)) return failure("source.brief_revision_ids", "expected revision ids or null");
-    brief_revision_ids = [];
-    for (const id of source.brief_revision_ids) {
-      const reference = revisionReference(id, prefix, "brief_revision_ids");
-      if (!reference.ok) return reference;
-      if (reference.value === null) return failure("source.brief_revision_ids", "null list entry");
-      brief_revision_ids.push(reference.value);
-    }
+function isRunConfig(value: unknown): boolean {
+  return object(value) && typeof value.grading_enabled === "boolean" && object(value.sessions)
+    && Object.values(value.sessions).every((stage) => object(stage) && Object.values(stage).every((worker) =>
+      object(worker) && text(worker.harness) && text(worker.model) && (worker.effort === null || text(worker.effort))));
+}
+
+export function decodeRevisionDelivery(input: unknown): Result<CommittedEventDelivery, CaptureError> {
+  if (!object(input) || input.producer !== "oakridge" || !text(input.namespace) || !text(input.run_id)
+    || !text(input.event_id) || !isDeliveryCursor(input.cursor) || !isDeliveryCursor(input.previous)
+    || input.event_id !== input.cursor.event_id || !object(input.event))
+    return failure("delivery", "invalid delivery identity or cursor");
+  const { event, run_id, event_id } = input;
+  switch (event.kind) {
+    case "revisions":
+      if (!Array.isArray(event.revisions) || !event.revisions.every((revision: unknown) => isRevision(revision, run_id)))
+        return failure(event_id, "invalid delivered revision or body digest");
+      break;
+    case "launched":
+      if (!text(event.input_schema_version) || !canonicalDigest(event.input).ok || !isRunConfig(event.config))
+        return failure(event_id, "invalid launch input or configuration");
+      break;
+    case "other":
+      if (!text(event.event_kind)) return failure(event_id, "event_kind is required");
+      break;
+    default: return failure(event_id, "unknown event kind");
   }
-  let analysis_revision_ids: string[] | null = null;
-  if (input.format === "observation.artifact-revision/v4" && source.analysis_revision_ids != null) {
-    if (!Array.isArray(source.analysis_revision_ids)) return failure("source.analysis_revision_ids", "expected revision ids or null");
-    analysis_revision_ids = [];
-    for (const id of source.analysis_revision_ids) {
-      const reference = revisionReference(id, prefix, "analysis_revision_ids");
-      if (!reference.ok) return reference;
-      if (reference.value === null) return failure("source.analysis_revision_ids", "null list entry");
-      analysis_revision_ids.push(reference.value);
-    }
-  }
-  if (!nonempty(input.recorded_at) || Number.isNaN(Date.parse(input.recorded_at))) return failure("recorded_at", "valid recorded_at is required");
-  if (!Object.hasOwn(input, "body") || input.body === null) return failure("body", "a non-null body is required");
-  const digest = canonicalDigest(input.body);
-  if (!digest.ok) return failure("body", digest.error.detail);
-  if (input.body_digest !== digest.value) return failure("body_digest", "body_digest does not match the canonical body");
-  const envelope: CaptureEnvelope = { ...(input as unknown as CaptureEnvelope),
-    source: { ...(source as unknown as CaptureSource), predecessor_id: predecessor.value, subject_id: subject.value, brief_revision_ids,
-      ...(Object.hasOwn(source, "analysis_revision_ids") ? { analysis_revision_ids } : {}) } };
-  return ok({ local_revision_id: revision_id.slice(prefix.length), envelope });
+  return ok(input as unknown as CommittedEventDelivery);
+}
+
+export function selectCaptures(delivery: CommittedEventDelivery): readonly CaptureSource[] {
+  if (delivery.event.kind !== "revisions") return [];
+  return delivery.event.revisions.map((revision): CaptureSource => ({
+    producer: delivery.producer, namespace: delivery.namespace, revision_id: revision.revision_id,
+    run_id: revision.run_id, unit_id: revision.unit_id, stage: revision.stage,
+    artifact_kind: revision.artifact, artifact_schema_version: revision.schema_version, definition_id: revision.definition_id,
+    body: revision.body, body_digest: revision.body_digest, predecessor_id: revision.predecessor_id, subject_id: revision.subject_id,
+    origin: revision.origin.kind === "operator_edit" ? { kind: "operator_edit" }
+      : { kind: "worker", action_id: revision.origin.action_id, seq: revision.origin.seq },
+    input_bindings: revision.input_bindings.map(({ input, unit, revision_id }) => ({ input, unit, revision_id })),
+    recorded_at: revision.recorded_at,
+  }));
 }

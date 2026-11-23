@@ -304,7 +304,9 @@
             "decision": "confirm_merged",
             "effect": "approve",
             "target_revision_id": "run-cf40de5f78dccdcd/implementation/a:pr:1"
-          }
+          },
+          "operation": "plain",
+          "assessment": null
         }
       ],
       "recorded_decisions": [],
@@ -386,7 +388,10 @@
           "is_reviewable": true,
           "is_editable": true,
           "revision_count": 0,
-          "latest_revision": null
+          "latest_revision": null,
+          "kind": "assessment",
+          "view": "assessment",
+          "has_assessment_operations": false
         },
         {
           "run_id": "run-cf40de5f78dccdcd",
@@ -424,7 +429,10 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:12.710Z",
             "number": 1
-          }
+          },
+          "kind": "record",
+          "view": "build_brief",
+          "has_assessment_operations": false
         },
         {
           "run_id": "run-cf40de5f78dccdcd",
@@ -460,7 +468,10 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:12.892Z",
             "number": 1
-          }
+          },
+          "kind": "document",
+          "view": "build_result",
+          "has_assessment_operations": false
         },
         {
           "run_id": "run-cf40de5f78dccdcd",
@@ -486,7 +497,11 @@
             "subject_id": null,
             "created_at": "2026-10-15T23:43:12.921Z",
             "number": 1
-          }
+          },
+          "kind": "external_reference",
+          "view": "pull_request",
+          "has_assessment_operations": false,
+          "link_field": "pr_url"
         },
         {
           "run_id": "run-cf40de5f78dccdcd",
@@ -496,7 +511,55 @@
           "is_reviewable": false,
           "is_editable": false,
           "revision_count": 0,
-          "latest_revision": null
+          "latest_revision": null,
+          "kind": "status_record",
+          "view": null,
+          "has_assessment_operations": false
+        }
+      ],
+      "workers": [
+        {
+          "key": "assessor",
+          "label": "Assessor",
+          "kind": "agent"
+        },
+        {
+          "key": "builder",
+          "label": "Builder",
+          "kind": "agent"
+        },
+        {
+          "key": "pr_watch",
+          "label": "PR watcher",
+          "kind": "code"
+        },
+        {
+          "key": "prepare_observed_state",
+          "label": "Prepare observed state",
+          "kind": "code"
+        }
+      ],
+      "reviews": [
+        {
+          "review": "merge_confirmation",
+          "of_artifact": "pr",
+          "reviewed_revision_id": "run-cf40de5f78dccdcd/implementation/a:pr:1",
+          "wait": "external",
+          "confirms": "merge",
+          "failure_code": null,
+          "producer_workers": [
+            "builder"
+          ],
+          "decisions": [
+            {
+              "key": "confirm_merged",
+              "label": "Confirm merged",
+              "effect": "approve",
+              "operation": "plain",
+              "on_artifact": null,
+              "target_revision_id": "run-cf40de5f78dccdcd/implementation/a:pr:1"
+            }
+          ]
         }
       ]
     }

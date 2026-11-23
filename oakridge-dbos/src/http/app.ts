@@ -22,6 +22,7 @@ import { installProjectApi } from "./projects";
 import { installReadModels } from "./read-models";
 
 export interface DefinitionApiDependencies {
+  readonly keyed_execution_recovery?: import("../domain/keyed-execution").KeyedExecutionRecovery;
   readonly db: Database;
   readonly core: CoreClient;
   readonly wake: (run_id: RunId) => void;

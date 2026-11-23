@@ -1,40 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
-  parseBuildResult,
   selectFileScopeComparison,
   selectOrderedIssues,
   selectTestEvidenceText,
 } from "./build-result";
-
-const body = {
-  repository_key: "assay",
-  summary: "Built the API.",
-  changed_files: ["src/api.py"],
-  tests: { passed: 78, failed: 0, output: "78 passed" },
-  delegated_session_metadata: { cohort_id: "cm-api" },
-  known_issues: [{ severity: "info", description: "Slow fixture." }],
-};
-
-describe("parseBuildResult", () => {
-  test("reads omitted test text and metadata fields as null", () => {
-    const result = parseBuildResult(body);
-    expect(result.ok && [result.value.head_sha, result.value.tests.summary, result.value.delegated_session_metadata?.branch]).toEqual([null, null, null]);
-  });
-
-  test("reads the build commit", () => {
-    const result = parseBuildResult({ ...body, head_sha: "abc123def456" });
-    expect(result.ok && result.value.head_sha).toBe("abc123def456");
-  });
-
-  test("names an issue whose severity is outside the contract", () => {
-    const result = parseBuildResult({ ...body, known_issues: [{ severity: "critical", description: "x" }] });
-    expect(result.ok ? null : result.error.field).toBe("known_issues[0]");
-  });
-
-  test("rejects test evidence without counts", () => {
-    expect(parseBuildResult({ ...body, tests: { output: "ran" } }).ok).toBe(false);
-  });
-});
 
 describe("selectFileScopeComparison", () => {
   const comparison = selectFileScopeComparison(["src/api.py", "src/errors.py", "docs/"], ["src/api.py", "docs/guide.md", "ci.yml"]);

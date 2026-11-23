@@ -11,9 +11,9 @@ const extension: ExtractorDefinition = { artifact_kind: "audit-note", schema_ver
     path: `/items/${number}`, item_scope: "task", producer_local_id: "T1", selected_value: number, links: [] })) }) };
 test("a profile's new extractor and readiness stage appear in dependency order without a roll-up edit", () => {
   const original = oakridgeProfile([]);
-  const profile = { ...original, extraction: { ...original.extraction, definitions: (kind: string, version: string) => kind === extension.artifact_kind ? [extension] : original.extraction.definitions(kind, version) } };
+  const profile = { ...original, extraction: { ...original.extraction, definitions: (candidate: import("../src/ports/producer-profile").ArtifactDeclaration) => candidate.artifact_kind === extension.artifact_kind ? [extension] : original.extraction.definitions(candidate) } };
   const audit = revision("audit-1", "compliance_audit", "audit-note");
-  const selected = selectRevision({}, audit.revision_id, profile.extraction.definitions("audit-note", "1"));
+  const selected = selectRevision({}, audit.revision_id, profile.extraction.definitions({ definition_id: "test", stage: "compliance_audit", artifact_kind: "audit-note", artifact_schema_version: "1" }) ?? []);
   const items = selected.items.map(({ item }) => ({ ...occurrence(item.path, audit, task, item.path), item_kind: item.item_kind, selected_value: item.selected_value }));
   const sets = items.map((item) => evidence(item, task));
   const snapshot = inputs({ stages: stagesFromReadiness([

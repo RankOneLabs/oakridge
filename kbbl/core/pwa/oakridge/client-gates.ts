@@ -2,7 +2,7 @@ import type { OperatorDecideRequest } from "./operator-contracts/http/ingress";
 import type { OperatorRunView } from "./operator-contracts/projections/run-view";
 import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
 import type { GateResumeRequest, GateResumeResponse, MergeStatus, ParkedGate, SentReviewFeedback } from "./artifact-types";
-import { decisionAction, parseCompositeId, reviewToGates, sentReviewFeedback, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
+import { compositeId, decisionAction, parseCompositeId, reviewToGates, sentReviewFeedback, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { isAdjudicationDecision } from "./adapters/gates";
 import { parseUnitView } from "./adapters/parse";
 
@@ -23,11 +23,10 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
     const target = revision.ok ? revision.value.name.slice(revision.value.name.indexOf(":") + 1) : request.artifact_revision_id;
     const matches: CompositeId[] = [];
     for (const run of await readRunPage()) for (const unit of await readUnits(run.run_id)) {
-      const reviews = new Set(unit.decisions.flatMap((decision) => decision.submit.kind === "review"
-        && decision.submit.target_revision_id === target ? [decision.submit.review] : []));
+      const reviews = new Set(unit.reviews.filter((review) => review.reviewed_revision_id === target).map((review) => review.review));
       for (const review of reviews) if (unit.decisions.some((decision) => decision.submit.kind === "review"
         && decision.submit.review === review && decisionAction(decision, unit.decisions) === request.action)) {
-        matches.push({ kind: "gate", runId: run.run_id, unitId: unit.unit_id, name: review });
+        matches.push({ kind: "gate", runId: run.run_id, unitId: unit.unit_id, name: JSON.stringify([review, target]) });
       }
     }
     if (matches.length !== 1) throw new Error(`oakridge ${id}: opaque gate ${matches.length === 0 ? "not found" : "is ambiguous"}`);
@@ -48,33 +47,28 @@ export function createGateClient({ readRunPage, readUnits, unitPath, get, decide
 
   async function resumeGate(gateId: string, req: GateResumeRequest): Promise<GateResumeResponse> {
     const gate = await resolveGateId(gateId, req);
-    const review = gate.name.split(":", 1)[0];
     const path = unitPath(gate.runId, gate.unitId);
     const unit = unwrapAdapter(path, parseUnitView(await get<unknown>(path)));
-    const currentGate = unwrapAdapter(path, reviewToGates(unit)).find((candidate) => candidate.id === gateId
-      || (candidate.run_id === gate.runId && candidate.gate_step === review));
+    const currentGate = unwrapAdapter(path, reviewToGates(unit)).find((candidate) => candidate.id === compositeId(gate));
+    const review = currentGate?.gate_step;
+    if (!review) throw new Error(`oakridge ${gateId}: review unavailable`);
     const requestedRevision = parseCompositeId(req.artifact_revision_id, "artifact");
-    const currentRevisionId = req.adjudication ? currentGate?.assessment_revision_id : currentGate?.artifact_revision_id;
-    const currentRevision = currentRevisionId ? parseCompositeId(currentRevisionId, "artifact") : null;
     const requestedTarget = requestedRevision.ok
       ? requestedRevision.value.name.slice(requestedRevision.value.name.indexOf(":") + 1) : req.artifact_revision_id;
-    const currentTarget = currentRevision?.ok
-      ? currentRevision.value.name.slice(currentRevision.value.name.indexOf(":") + 1) : currentRevisionId;
-    if (!currentTarget || requestedTarget !== currentTarget)
+    if (!currentGate?.reviewed_revision_id || requestedTarget !== currentGate.reviewed_revision_id)
       throw new Error(`oakridge ${gateId}: review artifact changed; refresh before deciding`);
     const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review
-      && isAdjudicationDecision(candidate) === Boolean(req.adjudication) && decisionAction(candidate, unit.decisions) === req.action);
+      && !isAdjudicationDecision(candidate) && decisionAction(candidate, unit.decisions) === req.action);
     if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${gateId}: decision ${req.action} unavailable`);
     if (decision.is_available === false)
       throw new Error(`oakridge ${gateId}: ${decision.disabled_reason ?? `decision ${req.action} unavailable`}`);
     if (decision.fields.length > 1)
       throw new Error(`oakridge ${gateId}: decision requires unsupported fields`);
-    if (!req.adjudication && req.action === "request_revision" && decision.fields.length === 0 && req.feedback.trim())
+    if (decision.submit.effect === "request_changes" && decision.fields.length === 0 && req.feedback.trim())
       throw new Error(`oakridge ${gateId}: decision does not accept feedback`);
     const field = decision.fields[0];
-    const payload = req.adjudication ?? (field ? { [field.key]: req.feedback } : {});
-    await decide(gate.runId, gate.unitId, review, { decision: decision.submit.decision, target: decision.submit.target_revision_id, payload, request_id: req.idempotency_key,
-      ...(req.adjudication ? { expected_assessment_revision_id: requestedTarget } : {}) });
+    const payload = field ? { [field.key]: req.feedback } : {};
+    await decide(gate.runId, gate.unitId, review, { decision: decision.submit.decision, target: decision.submit.target_revision_id, payload, request_id: req.idempotency_key });
     invalidateCachedRunUnits(gate.runId);
     return { gate_id: gateId, resumed: true };
   }

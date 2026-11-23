@@ -64,7 +64,7 @@ const RUN: RunDetail = {
       name: "build",
       type: "delegated_session",
       status: "running",
-      artifacts: [{ id: "art-build", type_id: "dev.build_result", version: 1, created_at: "2026-09-01T09:00:00Z" }],
+      artifacts: [{ id: "art-build", type_id: "cohort.build_result", version: 1, created_at: "2026-09-01T09:00:00Z" }],
       delegated_kbbl_sid: null,
       worktree: null,
       units: [
@@ -99,7 +99,9 @@ const GATES: ParkedGate[] = [
     unit_id: "c1",
     artifact_revision_id: "rev-1",
     worktree: null,
-    resume_actions: ["approve", "reject"],
+    decision_definitions: [{ key: "approve", label: "Approve the build", operation: "plain", assessment: null, fields: [], payload_schema: "{}",
+      submit: { kind: "review", review: "review_build", decision: "approve", effect: "approve", target_revision_id: "rev-1" } }],
+    resume_actions: ["approve"],
     offered_decisions: ["approve", "reject"],
     run_state: "active",
     actionable: true,
@@ -108,7 +110,7 @@ const GATES: ParkedGate[] = [
 
 const ARTIFACT: ArtifactDetail = {
   id: "art-build",
-  type_id: "dev.build_result",
+  type_id: "cohort.build_result",
   component_id: null,
   capabilities: { reviewable: true, commentable: true, atom_editable: false, review_items: true },
   anchor_schema: null,
@@ -116,7 +118,7 @@ const ARTIFACT: ArtifactDetail = {
     viewer: "json",
     layout: "report",
     sections: ["summary"],
-    action_labels: { approve: "Approve the build" },
+
   },
   run_id: "run-1",
   producing_stage: "build",

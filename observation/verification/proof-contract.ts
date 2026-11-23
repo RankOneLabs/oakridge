@@ -39,7 +39,8 @@ export interface CaptureReference {
 }
 /** Which run a capture check covers, and the artifact it had to reach, if any. */
 export interface RunCaptureRequest { readonly run_id: string; readonly target_artifact: string | null }
-export interface UnmappedEvent { readonly event_id: string; readonly event_kind: string; readonly reason: string }
+/** A captured revision whose declaration has no extractor registration, so nothing was projected from it. */
+export interface UnregisteredRevision { readonly revision_id: string; readonly artifact_kind: string; readonly detail: string }
 /** What observation and the publisher said when a capture wait ended. */
 export interface RunCaptureDiagnostics { readonly health: string; readonly launcher: string; readonly publisher_failures: readonly string[] }
 /** One run compared event by event: the authority's rows against the service's recorded outcomes. */
@@ -50,7 +51,8 @@ export interface RunCapture extends RunCaptureRequest {
   readonly service_cursor: string | null;
   readonly cursor_reached_run: boolean;
   readonly undelivered_event_ids: readonly string[];
-  readonly unmapped: readonly UnmappedEvent[];
+  /** Null when the service's extraction issues could not be read. */
+  readonly unregistered: readonly UnregisteredRevision[] | null;
   readonly source_revisions: readonly string[];
   /** The target revision as the service served it back; null until it does. */
   readonly target_revision: string | null;

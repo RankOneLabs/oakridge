@@ -21,7 +21,6 @@ interface GateCardProps {
 
 function gateTypeLabel(gateType: string): string {
   if (gateType === "artifact_approval") return "Artifact review";
-  if (gateType === "merge_confirmation") return "Merge confirmation";
   return "Operator decision";
 }
 

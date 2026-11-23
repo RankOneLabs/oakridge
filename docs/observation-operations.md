@@ -73,12 +73,13 @@ authoritative: the publisher reads it before each delivery. A repeated delivery 
 cursor. A revision id names one immutable body, so a different body under the same id is refused and
 holds the feed until an operator resolves it.
 
-`launched` stores the run input as a `run_input` outcome, the durable source for the spec and
+`launched` stores the run input as a `launched` outcome, the durable source for the spec and
 repositories, together with the exact config the launch committed. Its `grading_enabled` is the run's
 automatic-grading choice; a launch that committed no config has grading off, and a replay delivers the
-run's original config, never the current one. `revision_published` captures and projects a revision. `operator_decided` and the worker
-events are `ignored`. An event the mapping cannot place is stored as `unmapped`; read those at
-`GET /v1/sources/oakridge/unmapped`. The feed still advances past them.
+run's original config, never the current one. `revision_published` captures and projects each revision it carries, as a `revisions` outcome. Every
+other event is stored as `other`. A revision whose declaration has no extractor registration is still
+captured; it yields one `unregistered_declaration` extraction issue and no items, and the feed advances
+past it.
 
 `oakridge-dbos/scripts/observation-replay.ts` replays the committed stream into a scratch database and
 reports whether delivery reaches the end of the stream. Run it before restarting a live install on new

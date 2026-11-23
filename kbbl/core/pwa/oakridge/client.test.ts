@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import definition from "./__fixtures__/v2-definition-detail.json";
+import { projectedReview } from "./__fixtures__/read-models";
 import sample from "./__fixtures__/v2-adapter-sample.json";
 import planningRevise from "./__fixtures__/v2-planning-revise.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
 import { cancelRun, confirmFinalPullRequest, fetchArtifact, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, putArtifactRevisionBody, resumeGate, retryRunUnit } from "./client";
-import { compositeId } from "./adapters/core";
-import type { OperatorUnitView } from "./operator-contracts/projections/unit-view";
+import { compositeId, reviewToGates } from "./adapters/core";
+import type { OperatorDecisionDefinition, OperatorUnitView } from "./operator-contracts/projections/unit-view";
 import type { RepositoryKey } from "./run-types";
 
 const runId = sample.run.run_id;
@@ -16,6 +18,15 @@ const acceptDecision = cohort.decisions.find((decision) => decision.key === "acc
 const changeTarget = changeDecision?.submit.kind === "review" ? changeDecision.submit.target_revision_id : null;
 const acceptTarget = acceptDecision?.submit.kind === "review" ? acceptDecision.submit.target_revision_id : null;
 if (!changeTarget || !acceptTarget) throw new Error("captured fixture lacks assessment decisions");
+const gateIdOf = (unit: OperatorUnitView, review: string) => {
+  const gates = reviewToGates(unit);
+  const gate = gates.ok ? gates.value.find((item) => item.gate_step === review) : null;
+  if (!gate) throw new Error(`fixture lacks review ${review}`);
+  return gate.id;
+};
+const fixtureRead = (path: string) => path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
+  : path.includes("/units?") ? sample.units : path.includes("/artifacts/") ? sample.artifact
+    : path.includes("/definitions/") ? definition.definition : sample.run;
 const json = (body: unknown): Response => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
 const calls = (respond: (path: string, init?: RequestInit) => unknown) => vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
   const body = respond(String(input), init);
@@ -57,15 +68,15 @@ describe("v2 Oakridge client", () => {
       .toEqual([[planningRevise.attempts[0]?.kbbl_session_id, "input_revision", "completed"]]);
   });
 
-  it("lists one Brief session when two brief units share its sid", async () => {
+  it("lists the shared Brief session under both units", async () => {
     const first = sample.units.find((unit) => unit.stage === "brief" && unit.attempts.length > 0);
     if (!first) throw new Error("captured fixture lacks a brief attempt");
     const second = { ...first, unit_id: `${first.unit_id}-other`, attempts: first.attempts.map((attempt) => ({ ...attempt,
       id: `${attempt.id}-other`, unit_id: `${first.unit_id}-other`, created_at: "9999-01-01T00:00:00Z" })) };
     calls(() => [first, second]);
     const sessions = await fetchRunSessions(first.run_id);
-    expect(sessions.map((session) => [session.session_id, session.work_order_id])).toEqual([[first.attempts[0]?.kbbl_session_id,
-      `${first.attempts[0]?.id}-other`]]);
+    expect(sessions.map((session) => [session.session_id, session.work_order_id])).toEqual([[first.attempts[0]?.kbbl_session_id, first.attempts[0]?.id],
+      [first.attempts[0]?.kbbl_session_id, `${first.attempts[0]?.id}-other`]]);
   });
 
   it("refreshes cached units after cancelling a parked run", async () => {
@@ -88,13 +99,15 @@ describe("v2 Oakridge client", () => {
   });
 
   it("opens an artifact through its self-describing id without a prior run snapshot", async () => {
-    const fetch = calls((path) => path.includes("/units?") ? sample.units : sample.artifact);
+    const fetch = calls(fixtureRead);
     const id = compositeId({ kind: "artifact", runId, unitId: cohort.unit_id, name: `build_result:${changeTarget}` });
     const artifact = await fetchArtifact(id);
-    expect([artifact.component_id, artifact.label]).toEqual(["dev-build-result-viewer", "a"]);
+    expect([artifact.component_id, artifact.label]).toEqual(["build_result", "a"]);
     expect(fetch.mock.calls.map(([path]) => String(path))).toEqual([
       `/oakridge/api/api/runs/${runId}/units/${encodeURIComponent(cohort.unit_id)}/artifacts/build_result`,
       `/oakridge/api/api/runs/${runId}/units?input_fields=assignment,spec,brief,cohort,repositories,repository,repository_key,title,workspace`,
+      `/oakridge/api/api/runs/${runId}`,
+      `/oakridge/api/api/definitions/${sample.run.definition_id}`,
     ]);
   });
 
@@ -141,14 +154,13 @@ describe("v2 Oakridge client", () => {
   });
 
   it("resolves an opaque revision id by a one-time run and unit search", async () => {
-    const fetch = calls((path) => path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
-      : path.includes("/units?") ? sample.units : sample.artifact);
-    expect((await fetchArtifact(changeTarget)).component_id).toBe("dev-build-result-viewer");
+    const fetch = calls(fixtureRead);
+    expect((await fetchArtifact(changeTarget)).component_id).toBe("build_result");
     expect(fetch.mock.calls.some(([path]) => String(path).includes(`/units/${encodeURIComponent(cohort.unit_id)}/artifacts/build_result`))).toBe(true);
   });
 
   it("retries the cohort unit, not the brief that shares its collection key", async () => {
-    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", adjudication: null, assessment: null, fields: [], submit: { kind: "retry", worker: "builder" } };
+    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", operation: "plain", assessment: null, fields: [], submit: { kind: "retry", worker: "builder" } };
     const units = (sample.units as unknown as OperatorUnitView[]).map((unit) => unit.stage === "cohort" && unit.collection_key === "b"
       ? { ...unit, decisions: [retry] } : unit);
     const stalled = units.find((unit) => unit.stage === "cohort" && unit.collection_key === "b")!;
@@ -159,7 +171,7 @@ describe("v2 Oakridge client", () => {
   });
 
   it("marks only the units Oakridge offers a retry for as retryable", async () => {
-    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", adjudication: null, assessment: null, fields: [], submit: { kind: "retry", worker: "builder" } };
+    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", operation: "plain", assessment: null, fields: [], submit: { kind: "retry", worker: "builder" } };
     const units = (sample.units as unknown as OperatorUnitView[]).map((unit) => unit.stage === "cohort" && unit.collection_key === "b"
       ? { ...unit, decisions: [retry] } : unit);
     calls((path) => path.includes("/units?") ? units : sample.run);
@@ -172,7 +184,7 @@ describe("v2 Oakridge client", () => {
       : path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
       : path.includes("/units?") ? sample.units : cohort);
     await resumeGate("legacy-gate", { idempotency_key: "opaque-1", artifact_revision_id: acceptTarget,
-      action: "request_revision", feedback: "Improve it" });
+      action: "request_build_changes", feedback: "Improve it" });
     const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(String(posted?.[0])).toContain(`/units/${encodeURIComponent(cohort.unit_id)}/reviews/assessment_review/decide`);
     expect(JSON.parse(String(posted?.[1]?.body)).target).toBe(changeTarget);
@@ -180,19 +192,19 @@ describe("v2 Oakridge client", () => {
 
   it("sends collected feedback to the decision's declared field and target revision", async () => {
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-3" } : cohort);
-    const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "assessment_review" });
+    const gateId = gateIdOf(cohort, "assessment_review");
     await resumeGate(gateId, { idempotency_key: "decide-1", artifact_revision_id: acceptTarget,
-      action: "request_revision", feedback: "Fix the API" });
+      action: "request_build_changes", feedback: "Fix the API" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-1", decision: "request_build_changes",
       target: changeTarget, payload: { feedback: "Fix the API" } });
   });
 
-  it("submits the v1 approve action as the v2 decision key it maps from, without feedback", async () => {
+  it("submits the declared approval key without feedback", async () => {
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-4" } : cohort);
-    const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "assessment_review" });
+    const gateId = gateIdOf(cohort, "assessment_review");
     await resumeGate(gateId, { idempotency_key: "decide-2", artifact_revision_id: acceptTarget,
-      action: "approve", feedback: "" });
+      action: "accept", feedback: "" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     const body = JSON.parse(String(decision?.[1]?.body)) as { decision: string; payload: unknown };
     expect([body.decision, body.payload]).toEqual(["accept", {}]);
@@ -200,33 +212,35 @@ describe("v2 Oakridge client", () => {
 
   it("refuses a decision when the displayed artifact revision is stale", async () => {
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-ignored" } : cohort);
-    const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "assessment_review" });
+    const gateId = gateIdOf(cohort, "assessment_review");
     await expect(resumeGate(gateId, { idempotency_key: "stale-review", artifact_revision_id: "old-assessment",
-      action: "approve", feedback: "" }))
+      action: "accept", feedback: "" }))
       .rejects.toThrow("review artifact changed; refresh before deciding");
     expect(fetch.mock.calls.some(([path]) => String(path).endsWith("/decide"))).toBe(false);
   });
 
-  it("maps replace_pr by its request_changes effect and submits feedback", async () => {
-    const replacement = { ...cohort, decisions: [{ key: "replace_pr", label: "Replace PR", payload_schema: "{feedback: text}", adjudication: null, assessment: null,
+  it("submits the replacement decision by its declared key with feedback", async () => {
+    const decisions: OperatorDecisionDefinition[] = [{ key: "replace_pr", label: "Replace PR", payload_schema: "{feedback: text}", operation: "plain", assessment: null,
       fields: [{ key: "feedback", label: "Why replace?" }],
-      submit: { kind: "review", review: "pr_closed", decision: "replace_pr", effect: "request_changes", target_revision_id: "revision-pr" } }] };
+      submit: { kind: "review", review: "pr_closed", decision: "replace_pr", effect: "request_changes", target_revision_id: "revision-pr" } }];
+    const replacement = { ...cohort, decisions, reviews: [projectedReview({ review: "pr_closed", of_artifact: "pr", reviewed_revision_id: "revision-pr" }, decisions)] };
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-5" } : replacement);
-    const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "pr_closed" });
+    const gateId = gateIdOf(replacement, "pr_closed");
     await resumeGate(gateId, { idempotency_key: "decide-3", artifact_revision_id: "revision-pr",
-      action: "request_revision", feedback: "Open a replacement" });
+      action: "replace_pr", feedback: "Open a replacement" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-3", decision: "replace_pr",
       target: "revision-pr", payload: { feedback: "Open a replacement" } });
   });
 
   it("submits the chosen decision when a review offers several request-changes decisions", async () => {
-    const sendBack = (decision: string) => ({ key: decision, label: decision, payload_schema: "{feedback: text}", adjudication: null, assessment: null,
+    const sendBack = (decision: string): OperatorDecisionDefinition => ({ key: decision, label: decision, payload_schema: "{feedback: text}", operation: "plain", assessment: null,
       fields: [{ key: "feedback", label: "What must change?" }],
       submit: { kind: "review", review: "slice_report_review", decision, effect: "request_changes", target_revision_id: "revision-report" } });
-    const sliceReview = { ...cohort, decisions: [sendBack("send_to_builder"), sendBack("change_design")] };
+    const decisions = [sendBack("send_to_builder"), sendBack("change_design")];
+    const sliceReview = { ...cohort, decisions, reviews: [projectedReview({ review: "slice_report_review", of_artifact: "report", reviewed_revision_id: "revision-report" }, decisions)] };
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-6" } : sliceReview);
-    const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "slice_report_review" });
+    const gateId = gateIdOf(sliceReview, "slice_report_review");
     await resumeGate(gateId, { idempotency_key: "decide-4", artifact_revision_id: "revision-report",
       action: "change_design", feedback: "Narrow the slice" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
@@ -240,7 +254,7 @@ describe("v2 Oakridge client", () => {
     const mergeDecision = unit.decisions.find((decision) => decision.key === "confirm_merged");
     if (!mergeDecision || mergeDecision.submit.kind !== "review") throw new Error("captured fixture lacks merge decision target");
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: fixture.run.run_id, event_id: "event-6" } : unit);
-    const gateId = compositeId({ kind: "gate", runId: fixture.run.run_id, unitId: unit.unit_id, name: "merge_confirmation" });
+    const gateId = gateIdOf(unit, "merge_confirmation");
     await resumeGate(gateId, { idempotency_key: "merge-1", artifact_revision_id: mergeDecision.submit.target_revision_id,
       action: "confirm_merged", feedback: "" });
     const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
@@ -253,8 +267,8 @@ describe("v2 Oakridge client", () => {
     const unit = (integrationMerge.units as unknown as OperatorUnitView[]).find((candidate) => candidate.stage === "integration" && candidate.decisions.some((decision) => decision.key === "confirm_merged"));
     if (!unit || !unit.collection_key) throw new Error("captured fixture lacks an integration merge decision");
     const target = `${unit.unit_id}:manual_merge_target:1`;
-    const updated = { ...unit, decisions: unit.decisions.map((decision) => decision.key === "confirm_merged" && decision.submit.kind === "review"
-      ? { ...decision, submit: { ...decision.submit, target_revision_id: target } } : decision) };
+    const updated = { ...unit, reviews: unit.reviews.map((review) => review.confirms === "merge" ? { ...review,
+      reviewed_revision_id: target, decisions: review.decisions.map((decision) => ({ ...decision, target_revision_id: target })) } : review) };
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: integrationMerge.run.run_id, event_id: "event-manual-merge" } : [updated]);
     await confirmFinalPullRequest(integrationMerge.run.run_id, unit.collection_key as RepositoryKey,
       { idempotency_key: "manual-final-merge" });

@@ -66,7 +66,7 @@ test("spec review reopens analysis and reruns the editor in revise mode", async 
   expect(() => run.wanted("spec_editor")).toThrow();
 });
 test("canonical analysis stage has only analysis and spec, with spec as its only outcome", () => {
-  expect([Object.keys(development.stages.analysis.artifacts), development.stages.analysis.outcome, Object.keys(development.stages.analysis.reviews ?? {}), development.schemas?.tasks_body]).toEqual([["analysis", "spec"], {spec: "latest(spec)"}, ["analysis_review", "spec_review"], undefined]);
+  expect([Object.keys(development.stages.analysis.artifacts), development.stages.analysis.outcome, Object.keys(development.stages.analysis.reviews ?? {})]).toEqual([["analysis", "spec"], {spec: "latest(spec)"}, ["analysis_review", "spec_review"]]);
 });
 const planCases: {name: string; cohorts: PlanCohort[]; message: string}[] = [
   {name: "empty plan", cohorts: [], message: "The plan must name at least one cohort."},
@@ -118,7 +118,6 @@ const assessmentCases: {name: string; change: (b: AssessmentBody) => void; messa
   {name: "unknown item", change: b => {b.item_assessments[0].subject.id = "unknown";}, message: "Cohort assessment items must name brief build items."},
   {name: "duplicate item", change: b => {b.item_assessments.push(b.item_assessments[0]);}, message: "Assessment item ids must be unique."},
   {name: "wrong kind", change: b => {b.item_assessments[0].subject.kind = "requirement";}, message: "Cohort assessment items must be build items."},
-  {name: "orphan action", change: b => {b.next_actions.push({id: "00000000-0000-4000-8000-000000000001", audience: "rework", source: {kind: "additional_finding", id: "unknown"}, text: "Fix"});}, message: "Every next action source must resolve"},
   {name: "wrong head", change: b => {b.head_sha = "wrong";}, message: "Assessment head_sha must match"},
   {name: "unknown related item", change: b => {b.additional_findings.push({id: "F1", severity: "info", observation: "Note", related_build_item_ids: ["unknown"], evidence: []});}, message: "Additional finding links must name brief build items."},
   {name: "unexplained test failure", change: b => {b.test_evidence.failed = 1;}, message: "Failed tests require an unmet item"},
@@ -141,23 +140,6 @@ for (const defect of ["wrong kind", "missing", "unknown"] as const) test(`integr
   if (defect === "unknown") body.item_assessments[0].subject.id = "unknown";
   expect((await assessmentRun(body, true)).result.snapshot.decisions.some(d => d.kind === "validation")).toBe(true);
 });
-test("adjudication preserves history and forwards only rework_feedback", async () => {
-  const run = await assessmentRun(assessment());await run.end("assessor");
-  const payload = {entries: [], added_actions: [], rework_feedback: "Fix X"};
-  await run.decide("assessment_review", "request_build_changes", "assessment", payload);
-  expect(run.wanted("builder").resolved.feedback.map(f => f.payload)).toEqual([{feedback: "Fix X"}]);
-  await run.publish("builder", "build_result", {...buildResult, head_sha: "sha2"});await run.end("builder");
-  expect(run.wanted("assessor").resolved.review_history?.map(f => f.payload)).toContainEqual(payload);
-});
-test("integration adjudication forwards rework_feedback to the integrator", async () => {
-  const run = await assessmentRun(assessment("requirement"), true);await run.publish("integrator", "pr", pr);await run.end("integrator");
-  await run.decide("integration_review", "request_changes", "assessment", {entries: [], added_actions: [], rework_feedback: "Fix integration"});
-  expect(run.wanted("integrator").resolved.feedback.map(f => f.payload)).toEqual([{feedback: "Fix integration"}]);
-});
-test("previous pinned development and all of its prompt objects remain resolvable", () => {
-  const previous = resolveDefinition("74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4" as DefinitionId, DEFINITION_STORE_ROOT);
-  expect(previous.ok && Object.keys(previous.value.prompts).length > 0).toBe(true);
-});
 test("current definition pins every rewritten prompt", () => {
   const current = resolveLaunchableDefinition("development", DEFINITION_STORE_ROOT);
   expect(current.ok && current.value.prompts).toEqual(prompts);
@@ -170,9 +152,6 @@ for (const [stageName, stage] of Object.entries(development.stages)) for (const 
     test(`${stageName}.${workerName}.${mode} includes exact blocker instruction`, () => expect(prompts[path]).toContain(blocker));
   }
 }
-for (const [path, prompt] of Object.entries(prompts)) test(`${path} contains no retired vocabulary`, () => {
-  expect(prompt).not.toMatch(/pick a sensible path|\btasks\b|task_ids|tasks_review|acceptance_criteria|approaches_rejected|dependency_order|recommended_next_actions|needs_decision|subjects|builder_feedback|audience: builder/);
-});
 interface CohortScenario { name: string; cohorts: PlanCohort[]; ready: string[]; waiting: string[] }
 const scenarios = JSON.parse(readFileSync(resolve(root, "workflow-config/samples/development-cohorts.json"), "utf8")) as CohortScenario[];
 async function planRun(cohorts: PlanCohort[]) {
@@ -259,18 +238,17 @@ test("integration resolves a shared canonical requirement once across contributi
     const unit = `run/implementation/${c.id}`;
     await run.publish("builder", "pr", {...pr, branch: c.id}, unit);await run.publish("builder", "build_result", buildResult, unit);await run.end("builder", unit);
     const body = assessment();if (c.id === "C2") body.item_assessments = [body.item_assessments[0]];
-    await run.publish("assessor", "assessment", body, unit);await run.end("assessor", unit);await run.decide("assessment_review", "accept", "assessment", {entries: [], added_actions: [], rework_feedback: ""}, unit);
+    await run.publish("assessor", "assessment", body, unit);await run.end("assessor", unit);await run.decide("assessment_review", "accept", "assessment", {}, unit);
     await run.decide("merge_confirmation", "confirm_merged", "pr", {}, unit);
   }
   expect(run.wanted("integrator", "run/integration/oakridge").resolved.inputs).toMatchObject({requirements: spec().requirements});
 });
 
-test("assessment decisions declare typed adjudication only on accept and builder return", () => {
+test("assessment decisions declare operations while assessment changes stay plain", () => {
   const review = development.stages.cohort.reviews?.assessment_review;
   if (!review || "template" in review || "set" in review.decisions) throw new Error("Expected explicit review decisions");
-  expect([review.decisions.accept.payload, review.decisions.request_build_changes.payload, review.decisions.request_assessment_changes.payload, review.decisions.request_build_changes.feedback_field]).toEqual(["adjudication", "adjudication", undefined, "rework_feedback"]);
-  expect([review.decisions.accept.adjudication, review.decisions.request_build_changes.adjudication,
-    review.decisions.request_assessment_changes.adjudication]).toEqual(["accept", "feedback", undefined]);
+  expect([review.decisions.accept.operation, review.decisions.request_build_changes.operation,
+    review.decisions.request_assessment_changes.operation]).toEqual(["approve_assessment", "dispatch_feedback", undefined]);
 });
 
 test("duplicate additional finding ids are refused", async () => {
@@ -293,4 +271,9 @@ test("a spec sent back for analysis changes cannot be accepted until the editor 
   expect([fresh !== stale, run.result.reviews.find(r => r.review === "spec_review")?.target, run.result.snapshot.units.find(u => u.id === "run/unit")?.status.kind]).toEqual([true, fresh, "active"]);
   await run.decide("spec_review", "accept", "spec");
   expect(run.result.snapshot.units.find(u => u.id === "run/unit")?.status.kind).toBe("done");
+});
+
+test("previous pinned development and all of its prompt objects remain resolvable", () => {
+  const previous = resolveDefinition("74de304c8c29fc50ac3596817a2aed2ffb14846ccb8ecb7ef59f91127b7f87f4" as DefinitionId, DEFINITION_STORE_ROOT);
+  expect(previous.ok && Object.keys(previous.value.prompts).length > 0).toBe(true);
 });

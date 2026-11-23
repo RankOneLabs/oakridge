@@ -1,3 +1,4 @@
+import { ROOT_DECLARATION } from "../operator-contracts/constants";
 import type { OperatorEventHistory, OperatorUnitHistory } from "../operator-contracts/projections/history-view";
 import type { OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { RunEventFrame, RunEventPayload } from "../run-types";
@@ -15,7 +16,7 @@ const validEvent = (value: unknown): boolean => {
       && typeof value.decision === "string" && typeof value.unit === "string";
     case "retry_requested": return typeof value.unit === "string" && typeof value.worker === "string";
     case "cancel_requested": return true;
-    default: return false;
+    default: return typeof value.kind === "string" && value.kind.length > 0;
   }
 };
 
@@ -61,7 +62,7 @@ export function runActivityEvents(runId: string, histories: readonly UnitActivit
         const artifact = unit.artifacts.find((candidate) => candidate.latest_revision?.id === event.target);
         return [{ id: entry.id, occurred_at: entry.created_at, operation: "gate_decided" as const,
           payload: { ...base, stage_instance_id: base.stage_instance_id ?? unit.unit_id,
-            stage_key: base.stage_key ?? "$root", wait_id: event.review,
+            stage_key: base.stage_key ?? ROOT_DECLARATION, wait_id: event.review,
             output_name: artifact?.artifact_key ?? event.review,
             artifact_revision_id: event.target, attention: "none" as const,
             continuation: "waiting" as const } }];

@@ -325,7 +325,7 @@
       }
     }
   ],
-  "slice": {
+  "pilot_selection": {
     "case_ids": [
       "fact-shapes-stage-additive.type_enforced",
       "fact-shapes-stage-additive.reference",

@@ -1,4 +1,5 @@
 import { renderRunView, RUN_DETAIL_FIXTURE, buildBriefParams, json } from "../__fixtures__/run-view";
+import { OakridgeShell } from "../OakridgeShell";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
@@ -377,7 +378,6 @@ describe("RunDetail stage list", () => {
 describe("OakridgeShell unavailable state", () => {
   it("shows unavailable notice when config returns available=false", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ available: false }));
-    const { OakridgeShell } = await import("../OakridgeShell");
     wrap(<OakridgeShell route={{ sub: "runs" }} />);
     expect(await screen.findByTestId("or-unavailable")).toBeTruthy();
   });

@@ -5,7 +5,7 @@ import { oakridgeProfile } from "../src/producers/oakridge/profile";
 import { createApp } from "../src/http/app";
 import { withTenant } from "../src/storage/database";
 import { registerDefinitions } from "../src/storage/grading-store";
-import { fixtureDefinitions, integration, oakridgeGradingRegistry, revisionOutcome, scratchDatabase, tenant } from "./grading-fixture";
+import { fixtureDefinitions, integration, oakridgeGradingRegistry, revisionOutcome, fixtureDelivery, scratchDatabase, tenant } from "./grading-fixture";
 
 function snapshot(definitions: GradingDefinitions, version: number | null = null) {
   const registration = planRegistration(definitions, oakridgeGradingRegistry);
@@ -38,15 +38,15 @@ integration("replacement reaches new HTTP captures and health while existing pin
     if (!result.ok) throw new Error(result.error.detail);
   }
   const app = createApp({ db, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [] }, runtime_configuration: runtime });
-  let previous = { commit_txid: "0", id: "" };
+  let previous = { commit_txid: "0", event_id: "" };
   const send = async (revision_id: string) => {
-    const outcome = revisionOutcome({ revision_id, artifact_kind: "analysis", body: { summary: "Summary", findings: [
-      { id: "F1", description: "Observation", severity: "warning" }], requirements: [], risks: [], proposed_spec_updates: [] } });
-    const cursor = { commit_txid: String(Number(previous.commit_txid) + 1), id: outcome.event_id };
+    const outcome = revisionOutcome({ revision_id, artifact_kind: "analysis", body: { summary: "Summary", requirements: [{ id: "R1", findings: [
+      { id: "F1", description: "Observation", severity: "warning" }] }] } });
+    const delivery = fixtureDelivery(tenant, outcome, previous);
     const response = await app.request("/v1/sources/oakridge/events", { method: "POST",
-      headers: { authorization: "Bearer ingest", "content-type": "application/json" }, body: JSON.stringify({ previous, cursor, outcome }) });
+      headers: { authorization: "Bearer ingest", "content-type": "application/json" }, body: JSON.stringify(delivery) });
     expect(response.status).toBe(200);
-    previous = cursor;
+    previous = delivery.cursor;
   };
   const pins = () => withTenant(db, tenant, (trx) => trx.selectFrom("observation.evidence_set").selectAll().orderBy("evidence_set_id").execute());
   await send("before");
@@ -72,8 +72,8 @@ integration("each reconciliation reads the current collector while retaining the
   } } });
   const { createFeed } = await import("./grading-fixture");
   const feed = createFeed(db, tenant, initial.capture_configuration);
-  await feed.revision({ revision_id: "collector", artifact_kind: "analysis", body: { summary: "Summary", findings: [
-    { id: "F1", description: "Observation", severity: "warning" }], requirements: [], risks: [], proposed_spec_updates: [] } });
+  await feed.revision({ revision_id: "collector", artifact_kind: "analysis", body: { summary: "Summary", requirements: [{ id: "R1", findings: [
+    { id: "F1", description: "Observation", severity: "warning" }] }] } });
   const { createEvidenceReconciler } = await import("../src/storage/evidence-pipeline");
   const reconciler = createEvidenceReconciler({ db, runtime_configuration: runtime, log: () => undefined,
     repository: { hasCommit: async () => false, readFile: async () => ({ state: "absent" as const }) } });

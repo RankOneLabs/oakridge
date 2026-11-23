@@ -8,21 +8,16 @@ pub(super) fn compile_stage(
     operations: &[CodeOperation],
     prompts: &BTreeMap<String, String>,
 ) -> Result<(CheckedStage, TypeExpression), Vec<CompileError>> {
-    let reserved_errors: Vec<_> = stage
-        .artifacts
-        .keys()
-        .map(|key| ("artifacts", key))
-        .chain(stage.reviews.keys().map(|key| ("reviews", key)))
-        .filter(|(_, key)| matches!(key.as_str(), BLOCKER_ARTIFACT | BLOCKER_REVIEW))
-        .map(|(section, name)| {
-            CompileError::new(
-                CheckKind::Name,
-                format!("stages.{key}.{section}.{name}"),
-                SourceSpan::default(),
-                format!("reserved name {name}"),
-            )
-        })
-        .collect();
+    let mut reserved_errors =
+        reserved_key_errors(KeyNamespace::Artifact(key), stage.artifacts.keys());
+    reserved_errors.extend(reserved_key_errors(
+        KeyNamespace::Review(key),
+        stage.reviews.keys(),
+    ));
+    reserved_errors.extend(reserved_key_errors(
+        KeyNamespace::Worker(key),
+        stage.workers.keys(),
+    ));
     if !reserved_errors.is_empty() {
         return Err(reserved_errors);
     }
@@ -92,6 +87,20 @@ pub(super) fn compile_stage(
                 }
             }
         }
+        if let Some(field) = &artifact.link_field {
+            let valid = artifact.kind == ArtifactKind::ExternalReference
+                && matches!(
+                    resolve_type(&artifact.schema, &workflow.schemas),
+                    Type::Record { fields } if fields.get(&field.0) == Some(&Type::Text)
+                );
+            if !valid {
+                state.error(
+                    CheckKind::Schema,
+                    &format!("stages.{key}.artifacts.{artifact_key}.link_field"),
+                    "link_field must name a text field on an external reference",
+                );
+            }
+        }
         let schema = state.capture(checked_type(
             &artifact.schema,
             &workflow.schemas,
@@ -103,6 +112,7 @@ pub(super) fn compile_stage(
                 schema: schema.expect("valid artifact schema"),
                 edit_policy: artifact.edit_policy.clone(),
                 validations,
+                equivalent_subject_fields: artifact.equivalent_subject_fields.clone(),
             });
         }
     }
@@ -117,6 +127,28 @@ pub(super) fn compile_stage(
                 &format!("{path}.of"),
                 format!("review {review_key} artifact absent"),
             );
+        }
+        if review.wait == ReviewWait::External && review.by != ReviewBy::Operator {
+            state.error(
+                CheckKind::Review,
+                &format!("{path}.wait"),
+                "external wait requires an operator review",
+            );
+        }
+        if review.confirms == Some(ReviewConfirms::Merge)
+            && (review.by != ReviewBy::Operator
+                || review
+                    .decisions
+                    .values()
+                    .filter(|decision| decision.effect == DeclaredDecisionEffect::Approve)
+                    .count()
+                    != 1
+                || !stage
+                    .artifacts
+                    .get(&review.of.0)
+                    .is_some_and(|artifact| artifact.kind == ArtifactKind::ExternalReference))
+        {
+            state.error(CheckKind::Review, &format!("{path}.confirms"), "merge confirmation requires an operator review of an external reference with exactly one approve decision");
         }
         let when = review.when.as_deref().and_then(|text| {
             let result = checked_guard(
@@ -135,17 +167,6 @@ pub(super) fn compile_stage(
             }
         };
         state.capture(result);
-        let adjudication_errors =
-            adjudication::check_adjudication(adjudication::AdjudicationCheck {
-                review_key,
-                review,
-                stage_key: key,
-                stage,
-                path: &path,
-            });
-        for error in adjudication_errors {
-            state.error(error.check, &error.path.0, error.detail);
-        }
         let input_before = state.errors.len();
         let review_inputs = state.fields(
             &review.inputs,
@@ -208,18 +229,12 @@ pub(super) fn compile_stage(
                 })
             });
             if let Some(payload) = state.capture(payload) {
-                if let Some(field) = &decision.feedback_field {
-                    if decision.on.is_none()
-                        || !matches!(&payload, Some(Type::Record { fields }) if fields.get(field) == Some(&Type::Text))
-                    {
-                        state.error(CheckKind::Review, &format!("{decision_path}.feedback_field"), "feedback_field requires an on target and a text field in the payload record");
-                    }
-                }
                 decisions.insert(
                     decision_key.clone(),
                     CheckedDecision {
                         when: guard,
-                        feedback_field: decision.feedback_field.clone(),
+                        feedback_field: None,
+                        operation: decision.operation,
                         effect: decision.effect.clone(),
                         on: normalized_decision_target(decision.on.as_ref(), &review.of),
                         payload,
@@ -234,7 +249,8 @@ pub(super) fn compile_stage(
                     format!("decision target {target} absent"),
                 ),
                 Some(owner)
-                    if decision.effect == DeclaredDecisionEffect::RequestChanges
+                    if decision.operation.is_plain()
+                        && decision.effect == DeclaredDecisionEffect::RequestChanges
                         && !matches!(stage.workers.get(owner), Some(Worker::Agent { .. })) =>
                 {
                     state.error(
@@ -253,6 +269,20 @@ pub(super) fn compile_stage(
         reviews.push(match review.by {
             ReviewBy::Operator => CheckedReview::Operator {
                 key: review_key_value,
+                assessment: review.assessment.clone().or_else(|| {
+                    if review
+                        .decisions
+                        .values()
+                        .all(|decision| decision.operation.is_plain())
+                    {
+                        return None;
+                    }
+                    stage
+                        .artifacts
+                        .get(&review.of.0)
+                        .filter(|artifact| artifact.kind == ArtifactKind::Assessment)
+                        .map(|_| review.of.clone())
+                }),
                 of: review.of.clone(),
                 inputs: review_inputs.expect("valid review inputs"),
                 when,
@@ -283,21 +313,6 @@ pub(super) fn compile_stage(
                 }
             }
         });
-    }
-    for artifact in &artifacts {
-        if stage.artifacts[&artifact.key.0].kind == ArtifactKind::Assessment
-            && matches!(&artifact.schema, Type::Record { fields } if fields.contains_key("next_actions"))
-            && !adjudication::has_adjudication_coverage(stage, &artifact.key)
-        {
-            state.error(
-                CheckKind::Review,
-                &format!("stages.{key}.artifacts.{}", artifact.key),
-                format!(
-                    "assessment {} has next_actions but no review adjudicates it with accept and feedback",
-                    artifact.key
-                ),
-            );
-        }
     }
     let done = match stage.done_when.as_deref() {
         Some(text) => {
@@ -345,9 +360,11 @@ pub(super) fn compile_stage(
             schema: blocker_schema(),
             edit_policy: EditPolicy::Always,
             validations: vec![],
+            equivalent_subject_fields: vec![],
         });
         reviews.push(CheckedReview::Operator {
             key: SymbolKey::from(BLOCKER_REVIEW),
+            assessment: None,
             of: SymbolKey::from(BLOCKER_ARTIFACT),
             inputs: vec![],
             when: None,
@@ -362,7 +379,8 @@ pub(super) fn compile_stage(
                             on: value.on,
                             payload: value.payload,
                             when: None,
-                            feedback_field: value.feedback_field,
+                            feedback_field: Some("answer".into()),
+                            operation: DecisionOperation::Plain,
                         },
                     )
                 })

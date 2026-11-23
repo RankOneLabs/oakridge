@@ -1,6 +1,6 @@
-import { parseVersionedBody } from "../lib/versioned-body";
-import { artifactType, SCHEMA_COMPONENTS } from "./artifact-descriptors";
-export { artifactType, artifactTypes } from "./artifact-descriptors";
+import { BLOCKER_ARTIFACT, PROVIDER_ERROR_CODES } from "../operator-contracts/constants";
+import { artifactType } from "./artifact-descriptors";
+export { artifactType } from "./artifact-descriptors";
 import { selectCurrentArtifactContext } from "../lib/current-context";
 import { selectReceivedContext, selectRevisionReceivedContext } from "../lib/received-context";
 import { artifactSchemaVersion } from "../lib/artifact-version";
@@ -8,7 +8,7 @@ import type { OperatorUnitStatus } from "../operator-contracts/core-client/core-
 import type { OperatorArtifactDetail } from "../operator-contracts/projections/artifact-view";
 import type { OperatorRunEvent } from "../operator-contracts/projections/run-event";
 import type { OperatorRunView } from "../operator-contracts/projections/run-view";
-import type { OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts/projections/unit-view";
+import type { OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition, OperatorOpenReview, OperatorUnitView } from "../operator-contracts/projections/unit-view";
 import type { ArtifactDetail, ArtifactRevision } from "../artifact-types";
 import type { RepositoryKey, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../run-types";
 import { isWebUrl } from "../lib/pr-summary";
@@ -38,11 +38,8 @@ export function parseCompositeId(value: string, expected: CompositeKind): Adapte
   } catch { return fail("parse composite id", "invalid encoded id component"); }
 }
 
-/** Keep the prepared repository visible while hiding internal PR watch state. */
-export const isVisibleDevelopmentArtifact = (artifact: OperatorArtifactView): boolean =>
-  (artifact.artifact_key === "workspace" && artifact.schema === "workspace")
-    || (artifact.artifact_key === "spec" && artifact.schema === "text")
-    || (artifact.schema !== "text" && Object.hasOwn(SCHEMA_COMPONENTS, artifact.schema) && artifact.artifact_key !== "manual_merge_target");
+export const isVisibleArtifact = (artifact: OperatorArtifactView): boolean =>
+  artifact.kind !== "status_record" && artifact.artifact_key !== BLOCKER_ARTIFACT;
 export const artifactId = (artifact: OperatorArtifactView): string => compositeId({ kind: "artifact", runId: artifact.run_id, unitId: artifact.unit_id, name: artifact.artifact_key });
 export const artifactRevisionId = (artifact: OperatorArtifactView, revisionId: string): string =>
   compositeId({ kind: "artifact", runId: artifact.run_id, unitId: artifact.unit_id, name: `${artifact.artifact_key}:${revisionId}` });
@@ -52,9 +49,11 @@ export const objectValue = (value: unknown): { readonly [key: string]: unknown }
 export const textValue = (value: unknown): string | null => typeof value === "string" && value.trim() ? value : null;
 /** The unit view includes the latest revision body, so merge links need no
  * extra artifact request. Only web URLs become clickable in frozen v1 views. */
-export const developmentPullRequestUrl = (unit: OperatorUnitView): string | null => {
-  const body = unit.artifacts.find((artifact) => artifact.artifact_key === "pr")?.latest_revision?.body;
-  const url = textValue(objectValue(body)?.pr_url);
+export const selectReviewPullRequestUrl = (unit: OperatorUnitView, review: OperatorOpenReview | null): string | null => {
+  if (review?.confirms !== "merge") return null;
+  const artifact = unit.artifacts.find((candidate) => candidate.artifact_key === review.of_artifact && candidate.kind === "external_reference");
+  if (!artifact?.link_field) return null;
+  const url = textValue(objectValue(artifact.latest_revision?.body)?.[artifact.link_field]);
   return url && isWebUrl(url) ? url : null;
 };
 export const repositoryKeyOf = (unit: OperatorUnitView): RepositoryKey | null => {
@@ -73,41 +72,35 @@ const worktreeOf = (unit: OperatorUnitView): StageUnit["worktree"] => {
 export const revisionToArtifact = (artifact: OperatorArtifactDetail, unit: OperatorUnitView): AdapterResult<ArtifactDetail> => {
   if (artifact.run_id !== unit.run_id || artifact.unit_id !== unit.unit_id)
     return fail("revision to artifact", "artifact does not belong to unit");
-  const descriptor = artifactType(artifact.schema, artifactSchemaVersion(artifact.revisions.at(-1)), artifact.is_adjudicated);
+  const descriptor = artifactType(unit.stage, artifact);
   const revisions: ArtifactRevision[] = artifact.revisions.map((revision) => ({ id: compositeId({ kind: "artifact", runId: artifact.run_id,
     unitId: artifact.unit_id, name: `${artifact.artifact_key}:${revision.id}` }),
     status: artifact.decisions.some((decision) => decision.target_revision_id === revision.id && decision.effect === "request_changes") ? "rejected"
       : artifact.decisions.some((decision) => decision.target_revision_id === revision.id && decision.effect === "approve") ? "approved" : "draft",
-    context: selectCurrentArtifactContext(unit, revision.attempt_id), received_context: selectRevisionReceivedContext(unit, revision.attempt_id), artifact_schema_version: artifactSchemaVersion(revision), component_id: artifactType(artifact.schema, artifactSchemaVersion(revision), artifact.is_adjudicated).component_id,
-    current_read: parseVersionedBody({ schema: artifact.schema, version: artifactSchemaVersion(revision), is_adjudicated: artifact.is_adjudicated, body: revision.body }),
-    body: revision.body, created_at: revision.created_at, validation: null }));
+    context: selectCurrentArtifactContext(unit, revision.attempt_id), received_context: selectRevisionReceivedContext(unit, revision.attempt_id), artifact_schema_version: artifactSchemaVersion(revision), component_id: artifact.view,
+    subject_revision_id: revision.subject_id, producing_attempt_inputs: revision.producing_attempt_inputs, body: revision.body, created_at: revision.created_at, validation: null }));
   return ok({ id: compositeId({ kind: "artifact", runId: artifact.run_id, unitId: artifact.unit_id, name: artifact.artifact_key }),
     schema: artifact.schema, artifact_schema_version: artifactSchemaVersion(artifact.revisions.at(-1)),
     context: selectCurrentArtifactContext(unit), received_context: selectReceivedContext(unit), type_id: descriptor.id, component_id: descriptor.component_id,
     capabilities: { ...descriptor.capabilities, reviewable: artifact.is_reviewable, atom_editable: artifact.is_editable },
     anchor_schema: descriptor.anchor_schema,
-    run_id: artifact.run_id, original_spec: artifact.original_spec ?? textValue(objectValue(unit.input)?.spec),
-    producing_stage: unit.stage ?? "", label: unit.collection_key ?? unit.unit_key, revisions });
+    run_id: artifact.run_id, link_field: unit.artifacts.find((entry) => entry.artifact_key === artifact.artifact_key)?.link_field ?? null, producing_attempt_inputs: artifact.producing_attempt_inputs,
+    projected_workers: unit.workers, producing_stage: unit.stage ?? "", label: unit.collection_key ?? unit.unit_key, revisions });
 };
 
 export interface StatusInput { readonly status: OperatorUnitStatus; readonly attention: OperatorUnitView["attention"]; readonly attempts: readonly OperatorAttemptView[];
   readonly decisions: readonly OperatorDecisionDefinition[]; readonly hasRunStall?: boolean; readonly hasManualMergeFallback?: boolean }
 export const statusInputOf = (unit: OperatorUnitView): StatusInput =>
   ({ status: unit.status, attention: unit.attention, attempts: unit.attempts, decisions: unit.decisions,
-    hasManualMergeFallback: unit.artifacts.some((artifact) => artifact.artifact_key === "observed_state") });
+    hasManualMergeFallback: (unit.reviews ?? []).some((review) => review.confirms === "merge") });
 /** A wait the operator can clear: the unit offers a review decision, rather than waiting on an upstream dependency. */
 const awaitsOperator = (decisions: readonly OperatorDecisionDefinition[]): boolean =>
   decisions.some((decision) => decision.submit.kind === "review");
 /** An unavailable PR watcher must not hide a manual merge confirmation that can finish the cohort. */
-const awaitsManualMergeAfterWatchFailure = (input: StatusInput): boolean => {
-  if (!input.hasManualMergeFallback || input.attention?.kind !== "stalled"
-    || !input.attention.detail.startsWith("pr_watch failed:")) return false;
-  const failures = input.attempts.filter((attempt) => attempt.is_current && attempt.failure);
-  return failures.length > 0 && failures.every((attempt) => attempt.worker === "pr_watch"
-    && (attempt.failure?.code === "invalid_instruction" || attempt.failure?.code === "discovery_unsupported"))
-    && input.decisions.some((decision) => decision.submit.kind === "review"
-      && decision.submit.review === "merge_confirmation" && decision.submit.decision === "confirm_merged");
-};
+export const isMergeWatchFailure = (code: string | null | undefined): boolean =>
+  code === PROVIDER_ERROR_CODES.invalid_instruction || code === PROVIDER_ERROR_CODES.discovery_unsupported;
+const awaitsManualMergeAfterWatchFailure = (input: StatusInput): boolean =>
+  Boolean(input.hasManualMergeFallback && input.attention?.kind === "stalled" && isMergeWatchFailure(input.attention.failure_code));
 /**
  * An agent session working the unit now. A queued attempt can wait indefinitely, and a code
  * worker (a PR watcher) stays running through transient retries, so neither counts.
@@ -118,7 +111,9 @@ const isAgentWorking = (attempt: OperatorAttemptView): boolean =>
 const isWorkerStall = ({ attention, attempts }: StatusInput): boolean => {
   if (attention?.kind !== "stalled") return true;
   return attempts.some((attempt) => attempt.is_current && attempt.failure !== null
-    && attention.detail.startsWith(`${attempt.worker} failed:`));
+    && (attention.failure_code != null
+      ? attempt.failure.code === attention.failure_code
+      : attention.detail.startsWith(`${attempt.worker} failed:`)));
 };
 /** One worker failed while an agent still works the unit, so the unit has not stopped. */
 const isStillWorkingPastFailure = (input: StatusInput): boolean =>
@@ -150,7 +145,7 @@ export function selectAggregateStatus(statuses: readonly RunStatus[]): StageStat
   return "pending";
 }
 
-export { isAdjudicationDecision, isDisplayedReviewDecision, decisionAction, reviewDecisions, reviewToGates, selectGateDecision, sentReviewFeedback } from "./gates";
+export { isAdjudicationDecision, isDisplayedReviewDecision, selectMergeDecision, selectMergeReview, decisionAction, reviewDecisions, reviewToGates, selectGateDecision, sentReviewFeedback } from "./gates";
 import { reviewToGates } from "./gates";
 
 export function attemptToWorkOrder(input: { readonly runId: string; readonly stage: string; readonly unit: OperatorUnitView; readonly attempt: OperatorAttemptView }): AdapterResult<RunSessionAttempt> {
@@ -158,21 +153,11 @@ export function attemptToWorkOrder(input: { readonly runId: string; readonly sta
   if (!attempt.kbbl_session_id) return fail("attempt to work order", "attempt has no session id");
   const reason: RunSessionAttempt["reason"] = attempt.cause.kind === "retry" ? "operator_retry" : attempt.cause.kind === "changes_requested" ? "input_revision" : "initial";
   const work_order_state: RunSessionAttempt["work_order_state"] = attempt.status === "pending" ? "available" : attempt.status === "running" ? "started" : "completed";
-  // v1 groups sidebar attempts by (stage_instance_id, unit_id). A v2 cohort
-  // runs its builder and assessor on one unit, so give each a display-stage
-  // identity; retries of the same worker still group together.
   const unitLabel = unit.collection_key ?? unit.unit_key;
-  const sessionStage = stage === "cohort" && attempt.worker === "builder" ? "builder"
-    : stage === "cohort" && attempt.worker === "assessor" ? "assessment" : stage;
-  // The development brief writer shares one kbbl session across cohort brief
-  // units. Naming its sidebar row after the latest unit would imply that the
-  // session belongs to that one cohort.
-  const sessionUnitId = stage === "brief" && attempt.worker === "writer" ? "shared writer" : unitLabel;
-  const display_label = stage === "analysis" && attempt.worker === "author" ? "Spec analysis"
-    : stage === "analysis" && attempt.worker === "spec_editor" ? "Spec update" : sessionStage;
+  const display_label = unit.workers?.find((worker) => worker.key === attempt.worker)?.label ?? attempt.worker;
   return ok({ work_order_id: attempt.id, session_id: attempt.kbbl_session_id,
-    stage_instance_id: compositeId({ kind: "stage", runId, unitId: unit.unit_id, name: sessionStage }), stage_key: sessionStage,
-    display_label, unit_id: sessionUnitId, reason, work_order_state, created_at: attempt.created_at,
+    stage_instance_id: compositeId({ kind: "stage", runId, unitId: unit.unit_id, name: stage }), stage_key: stage,
+    display_label, worker_key: attempt.worker, unit_id: unitLabel, reason, work_order_state, created_at: attempt.created_at,
     completed_at: null, executor_health_kind: attempt.failure?.code ?? null, cleanup_state: "not_needed" });
 }
 
@@ -189,15 +174,15 @@ export function latestAttemptPerSession(attempts: readonly OperatorAttemptView[]
 }
 
 /** A shared v2 session can carry turns from different collection members.
- * Choose its latest attempt across the whole run before populating the v1 sidebar. */
+ * Keep the latest attempt for each unit and session pair. */
 export function latestUnitAttemptPerSession(units: readonly OperatorUnitView[]): AdapterResult<readonly { readonly unit: OperatorUnitView;
   readonly attempt: OperatorAttemptView }[]> {
   const ordered = units.flatMap((unit) => unit.attempts.map((attempt) => ({ unit, attempt })))
     .filter(({ attempt }) => attempt.kbbl_session_id !== null)
     .sort((left, right) => left.attempt.created_at.localeCompare(right.attempt.created_at) || left.attempt.id.localeCompare(right.attempt.id));
-  const latest = new Map<string, { readonly unit: OperatorUnitView; readonly attempt: OperatorAttemptView }>();
-  ordered.forEach((entry) => { if (entry.attempt.kbbl_session_id) latest.set(entry.attempt.kbbl_session_id, entry); });
-  return ok([...latest.values()]);
+  const keys = ordered.map(({ unit, attempt }) => JSON.stringify([unit.unit_id, attempt.kbbl_session_id]));
+  const latest = new Map(keys.map((key, index) => [key, index]));
+  return ok(ordered.filter((_, index) => latest.get(keys[index]) === index));
 }
 
 /** A scalar stage's one unit has no collection key; the PWA names it "0", as every stage-scoped consumer expects. */
@@ -218,8 +203,8 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
     });
     return { stage_instance_id: compositeId({ kind: "stage", runId: members[0].run_id, unitId: members[0].unit_id, name }), name, type: name,
       status, artifacts: members.flatMap((unit) => unit.artifacts.filter((artifact) => artifact.latest_revision
-        && isVisibleDevelopmentArtifact(artifact)).map((artifact) => ({
-        id: artifactId(artifact), type_id: artifactType(artifact.schema).id, version: artifact.revision_count,
+        && isVisibleArtifact(artifact)).map((artifact) => ({
+        id: artifactId(artifact), type_id: artifactType(unit.stage, artifact).id, view: artifact.view, artifact_kind: artifact.kind, version: artifact.revision_count,
         label: unit.collection_key ?? unit.unit_key, created_at: artifact.latest_revision!.created_at }))),
       delegated_kbbl_sid: members.flatMap((unit) => unit.attempts.map((attempt) => attempt.kbbl_session_id)).find((sid) => sid) ?? null,
       worktree: worktreeOf(members[0]), units: stageUnits };

@@ -8,11 +8,47 @@ pub(super) struct State<'a, 'limits> {
     pub(super) context: &'a EvaluationContext<'limits>,
 }
 
-pub(super) fn reduce(state: &State<'_, '_>, incoming: &Incoming) -> Result<Vec<Delta>, StepError> {
+pub(super) struct Reduction {
+    pub(super) deltas: Vec<Delta>,
+    pub(super) run_label: Option<RunLabel>,
+}
+
+pub(super) fn reduce(state: &State<'_, '_>, incoming: &Incoming) -> Result<Reduction, StepError> {
     let mut context = state.context.clone();
     let mut deltas = reduce_event(state.program, state.snapshot, incoming, &mut context)?;
+    let run_label = match (&state.program.label, deltas.first()) {
+        (Some(label), Some(Delta::PushUnit(unit)))
+            if matches!(incoming.event, Event::Launched { .. }) =>
+        {
+            Some(evaluate_label(label, unit, state.snapshot, &mut context)?)
+        }
+        _ => None,
+    };
     deltas.push(Delta::EvaluationBudget(context.remaining));
-    Ok(deltas)
+    Ok(Reduction { deltas, run_label })
+}
+
+fn evaluate_label(
+    label: &CheckedWorkflowLabel,
+    root: &UnitState,
+    snapshot: &StepSnapshot,
+    context: &mut EvaluationContext<'_>,
+) -> Result<RunLabel, StepError> {
+    let title = eval_expression(&label.title.expression, root, snapshot, None, None, context)?;
+    let repositories = eval_expression(
+        &label.repositories.expression,
+        root,
+        snapshot,
+        None,
+        None,
+        context,
+    )?;
+    Ok(RunLabel {
+        title: serde_json::from_value(title.unwrap_or(Value::Null))
+            .map_err(|_| invalid("workflow label title is not text"))?,
+        repositories: serde_json::from_value(repositories.unwrap_or(Value::Null))
+            .map_err(|_| invalid("workflow label repositories are not identifiers"))?,
+    })
 }
 
 fn reduce_event(
@@ -116,7 +152,7 @@ fn reduce_event(
                 .ok_or_else(|| invalid("attempt unit absent"))?;
             let definition = worker(checked_stage(program, unit)?, &attempt.worker)?;
             let has_blocker = state.revisions.iter().any(|revision| {
-                revision.by.as_ref() == Some(&attempt.action_id)
+                revision.by.as_ref().is_some_and(|by| by.matches(&attempt))
                     && revision.artifact.0 == BLOCKER_ARTIFACT
             });
             let status = match result {
@@ -131,7 +167,8 @@ fn reduce_event(
                     if !is_periodic(definition)
                         && definition.required_creates().iter().any(|artifact| {
                             !state.revisions.iter().any(|r| {
-                                r.by.as_ref() == Some(&attempt.action_id) && r.artifact == *artifact
+                                r.by.as_ref().is_some_and(|by| by.matches(&attempt))
+                                    && r.artifact == *artifact
                             })
                         }) =>
                 {
@@ -177,7 +214,7 @@ fn reduce_event(
                         state
                             .attempts
                             .iter()
-                            .find(|attempt| &attempt.action_id == action)
+                            .find(|attempt| action.matches(attempt))
                     })
                     .map(|attempt| &attempt.worker);
                 // A code worker (a periodic watch) keeps observing while the
@@ -232,12 +269,12 @@ fn reduce_event(
                         .attempts
                         .iter()
                         .rposition(|a| {
-                            a.action_id == *by
+                            by.matches(a)
                                 && a.unit == *unit
-                                && matches!(
+                                && (matches!(
                                     a.status,
                                     AttemptStatus::Pending | AttemptStatus::Running
-                                )
+                                ) || is_superseded_assignment_attempt(&state, a))
                         })
                         .ok_or_else(|| rejected("publication attempt is not current"))?,
                 ),
@@ -395,11 +432,6 @@ fn reduce_event(
             if review.0 == BLOCKER_REVIEW && parked_blocker(&state, unit).is_none() {
                 return Err(rejected("blocker is closed"));
             }
-            if !operator_review_is_open(program, &state, owner, when.as_ref(), context)?
-                || !reviewed_output_is_current(program, &state, owner, of)?
-            {
-                return Err(rejected("review is not open"));
-            }
             if state.decisions.iter().any(|d| {
                 matches!(d, DecisionState::Review { unit: existing_unit, review: existing_review,
                     decision: existing_decision, target: existing_target, payload: existing_payload, .. }
@@ -408,12 +440,21 @@ fn reduce_event(
             }) {
                 return Ok(deltas);
             }
+            if !operator_review_is_open(program, &state, owner, when.as_ref(), context)?
+                || !reviewed_output_is_current(program, &state, owner, of)?
+            {
+                return Err(rejected("review is not open"));
+            }
             let current = latest(&state, unit, decided_artifact(of, &decision_definition.on))
                 .ok_or_else(|| rejected("reviewed artifact unpublished"))?;
             if current.id != *target {
                 return Err(rejected("target is not latest revision"));
             }
-            if is_decided_by(&state, unit, review, target) {
+            if matches!(
+                decision_definition.operation,
+                DecisionOperation::Plain | DecisionOperation::ApproveAssessment
+            ) && is_decided_by(&state, unit, review, target)
+            {
                 return Err(rejected("review already decided on latest revision"));
             }
             if decision_definition.effect == DeclaredDecisionEffect::Approve
@@ -437,29 +478,46 @@ fn reduce_event(
                     return Err(rejected("decision payload fails schema"));
                 }
             }
-            let feedback_field = decision_definition
-                .feedback_field
-                .as_deref()
-                .unwrap_or("feedback");
-            if decision_definition.effect == DeclaredDecisionEffect::RequestChanges
-                && payload
-                    .get(feedback_field)
-                    .and_then(Value::as_str)
-                    .is_none_or(str::is_empty)
-            {
-                return Err(rejected("request_changes requires feedback"));
-            }
-            let id = decision_id(&state, unit);
-            let effect = match decision_definition.effect {
-                DeclaredDecisionEffect::Approve => DecisionEffect::Approve,
-                DeclaredDecisionEffect::RequestChanges => DecisionEffect::RequestChanges {
-                    feedback: payload
-                        .get(feedback_field)
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
+            let effect = match decision_definition.operation {
+                DecisionOperation::DispatchFeedback | DecisionOperation::DirectCorrection => {
+                    let DispatchPayload { rounds } = serde_json::from_value(payload.clone())
+                        .map_err(|_| rejected("dispatch requires rounds"))?;
+                    if rounds.is_empty() {
+                        return Err(rejected("dispatch requires rounds"));
+                    }
+                    let stage = checked_stage(program, owner)?;
+                    for round in &rounds {
+                        if !stage.workers.iter().any(|worker| matches!(worker, CheckedWorker::Agent { key, .. } if key.0 == round.worker.0)) {
+                            return Err(rejected(format!("recipient {} is not an agent worker of stage {}", round.worker, stage.key)));
+                        }
+                    }
+                    DecisionEffect::Dispatch { rounds }
+                }
+                DecisionOperation::ApproveAssessment => {
+                    if !payload.as_object().is_some_and(|fields| fields.is_empty()) {
+                        return Err(rejected("assessment approval requires an empty payload"));
+                    }
+                    DecisionEffect::Approve
+                }
+                DecisionOperation::Plain => match decision_definition.effect {
+                    DeclaredDecisionEffect::Approve => DecisionEffect::Approve,
+                    DeclaredDecisionEffect::RequestChanges => {
+                        let field = decision_definition
+                            .feedback_field
+                            .as_deref()
+                            .unwrap_or("feedback");
+                        let feedback = payload
+                            .get(field)
+                            .and_then(Value::as_str)
+                            .filter(|text| !text.is_empty())
+                            .ok_or_else(|| rejected("request_changes requires feedback"))?;
+                        DecisionEffect::RequestChanges {
+                            feedback: feedback.to_owned(),
+                        }
+                    }
                 },
             };
+            let id = decision_id(&state, unit);
             record!(Delta::PushDecision(DecisionState::Review {
                 id,
                 unit: unit.clone(),
@@ -536,4 +594,32 @@ fn reduce_event(
         }
     }
     Ok(deltas)
+}
+
+fn is_superseded_assignment_attempt(state: &StepSnapshot, attempt: &AttemptState) -> bool {
+    let Cause::AssignmentRound { round, .. } = &attempt.cause else {
+        return false;
+    };
+    let mut seen = None;
+    for decision in &state.decisions {
+        let DecisionState::Review {
+            unit,
+            effect: DecisionEffect::Dispatch { rounds },
+            ..
+        } = decision
+        else {
+            continue;
+        };
+        if unit != &attempt.unit {
+            continue;
+        }
+        for request in rounds {
+            if &request.round == round {
+                seen = Some(&request.assignment);
+            } else if seen == Some(&request.assignment) {
+                return true;
+            }
+        }
+    }
+    false
 }

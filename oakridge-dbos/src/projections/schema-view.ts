@@ -1,3 +1,4 @@
+import { BLOCKER_REVIEW } from "../core-client/core-types";
 import type { ParsedReviewDecision, ParsedWorkflow, Type } from "../core-client/core-types";
 
 /**
@@ -107,11 +108,12 @@ function aliasSchemas(name: string, aliases: Aliases): readonly Schema[] {
  * name text fields to collect. `request_changes` collects conventional
  * `feedback` unless the decision forwards a named payload field instead.
  */
-export function selectDecisionPayloadType(decision: ParsedReviewDecision): TypeNode {
+export function selectDecisionPayloadType(decision: ParsedReviewDecision, review?: string): TypeNode {
+  if (decision.operation && decision.operation !== "plain") return EMPTY_PAYLOAD;
   const declared = decision.payload == null ? null : typeNode(decision.payload);
   const fields = new Map<string, TypeNode>(declared?.kind === "record" ? declared.fields : []);
   for (const key of Object.keys(decision.fields ?? {})) if (!fields.has(key)) fields.set(key, { kind: "primitive", name: "text" });
-  if (decision.effect === "request_changes" && decision.feedback_field == null && !fields.has("feedback")) fields.set("feedback", { kind: "primitive", name: "text" });
+  if (decision.effect === "request_changes" && review !== BLOCKER_REVIEW && !fields.has("feedback")) fields.set("feedback", { kind: "primitive", name: "text" });
   if (declared && declared.kind !== "record") return declared;
   return { kind: "record", fields: [...fields].sort(([left], [right]) => left.localeCompare(right)) };
 }
@@ -130,11 +132,12 @@ export function selectWorkflowSchemas(workflow: ParsedWorkflow, order?: SchemaOr
     if (!stage) continue;
     nodes.push(typeNode(stage.input));
     for (const artifact of Object.values(stage.artifacts)) nodes.push(typeNode(artifact.schema));
-    for (const review of Object.values(stage.reviews ?? {}))
-      for (const decision of Object.values(review.decisions)) nodes.push(selectDecisionPayloadType(decision));
+    for (const [reviewKey, review] of Object.entries(stage.reviews ?? {}))
+      for (const decision of Object.values(review.decisions)) nodes.push(selectDecisionPayloadType(decision, reviewKey));
   }
   const aliases = workflow.schemas ?? {};
-  const all = [...(order?.schema_names ?? Object.keys(aliases)).flatMap((name) => aliasSchemas(name, aliases)), ...nodes.flatMap(nodeSchemas)];
+  const names = new Set([...(order?.schema_names ?? []), ...Object.keys(aliases)]);
+  const all = [...[...names].flatMap((name) => aliasSchemas(name, aliases)), ...nodes.flatMap(nodeSchemas)];
   const seen = new Set<string>();
   return all.filter((schema) => !seen.has(schema.key) && !!seen.add(schema.key));
 }

@@ -65,7 +65,7 @@ const drilldown = (selector: object, stage: string) => ({ logical_item_id: id("l
 const stageOf = (stage: string, overrides: Partial<ObservationStageCompositeRead> = {}): ObservationStageCompositeRead => ({ stage, state: "pending", results: paged([]), publication: { state: "pending" },
   totals: { contributing_items: 0, not_ready_items: 0, pending_items: 0, failed_items: 0, budget_deferred_items: 0, grading_off_items: 0, superseded_items: 0, superseded_answers: 0 },
   questions: paged([]), answers: paged([]), statuses: paged([]), disagreements: paged([]), items: drilldown({ kind: "items" }, stage), history: drilldown({ kind: "history" }, stage), ...overrides });
-export const taskComposite = (task_id = "T1"): ObservationCompositeRead => ({ run_id: id("run-1"), logical_item_id: id("l1"), scope: "task", producer_local_id: task_id, coverage: "linked", stages: paged([
+export const taskComposite = (task_id = "T1"): ObservationCompositeRead => ({ run_id: id("run-1"), logical_item_id: id("l1"), scope: "task", task_kind: "requirement", producer_local_id: task_id, repositories: [], coverage: "linked", stages: paged([
   stageOf("analysis"),
   stageOf("implementation", { state: "linked", publication: { state: "published", is_final: false, unit_ids: paged(["run-1/implementation/one"]) },
     totals: { contributing_items: 2, not_ready_items: 0, pending_items: 1, failed_items: 0, budget_deferred_items: 0, grading_off_items: 0, superseded_items: 1, superseded_answers: 1 },

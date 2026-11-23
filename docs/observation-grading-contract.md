@@ -195,15 +195,15 @@ exists, and no read depends on having answered.
 
 ## Oakridge profile
 
-- **Items:** `finding` from each analysis finding and `assessment_finding` from each implementation or
-  integration assessment finding, both addressed by revision and path. Item identity holds no task id.
-- **Tasks:** one run-scoped logical item per `task_id`, from the `tasks` artifact. Plan and brief
-  `acceptance_criteria` entries are occurrences of that logical item; their `id` is the task id. A task
-  shared by cohorts stays one logical item, and the same id in another run is another item.
-- **Links:** each id in an assessment finding's `task_ids` is one `assesses` edge to the logical task.
-  An empty list is valid. An unknown id stays unresolved and resolves in place if the task arrives.
-  Links are never inferred from requirement ids, feedback, text, timestamps or unit paths.
-- **Late links:** an explicit analysis-link declaration (below) adds an edge to an original finding
+- **Items:** `observation-extraction-catalogue.md` lists every registered artifact, its selectors, the
+  item kind each selector yields and the links it authors. Items are addressed by revision and path.
+- **Tasks:** one logical item per run, task kind and authored local id. A task shared by cohorts stays
+  one logical item, and the same id in another run is another item.
+- **Links:** only the ones an artifact authors. A bound link resolves within the input bindings recorded
+  on the delivered revision, and a proposal citation resolves at its exact revision id and JSON pointer.
+  A link whose target is not captured stays unresolved. Links are never inferred from text, timestamps
+  or unit paths.
+- **Late links:** capturing a referenced revision can resolve an existing edge
   addressed by source revision and path, without touching the item, its pins, evidence or answers.
 - **Composites:** the profile's path follows a task's incoming `assesses` edges to occurrences and on to
   their task-specific answers; per_item grades appear only as linked context. A composite is a read and creates no record.
@@ -242,69 +242,18 @@ assessment's absent build subject or an empty citation list.
 
 ## Approvals
 
-Approvals stay in Oakridge. `operator_decided` maps to `ignored` for accept and request-changes alike:
+Approvals stay in Oakridge. `operator_decided` maps to an `other` event for accept and request-changes alike:
 it advances the source cursor and creates no evidence, execution or answer. An approval creates no
 link either.
 
-## Analysis-link declarations
+## Committed revision links
 
-A declaration (`oakridge-dbos/src/domain/analysis-link-declaration.ts`) is a producer's explicit statement
-that original analysis findings assess tracked tasks:
-
-```json
-{ "run_id": "...", "tasks_revision_id": "<exact approved tasks revision>",
-  "entries": [{ "source_revision_id": "<analysis revision>", "item_path": "/findings/0", "task_ids": ["T1"] }] }
-```
-
-`POST /api/runs/:run_id/analysis-links` takes `request_id`, `tasks_revision_id` and `entries` under the
-operator credential, and resolves the writer from that credential.
-
-1. **No applicable entries, no declaration.** An entry with no task id is dropped. If none remain, the
-   route answers `{ "kind": "no_declaration" }` and journals nothing. Missing links are valid and ask
-   nothing of anyone.
-2. **The exact context is checked under the run lock.** The named revision must be this run's `tasks`
-   revision and have an `approve` decision of its own; a later approved revision does not stand in for it.
-   Each source must be this run's `analysis` revision with a finding at exactly `/findings/<index>`.
-   A refusal is a 409 with a stored receipt, so a replay returns it again.
-3. **It is journaled, not stepped.** A valid declaration is one `analysis_links_declared` row in
-   `authority.event`, holding the supplied payload. The core never sees it: it opens no attempt, changes no
-   unit and starts no worker. It does not count as the run moving on, so a stall or fault still stands.
-   No part of it reads requirement ids, feedback, text, timestamps or unit paths.
-4. **It travels the one ordered feed.** The publisher maps the row to a `relation_declaration` outcome
-   carrying the journaled payload, in the same `(commit_txid, id)` order as every other event, so an
-   observation outage cannot touch the approval or the run.
-5. **Observation projects it in the delivery's transaction.** The Oakridge profile reads the declaration
-   (`observation/src/producers/oakridge/declarations.ts`); generic code receives only `RelationDeclaration`s.
-   Each task id becomes one `producer_explicit` `assesses` edge to that run's logical task. The edges, the
-   stored outcome and the cursor commit together, so a delivery applied before a lost acknowledgement is
-   not applied again: the restarted publisher asks the service where it is and moves on, and a stale
-   redelivery gets a 409.
-
-An edge's identity comes from its source, the tasks revision and the task id, so the same statement declared
-twice is one relation. The same statement against another tasks revision is a second path to the same
-task, and a composite still counts the item once.
-
-An unknown task stays an unresolved edge, visible, and resolves in place if that run captures the task. A
-source this service holds no item for, or one in another run, gets no edge: it is kept on the stored outcome
-as `projection.unresolved_sources`, read with `readRelationDeclarations`, and the cursor still advances. A
-declaration the profile cannot read is recorded as `unmapped`.
-
-A declaration starts no reconciliation, so a link can never admit, retry or send anything. It leaves the
-item, its pins, frozen evidence, answers, executions, provider attempts and request counts as they were.
-
-**The caller.** The approved-tasks caller is the tasks review's own decision:
-`POST /api/runs/:run_id/units/:unit_id/reviews/tasks_review/decide` takes an optional `analysis_links` list of
-`{ source_revision_id, item_path, task_ids }`. The declaration names the revision the decision targets, and
-commits in the decision's transaction, so a crash cannot leave one without the other. Supplying nothing is the
-ordinary case: nothing is journaled and the response is unchanged. A refused entry refuses only the
-declaration, which the response reports as `analysis_links: { "kind": "refused", "reason": ... }`, and the
-decision stands. A retried request answers from both receipts. `operator_decided` still maps to ignored; only
-the separate declaration event carries associations. `POST /api/runs/:run_id/analysis-links` stays for links
-supplied after that approval.
-
-**What does not supply them.** Neither `tasks` nor `analysis` carries an association, and no agent step
-produces one, so a run gets late links only when a decision's caller supplies them. Having agents declare
-them needs a `tasks` artifact field or an agent output, which is an operator decision.
+The committed delivery identifies each revision that was inserted by the event.
+Each revision carries its origin and frozen input bindings. Development links
+to an input artifact resolve only through those bindings. A proposal links to
+the occurrence at its authored citation's revision ID and JSON pointer.
+Task links come from authored workflow fields. An unresolved link remains
+visible until its authored target arrives.
 
 ## Composites and lineage
 
@@ -315,10 +264,9 @@ nothing onto the task and produces no overall verdict. The producer's `Composite
 
 **Association.** A task includes every occurrence whose own logical item is that task, plus source
 occurrences of resolved edges whose target logical item is the task and whose generic
-`RELATION_SEMANTICS` flag establishes task association. `addresses` establishes association; `assesses` establishes and propagates it;
+`RELATION_SEMANTICS` flag establishes task association. `addresses` and `assesses` establish and propagate association.
 `supersedes`, `split_from` and `merged_from` establish and propagate it. Once an occurrence is
-associated, association flows to occurrences that name it through propagating edges. `derived_from`
-never establishes or propagates task association. Unresolved edges never associate an
+associated, association flows to occurrences that name it through propagating edges. `derived_from` propagates association through an occurrence target. Unresolved edges never associate an
 item. A breadth-first traversal with a visited set returns each occurrence once, retaining a shortest
 provenance path: `own`, or the establishing edge followed by propagating hops. Each hop retains its
 `relation_id`, type, `evidence_ref` and `asserted_by`.
@@ -383,7 +331,7 @@ drilldown total agree. These reads need no submission, assignment or reveal reco
 The ingest credential uses `GET /v1/sources/oakridge/cursor` and `POST /v1/sources/oakridge/events`.
 The grade credential uses `POST /v1/items/:id/answers` and `GET /v1/reviewer`. The read credential uses:
 
-- `GET /v1/sources/oakridge/unmapped`, `GET /v1/source-revisions/:id`
+- `GET /v1/source-revisions/:id`
 - `GET /v1/runs/:run_id/items`, `GET /v1/items/:id`, `GET /v1/items/:id/lineage`, `GET /v1/items/:id/grades`
 - `GET /v1/runs/:run_id/items/at?source_revision_id=&item_path=`: one item by its exact address, with no task or cohort
 - `GET /v1/items/:id/status`: each pinned question's definition, own readiness, frozen evidence, each machine evaluator's state and attempts, every answer and correction history, and the item's explicit links
@@ -408,9 +356,8 @@ them for the PWA. kbbl serves the same reads under task names: `/runs/:run_id/ta
 ## Verification
 
 Offline, from the repository root, with `OAKRIDGE_TEST_DATABASE_URL` naming a local PostgreSQL:
-`bun run --filter observation test` and `bun run typecheck`. No storage record changed, and
-`bun run --filter observation storage:check` passes against the existing baseline. No authority or
-observation baseline, core contract or generated definition changed for declarations or composites.
+`bun run --filter observation test` and `bun run typecheck`.
+`bun run --filter observation storage:check` checks the generated storage records against the baseline.
 
 - `observation/tests/grader-configuration.test.ts`: the committed `graders.json` configures every
   question; registration selects exactly the configured graders plus one human evaluator; several
@@ -437,14 +384,9 @@ observation baseline, core contract or generated definition changed for declarat
   absent file as `is_absent: true` and the reported test results; and the committed instructions
   naming that shape.
 
-- `oakridge-dbos/tests/analysis-link-declaration.test.ts`: the exact approved revision, a newer unapproved
-  one, another run's addresses, replayed and reused ingress ids, the route with nothing applicable, standing
-  stalls, and through the real feed, failed delivery, a lost acknowledgement, stale redelivery and repeats.
-- `oakridge-dbos/tests/observation-process-restart.test.ts`: a real publisher process killed before a
-  declaration is applied, and after it is applied but before its acknowledgement, each delivering it once
-  when restarted.
-- `observation/tests/relation-declaration.test.ts`: what a declaration decodes to, unchanged items,
-  repeats, unresolved targets, absent and other-run sources, tenant isolation and unmapped declarations.
+- `oakridge-dbos/tests/observation-delivery.integration.test.ts` checks cursor advances for unchanged polls,
+  exact revision IDs, frozen inputs, and idempotent redelivery through a real observation service.
+- `observation/tests/task-projection.test.ts` checks resolution of late task and bound occurrence targets.
 - `observation/tests/composite.test.ts`: a finding graded before tasks and linked late beside an unlinked
   control, one task through two cohorts and revised plan and briefs, newer empty revisions, stages,
   integration pending then final, corrections, disagreement, every status, unknown tasks, duplicate

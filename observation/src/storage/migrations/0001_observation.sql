@@ -25,6 +25,8 @@ CREATE TABLE observation.source_revision (
   captured_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   predecessor_id text,
   subject_id text,
+  origin jsonb NOT NULL,
+  input_bindings jsonb NOT NULL,
   PRIMARY KEY (producer, namespace, revision_id),
   CHECK (producer <> '' AND namespace <> '' AND revision_id <> ''),
   CHECK (predecessor_id IS NULL OR predecessor_id <> ''),
@@ -35,13 +37,15 @@ CREATE TABLE observation.source_revision (
 CREATE TABLE observation.extractor_definition (
   producer text NOT NULL,
   namespace text NOT NULL,
+  definition_id text NOT NULL,
+  stage text NOT NULL,
   artifact_kind text NOT NULL,
   schema_version text NOT NULL,
   extractor_id text NOT NULL,
   extractor_version text NOT NULL,
   item_kind text NOT NULL,
   item_selector text NOT NULL,
-  PRIMARY KEY (producer, namespace, artifact_kind, schema_version, extractor_id, extractor_version),
+  PRIMARY KEY (producer, namespace, definition_id, stage, artifact_kind, schema_version, extractor_id, extractor_version),
   CHECK (producer <> '' AND namespace <> '' AND extractor_id <> '' AND extractor_version <> '')
 );
 
@@ -51,9 +55,11 @@ CREATE TABLE observation.logical_item (
   logical_item_id text NOT NULL,
   run_id text NOT NULL,
   scope text NOT NULL,
+  task_kind text,
   producer_local_id text NOT NULL,
   PRIMARY KEY (producer, namespace, logical_item_id),
-  CHECK (logical_item_id = producer || ':' || namespace || ':' || run_id || ':' || scope || ':' || producer_local_id)
+  CHECK ((scope <> 'task') = (task_kind IS NULL)),
+  CHECK (logical_item_id = producer || ':' || namespace || ':' || run_id || ':' || scope || COALESCE(':' || task_kind, '') || ':' || producer_local_id)
 );
 
 CREATE TABLE observation.item_occurrence (
@@ -62,6 +68,8 @@ CREATE TABLE observation.item_occurrence (
   occurrence_id text NOT NULL,
   revision_id text NOT NULL,
   run_id text NOT NULL,
+  definition_id text NOT NULL,
+  stage text NOT NULL,
   artifact_kind text NOT NULL,
   schema_version text NOT NULL,
   extractor_id text NOT NULL,
@@ -81,8 +89,8 @@ CREATE TABLE observation.item_occurrence (
   UNIQUE (producer, namespace, revision_id, extractor_id, extractor_version, item_selector, item_id_or_path),
   FOREIGN KEY (producer, namespace, revision_id)
     REFERENCES observation.source_revision(producer, namespace, revision_id),
-  FOREIGN KEY (producer, namespace, artifact_kind, schema_version, extractor_id, extractor_version)
-    REFERENCES observation.extractor_definition(producer, namespace, artifact_kind, schema_version, extractor_id, extractor_version),
+  FOREIGN KEY (producer, namespace, definition_id, stage, artifact_kind, schema_version, extractor_id, extractor_version)
+    REFERENCES observation.extractor_definition(producer, namespace, definition_id, stage, artifact_kind, schema_version, extractor_id, extractor_version),
   FOREIGN KEY (producer, namespace, logical_item_id)
     REFERENCES observation.logical_item(producer, namespace, logical_item_id),
   CHECK (occurrence_id ~ '^canonical-json/v1:[0-9a-f]{64}$'),
@@ -103,6 +111,7 @@ CREATE TABLE observation.item_relation (
   type text NOT NULL CHECK (type IN ('derived_from', 'addresses', 'assesses', 'supersedes', 'split_from', 'merged_from')),
   asserted_by text NOT NULL CHECK (asserted_by IN ('producer_explicit', 'human', 'inferred')),
   evidence_ref text NOT NULL,
+  qualifier jsonb,
   algorithm text,
   algorithm_version text,
   recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -135,7 +144,7 @@ CREATE TABLE observation.extraction_issue (
   extractor_id text NOT NULL,
   extractor_version text NOT NULL,
   item_selector text NOT NULL,
-  kind text NOT NULL CHECK (kind IN ('extraction_failed', 'no_matching_items', 'identity_collision', 'unresolved_relation')),
+  kind text NOT NULL CHECK (kind IN ('extraction_failed', 'no_matching_items', 'unregistered_declaration', 'identity_collision', 'unresolved_relation')),
   detail text NOT NULL,
   is_retriable boolean NOT NULL,
   recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -380,9 +389,7 @@ CREATE TABLE observation.source_event_outcome (
   PRIMARY KEY (producer, namespace, event_id)
 );
 CREATE INDEX source_event_outcome_run ON observation.source_event_outcome(producer, namespace, run_id, outcome_kind);
--- Recorded revision provenance is read by revision id on every captured revision read.
-CREATE INDEX source_event_outcome_v4_revision ON observation.source_event_outcome(producer, namespace, (detail #>> '{revision,source,revision_id}'), commit_txid, event_id)
-  WHERE outcome_kind = 'artifact_revision' AND detail #>> '{revision,format}' = 'observation.artifact-revision/v4';
+CREATE INDEX source_revision_bound_artifact ON observation.source_revision(producer, namespace, run_id, artifact_kind, revision_id);
 
 -- Transaction-local tenant context is set by the storage adapter for every query.
 DO $$

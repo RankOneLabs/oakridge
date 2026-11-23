@@ -33,15 +33,15 @@ function nullableText(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
-export function parsePrSummary(body: unknown): Result<PrSummary, PrSummaryParseError> {
+export function parsePrSummary(body: unknown, linkField: string): Result<PrSummary, PrSummaryParseError> {
   if (!isRecord(body)) return fail("body", "expected an object");
-  for (const field of ["pr_url", "branch", "summary"] as const) {
+  for (const field of [linkField, "branch", "summary"]) {
     if (typeof body[field] !== "string") return fail(field, "expected a string");
   }
   return {
     ok: true,
     value: {
-      pr_url: body.pr_url as string,
+      pr_url: body[linkField] as string,
       branch: body.branch as string,
       summary: body.summary as string,
       review_status: REVIEW_STATUSES.find((status) => status === body.review_status) ?? null,

@@ -16,6 +16,7 @@ pub fn step_with_limits(
     limits: &ResourceLimits,
 ) -> Result<StepResult, StepError> {
     let mut context = EvaluationContext::new(limits);
+    context.program = Some(program);
     for unit in &snapshot.units {
         if let Some(input) = &unit.input {
             context.check_value(input)?;
@@ -31,7 +32,7 @@ pub fn step_with_limits(
         context.check_value(&decision.payload())?;
     }
     let mut state = snapshot.clone();
-    let deltas = reduce(
+    let reduction = reduce(
         &State {
             snapshot: &state,
             program,
@@ -40,7 +41,51 @@ pub fn step_with_limits(
         incoming,
     )
     .map_err(|error| attribute_event(error, snapshot, incoming))?;
-    apply_all(&mut state, &mut context, deltas);
+    let inserted_revision = reduction
+        .deltas
+        .iter()
+        .any(|delta| matches!(delta, Delta::PushRevision(_)));
+    apply_all(&mut state, &mut context, reduction.deltas);
+    let publication_bindings = match (&incoming.event, &incoming.writer) {
+        (
+            Event::RevisionPublished {
+                unit,
+                artifact,
+                predecessor,
+                subject,
+                ..
+            },
+            Writer::Operator { .. },
+        ) if inserted_revision => {
+            let owner = snapshot
+                .units
+                .iter()
+                .find(|candidate| candidate.id == *unit)
+                .ok_or_else(|| invalid("publication unit absent"))?;
+            let producer = checked_stage(program, owner)?
+                .workers
+                .iter()
+                .find(|worker| worker.creates().contains(artifact))
+                .ok_or_else(|| invalid("artifact has no creator"))?;
+            let (_, mut bindings) =
+                wants::resolve_worker_inputs(producer, owner, snapshot, &mut context)?;
+            for (name, id) in [
+                ("$subject", subject.as_ref()),
+                ("$previous", predecessor.as_ref()),
+            ] {
+                if let Some(revision) = id.and_then(|id| {
+                    snapshot
+                        .revisions
+                        .iter()
+                        .find(|revision| revision.id == *id)
+                }) {
+                    bindings.push(wants::revision_binding(name, revision));
+                }
+            }
+            Some(bindings)
+        }
+        _ => None,
+    };
     match advance_reduced(program, state, &mut context) {
         // A launch that cannot advance never started: it is refused, as a
         // launch whose input fails, not a stall of a run that is going.
@@ -52,7 +97,11 @@ pub fn step_with_limits(
                 entity: StepEntity::Unit { unit },
             })
         }
-        other => other,
+        other => other.map(|mut result| {
+            result.publication_bindings = publication_bindings;
+            result.run_label = reduction.run_label;
+            result
+        }),
     }
 }
 /// Everything after the event is applied: advance to a fixpoint, then
@@ -92,6 +141,8 @@ pub(super) fn advance_reduced(
     apply_all(&mut state, context, pending);
     let blocked = blocked_units(program, &state, context)?;
     Ok(StepResult {
+        run_label: None,
+        publication_bindings: None,
         snapshot: state,
         wanted,
         reviews,

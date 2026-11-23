@@ -244,6 +244,7 @@ export interface SessionsRouteDeps {
   oakridgeBaseUrl?: string;
   /** Sent on the session-hold lookup, an operator route of the Oakridge backend. */
   oakridgeControlToken?: string;
+  defaultPrIntegration?: import("../../../../oakridge-dbos/src/domain/pr-integration").PrIntegration;
 }
 
 /**
@@ -291,7 +292,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       inheritWorktreeFrom = body.inherit_worktree_from.trim();
     }
     if (worktree && inheritWorktreeFrom !== undefined) return c.json({ error: "worktree cannot be combined with inherit_worktree_from" }, 400);
-    const workflowResult = parseWorkflowIdentity(body.workflow);
+    const workflowResult = parseWorkflowIdentity(body.workflow, deps.defaultPrIntegration);
     if ("error" in workflowResult) return c.json({ error: workflowResult.error }, 400);
     const startSpec: AcpSessionStartSpec = {
       initial_prompt: body.initial_prompt,

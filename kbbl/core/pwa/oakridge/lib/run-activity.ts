@@ -1,7 +1,9 @@
-import { parseOakridgeRunEventFrame } from "../client";
+import type { OperatorRecordedFeedbackDisposition } from "../operator-contracts/storage/read-store";
+import { parseUnitViews } from "../adapters/parse";
+import { parseUnitHistory, runActivityEvents, type UnitActivityHistory } from "../adapters/activity";
+import { unwrap } from "../adapters/core";
 import type { RunEvent, RunEventOperation } from "../run-types";
 
-const PAGE_SIZE = 500;
 
 const ACTIVITY_OPERATIONS: ReadonlySet<RunEventOperation> = new Set([
   "input_revised",
@@ -25,7 +27,7 @@ export interface RunActivityItem {
 }
 
 export type RunActivityRead =
-  | { readonly kind: "loaded"; readonly items: readonly RunActivityItem[] }
+  | { readonly kind: "loaded"; readonly items: readonly RunActivityItem[]; readonly dispositions?: readonly OperatorRecordedFeedbackDisposition[] }
   | { readonly kind: "pending" }
   | { readonly kind: "unavailable" };
 
@@ -81,24 +83,35 @@ export const selectRunActivity = (
       return leftSequence === rightSequence ? 0 : leftSequence > rightSequence ? -1 : 1;
     });
 
-/** Read one run's durable ledger to exhaustion; `/run_events` is ascending and paged. */
-export async function fetchRunEvents(runId: string): Promise<readonly RunEvent[]> {
-  const events: RunEvent[] = [];
-  let after: string | null = null;
-  while (true) {
-    const query = new URLSearchParams({ limit: String(PAGE_SIZE), run_id: runId });
-    if (after !== null) query.set("after", after);
-    const response = await fetch(`/oakridge/api/run_events?${query.toString()}`);
+/** Read the durable histories through the same unit routes as the operator views. */
+export interface RunActivityHistory {
+  readonly events: readonly RunEvent[];
+  readonly dispositions: readonly OperatorRecordedFeedbackDisposition[];
+}
+
+export async function fetchRunEvents(runId: string): Promise<RunActivityHistory> {
+  const unitsPath = `/oakridge/api/runs/${encodeURIComponent(runId)}/units`;
+  const read = async (path: string): Promise<unknown> => {
+    const response = await fetch(path);
     if (!response.ok) throw new Error(`run activity: ${response.status}`);
-    const body: unknown = await response.json();
-    if (!Array.isArray(body)) throw new Error("run activity response was not a list");
-    const page = body.map((value) => {
-      const event = parseOakridgeRunEventFrame(JSON.stringify({ ...value, replayed: true }));
-      if (event === null) throw new Error("run activity response contained an invalid event");
-      return event as RunEvent;
-    });
-    events.push(...page);
-    if (page.length < PAGE_SIZE) return events;
-    after = page[page.length - 1]?.sequence ?? after;
-  }
+    return response.json();
+  };
+  const units = unwrap(unitsPath, parseUnitViews(await read(unitsPath)));
+  const histories = await Promise.all(units.map(async (unit): Promise<UnitActivityHistory> => {
+    const events: UnitActivityHistory["events"][number][] = [];
+    let cursor: string | null = null;
+    do {
+      const params = new URLSearchParams({ limit: String(100) });
+      if (cursor !== null) params.set("cursor", cursor);
+      const path = `${unitsPath}/${encodeURIComponent(unit.unit_id)}/history?${params}`;
+      const page = unwrap(path, parseUnitHistory(await read(path)));
+      if (page.unit_id !== unit.unit_id) throw new Error("run activity returned the wrong unit");
+      events.push(...page.events);
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+    return { unit, events };
+  }));
+  const dispositions = histories.flatMap(({ events }) => events.flatMap((event) => event.feedback_dispositions ?? []))
+    .sort((left, right) => right.created_at.localeCompare(left.created_at));
+  return { events: runActivityEvents(runId, histories), dispositions };
 }

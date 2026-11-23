@@ -74,6 +74,7 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
       id?: unknown;
       label?: unknown;
       models?: unknown;
+      default_model?: unknown;
       efforts?: unknown;
       supportsCompaction?: unknown;
     };
@@ -82,6 +83,7 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
       id: runtime.id,
       label: typeof runtime.label === "string" ? runtime.label : runtime.id,
       models: coerceRuntimeModels(runtime.models),
+      default_model: typeof runtime.default_model === "string" ? runtime.default_model : null,
       efforts: coerceRuntimeModels(runtime.efforts),
       supportsCompaction: runtime.supportsCompaction === true,
     }];

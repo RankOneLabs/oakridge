@@ -8,7 +8,7 @@ import { oakridgeGradingRegistry } from "../src/producers/oakridge/profile";
 import { fixtureBody } from "./grading-fixture";
 
 const revision = (kind: string, body: JsonValue): CapturedRevision => ({ revision_id: kind as ArtifactRevisionId,
-  artifact_kind: kind, stage: kind, subject_id: null, body });
+  artifact_kind: kind, stage: kind, subject_id: null, input_bindings: [], body });
 async function currentConfiguration() {
   const document = await Bun.file(new URL("./fixtures/grading-definitions-current.json", import.meta.url)).json();
   const definitions = parseGradingDefinitions(document.definitions, oakridgeGradingRegistry);
@@ -58,7 +58,7 @@ test("allocations resolve requirement_id in the spec", async () => {
 });
 test("item assessments collect the brief build item from recorded provenance", async () => {
   const { source: sources, revisions, artifact, question } = await context();
-  revisions.set("assessment", { ...revisions.get("assessment")!, brief_revision_ids: ["brief"] });
+  revisions.set("assessment", { ...revisions.get("assessment")!, input_bindings: [{ input: "brief", unit: "brief", revision_id: "brief" }] });
   expect(await oakridgeCapabilities.assessed_build_items!.resolve({ sources, question,
     artifact: { ...artifact, revision_id: "assessment" as ArtifactRevisionId, item_kind: "item_assessment", selected_value: { subject: { kind: "build_item", id: "B1" } } } }, {}))
     .toMatchObject({ state: "ready", references: [{ ref: "assessed_build_item:0", revision_id: "brief", content: { id: "B1" } }] });
@@ -112,7 +112,7 @@ test("configured canonical requirement coverage compares its definition with the
 
 for (const [question_id, kind, path, fixture] of [
   ["technical_decision.correctness", "technical_decision", "/technical_decisions/0", "brief"],
-  ["next_action.correctness", "next_action", "/next_actions/0", "assessment"],
+  ["feedback_proposal.correctness", "feedback_proposal", "/proposals/0", "assessment"],
 ] as const) test(`configured ${kind} grading includes its exact source container`, async () => {
   const registration = await currentConfiguration();
   const { source, artifact, revisions } = await context();

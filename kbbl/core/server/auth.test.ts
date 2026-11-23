@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 
 import {
   isLoopbackHost,
+  isPublicRequest,
+  KBBL_PUBLIC_PATHS,
   makeAuthStatusHandler,
   makeControlAuthMiddleware,
   makeCookieHandler,
@@ -117,15 +119,35 @@ describe("isLoopbackHost", () => {
   test("rejects LAN address", () => expect(isLoopbackHost("192.168.1.1")).toBe(false));
 });
 
+describe("isPublicRequest", () => {
+  test.each([
+    ["GET", "/auth/status", true],
+    ["HEAD", "/assets/index-abc.js", true],
+    ["GET", "/", true],
+    ["POST", "/auth/status", false],
+    ["GET", "/sessions", false],
+    ["GET", "/assetsx", false],
+  ] as const)("%s %s has public access %s", (method, path, isPublic) => {
+    expect(isPublicRequest({ method, path }, KBBL_PUBLIC_PATHS)).toBe(isPublic);
+  });
+
+  test("an empty allow-list denies even an otherwise public path", () => {
+    expect(isPublicRequest({ method: "GET", path: "/" }, [])).toBe(false);
+  });
+});
+
 // ---- makeControlAuthMiddleware -----------------------------------------------
 
 function buildApp(policy: AuthPolicy): Hono {
   const app = new Hono();
-  app.use("/*", makeControlAuthMiddleware(policy));
-  app.get("/read", (c) => c.json({ ok: true }));
-  app.post("/write", (c) => c.json({ ok: true }));
-  app.delete("/write", (c) => c.json({ ok: true }));
-  app.post("/hook/approval", (c) => c.json({ ok: true }));
+  app.use("/*", makeControlAuthMiddleware(policy, { publicPaths: KBBL_PUBLIC_PATHS }));
+  const ok = (c: Context) => c.json({ ok: true });
+  for (const path of ["/auth/status", "/assets/index-abc.js", "/", "/sessions", "/sessions/:sid/items", "/directories", "/live", "/read"]) {
+    app.get(path, ok);
+  }
+  app.post("/write", ok);
+  app.delete("/write", ok);
+  app.all("/hook/*", ok);
   return app;
 }
 
@@ -156,14 +178,58 @@ describe("makeControlAuthMiddleware — token mode", () => {
   const TOKEN = "test-secret-token";
   const app = buildApp({ mode: "token", token: TOKEN });
 
-  test("GET passes through without auth", async () => {
-    const res = await app.request("/read");
+  test("GET /sessions/:sid/items without credentials returns a Bearer challenge", async () => {
+    const res = await app.request("/sessions/sid-1/items");
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toMatch(/Bearer/);
+  });
+
+  for (const path of ["/sessions", "/directories", "/read", "/live"]) {
+    test.each(["GET", "HEAD"])("%s " + path + " without credentials returns 401", async (method) => {
+      expect((await app.request(path, { method })).status).toBe(401);
+    });
+  }
+
+  test.each([
+    ["POST", "/hook/approval"],
+    ["GET", "/hook/anything"],
+    ["GET", "/no-such-route"],
+    ["GET", "/assets/%2e%2e/sessions"],
+  ])("%s %s without credentials returns 401", async (method, path) => {
+    expect((await app.request(path, { method })).status).toBe(401);
+  });
+
+  test.each([
+    ["GET", "/auth/status"],
+    ["GET", "/"],
+    ["GET", "/assets/index-abc.js"],
+    ["HEAD", "/assets/index-abc.js"],
+  ])("%s %s without credentials returns 200", async (method, path) => {
+    expect((await app.request(path, { method })).status).toBe(200);
+  });
+
+  test("GET /sessions/:sid/items with a Bearer token returns 200", async () => {
+    const res = await app.request("/sessions/sid-1/items", {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
     expect(res.status).toBe(200);
   });
 
-  test("POST /hook/* passes through without auth (loopback-verified adapter)", async () => {
-    const res = await app.request("/hook/approval", { method: "POST" });
+  test("GET /live with a valid cookie and same-origin Referer returns 200", async () => {
+    const res = await app.request("/live", {
+      headers: { cookie: `kbbl_ctrl=${TOKEN}`, referer: "http://localhost/" },
+    });
     expect(res.status).toBe(200);
+  });
+
+  test("GET /sessions with a valid cookie but no same-origin header returns 403", async () => {
+    const res = await app.request("/sessions", { headers: { cookie: `kbbl_ctrl=${TOKEN}` } });
+    expect(res.status).toBe(403);
+  });
+
+  test("GET /sessions with the wrong Bearer token returns 403", async () => {
+    const res = await app.request("/sessions", { headers: { authorization: "Bearer wrong-token" } });
+    expect(res.status).toBe(403);
   });
 
   test("POST without credentials returns 401 with WWW-Authenticate", async () => {

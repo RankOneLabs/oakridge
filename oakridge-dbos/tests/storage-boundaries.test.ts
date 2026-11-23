@@ -42,11 +42,12 @@ export function rawSqlViolations(files: readonly SourceFile[]): readonly string[
 }
 
 const WORKFLOW_STATE = ["run", "unit", "unit_dependency", "attempt", "artifact_revision", "review_decision", "event", "wanted_log",
-  "effect_intent", "ingress_receipt", "operator_event"] as const;
+  "effect_intent", "ingress_receipt", "keyed_execution", "operator_event"] as const;
 type Write = "insertInto" | "updateTable" | "deleteFrom";
 /** Who besides commit may write which workflow-state table, and how (rescue spec §2.2). */
 const SANCTIONED: { readonly [path: string]: { readonly [table: string]: readonly Write[] } } = {
   "storage/commit.ts": Object.fromEntries(WORKFLOW_STATE.map((table) => [table, ["insertInto", "updateTable"]])),
+  "storage/keyed-execution-store.ts": { keyed_execution: ["insertInto", "updateTable"], ingress_receipt: ["insertInto"], operator_event: ["insertInto"] },
   "storage/executor-store.ts": { effect_intent: ["updateTable"] },
   "storage/operator-store.ts": { operator_event: ["insertInto"], run: ["updateTable"] },
   "storage/run-deletion.ts": { ...Object.fromEntries(WORKFLOW_STATE.map((table) => [table, ["deleteFrom"]])),

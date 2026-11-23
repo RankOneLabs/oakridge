@@ -35,6 +35,7 @@ export interface RuntimeModelOption {
 }
 
 export interface RuntimeDescriptor {
+  readonly default_model?: string | null;
   id: RuntimeId;
   label: string;
   models: RuntimeModelOption[];

@@ -1,9 +1,7 @@
-import { selectRecordedAdjudication, type Adjudication } from "../domain/adjudication";
 import type { Event, ResolvedDecision, Writer } from "../core-client/core-types";
-import { ANALYSIS_LINKS_DECLARED } from "../domain/analysis-link-declaration";
 import type { UnitId } from "../domain/primitives";
 import type { AuthorityEffectStatus } from "../storage/db-types";
-import type { HistoryPage, UnitDiagnosticsRead } from "../storage/read-store";
+import type { HistoryPage, RecordedFeedbackDisposition, UnitDiagnosticsRead } from "../storage/read-store";
 import { selectAttemptViews, type AttemptView } from "./unit-view";
 
 /** One event that addressed the unit. */
@@ -13,20 +11,16 @@ export interface EventHistory {
   readonly ingress_id: string | null;
   readonly event: Event;
   readonly writer: Writer;
+  readonly feedback_dispositions: readonly RecordedFeedbackDisposition[];
   readonly created_at: Date;
-  readonly adjudication?: Adjudication | null;
-  readonly assessment_revision_id?: string | null;
 }
 /** The events that addressed a unit, newest first, paged. */
 export interface UnitHistory { readonly unit_id: UnitId; readonly events: readonly EventHistory[]; readonly next_cursor: string | null }
 
 export function selectUnitHistory(unit_id: UnitId, page: HistoryPage, next_cursor: string | null): UnitHistory {
   // A declaration addresses the run and no unit, so a unit's history never holds one.
-  return { unit_id, next_cursor, events: page.items.flatMap(({ event, review, assessment_revision_id }) => {
-    if (event.payload.kind === ANALYSIS_LINKS_DECLARED) return [];
-    const adjudication = event.payload.kind === "operator_decided" ? selectRecordedAdjudication(review ?? null, event.payload.decision, event.payload.payload) : null;
-    return [{ id: event.id, ingress_id: event.ingress_id, event: event.payload, writer: event.writer, created_at: event.created_at,
-      ...(adjudication && event.payload.kind === "operator_decided" ? { adjudication, assessment_revision_id: assessment_revision_id ?? event.payload.target } : {}) }];
+  return { unit_id, next_cursor, events: page.items.flatMap(({ event, feedback_dispositions }) => {
+    return [{ id: event.id, ingress_id: event.ingress_id, event: event.payload, writer: event.writer, feedback_dispositions: feedback_dispositions ?? [], created_at: event.created_at }];
   }) };
 }
 

@@ -34,6 +34,11 @@ pub(super) fn workflow(declared: &Workflow, resolved: &Workflow) -> Workflow {
     for (key, ty) in &mut projected.schemas {
         *ty = project_type(&declared.schemas[key], &resolved.schemas[key]);
     }
+    projected.schemas.extend(
+        core_schemas()
+            .into_iter()
+            .map(|(key, ty)| (key.to_owned(), ty)),
+    );
     for (key, stage) in &mut projected.stages {
         let original = &declared.stages[key];
         let checked = &resolved.stages[key];
@@ -45,12 +50,6 @@ pub(super) fn workflow(declared: &Workflow, resolved: &Workflow) -> Workflow {
             );
         }
         for (name, review) in &mut stage.reviews {
-            if adjudication::is_adjudicating(review)
-                && review.assessment.is_none()
-                && adjudication::reviews_assessment(review, &stage.artifacts)
-            {
-                review.assessment = Some(review.of.clone());
-            }
             for (decision, value) in &mut review.decisions {
                 if let (Some(declared), Some(resolved)) = (
                     &original.reviews[name].decisions[decision].payload,
@@ -74,9 +73,12 @@ pub(super) fn workflow(declared: &Workflow, resolved: &Workflow) -> Workflow {
                 BLOCKER_ARTIFACT.into(),
                 Artifact {
                     kind: ArtifactKind::Record,
+                    view: None,
+                    link_field: None,
                     schema: blocker_schema(),
                     edit_policy: EditPolicy::Always,
                     validate: vec![],
+                    equivalent_subject_fields: vec![],
                 },
             );
             stage

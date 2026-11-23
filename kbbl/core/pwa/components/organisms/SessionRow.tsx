@@ -50,7 +50,7 @@ export function SessionRow({
 
   const canEnd = snapshot.source === "acp";
   const isTerminal = snapshot.status === "ended" || snapshot.status === "fenced" || snapshot.status === "failed";
-  const actionLabel = isTerminal ? "Hide session" : "End and hide session";
+  const hideLabel = isTerminal ? "Hide session" : "End and hide session";
 
   return (
     <li className="session-row-li">
@@ -130,7 +130,7 @@ export function SessionRow({
             variant={confirmEnd ? "armed" : "secondary"}
             className="absolute right-3 top-1/2 min-h-11 min-w-11 -translate-y-1/2 whitespace-nowrap text-xs!"
             disabled={endMutation.isPending}
-            aria-label={confirmEnd ? `Confirm ${actionLabel.toLowerCase()}` : actionLabel}
+            aria-label={confirmEnd ? `Confirm ${hideLabel.toLowerCase()}` : hideLabel}
             title={isTerminal
               ? "Hide this session while keeping its transcript."
               : "End and hide this session while keeping its transcript."}

@@ -6,7 +6,7 @@ const LIFECYCLE_LABELS: Record<CohortLifecycle, string> = {
   building: "Building",
   artifact_review: "Waiting for your review",
   revision_requested: "Changes requested",
-  merge_confirmation: "Waiting for merge confirmation",
+  merge_review: "Waiting for merge confirmation",
   assessing: "Checking the result",
   github_review: "Waiting for GitHub review or merge",
   pull_request_mismatch: "Pull request needs attention",

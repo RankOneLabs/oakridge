@@ -7,7 +7,6 @@ import { RunDetailView } from "../views/RunDetailView";
 import { usageFixture } from "./run-usage-fixture";
 vi.mock("../components/organisms/RunWorkspace", () => ({ RunWorkspace: () => null }));
 vi.mock("../components/organisms/ManualMergeIndications", () => ({ ManualMergeIndications: () => null }));
-vi.mock("../components/organisms/OperatorActionsHistory", () => ({ OperatorActionsHistory: () => null }));
 vi.mock("../hooks/useRunUsage", () => ({ useRunUsage: () => ({ data: usageFixture, isPending: false, isError: false }) }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it("reads the generated usage response through the run endpoint", async () => {
@@ -63,9 +62,9 @@ it("leaves usage to its workspace pane instead of stacking it above the run", ()
 it("excludes external waits and their approximation flags from human wait", () => {
   const unit = usageFixture.units[0];
   const usage = { ...usageFixture, units: [{ ...unit, reviews: [
-    { review: "approval", decision: "accept", wait_ms: 1500, approximate: false },
-    { review: "merge_confirmation", decision: "confirm", wait_ms: 9000, approximate: true },
-    { review: "pr_closed", decision: "confirm", wait_ms: 7000, approximate: true },
+    { review: "approval", kind: "human" as const, decision: "accept", wait_ms: 1500, approximate: false },
+    { review: "verify_release", kind: "external" as const, decision: "confirm", wait_ms: 9000, approximate: true },
+    { review: "verify_closure", kind: "external" as const, decision: "confirm", wait_ms: 7000, approximate: true },
   ] }] };
   expect(selectUsageCohorts(usage)[0]).toMatchObject({ human_wait_ms: 1500, approximate: false });
 });

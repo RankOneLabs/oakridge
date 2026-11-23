@@ -15,6 +15,7 @@ const lines = [
   "// Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.",
   'import type { Generated } from "kysely";',
   'import type { JsonValue } from "../domain/primitives";',
+  'import type { InputBinding, RevisionOrigin } from "../ingest/dbos-revision-delivery";',
   "",
 ];
 const names: string[] = [];
@@ -27,7 +28,9 @@ for (const [, tableName, definition] of tables) {
     const column = /^  (\w+) (text\[\]|text|jsonb|timestamptz|boolean|bigint|integer|numeric|double precision)(?![\w\[])(.*)$/.exec(line);
     if (!column) continue;
     const [, name, sqlType, modifiers] = column;
-    const type = sqlType === "text[]" ? "string[]" : sqlType === "text" ? "string" : sqlType === "jsonb" ? "JsonValue" : sqlType === "timestamptz" ? "Date" : sqlType === "boolean" ? "boolean" : "number";
+    const jsonType = tableName === "source_revision" && name === "origin" ? "RevisionOrigin"
+      : tableName === "source_revision" && name === "input_bindings" ? "readonly InputBinding[]" : "JsonValue";
+    const type = sqlType === "text[]" ? "string[]" : sqlType === "text" ? "string" : sqlType === "jsonb" ? jsonType : sqlType === "timestamptz" ? "Date" : sqlType === "boolean" ? "boolean" : "number";
     const nullable = !modifiers?.includes("NOT NULL") && !modifiers?.includes("PRIMARY KEY") && !modifiers?.includes("GENERATED ALWAYS AS");
     const columnType = `${type}${nullable ? " | null" : ""}`;
     lines.push(`  ${name}: ${(modifiers?.includes("DEFAULT ") || modifiers?.includes("GENERATED ALWAYS AS")) ? `Generated<${columnType}>` : columnType};`);

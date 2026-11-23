@@ -1,0 +1,89 @@
+import { readMergeStatusSource } from "../src/storage/read-store";
+import { openAssessmentRun } from "./assessment-fixture";
+import { expect, test } from "bun:test";
+import { openAuthority } from "./authority-fixture";
+import { assessment, expansion, freeze, item, openStudy, paid, plan, pr, prepareSlice, sliceAssessment } from "./study-fixture";
+
+test("merge status uses the watch intent on design, expansion, freeze and integration", async () => {
+  const authority = await openAuthority();
+  try {
+    const run = await openStudy(authority);
+    async function check(location: string, number: number) {
+      const response = await run.request("GET", "/merge-status", undefined, undefined, location);
+      expect(await response.json()).toMatchObject({ kind: "merged", pr_url: pr("irrelevant", number).pr_url });
+    }
+    const request = await prepareSlice(run);
+    await run.end("spend_requester");
+    await check(run.unit(), 1);
+    expect((await run.decide("spend_request_review", "approve", "spend_request")).status).toBe(201);
+    const runner = await run.startRunner();
+    const report = await run.publish("slice_runner", "slice_report", paid(runner.key), { subject: request.id });
+    await run.end("slice_runner");
+    await run.publish("slice_assessor", "slice_assessment", sliceAssessment(runner.key), { subject: report.id });
+    await run.end("slice_assessor");
+    expect((await run.decide("slice_assessment_review", "approve_assessment", "slice_assessment", { assessed_revision: report.id, dispositions: [] })).status).toBe(201);
+    expect((await run.decide("slice_report_review", "expand", "slice_report")).status).toBe(201);
+    expect((await run.decide("merge_confirmation", "confirm_merged", "pr")).status).toBe(201);
+
+    for (const [index, group] of ["two", "three"].entries()) {
+      const location = run.unit(`expansion/${group}`);
+      const work = await run.publish("expander", "expansion", expansion(group, [group]), { location });
+      await run.publish("expander", "pr", pr(group, index + 2), { location });
+      await run.end("expander", location);
+      await check(location, index + 2);
+      await run.publish("assessor", "assessment", assessment(group, [item("case", group)]), { subject: work.id, location });
+      await run.end("assessor", location);
+      expect((await run.decide("expansion_review", "accept", "assessment", { assessed_revision: work.id, dispositions: [] }, location)).status).toBe(201);
+      expect((await run.decide("merge_confirmation", "confirm_merged", "pr", { payload: {} }, location)).status).toBe(201);
+    }
+    const freezer = run.unit("freeze");
+    await run.publish("freezer", "freeze", freeze, { location: freezer });
+    await run.publish("freezer", "pr", pr("freeze", 4), { location: freezer });
+    await run.end("freezer", freezer);
+    await check(freezer, 4);
+    await run.code("pr_watch", freezer);
+    expect((await run.decide("freeze_review", "request_changes", "freeze", { payload: { feedback: "Confirm manifests" } }, freezer)).status).toBe(201);
+    await run.publish("freezer", "freeze", freeze, { location: freezer });
+    await run.publish("freezer", "pr", pr("freeze", 4), { location: freezer });
+    await run.end("freezer", freezer);
+    await check(freezer, 4);
+    await run.code("pr_watch", freezer);
+    await run.code("prepare_observed_state", freezer);
+    expect((await run.decide("freeze_review", "accept", "freeze", { payload: {} }, freezer)).status).toBe(201);
+    const integration = run.unit("integration");
+    const integrated = await run.publish("integrator", "pr", pr("integration", 5), { location: integration });
+    await run.publish("integrator", "assessment", assessment("integration", [
+      ...plan.cases.map((entry) => item("case", entry.id)), item("cohort_file", "full"),
+    ]), { location: integration, subject: integrated.id });
+    await run.end("integrator", integration);
+    await check(integration, 5);
+  } finally { await authority.close(); }
+});
+
+test("the watch follows its renamed artifact and refuses status after republication", async () => {
+  const authority = await openAuthority();
+  try {
+    const run = await openAssessmentRun(authority, {
+      workflow: "watch", input: {}, run: { units: { work: { stage: "write" } }, outcome: {} },
+      stages: { write: { input: {}, outcome: {}, done_when: "false",
+        artifacts: { change: { kind: "external_reference", link_field: "href", schema: { href: "text", org: "ident", project: "ident" } },
+          result: { kind: "status_record", schema: { state: "enum(open, merged, closed_unmerged)", number: "integer",
+            url: "text", head_sha: "optional(text)", merged_at: "optional(text)" } } },
+        workers: { author: { kind: "agent", inputs: { topic: '"watch"' }, produces: ["change"],
+          prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" } },
+          watcher: { kind: "code", operation: "pull_request.observe", when: "published(change)", produces: ["result"],
+            inputs: { query: '{owner: latest(change).org, name: latest(change).project, head_owner: latest(change).org, head_branch: "branch", base_branch: "main", pr_url: latest(change).href}' } } },
+      } },
+    });
+    const location = { run_id: run.run_id, unit_id: run.run_id + "/work" };
+    const publish = (number: number) => run.publish({ worker: "author", artifact: "change",
+      body: { href: "https://github.com/o/r/pull/" + number, org: "o", project: "r" } });
+    await publish(1);
+    const first = (await run.revision("change"))!.id;
+    expect(await readMergeStatusSource(authority.db, location)).toMatchObject({ latest_revision_id: first, intent: { observed_revision_id: first } });
+    await publish(2);
+    const second = (await run.revision("change"))!.id;
+    expect(second).not.toBe(first);
+    expect(await readMergeStatusSource(authority.db, location)).toMatchObject({ latest_revision_id: second, intent: { observed_revision_id: first } });
+  } finally { await authority.close(); }
+});

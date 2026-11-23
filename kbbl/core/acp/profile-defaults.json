@@ -1,0 +1,88 @@
+{
+  "acp": {
+    "agents": {
+      "claude-code": {
+        "models": [
+          {
+            "value": "opus",
+            "label": "opus 5.5"
+          },
+          {
+            "value": "fable",
+            "label": "fable 5.2"
+          },
+          {
+            "value": "sonnet",
+            "label": "sonnet 5.5"
+          },
+          {
+            "value": "haiku",
+            "label": "haiku 5.5"
+          }
+        ],
+        "default_model": "opus",
+        "auth_probe": {
+          "command": [
+            "claude",
+            "auth",
+            "status"
+          ],
+          "fix": "Run claude auth login"
+        }
+      },
+      "codex": {
+        "models": [
+          {
+            "value": "gpt-6.2-sol",
+            "label": "gpt-6.2 sol"
+          },
+          {
+            "value": "gpt-6.2-astra",
+            "label": "gpt-6.2 astra"
+          },
+          {
+            "value": "gpt-6.1-sol",
+            "label": "gpt-6.1 sol"
+          },
+          {
+            "value": "gpt-6-astra",
+            "label": "gpt-6 astra"
+          },
+          {
+            "value": "gpt-6.1-terra",
+            "label": "gpt-6.1 terra"
+          },
+          {
+            "value": "gpt-6-sol",
+            "label": "gpt-6 sol"
+          },
+          {
+            "value": "gpt-6-luna",
+            "label": "gpt-6 luna"
+          },
+          {
+            "value": "gpt-5.6-sol",
+            "label": "gpt-5.6 sol"
+          },
+          {
+            "value": "gpt-5.6-terra",
+            "label": "gpt-5.6 terra"
+          },
+          {
+            "value": "gpt-5.6-luna",
+            "label": "gpt-5.6 luna"
+          }
+        ],
+        "default_model": "gpt-5.6-sol",
+        "auth_probe": {
+          "command": [
+            "codex",
+            "login",
+            "status"
+          ],
+          "fix": "Run codex login"
+        }
+      }
+    }
+  }
+}
