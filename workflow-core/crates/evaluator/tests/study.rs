@@ -37,7 +37,7 @@ fn repository(key: &str) -> Value {
     json!({
         "key": key,
         "preparation": {"repository_path": format!("/repos/{key}"), "expected_head": null},
-        "forge": {"owner": "acme", "name": key, "build_base": "epic", "final_base": "main"}
+        "forge": {"owner": "acme", "path": key, "build_base": "epic", "final_base": "main"}
     })
 }
 
@@ -296,15 +296,15 @@ fn plan() -> Value {
         ],
         "outcomes": [{"id": "o1", "rule": "Compare scores with the control."}],
         "decision_rule": [{"condition": "Slice criteria met", "next_step": "Expand"}],
-        "models": [{
-            "id": MODEL, "route": "test/model", "per_attempt_cap_cents": 100,
+        "planned_models": [{
+            "id": MODEL, "model_route": "test/model", "per_attempt_cap_cents": 100,
             "expected_cost_per_attempt": {"cents": 50, "basis": "assumption"}
         }],
         "pilot_selection": {
             "case_ids": SLICE_CASES, "risk_reason": "Qualify the control and one omission.",
             "criteria": [{"id": "sc1", "text": "Both slice cases produce scores."}]
         },
-        "slice_paid": {"models": [MODEL], "repeats": 1, "cap_cents": 200},
+        "slice_paid": {"paid_model_ids": [MODEL], "repeats": 1, "cap_cents": 200},
         "iteration_triggers": [{"id": "it1", "text": "Check that controls replay."}],
         "full_study_repeats": 2
     })
@@ -336,7 +336,7 @@ fn spend_request(digest: &str, case_ids: &[&str]) -> Value {
 }
 
 fn digest_recipe() -> Value {
-    json!({"files": ["generator.py"], "command": "sha256sum generator.py"})
+    json!({"files": ["generator.py"], "digest_command": "sha256sum generator.py"})
 }
 
 fn paid_report(digest: &str, run_key: &str) -> Value {

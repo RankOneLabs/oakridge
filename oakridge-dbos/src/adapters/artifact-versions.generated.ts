@@ -5,14 +5,14 @@ export const ARTIFACT_KEYS = {
     'analysis': {
       'analysis': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'analysis',
         'artifact': 'analysis',
         'schema_version': 'artifact-schema/v2:ae5a9fb9c1a0cf37fbf047000c36f234da2d338552efe6f97f8a9a59890cdbde'
       },
       'spec': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'analysis',
         'artifact': 'spec',
         'schema_version': 'artifact-schema/v2:3e6831d5b78d1a4ac06096edd5901aae62889530f407b8581a71698e4e65ca58'
@@ -21,7 +21,7 @@ export const ARTIFACT_KEYS = {
     'brief': {
       'brief': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'brief',
         'artifact': 'brief',
         'schema_version': 'artifact-schema/v2:e04f77b836567abab8dc575972e28ad6c16c4fed569e0bbb3cb6653783913969'
@@ -30,35 +30,35 @@ export const ARTIFACT_KEYS = {
     'cohort': {
       'assessment': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'cohort',
         'artifact': 'assessment',
         'schema_version': 'artifact-schema/v2:a63baa9afb68c1334a5babe86e2c89d9278361c60cf22020dd1531c1dfe9ee18'
       },
       'build_result': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'cohort',
         'artifact': 'build_result',
         'schema_version': 'artifact-schema/v2:1dda345ac981ed6d07d09446c50031fa606afb81ebee51c6d45e48c4d2529217'
       },
       'observed_state': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'cohort',
         'artifact': 'observed_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
       },
       'pr': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'cohort',
         'artifact': 'pr',
         'schema_version': 'artifact-schema/v2:cefb9c462484fd262a0d8f13606eedd934dc500f39da36e125ff6777faaaf9b2'
       },
       'pr_state': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'cohort',
         'artifact': 'pr_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
@@ -67,35 +67,35 @@ export const ARTIFACT_KEYS = {
     'integration': {
       'assessment': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'integration',
         'artifact': 'assessment',
         'schema_version': 'artifact-schema/v2:a63baa9afb68c1334a5babe86e2c89d9278361c60cf22020dd1531c1dfe9ee18'
       },
       'manual_merge_target': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'integration',
         'artifact': 'manual_merge_target',
         'schema_version': 'artifact-schema/v2:cefb9c462484fd262a0d8f13606eedd934dc500f39da36e125ff6777faaaf9b2'
       },
       'observed_state': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'integration',
         'artifact': 'observed_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
       },
       'pr': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'integration',
         'artifact': 'pr',
         'schema_version': 'artifact-schema/v2:cefb9c462484fd262a0d8f13606eedd934dc500f39da36e125ff6777faaaf9b2'
       },
       'pr_state': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'integration',
         'artifact': 'pr_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
@@ -104,7 +104,7 @@ export const ARTIFACT_KEYS = {
     'planning': {
       'plan': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'planning',
         'artifact': 'plan',
         'schema_version': 'artifact-schema/v2:532d3d3e11f8df58a07618e8093374bb8e3e4f2348fa49a980bbbecb8290174d'
@@ -113,7 +113,7 @@ export const ARTIFACT_KEYS = {
     'prepare': {
       'workspace': {
         'workflow': 'development',
-        'definition_id': '3641af12c034beb312eb995bde74bdd808257aba5aac6f69c4819eb5fd15493b',
+        'definition_id': 'a86ded325914ad7396b8e4ce1c3e8cdaf04152633c148dad493b2cabb49564c9',
         'stage': 'prepare',
         'artifact': 'workspace',
         'schema_version': 'artifact-schema/v2:192c8542d82b4dcb2f5f21ebcb853f917de59d86fa7178558dda8b4e48be204b'
@@ -189,56 +189,56 @@ export const ARTIFACT_KEYS = {
     'design': {
       'observed_state': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'design',
         'artifact': 'observed_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
       },
       'plan': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'design',
         'artifact': 'plan',
-        'schema_version': 'artifact-schema/v2:7658c00cb8527086fbbe957385f360399ad61d3b1ca29ae0d8eed424fbf98475'
+        'schema_version': 'artifact-schema/v2:e74f037a39ba6c46faf802307ffb33131e68af084b8349aa6b4764d7e69dc26f'
       },
       'pr': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'design',
         'artifact': 'pr',
         'schema_version': 'artifact-schema/v2:cefb9c462484fd262a0d8f13606eedd934dc500f39da36e125ff6777faaaf9b2'
       },
       'pr_state': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'design',
         'artifact': 'pr_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
       },
       'slice_assessment': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'design',
         'artifact': 'slice_assessment',
         'schema_version': 'artifact-schema/v2:8161122bb966f7314d3b71652e61daae1811cc398df075b47cc3d19ba0157016'
       },
       'slice_build': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'design',
         'artifact': 'slice_build',
-        'schema_version': 'artifact-schema/v2:7496773161951f0dfbc5850bffeff5f4f54f7a7fc63b299e77d57762d4ff6379'
+        'schema_version': 'artifact-schema/v2:5f9f9ec269f98ab718246268de8325e0326d0261be26b843d069f63b0b8c6002'
       },
       'slice_report': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'design',
         'artifact': 'slice_report',
         'schema_version': 'artifact-schema/v2:5ffb70dad579f7cc084ab34e1e07f9e7478bf58a04dff38eaceddec257a19e09'
       },
       'spend_request': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'design',
         'artifact': 'spend_request',
         'schema_version': 'artifact-schema/v2:a556017153be86688c2169d94a3fd47fb18c868f505de842eec3621445848ba4'
@@ -247,35 +247,35 @@ export const ARTIFACT_KEYS = {
     'expand': {
       'assessment': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'expand',
         'artifact': 'assessment',
         'schema_version': 'artifact-schema/v2:9b0e0aed5398e6f782dd3e7d78b6c269e061227e79f89d6e45e1a292d05e2eb2'
       },
       'expansion': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'expand',
         'artifact': 'expansion',
         'schema_version': 'artifact-schema/v2:6c7c679e91c6808a146c24c295a11b8a16088901dd7c54fcb25e27b3f70e117e'
       },
       'observed_state': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'expand',
         'artifact': 'observed_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
       },
       'pr': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'expand',
         'artifact': 'pr',
         'schema_version': 'artifact-schema/v2:cefb9c462484fd262a0d8f13606eedd934dc500f39da36e125ff6777faaaf9b2'
       },
       'pr_state': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'expand',
         'artifact': 'pr_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
@@ -284,28 +284,28 @@ export const ARTIFACT_KEYS = {
     'freeze': {
       'freeze': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'freeze',
         'artifact': 'freeze',
         'schema_version': 'artifact-schema/v2:33dca68841f47eda5c5ab08ea4f4c5f48c0566b07fe4a6e57ce7c4838ff52bed'
       },
       'observed_state': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'freeze',
         'artifact': 'observed_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
       },
       'pr': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'freeze',
         'artifact': 'pr',
         'schema_version': 'artifact-schema/v2:cefb9c462484fd262a0d8f13606eedd934dc500f39da36e125ff6777faaaf9b2'
       },
       'pr_state': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'freeze',
         'artifact': 'pr_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
@@ -314,35 +314,35 @@ export const ARTIFACT_KEYS = {
     'integration': {
       'assessment': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'integration',
         'artifact': 'assessment',
         'schema_version': 'artifact-schema/v2:9b0e0aed5398e6f782dd3e7d78b6c269e061227e79f89d6e45e1a292d05e2eb2'
       },
       'manual_merge_target': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'integration',
         'artifact': 'manual_merge_target',
         'schema_version': 'artifact-schema/v2:cefb9c462484fd262a0d8f13606eedd934dc500f39da36e125ff6777faaaf9b2'
       },
       'observed_state': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'integration',
         'artifact': 'observed_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
       },
       'pr': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'integration',
         'artifact': 'pr',
         'schema_version': 'artifact-schema/v2:cefb9c462484fd262a0d8f13606eedd934dc500f39da36e125ff6777faaaf9b2'
       },
       'pr_state': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'integration',
         'artifact': 'pr_state',
         'schema_version': 'artifact-schema/v2:edd674514dde9094721498d4a515d6a8b6babf1f36cd76dbd3172dd80af61bf8'
@@ -351,7 +351,7 @@ export const ARTIFACT_KEYS = {
     'prepare': {
       'workspace': {
         'workflow': 'study',
-        'definition_id': 'ce3aab8a24638930930b64c990adf1a305ed784cd90d1d96ea310d69da7981fb',
+        'definition_id': '3fa918c8d34f23575890a879bea504763182e253976beeb94573dfb178992058',
         'stage': 'prepare',
         'artifact': 'workspace',
         'schema_version': 'artifact-schema/v2:192c8542d82b4dcb2f5f21ebcb853f917de59d86fa7178558dda8b4e48be204b'

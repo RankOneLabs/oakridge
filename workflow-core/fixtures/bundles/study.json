@@ -21,7 +21,7 @@
       "operation": "pull_request.observe",
       "when": "pr_opened",
       "inputs": {
-        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
+        "query": "{owner: input.repository.forge.owner, name: input.repository.forge.path, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).change_request_link}"
       },
       "every": "2m",
       "produces": [
@@ -78,7 +78,7 @@
     },
     "forge": {
       "owner": "ident",
-      "name": "ident",
+      "path": "ident",
       "build_base": "text",
       "final_base": "text"
     },
@@ -165,7 +165,7 @@
     },
     "plan_model": {
       "id": "ident",
-      "route": "text",
+      "model_route": "text",
       "per_attempt_cap_cents": "integer",
       "expected_cost_per_attempt": "expected_cost"
     },
@@ -179,7 +179,7 @@
       "criteria": "list(plan_item)"
     },
     "slice_paid_plan": {
-      "models": "list(ident)",
+      "paid_model_ids": "list(ident)",
       "repeats": "integer",
       "cap_cents": "integer"
     },
@@ -190,7 +190,7 @@
       "groups": "list(plan_group)",
       "outcomes": "list(plan_outcome)",
       "decision_rule": "list(decision_row)",
-      "models": "list(plan_model)",
+      "planned_models": "list(plan_model)",
       "pilot_selection": "plan_slice",
       "slice_paid": "slice_paid_plan",
       "full_study_repeats": "integer",
@@ -218,7 +218,7 @@
     },
     "digest_recipe": {
       "files": "list(text)",
-      "command": "text"
+      "digest_command": "text"
     },
     "slice_build_body": {
       "build": "build_summary",
@@ -493,7 +493,7 @@
               "message": "Every case must be listed by the group it names."
             },
             {
-              "check": "every(plan.slice_paid.models, contains(map(plan.models, item.id), item))",
+              "check": "every(plan.slice_paid.paid_model_ids, contains(map(plan.planned_models, item.id), item))",
               "message": "Paid slice models must be plan models."
             },
             {
@@ -505,7 +505,7 @@
               "message": "The slice needs at least one case."
             },
             {
-              "check": "len(plan.slice_paid.models) > 0",
+              "check": "len(plan.slice_paid.paid_model_ids) > 0",
               "message": "The paid slice needs at least one model."
             },
             {
@@ -527,7 +527,7 @@
               "message": "Every slice case must pass qualification: reference passes, omissions isolated and controls replayed."
             },
             {
-              "check": "len(slice_build.digest_recipe.files) > 0 and slice_build.digest_recipe.command != \"\"",
+              "check": "len(slice_build.digest_recipe.files) > 0 and slice_build.digest_recipe.digest_command != \"\"",
               "message": "The digest recipe needs files and a hashing command."
             },
             {
@@ -575,7 +575,7 @@
           "schema": "slice_report_body",
           "validate": [
             {
-              "check": "published(plan) and every(slice_report.paid_results, contains(latest(plan).slice_paid.models, item.model_id))",
+              "check": "published(plan) and every(slice_report.paid_results, contains(latest(plan).slice_paid.paid_model_ids, item.model_id))",
               "message": "Paid results may name only the plan's paid slice models."
             },
             {
@@ -734,7 +734,7 @@
             "spec": "input.spec",
             "repository": "input.repository",
             "build_base": "input.repository.forge.build_base",
-            "repository_name": "input.repository.forge.name"
+            "repository_name": "input.repository.forge.path"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -777,7 +777,7 @@
             "spend_request": "latest(spend_request)",
             "slice_build": "latest(slice_build)",
             "repository": "input.repository",
-            "repository_name": "input.repository.forge.name"
+            "repository_name": "input.repository.forge.path"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -1081,7 +1081,7 @@
             "plan": "input.plan",
             "repository": "input.repository",
             "build_base": "input.repository.forge.build_base",
-            "repository_name": "input.repository.forge.name"
+            "repository_name": "input.repository.forge.path"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
@@ -1281,7 +1281,7 @@
             "expansions": "input.expansions",
             "repository": "input.repository",
             "build_base": "input.repository.forge.build_base",
-            "repository_name": "input.repository.forge.name"
+            "repository_name": "input.repository.forge.path"
           },
           "workspace": "repository(input.workspace)",
           "produces": [
