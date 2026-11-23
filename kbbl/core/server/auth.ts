@@ -26,11 +26,12 @@ export function isLoopbackHost(host: string): boolean {
 
 /**
  * Resolves the startup auth policy from host, optional control token, and
- * insecure flag. A configured token is required on every bind, loopback
- * included: on loopback any local process — an agent among them — could
- * otherwise act as the operator through the Oakridge proxy. Throws when the
- * bind host is non-loopback and neither a token nor the explicit insecure
- * escape hatch is configured.
+ * insecure flag. A configured token is enforced on every bind, loopback
+ * included. The token is optional on a loopback bind: without one every route
+ * is open to any local process, an agent among them, which can then act as the
+ * operator through the Oakridge proxy. An empty or whitespace-only token
+ * counts as none. Throws when the bind host is non-loopback and neither a
+ * token nor the explicit insecure escape hatch is configured.
  */
 export function resolveStartupAuthPolicy(opts: {
   host: string;

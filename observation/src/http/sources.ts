@@ -23,7 +23,7 @@ export interface SourceDependencies {
 }
 
 /** Whether an accepted event can change what a run has ready: a captured revision adds items or the
- * inputs they cite, and a run input supplies what its questions read. Ignored and unmapped events
+ * inputs they cite, and a run input supplies what its questions read. Other events
  * never start a pass, so they can never cause an admission; the periodic sweep and restart still
  * revisit every waiting run. */
 export const startsReconciliation = (outcome: DeliveredEvent): boolean =>

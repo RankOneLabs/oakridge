@@ -121,6 +121,15 @@ pub(super) fn check(workflow: &Workflow) -> Vec<CompileError> {
                 if !is_assessment(stage, assessment) {
                     report(format!("{path}.assessment"), format!("assessment {assessment} is not a kind: assessment artifact of stage {stage_key}"));
                 }
+                if is_assessment(stage, &review.of) && assessment != &review.of {
+                    report(
+                        format!("{path}.assessment"),
+                        format!(
+                            "assessment {assessment} differs from reviewed assessment {}",
+                            review.of
+                        ),
+                    );
+                }
             }
             let mut operations = BTreeSet::new();
             for (key, decision) in &review.decisions {

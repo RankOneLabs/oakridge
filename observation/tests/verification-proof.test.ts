@@ -11,7 +11,7 @@ import { FINDING_KIND } from "../src/producers/oakridge/catalogue";
 import { runProof } from "../verification/proof";
 import { editedGraders, pinChecks, registrationScenario, type ItemReadback, type RegistrationSource } from "../verification/registration";
 import { launcherStateSchema, NO_EVIDENCE, PENDING_SCENARIOS, redactReport, reportStatus, scenarioStatus, type LauncherState,
-  type ObservationStatus, type ScenarioReport } from "../verification/proof-contract";
+  type ObservationStatus, type ScenarioReport, type UnregisteredRevision } from "../verification/proof-contract";
 import { liveScenario, runtimeScenario } from "../verification/scenarios";
 import { awaitRunCapture, isRunCaptured, readRunCapture } from "../verification/run-capture";
 import { awaitLaunch, type LaunchedProcess, type ProofIo } from "../verification/shadow-session";
@@ -54,10 +54,11 @@ interface FeedOutcome { readonly event_id: string; readonly event_kind: string; 
 const launched: FeedEvent = { id: "e1", commit_txid: "5", kind: "launched", artifact: null };
 const published = (artifact: string): FeedEvent => ({ id: "e2", commit_txid: "6", kind: "revision_published", artifact });
 const outcomeOf = (event: FeedEvent): FeedOutcome => ({ event_id: event.id, event_kind: event.kind, reason: null,
-  outcome_kind: event.artifact ? "artifact_revision" : "run_input", revision_id: event.artifact ? `oakridge:shadow-test:unit:${event.artifact}:1` : null });
+  outcome_kind: event.artifact ? "revisions" : "launched", revision_id: event.artifact ? `oakridge:shadow-test:unit:${event.artifact}:1` : null });
 
 /** A run's two sides of the feed: what the authority holds and what the service recorded. */
-interface Feed { readonly events: readonly FeedEvent[]; readonly outcomes: readonly FeedOutcome[]; readonly cursor: { readonly commit_txid: string; readonly event_id: string } }
+interface Feed { readonly events: readonly FeedEvent[]; readonly outcomes: readonly FeedOutcome[]; readonly cursor: { readonly commit_txid: string; readonly event_id: string };
+  readonly unregistered?: readonly UnregisteredRevision[] }
 const caughtUp = (artifact: string): Feed => {
   const events = [launched, published(artifact)];
   return { events, outcomes: events.map(outcomeOf), cursor: { commit_txid: "6", event_id: "e2" } };
@@ -65,6 +66,7 @@ const caughtUp = (artifact: string): Feed => {
 /** IO that answers capture reads from `feed`, which a test may swap between reads. */
 const feedIo = (feed: () => Feed): Pick<ProofIo, "shadowQuery" | "observationGet"> => ({
   shadowQuery: async (database, query) => {
+    if (query.includes("extraction_issue")) return ok(JSON.stringify(feed().unregistered ?? []));
     if (database === state.observation.database) return ok(JSON.stringify(feed().outcomes));
     return ok(query.includes("json_build_object") ? JSON.stringify(feed().events) : "[]");
   },
@@ -119,6 +121,7 @@ test.each(["assessment-on", "analysis-concurrent"] as const)("grading restores c
     },
     shadowQuery: async (_database, query) => {
       if (query.includes("source_event_outcome")) return ok(JSON.stringify(feed.outcomes));
+      if (query.includes("extraction_issue")) return ok("[]");
       if (query.includes("json_agg")) return ok(JSON.stringify(feed.events));
       if (query.includes("config::text")) return ok(JSON.stringify({ grading_enabled: !query.includes("analysis-off") }));
       return ok("1");
@@ -372,13 +375,19 @@ describe("a run's capture", () => {
     expect(isRunCaptured(await awaitRunCapture(io, request, 60_000))).toBe(true);
   });
 
-  test("an unmapped event ends the wait, because it stays unmapped", async () => {
-    const feed = caughtUp("plan");
+  test("an unregistered declaration ends the wait, because it stays unregistered", async () => {
     let sleeps = 0;
-    const rejected: Feed = { ...feed, outcomes: [feed.outcomes[0]!, { ...feed.outcomes[1]!, outcome_kind: "unmapped", reason: "no artifact declaration", revision_id: null }] };
-    const capture = await awaitRunCapture(fakeIo({ ...feedIo(() => rejected), sleep: async () => { sleeps += 1; } }), request, 5_000);
+    const unregistered = [{ revision_id: "oakridge:shadow-test:unit:plan:1", artifact_kind: "plan", detail: "no extractor registration" }];
+    const capture = await awaitRunCapture(fakeIo({ ...feedIo(() => ({ ...caughtUp("plan"), unregistered })), sleep: async () => { sleeps += 1; } }), request, 5_000);
     expect(sleeps).toBe(0);
-    expect(capture.unmapped).toEqual([{ event_id: "e2", event_kind: "revision_published", reason: "no artifact declaration" }]);
+    expect([isRunCaptured(capture), capture.unregistered]).toEqual([false, unregistered]);
+  });
+
+  test("extraction issues that cannot be read are not a capture", async () => {
+    const io = feedIo(() => caughtUp("plan"));
+    const capture = await read(caughtUp("plan"), { shadowQuery: async (database, query) =>
+      query.includes("extraction_issue") ? refused("relation does not exist") : io.shadowQuery(database, query) });
+    expect([isRunCaptured(capture), capture.unregistered]).toEqual([false, null]);
   });
 });
 
@@ -803,7 +812,8 @@ describe("the registration scenario", () => {
         .filter((entry) => entry.revision_id.startsWith("assessment") && query.includes(entry.run_id)).map((entry) => [entry.revision_id, "abc"])))
         : query.includes("evaluator_definition_id") ? JSON.stringify([...stored])
         : query.includes("grading_provider_attempt") ? JSON.stringify({ executions: options.executions ?? 0, attempts: 0, requests_sent: 0, answers: 0 })
-          : query.includes("source_event_outcome") ? JSON.stringify(feed.outcomes) : JSON.stringify(feed.events)),
+          : query.includes("source_event_outcome") ? JSON.stringify(feed.outcomes)
+          : query.includes("extraction_issue") ? "[]" : JSON.stringify(feed.events)),
       observationGet: async (path) => {
         const run = /\/v1\/runs\/([^/]+)\/items/.exec(path)?.[1];
         if (run) return ok({ items: occurrences.filter((entry) => entry.run_id === run && entry.pinned).map((entry) =>

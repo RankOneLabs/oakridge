@@ -56,11 +56,11 @@ state.
 `source-run` checks that observation is reachable before it launches, so a service
 already down fails without spending a turn. After canceling, it waits up to two
 minutes for `run-capture.ts` to find every authority event of the run recorded by the
-service, none of them `unmapped`, the service cursor at or past the run's last event,
+service, no captured revision left without an extractor registration, the service cursor at or past the run's last event,
 and the target revision served back through the read capability. A cursor alone is
 not enough, and neither is a run that reached its target on a healthy DBOS and kbbl.
-A failure keeps `run_capture` in the report: the undelivered event ids, unmapped
-reasons, failed reads, observation health, the launcher's status and the publisher's
+A failure keeps `run_capture` in the report: the undelivered event ids, unregistered
+revisions, failed reads, observation health, the launcher's status and the publisher's
 latest refusals. Those refusals appear only when this proof started the stack, since
 only then does it hold the launcher's log.
 

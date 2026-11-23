@@ -68,13 +68,16 @@ export function AssessmentDecisionBar({ address, status, gate, assessed, workers
       const choice = choices[item.item] ?? EMPTY;
       const unresolved = status.unresolved_proposals.includes(item.item);
       const operation = source?.origin === "operator" ? "direct_correction" : "dispatch_feedback";
-      const target = gate?.decision_definitions?.find((entry) => entry.operation === operation && entry.is_available !== false)?.submit;
-      const canAuthorize = target?.kind === "review" && (unresolved || (source?.origin === "operator" && item.assignments.length === 0) ||
+      const dispatch = gate?.decision_definitions?.find((entry) => entry.operation === operation);
+      const target = dispatch?.submit;
+      const isWithheld = dispatch?.is_available === false;
+      const isAuthorizable = target?.kind === "review" && (unresolved || (source?.origin === "operator" && item.assignments.length === 0) ||
         item.assignments.some((assignment) => assignment.progress === "returned_for_update"));
+      const canAuthorize = isAuthorizable && !isWithheld;
       const dispatching = !unresolved || choice.kind === "dispatch";
       return <fieldset key={item.item} disabled={mutation.isPending || !isPending}>
         <legend>{(source?.proposal_key && proposals.get(source.proposal_key)) || source?.instruction || item.item}</legend>
-        {(unresolved || canAuthorize) && <>
+        {(unresolved || isAuthorizable) && <>
           {unresolved && <Select aria-label="Disposition" value={choice.kind}
             onChange={(event) => updateChoice(item.item, { kind: event.target.value === "dispatch" ? "dispatch" : "reject" })}>
             <option value="reject">Reject</option><option value="dispatch">Dispatch</option>
@@ -86,9 +89,10 @@ export function AssessmentDecisionBar({ address, status, gate, assessed, workers
               recipients: event.target.checked ? [...choice.recipients, worker.key] : choice.recipients.filter((key) => key !== worker.key),
             })} /> {worker.label}
           </label>)}
-          {canAuthorize && dispatching && <Button disabled={!choice.instruction.trim() || !choice.recipients.length} onClick={() => mutation.mutate(() =>
+          {isAuthorizable && dispatching && <Button disabled={isWithheld || !choice.instruction.trim() || !choice.recipients.length} onClick={() => mutation.mutate(() =>
             authorizeAssessmentFeedback(address, { request_id: randomUuid(), item: item.item, target_revision: target.target_revision_id,
               instruction: choice.instruction.trim(), recipients: choice.recipients }))}>Authorize dispatch</Button>}
+          {isAuthorizable && dispatching && isWithheld && dispatch?.disabled_reason && <span role="status"> — {dispatch.disabled_reason}</span>}
         </>}
         {item.assignments.map((assignment) => <div key={assignment.assignment}>
           {workers.find((worker) => worker.key === assignment.recipient)?.label ?? assignment.recipient} · {assignment.progress.replaceAll("_", " ")}
@@ -107,14 +111,18 @@ export function AssessmentDecisionBar({ address, status, gate, assessed, workers
     {isPending && review && assessed && gate?.decision_definitions?.flatMap((definition) => {
       const submit = definition.submit;
       if (submit.kind !== "review" || (definition.operation !== "approve_assessment" && definition.operation !== "dispatch_feedback" && definition.operation !== "direct_correction")) return [];
-      return [<Button key={submit.decision} variant={submit.effect === "approve" ? "primary" : "secondary"}
-        disabled={mutation.isPending || definition.is_available === false}
-        onClick={() => mutation.mutate(() => decideAssessment(address, review, {
-          request_id: randomUuid(), decision: submit.decision, target: status.assessment_revision, assessed_revision: assessed,
-          dispositions: dispositions.filter((entry) => entry.kind === "dispatch"
-            ? definition.operation === (status.item_sources.find((source) => source.item === entry.item)?.origin === "operator" ? "direct_correction" : "dispatch_feedback")
-            : entry.kind === "reject" || definition.operation === "approve_assessment"),
-        }))}>{definition.label}</Button>];
+      const isWithheld = definition.is_available === false;
+      return [<span key={submit.decision}>
+        <Button variant={submit.effect === "approve" ? "primary" : "secondary"}
+          disabled={mutation.isPending || isWithheld}
+          onClick={() => mutation.mutate(() => decideAssessment(address, review, {
+            request_id: randomUuid(), decision: submit.decision, target: status.assessment_revision, assessed_revision: assessed,
+            dispositions: dispositions.filter((entry) => entry.kind === "dispatch"
+              ? definition.operation === (status.item_sources.find((source) => source.item === entry.item)?.origin === "operator" ? "direct_correction" : "dispatch_feedback")
+              : entry.kind === "reject" || definition.operation === "approve_assessment"),
+          }))}>{definition.label}</Button>
+        {isWithheld && definition.disabled_reason && <span role="status"> — {definition.disabled_reason}</span>}
+      </span>];
     })}
     {mutation.error && <p role="alert">{mutation.error.message}</p>}
   </section>;

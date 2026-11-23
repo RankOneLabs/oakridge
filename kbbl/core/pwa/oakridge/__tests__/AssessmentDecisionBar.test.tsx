@@ -73,3 +73,40 @@ test.each([
     { target: "appraisal:2", assessed_revision: "draft:2", dispositions: [{ kind: "dispatch", item: "item", recipients: ["scribe"], instruction: "Update the text" }] },
   ]);
 });
+
+function withheldGate(operation: "approve_assessment" | "dispatch_feedback", effect: "approve" | "request_changes"): ParkedGate {
+  return {
+    id: "gate", gate_type: "artifact_approval", gate_step: "desk", run_id: "run", stage_name: "writing",
+    unit_id: "edition", artifact_revision_id: "appraisal:1", worktree: null, run_state: "active", actionable: true,
+    resume_actions: [], offered_decisions: ["decide"], decision_definitions: [{
+      key: "decide", label: "Record the desk decision", operation, payload_schema: "{}", assessment: "appraisal", fields: [],
+      is_available: false, disabled_reason: "The folio is still with the scribe.",
+      submit: { kind: "review", review: "desk", decision: "decide", effect, target_revision_id: "draft:1" },
+    }],
+  };
+}
+
+function renderWithheld(gate: ParkedGate) {
+  render(<QueryClientProvider client={new QueryClient()}>
+    <AssessmentDecisionBar address={{ run: "run", unit: "edition", artifact: "appraisal" }} assessed="draft:1" gate={gate}
+      status={{ assessment_artifact: "appraisal", assessment_revision: "appraisal:1", unit: "edition", approval: { kind: "pending" },
+        unresolved_proposals: ["item"], items: [{ item: "item", assignments: [] }],
+        item_sources: [{ item: "item", origin: "proposal", proposal_key: "note", instruction: "Revise" }] }}
+      workers={[{ key: "scribe", label: "Scribe", kind: "agent" }]} paths={[]} body={{}} onRecorded={vi.fn()} />
+  </QueryClientProvider>);
+}
+
+test("a withheld decision stays visible, disabled, beside the server's reason", () => {
+  renderWithheld(withheldGate("approve_assessment", "approve"));
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Record the desk decision" }).disabled).toBe(true);
+  expect(screen.getByRole("status").textContent).toBe(" — The folio is still with the scribe.");
+});
+
+test("a withheld dispatch keeps its authorize control, disabled, beside the server's reason", () => {
+  renderWithheld(withheldGate("dispatch_feedback", "request_changes"));
+  fireEvent.change(screen.getByLabelText("Disposition"), { target: { value: "dispatch" } });
+  fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Update the text" } });
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Authorize dispatch" }).disabled).toBe(true);
+  expect(screen.queryByRole("checkbox", { name: "Scribe" })).toBeNull();
+  expect(screen.getAllByRole("status").map((node) => node.textContent)).toEqual([" — The folio is still with the scribe.", " — The folio is still with the scribe."]);
+});

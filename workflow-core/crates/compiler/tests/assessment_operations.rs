@@ -101,6 +101,25 @@ fn operations_enforce_declared_effect_and_target() {
 }
 
 #[test]
+fn assessment_binding_must_match_the_reviewed_assessment() {
+    let mut value = source();
+    value.pointer_mut(STAGE).unwrap()["artifacts"]["another"] =
+        json!({"kind": "assessment", "schema": "text"});
+    value.pointer_mut(REVIEW).unwrap()["assessment"] = json!("another");
+    let errors = compile(value).unwrap_err();
+    assert!(
+        errors.iter().any(|error| error
+            .path
+            .0
+            .contains("stages.work.reviews.review.assessment")
+            && error
+                .detail
+                .contains("assessment another differs from reviewed assessment assessment")),
+        "{errors:?}"
+    );
+}
+
+#[test]
 fn authored_legacy_fields_and_assessment_payload_are_rejected() {
     // These concatenations keep repository-wide searches for retired constructs
     // focused on implementations while still exercising the literal wire spellings.

@@ -195,14 +195,14 @@ exists, and no read depends on having answered.
 
 ## Oakridge profile
 
-- **Items:** `finding` from each analysis finding and `assessment_finding` from each implementation or
-  integration assessment finding, both addressed by revision and path. Item identity holds no task id.
-- **Tasks:** one run-scoped logical item per `task_id`, from the `tasks` artifact. Plan and brief
-  `acceptance_criteria` entries are occurrences of that logical item; their `id` is the task id. A task
-  shared by cohorts stays one logical item, and the same id in another run is another item.
-- **Links:** each id in an assessment finding's `task_ids` is one `assesses` edge to the logical task.
-  An empty list is valid. An unknown id stays unresolved and resolves in place if the task arrives.
-  Links are never inferred from requirement ids, feedback, text, timestamps or unit paths.
+- **Items:** `observation-extraction-catalogue.md` lists every registered artifact, its selectors, the
+  item kind each selector yields and the links it authors. Items are addressed by revision and path.
+- **Tasks:** one logical item per run, task kind and authored local id. A task shared by cohorts stays
+  one logical item, and the same id in another run is another item.
+- **Links:** only the ones an artifact authors. A bound link resolves within the input bindings recorded
+  on the delivered revision, and a proposal citation resolves at its exact revision id and JSON pointer.
+  A link whose target is not captured stays unresolved. Links are never inferred from text, timestamps
+  or unit paths.
 - **Late links:** capturing a referenced revision can resolve an existing edge
   addressed by source revision and path, without touching the item, its pins, evidence or answers.
 - **Composites:** the profile's path follows a task's incoming `assesses` edges to occurrences and on to
@@ -331,7 +331,7 @@ drilldown total agree. These reads need no submission, assignment or reveal reco
 The ingest credential uses `GET /v1/sources/oakridge/cursor` and `POST /v1/sources/oakridge/events`.
 The grade credential uses `POST /v1/items/:id/answers` and `GET /v1/reviewer`. The read credential uses:
 
-- `GET /v1/sources/oakridge/unmapped`, `GET /v1/source-revisions/:id`
+- `GET /v1/source-revisions/:id`
 - `GET /v1/runs/:run_id/items`, `GET /v1/items/:id`, `GET /v1/items/:id/lineage`, `GET /v1/items/:id/grades`
 - `GET /v1/runs/:run_id/items/at?source_revision_id=&item_path=`: one item by its exact address, with no task or cohort
 - `GET /v1/items/:id/status`: each pinned question's definition, own readiness, frozen evidence, each machine evaluator's state and attempts, every answer and correction history, and the item's explicit links
@@ -356,9 +356,8 @@ them for the PWA. kbbl serves the same reads under task names: `/runs/:run_id/ta
 ## Verification
 
 Offline, from the repository root, with `OAKRIDGE_TEST_DATABASE_URL` naming a local PostgreSQL:
-`bun run --filter observation test` and `bun run typecheck`. No storage record changed, and
-`bun run --filter observation storage:check` passes against the existing baseline. No authority or
-observation baseline, core contract or generated definition changed for declarations or composites.
+`bun run --filter observation test` and `bun run typecheck`.
+`bun run --filter observation storage:check` checks the generated storage records against the baseline.
 
 - `observation/tests/grader-configuration.test.ts`: the committed `graders.json` configures every
   question; registration selects exactly the configured graders plus one human evaluator; several
