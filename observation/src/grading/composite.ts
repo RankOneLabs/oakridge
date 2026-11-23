@@ -338,6 +338,7 @@ export interface RepositoryJudgment {
 }
 export interface ApplicableRepository {
   readonly repository_key: string;
+  /** Oldest to newest by assessment publication time. */
   readonly judgments: readonly RepositoryJudgment[];
 }
 export interface LogicalItemComposite {

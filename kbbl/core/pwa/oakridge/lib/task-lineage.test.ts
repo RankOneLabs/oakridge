@@ -40,3 +40,15 @@ test("judgments stay pending without an approval for the same assessment revisio
   ], [recorded]);
   expect(rows.map(({ status }) => status)).toEqual(["pending", "met"]);
 });
+
+test("the latest published assessment wins even when the older assessment was approved last", () => {
+  const rows = selectRepositoryJudgments([{ repository_key: "first", judgments: [
+    { assessment_revision_id: id("appraisal:9"), status: "partial" },
+    { assessment_revision_id: id("appraisal:10"), status: "met" },
+    { assessment_revision_id: id("appraisal:11"), status: "not_met" },
+  ] }], [
+    { ...recorded, approved_assessment_revision_id: "appraisal:10", created_at: "2026-11-01" },
+    { ...recorded, approved_assessment_revision_id: "appraisal:9", created_at: "2026-11-02" },
+  ]);
+  expect(rows).toEqual([{ repository_key: "first", status: "met" }]);
+});

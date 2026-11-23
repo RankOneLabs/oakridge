@@ -32,11 +32,9 @@ export function selectRepositoryJudgments(
   repositories: readonly import("../grading-contracts/grading/composite").ObservationApplicableRepository[],
   decisions: readonly RecordedDecision[],
 ) {
-  const approvals = new Map(decisions.flatMap((decision) => decision.approved_assessment_revision_id
-    ? [[decision.approved_assessment_revision_id, Date.parse(decision.created_at)] as const] : []));
+  const approvals = new Set(decisions.map((decision) => decision.approved_assessment_revision_id));
   return repositories.map(({ repository_key, judgments }) => {
-    const latest = judgments.filter((judgment) => approvals.has(judgment.assessment_revision_id))
-      .sort((left, right) => (approvals.get(right.assessment_revision_id) ?? 0) - (approvals.get(left.assessment_revision_id) ?? 0))[0];
+    const latest = judgments.findLast((judgment) => approvals.has(judgment.assessment_revision_id));
     return { repository_key, status: latest?.status ?? "pending" };
   });
 }
