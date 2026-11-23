@@ -1,13 +1,16 @@
 import { expect, test } from "bun:test";
-import { ARTIFACT_KEY_LIST } from "../src/producers/oakridge/artifact-versions";
+import { ARTIFACT_KEYS, ARTIFACT_KEY_LIST } from "../src/producers/oakridge/artifact-versions";
 import { OAKRIDGE_REGISTRATIONS, selectRegistration } from "../src/producers/oakridge/catalogue";
 import { createFeed, developmentKeys, integration, scratchDatabase, tenant } from "./grading-fixture";
 import { listRunItems } from "../src/storage/projection-store";
 
 test("every launchable declaration has exactly one registration and a documented selector for each extractor", async () => {
-  expect(OAKRIDGE_REGISTRATIONS.map(({ key }) => key)).toEqual(expect.arrayContaining(ARTIFACT_KEY_LIST));
-  expect(new Set(OAKRIDGE_REGISTRATIONS.map(({ key }) => key)).size).toBe(OAKRIDGE_REGISTRATIONS.length);
-  expect(OAKRIDGE_REGISTRATIONS).toHaveLength(ARTIFACT_KEY_LIST.length);
+  const registrations = OAKRIDGE_REGISTRATIONS.map(({ key }) => key);
+  expect(new Set(registrations).size).toBe(registrations.length);
+  // The portability browser test publishes this artifact to verify a loud missing registration.
+  expect(ARTIFACT_KEY_LIST.filter((key) => !registrations.includes(key)))
+    .toEqual([ARTIFACT_KEYS.portability.drafting.manuscript]);
+  expect(registrations).toHaveLength(ARTIFACT_KEY_LIST.length - 1);
   const document = await Bun.file(new URL("../../docs/observation-extraction-catalogue.md", import.meta.url)).text();
   for (const { extractors } of OAKRIDGE_REGISTRATIONS) for (const extractor of extractors) {
     const row = "| `" + extractor.artifact_kind + "` | `" + extractor.item_selector + "` |";

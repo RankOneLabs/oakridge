@@ -39,6 +39,7 @@ list when a judgment has yet to arrive.
 | --- | --- | --- | --- |
 | `plan` | `/cases/*` | case | Case task |
 | `plan` | `/slice/criteria/*` | criterion | Criterion task |
+| `plan` | `/pilot_selection/criteria/*` | criterion | Criterion task in current study definitions |
 | `plan` | `/iteration_triggers/*` | trigger | Trigger task |
 | `plan` | `/hypotheses/*` | hypothesis | Item addressed by path |
 | `plan` | `/outcomes/*` | outcome | Item addressed by path |
@@ -60,3 +61,13 @@ list when a judgment has yet to arrive.
 The study registers assessments separately for expansion and integration.
 Workspace, spend request, pull request, pull request state, observed state, and
 manual merge target declarations have empty extractor lists.
+
+## Portability fixture
+
+| Artifact | Selector | Item kind | Identity or links |
+| --- | --- | --- | --- |
+| `roadmap` | `/folios/*` | folio | Item addressed by path |
+| `appraisal` | `/remarks/*` | remark | Item addressed by path |
+
+The browser test publishes a manuscript with no registration and checks that
+Observation records an unregistered declaration issue.
