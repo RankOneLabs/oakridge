@@ -22,11 +22,11 @@ describe("agent session choices from a pinned definition", () => {
     ]);
   });
 
-  it("suggests the worker role for each declared worker", () => {
+  it("defaults integration and assessment to planner models while building uses worker models", () => {
     const targets = targetsForDevelopment();
     expect(targets.filter((target) => target.stage === "integration" || target.stage === "cohort")
       .map((target) => [target.worker, target.suggested_role]))
-      .toEqual([["builder", "worker"], ["assessor", "worker"], ["integrator", "worker"]]);
+      .toEqual([["builder", "worker"], ["assessor", "planner"], ["integrator", "planner"]]);
   });
 
   it("includes agent template uses and excludes code template uses", () => {
@@ -70,10 +70,11 @@ describe("agent session choices from a pinned definition", () => {
     expect(result.ok ? null : result.error.detail).toBe("Choose a runtime and model for analysis · author.");
   });
 
-  it("offers a worker choice covering every agent session", () => {
+  it("offers a planner and a worker choice covering every agent session", () => {
     expect(selectRoleChoiceTargets(targetsForDevelopment()).map((target) => [target.key, target.covers]))
       .toEqual([
-        ["worker", ["analysis · author", "analysis · spec_editor", "planning · planner", "brief · writer", "cohort · builder", "cohort · assessor", "integration · integrator"]],
+        ["planner", ["analysis · author", "analysis · spec_editor", "planning · planner", "brief · writer", "cohort · assessor", "integration · integrator"]],
+        ["worker", ["cohort · builder"]],
       ]);
   });
 
@@ -90,12 +91,12 @@ describe("agent session choices from a pinned definition", () => {
     });
     const result = selectLaunchSessionSettings(targets, selections);
     expect(result.ok && [result.value.cohort.builder.model, result.value.cohort.assessor.model, result.value.integration.integrator.model])
-      .toEqual(["gpt-5", "gpt-5", "gpt-5"]);
+      .toEqual(["gpt-5", "opus", "opus"]);
   });
 
   it("marks a session's runtime as chosen when its role's runtime was chosen", () => {
     const targets = targetsForDevelopment();
-    expect([...selectSessionKeysFromRoleKeys(targets, new Set(["worker"]))]).toEqual(targets.map(({ key }) => key));
+    expect([...selectSessionKeysFromRoleKeys(targets, new Set(["worker"]))]).toEqual([JSON.stringify(["cohort", "builder"])]);
   });
 });
 

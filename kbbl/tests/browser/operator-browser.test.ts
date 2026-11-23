@@ -50,7 +50,7 @@ const v2Read = (path: string): Response | null => {
 };
 
 // Keep the browser's HTTP fixture on the same v2 contract as the client.
-test("browser starts a workflow run from the projected root input form", async () => {
+test("browser starts development with an uploaded brief and per-session model selections", async () => {
   const launches: unknown[] = [];
   const requestedPaths: string[] = [];
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -79,14 +79,16 @@ test("browser starts a workflow run from the projected root input form", async (
     await page.goto(`${server.url.href}?launch`);
     await page.getByTestId("or-new-run-form").waitFor();
     await page.getByRole("option", { name: "development" }).waitFor({ state: "attached" });
-    await page.getByLabel("title", { exact: true }).fill("Ship the v1 UI");
-    await page.getByLabel("Use repository picker").check();
-    await page.getByLabel("primary repository key").fill("repo");
-    await page.getByLabel("final merge policy").selectOption("require_merge");
+    await page.getByLabel("Epic title").fill("Ship the v1 UI");
+    await page.getByLabel("Planner model").selectOption("opus");
     await page.getByLabel("Repository 1 GitHub owner").fill("RankOneLabs");
     await page.getByLabel("Repository 1 GitHub name").fill("oakridge");
     await page.getByLabel("Repository 1 path").fill("/repo");
-    await page.getByLabel("spec", { exact: true }).fill("Restore the operator UI");
+    await page.getByRole("button", { name: "Upload file" }).click();
+    const spec = "Restore the operator UI\nKeep the full brief.";
+    await page.getByLabel("Brief notes file").setInputFiles({ name: "brief.md", mimeType: "text/markdown", buffer: Buffer.from(spec) });
+    await page.getByText("brief.md", { exact: true }).waitFor();
+    expect(await page.getByLabel("Brief notes preview").inputValue()).toBe(spec);
     await page.getByRole("button", { name: "Per session" }).click();
     await page.getByLabel("cohort · builder model").selectOption("sonnet");
     await page.getByLabel("cohort · assessor model").selectOption("opus");
@@ -94,7 +96,8 @@ test("browser starts a workflow run from the projected root input form", async (
     await page.waitForURL(`**#run/${runId}`);
     expect(launches).toHaveLength(1);
     expect(launches[0]).toMatchObject({ definition_id: definition.definition_id,
-      input: { title: "Ship the v1 UI", spec: "Restore the operator UI" },
+      input: { title: "Ship the v1 UI", spec, primary_repository_key: "repo", final_merge_policy: "require_merge",
+        repositories: [{ forge: { build_base: "epic/ship-the-v1-ui", final_base: "main" } }] },
       config: { sessions: { analysis: { author: {} }, planning: { planner: {} }, brief: { writer: {} },
         cohort: { builder: { model: "sonnet" }, assessor: { model: "opus" } }, integration: { integrator: { model: "opus" } } } } });
     expect(requestedPaths).toContain(`/oakridge/api/api/runs/${runId}/units`);

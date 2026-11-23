@@ -21,7 +21,7 @@ export function WorkflowInputFields({ fields, draft, onChange, disabled }: Workf
     const control = variants ? <Select {...props}>
       <option value="">{optional ? "Unset" : "Select…"}</option>
       {variants.map((variant) => <option key={variant} value={variant}>{variant}</option>)}
-    </Select> : shape.kind === "list" || shape.kind === "record"
+    </Select> : shape.kind === "list" || shape.kind === "record" || shape.kind === "string"
       ? <TextArea {...props} rows={5} />
       : shape.kind === "integer" ? <TextInput {...props} type="number" /> : <TextInput {...props} />;
     return <FormField key={key} label={label}>{control}</FormField>;

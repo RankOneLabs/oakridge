@@ -1,4 +1,4 @@
-import { Checkbox } from "../../../components/atoms/Checkbox";
+import { TextInput } from "../../../components/atoms/TextInput";
 import { Select } from "../../../components/atoms/Select";
 import { useInstallStatus } from "../../hooks/useInstallStatus";
 import { selectLaunchBlock } from "../../state/install-status";
@@ -19,15 +19,19 @@ import { useAgentSessionSelections } from "../../hooks/useAgentSessionSelections
 import { useCreateRun } from "../../hooks/useCreateRun";
 import type { RepositoryInputDraft } from "../../launch-types";
 import type { Project } from "../../project-types";
-import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
+import { repositoryDraftFromProject } from "../../repository-inputs";
 import { SessionModelFields } from "../molecules/SessionModelFields";
 import { selectAgentSessionTargets, selectLaunchSessionSettings, selectRoleChoiceTargets, selectSessionKeysFromRoleKeys,
   selectSessionSelectionsFromRoles, type SessionModelMode } from "../../lib/agent-session-targets";
 import { selectRequestIdentity, type PendingRequestIdentity } from "../../lib/request-identity";
 import { randomUuid } from "../../../lib/random-uuid";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
+import type { FinalMergePolicy } from "../../run-types";
+import { BriefNotesField } from "../molecules/BriefNotesField";
+import { StudySliceFields } from "../molecules/StudySliceFields";
+import { readBriefNotesFile, type BriefNotesSource } from "../../lib/brief-notes";
 import { WorkflowInputFields } from "../molecules/WorkflowInputFields";
-import { selectLaunchInputSchema, selectWorkflowLaunchInput, type LaunchInputDraft } from "../../lib/workflow-launch-input";
+import { DEFAULT_STUDY_SLICE_DRAFT, selectLaunchInputSchema, selectWorkflowLaunchInput, type LaunchInputDraft } from "../../lib/workflow-launch-input";
 import { AutomaticGradingField } from "../molecules/AutomaticGradingField";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
@@ -50,7 +54,12 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const defaultRuntimeId = useMemo(() => defaultRuntimeIdForConfig(serverConfig), [serverConfig]);
 
   const [draft, setDraft] = useState<LaunchInputDraft>({});
-  const [useRepositoryPreset, setUseRepositoryPreset] = useState(false);
+  const [epicTitle, setEpicTitle] = useState("");
+  const [finalMergePolicy, setFinalMergePolicy] = useState<FinalMergePolicy>("guarded");
+  const [briefNotes, setBriefNotes] = useState("");
+  const [briefNotesSource, setBriefNotesSource] = useState<BriefNotesSource>({ kind: "typed" });
+  const [isReadingBrief, setIsReadingBrief] = useState(false);
+  const [studySlice, setStudySlice] = useState(DEFAULT_STUDY_SLICE_DRAFT);
   const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "", forge_owner: "", forge_name: "", integration_branch: "main" }]);
   const [projectId, setProjectId] = useState<string>("");
   const [isGradingEnabled, setIsGradingEnabled] = useState(false);
@@ -60,7 +69,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const definitionQuery = useOperatorDefinition(workflowDefId);
   const sessionTargets = useMemo(() => definitionQuery.data ? selectAgentSessionTargets(definitionQuery.data.workflow, definitionQuery.data.graph, definitionQuery.data.worker_names) : [], [definitionQuery.data]);
   const inputSchema = definitionQuery.data ? selectLaunchInputSchema(definitionQuery.data.bundle) : null;
-  const repositoryField = inputSchema?.fields.find((field) => field.key === "repositories" && field.shape.kind === "list");
+  const hasEpicFields = inputSchema?.form === "development" || inputSchema?.form === "study";
   const sessionChoices = useAgentSessionSelections(sessionTargets, runtimeDescriptors, defaultRuntimeId);
   const roleTargets = useMemo(() => selectRoleChoiceTargets(sessionTargets), [sessionTargets]);
   const roleChoices = useAgentSessionSelections(roleTargets, runtimeDescriptors, defaultRuntimeId);
@@ -104,6 +113,24 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     })]);
   };
 
+  const onBriefNotesFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setError(null);
+    setIsReadingBrief(true);
+    const result = await readBriefNotesFile(file);
+    setIsReadingBrief(false);
+    if (!result.ok) {
+      setBriefNotes("");
+      setBriefNotesSource({ kind: "file", file_name: "" });
+      setError(result.error.detail);
+      return;
+    }
+    setBriefNotes(result.value.text);
+    setBriefNotesSource({ kind: "file", file_name: result.value.file_name });
+  };
+
   // Per-session choices always start from the current planner and worker
   // choices, so switching shows exactly what by-role mode would launch.
   const onModelModeChange = (mode: SessionModelMode) => {
@@ -121,17 +148,11 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     if (!workflowDefId) { setError("Select a workflow definition."); return; }
     if (!definitionQuery.data || definitionQuery.data.definition_id !== workflowDefId) { setError("Wait for the workflow's agent sessions to load."); return; }
     if (!inputSchema) { setError("This workflow does not provide a record input schema."); return; }
-    let launchDraft = draft;
-    if (useRepositoryPreset && repositoryField) {
-      const preset = validateRepositoryInputs(repositories);
-      if (!preset.ok) { setError(preset.error.detail); return; }
-      launchDraft = { ...draft, repositories: JSON.stringify(preset.repositories.map((repository) => ({
-        key: repository.key, preparation: { repository_path: repository.path, expected_head: null },
-        forge: { owner: repository.forge_owner, name: repository.forge_name,
-          build_base: repository.integration_branch, final_base: repository.integration_branch },
-      }))) };
-    }
-    const workflowInput = selectWorkflowLaunchInput(inputSchema, launchDraft);
+    if (isReadingBrief) return;
+    const workflowInput = selectWorkflowLaunchInput(inputSchema, {
+      fields: draft, studySlice,
+      epic: { title: epicTitle, policy: finalMergePolicy, notes: briefNotes, source: briefNotesSource, repositories },
+    });
     if (!workflowInput.ok) { setError(workflowInput.error.detail); return; }
     const sessionSettings = selectLaunchSessionSettings(sessionTargets, modelMode === "by_role"
       ? sessionSelectionsFromRoles()
@@ -164,12 +185,22 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
       />
 
       <form className="or-form-card flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
+        {hasEpicFields && <>
+          <FormField label="Epic title">
+            <TextInput type="text" value={epicTitle} onChange={(event) => setEpicTitle(event.target.value)} disabled={pending} placeholder="Ship account recovery" required />
+          </FormField>
+          <FormField label="Final merge policy" hint="Choose guarded for normal GitHub workflows. External confirmation leaves final integration completion to an outside operator or system.">
+            <Select value={finalMergePolicy} onChange={(event) => setFinalMergePolicy(event.target.value === "external_confirmation" ? "external_confirmation" : "guarded")} disabled={pending}>
+              <option value="guarded">Guarded — Oakridge verifies the final merge</option>
+              <option value="external_confirmation">External confirmation — another system confirms it</option>
+            </Select>
+          </FormField>
+        </>}
         <FormField label="Workflow Definition">
           <Select
-
             value={workflowDefId}
-            onChange={(e) => { setWorkflowDefId(e.target.value); setDraft({}); setUseRepositoryPreset(false); }}
-            disabled={pending || defsQuery.isPending}
+            onChange={(e) => { setWorkflowDefId(e.target.value); setDraft({}); setError(null); }}
+            disabled={pending || isReadingBrief || defsQuery.isPending}
             required
           >
             {defsQuery.isPending && <option value="">Loading…</option>}
@@ -186,7 +217,6 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
 
         <FormField label="Project (optional)">
           <Select
-
             value={projectId}
             onChange={(e) => setProjectId(e.target.value)}
             disabled={pending || projectsQuery.isPending}
@@ -198,9 +228,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           </Select>
         </FormField>
 
-        {repositoryField && <label><Checkbox type="checkbox" checked={useRepositoryPreset}
-          onChange={(event) => setUseRepositoryPreset(event.target.checked)} /> Use repository picker</label>}
-        {useRepositoryPreset && repositoryField && <RepositoryLaunchFields
+        {hasEpicFields && <RepositoryLaunchFields
           repositories={repositories}
           setRepositories={setRepositories}
           projects={projectsQuery.data ?? []}
@@ -208,7 +236,16 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           isLoadingProjects={projectsQuery.isPending}
           disabled={pending}
         />}
-        {inputSchema && <WorkflowInputFields fields={inputSchema.fields.filter((field) => !useRepositoryPreset || field !== repositoryField)}
+        {hasEpicFields && <BriefNotesField
+          notes={briefNotes}
+          setNotes={setBriefNotes}
+          source={briefNotesSource}
+          setSource={setBriefNotesSource}
+          onFileChange={(event) => { void onBriefNotesFileChange(event); }}
+          disabled={pending || isReadingBrief}
+        />}
+        {inputSchema?.form === "study" && <StudySliceFields draft={studySlice} onChange={setStudySlice} disabled={pending} />}
+        {inputSchema && <WorkflowInputFields fields={inputSchema.additionalFields}
           draft={draft} onChange={(key, value) => setDraft((current) => ({ ...current, [key]: value }))} disabled={pending} />}
 
         {definitionQuery.isPending && <div>Loading agent sessions…</div>}
@@ -231,7 +268,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
 
         <div className="flex justify-end gap-3">
           <Button onClick={onBack} disabled={pending}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={Boolean(launchBlock) || pending || !workflowDefId || !definitionQuery.data || !inputSchema}>
+          <Button type="submit" variant="primary" disabled={Boolean(launchBlock) || isReadingBrief || pending || !workflowDefId || !definitionQuery.data || !inputSchema}>
             {pending ? "Starting…" : "Start Run"}
           </Button>
         </div>
